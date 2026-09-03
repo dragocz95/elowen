@@ -216,6 +216,44 @@ describe('shared project memory (store)', () => {
     expect(canUseCategory(db, 11, pool.id)).toBe(true);
   });
 
+  it('merge keeps the pool when all sources agree on it, and never mixes a private fact into it', () => {
+    const project = shareProject('obchod', { members: [10, 11], sharers: [10, 11] });
+    const pool = cats.sharedForProject(10, project)!;
+    const a = mem.add(10, { body: 'supplier A terms' }, 'user:10', 'add');
+    const b = mem.add(11, { body: 'supplier A pricing' }, 'user:11', 'add');
+    mem.setCategory(10, a.id, pool.id, 'user:10', 'tag');
+    mem.setCategory(11, b.id, pool.id, 'user:11', 'tag');
+    // A member merges two of the team's rows: the merged memory STAYS in the pool.
+    const merged = mem.merge(11, [a.id, b.id], 'supplier A: terms + pricing', 'user:11', 'dedupe');
+    expect(merged.category_id).toBe(pool.id);
+    // Mixing a pool row with a personal row lands UNCATEGORIZED — the shared fact must not leak into
+    // anyone's private filing (the classifier re-files it later).
+    const personal = mem.add(11, { body: 'my own note' }, 'user:11', 'add');
+    const mixed = mem.merge(11, [a.id, personal.id], 'mixed merge', 'user:11', 'dedupe');
+    expect(mixed.category_id).toBeNull();
+  });
+
+  it('a sharer may hard-purge a foreign shared row, taking every reader\'s usage events with it', () => {
+    const project = shareProject('obchod', { members: [10, 11], sharers: [10, 11] });
+    const pool = cats.sharedForProject(10, project)!;
+    const foreign = mem.add(10, { body: 'obsolete fact' }, 'user:10', 'add');
+    mem.setCategory(10, foreign.id, pool.id, 'user:10', 'tag');
+    mem.markUsed(10, [foreign.id]);
+    mem.markUsed(11, [foreign.id]);
+    expect(db.prepare('SELECT COUNT(*) AS n FROM memory_usage_events WHERE memory_id = ?').get(foreign.id)).toEqual({ n: 2 });
+
+    // Full parity on the destructive path too…
+    expect(mem.purge(11, foreign.id, 'user:11', 'cleanup')).toBe(true);
+    // …and the row is GONE: the embedding cascades, the usage events follow, the audit survives.
+    expect(mem.get(10, foreign.id)).toBeUndefined();
+    expect(db.prepare('SELECT COUNT(*) AS n FROM memory_usage_events WHERE memory_id = ?').get(foreign.id)).toEqual({ n: 0 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM memory_events WHERE memory_id = ?').get(foreign.id)).toEqual({ n: 3 });
+    // A non-member still cannot purge anything foreign.
+    const other = mem.add(12, { body: 'private' }, 'user:12', 'add');
+    expect(mem.purge(11, other.id, 'user:11', 'nope')).toBe(false);
+    expect(mem.get(12, other.id)).toBeDefined();
+  });
+
   it('setCategory rejects a foreign category target and an unknown memory as before', () => {
     const project = shareProject('obchod', { members: [10], sharers: [10] });
     const other = cats.create(11, { name: 'Foreign' });

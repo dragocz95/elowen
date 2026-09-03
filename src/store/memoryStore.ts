@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import type { Db } from './db.js';
 import type { MemoryRow, MemoryEventRow, MemoryCategoryRow } from '../shared/wireContract.js';
 import { memoryCategoryFingerprint } from './memoryCategoryStore.js';
-import { sharedCategoryIds, canUseCategory } from './sharedMemoryAccess.js';
+import { sharedCategoryIds, canUseCategory, isSharer, SHARED_CATEGORY_USER_ID } from './sharedMemoryAccess.js';
 
 // The memory row shapes are the daemon↔web wire contract (served over /memory) — defined once in
 // src/shared and re-exported here, so a field added on the daemon can never be missing on the web.
@@ -104,16 +104,27 @@ export class MemoryStore {
     return rows.map((r) => r.id);
   }
 
+  /** The reader-widening WHERE fragment for the user-keyed read queries: the user's own rows plus,
+   *  when pools are supplied, every other author's row sitting in one of those pools. ONE source of
+   *  truth — callers thread `params` straight after their own leading binds, so the clause and the
+   *  bind list can never drift apart. `col` prefixes the columns for aliased queries. */
+  private readerScope(userId: number, sharedCategoryIds: number[], col = ''): { clause: string; params: (string | number)[] } {
+    if (sharedCategoryIds.length === 0) return { clause: `${col}user_id = ?`, params: [userId] };
+    return {
+      clause: `(${col}user_id = ? OR ${col}category_id IN (${sharedCategoryIds.map(() => '?').join(', ')}))`,
+      params: [userId, ...sharedCategoryIds],
+    };
+  }
+
   /** One memory the user may READ/WRITE: their own row, or ANOTHER author's row sitting in a shared
    *  pool they share. This is the row-side access boundary — every cross-user-capable mutation and
-   *  read routes through it instead of the owner-scoped {@link get}. */
-  getAccessible(userId: number, id: number): MemoryRow | undefined {
-    const shared = this.sharedIds(userId);
-    if (shared.length === 0) return this.get(userId, id);
-    const placeholders = shared.map(() => '?').join(', ');
+   *  read routes through it instead of the owner-scoped {@link get}. Pass `shared` to reuse one
+   *  resolved pool set across many calls (merge does). */
+  getAccessible(userId: number, id: number, shared?: number[]): MemoryRow | undefined {
+    const scope = this.readerScope(userId, shared ?? this.sharedIds(userId));
     return this.db.prepare(
-      `SELECT * FROM memories WHERE id = ? AND (user_id = ? OR category_id IN (${placeholders}))`,
-    ).get(id, userId, ...shared) as MemoryRow | undefined;
+      `SELECT * FROM memories WHERE id = ? AND ${scope.clause}`,
+    ).get(id, ...scope.params) as MemoryRow | undefined;
   }
 
   /** Insert a memory and audit the 'add' (after_json = the new row). `model` names the inference model
@@ -148,12 +159,9 @@ export class MemoryStore {
    *  authors' rows sitting in those shared pools. */
   list(userId: number, opts: ListMemoriesOpts = {}): MemoryRow[] {
     const status = opts.status === undefined ? 'active' : opts.status;
-    const shared = opts.sharedCategoryIds ?? [];
-    const scope = shared.length > 0
-      ? `(user_id = ? OR category_id IN (${shared.map(() => '?').join(', ')}))`
-      : 'user_id = ?';
-    const clauses = [scope];
-    const params: (string | number)[] = shared.length > 0 ? [userId, ...shared] : [userId];
+    const scope = this.readerScope(userId, opts.sharedCategoryIds ?? []);
+    const clauses = [scope.clause];
+    const params: (string | number)[] = [...scope.params];
     if (status !== '' && status !== 'all') { clauses.push('status = ?'); params.push(status); }
     if (opts.kind !== undefined) { clauses.push('kind = ?'); params.push(opts.kind); }
     if (opts.categoryId !== undefined) {
@@ -183,14 +191,11 @@ export class MemoryStore {
   }
 
   listRecent(userId: number, limit: number, sharedCategoryIds: number[] = []): MemoryRow[] {
-    const scope = sharedCategoryIds.length > 0
-      ? `(user_id = ? OR category_id IN (${sharedCategoryIds.map(() => '?').join(', ')}))`
-      : 'user_id = ?';
-    const params: (string | number)[] = sharedCategoryIds.length > 0 ? [userId, ...sharedCategoryIds, limit] : [userId, limit];
+    const scope = this.readerScope(userId, sharedCategoryIds);
     return this.db.prepare(
-      `SELECT * FROM memories WHERE ${scope} AND status = 'active'
+      `SELECT * FROM memories WHERE ${scope.clause} AND status = 'active'
        ORDER BY created_at DESC, id DESC LIMIT ?`
-    ).all(...params) as MemoryRow[];
+    ).all(...scope.params, limit) as MemoryRow[];
   }
 
   /** Active memories in the supplied categories, most-recently created first. The category filter lives
@@ -203,16 +208,11 @@ export class MemoryStore {
     const ids = [...categoryIds];
     if (ids.length === 0) return [];
     const placeholders = ids.map(() => '?').join(', ');
-    const scope = sharedCategoryIds.length > 0
-      ? `(user_id = ? OR category_id IN (${sharedCategoryIds.map(() => '?').join(', ')}))`
-      : 'user_id = ?';
-    const params: (string | number)[] = sharedCategoryIds.length > 0
-      ? [userId, ...sharedCategoryIds, ...ids, limit]
-      : [userId, ...ids, limit];
+    const scope = this.readerScope(userId, sharedCategoryIds);
     return this.db.prepare(
-      `SELECT * FROM memories WHERE ${scope} AND status = 'active' AND category_id IN (${placeholders})
+      `SELECT * FROM memories WHERE ${scope.clause} AND status = 'active' AND category_id IN (${placeholders})
        ORDER BY created_at DESC, id DESC LIMIT ?`
-    ).all(...params) as MemoryRow[];
+    ).all(...scope.params, ...ids, limit) as MemoryRow[];
   }
 
   /** v1 keyword fallback: case-insensitive LIKE scan over body, active only, newest-updated first.
@@ -222,16 +222,11 @@ export class MemoryStore {
     const q = query.trim();
     if (q.length < 2) return [];
     const like = `%${q.replace(/[\\%_]/g, (ch) => `\\${ch}`)}%`;
-    const scope = sharedCategoryIds.length > 0
-      ? `(user_id = ? OR category_id IN (${sharedCategoryIds.map(() => '?').join(', ')}))`
-      : 'user_id = ?';
-    const params: (string | number)[] = sharedCategoryIds.length > 0
-      ? [userId, ...sharedCategoryIds, like, limit]
-      : [userId, like, limit];
+    const scope = this.readerScope(userId, sharedCategoryIds);
     return this.db.prepare(
-      `SELECT * FROM memories WHERE ${scope} AND status = 'active' AND body LIKE ? ESCAPE '\\'
+      `SELECT * FROM memories WHERE ${scope.clause} AND status = 'active' AND body LIKE ? ESCAPE '\\'
        ORDER BY updated_at DESC, id DESC LIMIT ?`
-    ).all(...params) as MemoryRow[];
+    ).all(...scope.params, like, limit) as MemoryRow[];
   }
 
   /** Patch a memory (own row, or another author's shared-pool row via {@link getAccessible}), bump
@@ -328,18 +323,24 @@ export class MemoryStore {
         .get(Number(info.lastInsertRowid)) as MemoryRow;
       const sourceIds: number[] = [];
       const sourceCategories = new Set<number>();
+      let sawUncategorized = false;
+      // One shared-set resolution for the whole batch — getAccessible would otherwise re-run the
+      // sharer predicate per source id.
+      const shared = this.sharedIds(userId);
       for (const id of ids) {
-        const before = this.getAccessible(userId, id);
+        const before = this.getAccessible(userId, id, shared);
         if (!before) continue; // access enforced: skip rows this caller cannot touch
         this.db.prepare("UPDATE memories SET status = 'deleted', updated_at = datetime('now') WHERE id = ?")
           .run(id);
         sourceIds.push(id);
-        if (before.category_id !== null) sourceCategories.add(before.category_id);
+        if (before.category_id === null) sawUncategorized = true;
+        else sourceCategories.add(before.category_id);
       }
-      // Keep the merged row in its category only when the sources agree on ONE and the caller may use
-      // it — a shared pool must not be exited by a merge, and a personal re-filing stays with the
-      // reclassify pass as before.
-      if (sourceCategories.size === 1) {
+      // Keep the merged row in its category only when the sources agree on ONE (an uncategorized
+      // source is a disagreement — the merged content is mixed, and filing it into the pool would
+      // publish the private half to the team) and the caller may use it. A shared pool must not be
+      // exited by a merge; a personal re-filing stays with the reclassify pass as before.
+      if (!sawUncategorized && sourceCategories.size === 1) {
         const carried = [...sourceCategories][0]!;
         if (canUseCategory(this.db, userId, carried)) {
           this.db.prepare("UPDATE memories SET category_id = ?, updated_at = datetime('now') WHERE id = ?")
@@ -366,16 +367,10 @@ export class MemoryStore {
    *  counter rides on the memory row itself. */
   markUsed(userId: number, ids: number[], context?: MemoryUsageContext): void {
     if (ids.length === 0) return;
-    const shared = this.sharedIds(userId);
-    const bump = shared.length > 0
-      ? this.db.prepare(
-        `UPDATE memories SET use_count = use_count + 1, last_used_at = datetime('now')
-          WHERE id = ? AND (user_id = ? OR category_id IN (${shared.map(() => '?').join(', ')}))`
-      )
-      : this.db.prepare(
-        "UPDATE memories SET use_count = use_count + 1, last_used_at = datetime('now') WHERE id = ? AND user_id = ?"
-      );
-    const bumpArgs = (id: number): (string | number)[] => shared.length > 0 ? [id, userId, ...shared] : [id, userId];
+    const scope = this.readerScope(userId, this.sharedIds(userId));
+    const bump = this.db.prepare(
+      `UPDATE memories SET use_count = use_count + 1, last_used_at = datetime('now') WHERE id = ? AND ${scope.clause}`
+    );
     const logUse = this.db.prepare(
       `INSERT INTO memory_usage_events
         (memory_id, user_id, used_at, session_id, turn_id, search_index)
@@ -383,7 +378,7 @@ export class MemoryStore {
     );
     this.db.transaction(() => {
       for (const id of ids) {
-        if (bump.run(...bumpArgs(id)).changes > 0) {
+        if (bump.run(id, ...scope.params).changes > 0) {
           logUse.run(id, userId, context?.sessionId ?? null, context?.turnId ?? null, context?.searchIndex ?? null);
         }
       }
@@ -522,7 +517,12 @@ export class MemoryStore {
                   project_id AS projectId, created_at
              FROM memory_categories WHERE id = ?`,
         ).get(categoryId) as MemoryCategoryRow | undefined;
-        if (!target || !canUseCategory(this.db, userId, categoryId)) return false;
+        // The SELECT above already holds the row canUseCategory would re-read — derive the same
+        // predicate from it: the caller's own category, or a shared pool of a project they share.
+        const usable = !!target && (target.user_id === userId
+          || (target.user_id === SHARED_CATEGORY_USER_ID && target.projectId != null
+            && isSharer(this.db, userId, target.projectId)));
+        if (!usable) return false;
         if (before.user_id !== userId && categoryId !== before.category_id) return false; // asymmetry rule
         if (expected.targetCategoryFingerprint !== undefined
           && memoryCategoryFingerprint(target) !== expected.targetCategoryFingerprint) return false;
@@ -552,16 +552,13 @@ export class MemoryStore {
    *  the current body) are also excluded, so retrieval never ranks against an out-of-date vector — the
    *  memory falls back to keyword search until the embed queue re-vectorizes it. */
   listActiveWithEmbeddings(userId: number, sharedCategoryIds: number[] = []): { memory: MemoryRow; vector: Float32Array }[] {
-    const scope = sharedCategoryIds.length > 0
-      ? `(m.user_id = ? OR m.category_id IN (${sharedCategoryIds.map(() => '?').join(', ')}))`
-      : 'm.user_id = ?';
-    const params: (string | number)[] = sharedCategoryIds.length > 0 ? [userId, ...sharedCategoryIds] : [userId];
+    const scope = this.readerScope(userId, sharedCategoryIds, 'm.');
     const rows = this.db.prepare(
       `SELECT m.*, e.vector AS vector, e.content_hash AS embedded_hash
          FROM memories m JOIN memory_embeddings e ON e.memory_id = m.id
-        WHERE ${scope} AND m.status = 'active'
+        WHERE ${scope.clause} AND m.status = 'active'
         ORDER BY m.updated_at DESC, m.id DESC`
-    ).all(...params) as (MemoryRow & { vector: Buffer; embedded_hash: string })[];
+    ).all(...scope.params) as (MemoryRow & { vector: Buffer; embedded_hash: string })[];
     return rows
       .filter((r) => r.embedded_hash === hashBody(r.body)) // drop stale vectors — body edited since embed
       .map(({ vector, embedded_hash, ...memory }) => ({
@@ -658,14 +655,18 @@ export class MemoryStore {
    *  deleted with the account (they are the deleted account's analytics). */
   removeForUser(userId: number): void {
     this.db.transaction(() => {
-      const sharedRowIds = this.db.prepare(
-        `SELECT id FROM memories WHERE user_id = ? AND category_id IN
-           (SELECT id FROM memory_categories WHERE user_id = 0 AND project_id IS NOT NULL)`
-      ).all(userId) as { id: number }[];
-      for (const { id } of sharedRowIds) {
-        this.db.prepare('UPDATE memories SET user_id = 0 WHERE id = ?').run(id);
-        this.db.prepare('UPDATE memory_events SET user_id = 0 WHERE memory_id = ?').run(id);
-      }
+      // Shared-pool rows authored by the deleted user stay with the pool — re-attributed to the
+      // instance sentinel together with their audit events. Both statements are set-based: the
+      // memories UPDATE runs first so the events UPDATE can select the re-attributed ids through the
+      // same pool predicate. An event of a PRIOR, purged row occupant whose id a pool row now reuses
+      // is swept along — it is inert (eventsForMemory bounds by the row's created_at) and audit rows
+      // are retained forever by design, so no data escapes.
+      const poolPredicate = 'category_id IN (SELECT id FROM memory_categories WHERE user_id = 0 AND project_id IS NOT NULL)';
+      this.db.prepare(`UPDATE memories SET user_id = 0 WHERE user_id = ? AND ${poolPredicate}`).run(userId);
+      this.db.prepare(
+        `UPDATE memory_events SET user_id = 0 WHERE user_id = ?
+          AND memory_id IN (SELECT id FROM memories WHERE user_id = 0 AND ${poolPredicate})`
+      ).run(userId);
       this.db.prepare('DELETE FROM memories WHERE user_id = ?').run(userId);
       this.db.prepare('DELETE FROM memory_events WHERE user_id = ?').run(userId);
       this.db.prepare('DELETE FROM memory_usage_events WHERE user_id = ?').run(userId);

@@ -135,8 +135,8 @@ function applyAdditiveMigrations(db: Db): void {
   addColumn(db, 'projects', 'icon', "TEXT NOT NULL DEFAULT ''");
   // Shared project memory toggle. When on, the project's shared memory pool (a memory_categories row
   // with user_id = 0) is recallable/writable by the share list (project_memory_members), or by every
-  // project member when that list is empty. The index for it lives above (same rule as the events
-  // indexes: a column's index belongs here, right after addColumn, not in schema.sql).
+  // project member when that list is empty. No index on purpose: a boolean column is never worth one,
+  // and the hot paths ride on project_memory_members' PK and the memory_categories partial unique.
   addColumn(db, 'projects', 'memory_shared', 'INTEGER NOT NULL DEFAULT 0');
   addColumn(db, 'users', 'is_admin', 'INTEGER NOT NULL DEFAULT 0');
   addColumn(db, 'users', 'allowed_execs', "TEXT NOT NULL DEFAULT ''");

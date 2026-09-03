@@ -57,15 +57,6 @@ export function sharedCategoryIds(db: Db, userId: number): number[] {
   return rows.map((r) => r.id);
 }
 
-/** Ids of the shared memory categories of ONE project, when this user may touch them. */
-export function sharedCategoryIdsForProject(db: Db, userId: number, projectId: number): number[] {
-  if (!isSharer(db, userId, projectId)) return [];
-  const rows = db.prepare(
-    'SELECT id FROM memory_categories WHERE user_id = ? AND project_id = ?',
-  ).all(SHARED_CATEGORY_USER_ID, projectId) as { id: number }[];
-  return rows.map((r) => r.id);
-}
-
 /** True when `userId` may USE `categoryId` as a target for their memories: one of their OWN categories,
  *  or the shared category of a project they share. This is the category-side twin of memory access —
  *  `setCategory`/`setCategoryIfUnchanged` must ask THIS, not just row ownership, or every write into a

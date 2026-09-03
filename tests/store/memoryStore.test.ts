@@ -30,7 +30,7 @@ describe('MemoryStore', () => {
        VALUES (?, 1, 'add', ?, 'agent', 'curator: new durable fact', '2000-01-01 00:00:00')`
     ).run(m.id, JSON.stringify({ body: 'Projekt sarah_hair má dvě databáze' }));
 
-    const scoped = s.eventsForMemory(1, m.id);
+    const scoped = s.eventsForMemory(m.id);
     expect(scoped.some((e) => (e.after_json ?? '').includes('sarah_hair'))).toBe(false);
     expect(scoped.some((e) => (e.after_json ?? '').includes('VPS'))).toBe(true);
   });
@@ -290,7 +290,7 @@ describe('MemoryStore', () => {
     s.markUsed(1, [m.id]);
     s.markUsed(1, [m.id]);
 
-    const history = s.usageHistory(1, m.id);
+    const history = s.usageHistory(m.id);
     expect(history).toHaveLength(2);
     expect(s.get(1, m.id)?.use_count).toBe(2);
     expect([...history].sort()).toEqual(history);
@@ -320,7 +320,7 @@ describe('MemoryStore', () => {
 
     store.markUsed(1, [mine.id, theirs.id]);
 
-    expect(store.usageHistory(1, mine.id)).toHaveLength(1);
+    expect(store.usageHistory(mine.id)).toHaveLength(1);
     expect(store.usageHistory(2, theirs.id)).toHaveLength(0);
     expect(store.get(2, theirs.id)?.use_count).toBe(0);
   });
@@ -330,11 +330,11 @@ describe('MemoryStore', () => {
   it('purging a memory takes its recall history with it', () => {
     const m = store.add(1, { body: 'x' }, 'agent', '');
     store.markUsed(1, [m.id]);
-    expect(store.usageHistory(1, m.id)).toHaveLength(1);
+    expect(store.usageHistory(m.id)).toHaveLength(1);
 
     store.purge(1, m.id, 'user:1', 'test');
 
-    expect(store.usageHistory(1, m.id)).toHaveLength(0);
+    expect(store.usageHistory(m.id)).toHaveLength(0);
   });
 
   it('emptying the trash takes the recall history of every purged memory', () => {
@@ -344,7 +344,7 @@ describe('MemoryStore', () => {
 
     store.purgeDeleted(1, 'user:1', 'test');
 
-    expect(store.usageHistory(1, m.id)).toHaveLength(0);
+    expect(store.usageHistory(m.id)).toHaveLength(0);
   });
 
   it('purgeUsageEventsOlderThan drops only events past the window', () => {
@@ -354,10 +354,10 @@ describe('MemoryStore', () => {
     s.markUsed(1, [m.id]);
     db.prepare("INSERT INTO memory_usage_events (memory_id, user_id, used_at) VALUES (?, 1, datetime('now', '-120 days'))")
       .run(m.id);
-    expect(s.usageHistory(1, m.id)).toHaveLength(2);
+    expect(s.usageHistory(m.id)).toHaveLength(2);
 
     expect(s.purgeUsageEventsOlderThan(90)).toBe(1);
-    expect(s.usageHistory(1, m.id)).toHaveLength(1);
+    expect(s.usageHistory(m.id)).toHaveLength(1);
   });
 
   it('removeForUser wipes memories, embeddings, and events for that user', () => {

@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { Plus, Pencil, Trash2, Tags, Globe, UsersRound } from 'lucide-react';
-import type { Memory, MemoryCategory } from '../../lib/types';
+import { SHARED_CATEGORY_USER_ID, type Memory, type MemoryCategory } from '../../lib/types';
 import { useMe, useMemoryCategories, useProjects } from '../../lib/queries';
 import { useCreateMemoryCategory, useUpdateMemoryCategory, useDeleteMemoryCategory } from '../../lib/mutations';
 import { apiErrorMessage, elowenClient } from '../../lib/elowenClient';
@@ -46,9 +46,10 @@ export function CategoryManager({ memories }: { memories: Memory[] }) {
       ) : (
         <ul className="flex flex-wrap gap-2">
           {rows.map((c) => {
-            // A shared pool category carries the instance sentinel owner (user_id = 0). Members see it
-            // read-only (it steers the classifier for the whole team); the admin may still edit it.
-            const shared = c.user_id === 0;
+            // A shared pool category carries the instance sentinel owner (SHARED_CATEGORY_USER_ID).
+            // Members see it read-only (it steers the classifier for the whole team); the admin may
+            // still edit it.
+            const shared = c.user_id === SHARED_CATEGORY_USER_ID;
             return (
               <li
                 key={c.id}
@@ -135,7 +136,7 @@ export function CategoryModal({ category, onClose }: { category?: MemoryCategory
   const selectedProject = projectId == null ? null : (projects.data ?? []).find((p) => p.id === projectId) ?? null;
   // A shared pool's project binding is immutable (the pool belongs to its project for life), so the
   // scope picker is hidden while editing one; the admin edits only its display/classification fields.
-  const sharedEdit = isEdit && category.user_id === 0;
+  const sharedEdit = isEdit && category.user_id === SHARED_CATEGORY_USER_ID;
 
   // A missing name is a property of the name field, not of the whole dialog, so it is stated there
   // instead of as a toast the reader has to connect back to a control. Latched on the first blocked

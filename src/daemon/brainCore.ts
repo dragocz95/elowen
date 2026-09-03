@@ -456,7 +456,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     onRecalled: (userId) => bus.publish({ type: 'memory', userId }),
     // Shared project memory pools the user belongs to (one category per shared project) — widens the
     // browsing surfaces (web list, semantic search, inspector) past the per-user filter.
-    sharedCategoriesOf: (userId) => memoryCategoryStore.listShared(userId).map((c) => c.id),
+    sharedCategoriesOf: (userId) => memoryCategoryStore.listSharedIds(userId),
   });
   // Background embedder: fills in missing/stale memory vectors so writes never block on the provider.
   // Driven off a startLoops tick below; no-ops until an embedding provider/model is configured.

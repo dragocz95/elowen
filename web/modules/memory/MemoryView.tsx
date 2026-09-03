@@ -649,7 +649,7 @@ function MemoryRow({ memory, category, active, selected, onSelect, onToggleSelec
         {memory.sharedProjectSlug ? (
           <span
             className="shrink-0"
-            title={memory.authorName ? t.memory.sharedBy.replace('{author}', memory.authorName) : t.memory.sharedBadge.replace('{project}', memory.sharedProjectSlug)}
+            title={`${t.memory.sharedBadge.replace('{project}', memory.sharedProjectSlug)}${memory.authorName ? ` · ${t.memory.sharedBy.replace('{author}', memory.authorName)}` : ''}`}
           >
             <Badge tone="accent">
               {t.memory.sharedBadge.replace('{project}', memory.sharedProjectSlug)}{memory.authorName ? ` · ${memory.authorName}` : ''}

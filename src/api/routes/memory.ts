@@ -45,8 +45,9 @@ function maintenanceError(error: unknown): string | null {
 
 /** Per-user private RAW memory: durable facts a user (or the brain on their behalf) stores, with a
  *  semantic-retrieval debugging surface and a self-service re-embed. Identity is ALWAYS the caller
- *  (`c.get('user')`), never a body/param field, so a user can only read or mutate their OWN memories
- *  (the store is user_id-scoped and no-ops / 404s on a foreign id). Provider (embedding) settings are
+ *  (`c.get('user')`), never a body/param field, so a user reads/mutates their OWN memories plus the
+ *  shared pools they belong to (the store no-ops / 404s on anything else). Provider (embedding)
+ *  settings are workspace-level and admin-gated. Provider (embedding) settings are
  *  workspace-level and admin-gated. Degrades to 400 when the store isn't wired. */
 export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
   const { d, canAccessProject, notAdmin, notAdminUnlessSetup } = ctx;
@@ -56,8 +57,9 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
 
   /** Enrich shared-pool rows with what the web list needs to badge them: the project slug behind the
    *  shared category and the author's display name (NULL for re-attributed rows, user_id = 0). Own rows
-   *  pass through untouched. */
-  const decorateShared = (userId: number, rows: MemoryRow[]): MemoryRow[] => {
+   *  pass through untouched. Generic over the row shape so a vitality-decorated array keeps its extra
+   *  field; called ONCE per request — the shared-category lookup is too expensive to run per row. */
+  const decorateShared = <T extends MemoryRow>(userId: number, rows: T[]): T[] => {
     if (!store) return rows;
     const sharedCats = d.memoryCategoryStore?.listShared(userId) ?? [];
     if (sharedCats.length === 0) return rows;
@@ -80,7 +82,7 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
 
   /** The shared pool category ids the caller belongs to — the widening set for the list/search reads. */
   const sharedPoolIds = (userId: number): number[] =>
-    (d.memoryCategoryStore?.listShared(userId) ?? []).map((c) => c.id);
+    d.memoryCategoryStore?.listSharedIds(userId) ?? [];
 
   // --- Literal sub-paths registered before `/memory/:id` so they can never be captured as an id. ---
 
@@ -121,8 +123,8 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
     }
   });
 
-  // Merge several of the caller's memories into one new fact; the sources are soft-deleted (owner-scoped
-  // — a foreign source id is skipped, never merged).
+  // Merge several of the caller's memories into one new fact; the sources are soft-deleted (access-scoped
+  // — a source the caller cannot touch is skipped, never merged; shared pool rows carry the merge).
   app.post('/memory/merge', async (c) => {
     if (!store) return c.json({ error: 'memory unavailable' }, 400);
     const userId = c.get('user').id;
@@ -131,7 +133,7 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
   });
 
   // Hard-delete a batch of the caller's memories by id (any status) — a real DELETE, not a soft flip.
-  // Owner-scoped in the store (a foreign id is skipped), and atomic: the batch is one transaction, so a
+  // Access-scoped in the store (a forbidden id is skipped), and atomic: the batch is one transaction, so a
   // failure part-way through can't leave its prefix irreversibly deleted. Registered before `/memory/:id`.
   app.post('/memory/purge', async (c) => {
     if (!store) return c.json({ error: 'memory unavailable' }, 400);
@@ -218,7 +220,7 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json({ embedded });
   });
 
-  // --- Memory categories (owner-scoped) + the workspace categorization model. All literal `/memory/*`
+  // --- Memory categories (own + admin-managed shared pools) + the workspace categorization model. All literal `/memory/*`
   //     sub-paths, so they MUST stay above `/memory/:id` or the id route would swallow them. ---
 
   // The caller's categories, name-sorted — their OWN plus every shared pool they belong to (read-only
@@ -260,7 +262,7 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
     }
   });
 
-  // Partial update (owner-scoped → 404 on a foreign/missing id). A name collision → 409. A SHARED pool
+  // Partial update (owner-scoped for personal categories → 404 on a foreign/missing id). A name collision → 409. A SHARED pool
   // category is admin-only (its description steers the classifier for the whole team) and its project
   // binding is immutable, so the patch routes through the dedicated shared path instead.
   app.patch('/memory/categories/:cid', async (c) => {
@@ -329,7 +331,7 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json(await categorizer.reclassify(c.get('user').id, b));
   });
 
-  // --- Collection + id-addressed CRUD (owner-scoped). ---
+  // --- Collection + id-addressed CRUD (access-scoped: own rows, plus shared-pool rows for sharers). ---
 
   // List the caller's memories — OWN plus the shared pools they belong to (shared rows carry
   // `sharedProjectSlug` + `authorName`) — optionally narrowed (?status=&kind=&categoryId=&limit=&offset=).
@@ -347,7 +349,7 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
       const rows = ctx.memoryService
         ? await ctx.memoryService.searchSemantic(userId, q, lim)
         : store.search(userId, q, lim, shared);
-      return c.json(rows.map(withCurrentVitality).map((row) => decorateShared(userId, [row])[0]!));
+      return c.json(decorateShared(userId, rows.map(withCurrentVitality)));
     }
     const cat = c.req.query('categoryId');
     const rows = store.list(userId, {
@@ -358,7 +360,7 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
       limit: queryInt(limit, { min: 1, max: 500, fallback: undefined }),
       offset: queryInt(c.req.query('offset'), { min: 0, fallback: undefined }),
     });
-    return c.json(rows.map(withCurrentVitality).map((row) => decorateShared(userId, [row])[0]!));
+    return c.json(decorateShared(userId, rows.map(withCurrentVitality)));
   });
 
   // Create a memory for the caller (source='user', actor='user:<id>').
@@ -379,7 +381,7 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
     const userId = c.get('user').id;
     const row = store.getAccessible(userId, Number(c.req.param('id')));
     if (!row) return c.json({ error: 'not found' }, 404);
-    return c.json(withCurrentVitality(decorateShared(userId, [row])[0]!));
+    return c.json(decorateShared(userId, [withCurrentVitality(row)])[0]!);
   });
 
   // Partial update. The store scopes to the owner, so a patch aimed at a foreign id matches nothing and
@@ -393,7 +395,7 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json(withCurrentVitality(updated));
   });
 
-  // Soft-delete (owner-scoped no-op on a foreign id).
+  // Soft-delete (access-scoped no-op on a forbidden id).
   app.delete('/memory/:id', (c) => {
     if (!store) return c.json({ error: 'memory unavailable' }, 400);
     const userId = c.get('user').id;
@@ -401,8 +403,8 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json({ ok: true });
   });
 
-  // Hard-delete ONE of the caller's memories (any status) — a real DELETE, not a soft flip. Owner-scoped
-  // → 404 on a foreign/missing id. The embedding cascades away; a 'purge' audit is written first.
+  // Hard-delete ONE memory the caller can access (any status) — a real DELETE, not a soft flip. For a
+  // shared pool this means a sharer may irreversibly purge a teammate's row; 404 on anything else. The embedding cascades away; a 'purge' audit is written first.
   app.delete('/memory/:id/purge', (c) => {
     if (!store) return c.json({ error: 'memory unavailable' }, 400);
     const userId = c.get('user').id;
@@ -411,7 +413,7 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json({ ok: true });
   });
 
-  // Restore a soft-deleted memory. Owner-scoped → 404 on a foreign/missing id.
+  // Restore a soft-deleted memory. Access-scoped → 404 on a forbidden/missing id.
   app.post('/memory/:id/restore', (c) => {
     if (!store) return c.json({ error: 'memory unavailable' }, 400);
     const userId = c.get('user').id;
@@ -434,7 +436,7 @@ export function registerMemoryRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (!ok) return c.json({ error: 'not found' }, 404);
     const row = store.getAccessible(userId, id);
     if (!row) return c.json({ error: 'not found' }, 404);
-    return c.json(withCurrentVitality(decorateShared(userId, [row])[0]!));
+    return c.json(decorateShared(userId, [withCurrentVitality(row)])[0]!);
   });
 
   // That one memory's audit trail (access-scoped): verify access, then read events scoped to THIS

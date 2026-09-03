@@ -858,6 +858,9 @@ export interface ActivityEvent {
   tools?: { name: string; count: number }[];
 }
 export interface Project { id: number; slug: string; path: string; notes: string; icon: string; memoryShared?: boolean }
+/** The sentinel owner of a project's SHARED memory category (mirrors the daemon's
+ *  SHARED_CATEGORY_USER_ID — a memory_categories row with user_id = 0 is a shared pool). */
+export const SHARED_CATEGORY_USER_ID = 0;
 export interface ProjectSummary {
   projectId: number;
   /** Present only for administrators; ordinary users never receive other accounts' assignments. */

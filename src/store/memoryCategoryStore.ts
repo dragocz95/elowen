@@ -1,6 +1,6 @@
 import type { Db } from './db.js';
 import type { MemoryCategoryRow } from '../shared/wireContract.js';
-import { SHARED_CATEGORY_USER_ID, isSharer } from './sharedMemoryAccess.js';
+import { SHARED_CATEGORY_USER_ID, isSharer, sharedCategoryIds } from './sharedMemoryAccess.js';
 
 // The category row shape is the daemon↔web wire contract (served over /memory/categories) — defined
 // once in src/shared and re-exported here, so a field added on the daemon can never be missing on the web.
@@ -159,22 +159,22 @@ export class MemoryCategoryStore {
     }
   }
 
-  /** Every shared category this user may touch (their own share lists, one per shared project). */
+  /** Every shared category this user may touch (their own share lists, one per shared project). The
+   *  sharer predicate lives in ONE place — sharedCategoryIds() — so a fix to the access rule can never
+   *  land in one copy and miss the other; this only adds display fields and the sort order. */
   listShared(userId: number): MemoryCategoryRow[] {
+    const ids = sharedCategoryIds(this.db, userId);
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => '?').join(', ');
     const rows = this.db.prepare(
-      `SELECT c.* FROM memory_categories c
-        WHERE c.user_id = ? AND c.project_id IS NOT NULL
-          AND EXISTS (SELECT 1 FROM projects p WHERE p.id = c.project_id AND p.memory_shared = 1)
-          AND (
-            EXISTS (SELECT 1 FROM project_memory_members m WHERE m.project_id = c.project_id AND m.user_id = ?)
-            OR (
-              NOT EXISTS (SELECT 1 FROM project_memory_members m2 WHERE m2.project_id = c.project_id)
-              AND EXISTS (SELECT 1 FROM user_projects up WHERE up.user_id = ? AND up.project_id = c.project_id)
-            )
-          )
-        ORDER BY name COLLATE NOCASE ASC`,
-    ).all(SHARED_CATEGORY_USER_ID, userId, userId) as MemoryCategoryDbRow[];
+      `SELECT * FROM memory_categories WHERE id IN (${placeholders}) ORDER BY name COLLATE NOCASE ASC`,
+    ).all(...ids) as MemoryCategoryDbRow[];
     return rows.map(toCategory);
+  }
+
+  /** Shared pool category ids only (no display fields) — the widening set for the read queries. */
+  listSharedIds(userId: number): number[] {
+    return sharedCategoryIds(this.db, userId);
   }
 
   /** Read one shared category by id, regardless of who asks (route-level gating decides WHO may act). */
@@ -190,13 +190,13 @@ export class MemoryCategoryStore {
     const before = this.getShared(id);
     if (!before) return undefined;
     const sets: string[] = [];
-    const params: Record<string, string | number> = { id };
+    const params: Record<string, string | number> = { id, user_id: SHARED_CATEGORY_USER_ID };
     if (patch.name !== undefined) { sets.push('name = @name'); params.name = patch.name; }
     if (patch.description !== undefined) { sets.push('description = @description'); params.description = patch.description; }
     if (patch.color !== undefined) { sets.push('color = @color'); params.color = patch.color; }
     if (patch.icon !== undefined) { sets.push('icon = @icon'); params.icon = clampIcon(patch.icon); }
     if (sets.length > 0) {
-      this.db.prepare(`UPDATE memory_categories SET ${sets.join(', ')} WHERE id = @id AND user_id = ${SHARED_CATEGORY_USER_ID}`).run(params);
+      this.db.prepare(`UPDATE memory_categories SET ${sets.join(', ')} WHERE id = @id AND user_id = @user_id`).run(params);
     }
     return this.getShared(id);
   }

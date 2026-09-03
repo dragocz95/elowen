@@ -14,6 +14,7 @@ import { Segmented } from '../../components/ui/Segmented';
 import { LoadingState, ErrorState } from '../../components/ui/states';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
+import { SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { Toggle } from '../../components/ui/Toggle';
 import { Avatar } from '../../components/ui/Avatar';
 import { useToast } from '../../components/ui/Toast';
@@ -169,27 +170,26 @@ function SharedMemoryPanel({ project }: { project: Project }) {
 
   return (
     <div className="border-t border-border/60 py-3">
-      <div className="flex items-start justify-between gap-3">
-        <div className="min-w-0">
-          <p className="text-sm font-medium">{t.projects.memorySharedTitle}</p>
-          <p className="text-xs text-muted-foreground">{t.projects.memorySharedDesc}</p>
-        </div>
-        <Toggle checked={on} onChange={(next) => { void toggle(next); }} label={t.projects.memorySharedTitle} disabled={updateProject.isPending} />
-      </div>
+      <SpatialRow
+        title={t.projects.memorySharedTitle}
+        icon={UsersRound}
+        description={t.projects.memorySharedDesc}
+        control={<Toggle checked={on} onChange={(next) => { void toggle(next); }} label={t.projects.memorySharedTitle} disabled={updateProject.isPending} />}
+      />
       {on ? (
-        explicit.length === 0 ? (
-          <p className="mt-2 text-xs text-muted-foreground">{t.projects.memoryEveryone}</p>
-        ) : (
-          <div className="mt-2">
-            <SelectionSummary
-              countText={t.projects.memorySharersCount.replace('{n}', String(sharers.length))}
-              samples={sharers.slice(0, 3).map((user) => ({ label: user.name || user.username, icon: <Avatar user={user} size={16} /> }))}
-              moreCount={Math.max(0, sharers.length - 3)}
-              onManage={() => setOpen(true)}
-              manageLabel={t.managePicker.manage}
-            />
-          </div>
-        )
+        <div className="mt-2">
+          {/* Rendered in BOTH states so the picker is always reachable: with an empty share list the
+              count text says everyone shares, and managing it is how the list becomes non-empty. */}
+          <SelectionSummary
+            countText={explicit.length === 0
+              ? t.projects.memoryEveryone
+              : t.projects.memorySharersCount.replace('{n}', String(sharers.length))}
+            samples={sharers.slice(0, 3).map((user) => ({ label: user.name || user.username, icon: <Avatar user={user} size={16} /> }))}
+            moreCount={Math.max(0, sharers.length - 3)}
+            onManage={() => setOpen(true)}
+            manageLabel={t.managePicker.manage}
+          />
+        </div>
       ) : null}
       <ManageSelectionModal
         title={t.projects.memoryPickTitle}

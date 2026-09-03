@@ -697,7 +697,7 @@ export const sk = {
     accessSelected: '{n} používateľov vybraných',
     accessEmpty: 'Nie sú dostupné žiadne bežné účty',
     memorySharedTitle: 'Zdieľaná pamäť',
-    memorySharedDesc: 'Vybraným ľuďom dajte jeden zdieľaný fond pamäte pre tento projekt. Agent si ho vnútri projektu vybavuje vedle ich súkromných spomienok.',
+    memorySharedDesc: 'Vybraným ľuďom dajte jeden zdieľaný fond pamäte pre tento projekt. Agent si ho vnútri projektu vybavuje vedľa ich súkromných spomienok.',
     memoryEveryone: 'Nikto nevybraný — zdieľajú všetci členovia projektu.',
     memorySharersGroup: 'Zdieľajúci',
     memorySharersCount: '{n} zdieľajúcich',

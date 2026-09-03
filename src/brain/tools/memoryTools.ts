@@ -175,9 +175,9 @@ function ensureProjectCategory(
 
 /** File a just-stored memory inside a project conversation. When the user SHARES the project's memory
  *  pool, the pool is the fallback (and among the classifier's options) — the fact lands where the whole
- *  team can recall it. Otherwise the personal project category applies. The classifier decides first and
- *  its pick wins; when it is silent (no match, no model wired, or a relay error) the memory falls back to
- *  the pool/project category — created here on first use — so a project memory is never left
+ *  team can recall it; otherwise the personal project category applies. The classifier decides first
+ *  and its pick wins; when it is silent (no match, no model wired, or a relay error) the memory falls
+ *  back to the pool/project category — created here on first use — so a project memory is never left
  *  uncategorized (uncategorized memories are never recalled — fail-closed). Fire-and-forget from the
  *  caller, but the fallback can only be applied once the classifier's verdict is known, so this must
  *  run inline instead of via the usual background classifyNewMemory. */
@@ -187,28 +187,19 @@ async function categorizeNewMemoryForProject(
   row: MemoryRow,
   project: { id: number; slug: string },
 ): Promise<void> {
-  // Resolved (and lazily created) BEFORE the classifier runs so the shared pool is among its options.
-  // NULL when the user does not share the pool — then the personal project category applies unchanged.
+  // Resolved BEFORE the classifier runs so the fallback is among its options. The pool wins when the
+  // user shares it (the ?? keeps ensureProjectCategory from ever creating a personal binding then);
+  // a non-sharer keeps today's behavior unchanged.
   const sharedCategory = d.categories.sharedForProject(userId, project);
-  if (sharedCategory) {
-    let classified: number | null = null;
-    try {
-      classified = await d.categorizer.classify(userId, row.body, [sharedCategory]);
-    } catch {
-      // Relay error → treat as silent and fall through to the pool default (never fail the add).
-    }
-    d.store.setCategory(userId, row.id, classified ?? sharedCategory.id, `user:${userId}`, 'MemoryAdd: shared project pool');
-    return;
-  }
-  // Created BEFORE the classifier runs so the project's own category is among its options.
-  const projectCategory = ensureProjectCategory(d, userId, project);
+  const fallback = sharedCategory ?? ensureProjectCategory(d, userId, project);
   let classified: number | null = null;
   try {
-    classified = await d.categorizer.classify(userId, row.body);
+    classified = await d.categorizer.classify(userId, row.body, sharedCategory ? [sharedCategory] : []);
   } catch {
-    // Relay error → treat as silent and fall through to the project default (never fail the add).
+    // Relay error → treat as silent and fall through to the default (never fail the add).
   }
-  d.store.setCategory(userId, row.id, classified ?? projectCategory.id, `user:${userId}`, 'MemoryAdd: project default');
+  d.store.setCategory(userId, row.id, classified ?? fallback.id, `user:${userId}`,
+    sharedCategory ? 'MemoryAdd: shared project pool' : 'MemoryAdd: project default');
 }
 
 function memoryUpdate(d: MemoryToolDeps) {
