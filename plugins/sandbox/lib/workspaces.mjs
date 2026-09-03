@@ -31,7 +31,9 @@ function rowWorkspace(row) {
 }
 
 function slug(value) {
-  const clean = String(value).normalize('NFKD').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 36);
+  // NFKD splits `ř` into `r` + a combining mark; the mark must be DROPPED, not turned into a dash,
+  // or a Czech label reads `pojmenova-ni` instead of `pojmenovani`.
+  const clean = String(value).normalize('NFKD').replace(/\p{M}+/gu, '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 36);
   return clean || 'workspace';
 }
 

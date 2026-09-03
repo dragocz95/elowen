@@ -129,6 +129,8 @@ describe('sandbox plugin workspaces', () => {
   it('names the worktree and branch after the label and steps past taken names', async () => {
     const { registry, projectPath } = await setup();
     execFileSync('git', ['-C', projectPath, 'branch', 'elowen/u1/same-name-2']);
+    const accented = (await runAs(registry, projectPath, 1, 'brain-n0', 'SandboxCreateWorkspace', { projectId: 1, label: 'Přehled účtů', baseRef: 'main' })).details.workspace;
+    expect(accented.branch).toBe('elowen/u1/prehled-uctu');
     const first = (await runAs(registry, projectPath, 1, 'brain-n1', 'SandboxCreateWorkspace', { projectId: 1, label: 'Same name', baseRef: 'main' })).details.workspace;
     const second = (await runAs(registry, projectPath, 1, 'brain-n2', 'SandboxCreateWorkspace', { projectId: 1, label: 'Same name', baseRef: 'main' })).details.workspace;
     expect(first.branch).toBe('elowen/u1/same-name');
