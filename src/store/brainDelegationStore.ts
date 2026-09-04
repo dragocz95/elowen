@@ -27,6 +27,9 @@ interface BrainSubagentRunState {
 export interface BrainSubagentRun extends BrainSubagentRunState {
   toolCallId: string;
   sessionId: string;
+  /** Insertion order of the run row — the only honest "which run of this child is newest" (a
+   *  boot-claimed `recovering` row keeps the pause's updated_at for as long as its respawn runs). */
+  rowid: number;
   /** The delegated child's existing brain_sessions.created_at value. */
   startedAt?: string;
   /** The run sidecar's existing brain_subagent_runs.updated_at value. */
@@ -379,14 +382,10 @@ export class BrainDelegationStore {
 
   /** Read only still-valid direct same-owner relations. Malformed legacy/corrupted JSON is ignored at
    *  this boundary, so all downstream wire shapes remain trusted and finite. */
-  /** In INSERTION order (rowid), oldest first: a later run of the same child (a DelegateContinue after
-   *  its Delegate) always comes after, so "the newest run of a child" is the last row for that session.
-   *  Deliberately not updated_at — a boot-claimed `recovering` row keeps the pause's timestamp for as
-   *  long as its respawn runs, while a finished older row may be touched later. */
   getSubagentRuns(parentSessionId: string): BrainSubagentRun[] {
     const rows = this.db.prepare(
       `SELECT r.tool_call_id, r.child_session_id, r.state, c.created_at AS started_at,
-              r.updated_at, x.delivery_state
+              r.updated_at, x.delivery_state, r.rowid AS rowid
          FROM brain_subagent_runs r
          JOIN brain_sessions p ON p.id = r.parent_session_id
          JOIN brain_sessions c ON c.id = r.child_session_id
@@ -395,9 +394,10 @@ export class BrainDelegationStore {
         WHERE r.parent_session_id = ?
           AND c.parent_session_id = p.id
           AND c.user_id = p.user_id
-        ORDER BY r.rowid ASC`
+        ORDER BY r.updated_at ASC, r.rowid ASC`
     ).all(parentSessionId) as {
       tool_call_id: string; child_session_id: string; state: string;
+      rowid: number;
       started_at: string; updated_at: string; delivery_state: string | null;
     }[];
     const out: BrainSubagentRun[] = [];
@@ -407,7 +407,7 @@ export class BrainDelegationStore {
       const state = normalizeSubagentState(parsed);
       if (state) out.push({
         toolCallId: row.tool_call_id, sessionId: row.child_session_id, ...state,
-        startedAt: row.started_at, updatedAt: row.updated_at,
+        startedAt: row.started_at, updatedAt: row.updated_at, rowid: row.rowid,
         ...(row.delivery_state === 'pending' || row.delivery_state === 'acknowledged'
           ? { resultDelivery: row.delivery_state } : {}),
       });

@@ -207,16 +207,24 @@ export class BrainStatusService {
       ...this.d.sessions.childrenOf(sessionId),
       ...this.d.store.recoveringSubagentSessionIds(sessionId),
     ]);
-    // ONE state per child: its NEWEST run row. A child continued after it finished (DelegateContinue,
-    // or a boot-claimed recovery of that continuation) has two rows, and every client projects
-    // sub-agent state by child session — so two rows for one child is two voices, and whichever the
-    // client happened to apply last won (a prepended synthetic anchor for the running row lost to the
-    // older row's terminal chip later in the page: a working sub-agent shown as done). The store returns
-    // rows in insertion order, so the last row for a session is its newest.
+    // ONE state per child: the NEWEST run row (by insertion, never updated_at) that the liveness filter
+    // KEEPS. A child continued after it finished (DelegateContinue, or a boot-claimed recovery of that
+    // continuation) has two rows, and every client projects sub-agent state by child session — two rows
+    // for one child is two voices, and whichever the client applied last won (a prepended synthetic
+    // anchor for the running row lost to the older row's terminal chip later in the page: a working
+    // sub-agent shown as done). Filtering FIRST matters: a newer row whose display state is still
+    // `running` while its lifecycle is long terminal (its final upsert never landed) is exactly what the
+    // filter hides, and hiding it must not take the older finished row down with it — the child was
+    // finished, and that is what the page should say.
+    const runs = this.d.store.getSubagentRuns(sessionId);
     const newest = new Map<string, BrainSubagentRun>();
-    for (const run of this.d.store.getSubagentRuns(sessionId)) newest.set(run.sessionId, run);
-    return [...newest.values()]
-      .filter((run) => run.status !== 'running' || active.has(run.sessionId));
+    for (const run of runs) {
+      if (run.status === 'running' && !active.has(run.sessionId)) continue;
+      const current = newest.get(run.sessionId);
+      if (!current || run.rowid > current.rowid) newest.set(run.sessionId, run);
+    }
+    // The store's own order (updated_at) is what every other consumer sees; keep it here too.
+    return runs.filter((run) => newest.get(run.sessionId) === run);
   }
 
   /** The conversation's durable DAGs. Same read-time fallback as subagentRuns, but a TRANSFORM rather than

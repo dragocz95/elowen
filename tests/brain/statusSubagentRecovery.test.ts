@@ -144,6 +144,27 @@ describe('sub-agent recovery status projection', () => {
     expect(states[0]).toMatchObject({ status: 'running', task: 'continue: fix the blockers' });
   });
 
+  it('a newer row stuck at display `running` under a terminal lifecycle must not hide the child: the older finished row speaks', () => {
+    // Production DB shape (27 pairs under brain-1-mrxd…): the DelegateContinue row's final upsert never
+    // landed, so its JSON status is still `running` while its lifecycle is `done` and nothing is live.
+    // The liveness filter hides that row; the child is finished and its older `done` row must survive
+    // — a "newest row wins, then filter" order lost 20 of 254 children from the page.
+    const { db, store, status } = harness();
+    const CONTINUE_CALL = 'call-continue|fc_3';
+    store.setDelegationBootId('boot-x');
+    expect(store.upsertSubagentRun(PARENT, { id: TOOL_CALL, sessionId: CHILD, status: 'done', task: 'first ask', tools: 40, seconds: 900 })).toBe(true);
+    expect(store.upsertSubagentRun(PARENT, { id: CONTINUE_CALL, sessionId: CHILD, status: 'running', task: 'continue', tools: 3, seconds: 60 })).toBe(true);
+    db.prepare("UPDATE brain_subagent_runs SET lifecycle = 'done', owner_boot_id = NULL WHERE tool_call_id = ?").run(CONTINUE_CALL);
+
+    const states = status.messagesOf(1, PARENT)
+      .flatMap((message) => message.segments ?? [])
+      .filter((segment): segment is Extract<typeof segment, { kind: 'tool' }> => segment.kind === 'tool')
+      .map((segment) => segment.sub)
+      .filter((sub): sub is NonNullable<typeof sub> => !!sub && sub.sessionId === CHILD);
+    expect(states).toHaveLength(1);
+    expect(states[0]).toMatchObject({ status: 'done', task: 'first ask' });
+  });
+
   it('renders recovery_required as a terminal error with the durable reason', () => {
     const { store, status } = harness();
     store.setDelegationBootId('boot-old');
