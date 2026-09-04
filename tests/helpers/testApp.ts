@@ -69,6 +69,11 @@ export function pluginTestHost(w: { db: Db; config?: ConfigStore; projects?: Pro
       userOverride: () => null,
     },
     relayClient: () => new FakeInference('[]'),
+    defaultInference: () => new FakeInference('[]'),
+    publicHttp: {
+      validate: async (url: string) => url,
+      request: async () => { throw new Error('public HTTP is not wired in this generic test host'); },
+    },
     git: {
       projectSnapshot: async () => ({ isRepo: false, status: null, remotes: [] }),
       projectHead, projectRangeDiff, projectRangeLog, projectRangeFileDiff, projectCommitFileDiff,
