@@ -62,6 +62,8 @@ describe('ElicitationRegistry — parked AskUserQuestion lifecycle', () => {
 
   it.each([
     ['wrong answer count', [], Q],
+    ['an empty selection without custom text', [{ header: 'Choice', selected: [] }], Q],
+    ['an empty selection with blank custom text', [{ header: 'Choice', selected: [], other: '   ' }], Q],
     ['unknown selected label', [{ header: 'Choice', selected: ['C'] }], Q],
     ['more than one pick for single-select', [{ header: 'Choice', selected: ['A', 'B'] }], Q],
     ['custom text when custom input is disabled', [{ header: 'Choice', selected: ['A'], other: 'note' }], [{ ...Q[0]!, custom: false }]],
@@ -116,6 +118,38 @@ describe('ElicitationRegistry — parked AskUserQuestion lifecycle', () => {
     expect(events).toHaveLength(2);
     expect(reg.answer(events[1]!.id, [{ header: 'Choice', selected: ['B'] }])).toBe(true);
     await expect(p2).resolves.toEqual([{ header: 'Choice', selected: ['B'] }]);
+  });
+
+  it('cancelForSession invalidates queued approvals before their deferred park can emit', async () => {
+    const reg = new ElicitationRegistry();
+    const events: BrainEvent[] = [];
+    const emit = (event: BrainEvent): void => { events.push(event); };
+    const first = reg.ask('sess-1', Q, emit, 'approval');
+    const queued = reg.ask('sess-1', Q, emit, 'approval');
+
+    reg.cancelForSession('sess-1', 'aborted');
+
+    await expect(first).rejects.toThrow('aborted');
+    await expect(queued).rejects.toThrow('aborted');
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    expect(events.filter((event) => event.type === 'ask')).toHaveLength(1);
+    expect(reg.pendingForSession('sess-1')).toBeNull();
+  });
+
+  it('cancelAll invalidates queued approvals before their deferred park can emit', async () => {
+    const reg = new ElicitationRegistry();
+    const events: BrainEvent[] = [];
+    const emit = (event: BrainEvent): void => { events.push(event); };
+    const first = reg.ask('sess-1', Q, emit, 'approval');
+    const queued = reg.ask('sess-1', Q, emit, 'approval');
+
+    reg.cancelAll('sessions reset');
+
+    await expect(first).rejects.toThrow('sessions reset');
+    await expect(queued).rejects.toThrow('sessions reset');
+    for (let i = 0; i < 4; i++) await Promise.resolve();
+    expect(events.filter((event) => event.type === 'ask')).toHaveLength(1);
+    expect(reg.pendingForSession('sess-1')).toBeNull();
   });
 
   it('times out to a per-question no-answer sentinel when nobody answers', async () => {

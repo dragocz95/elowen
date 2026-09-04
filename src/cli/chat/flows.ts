@@ -29,10 +29,27 @@ export function createFlows(
   // kind (a blocked tool-permission ask) takes the dedicated warning-toned modal instead: 1/2/3 or
   // arrows+Enter pick, and Esc answers Deny — it never aborts the turn (the tool just reports the
   // denial to the model and the run continues).
-  // The question on screen right now, so a remote resolution can take it down. Cleared by whichever
-  // exit happens first — a local decision here, or closeAsk() below.
+  // The question owned by the active dock, so a remote resolution can take it down. A local decision keeps
+  // ownership until the daemon confirms `matched:true`; failed or stale answers can then restore safely.
   let onScreen: { id: string; close: () => void } | null = null;
   const settled = (id: string): void => { if (onScreen?.id === id) onScreen = null; };
+
+  const restoreAsk = (id: string, questions: AskQuestion[], kind?: 'approval'): void => {
+    if (onScreen?.id === id) launchAsk(id, questions, kind);
+  };
+  const reconcileAsk = (id: string, questions: AskQuestion[], kind?: 'approval'): void => {
+    if (onScreen?.id !== id) return;
+    lifetime.runSession(
+      () => client.status(),
+      (status) => {
+        if (onScreen?.id !== id) return;
+        const pending = status.pendingAsk;
+        if (!pending) { settled(id); return; }
+        launchAsk(pending.id, pending.questions, pending.kind);
+      },
+      () => restoreAsk(id, questions, kind),
+    );
+  };
 
   const launchAsk = (id: string, questions: AskQuestion[], kind?: 'approval'): void => {
     const q = questions[0];
@@ -40,11 +57,10 @@ export function createFlows(
       const handle = runApprovalFlow({
         tui, slot: editorSlot, editor, question: q,
         onDecision: (label) => {
-          settled(id);
           lifetime.runSession(
             () => client.answer(id, [{ header: q.header, selected: [label] }]),
-            () => {},
-            () => { /* turn may have gone */ },
+            (matched) => { if (matched) settled(id); else reconcileAsk(id, questions, kind); },
+            () => restoreAsk(id, questions, kind),
           );
         },
       });
@@ -54,8 +70,11 @@ export function createFlows(
     const handle = runAskFlow({
       tui, slot: editorSlot, editor, questions, agentName: rt.brand.agentName,
       onComplete: (answers) => {
-        settled(id);
-        lifetime.runSession(() => client.answer(id, answers), () => {}, () => { /* turn may have gone */ });
+        lifetime.runSession(
+          () => client.answer(id, answers),
+          (matched) => { if (matched) settled(id); else reconcileAsk(id, questions, kind); },
+          () => restoreAsk(id, questions, kind),
+        );
       },
       onCancel: () => {
         settled(id);

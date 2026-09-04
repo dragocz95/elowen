@@ -115,6 +115,17 @@ describe('BrainClient', () => {
     }));
   });
 
+  it('returns the daemon matched flag when answering a parked question', async () => {
+    const f = vi.fn(async () => j(200, { ok: true, matched: false })) as unknown as typeof fetch;
+    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
+
+    await expect(c.answer('ask-1', [{ header: 'Choice', selected: ['A'] }])).resolves.toBe(false);
+    expect(f).toHaveBeenCalledWith('http://x/brain/answer', expect.objectContaining({
+      method: 'POST',
+      body: JSON.stringify({ id: 'ask-1', answers: [{ header: 'Choice', selected: ['A'] }] }),
+    }));
+  });
+
   it('interruptQueued binds the interrupt to the current CLI generation', async () => {
     const f = vi.fn(async (url: string) => url.endsWith('/brain/start')
       ? j(201, { sessionId: 'brain-1' })
