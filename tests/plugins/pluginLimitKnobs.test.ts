@@ -40,11 +40,34 @@ describe('files — pdfMaxPages', () => {
     config: config ? { files: config } : undefined,
   });
 
-  /** A file the plugin recognises as a PDF by its header. The page-spec check runs before poppler is ever
-   *  invoked, so this suite needs no real document and no poppler on the host. */
+  /** A real eleven-page PDF. `Read` asks pdfinfo for the page count before applying the configured request
+   * cap, so a header-only stub would test malformed-PDF handling instead of the limit this suite owns. */
   const stubPdf = (dir: string): string => {
+    const pages = 11;
+    const fontObj = 3 + pages * 2;
+    const objects: string[] = [];
+    objects[1] = '<</Type/Catalog/Pages 2 0 R>>';
+    objects[2] = `<</Type/Pages/Kids[${Array.from({ length: pages }, (_, i) => `${3 + i * 2} 0 R`).join(' ')}]/Count ${pages}>>`;
+    for (let i = 0; i < pages; i += 1) {
+      const pageObj = 3 + i * 2;
+      const contentObj = pageObj + 1;
+      const stream = `BT /F1 12 Tf 20 100 Td (Page ${i + 1}) Tj ET`;
+      objects[pageObj] = `<</Type/Page/Parent 2 0 R/MediaBox[0 0 300 200]/Contents ${contentObj} 0 R/Resources<</Font<</F1 ${fontObj} 0 R>>>>>>`;
+      objects[contentObj] = `<</Length ${stream.length}>>\nstream\n${stream}\nendstream`;
+    }
+    objects[fontObj] = '<</Type/Font/Subtype/Type1/BaseFont/Helvetica>>';
+    let body = '%PDF-1.4\n';
+    const offsets: number[] = [];
+    for (let i = 1; i < objects.length; i += 1) {
+      offsets[i] = body.length;
+      body += `${i} 0 obj\n${objects[i]}\nendobj\n`;
+    }
+    const xref = body.length;
+    body += `xref\n0 ${objects.length}\n0000000000 65535 f \n`;
+    for (let i = 1; i < objects.length; i += 1) body += `${String(offsets[i]).padStart(10, '0')} 00000 n \n`;
+    body += `trailer\n<</Size ${objects.length}/Root 1 0 R>>\nstartxref\n${xref}\n%%EOF\n`;
     const path = join(dir, 'doc.pdf');
-    writeFileSync(path, '%PDF-1.4\n');
+    writeFileSync(path, Buffer.from(body, 'latin1'));
     return path;
   };
 
