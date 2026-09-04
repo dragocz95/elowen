@@ -282,12 +282,15 @@ function hasToolCalls(raw: string): boolean {
  *  carries a different stopReason. Shared with the child recovery's "already answered" shortcut, which
  *  must never complete a run on a half answer. */
 export function isProvablyFinalAssistant(raw: string): boolean {
-  let message: { role?: string; stopReason?: string; usage?: unknown };
+  let message: { role?: string; content?: unknown; stopReason?: string; usage?: unknown };
   try { message = JSON.parse(raw) as typeof message; } catch { return false; }
   if (message.role !== 'assistant' || message.stopReason !== 'stop') return false;
   if (typeof message.usage !== 'object' || message.usage === null) return false;
   const usage = message.usage as { input?: unknown; output?: unknown };
-  return Number.isFinite(usage.input) && Number.isFinite(usage.output);
+  if (!Number.isFinite(usage.input) || !Number.isFinite(usage.output)) return false;
+  // A closed message with nothing to say (thinking only, or empty) is no final answer: a room would post
+  // an empty reply and a child would complete on nothing. Such a tail is continued like a partial one.
+  return extractText(message).trim().length > 0;
 }
 
 /** THE rule for the one transcript row a resume may rewrite — shared by the checkpoint settle

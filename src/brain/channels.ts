@@ -1035,7 +1035,12 @@ export class ChannelSessionService {
             let commitOrientation = (): void => {};
             let commitSkillsDigest = (): void => {};
             let commitRecall = (): void => {};
-            if (!(opts.promptCommand === true && isPromptCommand(turnText, ch.session))) {
+            // A CONTINUATION sends no prompt at all: composing one (post-compaction orientation, the
+            // skills digest, live recall) would produce text the model never reads — and committing those
+            // drains would mark as delivered what was never delivered. Nothing is composed, nothing is
+            // committed; the next real prompt composes and commits as usual.
+            const continuation = opts.internalSystem?.continuation === true;
+            if (!continuation && !(opts.promptCommand === true && isPromptCommand(turnText, ch.session))) {
               const turnContext = ch.turnContext();
               // The drain stays per-surface (it is stateful and commits only once the prompt reached the
               // provider), but the ORDER and framing of the blocks no longer live here: composeTurnPrompt
@@ -1110,7 +1115,7 @@ export class ChannelSessionService {
             // DURING this turn, so a commit after the loop meant it always saw an empty set, retrieved the
             // memories the prompt had just printed and injected them a second time.
             commitRecall();
-            if (opts.internalSystem?.continuation) {
+            if (continuation) {
               // A transcript that already ends on a settled answer has nothing to continue: the pause hit
               // after the model's last word and only the delivery was lost — the answer below is it.
               const outcome = await continueInterruptedTurn(ch.session, { store: this.d.store, sessionId });

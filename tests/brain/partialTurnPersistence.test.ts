@@ -126,6 +126,13 @@ describe('a turn interrupted by a daemon restart', () => {
     expect(settled).toEqual({ answered: [], droppedPartial: false, tail: 'final' });
   });
 
+  it('a thinking-only closed assistant is not a final tail: it is continued like a partial one', () => {
+    projectUserTurn(store, 's1', 'do the thing');
+    midTurn(assistantCalling('t1'), toolResult('t1'), { role: 'assistant', content: [{ type: 'thinking', thinking: 'hm' }], stopReason: 'stop', usage });
+    expect(settlePartialTurn(store, 's1').tail).toBe('continuable');
+    expect(rolesOf(store, 's1')).toEqual(['user', 'assistant', 'toolResult']);
+  });
+
   it('a settled transcript with nothing pending still reports its tail shape', () => {
     projectUserTurn(store, 's1', 'do the thing');
     expect(settlePartialTurn(store, 's1')).toEqual({ answered: [], droppedPartial: false, tail: 'continuable' });

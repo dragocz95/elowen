@@ -21,6 +21,7 @@ describe('finishedAnswerOf — a child completes from its transcript only on a p
     ['an abort (orphaned runner)', { role: 'assistant', content: [{ type: 'text', text: 'half' }], stopReason: 'aborted', usage }],
     ['an error', { role: 'assistant', content: [], stopReason: 'error', usage }],
     ['an empty final', { role: 'assistant', content: [{ type: 'text', text: '  ' }], stopReason: 'stop', usage }],
+    ['a thinking-only final (closed, but nothing said)', { role: 'assistant', content: [{ type: 'thinking', thinking: 'hm' }], stopReason: 'stop', usage }],
     ['a tool result tail', { role: 'toolResult', toolCallId: 't1', toolName: 'Bash', content: [{ type: 'text', text: '[exit 0]' }] }],
   ])('refuses %s', (_label, message) => {
     expect(finishedAnswerOf([row(message)])).toBeUndefined();
