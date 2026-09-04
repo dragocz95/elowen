@@ -25,15 +25,23 @@ export function buildExitPlanModeTool() {
   return defineTool({
     name: EXIT_PLAN_MODE_TOOL,
     label: 'Submit plan',
-    description: 'Submit the plan you wrote in plan mode and ask the user to approve leaving plan mode and '
-      + 'starting implementation. Call it exactly once, at the END of a planning turn, and only after you '
-      + 'have written the plan to the plan file named in the plan mode instructions — the plan is READ from '
-      + 'that file and is not a parameter, so this tool takes no arguments. It refuses outside plan mode '
-      + '(if your plan was already approved, just continue implementing) and refuses when the plan file is '
-      + 'empty or missing, answering with the exact path to write first. Calling it ENDS your turn and is '
-      + 'not approval: stop, do not start implementing and do not ask again in prose — the user\'s decision '
-      + 'arrives afterwards, and the plan stays on disk so you can re-read it while you work.',
-    parameters: Type.Object({}),
+    description: [
+      'Use this tool when you are in plan mode and have finished writing your plan to the plan file and are ready for user approval.',
+      '## How This Tool Works\n- You should have already written your plan to the plan file specified in the plan mode system message\n- This tool does NOT take the plan content as a parameter - it will read the plan from the file you wrote\n- This tool simply signals that you\'re done planning and ready for the user to review and approve\n- The user will see the contents of your plan file when they review it',
+      '## When to Use This Tool\nIMPORTANT: Only use this tool when the task requires planning the implementation steps of a task that requires writing code. For research tasks where you\'re gathering information, searching files, reading files or in general trying to understand the codebase - do NOT use this tool.',
+      '## Before Using This Tool\nEnsure your plan is complete and unambiguous:\n- If you have unresolved questions about requirements or approach, use AskUserQuestion first (in earlier phases)\n- Once your plan is finalized, use THIS tool to request approval',
+      '**Important:** Do NOT use AskUserQuestion to ask "Is this plan okay?" or "Should I proceed?" - that\'s exactly what THIS tool does. ExitPlanMode inherently requests user approval of your plan.',
+      '## Examples\n1. Initial task: "Search for and understand the implementation of vim mode in the codebase" - Do not use the exit plan mode tool because you are not planning the implementation steps of a task.\n2. Initial task: "Help me implement yank mode for vim" - Use the exit plan mode tool after you have finished planning the implementation steps of the task.\n3. Initial task: "Add a new feature to handle user authentication" - If unsure about auth method (OAuth, JWT, etc.), use AskUserQuestion first, then use exit plan mode tool after clarifying the approach.',
+      'The optional allowedPrompts field is deprecated and accepted only for transcript compatibility. Elowen ignores it and never derives permission or authority from it.',
+    ].join('\n\n'),
+    parameters: Type.Object({
+      allowedPrompts: Type.Optional(Type.Array(Type.Object({
+        tool: Type.Literal('Bash', { description: 'The tool this prompt applies to' }),
+        prompt: Type.String({ description: 'Semantic description of the action, e.g. "run tests", "install dependencies"' }),
+      }), {
+        description: 'Deprecated: no longer used. Accepted for transcript compatibility and ignored; never changes Elowen permissions.',
+      })),
+    }),
     execute: async () => {
       // Mode first. Outside plan mode there is nothing to exit, and reading a stale plan file would let a
       // build turn resurrect an old plan as though it were fresh.

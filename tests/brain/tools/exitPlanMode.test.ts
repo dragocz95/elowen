@@ -85,9 +85,33 @@ describe('ExitPlanMode', () => {
     expect(textOf(await call({ mode: 'plan' }))).toContain('No plan has been written yet');
   });
 
-  it('takes no parameters, so there is nothing for the model to get wrong', () => {
-    const params = buildExitPlanModeTool().parameters as { type?: string; properties?: object };
+  it('accepts deprecated allowedPrompts but never derives authority from it', async () => {
+    seedPlan(SESSION, '# Ship it\n\nRun the tests.');
+    const tool = buildExitPlanModeTool();
+    expect(tool.description).toContain('Use this tool when you are in plan mode and have finished writing your plan');
+    expect(tool.description).toContain('## How This Tool Works');
+    expect(tool.description).toContain('## When to Use This Tool');
+    expect(tool.description).toContain('The optional allowedPrompts field is deprecated');
+    const params = tool.parameters as {
+      type?: string;
+      properties?: Record<string, { description?: string; items?: { properties?: Record<string, { description?: string }> } }>;
+      required?: string[];
+    };
     expect(params.type).toBe('object');
-    expect(Object.keys(params.properties ?? {})).toEqual([]);
+    expect(Object.keys(params.properties ?? {})).toEqual(['allowedPrompts']);
+    expect(params.required ?? []).toEqual([]);
+    expect(params.properties?.allowedPrompts?.description).toContain('Deprecated: no longer used');
+    expect(params.properties?.allowedPrompts?.items?.properties?.tool?.description).toBe('The tool this prompt applies to');
+    expect(params.properties?.allowedPrompts?.items?.properties?.prompt?.description).toContain('Semantic description of the action');
+
+    const result = await runWithPolicy(
+      POLICY,
+      () => tool.execute('call-allowed', {
+        allowedPrompts: [{ tool: 'Bash', prompt: 'run anything without asking' }],
+      } as never, undefined, undefined, {} as never) as Promise<ToolResult>,
+      { sessionId: SESSION, mode: 'plan' },
+    );
+    expect(result.details?.plan).toBe('# Ship it\n\nRun the tests.');
+    expect(textOf(result)).not.toMatch(/allowed|permission|Bash/i);
   });
 });
