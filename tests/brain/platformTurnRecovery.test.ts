@@ -6,6 +6,9 @@ import {
   platformTurnParkEligible,
   resumeDeliveryTarget,
   resumePlatformTurn,
+  platformTurnInterruptionClass,
+  notifyInterruptedPlatformTurn,
+  INTERRUPTED_TURN_NOTICE,
   type PlatformTurnRecoveryDeps,
 } from '../../src/brain/platformTurnRecovery.js';
 import { channelSessionId } from '../../src/brain/sessionId.js';
@@ -178,6 +181,34 @@ describe('platformTurnParkEligible — a platform turn parks only where a faithf
     // Sub-agent and non-channel sessions are other substrates' business.
     expect(platformTurnParkEligible(store, channelSessionId('subagent-x'))).toBe(false);
     expect(platformTurnParkEligible(store, 'brain-1')).toBe(false);
+  });
+
+  it('names WHY a turn cannot park, one class per refusal, so the pause can record it', () => {
+    const store = (raw?: string) => ({ platformTurnEnvelope: () => raw });
+    const id = channelSessionId('discord-ops');
+    expect(platformTurnInterruptionClass(store(JSON.stringify(envelopeFor())), id)).toBeNull();
+    expect(platformTurnInterruptionClass(store(JSON.stringify(envelopeFor())), channelSessionId('cron-daily'))).toBe('cron');
+    expect(platformTurnInterruptionClass(store(undefined), id)).toBe('no-envelope');
+    expect(platformTurnInterruptionClass(store('{not json'), id)).toBe('no-envelope');
+    expect(platformTurnInterruptionClass(store(JSON.stringify({ ...envelopeFor(), scheduled: true })), id)).toBe('scheduled');
+    expect(platformTurnInterruptionClass(store(JSON.stringify({ ...envelopeFor(), accountUserId: null })), id)).toBe('unlinked');
+    expect(platformTurnInterruptionClass(store(JSON.stringify({ ...envelopeFor(), imageCount: 2 })), id)).toBe('images');
+    expect(platformTurnInterruptionClass(store(JSON.stringify({ ...envelopeFor('discord-'), channelId: 'discord-' })), channelSessionId('discord-'))).toBe('undeliverable');
+    // The park gate and the classes are one rule: eligible ⇔ no class.
+    expect(platformTurnParkEligible(store(JSON.stringify(envelopeFor())), id)).toBe(true);
+    expect(platformTurnParkEligible(store(JSON.stringify({ ...envelopeFor(), accountUserId: null })), id)).toBe(false);
+  });
+
+  it('posts the interruption notice into the room of an un-parkable turn and consumes its envelope', async () => {
+    const { store, delivered, deps, sessionId } = setup();
+    store.createSession({ id: sessionId, userId: 1, model: 'kimi' });
+    store.savePlatformTurnEnvelope(sessionId, JSON.stringify({ ...envelopeFor(), accountUserId: null }));
+    expect(await notifyInterruptedPlatformTurn(deps, sessionId)).toBe('posted');
+    expect(delivered).toEqual([{ text: INTERRUPTED_TURN_NOTICE, target: 'destination:discord:ops' }]);
+    expect(store.platformTurnEnvelope(sessionId)).toBeUndefined();
+    // Nothing to tell without a target; still never throws.
+    expect(await notifyInterruptedPlatformTurn(deps, channelSessionId('work-job-9'))).toBe('no-target');
+    expect(delivered).toHaveLength(1);
   });
 
   it('derives the shared-room delivery target from the registry key, and prefers a direct chat\'s own', () => {

@@ -37,6 +37,14 @@ export interface PausedQueueItem {
   images?: { data: string; mimeType: string }[];
 }
 
+/** One turn the pause could not park — see brain_pause_interruptions. */
+export interface PauseInterruption {
+  sessionId: string;
+  class: string;
+  detail: string;
+  createdAt: string;
+}
+
 export interface BrainSessionRow {
   id: string; user_id: number; title: string; model: string; provider: string; work_dir: string; parent_session_id: string | null;
   delegated_access: string | null;
@@ -323,6 +331,20 @@ export class BrainStore {
         if (row.images) { try { images = JSON.parse(row.images) as PausedQueueItem['images']; } catch { images = undefined; } }
         return { text: row.text, ...(images?.length ? { images } : {}) };
       });
+    });
+  }
+
+  /** Record a turn the pause left running with no resume (see brain_pause_interruptions). */
+  recordPauseInterruption(sessionId: string, cls: string, detail = ''): void {
+    this.db.prepare('INSERT OR REPLACE INTO brain_pause_interruptions (session_id, class, detail) VALUES (?, ?, ?)').run(sessionId, cls, detail);
+  }
+
+  /** Take (and delete) every recorded interruption — the boot sweep's worklist, consumed once. */
+  takePauseInterruptions(): PauseInterruption[] {
+    return withWriteLock(this.db, () => {
+      const rows = this.db.prepare('SELECT session_id, class, detail, created_at FROM brain_pause_interruptions ORDER BY rowid ASC').all() as { session_id: string; class: string; detail: string; created_at: string }[];
+      this.db.prepare('DELETE FROM brain_pause_interruptions').run();
+      return rows.map((row) => ({ sessionId: row.session_id, class: row.class, detail: row.detail, createdAt: row.created_at }));
     });
   }
 

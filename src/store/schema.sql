@@ -534,6 +534,16 @@ CREATE INDEX IF NOT EXISTS idx_brain_session_events_session ON brain_session_eve
 -- interrupted turn has been continued. Deliberately NOT brain_messages: a user row appended behind a
 -- pending tool call would sit between that call and its (synthetic) result, which every provider refuses.
 -- `images` is a JSON array of {data (base64), mimeType} or NULL. Rows are consumed by the replay.
+-- A turn the pause could NOT park (no boot resume exists for it — see platformTurnInterruptionClass) and
+-- that did not finish inside the pause's bounded wait. Nothing continues such a turn; the boot sweep
+-- reads these rows to tell whoever was waiting (the room, or the owner for a scheduled run) that the
+-- restart cut the reply off, so an interruption never passes in silence. Consumed by that sweep.
+CREATE TABLE IF NOT EXISTS brain_pause_interruptions (
+  session_id TEXT NOT NULL PRIMARY KEY,
+  class TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS brain_paused_queue (
   session_id TEXT NOT NULL,
   seq INTEGER NOT NULL,

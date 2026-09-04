@@ -396,7 +396,7 @@ describe('the default shutdown is a PAUSE: checkpoint, then exit within seconds'
     const paused: number[] = [];
     (brain as unknown as { pauseForRestart: () => unknown }).pauseForRestart = () => {
       paused.push(Date.now());
-      return { turns: 3, children: 2, parked: ['brain-1'], queued: 0 };
+      return { turns: 3, children: 2, parked: ['brain-1'], queued: 0, unparkable: [] };
     };
     const { exited, elapsedMs } = await runSignal(brain);
     expect(exited).toEqual([0]);
@@ -410,7 +410,7 @@ describe('the default shutdown is a PAUSE: checkpoint, then exit within seconds'
     const brain = ({
       busy: () => { order.push('busy'); return { turns: 1, children: 0, undelivered: 0 }; },
       beginDrain: () => order.push('beginDrain'),
-      pauseForRestart: () => { order.push('pause'); return { turns: 1, children: 0, parked: [], queued: 0 }; },
+      pauseForRestart: () => { order.push('pause'); return { turns: 1, children: 0, parked: [], queued: 0, unparkable: [] }; },
       shutdownPluginServices: async () => { order.push('stop-services'); },
       notify: async () => { /* quiet */ },
     }) as unknown as BrainService;
@@ -422,7 +422,7 @@ describe('the default shutdown is a PAUSE: checkpoint, then exit within seconds'
   it('a requested restart pauses too and exits with the restart status', async () => {
     const { brain } = brainBusy([{ turns: 1, children: 1 }]);
     (brain as unknown as { pauseForRestart: () => unknown }).pauseForRestart =
-      () => ({ turns: 1, children: 1, parked: [], queued: 0 });
+      () => ({ turns: 1, children: 1, parked: [], queued: 0, unparkable: [] });
     const exited: number[] = [];
     await new Promise<void>((resolve) => {
       const control = installGracefulShutdown(brain, silentLog, {
@@ -452,7 +452,7 @@ describe('the default shutdown is a PAUSE: checkpoint, then exit within seconds'
     const brain = ({
       busy: () => ({ turns: 0, children: 0, undelivered: 0 }),
       beginDrain: () => { /* quiet */ },
-      pauseForRestart: () => ({ turns: 0, children: 0, parked: [], queued: 0 }),
+      pauseForRestart: () => ({ turns: 0, children: 0, parked: [], queued: 0, unparkable: [] }),
       shutdownPluginServices: () => new Promise<void>(() => { /* never resolves */ }),
       notify: async () => { /* quiet */ },
     }) as unknown as BrainService;
@@ -518,5 +518,69 @@ describe('a pause whose checkpoint throws still exits', () => {
     });
     expect(exited).toEqual([0]);
     expect(errors.some((m) => m.includes('pause checkpoint failed'))).toBe(true);
+  });
+
+  it('gives the turns nothing can resume exactly one bounded wait, between the checkpoint and the exit', async () => {
+    const order: string[] = [];
+    const brain = ({
+      busy: () => ({ turns: 2, children: 0, undelivered: 0 }),
+      beginDrain: () => { /* quiet */ },
+      pauseForRestart: () => { order.push('checkpoint'); return { turns: 2, children: 0, parked: ['brain-1'], queued: 0, unparkable: ['brain-ch-cron-x'] }; },
+      settleUnparkable: async (ids: string[]) => { order.push(`wait:${ids.join(',')}`); return ids; },
+      shutdownPluginServices: async () => { order.push('stop-services'); },
+      notify: async () => { /* quiet */ },
+    }) as unknown as BrainService;
+    const exited: number[] = [];
+    await new Promise<void>((resolve) => {
+      installGracefulShutdown(brain, silentLog, {
+        pollMs: 5, drainMs: 60_000, notify: false, mode: () => 'pause',
+        exit: ((code: number) => { exited.push(code); order.push('exit'); resolve(); }) as never,
+      });
+      process.emit('SIGTERM');
+    });
+    expect(order).toEqual(['checkpoint', 'wait:brain-ch-cron-x', 'stop-services', 'exit']);
+    expect(exited).toEqual([0]);
+  });
+
+  it('skips the wait entirely when every turn parked', async () => {
+    const order: string[] = [];
+    const brain = ({
+      busy: () => ({ turns: 1, children: 0, undelivered: 0 }),
+      beginDrain: () => { /* quiet */ },
+      pauseForRestart: () => ({ turns: 1, children: 0, parked: ['brain-1'], queued: 0, unparkable: [] }),
+      settleUnparkable: async () => { order.push('wait'); return []; },
+      notify: async () => { /* quiet */ },
+    }) as unknown as BrainService;
+    await new Promise<void>((resolve) => {
+      installGracefulShutdown(brain, silentLog, {
+        pollMs: 5, drainMs: 60_000, notify: false, mode: () => 'pause',
+        exit: (() => { resolve(); }) as never,
+      });
+      process.emit('SIGTERM');
+    });
+    expect(order).toEqual([]);
+  });
+
+  it('a wedged un-parkable wait cannot hold the process: the guard exits', async () => {
+    const brain = ({
+      busy: () => ({ turns: 1, children: 0, undelivered: 0 }),
+      beginDrain: () => { /* quiet */ },
+      pauseForRestart: () => ({ turns: 1, children: 0, parked: [], queued: 0, unparkable: ['brain-ch-cron-x'] }),
+      settleUnparkable: () => new Promise<string[]>(() => { /* never */ }),
+      notify: async () => { /* quiet */ },
+    }) as unknown as BrainService;
+    const exited: number[] = [];
+    vi.useFakeTimers();
+    try {
+      installGracefulShutdown(brain, silentLog, {
+        pollMs: 5, drainMs: 60_000, notify: false, mode: () => 'pause',
+        exit: ((code: number) => { exited.push(code); }) as never,
+      });
+      process.emit('SIGTERM');
+      await vi.advanceTimersByTimeAsync(27_000);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(exited).toEqual([0]);
   });
 });

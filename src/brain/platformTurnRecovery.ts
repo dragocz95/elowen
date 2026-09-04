@@ -115,10 +115,31 @@ export function resumeDeliveryTarget(envelope: PlatformTurnResumeEnvelope): stri
   try { return encodeNotificationDestination(envelope.platform, id); } catch { return null; }
 }
 
-/** May the shutdown drain park THIS live platform channel turn? Consulted by the step-boundary hold (via
- *  the brainCore hook) at the moment it would park, when the current turn's envelope is already durable.
- *  Everything unproven is a NO — a parked turn nothing can resume means the person who asked simply never
- *  gets an answer, which is strictly worse than the drain waiting the turn out whole:
+/** WHY a live platform channel turn cannot be parked — the classes the pause records for a turn it has to
+ *  leave behind (brain_pause_interruptions), so the boot sweep can tell whoever was waiting. `null` = the
+ *  turn parks (see {@link platformTurnParkEligible}, whose rules this mirrors one for one). */
+export type PlatformTurnInterruptionClass = 'cron' | 'scheduled' | 'unlinked' | 'images' | 'undeliverable' | 'no-envelope';
+export function platformTurnInterruptionClass(
+  store: { platformTurnEnvelope(sessionId: string): string | undefined },
+  sessionId: string,
+): PlatformTurnInterruptionClass | null {
+  if (platformOfSession(sessionId) === CRON_PLATFORM) return 'cron';
+  const raw = store.platformTurnEnvelope(sessionId);
+  if (!raw) return 'no-envelope';
+  let envelope: PlatformTurnResumeEnvelope | null;
+  try { envelope = normalizePlatformTurnEnvelope(JSON.parse(raw)); } catch { return 'no-envelope'; }
+  if (!envelope || channelSessionId(envelope.channelId) !== sessionId) return 'no-envelope';
+  if (envelope.scheduled) return 'scheduled';
+  if (envelope.accountUserId === null) return 'unlinked';
+  if (envelope.imageCount) return 'images';
+  if (resumeDeliveryTarget(envelope) === null) return 'undeliverable';
+  return null;
+}
+
+/** May the pause park THIS live platform channel turn? Consulted (via the brainCore hook) at the moment
+ *  it would park, when the current turn's envelope is already durable. Everything unproven is a NO — a
+ *  parked turn nothing can resume means the person who asked simply never gets an answer; such a turn is
+ *  instead given the pause's bounded wait and then recorded as interrupted:
  *  - cron turns never park (their results ride the scheduler's own delivery contract, not a room);
  *  - a scheduled/unattended turn never parks for the same reason, whatever platform fired it;
  *  - an unlinked sender's turn never parks (the authority resolver would refuse it at boot anyway);
@@ -131,15 +152,30 @@ export function platformTurnParkEligible(
   sessionId: string,
 ): boolean {
   if (!isChannelSession(sessionId) || isSubagentSession(sessionId)) return false;
-  if (platformOfSession(sessionId) === CRON_PLATFORM) return false;
-  const raw = store.platformTurnEnvelope(sessionId);
-  if (!raw) return false;
-  let envelope: PlatformTurnResumeEnvelope | null;
-  try { envelope = normalizePlatformTurnEnvelope(JSON.parse(raw)); } catch { return false; }
-  if (!envelope || channelSessionId(envelope.channelId) !== sessionId) return false;
-  if (envelope.scheduled || envelope.accountUserId === null) return false;
-  if (envelope.imageCount) return false;
-  return resumeDeliveryTarget(envelope) !== null;
+  return platformTurnInterruptionClass(store, sessionId) === null;
+}
+
+/** The interrupted-turn notice a room reads when the pause could not park its reply. Formal on purpose:
+ *  application copy for whoever was waiting. */
+export const INTERRUPTED_TURN_NOTICE = 'A restart interrupted a reply in this conversation and it could not be resumed '
+  + 'automatically. Please re-send the last message.';
+
+/** Post the interruption notice into the conversation a recorded, un-parkable turn belonged to — the boot
+ *  half of the pause's "never in silence" rule. A cron/scheduled run has no room to tell; its owner is
+ *  told through the daemon's own notify seam by the caller. The envelope is cleared: nothing will resume
+ *  this turn. Best-effort, never throws. */
+export async function notifyInterruptedPlatformTurn(
+  deps: Pick<PlatformDeliveryDeps, 'canDeliver' | 'deliver' | 'log'> & { store: { platformTurnEnvelope(sessionId: string): string | undefined; clearPlatformTurnEnvelope(sessionId: string): void } },
+  sessionId: string,
+): Promise<'posted' | 'no-target'> {
+  const raw = deps.store.platformTurnEnvelope(sessionId);
+  deps.store.clearPlatformTurnEnvelope(sessionId);
+  let envelope: PlatformTurnResumeEnvelope | null = null;
+  try { envelope = raw ? normalizePlatformTurnEnvelope(JSON.parse(raw)) : null; } catch { envelope = null; }
+  const target = envelope ? resumeDeliveryTarget(envelope) : null;
+  if (!target || !deps.canDeliver(target)) return 'no-target';
+  try { await deps.deliver(INTERRUPTED_TURN_NOTICE, target); return 'posted'; }
+  catch (e) { deps.log.warn(`could not post the interruption notice for ${sessionId}: ${e instanceof Error ? e.message : String(e)}`); return 'no-target'; }
 }
 
 /** What POSTING a computed answer needs — and, just as importantly, what it does NOT: there is no `send`

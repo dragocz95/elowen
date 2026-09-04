@@ -55,11 +55,11 @@ import { SessionQueueService } from './service/sessionQueue.js';
 import { exportBrainSession } from './session/exportSession.js';
 import type { ExportFormat, SessionExport } from './session/exportSession.js';
 import { toolAuthorityForUser } from './brainDeps.js';
-import { resumePlatformTurn, type PlatformResumeContinuation, type ParkedPlatformTurn } from './platformTurnRecovery.js';
+import { notifyInterruptedPlatformTurn, platformTurnInterruptionClass, resumePlatformTurn, type PlatformResumeContinuation, type ParkedPlatformTurn } from './platformTurnRecovery.js';
 import type { OwnerConversationRecovery } from './recovery/providers.js';
 import type { RecoveryOutcome } from './recovery/types.js';
 import type { BrainDeps } from './brainDeps.js';
-import type { BrainSessionRow } from '../store/brainStore.js';
+import type { BrainSessionRow, PauseInterruption } from '../store/brainStore.js';
 import { processRegistry, type ProcessInfo } from './processRegistry.js';
 import type { BrainStreamSnapshot } from './session/liveEventReplay.js';
 import { DEFAULT_BRAIN_LIMITS } from '../store/configStore.js';
@@ -87,6 +87,23 @@ const MAX_WORKFLOW_RESUME_ATTEMPTS = 3;
  *  chances, then a visible give-up instead of stacking resume turns on a conversation forever. */
 const MAX_PARK_RESUME_ATTEMPTS = 3;
 const MAX_RESULT_WAKE_ATTEMPTS = 3;
+
+/** The pause's only wait, and only for turns that have NO resume (see pauseForRestart): a bounded grace
+ *  for a step about to finish, fixed and deliberately far below the unit's stop timeout. */
+const PAUSE_UNPARKABLE_WAIT_MS = 20_000;
+const PAUSE_UNPARKABLE_POLL_MS = 250;
+
+/** What a pause-for-restart left behind — the shutdown log line's material. */
+export interface PauseSummary {
+  turns: number;
+  children: number;
+  /** Owner / platform turns that got a park marker (resumed by the boot sweeps). */
+  parked: string[];
+  /** Messages checkpointed out of PI's mid-turn queue. */
+  queued: number;
+  /** Live turns with NO resume — handed to {@link BrainService.settleUnparkable} for the bounded wait. */
+  unparkable: string[];
+}
 
 /** The hidden continuation a boot resume injects into a parked conversation. Delivered through PI's
  *  custom-message seam (`display:false`) so it never renders as a fake user bubble; it appends at the
@@ -585,13 +602,16 @@ export class BrainService {
    *     is written as a durable user row at the transcript tail, in delivery order, so it is read by the
    *     resumed turn rather than vanishing with the process;
    *   - delegated children need nothing: their run rows stay `running` and the next boot claims and
-   *     respawns them (delegatedSession.ts), and a runner process dies with the daemon's cgroup.
+   *     respawns them (delegatedSession.ts), and a runner process dies with the daemon's cgroup;
+   *   - a turn with NO resume (cron, an unlinked room sender, a task worker …) gets one bounded wait and
+   *     is then recorded as interrupted, for the boot sweep to say so where the reply was expected.
    *  No PI abort is issued on purpose: an abort unwinds through the delegation tree and terminalizes child
    *  run rows as aborted, which is exactly the work a pause must keep. The process exits right after. */
-  pauseForRestart(): { turns: number; children: number; parked: string[]; queued: number } {
+  pauseForRestart(): PauseSummary {
     this.beginDrain();
     const at = this.busy();
     const parked: string[] = [];
+    const unparkable: string[] = [];
     let queued = 0;
     for (const sessionId of this.sessions.activeTurnSessionIds()) {
       // A held non-session serial key (a plugin reload) counts as a turn but is no conversation.
@@ -601,8 +621,36 @@ export class BrainService {
       if (live) queued += this.checkpointQueuedMessages(sessionId, live);
       if (isSubagentSession(sessionId)) continue; // resumed from its run row, never a park marker
       if (this.d.stepDrain?.parkNow(sessionId)) parked.push(sessionId);
+      else unparkable.push(sessionId);
     }
-    return { turns: at.turns, children: at.children, parked, queued };
+    return { turns: at.turns, children: at.children, parked, queued, unparkable };
+  }
+
+  /** The second, ASYNCHRONOUS half of the pause, for the turns {@link pauseForRestart} could not park (a
+   *  cron run, a room turn from an unlinked sender, a task worker …): the ONE bounded wait a pause has —
+   *  long enough for a step that is about to finish, never a drain — after which whatever still runs is
+   *  recorded durably, so the boot sweep can say so where the reply was expected. An interruption is
+   *  never silent, but it never holds the restart either. Returns the sessions recorded. */
+  async settleUnparkable(unparkable: readonly string[], budgetMs = PAUSE_UNPARKABLE_WAIT_MS): Promise<string[]> {
+    const interrupted = await this.waitForUnparkable(unparkable, budgetMs);
+    for (const sessionId of interrupted) {
+      const cls = isChannelSession(sessionId) ? platformTurnInterruptionClass(this.d.store, sessionId) ?? 'other' : 'other';
+      this.d.store.recordPauseInterruption(sessionId, cls);
+    }
+    return interrupted;
+  }
+
+  /** Poll the live turn set until none of `sessionIds` is running, or the budget is out. Returns the
+   *  ones still running. */
+  private async waitForUnparkable(sessionIds: readonly string[], budgetMs: number): Promise<string[]> {
+    if (sessionIds.length === 0) return [];
+    const deadline = Date.now() + budgetMs;
+    for (;;) {
+      const live = new Set(this.sessions.activeTurnSessionIds());
+      const still = sessionIds.filter((id) => live.has(id));
+      if (still.length === 0 || Date.now() >= deadline) return still;
+      await new Promise((resolve) => setTimeout(resolve, PAUSE_UNPARKABLE_POLL_MS));
+    }
   }
 
   /** Checkpoint PI's transient mid-turn queue (steers first — PI delivers those before the follow-ups)
@@ -1056,6 +1104,38 @@ export class BrainService {
       // answered — replayed last, so they land AFTER the continued turn, in the order they were typed.
       if (item.parked) await this.replayPausedQueue(row);
     }
+  }
+
+  /** `interrupted-turns` provider, CLAIM: every turn the last pause could not park (consumed once). */
+  claimPauseInterruptions(): PauseInterruption[] {
+    return this.d.store.takePauseInterruptions();
+  }
+
+  /** `interrupted-turns` provider, RESUME: nothing resumes — tell whoever was waiting. A room turn gets
+   *  the notice posted into the room (its envelope is consumed); a cron/scheduled run, which has no room
+   *  to tell, is reported to the daemon's owner notice channel; everything else is logged. Nothing here
+   *  spends a model turn. */
+  async notifyPauseInterruption(item: PauseInterruption): Promise<RecoveryOutcome> {
+    const log = logger('brain');
+    if (item.class === 'cron' || item.class === 'scheduled') {
+      const title = this.d.store.getSession(item.sessionId)?.title ?? item.sessionId;
+      log.warn(`scheduled run ${item.sessionId} was interrupted by the restart and was not re-run`);
+      await this.notify(`⏸️ A scheduled run (${title}) was interrupted by the daemon restart and was not re-run automatically.`)
+        .catch(() => { /* best-effort */ });
+      return 'terminalized';
+    }
+    if (isChannelSession(item.sessionId)) {
+      const posted = await notifyInterruptedPlatformTurn({
+        store: this.d.store,
+        canDeliver: (target) => this.platforms.canDeliver(target),
+        deliver: (text, target) => this.platforms.notify(text, target),
+        log,
+      }, item.sessionId);
+      log.warn(`turn ${item.sessionId} (${item.class}) was interrupted by the restart with no resume — notice ${posted}`);
+      return posted === 'posted' ? 'terminalized' : 'released';
+    }
+    log.warn(`turn ${item.sessionId} (${item.class}) was interrupted by the restart with no resume`);
+    return 'released';
   }
 
   /** `platform-conversations` provider, CLAIM: the two durable states this provider recovers, unioned.

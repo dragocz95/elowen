@@ -6065,6 +6065,45 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(d.store.pendingSubagentResults(room)).toEqual([]); // acknowledged through the continuation
   });
 
+  it('boot tells whoever was waiting on a turn the pause could not park: the room, or the owner for a cron run', async () => {
+    // MAJOR 2: an un-parkable turn (cron, unlinked room sender, task worker …) is never silently lost —
+    // the pause records it and the boot's interrupted-turns sweep posts the notice where the reply was
+    // expected. No model turn is spent.
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('discord', {}, { info() {}, warn() {}, error() {} });
+    const posted: { text: string; channelId?: string }[] = [];
+    ctx.registerPlatform({
+      name: 'discord', connect: async () => {}, listen: () => {}, send: async () => {},
+      notify: async (text: string, channelId?: string) => { posted.push({ text, ...(channelId ? { channelId } : {}) }); },
+    });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const room = 'brain-ch-discord-ops';
+    const cron = 'brain-ch-cron-daily-digest';
+    d.store.createSession({ id: room, userId: 1, model: 'm' });
+    d.store.createSession({ id: cron, userId: 1, model: 'm', title: 'daily digest' });
+    d.store.savePlatformTurnEnvelope(room, JSON.stringify({
+      v: 1, platform: 'discord', channelId: 'discord-ops', ownerUserId: 1, direct: false, trusted: false, scheduled: false,
+      accountUserId: null, sender: { id: '42', name: 'Petra' },
+      identity: { platform: 'discord', userId: '42', admin: false, owner: false, conversation: 'shared' },
+      promptAppend: [], deniedTools: [], promptCommand: false, turnText: 'x', senderText: 'x', capturedAt: '2026-09-04T00:00:00Z',
+    }));
+    d.store.recordPauseInterruption(room, 'unlinked');
+    d.store.recordPauseInterruption(cron, 'cron');
+
+    const restarted = new BrainService(d as never);
+    await restarted.startPlatforms();
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll();
+    await recovery.resumeAll();
+
+    expect(posted.some((p) => p.text.includes('restart interrupted a reply') && p.channelId)).toBe(true); // into the room
+    expect(posted.some((p) => p.text.includes('scheduled run') && p.text.includes('daily digest') && !p.channelId)).toBe(true); // owner notice
+    expect(d.session.prompt).not.toHaveBeenCalled();
+    expect(d.store.takePauseInterruptions()).toEqual([]); // consumed
+    expect(d.store.platformTurnEnvelope(room)).toBeUndefined();
+  });
+
   it('uses recovered results as the continuation of a genuinely parked owner turn', async () => {
     const d = fakeDeps();
     d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });

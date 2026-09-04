@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
-import type { BrainService } from '../brain/brainService.js';
+import type { BrainService, PauseSummary } from '../brain/brainService.js';
 import { lifecycleNotice } from './lifecycleNotices.js';
 
 /** A boot announced less than this ago suppresses the next one, so a crash-looping daemon reports the
@@ -25,6 +25,11 @@ const SHUTDOWN_POLL_MS = 500;
  *  whole point of a pause is that the process is gone within seconds, so the supervisor can start the
  *  new build and boot recovery can resume the checkpointed work. */
 const PAUSE_NOTIFY_MS = 1_500;
+/** The synchronous checkpoint's guard (see pause below): well above any single SQLite busy_timeout round. */
+const PAUSE_CHECKPOINT_GUARD_MS = 5_000;
+/** Backstop over the un-parkable wait (20 s inside BrainService) plus the courtesies; the unit's
+ *  TimeoutStopSec (30 s) sits just above this. */
+const PAUSE_UNPARKABLE_GUARD_MS = 26_000;
 const PAUSE_PLUGIN_SHUTDOWN_MS = 3_000;
 /** A drain already waited minutes for the work; its plugin teardown gets a generous but finite bound so
  *  a wedged service can no longer hold the exit until systemd's SIGKILL. */
@@ -135,20 +140,37 @@ export function installGracefulShutdown(
   const pause = (cause: string): void => {
     void (async () => {
       const started = Date.now();
+      // The exit guard is armed BEFORE the checkpoint. Honest limit: the checkpoint is synchronous SQLite
+      // work, and a timer cannot preempt a synchronous busy_timeout stall — only systemd's stop timeout
+      // can. What the guard does catch is everything asynchronous around it (a checkpoint that returns a
+      // promise from a test brain, a wedged wait), so the process never sits idle waiting to be killed.
+      let guard = setTimeout(() => { log.error('pause checkpoint did not return in time — exiting anyway'); exit(exitCode); }, PAUSE_CHECKPOINT_GUARD_MS);
+      guard.unref?.();
       // Everything durable happens synchronously in here (SQLite writes): after this line the checkpoint
       // is complete and only best-effort courtesies remain between us and the exit. A failing checkpoint
-      // is logged, not fatal: the per-message mirror is already on disk, and a process that refuses to
-      // exit on SIGTERM only earns systemd's SIGKILL.
-      let at = { turns: 0, children: 0, parked: [] as string[], queued: 0 };
+      // is logged, not fatal: the per-message mirror is already on disk.
+      let at: PauseSummary = { turns: 0, children: 0, parked: [], queued: 0, unparkable: [] };
       try { at = brain?.pauseForRestart?.() ?? at; }
       catch (error) { log.error('pause checkpoint failed — exiting anyway', error); }
-      log.info(`${cause} — pausing (${at.turns} turn(s), ${at.children} sub-agent(s)): parked ${at.parked.length} turn(s), checkpointed ${at.queued} queued message(s)`);
+      clearTimeout(guard);
+      log.info(`${cause} — pausing (${at.turns} turn(s), ${at.children} sub-agent(s)): parked ${at.parked.length} turn(s), checkpointed ${at.queued} queued message(s), ${at.unparkable.length} turn(s) without a resume`);
       if (at.parked.length > 0) log.info(`parked for boot resume: ${at.parked.join(', ')}`);
-      if (opts?.notify !== false && exitCode !== RESTART_EXIT_CODE && (at.turns > 0 || at.children > 0)) {
+      // The one bounded wait, for turns nothing can resume; its own budget is inside settleUnparkable,
+      // and this guard only catches a wait that wedges. Then the courtesies, each bounded on its own.
+      guard = setTimeout(() => { log.error('pause wait for un-parkable turns wedged — exiting anyway'); exit(exitCode); }, PAUSE_UNPARKABLE_GUARD_MS);
+      guard.unref?.();
+      if (at.unparkable.length > 0) {
+        try {
+          const interrupted = await brain?.settleUnparkable?.(at.unparkable) ?? [];
+          if (interrupted.length > 0) log.info(`interrupted without a resume (recorded for the boot notice): ${interrupted.join(', ')}`);
+        } catch (error) { log.error('pause wait for un-parkable turns failed — exiting anyway', error); }
+      }
+      if (opts?.notify !== false && exitCode !== RESTART_EXIT_CODE) {
         const { text, notice } = lifecycleNotice('pausing', at.turns, at.children);
         await bounded(brain?.notify(text, undefined, notice).catch(() => { /* best-effort: never block the exit on a chat API */ }), PAUSE_NOTIFY_MS);
       }
       await finish(PAUSE_PLUGIN_SHUTDOWN_MS);
+      clearTimeout(guard);
       log.info(`paused in ${Date.now() - started} ms — exiting ${exitCode}${exitCode === RESTART_EXIT_CODE ? ' (supervisor restarts us)' : ''}`);
       exit(exitCode);
     })();

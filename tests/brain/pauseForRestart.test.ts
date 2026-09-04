@@ -155,7 +155,50 @@ describe('pauseForRestart — the durable checkpoint of a turn caught mid-step',
     const svc = new BrainService(d as never);
     await svc.start(1);
     const summary = svc.pauseForRestart();
-    expect(summary).toEqual({ turns: 0, children: 0, parked: [], queued: 0 });
+    expect(summary).toEqual({ turns: 0, children: 0, parked: [], queued: 0, unparkable: [] });
     expect(d.store.parkedSessions()).toEqual([]);
+  });
+
+  it('a turn nothing can resume is not parked: it gets the bounded wait, then a durable interruption record', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    // Two live turns with no boot resume: a cron run and a task-worker style room turn without an
+    // envelope. Simulated through the registry's own lock — the same thing activeTurnSessionIds reads.
+    const cron = 'brain-ch-cron-daily';
+    const worker = 'brain-ch-work-job-1';
+    for (const id of [cron, worker]) d.store.createSession({ id, userId: 1, model: 'm' });
+    const registry = (svc as unknown as { sessions: { withLock<T>(key: string, fn: () => Promise<T>): Promise<T> } }).sessions;
+    let finishWorker = (): void => {};
+    void registry.withLock(cron, () => new Promise<void>(() => { /* never finishes */ }));
+    void registry.withLock(worker, () => new Promise<void>((resolve) => { finishWorker = resolve; }));
+    await tick();
+
+    const summary = svc.pauseForRestart();
+    expect(summary.parked).toEqual([]);
+    expect(summary.unparkable.sort()).toEqual([cron, worker].sort());
+    expect(d.store.parkedSessions()).toEqual([]); // no marker: nothing would resume them
+
+    setTimeout(() => finishWorker(), 50); // the worker's step finishes inside the wait
+    const interrupted = await svc.settleUnparkable(summary.unparkable, 1_000);
+    expect(interrupted).toEqual([cron]); // the worker got its answer out; only the cron run was cut
+    expect(d.store.takePauseInterruptions()).toEqual([expect.objectContaining({ sessionId: cron, class: 'cron' })]);
+    expect(d.store.takePauseInterruptions()).toEqual([]); // consumed once
+  });
+
+  it('the bounded wait ends at its budget even when the turn never finishes', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const room = 'brain-ch-discord-room';
+    d.store.createSession({ id: room, userId: 1, model: 'm' });
+    const registry = (svc as unknown as { sessions: { withLock<T>(key: string, fn: () => Promise<T>): Promise<T> } }).sessions;
+    void registry.withLock(room, () => new Promise<void>(() => { /* stuck */ }));
+    await tick();
+    const startedAt = Date.now();
+    const interrupted = await svc.settleUnparkable([room], 300);
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+    expect(interrupted).toEqual([room]);
+    expect(d.store.takePauseInterruptions()[0]).toMatchObject({ sessionId: room, class: 'no-envelope' });
   });
 });

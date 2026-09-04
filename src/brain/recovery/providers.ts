@@ -1,4 +1,4 @@
-import type { BrainSessionRow, RecoverableRun, RecoverableWorkflow } from '../../store/brainStore.js';
+import type { BrainSessionRow, PauseInterruption, RecoverableRun, RecoverableWorkflow } from '../../store/brainStore.js';
 import type { ParkedPlatformTurn } from '../platformTurnRecovery.js';
 import { BootRecoveryCoordinator } from './coordinator.js';
 import type { RecoveryLog, RecoveryOutcome } from './types.js';
@@ -33,6 +33,8 @@ export interface BootRecoveryHost {
   resumeParkedConversation(item: OwnerConversationRecovery): Promise<RecoveryOutcome>;
   claimParkedPlatformTurns(): readonly ParkedPlatformTurn[];
   resumeParkedPlatformTurn(row: ParkedPlatformTurn): Promise<RecoveryOutcome>;
+  claimPauseInterruptions(): readonly PauseInterruption[];
+  notifyPauseInterruption(item: PauseInterruption): Promise<RecoveryOutcome>;
 }
 
 /** The daemon's boot recovery chain. Built by the daemon's boot layer only — the sub-agent runner has no
@@ -117,6 +119,16 @@ export function createBootRecovery(host: BootRecoveryHost, log: RecoveryLog): Bo
     // Concurrent: independent rooms, exactly as their turns would run in normal operation.
     parallel: true,
     resume: (row) => host.resumeParkedPlatformTurn(row),
+  });
+
+  // Turns the last pause could NOT park and that outlived its bounded wait: nothing resumes them, and
+  // this is the sweep that makes sure nobody waits on them in silence (a notice into the room, or to the
+  // owner for a scheduled run). Independent of every other provider; concurrent, they are just posts.
+  coordinator.register<PauseInterruption>({
+    id: 'interrupted-turns',
+    claim: () => host.claimPauseInterruptions(),
+    parallel: true,
+    resume: (item) => host.notifyPauseInterruption(item),
   });
 
   return coordinator;

@@ -205,6 +205,8 @@ describe('createBootRecovery', () => {
       resumeParkedConversation: async () => { trace.push('resume:conversations'); return 'resumed'; },
       claimParkedPlatformTurns: () => { trace.push('claim:platform'); return [{ id: 'brain-ch-x' } as never]; },
       resumeParkedPlatformTurn: async () => { trace.push('resume:platform'); return 'resumed'; },
+      claimPauseInterruptions: () => [],
+      notifyPauseInterruption: async () => 'released',
     };
   }
 
@@ -226,6 +228,8 @@ describe('createBootRecovery', () => {
       // the claim is what makes the wait-on-delegation decision independent of registration order.
       { id: 'owner-conversations', dependsOn: ['delegations-claim'], parallel: true },
       { id: 'platform-conversations', dependsOn: ['delegations-claim'], parallel: true },
+      // Turns the pause could not park: notices only, independent of everything above.
+      { id: 'interrupted-turns', dependsOn: [], parallel: true },
     ]);
   });
 
@@ -283,6 +287,7 @@ describe('createBootRecovery', () => {
       workflows: async () => host.resumeWorkflow({} as never),
       'owner-conversations': async () => host.resumeParkedConversation({} as never),
       'platform-conversations': async () => host.resumeParkedPlatformTurn({} as never),
+      'interrupted-turns': async () => host.notifyPauseInterruption({} as never),
     };
     const claimOf: Record<string, () => readonly unknown[]> = {
       'delegations-claim': () => { host.claimDelegationRecovery(); return []; },
@@ -290,6 +295,7 @@ describe('createBootRecovery', () => {
       workflows: () => host.claimWorkflowRecovery(),
       'owner-conversations': () => host.claimParkedConversations(),
       'platform-conversations': () => host.claimParkedPlatformTurns(),
+      'interrupted-turns': () => host.claimPauseInterruptions(),
     };
     for (const provider of [...reference].reverse()) {
       reversed.register({ id: provider.id, dependsOn: provider.dependsOn, parallel: provider.parallel, claim: claimOf[provider.id]!, resume: resumeOf[provider.id]! });
