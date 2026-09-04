@@ -45,6 +45,11 @@ export interface PauseInterruption {
   createdAt: string;
 }
 
+/** `brain_messages.pending` sentinel for a row retired from the transcript (see discardMessage): not
+ *  pending (never settled, never deleted by the next agent_end), not settled (never read), kept only so
+ *  its usage rows survive. */
+export const DISCARDED_MESSAGE = 2;
+
 export interface BrainSessionRow {
   id: string; user_id: number; title: string; model: string; provider: string; work_dir: string; parent_session_id: string | null;
   delegated_access: string | null;
@@ -958,8 +963,18 @@ export class BrainStore {
   /** Raw transcript rows, including provisional message_end mirrors. Recovery, compaction alignment and
    *  diagnostics need this exact on-disk state; user-facing history must use getSettledMessages instead. */
   getMessages(sessionId: string): BrainMessageRow[] {
-    return this.db.prepare('SELECT * FROM brain_messages WHERE session_id = ? ORDER BY rowid ASC')
+    return this.db.prepare(`SELECT * FROM brain_messages WHERE session_id = ? AND pending <> ${DISCARDED_MESSAGE} ORDER BY rowid ASC`)
       .all(sessionId) as BrainMessageRow[];
+  }
+
+  /** Retire a message from the transcript WITHOUT deleting it: the row stays for the usage rollup (its
+   *  tokens were paid for — the AFTER DELETE trigger would drop them from spend history) but no reader
+   *  sees it again: getMessages, the display read model, rehydration, export, compaction alignment all
+   *  filter on `pending`. Used for the unfinished trailing assistant a resume rewrites; a single UPDATE,
+   *  so a resume that changes PI's in-memory state and the durable transcript commits both or neither
+   *  as far as the transcript is concerned. */
+  discardMessage(sessionId: string, id: string): boolean {
+    return this.db.prepare(`UPDATE brain_messages SET pending = ${DISCARDED_MESSAGE} WHERE session_id = ? AND id = ?`).run(sessionId, id).changes > 0;
   }
 
   /** The one user-facing transcript read model. Pending rows remain queryable through getMessages for crash

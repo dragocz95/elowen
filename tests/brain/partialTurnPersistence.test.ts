@@ -187,6 +187,16 @@ describe('a turn interrupted by a daemon restart', () => {
     expect(rolesOf(store, child)).toEqual(['user']);
   });
 
+  it('retires the dropped fragment instead of deleting it: invisible to every reader, still in the table for the usage rollup', () => {
+    projectUserTurn(store, 's1', 'do the thing');
+    midTurn(assistantCalling('t1'), toolResult('t1'), { role: 'assistant', content: [{ type: 'text', text: 'half a' }], usage: { input: 5, output: 2 } });
+    const dropped = store.getMessages('s1').at(-1)!;
+    expect(settlePartialTurn(store, 's1').droppedPartial).toBe(true);
+    expect(store.getMessages('s1').map((row) => row.id)).not.toContain(dropped.id);
+    const raw = db.prepare('SELECT pending FROM brain_messages WHERE id = ?').get(dropped.id) as { pending: number } | undefined;
+    expect(raw).toEqual({ pending: 2 }); // not deleted — the AFTER DELETE trigger would take its usage with it
+  });
+
   it("keeps a user's own Esc-cut answer (settled, aborted, with text): they saw it and it is theirs", () => {
     projectUserTurn(store, 's1', 'tell me a story');
     store.appendMessage({ id: 'cut', sessionId: 's1', parentId: null, role: 'assistant', content: { role: 'assistant', content: [{ type: 'text', text: 'Once upon a' }], stopReason: 'aborted' } });

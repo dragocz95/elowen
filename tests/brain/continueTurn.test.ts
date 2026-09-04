@@ -29,13 +29,13 @@ function fakeSession(initial: Msg[], opts: { seam?: boolean } = {}) {
   return { session: session as unknown as AgentSession, batches, state: () => messages };
 }
 
-function storeWith(rows: { role: string; content: object }[]): { store: BrainStore; sessionId: string } {
-  const store = new BrainStore(openDb(':memory:'));
-  const sessionId = 'brain-1';
+function storeWith(rows: { role: string; content: object }[], sessionId = 'brain-1'): { store: BrainStore; sessionId: string; db: ReturnType<typeof openDb> } {
+  const db = openDb(':memory:');
+  const store = new BrainStore(db);
   store.createSession({ id: sessionId, userId: 1, model: 'm' });
   projectUserTurn(store, sessionId, 'do the thing');
   rows.forEach((row, index) => store.appendMessage({ id: `r${index}`, sessionId, parentId: null, role: row.role, content: row.content }));
-  return { store, sessionId };
+  return { store, sessionId, db };
 }
 
 describe('continueInterruptedTurn — the resume is a continuation, never a message', () => {
@@ -66,12 +66,12 @@ describe('continueInterruptedTurn — the resume is a continuation, never a mess
     expect(state()).toHaveLength(2);
   });
 
-  it('a partially streamed assistant tail is trimmed from PI state AND the durable transcript, then continued from the message before it', async () => {
-    const { store, sessionId } = storeWith([
+  it('an unfinished sub-agent tail (an orphaned runner\'s aborted text) is RETIRED from PI state AND the transcript, then continued from the message before it', async () => {
+    const { store, sessionId, db } = storeWith([
       { role: 'assistant', content: { role: 'assistant', content: [{ type: 'toolCall', id: 't1', name: 'Bash', arguments: {} }], stopReason: 'toolUse', usage } },
       { role: 'toolResult', content: { role: 'toolResult', toolCallId: 't1', content: [{ type: 'text', text: 'ok' }] } },
-      { role: 'assistant', content: { role: 'assistant', content: [{ type: 'text', text: 'I will now sta' }] } }, // no stop, no usage
-    ]);
+      { role: 'assistant', content: { role: 'assistant', content: [{ type: 'text', text: 'I will now sta' }], stopReason: 'aborted', usage } },
+    ], 'brain-ch-subagent-orphan');
     const before = store.getMessages(sessionId);
     const { session, batches, state } = fakeSession(before.map((row) => JSON.parse(row.content) as Msg));
 
@@ -83,6 +83,19 @@ describe('continueInterruptedTurn — the resume is a continuation, never a mess
     expect(after.map((row) => row.content)).toEqual(before.slice(0, -1).map((row) => row.content));
     expect(state().map((m) => m.role)).toEqual(['user', 'assistant', 'toolResult', 'assistant']);
     expect((state().at(-1) as Msg).stopReason).toBe('stop'); // the regenerated answer, not the fragment
+    // Retired, not deleted: the row is still in the table (its usage was paid for), just invisible.
+    const raw = db.prepare('SELECT id, pending FROM brain_messages WHERE session_id = ? ORDER BY rowid').all(sessionId) as { id: string; pending: number }[];
+    expect(raw.at(-1)).toEqual({ id: 'r2', pending: 2 });
+  });
+
+  it("keeps a user's own Esc-cut answer on the resume path too (settled, aborted, with text): nothing to continue", async () => {
+    const { store, sessionId } = storeWith([
+      { role: 'assistant', content: { role: 'assistant', content: [{ type: 'text', text: 'Once upon a' }], stopReason: 'aborted', usage } },
+    ]);
+    const { session, batches } = fakeSession(store.getMessages(sessionId).map((row) => JSON.parse(row.content) as Msg));
+    expect(await continueInterruptedTurn(session, { store, sessionId })).toBe('nothing');
+    expect(batches).toEqual([]);
+    expect(store.getMessages(sessionId).map((row) => row.role)).toEqual(['user', 'assistant']);
   });
 
   it('an errored assistant left by a failed earlier resume is trimmed the same way (no double answer, no dead end)', async () => {

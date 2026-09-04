@@ -137,7 +137,7 @@ function projectPendingMessage(store: BrainStore, sessionId: string, message: un
  *  result, so the settled transcript is this sequence plus that tail. Filtering the raw rowid sequence
  *  rather than concatenating settled + pending preserves the interleaving. */
 export function recoverablePartialTurnRows(rows: readonly BrainMessageRow[]): BrainMessageRow[] {
-  const pending = rows.filter((row) => row.pending !== 0);
+  const pending = rows.filter((row) => row.pending === 1);
   if (pending.length === 0) return [...rows];
   const keep = answeredToolCallPrefix(pending.map((row) => row.content));
   let pendingIndex = 0;
@@ -232,7 +232,7 @@ export interface SettledTail {
  *  that never came. */
 export function settlePartialTurn(store: BrainStore, sessionId: string): SettledTail {
   const rows = store.getMessages(sessionId);
-  const pending = rows.filter((row) => row.pending !== 0);
+  const pending = rows.filter((row) => row.pending === 1);
   // A pending row that cannot be parsed is not a step we can answer for: keep the verifiable prefix and
   // drop the rest, exactly as before.
   const verifiable = answeredToolCallPrefixOrParseLimit(pending.map((row) => row.content));
@@ -240,17 +240,11 @@ export function settlePartialTurn(store: BrainStore, sessionId: string): Settled
   const kept = pending.slice(0, verifiable);
   const outstanding = outstandingToolCalls(kept.map((row) => row.content));
   let droppedPartial = false;
-  // A trailing assistant with no tool call of its own that is not provably final is a partial stream, or
-  // an abort fragment. A PENDING one is always the pause's cut and is dropped. A SETTLED one is dropped
-  // when it is a fragment nothing wants back — a provider error, an empty abort — or, in a sub-agent
-  // session, any unfinished text: an orphaned runner aborts its turn when the daemon's IPC closes and
-  // its agent_end settles a `stopReason: 'aborted'` assistant before the cgroup takes it down, and no
-  // person ever asked to keep it. A user's own Esc-cut answer (settled, aborted, with text) stays: they
-  // saw it, and it is theirs.
+  // The unfinished trailing assistant (see isUnfinishedTail) is RETIRED, not deleted: its tokens stay
+  // in the usage rollup, and no reader ever returns it again.
   const last = kept.at(-1) ?? rows.filter((row) => row.pending === 0).at(-1);
-  if (last && last.role === 'assistant' && !hasToolCalls(last.content) && !isProvablyFinalAssistant(last.content)
-    && (last.pending !== 0 || isFragment(last.content) || isSubagentSession(sessionId))) {
-    store.deleteMessage(sessionId, last.id);
+  if (last && isUnfinishedTail(last, sessionId)) {
+    store.discardMessage(sessionId, last.id);
     droppedPartial = !isEmptyAssistant(last.content);
   }
   if (pending.length === 0 && outstanding.length === 0) {
@@ -294,6 +288,20 @@ export function isProvablyFinalAssistant(raw: string): boolean {
   if (typeof message.usage !== 'object' || message.usage === null) return false;
   const usage = message.usage as { input?: unknown; output?: unknown };
   return Number.isFinite(usage.input) && Number.isFinite(usage.output);
+}
+
+/** THE rule for the one transcript row a resume may rewrite — shared by the checkpoint settle
+ *  (settlePartialTurn) and the continuation (session/continueTurn.ts), so the two can never disagree:
+ *  a trailing assistant with no tool call of its own that is not provably final is a partial stream or
+ *  an abort fragment. A PENDING one is always the pause's cut. A SETTLED one counts when it is a fragment
+ *  nothing wants back — a provider error, an empty abort — or, in a sub-agent session, any unfinished
+ *  text: an orphaned runner aborts its turn when the daemon's IPC closes and its agent_end settles a
+ *  `stopReason: 'aborted'` assistant before the cgroup takes it down, and no person ever asked to keep
+ *  it. A user's own Esc-cut answer (settled, aborted, with text) is NOT unfinished tail: they saw it,
+ *  and it is theirs. */
+export function isUnfinishedTail(row: { role: string; content: string; pending: number }, sessionId: string): boolean {
+  if (row.role !== 'assistant' || hasToolCalls(row.content) || isProvablyFinalAssistant(row.content)) return false;
+  return row.pending === 1 || isFragment(row.content) || isSubagentSession(sessionId);
 }
 
 /** A settled assistant nobody wants back: a provider error, or an abort that produced nothing. */

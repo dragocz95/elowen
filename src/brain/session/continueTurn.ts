@@ -1,6 +1,6 @@
 import type { AgentSession } from '@earendil-works/pi-coding-agent';
 import type { BrainStore } from '../../store/brainStore.js';
-import { isProvablyFinalAssistant } from '../persistence.js';
+import { isUnfinishedTail } from '../persistence.js';
 
 /** Continue an interrupted turn from the transcript's current tail WITHOUT adding a message.
  *
@@ -41,9 +41,7 @@ export async function continueInterruptedTurn(
   const tail = seam.messages.at(-1);
   if (!tail) return 'nothing';
   if (tail.role === 'assistant') {
-    if (isFinalAssistantMessage(tail)) return 'nothing';
-    trimUnfinishedTail(seam, durable);
-    if (!continuable(seam.messages)) return 'nothing';
+    if (!trimUnfinishedTail(seam, durable) || !continuable(seam.messages)) return 'nothing';
   }
   await seam._runAgentPrompt([]);
   return 'continued';
@@ -55,22 +53,25 @@ export function continuable(messages: readonly { role?: string }[]): boolean {
   return !!last && last.role !== 'assistant';
 }
 
-/** The in-memory twin of persistence.ts isProvablyFinalAssistant: stopReason stop and usage counts. */
-function isFinalAssistantMessage(message: { role?: string }): boolean {
-  return isProvablyFinalAssistant(JSON.stringify(message));
-}
-
-/** Drop the unfinished trailing assistant from PI's state (through the agent state setter PI's own
- *  retry uses) and from the durable transcript, so neither the next model call nor the next boot sees it. */
+/** Retire the unfinished trailing assistant from PI's state (through the agent state setter PI's own
+ *  retry uses) and from the durable transcript (discardMessage, by row id — the row stays for the usage
+ *  rollup), so neither the next model call nor the next boot sees it. ONE rule decides, the same one the
+ *  checkpoint settle applies (persistence.ts isUnfinishedTail): PI's in-memory tail is judged as a
+ *  settled row of this session, so a user's Esc-cut answer survives this path exactly as it survives the
+ *  other. Returns whether anything was trimmed. */
 function trimUnfinishedTail(
   seam: { messages: { role?: string }[]; agent?: { state?: { messages: { role?: string }[] } } },
   durable?: { store: BrainStore; sessionId: string },
-): void {
+): boolean {
+  const tail = seam.messages.at(-1);
+  if (!tail) return false;
+  const sessionId = durable?.sessionId ?? '';
+  if (!isUnfinishedTail({ role: String(tail.role), content: JSON.stringify(tail), pending: 0 }, sessionId)) return false;
+  if (durable) {
+    const last = durable.store.getMessages(durable.sessionId).at(-1);
+    if (last && isUnfinishedTail(last, durable.sessionId)) durable.store.discardMessage(durable.sessionId, last.id);
+  }
   if (seam.agent?.state) seam.agent.state.messages = seam.messages.slice(0, -1);
   else seam.messages.splice(-1, 1);
-  if (!durable) return;
-  const last = durable.store.getMessages(durable.sessionId).at(-1);
-  if (last && last.role === 'assistant' && !isProvablyFinalAssistant(last.content)) {
-    durable.store.deleteMessage(durable.sessionId, last.id);
-  }
+  return true;
 }
