@@ -27,6 +27,9 @@ export const ENVIRONMENT_PACKAGES = Object.freeze([
   'podman', 'crun', 'uidmap', 'dbus-user-session', 'passt', 'slirp4netns',
 ]);
 const OPTIONAL_OVERLAY_PACKAGE = 'fuse-overlayfs';
+export const ENVIRONMENT_DELEGATION_DROP_IN = '/etc/systemd/system/user@.service.d/elowen-sites-environments.conf';
+export const ENVIRONMENT_DELEGATION_CONTENT = '[Service]\nDelegate=cpu memory pids\n';
+const SYSTEM_PATH = '/usr/sbin:/usr/bin:/sbin:/bin';
 const PACKAGE_LABELS = Object.freeze({
   podman: 'Podman',
   crun: 'crun',
@@ -341,14 +344,23 @@ function commandErrorText(error) {
   return stderr.slice(-1_000);
 }
 
+export function commandOptionsFor(file, _args = []) {
+  const apt = file === '/usr/bin/apt-get';
+  return {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: apt ? 5 * 60_000 : 30_000,
+    maxBuffer: 2 * 1024 * 1024,
+    env: {
+      PATH: SYSTEM_PATH,
+      ...(apt ? { DEBIAN_FRONTEND: 'noninteractive', NEEDRESTART_MODE: 'l' } : {}),
+    },
+  };
+}
+
 function defaultCommandRunner(file, args) {
   try {
-    const stdout = execFileSync(file, args, {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: file === '/usr/bin/apt-get' ? 5 * 60_000 : 30_000,
-      maxBuffer: 2 * 1024 * 1024,
-    });
+    const stdout = execFileSync(file, args, commandOptionsFor(file, args));
     return { ok: true, stdout: String(stdout) };
   } catch (error) {
     return { ok: false, stderr: commandErrorText(error) };
@@ -365,27 +377,46 @@ export function helperRequestFields(request) {
   return fields;
 }
 
+function sudoId(raw, label) {
+  if (typeof raw !== 'string' || !/^(?:0|[1-9]\d*)$/.test(raw)) fail(`the invoking service ${label} is invalid`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 0 || value > 0xffff_ffff) {
+    fail(`the invoking service ${label} is invalid`);
+  }
+  return value;
+}
+
 function serviceUser(runner, env) {
   const name = typeof env.SUDO_USER === 'string' ? env.SUDO_USER : '';
   if (!SAFE_USER.test(name) || name === 'root') fail('the invoking service user cannot be determined');
+  const sudoUid = sudoId(env.SUDO_UID, 'user id');
+  const sudoGid = sudoId(env.SUDO_GID, 'group id');
   const result = runner('/usr/bin/getent', ['passwd', name]);
   if (!result.ok) fail('the invoking service user does not exist');
-  const fields = String(result.stdout || '').trim().split(':');
-  const uid = Number.parseInt(fields[2] || '', 10);
-  const gid = Number.parseInt(fields[3] || '', 10);
+  const lines = String(result.stdout || '').trim().split('\n').filter(Boolean);
+  const fields = lines.length === 1 ? lines[0].split(':') : [];
+  const uid = Number(fields[2]);
+  const gid = Number(fields[3]);
   const home = fields[5] || '';
-  if (!Number.isInteger(uid) || uid <= 0 || !Number.isInteger(gid) || gid < 0 || !home.startsWith('/')) {
+  if (fields.length !== 7 || fields[0] !== name
+    || !/^(?:0|[1-9]\d*)$/.test(fields[2] || '') || !/^(?:0|[1-9]\d*)$/.test(fields[3] || '')
+    || !Number.isSafeInteger(uid) || uid <= 0 || uid > 0xffff_ffff
+    || !Number.isSafeInteger(gid) || gid < 0 || gid > 0xffff_ffff
+    || !home.startsWith('/') || home.includes('\0')) {
     fail('the invoking service user record is invalid');
   }
-  if (env.SUDO_UID && Number.parseInt(env.SUDO_UID, 10) !== uid) fail('the invoking service user id does not match sudo');
-  if (env.SUDO_GID && Number.parseInt(env.SUDO_GID, 10) !== gid) fail('the invoking service group id does not match sudo');
+  if (sudoUid !== uid) fail('the invoking service user id does not match sudo');
+  if (sudoGid !== gid) fail('the invoking service group id does not match sudo');
   return { name, uid, gid, home };
 }
 
 function runAsServiceUser(runner, user, command, args) {
   return runner('/usr/sbin/runuser', [
-    '-u', user.name, '--', '/usr/bin/env',
+    '-u', user.name, '--', '/usr/bin/env', '-i',
     `HOME=${user.home}`,
+    `USER=${user.name}`,
+    `LOGNAME=${user.name}`,
+    `PATH=${SYSTEM_PATH}`,
     `XDG_RUNTIME_DIR=/run/user/${user.uid}`,
     `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${user.uid}/bus`,
     command, ...args,
@@ -401,15 +432,48 @@ function defaultReadText(path) {
   try { return readFileSync(path, 'utf8'); } catch { return ''; }
 }
 
+export function supportedEnvironmentOs(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) return { ok: false, detail: 'operating system information is unavailable' };
+  const values = new Map();
+  for (const sourceLine of raw.split('\n')) {
+    const line = sourceLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const match = /^([A-Z][A-Z0-9_]*)=(.*)$/.exec(line);
+    if (!match) return { ok: false, detail: 'operating system information is malformed' };
+    let value = match[2];
+    if (value.startsWith('"') || value.startsWith("'")) {
+      const quote = value[0];
+      if (value.length < 2 || !value.endsWith(quote)) return { ok: false, detail: 'operating system information is malformed' };
+      value = value.slice(1, -1);
+    }
+    values.set(match[1], value);
+  }
+  if (!values.has('ID') || !values.get('ID')) return { ok: false, detail: 'operating system information is malformed' };
+  const id = String(values.get('ID')).toLowerCase();
+  if (id === 'debian') return { ok: true, detail: 'Debian is supported' };
+  if (id === 'ubuntu') return { ok: true, detail: 'Ubuntu is supported' };
+  return { ok: false, detail: 'only Debian and Ubuntu are supported' };
+}
+
 function subidEntries(readText, path) {
-  return String(readText(path) || '').split('\n').flatMap((line) => {
-    const [name, rawStart, rawCount] = line.trim().split(':');
-    const start = Number.parseInt(rawStart || '', 10);
-    const count = Number.parseInt(rawCount || '', 10);
-    return name && Number.isInteger(start) && start >= 0 && Number.isInteger(count) && count > 0
-      ? [{ name, start, end: start + count - 1 }]
-      : [];
-  });
+  const entries = [];
+  for (const sourceLine of String(readText(path) || '').split('\n')) {
+    const line = sourceLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const parts = line.split(':');
+    if (parts.length !== 3 || !/^[^\s:\0]+$/.test(parts[0]) || !/^\d+$/.test(parts[1]) || !/^\d+$/.test(parts[2])) {
+      fail(`${path} contains an invalid subordinate id entry`);
+    }
+    const start = Number(parts[1]);
+    const count = Number(parts[2]);
+    const end = start + count - 1;
+    if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(count) || count <= 0
+      || !Number.isSafeInteger(end) || end > 0xffff_ffff) {
+      fail(`${path} contains an invalid subordinate id entry`);
+    }
+    entries.push({ name: parts[0], start, end });
+  }
+  return entries;
 }
 
 function subidPresent(readText, path, user) {
@@ -431,6 +495,26 @@ function nextSubidRange(readText) {
 function lingerEnabled(runner, user) {
   const result = runner('/usr/bin/loginctl', ['show-user', user.name, '--property=Linger', '--value']);
   return result.ok && String(result.stdout || '').trim() === 'yes';
+}
+
+function userDelegation(runner, user) {
+  const result = runner('/usr/bin/systemctl', [
+    'show', `user@${user.uid}.service`, '--property=Delegate', '--property=DelegateControllers', '--value',
+  ]);
+  const lines = String(result.stdout || '').trim().split('\n');
+  return {
+    enabled: result.ok && lines[0] === 'yes',
+    controllers: new Set((lines[1] || '').trim().split(/\s+/).filter(Boolean)),
+  };
+}
+
+function ensureDelegationDropIn(runner, readText, writeAtomic) {
+  if (readText(ENVIRONMENT_DELEGATION_DROP_IN) !== ENVIRONMENT_DELEGATION_CONTENT) {
+    writeAtomic(ENVIRONMENT_DELEGATION_DROP_IN, Buffer.from(ENVIRONMENT_DELEGATION_CONTENT), 0o644);
+  }
+  // Repeat daemon-reload while the live user manager still lacks delegation. It is idempotent, and this
+  // also recovers when a previous call wrote the file but daemon-reload itself failed.
+  runRequired(runner, '/usr/bin/systemctl', ['daemon-reload'], 'systemd daemon reload failed');
 }
 
 function podmanInfo(runner, user) {
@@ -466,24 +550,21 @@ function environmentStatus(options = {}) {
   const runner = options.runner ?? defaultCommandRunner;
   const readText = options.readText ?? defaultReadText;
   const env = options.env ?? process.env;
+  const os = supportedEnvironmentOs(readText('/etc/os-release'));
   const user = serviceUser(runner, env);
   const packageState = new Map(ENVIRONMENT_PACKAGES.map((name) => [name, packageInstalled(runner, name)]));
   const podman = packageState.get('podman') ? podmanInfo(runner, user) : { ok: false, detail: 'podman is not installed' };
   const fuseInstalled = packageInstalled(runner, OPTIONAL_OVERLAY_PACKAGE);
   const overlayRequired = !podman.ok && /overlay|fuse-overlayfs|mount_program/i.test(podman.detail);
-  const delegate = runner('/usr/bin/systemctl', [
-    'show', `user@${user.uid}.service`, '--property=Delegate', '--property=DelegateControllers', '--value',
-  ]);
-  const delegateLines = String(delegate.stdout || '').trim().split('\n');
-  const delegated = new Set((delegateLines[1] || '').trim().split(/\s+/).filter(Boolean));
-  const delegateEnabled = delegate.ok && delegateLines[0] === 'yes';
+  const delegation = userDelegation(runner, user);
   const bus = runAsServiceUser(runner, user, '/usr/bin/systemctl', ['--user', 'show-environment']);
-  const items = ENVIRONMENT_PACKAGES.map((name) => ({
+  const items = [{ id: 'os:supported', label: 'Supported operating system', ok: os.ok, detail: os.detail }];
+  items.push(...ENVIRONMENT_PACKAGES.map((name) => ({
     id: `package:${name}`,
     label: PACKAGE_LABELS[name],
     ok: packageState.get(name) === true,
     detail: packageState.get(name) ? 'installed' : 'not installed',
-  }));
+  })));
   items.push({
     id: `package:${OPTIONAL_OVERLAY_PACKAGE}`,
     label: PACKAGE_LABELS[OPTIONAL_OVERLAY_PACKAGE],
@@ -499,7 +580,7 @@ function environmentStatus(options = {}) {
     { id: 'user-bus', label: 'User D-Bus', ok: bus.ok, detail: bus.ok ? 'reachable' : 'not reachable' },
   );
   for (const controller of ['cpu', 'memory', 'pids']) {
-    const ok = delegateEnabled && delegated.has(controller);
+    const ok = delegation.enabled && delegation.controllers.has(controller);
     items.push({
       id: `cgroup:${controller}`,
       label: `${controller} cgroup delegation`,
@@ -519,7 +600,10 @@ function runRequired(runner, file, args, failure) {
 function provisionEnvironments(options = {}) {
   const runner = options.runner ?? defaultCommandRunner;
   const readText = options.readText ?? defaultReadText;
+  const writeAtomic = options.writeAtomic ?? atomicWrite;
   const env = options.env ?? process.env;
+  const os = supportedEnvironmentOs(readText('/etc/os-release'));
+  if (!os.ok) fail(os.detail);
   const user = serviceUser(runner, env);
   const missing = ENVIRONMENT_PACKAGES.filter((name) => !packageInstalled(runner, name));
   let aptUpdated = false;
@@ -541,6 +625,8 @@ function provisionEnvironments(options = {}) {
     runRequired(runner, '/usr/bin/loginctl', ['enable-linger', user.name], 'systemd linger enablement failed');
   }
   let status = environmentStatus({ runner, readText, env });
+  const delegationMissing = status.items.some((item) => item.id.startsWith('cgroup:') && !item.ok);
+  if (delegationMissing) ensureDelegationDropIn(runner, readText, writeAtomic);
   const fuse = status.items.find((item) => item.id === `package:${OPTIONAL_OVERLAY_PACKAGE}`);
   if (fuse && !fuse.ok && fuse.detail === 'required by rootless overlay storage') {
     if (!aptUpdated) runRequired(runner, '/usr/bin/apt-get', ['update'], 'apt package metadata update failed');
@@ -552,9 +638,15 @@ function provisionEnvironments(options = {}) {
     );
     status = environmentStatus({ runner, readText, env });
   }
+  const delegationPending = status.items.some((item) => item.id.startsWith('cgroup:') && !item.ok)
+    && readText(ENVIRONMENT_DELEGATION_DROP_IN) === ENVIRONMENT_DELEGATION_CONTENT;
   return {
     ...status,
-    ...(status.ready ? {} : { detail: 'environment support remains incomplete' }),
+    ...(status.ready ? {} : {
+      detail: delegationPending
+        ? 'systemd delegation is configured; a reboot or user-manager restart is required'
+        : 'environment support remains incomplete',
+    }),
   };
 }
 
