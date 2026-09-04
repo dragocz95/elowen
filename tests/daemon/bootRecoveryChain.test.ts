@@ -20,7 +20,8 @@ describe('daemon boot chain — claim before the platforms, resume after them', 
 
   const tracedBrain = (trace: string[]): BrainService => ({
     reconcileGoalsOnBoot: () => { trace.push('reconcileGoals'); },
-    claimDelegationRecovery: () => { trace.push('claim:delegations'); return [{ childSessionId: 'run' }]; },
+    claimDelegationRecovery: () => { trace.push('claim:delegations'); },
+    takeClaimedDelegations: () => [{ childSessionId: 'run' }],
     orderDelegationRecovery: (runs: unknown[]) => runs,
     recoverDelegation: async () => { trace.push('resume:delegations'); return 'resumed'; },
     claimWorkflowRecovery: () => { trace.push('claim:workflows'); return [{ workflowId: 'wf' }]; },

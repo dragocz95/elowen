@@ -195,7 +195,8 @@ describe('createBootRecovery', () => {
    *  (delegations → workflows → owner and platform conversations) and the claim/resume phase split. */
   function stubHost(trace: string[]): BootRecoveryHost {
     return {
-      claimDelegationRecovery: () => { trace.push('claim:delegations'); return [{ childSessionId: 'run' } as never]; },
+      claimDelegationRecovery: () => { trace.push('claim:delegations'); },
+      takeClaimedDelegations: () => [{ childSessionId: 'run' } as never],
       orderDelegationRecovery: (runs) => { trace.push('order:delegations'); return runs; },
       recoverDelegation: async () => { trace.push('resume:delegations'); return 'resumed'; },
       claimWorkflowRecovery: () => { trace.push('claim:workflows'); return [{ workflowId: 'wf' } as never]; },
@@ -211,16 +212,20 @@ describe('createBootRecovery', () => {
     // Asserted on the DECLARED graph, not on a trace: a trace would pass just as happily on a chain whose
     // providers merely happen to be registered in a working order.
     expect(createBootRecovery(stubHost([]), silentLog()).plan()).toEqual([
+      // The synchronous claim everything else reads: which runs this boot owns, and therefore which
+      // parked turns wait on a recovering child.
+      { id: 'delegations-claim', dependsOn: [], parallel: false },
       // Concurrent respawns: the deepest-first guarantee lives in the host (a run awaits its claimed
       // descendants), so a fleet of independent trees no longer serializes on one another.
-      { id: 'delegations', dependsOn: [], parallel: true },
+      { id: 'delegations', dependsOn: ['delegations-claim'], parallel: true },
       // The workflow claim is taken by the delegation reconcile, and a delegation claimed under a claimed
       // workflow's node session is superseded by that workflow's resume.
       { id: 'workflows', dependsOn: ['delegations'], parallel: false },
-      // Woken in the FIRST wave, alongside the delegation sweep: a result that is already durable reaches
-      // its owner at once, and a later one arrives through the recovery's completion hook.
-      { id: 'owner-conversations', dependsOn: [], parallel: true },
-      { id: 'platform-conversations', dependsOn: [], parallel: true },
+      // Woken alongside the delegation RUN (not after it): a result that is already durable reaches its
+      // owner at once, and a later one arrives through the recovery's completion hook. The dependency on
+      // the claim is what makes the wait-on-delegation decision independent of registration order.
+      { id: 'owner-conversations', dependsOn: ['delegations-claim'], parallel: true },
+      { id: 'platform-conversations', dependsOn: ['delegations-claim'], parallel: true },
     ]);
   });
 
@@ -263,6 +268,38 @@ describe('createBootRecovery', () => {
     finishDelegation();
     await done;
     expect(trace.indexOf('resume:workflows')).toBeGreaterThan(trace.indexOf('resume:delegations:end'));
+  });
+
+  it('sequences the claims by dependency, not by registration order (the owner sweep reads the delegation claim)', async () => {
+    // Same providers, registered BACKWARDS through a bare coordinator: the owner and platform claims must
+    // still run after the delegation claim, or awaitsDelegations would read an empty claim set.
+    const trace: string[] = [];
+    const host = stubHost(trace);
+    const reference = createBootRecovery(host, silentLog()).plan();
+    const reversed = new BootRecoveryCoordinator(silentLog());
+    const resumeOf: Record<string, () => Promise<RecoveryOutcome>> = {
+      'delegations-claim': async () => 'released',
+      delegations: async () => host.recoverDelegation({} as never),
+      workflows: async () => host.resumeWorkflow({} as never),
+      'owner-conversations': async () => host.resumeParkedConversation({} as never),
+      'platform-conversations': async () => host.resumeParkedPlatformTurn({} as never),
+    };
+    const claimOf: Record<string, () => readonly unknown[]> = {
+      'delegations-claim': () => { host.claimDelegationRecovery(); return []; },
+      delegations: () => host.takeClaimedDelegations(),
+      workflows: () => host.claimWorkflowRecovery(),
+      'owner-conversations': () => host.claimParkedConversations(),
+      'platform-conversations': () => host.claimParkedPlatformTurns(),
+    };
+    for (const provider of [...reference].reverse()) {
+      reversed.register({ id: provider.id, dependsOn: provider.dependsOn, parallel: provider.parallel, claim: claimOf[provider.id]!, resume: resumeOf[provider.id]! });
+    }
+    reversed.claimAll(0);
+    expect(trace.indexOf('claim:delegations')).toBeLessThan(trace.indexOf('claim:conversations'));
+    expect(trace.indexOf('claim:delegations')).toBeLessThan(trace.indexOf('claim:platform'));
+    expect(trace.indexOf('claim:delegations')).toBeLessThan(trace.indexOf('claim:workflows'));
+    await reversed.resumeAll();
+    expect(trace.indexOf('resume:workflows')).toBeGreaterThan(trace.indexOf('resume:delegations'));
   });
 
   it('still resumes workflows and conversations when the delegation sweep fails', async () => {

@@ -193,6 +193,8 @@ export class BrainService {
   private bootOwnerResultParents = new Set<string>();
   /** `parent\0toolCallId` of every delegation this boot claimed — see parkedTurnAwaitsDelegations. */
   private bootClaimedCalls = new Set<string>();
+  /** The claim set itself, held between the `delegations-claim` and `delegations` providers' claims. */
+  private bootClaimedRuns: RecoverableRun[] = [];
   /** The destructive session lifecycle: turn interruption (Esc/Stop), the client-close stop, the idle
    *  reaper and conversation delete/purge — see SessionTeardownService. */
   private teardown: SessionTeardownService;
@@ -688,18 +690,25 @@ export class BrainService {
   // storage, transactions, the on-disk journal, every fail-closed refusal and every user notice — stays
   // here; the coordinator only orders these steps and tallies the outcome each one reports. ---
 
-  /** `delegations` provider, CLAIM: run the synchronous boot reconcile and hand over the generic run
-   *  claims. The reconcile claims BOTH substrates in one pass, because a delegation claimed under a
-   *  claimed workflow's node session has to be superseded before either set is handed out; the workflow
-   *  half is taken by {@link claimWorkflowRecovery}, whose provider declares the dependency that orders it
-   *  after this one. */
-  claimDelegationRecovery(): RecoverableRun[] {
+  /** `delegations-claim` provider: run the synchronous boot reconcile and stash the generic run claims
+   *  for {@link takeClaimedDelegations}. The reconcile claims BOTH substrates in one pass, because a
+   *  delegation claimed under a claimed workflow's node session has to be superseded before either set is
+   *  handed out; the workflow half is taken by {@link claimWorkflowRecovery}, whose provider declares the
+   *  dependency that orders it after this one. */
+  claimDelegationRecovery(): void {
     this.delegated.reconcileDelegationsOnBoot();
     const runs = this.delegated.takePendingRecovery();
     this.bootOwnerResultParents = new Set(
       runs.map((run) => run.parentSessionId).filter((sessionId) => !isNonUserSession(sessionId))
     );
     this.bootClaimedCalls = new Set(runs.map((run) => `${run.parentSessionId}\u0000${run.toolCallId}`));
+    this.bootClaimedRuns = runs;
+  }
+
+  /** `delegations` (run) provider, CLAIM: the runs the claim provider took, exactly once. */
+  takeClaimedDelegations(): RecoverableRun[] {
+    const runs = this.bootClaimedRuns;
+    this.bootClaimedRuns = [];
     return runs;
   }
 
@@ -793,9 +802,11 @@ export class BrainService {
    *
    *  Genuine shutdown parks still come from parkedSessions and remain partitioned from platform turns.
    *  Result wakes come from the raw durable outbox plus parents whose claimed child will enqueue a result
-   *  later in this boot. The latter must be named during CLAIM because every provider claims before any
-   *  provider resumes; the dependency on `delegations` then guarantees the result exists before this item
-   *  runs. One item per conversation, tagged so a result wake is never mistaken for a generic restart. */
+   *  later in this boot. The latter are named during CLAIM (the provider depends on `delegations-claim`,
+   *  so the claim set is known here) but their result is NOT awaited: the wake runs in the same wave as
+   *  the respawns, and a result that lands later is delivered by the recovery's completion hook
+   *  (onRecoveredRunCompleted). One item per conversation, tagged so a result wake is never mistaken for
+   *  a generic restart. */
   claimParkedConversations(): OwnerConversationRecovery[] {
     const claimed = new Map<string, OwnerConversationRecovery>();
     for (const row of this.d.store.parkedSessions()) {
