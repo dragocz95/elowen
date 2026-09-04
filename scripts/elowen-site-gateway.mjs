@@ -759,30 +759,36 @@ async function readStdin() {
   }
 }
 
+export function helperRequestNeedsDeployment(request) {
+  return request?.op === 'status'
+    || request?.op === 'sync-sites'
+    || request?.op === 'ensure-site'
+    || request?.op === 'remove-site'
+    || request?.op === 'deny';
+}
+
 async function main() {
   if (typeof process.getuid === 'function' && process.getuid() !== 0) fail('helper must run as root');
   // No command-line modes at all: HTTP-01 needs no auth hook, so the sudoers rule can pin the empty
   // argument vector and there is no argv surface left to reach.
   if (process.argv.length > 2) fail('helper accepts no command-line arguments');
   const request = await readStdin();
-  if (request?.op === 'environments-status') {
-    const response = await applyRequest(request);
-    process.stdout.write(`${JSON.stringify(response)}\n`);
-    return;
-  }
-  if (request?.op === 'status'
+  if (request?.op === 'environments-status'
+    || request?.op === 'status'
     || request?.op === 'prepare-runtime-socket'
     || request?.op === 'seal-runtime-socket'
     || request?.op === 'remove-runtime-socket') {
-    const response = await applyRequest(request, readDeployment());
+    const response = helperRequestNeedsDeployment(request)
+      ? await applyRequest(request, readDeployment())
+      : await applyRequest(request);
     process.stdout.write(`${JSON.stringify(response)}\n`);
     return;
   }
   const release = await acquireMutationLock();
   try {
-    const response = request?.op === 'environments-provision'
-      ? await applyRequest(request)
-      : await applyRequest(request, readDeployment());
+    const response = helperRequestNeedsDeployment(request)
+      ? await applyRequest(request, readDeployment())
+      : await applyRequest(request);
     process.stdout.write(`${JSON.stringify(response)}\n`);
   } finally {
     release();

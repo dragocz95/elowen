@@ -7,6 +7,7 @@ import {
   applyRequest,
   commandOptionsFor,
   helperRequestFields,
+  helperRequestNeedsDeployment,
   supportedEnvironmentOs,
 } from '../../scripts/elowen-site-gateway.mjs';
 
@@ -124,6 +125,21 @@ describe('published-sites environment support helper', () => {
     expect(() => helperRequestFields({ op: 'environments-provision', packages: ['curl'] })).toThrow(/extra fields/);
     await expect(applyRequest({ op: 'environments-status', command: 'id' }, deployment)).rejects.toThrow(/extra fields/);
     await expect(applyRequest({ op: 'environment-support-status' }, deployment)).rejects.toThrow(/not supported/);
+  });
+
+  it('keeps environment and runtime-socket operations independent from gateway deployment metadata', () => {
+    for (const op of [
+      'environments-status',
+      'environments-provision',
+      'prepare-runtime-socket',
+      'seal-runtime-socket',
+      'remove-runtime-socket',
+    ]) {
+      expect(helperRequestNeedsDeployment({ op })).toBe(false);
+    }
+    for (const op of ['status', 'sync-sites', 'ensure-site', 'remove-site', 'deny']) {
+      expect(helperRequestNeedsDeployment({ op })).toBe(true);
+    }
   });
 
   it('runs helper commands with a minimal environment and disables apt service restarts', () => {
