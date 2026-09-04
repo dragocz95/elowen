@@ -29,6 +29,7 @@ import { normalizeDelegatedExecutionScope, scopeExceedsCurrentAccess, type Deleg
 import { buildPermissionRuleset, noninteractivePermissionBoundary } from './toolPermissions.js';
 import { isNonUserSession, isOwnedUserSession, isSubagentSession, isChannelSession, channelIdOf, defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId } from './sessionId.js';
 import { lastAssistantText } from './goal.js';
+import { DELEGATION_WAIT_TOOLS, outstandingToolCalls } from './persistence.js';
 import { ClientAttachments } from './service/attachments.js';
 import { DelegatedSessionService } from './service/delegatedSession.js';
 import { IdleSessionClock } from './service/liveSessionReaper.js';
@@ -38,7 +39,7 @@ import { LiveSessionSpawner } from './service/spawner.js';
 import { ConversationLifecycle } from './service/lifecycle.js';
 import { recordSessionEvent, scheduleReasoningMarker } from './service/sessionEvents.js';
 import { clientDir } from './service/workDir.js';
-import { BrainTurnRunner } from './service/turnRunner.js';
+import { BrainTurnRunner, subagentResultReminder } from './service/turnRunner.js';
 import type { BoundClientRequest, TurnRequest } from './service/turnRequest.js';
 import { BrainStatusService } from './service/statusService.js';
 import type { SessionListItem, SessionPage, SessionPageOpts, MessagePage, MessagePageOpts, BrainStatusView, ManagedSessionView } from './service/statusService.js';
@@ -54,10 +55,11 @@ import { SessionQueueService } from './service/sessionQueue.js';
 import { exportBrainSession } from './session/exportSession.js';
 import type { ExportFormat, SessionExport } from './session/exportSession.js';
 import { toolAuthorityForUser } from './brainDeps.js';
-import { resumePlatformTurn, type ParkedPlatformTurn } from './platformTurnRecovery.js';
+import { notifyInterruptedPlatformTurn, platformTurnInterruptionClass, resumePlatformTurn, type PlatformResumeContinuation, type ParkedPlatformTurn } from './platformTurnRecovery.js';
 import type { OwnerConversationRecovery } from './recovery/providers.js';
 import type { RecoveryOutcome } from './recovery/types.js';
 import type { BrainDeps } from './brainDeps.js';
+import type { BrainSessionRow, PauseInterruption } from '../store/brainStore.js';
 import { processRegistry, type ProcessInfo } from './processRegistry.js';
 import type { BrainStreamSnapshot } from './session/liveEventReplay.js';
 import { DEFAULT_BRAIN_LIMITS } from '../store/configStore.js';
@@ -86,12 +88,31 @@ const MAX_WORKFLOW_RESUME_ATTEMPTS = 3;
 const MAX_PARK_RESUME_ATTEMPTS = 3;
 const MAX_RESULT_WAKE_ATTEMPTS = 3;
 
+/** The pause's only wait, and only for turns that have NO resume (see pauseForRestart): a bounded grace
+ *  for a step about to finish, fixed and deliberately far below the unit's stop timeout. */
+const PAUSE_UNPARKABLE_WAIT_MS = 20_000;
+const PAUSE_UNPARKABLE_POLL_MS = 250;
+
+/** What a pause-for-restart left behind — the shutdown log line's material. */
+export interface PauseSummary {
+  turns: number;
+  children: number;
+  /** Owner / platform turns that got a park marker (resumed by the boot sweeps). */
+  parked: string[];
+  /** Messages checkpointed out of PI's mid-turn queue. */
+  queued: number;
+  /** Live turns with NO resume — handed to {@link BrainService.settleUnparkable} for the bounded wait. */
+  unparkable: string[];
+}
+
 /** The hidden continuation a boot resume injects into a parked conversation. Delivered through PI's
  *  custom-message seam (`display:false`) so it never renders as a fake user bubble; it appends at the
  *  transcript's TAIL, after the fully-answered pending step the park left behind, so the cached prefix
  *  above it is untouched. The turn it triggers produces the answer the restart interrupted. */
-const PARKED_RESUME_NOTE = 'The daemon restarted and interrupted this conversation\'s active turn at a step boundary. '
-  + 'Every tool result above is complete, but the remaining work was not done and the final answer was never delivered. '
+const PARKED_RESUME_NOTE = 'The daemon restarted and interrupted this conversation\'s active turn. '
+  + 'The remaining work was not done and the final answer was never delivered. A tool result marked [interrupted] '
+  + 'belongs to a call the restart cut off: its effect is unknown, so check the current state before repeating it '
+  + 'and never assume it completed; every other tool result above is complete. '
   + 'Continue exactly where the transcript leaves off and finish the turn: complete any remaining work and give the user '
   + 'the answer they are still waiting for. Do not redo work whose results are already above, and do not dwell on the '
   + 'interruption. If the transcript shows the request was in fact fully answered, reply with a one-line confirmation only.';
@@ -187,6 +208,10 @@ export class BrainService {
   /** Top-level owner parents whose claimed children will enqueue a result during this boot. The owner
    * recovery provider claims them before that enqueue exists, then wakes them after delegation recovery. */
   private bootOwnerResultParents = new Set<string>();
+  /** `parent\0toolCallId` of every delegation this boot claimed — see parkedTurnAwaitsDelegations. */
+  private bootClaimedCalls = new Set<string>();
+  /** The claim set itself, held between the `delegations-claim` and `delegations` providers' claims. */
+  private bootClaimedRuns: RecoverableRun[] = [];
   /** The destructive session lifecycle: turn interruption (Esc/Stop), the client-close stop, the idle
    *  reaper and conversation delete/purge — see SessionTeardownService. */
   private teardown: SessionTeardownService;
@@ -216,7 +241,7 @@ export class BrainService {
     d.store.setDelegationBootId(randomUUID());
     // Mid-turn messages are STEERED into the running turn via PI's native queue (session.steer); PI fans
     // its transient backlog as `queue_update`, mapped to the `queue` snapshot event in the spawner.
-    this.factory = new BrainSessionFactory({ store: d.store, chatImagesDir: d.chatImagesDir, onTurnSettled: d.onTurnSettled, createSession: d.createSession, resourceLoaderFactory: d.resourceLoaderFactory, stepDrain: d.stepDrain });
+    this.factory = new BrainSessionFactory({ store: d.store, chatImagesDir: d.chatImagesDir, onTurnSettled: d.onTurnSettled, createSession: d.createSession, resourceLoaderFactory: d.resourceLoaderFactory });
     this.identity = new IdentityResolver({ platformOwner: d.platformOwner, resolvePlatformUser: d.resolvePlatformUser, users: d.users });
     this.titler = new ConversationTitler({ store: d.store, inference: d.inference ?? (() => null), logger: logger('conversation-titler') });
     // Built before the channel service so it can share the SAME curator instance — channel and
@@ -405,6 +430,24 @@ export class BrainService {
       // A DelegateContinue targeting a child whose turn runs in the sub-agent runner steers THROUGH that
       // process — only the process holding the PI session can inject into its running turn.
       ...(d.subagentRunner ? { steerRemote: (channelId: string, text: string) => d.subagentRunner?.steer(channelId, text) ?? Promise.resolve({ outcome: 'idle' as const }) } : {}),
+      // The recovered child's answer takes the ordinary background-delivery path into its parent. A parent
+      // that was PAUSED on that very delegation (park marker, no resume of its own — see
+      // resumeParkedConversation) is un-parked once the answer has actually been consumed by a turn, so
+      // the next boot does not resume a conversation the result already finished.
+      onRecoveredRunCompleted: async (parentSessionId, ownerUserId) => {
+        // A top-level platform room has no inbox drain (its turns run under a durable envelope, not an
+        // owner's live session): the result is delivered as the room's own resume continuation.
+        if (isChannelSession(parentSessionId) && !isSubagentSession(parentSessionId)) {
+          await this.deliverRecoveredResultToRoom(parentSessionId);
+          return;
+        }
+        const outcome = await this.turnRunner.drainPendingSubagentResults(ownerUserId, parentSessionId);
+        if (outcome.answered && !this.d.store.hasPendingDelivery(parentSessionId)) {
+          this.d.store.clearSessionPark(parentSessionId);
+          return;
+        }
+        await this.rescueParkedParent(parentSessionId);
+      },
     });
     this.pluginServices = new PluginServiceRunner(() => this.resolvePlugins());
     this.platforms = new PlatformOrchestrator({
@@ -517,34 +560,168 @@ export class BrainService {
     return { ...this.sessions.busy(), undelivered: this.d.store.countPendingDeliveries() };
   }
 
-  /** Latched true by the graceful-shutdown handler on the first SIGTERM. From then on a NEW turn is
-   *  refused (turnRunner.send / channelService.send) so {@link busy} can fall to zero and the drain can
-   *  exit — otherwise fresh input arriving through the drain window keeps it busy for the full budget.
-   *  One-way: a draining daemon is on its way out, never back to admitting. Delegation and result
-   *  delivery take other seams, so they keep running and the drain still waits for them.
-   *
-   *  Also latches the STEP-BOUNDARY drain: every live turn is parked at its next boundary (see
-   *  stepDrain.ts) here and in the runner pool, and parked questions are cancelled — an elicitation is a
-   *  tool execution that can wait on a human for minutes, and a daemon on its way out has no business
-   *  holding the exit for an answer it could not act on anyway (the cancel lets the turn reach its
-   *  boundary and park; the question is re-askable after the restart). */
+  /** Latched true by the pause on the first SIGTERM. From then on a NEW turn is refused
+   *  (turnRunner.send / channelService.send): the process is on its way out and fresh input must reach
+   *  the next boot as a durable row, not a half-run turn. One-way: never back to admitting. Parked
+   *  questions are cancelled — an elicitation is a tool execution that can wait on a human for minutes,
+   *  and a daemon on its way out cannot act on the answer anyway (the question is re-askable after the
+   *  restart). */
   beginDrain(): void {
     this.draining = true;
-    if (this.d.stepDrain) {
-      this.d.stepDrain.begin();
-      this.d.remoteStepDrain?.begin();
-      this.elicitation.cancelAll('daemon restarting');
+    this.elicitation.cancelAll('daemon restarting');
+  }
+
+  /** PAUSE for a restart — the only shutdown. Its predecessor, a step-boundary drain, was measured at a
+   *  median of four minutes (and the full ten-minute budget in a fifth of restarts) whenever a sub-agent
+   *  was in flight. Nothing is waited for: the durable checkpoint already exists, because every assistant and
+   *  tool-result message is mirrored into SQLite the moment PI finishes it (persistence.ts
+   *  projectPendingMessage), so all this has to do is make the resume DETERMINISTIC:
+   *   - every live owner / platform turn gets its park marker NOW (the marker the boot resume sweeps
+   *     read), so the boot sweep continues it from its durable tail — where an unanswered tool call is
+   *     answered with an `interrupted` result (settlePartialTurn) instead of being replayed or lost;
+   *   - every message still queued behind a running turn (PI's steer / follow-up queue is process memory)
+   *     is written as a durable user row at the transcript tail, in delivery order, so it is read by the
+   *     resumed turn rather than vanishing with the process;
+   *   - delegated children need nothing: their run rows stay `running` and the next boot claims and
+   *     respawns them (delegatedSession.ts), and a runner process dies with the daemon's cgroup;
+   *   - a turn with NO resume (cron, an unlinked room sender, a task worker …) gets one bounded wait and
+   *     is then recorded as interrupted, for the boot sweep to say so where the reply was expected.
+   *  No PI abort is issued on purpose: an abort unwinds through the delegation tree and terminalizes child
+   *  run rows as aborted, which is exactly the work a pause must keep. The process exits right after. */
+  pauseForRestart(): PauseSummary {
+    this.beginDrain();
+    const at = this.busy();
+    const parked: string[] = [];
+    const unparkable: string[] = [];
+    let queued = 0;
+    for (const sessionId of this.sessions.activeTurnSessionIds()) {
+      // A held non-session serial key (a plugin reload) counts as a turn but is no conversation.
+      if (!this.d.store.getSession(sessionId)) continue;
+      const live = this.sessions.get(sessionId)
+        ?? (isChannelSession(sessionId) ? this.sessions.channelGet(channelIdOf(sessionId)) : undefined);
+      if (live) queued += this.checkpointQueuedMessages(sessionId, live);
+      if (isSubagentSession(sessionId)) continue; // resumed from its run row, never a park marker
+      if (this.d.turnPark?.parkNow(sessionId)) parked.push(sessionId);
+      else unparkable.push(sessionId);
+    }
+    return { turns: at.turns, children: at.children, parked, queued, unparkable };
+  }
+
+  /** The second, ASYNCHRONOUS half of the pause, for the turns {@link pauseForRestart} could not park (a
+   *  cron run, a room turn from an unlinked sender, a task worker …): the ONE bounded wait a pause has —
+   *  long enough for a step that is about to finish, never a drain — after which whatever still runs is
+   *  recorded durably, so the boot sweep can say so where the reply was expected. An interruption is
+   *  never silent, but it never holds the restart either. Returns the sessions recorded. */
+  async settleUnparkable(unparkable: readonly string[], budgetMs = PAUSE_UNPARKABLE_WAIT_MS): Promise<string[]> {
+    const interrupted = await this.waitForUnparkable(unparkable, budgetMs);
+    for (const sessionId of interrupted) {
+      const cls = isChannelSession(sessionId) ? platformTurnInterruptionClass(this.d.store, sessionId) ?? 'other' : 'other';
+      this.d.store.recordPauseInterruption(sessionId, cls);
+    }
+    return interrupted;
+  }
+
+  /** Poll the live turn set until none of `sessionIds` is running, or the budget is out. Returns the
+   *  ones still running. */
+  private async waitForUnparkable(sessionIds: readonly string[], budgetMs: number): Promise<string[]> {
+    if (sessionIds.length === 0) return [];
+    const deadline = Date.now() + budgetMs;
+    for (;;) {
+      const live = new Set(this.sessions.activeTurnSessionIds());
+      const still = sessionIds.filter((id) => live.has(id));
+      if (still.length === 0 || Date.now() >= deadline) return still;
+      await new Promise((resolve) => setTimeout(resolve, PAUSE_UNPARKABLE_POLL_MS));
     }
   }
 
-  /** How many live turns are still MID-STEP, across this process and the runner pool — what the
-   *  step-boundary shutdown drain actually waits on. Undefined when no coordinator is wired (minimal
-   *  test daemons), which tells the drain to fall back to whole-turn waiting. */
-  async midStepWork(): Promise<number | undefined> {
-    if (!this.d.stepDrain) return undefined;
-    const local = this.d.stepDrain.unsafeCount(this.sessions.activeTurnSessionIds());
-    const remote = await (this.d.remoteStepDrain?.midStepWork() ?? Promise.resolve(0));
-    return local + remote;
+  /** Checkpoint PI's transient mid-turn queue (steers first — PI delivers those before the follow-ups)
+   *  into the side table brain_paused_queue, images included. NOT as transcript rows: a user row appended
+   *  behind a pending tool call sits between that call and its synthetic `interrupted` answer, and every
+   *  provider refuses such a context — durably, on every later turn. The boot resume replays the queue
+   *  as ordinary user turns once the interrupted turn has been continued (replayPausedQueue). Owner
+   *  conversations only: a platform room's queued messages belong to a room member whose turn envelope
+   *  is not this conversation's to replay (reported, not silently dropped). */
+  private checkpointQueuedMessages(sessionId: string, live: LiveBrain): number {
+    const items = this.queuedSnapshot(live)
+      .filter((message) => message.text.trim())
+      .map((message) => ({
+        text: message.text,
+        ...(message.images?.length ? { images: message.images.map((image) => ({ data: image.data, mimeType: image.mimeType })) } : {}),
+      }));
+    if (items.length === 0) return 0;
+    if (isNonUserSession(sessionId)) {
+      logger('brain').warn(`pause: ${items.length} queued message(s) in ${sessionId} cannot be checkpointed for a non-owner session — the sender must resend`);
+      return 0;
+    }
+    this.d.store.checkpointPausedQueue(sessionId, items);
+    return items.length;
+  }
+
+  /** Replay the pause checkpoint's queue as ordinary user turns, in delivery order, after the interrupted
+   *  turn was continued (or, for a turn waiting durably on its delegations, right away — the answer comes
+   *  later either way). `interruptResume` lets each turn through the admission gate of a daemon that is
+   *  still finishing its boot sweep. A failed replay is logged and the rest still goes: the messages
+   *  were the user's words and losing one silently is the one thing this exists to prevent. */
+  private async replayPausedQueue(row: BrainSessionRow): Promise<void> {
+    const items = this.d.store.takePausedQueue(row.id);
+    for (const item of items) {
+      try {
+        await this.turnRunner.send({
+          userId: row.user_id, text: item.text, session: row.id, interruptResume: true,
+          ...(item.images?.length ? { images: item.images } : {}),
+        });
+      } catch (e) {
+        logger('brain').error(`replay of a message queued before the pause failed for ${row.id}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    if (items.length > 0) logger('brain').info(`replayed ${items.length} message(s) queued before the pause into ${row.id}`);
+  }
+
+  /** A platform room paused on its delegation receives the recovered result the way the owner does — as
+   *  the continuation of the interrupted turn — through the platform resume with a `<subagent-result>`
+   *  note in place of the generic restart note (resumePlatformTurn's `continuation`). The inbox rows are
+   *  acknowledged only once the room's model has answered on them. Waits for a sibling that is still
+   *  recovering, exactly like the owner path. */
+  private async deliverRecoveredResultToRoom(parentSessionId: string): Promise<void> {
+    const row = this.d.store.getSession(parentSessionId);
+    if (!row) return;
+    if (this.d.store.recoveringSubagentSessionIds(parentSessionId).length > 0) return;
+    const results = this.d.store.pendingSubagentResults(parentSessionId);
+    if (results.length === 0) return;
+    if (!row.parked_at) {
+      // The pause could not park this room turn (see platformTurnParkEligible): nobody continues it, so
+      // the answer stays readable through DelegateRead and the room is told so by the resumed sender.
+      logger('brain').warn(`recovered sub-agent result(s) for unparked platform room ${parentSessionId} stay in the inbox; the room reads them through DelegateRead`);
+      return;
+    }
+    const note = `${results.map(subagentResultReminder).join('\n')}\n`
+      + 'The daemon restarted while this conversation was waiting on the sub-agent work above; the interrupted '
+      + 'Delegate call is marked [interrupted] in the transcript. Continue from these results and give the sender '
+      + 'the answer they are waiting for. Do not re-delegate the same work.';
+    const outcome = await this.resumeParkedPlatformTurn({ id: row.id, park_attempts: row.park_attempts }, {
+      note,
+      acknowledge: () => { for (const result of results) this.d.store.acknowledgeSubagentResult(parentSessionId, result.id); },
+    });
+    logger('brain').info(`platform room ${parentSessionId}: recovered result delivered as its continuation (${outcome})`);
+  }
+
+  /** The safety net under a parent PAUSED on its delegation (resumeParkedConversation's durable wait): the
+   *  recovered child's result did not un-park it — delivery failed, or the child terminalized with a
+   *  notice the parent must see. Once no other child of this boot is still recovering, run the ordinary
+   *  parked resume: the result wake retries the delivery and then the generic continuation; on repeated
+   *  failure the marker stays for the next boot, and the attempt cap ends it visibly. Nothing here may
+   *  leave a conversation parked with nobody left to un-park it. */
+  private async rescueParkedParent(parentSessionId: string): Promise<void> {
+    const row = this.d.store.getSession(parentSessionId);
+    if (!row?.parked_at || isNonUserSession(parentSessionId)) return;
+    if (this.d.store.recoveringSubagentSessionIds(parentSessionId).length > 0) return; // a sibling still delivers later
+    logger('brain').info(`parked conversation ${parentSessionId}: recovered result did not un-park it — running the ordinary parked resume`);
+    try {
+      const outcome = await this.resumeParkedConversation({ row, parked: true, resultsExpected: true });
+      logger('brain').info(`parked conversation ${parentSessionId}: rescue resume ${outcome}`);
+    } catch (e) {
+      logger('brain').error(`parked conversation ${parentSessionId}: rescue resume failed`, e);
+    }
   }
 
   /** The turn drain has finished and process exit is now terminal. Stop browser/process-owning plugin
@@ -576,18 +753,39 @@ export class BrainService {
   // storage, transactions, the on-disk journal, every fail-closed refusal and every user notice — stays
   // here; the coordinator only orders these steps and tallies the outcome each one reports. ---
 
-  /** `delegations` provider, CLAIM: run the synchronous boot reconcile and hand over the generic run
-   *  claims. The reconcile claims BOTH substrates in one pass, because a delegation claimed under a
-   *  claimed workflow's node session has to be superseded before either set is handed out; the workflow
-   *  half is taken by {@link claimWorkflowRecovery}, whose provider declares the dependency that orders it
-   *  after this one. */
-  claimDelegationRecovery(): RecoverableRun[] {
+  /** `delegations-claim` provider: run the synchronous boot reconcile and stash the generic run claims
+   *  for {@link takeClaimedDelegations}. The reconcile claims BOTH substrates in one pass, because a
+   *  delegation claimed under a claimed workflow's node session has to be superseded before either set is
+   *  handed out; the workflow half is taken by {@link claimWorkflowRecovery}, whose provider declares the
+   *  dependency that orders it after this one. */
+  claimDelegationRecovery(): void {
     this.delegated.reconcileDelegationsOnBoot();
     const runs = this.delegated.takePendingRecovery();
     this.bootOwnerResultParents = new Set(
       runs.map((run) => run.parentSessionId).filter((sessionId) => !isNonUserSession(sessionId))
     );
+    this.bootClaimedCalls = new Set(runs.map((run) => `${run.parentSessionId}\u0000${run.toolCallId}`));
+    this.bootClaimedRuns = runs;
+  }
+
+  /** `delegations` (run) provider, CLAIM: the runs the claim provider took, exactly once. */
+  takeClaimedDelegations(): RecoverableRun[] {
+    const runs = this.bootClaimedRuns;
+    this.bootClaimedRuns = [];
     return runs;
+  }
+
+  /** Is this parked owner turn blocked ONLY on delegation calls this boot is recovering — read off its
+   *  still-pending tail, before any spawn settles it (see OwnerConversationRecovery.awaitsDelegations). */
+  private parkedTurnAwaitsDelegations(sessionId: string): boolean {
+    const outstanding = outstandingToolCalls(this.d.store.pendingMessages(sessionId).map((row) => row.content));
+    // EVERY outstanding call must be a delegation (a local tool in the batch means the turn has to be
+    // continued now), and at least ONE of them must still be recovering this boot: a batch where child A
+    // already finished and child B is being recovered still waits for B — resuming on A's answer alone
+    // would make the turn answer twice, once now and once when B's result lands.
+    return outstanding.length > 0
+      && outstanding.every((call) => DELEGATION_WAIT_TOOLS.has(call.name))
+      && outstanding.some((call) => this.bootClaimedCalls.has(`${sessionId}\u0000${call.id}`));
   }
 
   /** `delegations` provider, ORDER: deepest first — see DelegatedSessionService.orderForRecovery. */
@@ -667,14 +865,16 @@ export class BrainService {
    *
    *  Genuine shutdown parks still come from parkedSessions and remain partitioned from platform turns.
    *  Result wakes come from the raw durable outbox plus parents whose claimed child will enqueue a result
-   *  later in this boot. The latter must be named during CLAIM because every provider claims before any
-   *  provider resumes; the dependency on `delegations` then guarantees the result exists before this item
-   *  runs. One item per conversation, tagged so a result wake is never mistaken for a generic restart. */
+   *  later in this boot. The latter are named during CLAIM (the provider depends on `delegations-claim`,
+   *  so the claim set is known here) but their result is NOT awaited: the wake runs in the same wave as
+   *  the respawns, and a result that lands later is delivered by the recovery's completion hook
+   *  (onRecoveredRunCompleted). One item per conversation, tagged so a result wake is never mistaken for
+   *  a generic restart. */
   claimParkedConversations(): OwnerConversationRecovery[] {
     const claimed = new Map<string, OwnerConversationRecovery>();
     for (const row of this.d.store.parkedSessions()) {
       if (isNonUserSession(row.id)) continue;
-      claimed.set(row.id, { row, parked: true, resultsExpected: false });
+      claimed.set(row.id, { row, parked: true, resultsExpected: false, awaitsDelegations: this.parkedTurnAwaitsDelegations(row.id) });
     }
     const resultParents = new Set([
       ...this.d.store.pendingDeliveryParentSessionIds(),
@@ -825,6 +1025,21 @@ export class BrainService {
       if (!item.parked) return 'released';
     }
 
+    // A turn the pause caught waiting on its own delegation(s) is not continued here: the recovered
+    // child's answer arrives through onRecoveredRunCompleted and IS the continuation (and clears the
+    // marker once consumed). Resuming now would only make the model say "still waiting" — a wasted turn
+    // that might even answer the user prematurely. The marker stays, so a delivery that never comes is
+    // retried by the next boot like any other park.
+    if (item.awaitsDelegations) {
+      // Counted like every other park: a delivery that keeps failing boot after boot reaches the same
+      // cap and the same visible give-up (top of this method) instead of parking forever.
+      if (!this.d.store.claimParkResumeAttempt(row.id)) {
+        log.info(`parked conversation ${row.id}: marker cleared before the delegation wait was recorded (the user spoke) — skipping`);
+        return 'released';
+      }
+      log.info(`parked conversation ${row.id} waits durably for its recovering sub-agent(s); no resume turn (attempt ${row.park_attempts + 1}/${MAX_PARK_RESUME_ATTEMPTS})`);
+      return 'released';
+    }
     // The durable claim: bump the attempt counter, but only while the marker still stands. Losing this
     // race means the user already spoke (admission cleared the marker) or aborted — their input is the
     // continuation, and injecting ours on top is exactly the double-continuation this guards against.
@@ -866,7 +1081,42 @@ export class BrainService {
     }
     } finally {
       if (item.resultsExpected) this.turnRunner.releaseSettledResultDelivery(row.id);
+      // Whatever the resume did, the messages the user typed behind the paused turn are theirs to have
+      // answered — replayed last, so they land AFTER the continued turn, in the order they were typed.
+      if (item.parked) await this.replayPausedQueue(row);
     }
+  }
+
+  /** `interrupted-turns` provider, CLAIM: every turn the last pause could not park (consumed once). */
+  claimPauseInterruptions(): PauseInterruption[] {
+    return this.d.store.takePauseInterruptions();
+  }
+
+  /** `interrupted-turns` provider, RESUME: nothing resumes — tell whoever was waiting. A room turn gets
+   *  the notice posted into the room (its envelope is consumed); a cron/scheduled run, which has no room
+   *  to tell, is reported to the daemon's owner notice channel; everything else is logged. Nothing here
+   *  spends a model turn. */
+  async notifyPauseInterruption(item: PauseInterruption): Promise<RecoveryOutcome> {
+    const log = logger('brain');
+    if (item.class === 'cron' || item.class === 'scheduled') {
+      const title = this.d.store.getSession(item.sessionId)?.title ?? item.sessionId;
+      log.warn(`scheduled run ${item.sessionId} was interrupted by the restart and was not re-run`);
+      await this.notify(`⏸️ A scheduled run (${title}) was interrupted by the daemon restart and was not re-run automatically.`)
+        .catch(() => { /* best-effort */ });
+      return 'terminalized';
+    }
+    if (isChannelSession(item.sessionId)) {
+      const posted = await notifyInterruptedPlatformTurn({
+        store: this.d.store,
+        canDeliver: (target) => this.platforms.canDeliver(target),
+        deliver: (text, target) => this.platforms.notify(text, target),
+        log,
+      }, item.sessionId);
+      log.warn(`turn ${item.sessionId} (${item.class}) was interrupted by the restart with no resume — notice ${posted}`);
+      return posted === 'posted' ? 'terminalized' : 'released';
+    }
+    log.warn(`turn ${item.sessionId} (${item.class}) was interrupted by the restart with no resume`);
+    return 'released';
   }
 
   /** `platform-conversations` provider, CLAIM: the two durable states this provider recovers, unioned.
@@ -883,7 +1133,8 @@ export class BrainService {
    *  that writes the delivery row), but deduplicated anyway so a hand-edited database cannot turn one
    *  session into two items. */
   claimParkedPlatformTurns(): ParkedPlatformTurn[] {
-    const parked = this.d.store.parkedSessions().filter((row) => isNonUserSession(row.id));
+    const parked = this.d.store.parkedSessions().filter((row) => isNonUserSession(row.id))
+      .map((row) => ({ id: row.id, park_attempts: row.park_attempts, awaitsDelegations: this.parkedTurnAwaitsDelegations(row.id) }));
     const claimed = new Set(parked.map((row) => row.id));
     const undelivered = this.d.store.pendingPlatformDeliveries()
       .filter((delivery) => isNonUserSession(delivery.sessionId) && !claimed.has(delivery.sessionId))
@@ -896,7 +1147,7 @@ export class BrainService {
    *  post THAT text without spending a model turn. All the policy — authority re-derived from the account
    *  (never replayed), both attempt caps, the visible give-ups, the compute/deliver split — lives in
    *  resumePlatformTurn; this only wires the brain in. */
-  async resumeParkedPlatformTurn(row: ParkedPlatformTurn): Promise<RecoveryOutcome> {
+  async resumeParkedPlatformTurn(row: ParkedPlatformTurn, continuation?: PlatformResumeContinuation): Promise<RecoveryOutcome> {
     return resumePlatformTurn({
       store: this.d.store,
       users: this.d.users,
@@ -915,7 +1166,7 @@ export class BrainService {
       canDeliver: (target) => this.platforms.canDeliver(target),
       deliver: (text, target) => this.platforms.notify(text, target),
       log: logger('brain'),
-    }, row);
+    }, row, continuation);
   }
 
   /** D3 — never replay authority from disk unchecked. The workflow recovery journal lives in the plugin

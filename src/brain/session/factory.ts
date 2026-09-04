@@ -7,7 +7,6 @@ import { applyProviderRequestProfile, isCanonicalThinkingLevel, type ProviderReq
 import type { DelegatedExecutionScope } from '../delegatedScope.js';
 import type { ApplyCompaction } from './liveBrain.js';
 import { installLiveRecall, type LiveRecallOptions } from './liveRecall.js';
-import type { StepDrainCoordinator } from '../stepDrain.js';
 import { createCompactionModelRoute, type CompactionModelRoute } from './compactionModelRoute.js';
 import { createCompactionCircuitBreaker, type CompactionThresholdBudget } from './compactionCircuitBreaker.js';
 import {
@@ -163,10 +162,6 @@ export interface SessionFactoryDeps {
   /** Injected for tests; builds the resource loader that carries the system prompt. A test passes
    *  `() => undefined` so no disk-touching loader is constructed. */
   resourceLoaderFactory?: (o: BrainResourceLoaderOptions) => ResourceLoader | undefined;
-  /** This process's step-boundary shutdown coordinator (see stepDrain.ts). The factory gives every
-   *  spawned session its boundary hold and tool-execution bookkeeping; absent → sessions spawn exactly
-   *  as before and the shutdown drain falls back to whole-turn waiting. */
-  stepDrain?: StepDrainCoordinator;
 }
 
 /** Shared construction seam used by chat and embedded task-worker tests. Keeping this shape beside the
@@ -712,10 +707,7 @@ export class BrainSessionFactory {
       model: spec.model,
       resourceLoader,
       settingsManager,
-      // The step-drain wrapper brackets only execute() with per-session bookkeeping; names and schemas —
-      // and therefore the system-prompt bytes and the `tools` name list below — are untouched, so
-      // in-process and runner sessions keep byte-identical composition.
-      customTools: this.d.stepDrain ? this.d.stepDrain.wrapTools(spec.sessionId, spec.tools) : spec.tools,
+      customTools: spec.tools,
       // PI treats `tools` as the session's ALLOWED tool names — a hard REGISTRY filter, not merely the
       // initial active slice (sdk: `allowedToolNames = options.tools`). Deferred tools must therefore
       // stay in this list: omitting them here drops them from the registry entirely, getAllTools() stops
@@ -920,11 +912,6 @@ export class BrainSessionFactory {
         'PI runtime does not expose the turn-boundary compaction capability; proactive mid-tool-loop compaction is disabled',
       );
     }
-    // The shutdown hold, installed AFTER the compaction wrapper so it runs FIRST at each step boundary:
-    // a draining daemon parks the loop before spending a compaction model call on a turn it will not
-    // continue. See StepDrainCoordinator.installHold.
-    this.d.stepDrain?.installHold(session, spec.sessionId);
-
     // Count compaction outcomes for the circuit breaker installed above. Its cancel gate reads this
     // count on the next `session_before_compact`, so a session that cannot summarize stops trying.
     session.subscribe(compactionBreaker.observe);

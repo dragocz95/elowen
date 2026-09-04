@@ -306,27 +306,6 @@ process.on('message', (raw: unknown) => {
         });
       return;
     }
-    case 'drain':
-      // The daemon began its shutdown drain. Latch the local coordinator so every turn running here
-      // parks at its next step boundary; the daemon polls convergence via drainStatus.
-      void (async (): Promise<void> => { await booting; brain?.beginDrain(); })();
-      return;
-    case 'drainStatus': {
-      void (async (): Promise<number> => {
-        await booting;
-        // No coordinator (or no brain) → fall back to the raw in-flight turn count, which is the
-        // conservative whole-turn answer.
-        return (await brain?.midStepWork()) ?? runningChannels.size;
-      })().then(
-        (midStep) => send({ type: 'drainStatus', drainId: msg.drainId, midStep }),
-        (e: unknown) => {
-          log.warn(`drain status failed: ${errorText(e)}`);
-          // Fail closed: the daemon keeps waiting instead of exiting under a turn it could not observe.
-          send({ type: 'drainStatus', drainId: msg.drainId, midStep: 1 });
-        },
-      );
-      return;
-    }
     case 'activity': {
       void (async (): Promise<void> => {
         await booting;

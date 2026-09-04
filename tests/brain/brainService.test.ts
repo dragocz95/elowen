@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BrainService } from '../../src/brain/brainService.js';
 import { createBootRecovery } from '../../src/brain/recovery/providers.js';
-import { StepDrainCoordinator } from '../../src/brain/stepDrain.js';
 import type { KnownControls, PluginSkill, SubagentProgressEvent } from '../../src/plugins/api.js';
 import { currentSubagentEmitter, currentToolPolicy, currentTurnModel, currentWorkDir } from '../../src/plugins/policyContext.js';
 import { personalityText } from '../../src/brain/personality.js';
@@ -5882,6 +5881,252 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);
   });
 
+  it('a PAUSED owner turn blocked on its own foreground Delegate waits durably: no resume turn, the recovered result is the continuation', async () => {
+    // The pause parks the owner turn wherever it stands — here mid-Delegate. Resuming it at boot would
+    // only make the model say "still waiting" (or answer prematurely); instead the child's recovered
+    // answer is delivered as the continuation and un-parks the conversation once consumed.
+    // Rows only, no live service before the "restart": the harness shares ONE fake PI session, and a
+    // pre-restart owner listener would receive the child's recovery events as its own.
+    const d = fakeDeps();
+    const sessionId = 'brain-1';
+    d.store.createSession({ id: sessionId, userId: 1, model: 'm' });
+    const child = 'brain-ch-subagent-paused-fg';
+    d.store.createSession({
+      id: child, userId: 1, model: 'm', parentSessionId: sessionId,
+      delegatedAccess: { admin: true, owner: true, projectIds: [], permissionBoundary: null },
+    });
+    d.store.upsertSubagentRun(sessionId, { id: 'call-fg', sessionId: child, status: 'running', task: 'dig', tools: 1, seconds: 5 });
+    // The owner's interrupted tail: a pending assistant whose Delegate call never returned.
+    d.store.appendMessage({
+      id: 'a-owner-fg', sessionId, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'call-fg', name: 'Delegate', arguments: {} }] },
+    });
+    d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-owner-fg'").run();
+    d.store.markSessionParked(sessionId); // what pauseForRestart wrote
+
+    const restarted = new BrainService(d as never);
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll();
+    await recovery.resumeAll();
+
+    // No generic restart continuation was injected into the owner …
+    const customs = d.session.sendCustomMessage.mock.calls.map((call) => (call[0] as { customType?: string }).customType);
+    expect(customs).not.toContain('restart-resume');
+    // … the child's recovered answer was, exactly once, and it un-parked the conversation.
+    expect(customs.filter((type) => type === 'subagent-result')).toHaveLength(1);
+    expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);
+    expect(d.store.getSession(sessionId)).toMatchObject({ parked_at: null, park_attempts: 0 });
+    // The owner transcript answers the interrupted Delegate call instead of hiding it, right behind it.
+    const rows = d.store.getMessages(sessionId);
+    const callIndex = rows.findIndex((row) => row.id === 'a-owner-fg');
+    expect(callIndex).toBeGreaterThanOrEqual(0);
+    expect(JSON.parse(rows[callIndex + 1]!.content)).toMatchObject({ role: 'toolResult', toolCallId: 'call-fg', isError: true });
+    expect(rows.every((row) => row.pending === 0)).toBe(true);
+  });
+
+  it('a paused owner turn with one child finished and one still recovering waits for the recovering one — never two answers', async () => {
+    const d = fakeDeps();
+    const sessionId = 'brain-1';
+    d.store.createSession({ id: sessionId, userId: 1, model: 'm' });
+    const done = 'brain-ch-subagent-mixed-done';
+    const running = 'brain-ch-subagent-mixed-running';
+    for (const child of [done, running]) {
+      d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId, delegatedAccess: { admin: true, owner: true, projectIds: [], permissionBoundary: null } });
+    }
+    d.store.appendMessage({ id: 'done-a', sessionId: done, parentId: null, role: 'assistant', content: { role: 'assistant', content: [{ type: 'text', text: 'A is finished' }] } });
+    d.store.upsertSubagentRun(sessionId, { id: 'call-a', sessionId: done, status: 'done', task: 'a', tools: 1, seconds: 1 });
+    d.store.upsertSubagentRun(sessionId, { id: 'call-b', sessionId: running, status: 'running', task: 'b', tools: 1, seconds: 1 });
+    d.store.appendMessage({
+      id: 'a-owner-mixed', sessionId, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [
+        { type: 'toolCall', id: 'call-a', name: 'Delegate', arguments: {} },
+        { type: 'toolCall', id: 'call-b', name: 'Delegate', arguments: {} },
+      ] },
+    });
+    d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-owner-mixed'").run();
+    d.store.markSessionParked(sessionId);
+
+    const restarted = new BrainService(d as never);
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll();
+    await recovery.resumeAll();
+
+    const customs = d.session.sendCustomMessage.mock.calls.map((call) => (call[0] as { customType?: string }).customType);
+    expect(customs).not.toContain('restart-resume'); // no generic continuation on A's answer alone
+    expect(customs.filter((type) => type === 'subagent-result')).toHaveLength(1); // exactly one: B's
+    expect(d.store.getSession(sessionId)!.parked_at).toBeNull();
+    // A's answer is folded into its interrupted tool result, so the single continuation had both.
+    const rows = d.store.getMessages(sessionId).map((row) => row.content);
+    expect(rows.some((content) => content.includes('"call-a"') && content.includes('A is finished'))).toBe(true);
+  });
+
+  /** A parent paused on one foreground Delegate whose child row is `running` at boot. */
+  function pausedOnDelegate(d: ReturnType<typeof fakeDeps>, child: string, toolCallId: string): string {
+    const sessionId = 'brain-1';
+    d.store.createSession({ id: sessionId, userId: 1, model: 'm' });
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId, delegatedAccess: { admin: true, owner: true, projectIds: [], permissionBoundary: null } });
+    d.store.upsertSubagentRun(sessionId, { id: toolCallId, sessionId: child, status: 'running', task: 'dig', tools: 1, seconds: 5 });
+    d.store.appendMessage({
+      id: `a-${toolCallId}`, sessionId, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: toolCallId, name: 'Delegate', arguments: {} }] },
+    });
+    d.db.prepare('UPDATE brain_messages SET pending = 1 WHERE id = ?').run(`a-${toolCallId}`);
+    d.store.markSessionParked(sessionId);
+    return sessionId;
+  }
+
+  it('a parent paused on a delegation that hits the recovery attempt cap gets the error as its continuation and is un-parked', async () => {
+    const d = fakeDeps();
+    const sessionId = pausedOnDelegate(d, 'brain-ch-subagent-capped', 'call-capped');
+    d.db.prepare("UPDATE brain_subagent_runs SET attempt = 3 WHERE tool_call_id = 'call-capped'").run(); // three boots already tried
+
+    const restarted = new BrainService(d as never);
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll();
+    await recovery.resumeAll();
+
+    const delivered = d.session.sendCustomMessage.mock.calls.map((call) => call[0] as { customType?: string; content?: string });
+    expect(delivered.filter((m) => m.customType === 'subagent-result')).toHaveLength(1);
+    expect(String(delivered[0]?.content)).toContain('could not be recovered');
+    expect(d.store.getSession(sessionId)).toMatchObject({ parked_at: null, park_attempts: 0 });
+    expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);
+  });
+
+  it('a parent paused on a delegation whose recovery turn fails is not left parked forever', async () => {
+    const d = fakeDeps();
+    const sessionId = pausedOnDelegate(d, 'brain-ch-subagent-broken', 'call-broken');
+    d.session.prompt.mockRejectedValueOnce(new Error('provider unavailable')); // the child's recovery turn
+
+    const restarted = new BrainService(d as never);
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll();
+    await recovery.resumeAll();
+
+    // The child parked as recovery_required with a notice the user must act on; that notice is stored
+    // for the parent and the park marker is gone — the user's next message is the continuation, and
+    // nothing waits for a delivery that will never answer.
+    const row = d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'call-broken'").get() as { lifecycle: string };
+    expect(row.lifecycle).toBe('recovery_required');
+    expect(d.store.getSession(sessionId)!.parked_at).toBeNull();
+    expect(d.store.pendingSubagentResults(sessionId).some((r) => r.requiresUserAction)).toBe(true);
+  });
+
+  it('the delegation wait spends the park attempt budget like every other park', async () => {
+    const d = fakeDeps();
+    const sessionId = pausedOnDelegate(d, 'brain-ch-subagent-counted', 'call-counted');
+    const restarted = new BrainService(d as never);
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll();
+    // Observe the counter the moment the owner sweep records the wait, before the child's result lands.
+    const seen: { id: string; attempts: number }[] = [];
+    const original = d.store.claimParkResumeAttempt.bind(d.store);
+    d.store.claimParkResumeAttempt = (id: string) => { const ok = original(id); seen.push({ id, attempts: d.store.getSession(id)!.park_attempts }); return ok; };
+    await recovery.resumeAll();
+    expect(seen[0]).toEqual({ id: sessionId, attempts: 1 });
+  });
+
+  it('a platform ROOM paused on its Delegate waits at boot and then gets the recovered result as its own continuation', async () => {
+    // MAJOR 5: a room has no owner inbox drain. The room-side twin of the owner path: no generic resume
+    // at boot (the room is told nothing it cannot use), and when the child lands, the platform resume is
+    // invoked WITH the result as the continuation note.
+    const d = fakeDeps();
+    const room = 'brain-ch-discord-ops';
+    d.store.createSession({ id: room, userId: 1, model: 'm' });
+    const child = 'brain-ch-subagent-room-child';
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: room, delegatedAccess: { admin: true, owner: true, projectIds: [], permissionBoundary: null } });
+    d.store.upsertSubagentRun(room, { id: 'call-room', sessionId: child, status: 'running', task: 'dig', tools: 1, seconds: 5 });
+    d.store.appendMessage({
+      id: 'a-room', sessionId: room, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'call-room', name: 'Delegate', arguments: {} }] },
+    });
+    d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-room'").run();
+    d.store.markSessionParked(room);
+
+    const restarted = new BrainService(d as never);
+    const resumes: { row: { id: string; awaitsDelegations?: boolean }; note?: string }[] = [];
+    vi.spyOn(restarted, 'resumeParkedPlatformTurn').mockImplementation(async (row, continuation) => {
+      resumes.push({ row, ...(continuation ? { note: continuation.note } : {}) });
+      if (continuation) { continuation.acknowledge(); d.store.clearSessionPark(row.id); }
+      return 'resumed';
+    });
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll();
+    await recovery.resumeAll();
+
+    // First the boot sweep's own visit, marked as a wait (the real resume records the attempt and returns).
+    expect(resumes[0]).toMatchObject({ row: { id: room, awaitsDelegations: true } });
+    expect(resumes[0]!.note).toBeUndefined();
+    // Then the completion hook, carrying the child's real answer in the <subagent-result> shape.
+    const withResult = resumes.find((r) => r.note);
+    expect(withResult?.note).toContain('<subagent-result');
+    expect(withResult?.note).toContain(child);
+    expect(withResult?.note).toContain('echo:'); // the child's recovered answer body
+    expect(d.store.pendingSubagentResults(room)).toEqual([]); // acknowledged through the continuation
+  });
+
+  it('boot tells whoever was waiting on a turn the pause could not park: the room, or the owner for a cron run', async () => {
+    // MAJOR 2: an un-parkable turn (cron, unlinked room sender, task worker …) is never silently lost —
+    // the pause records it and the boot's interrupted-turns sweep posts the notice where the reply was
+    // expected. No model turn is spent.
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('discord', {}, { info() {}, warn() {}, error() {} });
+    const posted: { text: string; channelId?: string }[] = [];
+    ctx.registerPlatform({
+      name: 'discord', connect: async () => {}, listen: () => {}, send: async () => {},
+      notify: async (text: string, channelId?: string) => { posted.push({ text, ...(channelId ? { channelId } : {}) }); },
+    });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const room = 'brain-ch-discord-ops';
+    const cron = 'brain-ch-cron-daily-digest';
+    d.store.createSession({ id: room, userId: 1, model: 'm' });
+    d.store.createSession({ id: cron, userId: 1, model: 'm', title: 'daily digest' });
+    d.store.savePlatformTurnEnvelope(room, JSON.stringify({
+      v: 1, platform: 'discord', channelId: 'discord-ops', ownerUserId: 1, direct: false, trusted: false, scheduled: false,
+      accountUserId: null, sender: { id: '42', name: 'Petra' },
+      identity: { platform: 'discord', userId: '42', admin: false, owner: false, conversation: 'shared' },
+      promptAppend: [], deniedTools: [], promptCommand: false, turnText: 'x', senderText: 'x', capturedAt: '2026-09-04T00:00:00Z',
+    }));
+    d.store.recordPauseInterruption(room, 'unlinked');
+    d.store.recordPauseInterruption(cron, 'cron');
+
+    const restarted = new BrainService(d as never);
+    await restarted.startPlatforms();
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll();
+    await recovery.resumeAll();
+
+    expect(posted.some((p) => p.text.includes('restart interrupted a reply') && p.channelId)).toBe(true); // into the room
+    expect(posted.some((p) => p.text.includes('scheduled run') && p.text.includes('daily digest') && !p.channelId)).toBe(true); // owner notice
+    expect(d.session.prompt).not.toHaveBeenCalled();
+    expect(d.store.takePauseInterruptions()).toEqual([]); // consumed
+    expect(d.store.platformTurnEnvelope(room)).toBeUndefined();
+  });
+
+  it('/stop on a PARKED conversation with no live instance is a durable cancel: marker and queue gone, no error', async () => {
+    // MINOR 9: between the pause and its boot resume there is no live brain, and abort() used to throw
+    // "brain not started" — for a conversation that is plainly the user's and about to be resumed.
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.markSessionParked('brain-1');
+    d.store.checkpointPausedQueue('brain-1', [{ text: 'never mind' }]);
+    const svc = new BrainService(d as never);
+
+    await expect(svc.abort(1, 'brain-1')).resolves.toBeUndefined();
+
+    expect(d.store.getSession('brain-1')).toMatchObject({ parked_at: null, park_attempts: 0 });
+    expect(d.store.takePausedQueue('brain-1')).toEqual([]);
+    // And the sweep now has nothing to resume — the user's cancel wins.
+    const recovery = bootRecovery(svc);
+    recovery.claimAll();
+    await recovery.resumeAll();
+    expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
+    expect(d.session.prompt).not.toHaveBeenCalled();
+    // A session that is neither live nor parked still reports the honest error.
+    d.store.createSession({ id: 'brain-2', userId: 1, model: 'm' });
+    await expect(svc.abort(1, 'brain-2')).rejects.toThrow('brain not started');
+  });
+
   it('uses recovered results as the continuation of a genuinely parked owner turn', async () => {
     const d = fakeDeps();
     d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
@@ -6065,77 +6310,77 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(d.store.hasPendingDelivery('brain-1')).toBe(true);
   });
 
-  it('boot recovery parks a run as recovery_required when the interrupted tail has an unanswered tool call', async () => {
+  it('boot recovery answers an interrupted LOCAL tool call and respawns the child with the interrupted note', async () => {
+    // A pause-for-restart leaves every busy child mid-step by design, so an unanswered Write is the
+    // ORDINARY restart shape now, not an anomaly to park for the user. The call is answered with a
+    // synthetic `interrupted` result (its effect is unknown — the process died with the daemon) and the
+    // child is told to verify before repeating it; recovery_required is reserved for a recovery turn that
+    // itself fails (see the test below).
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     const { sessionId } = await svc.start(1);
-    d.store.createSession({ id: 'brain-ch-subagent-mut', userId: 1, model: 'm', parentSessionId: sessionId });
+    d.store.createSession({
+      id: 'brain-ch-subagent-mut', userId: 1, model: 'm', parentSessionId: sessionId,
+      delegatedAccess: { admin: true, owner: true, projectIds: [], permissionBoundary: null },
+    });
     d.store.upsertSubagentRun(sessionId, { id: 'delegate-mut', sessionId: 'brain-ch-subagent-mut', status: 'running', task: 'edit', tools: 1, seconds: 5 });
-    // The child crashed mid-step: a pending assistant row whose Write tool call never got its result.
+    // The child was paused mid-step: a pending assistant row whose Write tool call never got its result.
     d.store.appendMessage({
       id: 'a-mut', sessionId: 'brain-ch-subagent-mut', parentId: null, role: 'assistant',
       content: { role: 'assistant', content: [{ type: 'toolCall', id: 'w1', name: 'Write', arguments: { path: '/x' } }] },
     });
-    d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-mut'").run(); // mark it as un-settled (crash-interrupted)
+    d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-mut'").run(); // mark it as un-settled (pause-interrupted)
 
     const restarted = new BrainService(d as never);
     await runBootRecovery(restarted);
 
     const row = d.db.prepare("SELECT lifecycle, state FROM brain_subagent_runs WHERE tool_call_id = 'delegate-mut'").get() as { lifecycle: string; state: string };
-    expect(row.lifecycle).toBe('recovery_required');
-    expect(JSON.parse(row.state).recoveryReason).toContain('Write');
-    expect(d.session.prompt).not.toHaveBeenCalled(); // no blind child respawn — the parent decides
-    // The recovery notice must reach the durable parent context WITHOUT starting an autonomous parent turn:
-    // that turn still contains the original delegation request and could blindly issue Delegate again. The
-    // user's next message is the turn that may inspect the notice and choose DelegateContinue.
-    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);
-    expect(d.session.sendCustomMessage.mock.calls[0]?.[0]).toMatchObject({ customType: 'subagent-result' });
-    expect(d.session.sendCustomMessage.mock.calls[0]?.[1]).toMatchObject({ triggerTurn: false });
-    expect(String(d.session.sendCustomMessage.mock.calls[0]?.[0]?.content)).toContain('DelegateContinue');
-    expect(d.store.pendingSubagentResults(sessionId)).toHaveLength(1); // durable until a user turn consumes it
-    await expect(restarted.send({
-      userId: 1, session: sessionId, text: 'automatic goal continuation', mode: 'build',
-      internal: { kind: 'goalContinue' },
-    })).rejects.toThrow('unsafe sub-agent recovery is waiting for a user message');
-    expect(d.session.prompt).not.toHaveBeenCalled(); // the goal loop receives an error and pauses visibly
-    expect(d.store.pendingSubagentResults(sessionId)).toHaveLength(1);
-
-    // A later ordinary completion must inherit the same hold. If the recovery marker were acknowledged at
-    // boot, this drain would start exactly the autonomous turn that replayed Delegate in production.
-    const laterChild = 'brain-ch-subagent-later-result';
-    d.store.createSession({ id: laterChild, userId: 1, model: 'm', parentSessionId: sessionId });
-    d.store.upsertSubagentRun(sessionId, {
-      id: 'delegate-later', sessionId: laterChild, status: 'done', task: 'later', tools: 1, seconds: 1,
-      background: true, autoDeliver: true,
-    });
-    expect(d.store.enqueueSubagentResult(sessionId, {
-      id: 'result-later', toolCallId: 'delegate-later', sessionId: laterChild, status: 'done', task: 'later',
-      result: 'later answer', tools: 1, seconds: 1,
-    })).toBe(true);
-    // Simulate the idle reaper: the custom notice was live-only, while the inbox marker survives. send()
-    // must rehydrate and synchronously restore BOTH pending results before admitting the user's prompt.
-    const sessions = (restarted as unknown as { sessions: { dispose(id: string): void } }).sessions;
-    sessions.dispose(sessionId);
-    d.session.messages.length = 0;
-    d.session.sendCustomMessage.mockClear();
-    d.session.prompt.mockClear();
-    d.session.sendCustomMessage.mockRejectedValueOnce(new Error('custom append failed'));
-    await expect(restarted.send({
-      userId: 1, session: sessionId, text: 'continue the interrupted child',
-    })).rejects.toThrow('unsafe sub-agent recovery notice could not be restored');
-    expect(d.session.prompt).not.toHaveBeenCalled();
-    expect(d.store.pendingSubagentResults(sessionId)).toHaveLength(2);
-    d.session.sendCustomMessage.mockClear();
-
-    await restarted.send({ userId: 1, session: sessionId, text: 'continue the interrupted child' });
-    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(2);
-    expect(d.session.sendCustomMessage.mock.calls.map((call) => call[1])).toEqual([
-      expect.objectContaining({ triggerTurn: false }),
-      expect.objectContaining({ triggerTurn: false }),
-    ]);
+    expect(row.lifecycle).toBe('done');
+    // Exactly one respawn, carrying the interrupted-step instruction, never a blind replay.
     expect(d.session.prompt).toHaveBeenCalledTimes(1);
-    expect(d.session.messages.map((message) => message.role)).toEqual(['custom', 'custom', 'user', 'assistant']);
-    await vi.waitFor(() => expect(d.store.pendingSubagentResults(sessionId)).toEqual([]));
+    expect(String(d.session.prompt.mock.calls[0]?.[0])).toContain('marked [interrupted]');
+    expect(String(d.session.prompt.mock.calls[0]?.[0])).toContain('check the current state before repeating');
+    // The transcript keeps the Write call AND its synthetic answer, in order, all settled.
+    const rows = d.store.getMessages('brain-ch-subagent-mut');
+    const writeIndex = rows.findIndex((m) => m.id === 'a-mut');
+    expect(writeIndex).toBeGreaterThanOrEqual(0);
+    const answer = JSON.parse(rows[writeIndex + 1]!.content) as { role: string; toolCallId: string; isError: boolean; content: { text: string }[] };
+    expect(answer).toMatchObject({ role: 'toolResult', toolCallId: 'w1', isError: true });
+    expect(answer.content[0]!.text).toContain('[interrupted]');
+    expect(rows.every((m) => m.pending === 0)).toBe(true);
+    // The parent gets the child's real answer through the durable inbox, and nothing gates the user.
+    expect(d.store.pendingSubagentResults(sessionId).some((r) => r.requiresUserAction)).toBe(false);
+  });
+
+  it('boot recovery completes a child that had already answered before the pause without a model call', async () => {
+    // The status-bar symptom: a child whose final answer was written but whose terminal bookkeeping was
+    // lost with the process showed as running until a serial respawn asked the model to "continue" a
+    // finished task. The transcript IS the answer — complete the run from it.
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    d.store.createSession({
+      id: 'brain-ch-subagent-finished', userId: 1, model: 'm', parentSessionId: sessionId,
+      delegatedAccess: { admin: true, owner: true, projectIds: [], permissionBoundary: null },
+    });
+    d.store.upsertSubagentRun(sessionId, { id: 'delegate-finished', sessionId: 'brain-ch-subagent-finished', status: 'running', task: 'dig', tools: 1, seconds: 5 });
+    d.store.appendMessage({
+      id: 'a-final', sessionId: 'brain-ch-subagent-finished', parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'text', text: 'FINAL: the answer is 42' }], stopReason: 'stop' },
+    });
+    d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-final'").run();
+
+    const restarted = new BrainService(d as never);
+    await runBootRecovery(restarted);
+
+    const row = d.db.prepare("SELECT lifecycle, state FROM brain_subagent_runs WHERE tool_call_id = 'delegate-finished'").get() as { lifecycle: string; state: string };
+    expect(row.lifecycle).toBe('done');
+    expect(JSON.parse(row.state).status).toBe('done');
+    // No respawn: the child session's prompt was never asked for anything.
+    expect(d.session.prompt.mock.calls.map((call) => String(call[0]))).not.toContainEqual(expect.stringContaining('The daemon restarted'));
+    const delivered = d.db.prepare("SELECT payload FROM brain_subagent_results WHERE tool_call_id = 'delegate-finished'").get() as { payload: string };
+    expect(JSON.parse(delivered.payload).result).toBe('FINAL: the answer is 42');
+    expect(d.store.getMessages('brain-ch-subagent-finished').every((m) => m.pending === 0)).toBe(true);
   });
 
   it('boot recovery replays a child parked on its own delegation and feeds it the recovered grandchild result (D2)', async () => {
@@ -6203,29 +6448,6 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(d.session.sendCustomMessage.mock.calls[0]?.[1]).toMatchObject({ triggerTurn: false });
     expect(String(d.session.sendCustomMessage.mock.calls[0]?.[0]?.content)).toContain('DelegateContinue');
     expect(d.store.pendingSubagentResults(sessionId)).toHaveLength(1);
-  });
-
-  it('midStepWork joins the real coordinator to the registry\'s live turn identities', async () => {
-    // The identity JOIN is the silent-failure surface: the factory keys holds/tool batches by
-    // spec.sessionId while the drain asks unsafeCount(activeTurnSessionIds()) — if those ever diverged,
-    // every restart would quietly burn the full fallback budget with a green suite. Prove through the
-    // REAL send-lock path that an in-flight turn reads 1 and an idle daemon reads 0.
-    const d = fakeDeps();
-    (d as unknown as { stepDrain: StepDrainCoordinator }).stepDrain = new StepDrainCoordinator();
-    const svc = new BrainService(d as never);
-    await svc.start(1);
-    let release!: () => void;
-    d.session.prompt.mockImplementationOnce(() => new Promise<void>((r) => { release = r; }));
-
-    const turn = svc.send({ userId: 1, text: 'work' });
-    // Wait until prompt() is genuinely in flight — the turn then holds BOTH locks of the topology
-    // (send-<id> and the bare id), and the exact count pins that they collapse onto ONE conversation.
-    // Reporting raw lock keys would read 2 here, i.e. phantom turns that never park and burn the budget.
-    await vi.waitFor(() => expect(release).toBeDefined());
-    expect(await svc.midStepWork()).toBe(1);
-    release();
-    await turn;
-    await vi.waitFor(async () => expect(await svc.midStepWork()).toBe(0));
   });
 
   it('boot claims a running workflow and terminalizes it with a durable notice when resume is unavailable', async () => {
@@ -6444,6 +6666,38 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     const row = d.store.getSession('brain-1')!;
     expect(row.parked_at).toBeNull();
     expect(row.park_attempts).toBe(0);
+  });
+
+  it('replays the messages queued behind the paused turn AFTER the resume continuation, in order', async () => {
+    // The pause checkpoints PI's transient queue into brain_paused_queue (never into the transcript, see
+    // the BLOCKER: a user row behind a pending tool call separates it from its synthetic answer). The
+    // resume continues the interrupted turn first, then delivers each queued message as its own turn.
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.markSessionParked('brain-1');
+    d.store.checkpointPausedQueue('brain-1', [
+      { text: 'also check the logs' },
+      { text: 'and then summarize', images: [{ data: 'AAAA', mimeType: 'image/png' }] },
+    ]);
+
+    const restarted = new BrainService(d as never);
+    await runBootRecovery(restarted);
+
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);
+    expect(d.session.sendCustomMessage.mock.calls[0]?.[0]).toMatchObject({ customType: 'restart-resume' });
+    const prompted = d.session.prompt.mock.calls.map((call) => String(call[0]));
+    expect(prompted.filter((text) => text.includes('also check the logs'))).toHaveLength(1);
+    expect(prompted.filter((text) => text.includes('and then summarize'))).toHaveLength(1);
+    expect(prompted.indexOf(prompted.find((t) => t.includes('also check the logs'))!))
+      .toBeLessThan(prompted.indexOf(prompted.find((t) => t.includes('and then summarize'))!));
+    // The resume note went out before either replayed turn was prompted.
+    expect(d.session.sendCustomMessage.mock.invocationCallOrder[0]!).toBeLessThan(d.session.prompt.mock.invocationCallOrder[0]!);
+    // Consumed: nothing replays the same words on the next boot.
+    expect(d.store.takePausedQueue('brain-1')).toEqual([]);
+    // The transcript holds the replayed messages as ordinary user rows, after the resume.
+    const users = d.store.getMessages('brain-1').filter((row) => row.role === 'user').map((row) => JSON.parse(row.content) as { content: string; images?: unknown[] });
+    expect(users.map((u) => u.content.split('\n')[0])).toEqual(['also check the logs', 'and then summarize']);
+    expect(users[1]!.content).toContain('image'); // the attachment survived the pause with its message
   });
 
   it('a user message arriving before the sweep IS the continuation — no injected duplicate', async () => {

@@ -77,11 +77,6 @@ export type DaemonToRunner =
   | { type: 'activity'; activityId: string }
   /** Stop every terminal process owned by one account before core deletes that account. */
   | { type: 'killAccountProcesses'; requestId: string; userId: number }
-  /** The daemon began its shutdown drain: park every turn here at its next step boundary too. One-way,
-   *  no reply — the poll below observes convergence. */
-  | { type: 'drain' }
-  /** Poll how many turns in this runner are still MID-STEP (see StepDrainCoordinator.unsafeCount). */
-  | { type: 'drainStatus'; drainId: string }
   /** The daemon's answer to a runner-originated host call. Errors are data so a rejected workflow
    *  expansion settles the tool call without crashing either IPC peer. */
   | { type: 'hostResult'; callId: string; result: HostRpcResult }
@@ -108,8 +103,6 @@ export type RunnerToDaemon =
   | { type: 'released'; releaseId: string; busy: boolean }
   | { type: 'activity'; activityId: string; activeCount: number }
   | { type: 'accountProcessesKilled'; requestId: string; killed: number }
-  /** The answer to a `drainStatus` poll: this runner's own mid-step turn count. */
-  | { type: 'drainStatus'; drainId: string; midStep: number }
   /** The answer to a `steer` frame. `delivered` only once the message is confirmed in the child's
    *  context; `idle` when no streaming turn holds this channel here (the daemon then delivers the text
    *  itself); `aborted` when the delegation's abort fences fired while the steer waited. */
@@ -208,11 +201,6 @@ export function parseDaemonMessage(raw: unknown): DaemonToRunner | undefined {
       ? { type: 'killAccountProcesses', requestId, userId: v.userId as number }
       : undefined;
   }
-  if (v.type === 'drain') return { type: 'drain' };
-  if (v.type === 'drainStatus') {
-    const drainId = str(v.drainId);
-    return drainId ? { type: 'drainStatus', drainId } : undefined;
-  }
   if (v.type === 'hostResult') {
     const callId = str(v.callId);
     const result = parseHostRpcResult(v.result);
@@ -271,12 +259,6 @@ export function parseRunnerMessage(raw: unknown): RunnerToDaemon | undefined {
       const requestId = str(v.requestId);
       return requestId && Number.isSafeInteger(v.killed) && (v.killed as number) >= 0
         ? { type: 'accountProcessesKilled', requestId, killed: v.killed as number }
-        : undefined;
-    }
-    case 'drainStatus': {
-      const drainId = str(v.drainId);
-      return drainId && Number.isSafeInteger(v.midStep) && (v.midStep as number) >= 0
-        ? { type: 'drainStatus', drainId, midStep: v.midStep as number }
         : undefined;
     }
     case 'steered': {

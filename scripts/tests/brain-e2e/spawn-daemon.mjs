@@ -112,6 +112,10 @@ export async function spawnRealDaemon(opts) {
   let child = null;
   let logs = [];
   let exited = null;
+  /** Timing of the most recent restart(): how long the SIGTERM took to turn into an exit, whether the
+   *  harness had to SIGKILL, and how long the new process took to become healthy. A suite that changes the
+   *  shutdown path needs these as evidence, not as a feeling. */
+  let lastRestart = null;
 
   /** (Re)start the daemon child on the SAME port and data dir, capturing its output. */
   const launch = () => {
@@ -126,13 +130,17 @@ export async function spawnRealDaemon(opts) {
   /** Terminate the child and WAIT for the exit, so its port is free again. Leaves the data dir intact —
    *  that is what separates a restart from a teardown. */
   const kill = async () => {
-    if (!child || exited !== null) return;
+    if (!child || exited !== null) return { stopMs: 0, forced: false, exit: exited };
+    const startedAt = Date.now();
     child.kill('SIGTERM');
     for (let i = 0; i < 30 && exited === null; i += 1) await sleep(100);
+    let forced = false;
     if (exited === null) {
+      forced = true;
       child.kill('SIGKILL');
       for (let i = 0; i < 20 && exited === null; i += 1) await sleep(100);
     }
+    return { stopMs: Date.now() - startedAt, forced, exit: exited };
   };
 
   /** Authenticate as the bootstrapped admin → bearer token. */
@@ -168,9 +176,11 @@ export async function spawnRealDaemon(opts) {
    *  show that behaviour after the restart came out of SQLite rather than out of RAM. Returns a FRESH
    *  bearer token; the caller must use it from then on. */
   const restart = async () => {
-    await kill();
+    const stop = await kill();
+    const bootStartedAt = Date.now();
     launch();
     await waitForHealth(baseUrl, healthTimeoutMs);
+    lastRestart = { ...stop, bootMs: Date.now() - bootStartedAt, bootAt: bootStartedAt };
     return login();
   };
 
@@ -196,7 +206,12 @@ export async function spawnRealDaemon(opts) {
     // daemon actually took that path instead of silently falling back to the old one.
     // `pid` is a getter, not a value: a restart replaces the child, and a caller sampling /proc must
     // follow the live process rather than keep polling a pid that has exited.
-    return { baseUrl, token, dataDir, port, providerId, model, pid: () => child?.pid, stop, restart, logText: () => logs.join('') };
+    return {
+      baseUrl, token, dataDir, port, providerId, model, pid: () => child?.pid, stop, restart, logText: () => logs.join(''),
+      lastRestart: () => lastRestart,
+      // The daemon writes its log under ELOWEN_LOG_DIR, not to stdout — this is where a suite reads it.
+      logDir: join(dataDir, 'logs'),
+    };
   } catch (e) {
     const tail = logs.join('').split('\n').slice(-40).join('\n');
     await stop();

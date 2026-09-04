@@ -31,6 +31,20 @@ import type { BrainDebugLegacyTranscriptPage } from '../shared/wireContract.js';
 export { syntheticRestartResultId } from './brainDelegationStore.js';
 export type { BrainWorkflowRun, RecoverableRun, RecoverableWorkflow } from './brainDelegationStore.js';
 
+/** One message of a pause checkpoint's queue — see brain_paused_queue. */
+export interface PausedQueueItem {
+  text: string;
+  images?: { data: string; mimeType: string }[];
+}
+
+/** One turn the pause could not park — see brain_pause_interruptions. */
+export interface PauseInterruption {
+  sessionId: string;
+  class: string;
+  detail: string;
+  createdAt: string;
+}
+
 export interface BrainSessionRow {
   id: string; user_id: number; title: string; model: string; provider: string; work_dir: string; parent_session_id: string | null;
   delegated_access: string | null;
@@ -47,7 +61,7 @@ export interface BrainSessionRow {
    *  anchored on the operator because a room has no single author. NULL where nobody identifiable has
    *  written yet (an unlinked sender, or a row older than the column). */
   last_writer_user_id: number | null;
-  /** When the step-boundary shutdown drain parked this conversation's live turn (see schema.sql).
+  /** When the pause-for-restart parked this conversation's live turn (see schema.sql).
    *  NULL = nothing parked; the boot resume sweep continues every marked conversation. */
   parked_at: string | null;
   /** Boot resume attempts on the current park; bumped durably before each attempt, reset on clear. */
@@ -265,9 +279,9 @@ export class BrainStore {
     return this.db.prepare('SELECT * FROM brain_sessions WHERE id = ?').get(id) as BrainSessionRow | undefined;
   }
 
-  /** Stamp the shutdown park marker (see schema.sql): this conversation's live turn was parked at its
-   *  step boundary by a draining daemon and MUST be resumed at the next boot. Written synchronously the
-   *  moment the loop parks, so it is durable before the process exits. */
+  /** Stamp the shutdown park marker (see schema.sql): this conversation's live turn was parked the
+   *  moment the daemon was told to stop and MUST be resumed at the next boot. Written synchronously in
+   *  the pause, so it is durable before the process exits. */
   markSessionParked(id: string): void {
     this.db.prepare("UPDATE brain_sessions SET parked_at = datetime('now') WHERE id = ?").run(id);
   }
@@ -292,6 +306,51 @@ export class BrainStore {
     return this.db.prepare(
       'UPDATE brain_sessions SET park_attempts = park_attempts + 1 WHERE id = ? AND parked_at IS NOT NULL',
     ).run(id).changes > 0;
+  }
+
+  /** Replace the pause checkpoint of this conversation's mid-turn queue (see brain_paused_queue). */
+  checkpointPausedQueue(sessionId: string, items: readonly PausedQueueItem[]): void {
+    withWriteLock(this.db, () => {
+      this.db.prepare('DELETE FROM brain_paused_queue WHERE session_id = ?').run(sessionId);
+      const insert = this.db.prepare('INSERT INTO brain_paused_queue (session_id, seq, text, images) VALUES (?, ?, ?, ?)');
+      items.forEach((item, seq) => {
+        insert.run(sessionId, seq, item.text, item.images?.length ? JSON.stringify(item.images) : null);
+      });
+    });
+  }
+
+  /** Take (and delete) the checkpointed queue of one conversation, in delivery order. Consumed exactly
+   *  once: a replay that fails mid-way loses the rest, which is the honest outcome — a second boot must
+   *  not deliver the same message again. */
+  takePausedQueue(sessionId: string): PausedQueueItem[] {
+    return withWriteLock(this.db, () => {
+      const rows = this.db.prepare('SELECT text, images FROM brain_paused_queue WHERE session_id = ? ORDER BY seq ASC').all(sessionId) as { text: string; images: string | null }[];
+      this.db.prepare('DELETE FROM brain_paused_queue WHERE session_id = ?').run(sessionId);
+      return rows.map((row) => {
+        let images: PausedQueueItem['images'];
+        if (row.images) { try { images = JSON.parse(row.images) as PausedQueueItem['images']; } catch { images = undefined; } }
+        return { text: row.text, ...(images?.length ? { images } : {}) };
+      });
+    });
+  }
+
+  /** Record a turn the pause left running with no resume (see brain_pause_interruptions). */
+  recordPauseInterruption(sessionId: string, cls: string, detail = ''): void {
+    this.db.prepare('INSERT OR REPLACE INTO brain_pause_interruptions (session_id, class, detail) VALUES (?, ?, ?)').run(sessionId, cls, detail);
+  }
+
+  /** Take (and delete) every recorded interruption — the boot sweep's worklist, consumed once. */
+  takePauseInterruptions(): PauseInterruption[] {
+    return withWriteLock(this.db, () => {
+      const rows = this.db.prepare('SELECT session_id, class, detail, created_at FROM brain_pause_interruptions ORDER BY rowid ASC').all() as { session_id: string; class: string; detail: string; created_at: string }[];
+      this.db.prepare('DELETE FROM brain_pause_interruptions').run();
+      return rows.map((row) => ({ sessionId: row.session_id, class: row.class, detail: row.detail, createdAt: row.created_at }));
+    });
+  }
+
+  /** Discard a checkpointed queue without replaying it — the user cancelled the parked turn. */
+  discardPausedQueue(sessionId: string): void {
+    this.db.prepare('DELETE FROM brain_paused_queue WHERE session_id = ?').run(sessionId);
   }
 
   /** Result-specific continuation CAS: unlike claimParkResumeAttempt this does not spend the generic park

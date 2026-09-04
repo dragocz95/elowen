@@ -220,8 +220,8 @@ CREATE TABLE IF NOT EXISTS brain_sessions (
   -- with a per-row json_extract for every row of a listing. NULL where nobody identifiable has written
   -- yet (an unlinked sender, or a row that predates this column).
   last_writer_user_id INTEGER,
-  -- Shutdown park marker: when the step-boundary drain parked this conversation's live turn (see
-  -- stepDrain.ts). A parked turn's durable pending tail is fully answered, so the boot recovery providers
+  -- Shutdown park marker: when the pause-for-restart parked this conversation's live turn (see
+  -- turnPark.ts). The turn's durable pending tail is settled at resume (settlePartialTurn), so the boot recovery providers
   -- (`owner-conversations` for owner rows, `platform-conversations` for platform channel rows — the two
   -- partition the markers between them) can continue the turn from exactly there and deliver
   -- the answer the restart interrupted. NULL = nothing parked. Written synchronously at the park (before
@@ -528,6 +528,30 @@ CREATE TABLE IF NOT EXISTS brain_session_events (
   PRIMARY KEY (session_id, event_id)
 );
 CREATE INDEX IF NOT EXISTS idx_brain_session_events_session ON brain_session_events(session_id);
+-- The checkpoint of a conversation's mid-turn QUEUE at a pause-for-restart: messages the user typed while
+-- a turn ran live only in PI's process memory (steer / follow-up) until PI delivers them, so the pause
+-- copies them here in delivery order and the boot resume replays them as ordinary user turns AFTER the
+-- interrupted turn has been continued. Deliberately NOT brain_messages: a user row appended behind a
+-- pending tool call would sit between that call and its (synthetic) result, which every provider refuses.
+-- `images` is a JSON array of {data (base64), mimeType} or NULL. Rows are consumed by the replay.
+-- A turn the pause could NOT park (no boot resume exists for it — see platformTurnInterruptionClass) and
+-- that did not finish inside the pause's bounded wait. Nothing continues such a turn; the boot sweep
+-- reads these rows to tell whoever was waiting (the room, or the owner for a scheduled run) that the
+-- restart cut the reply off, so an interruption never passes in silence. Consumed by that sweep.
+CREATE TABLE IF NOT EXISTS brain_pause_interruptions (
+  session_id TEXT NOT NULL PRIMARY KEY,
+  class TEXT NOT NULL,
+  detail TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS brain_paused_queue (
+  session_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  text TEXT NOT NULL,
+  images TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (session_id, seq)
+);
 -- Durable completion inbox for detached/background delegated work. A result is persisted before the
 -- parent is woken and remains pending until that triggered parent turn settles successfully.
 --

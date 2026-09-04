@@ -77,16 +77,13 @@ RestartForceExitStatus=75
 RestartSec=3
 # Signal the daemon ALONE on stop, not the whole control group. The daemon forks sub-agent runners as
 # child processes; the default KillMode=control-group delivers SIGTERM to them at the SAME instant as the
-# daemon, so a runner aborts its in-flight delegations before the drain below can wait for even one to
-# finish. With mixed, only the main process gets SIGTERM — the runners keep working through the drain,
-# and systemd SIGKILLs whatever is still in the cgroup once the daemon has exited (by then a drained
-# runner has nothing left to finish). Without this the TimeoutStopSec drain protects turns but not the
-# delegated work running beside them.
+# daemon. With mixed, only the main process gets SIGTERM: it checkpoints and exits within seconds, and the
+# runners (whose transcripts are mirrored to SQLite per message) go down with the cgroup right after.
 KillMode=mixed
-# The daemon drains running turns on SIGTERM (SHUTDOWN_DRAIN_MS, 10 min) before exiting. The default
-# stop timeout is 90s, which would SIGKILL it mid-drain and destroy the very work being waited for.
-# Keep this ABOVE that drain budget; the daemon always gives up on its own first.
-TimeoutStopSec=660
+# The shutdown is a PAUSE: a synchronous checkpoint, one bounded wait (20 s) for turns nothing can resume,
+# and bounded courtesies — the daemon's own guards keep the whole of it under ~28 s. This sits just
+# above them; a daemon still alive at this point is wedged and SIGKILL is the right answer.
+TimeoutStopSec=30
 
 [Install]
 WantedBy=multi-user.target

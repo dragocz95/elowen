@@ -1,4 +1,4 @@
-/** Translations for the daemon's own lifecycle announcements (stopping, back online, restart).
+/** Translations for the daemon's own lifecycle announcements (pausing, back online, restart).
  *
  *  These live apart from SHARED_MESSAGES because they carry markdown emphasis, which that table
  *  deliberately excludes: the daemon has always sent these bold and the adapters that render it would
@@ -15,27 +15,27 @@
  *  instead of getting it wrong in two cases out of three. */
 export const LIFECYCLE_MESSAGES = {
   en: {
-    stopping: (turns, children, undelivered) =>
-      `🛑 **Stopping** — waiting for ${turns} turn(s), ${children} sub-agent(s) and ${undelivered} undelivered result(s)…`,
-    stoppingIdle: '🛑 **Stopping** — Elowen is shutting down.',
+    pausing: (turns, children) => turns + children > 0
+      ? `⏸️ **Pausing** — ${turns} turn(s) and ${children} sub-agent(s) are checkpointed and resume after the restart.`
+      : '⏸️ **Pausing** — Elowen is restarting; nothing was in flight.',
     backOnline: '✅ **Back online** — Elowen restarted and is ready.',
     backOnlineVersion: (version) => `✅ **Back online** — the daemon started (v${version}).`,
     restarting: '🔄 **Restart** — Elowen is restarting, back in a moment…',
     restartFailed: '⚠️ **Restart failed** — the daemon could not restart itself. Check the service logs.',
   },
   cs: {
-    stopping: (turns, children, undelivered) =>
-      `🛑 **Zastavuji** — čekám na dokončení (tahy: ${turns}, subagenti: ${children}, nedoručené výsledky: ${undelivered})…`,
-    stoppingIdle: '🛑 **Zastavuji** — Elowen se vypíná.',
+    pausing: (turns, children) => turns + children > 0
+      ? `⏸️ **Pozastavuji** — rozpracovaná práce (tahy: ${turns}, subagenti: ${children}) je uložená a po restartu pokračuje.`
+      : '⏸️ **Pozastavuji** — Elowen se restartuje; nic nebylo rozpracované.',
     backOnline: '✅ **Zpět online** — Elowen se restartoval a je připravený.',
     backOnlineVersion: (version) => `✅ **Zpět online** — daemon nastartoval (v${version}).`,
     restarting: '🔄 **Restart** — Elowen se restartuje, za okamžik jsem zpět…',
     restartFailed: '⚠️ **Restart selhal** — daemon se nedokázal restartovat. Zkontrolujte prosím logy služby.',
   },
   sk: {
-    stopping: (turns, children, undelivered) =>
-      `🛑 **Zastavujem** — čakám na dokončenie (ťahy: ${turns}, subagenti: ${children}, nedoručené výsledky: ${undelivered})…`,
-    stoppingIdle: '🛑 **Zastavujem** — Elowen sa vypína.',
+    pausing: (turns, children) => turns + children > 0
+      ? `⏸️ **Pozastavujem** — rozpracovaná práca (ťahy: ${turns}, subagenti: ${children}) je uložená a po reštarte pokračuje.`
+      : '⏸️ **Pozastavujem** — Elowen sa reštartuje; nič nebolo rozpracované.',
     backOnline: '✅ **Späť online** — Elowen sa reštartoval a je pripravený.',
     backOnlineVersion: (version) => `✅ **Späť online** — daemon naštartoval (v${version}).`,
     restarting: '🔄 **Reštart** — Elowen sa reštartuje, o chvíľu som späť…',

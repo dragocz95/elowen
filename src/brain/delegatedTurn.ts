@@ -131,11 +131,6 @@ export interface DelegatedTurnRunner {
   /** Whether remote turns have a live reverse channel for this host operation. Absent is an old/unwired
    *  runner and callers must withhold the corresponding tool rather than hand out a broken capability. */
   supportsHostRpc?(method: HostRpcMethod): boolean;
-  /** Broadcast the daemon's shutdown drain latch so turns over there park at their next step boundary
-   *  too (see stepDrain.ts). Absent means the runner predates this seam. */
-  beginDrain?(): void;
-  /** How many turns in the runner(s) are still mid-step — the remote half of the step-boundary drain. */
-  midStepWork?(): Promise<number>;
 }
 
 /** The runner could not be STARTED. Distinct from a turn that failed inside a healthy runner: nothing ran

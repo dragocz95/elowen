@@ -20,7 +20,8 @@ describe('daemon boot chain — claim before the platforms, resume after them', 
 
   const tracedBrain = (trace: string[]): BrainService => ({
     reconcileGoalsOnBoot: () => { trace.push('reconcileGoals'); },
-    claimDelegationRecovery: () => { trace.push('claim:delegations'); return [{ childSessionId: 'run' }]; },
+    claimDelegationRecovery: () => { trace.push('claim:delegations'); },
+    takeClaimedDelegations: () => [{ childSessionId: 'run' }],
     orderDelegationRecovery: (runs: unknown[]) => runs,
     recoverDelegation: async () => { trace.push('resume:delegations'); return 'resumed'; },
     claimWorkflowRecovery: () => { trace.push('claim:workflows'); return [{ workflowId: 'wf' }]; },
@@ -29,6 +30,8 @@ describe('daemon boot chain — claim before the platforms, resume after them', 
     resumeParkedConversation: async () => { trace.push('resume:conversations'); return 'resumed'; },
     claimParkedPlatformTurns: () => { trace.push('claim:platform'); return [{ id: 'p' }]; },
     resumeParkedPlatformTurn: async () => { trace.push('resume:platform'); return 'resumed'; },
+    claimPauseInterruptions: () => [],
+    notifyPauseInterruption: async () => 'released',
     startPlatforms: async () => { trace.push('startPlatforms'); },
     notify: async () => { trace.push('announceBoot'); },
     pendingChatImageFiles: () => [],
@@ -75,12 +78,15 @@ describe('daemon boot chain — claim before the platforms, resume after them', 
       for (let i = 0; i < 50 && !trace.includes('resume:platform'); i += 1) {
         await new Promise((r) => setTimeout(r, 5));
       }
-      expect(trace).toEqual([
+      expect(trace.slice(0, 8)).toEqual([
         'reconcileGoals',
         'claim:delegations', 'claim:workflows', 'claim:conversations', 'claim:platform',
         'pluginReconcile', 'startPlatforms', 'announceBoot',
-        'resume:delegations', 'resume:workflows', 'resume:conversations', 'resume:platform',
       ]);
+      // The resume pass runs in dependency waves: conversations wake alongside the delegation sweep, and
+      // only the workflow resume is ordered after it.
+      expect([...trace.slice(8)].sort()).toEqual(['resume:conversations', 'resume:delegations', 'resume:platform', 'resume:workflows']);
+      expect(trace.indexOf('resume:workflows')).toBeGreaterThan(trace.indexOf('resume:delegations'));
     } finally { stop(); }
   });
 });
