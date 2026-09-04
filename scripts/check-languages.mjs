@@ -21,6 +21,7 @@
 import { readFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pluginSettingsFields } from './plugin-language-fields.mjs';
 
 const root = fileURLToPath(new URL('..', import.meta.url));
 const errors = [];
@@ -206,7 +207,7 @@ for (const name of pluginNames) {
 for (const name of pluginNames) {
   const dir = join(pluginsDir, name);
   const manifest = JSON.parse(readFileSync(join(dir, 'elowen-plugin.json'), 'utf-8'));
-  const schema = Array.isArray(manifest.configSchema) ? manifest.configSchema : [];
+  const schema = pluginSettingsFields(manifest, name, errors);
   const fieldByKey = new Map(schema.map((field) => [field.key, field]));
 
   for (const locale of [...pluginLocales].sort()) {
@@ -279,7 +280,7 @@ for (const name of pluginNames) {
     for (const [key, override] of Object.entries(i18n.fields ?? {})) {
       const field = fieldByKey.get(key);
       if (!field) {
-        errors.push(`plugin ${name} (${locale}): fields.${key} has no matching configSchema field`);
+        errors.push(`plugin ${name} (${locale}): fields.${key} has no matching settings field`);
         continue;
       }
       const optionValues = new Set((field.options ?? []).map((option) => option.value));
