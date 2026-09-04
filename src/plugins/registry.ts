@@ -166,6 +166,7 @@ export interface PluginHostWiring {
   relayClient?: (cfg: RelayConfig) => InferenceClient;
   /** Live accessor so plugin calls follow Settings changes without rebuilding the registry. */
   defaultInference?: () => InferenceClient | null;
+  publicHttp?: PluginHost['publicHttp'] extends () => infer H ? H : never;
   git?: PluginHost['git'] extends () => infer G ? G : never;
   /** Live accessor — the PushSender is constructed after the plugin load (bootstrap late wiring). */
   push?: () => PluginHostPush | undefined;
@@ -1224,6 +1225,11 @@ export class PluginRegistry {
           if (!capabilities.reads?.includes('inference')) throw new Error(`plugin "${name}" did not declare the reads:['inference'] capability`);
           if (!host?.defaultInference) throw new Error('no default inference route wired for plugins in this process');
           return host.defaultInference();
+        },
+        publicHttp: () => {
+          if (!capabilities.network) throw new Error(`plugin "${name}" did not declare the network capability`);
+          if (!host?.publicHttp) throw new Error('no public HTTP transport wired for plugins in this process');
+          return host.publicHttp;
         },
         git: () => {
           if (!capabilities.reads?.includes('git')) throw new Error(`plugin "${name}" did not declare the reads:['git'] capability`);

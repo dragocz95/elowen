@@ -59,6 +59,20 @@ describe('piInferenceClient.decide', () => {
     expect((await c!.decide('prompt')).text).toBe('{"greeting":"Čau"}');
   });
 
+  it('returns provider usage for host-owned origin accounting', async () => {
+    const c = await client({
+      reply: message({
+        usage: {
+          input: 11, output: 7, cacheRead: 3, cacheWrite: 2, totalTokens: 23,
+          cost: { input: 0.01, output: 0.02, cacheRead: 0.003, cacheWrite: 0.002, total: 0.035 },
+        },
+      }),
+    });
+    expect((await c!.decide('prompt')).usage).toEqual({
+      input: 11, output: 7, cacheRead: 3, cacheWrite: 2, total: 23, cost: 0.035,
+    });
+  });
+
   it.each(['error', 'aborted'] as const)('throws on a %s stop so the generator records failed', async (stopReason) => {
     const c = await client({ reply: message({ stopReason, errorMessage: 'boom' }) });
     await expect(c!.decide('prompt')).rejects.toThrow('boom');

@@ -180,10 +180,15 @@ describe('ctx.host capability gates', () => {
 
   it('extraction seams (prompts/relayClient/git) carry their own grants', async () => {
     const defaultInference = { model: 'workspace/small', decide: async () => ({ text: 'ok' }) };
+    const publicHttp = {
+      validate: async (url: string) => url,
+      request: async () => ({ url: 'https://example.com/', status: 200, statusText: 'OK', headers: {}, body: [], cancel() {} }),
+    };
     const seams: PluginHostWiring = {
       prompts: { render: (n) => `P:${n}`, rawTemplate: (n) => `T:${n}`, userOverride: (id, n) => (id === 1 ? `O:${n}` : null) },
       relayClient: (cfg) => ({ model: cfg.model, decide: async () => ({ text: 'ok' }) }),
       defaultInference: () => defaultInference,
+      publicHttp,
       git: {
         projectSnapshot: async () => ({ isRepo: true, status: null, remotes: [] }),
         projectHead: async () => 'sha', projectRangeDiff: async () => [],
@@ -194,11 +199,13 @@ describe('ctx.host capability gates', () => {
     expect(() => denied.host.prompts()).toThrow("reads:['prompts']");
     expect(() => denied.host.relayClient({ baseUrl: 'b', apiKey: 'k', model: 'm' })).toThrow("reads:['inference']");
     expect(() => denied.host.defaultInference()).toThrow("reads:['inference']");
+    expect(() => denied.host.publicHttp()).toThrow('network capability');
     expect(() => denied.host.git()).toThrow("reads:['git']");
-    const granted = wire({ reads: ['prompts', 'inference', 'git'] }, seams);
+    const granted = wire({ reads: ['prompts', 'inference', 'git'], network: true }, seams);
     expect(granted.host.prompts().render('x')).toBe('P:x');
     expect(granted.host.relayClient({ baseUrl: 'b', apiKey: 'k', model: 'm' }).model).toBe('m');
     expect(granted.host.defaultInference()).toBe(defaultInference);
+    expect(granted.host.publicHttp()).toBe(publicHttp);
     // A saved override is a DIFFERENT question from "render this template": a caller with its own
     // fallback chain (the planner prompt falls back to the workspace template, not to the file default)
     // must be able to see that a user never edited it.
