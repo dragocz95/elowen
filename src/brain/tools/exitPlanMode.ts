@@ -32,16 +32,17 @@ export function buildExitPlanModeTool() {
       '## Before Using This Tool\nEnsure your plan is complete and unambiguous:\n- If you have unresolved questions about requirements or approach, use AskUserQuestion first (in earlier phases)\n- Once your plan is finalized, use THIS tool to request approval',
       '**Important:** Do NOT use AskUserQuestion to ask "Is this plan okay?" or "Should I proceed?" - that\'s exactly what THIS tool does. ExitPlanMode inherently requests user approval of your plan.',
       '## Examples\n1. Initial task: "Search for and understand the implementation of vim mode in the codebase" - Do not use the exit plan mode tool because you are not planning the implementation steps of a task.\n2. Initial task: "Help me implement yank mode for vim" - Use the exit plan mode tool after you have finished planning the implementation steps of the task.\n3. Initial task: "Add a new feature to handle user authentication" - If unsure about auth method (OAuth, JWT, etc.), use AskUserQuestion first, then use exit plan mode tool after clarifying the approach.',
+      'A successful call structurally ends the current planning turn before another model step starts.',
       'The optional allowedPrompts field is deprecated and accepted only for transcript compatibility. Elowen ignores it and never derives permission or authority from it.',
     ].join('\n\n'),
     parameters: Type.Object({
       allowedPrompts: Type.Optional(Type.Array(Type.Object({
         tool: Type.Literal('Bash', { description: 'The tool this prompt applies to' }),
         prompt: Type.String({ description: 'Semantic description of the action, e.g. "run tests", "install dependencies"' }),
-      }), {
+      }, { additionalProperties: false }), {
         description: 'Deprecated: no longer used. Accepted for transcript compatibility and ignored; never changes Elowen permissions.',
       })),
-    }),
+    }, { additionalProperties: false }),
     execute: async () => {
       // Mode first. Outside plan mode there is nothing to exit, and reading a stale plan file would let a
       // build turn resurrect an old plan as though it were fresh.
@@ -68,6 +69,9 @@ export function buildExitPlanModeTool() {
           + 'is acceptable — submitting it already asked. If they approve it, you will be told so and may then '
           + 'start; the plan stays on disk so you can re-read it while you work.' }],
         details: { plan },
+        // PI consumes this structurally after the current tool batch and emits agent_end before another
+        // provider request. The approval decision therefore starts a later user turn, never this one.
+        terminate: true,
       };
     },
   });

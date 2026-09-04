@@ -99,8 +99,8 @@ export function AskQuestionCard({ questions, kind, onSubmit }: { questions: AskQ
             default: return { label: op.label, description: op.description };
           }
         };
-        // A preview is a pane for ONE focused option, which multi-select has no notion of — so previews
-        // only ever drive the layout for a single-select question (the tool drops them otherwise).
+        // A preview is a pane for ONE focused option, which multi-select has no notion of. The tool schema
+        // and runtime reject that combination; this guard keeps historical events display-safe too.
         const hasPreview = !q.multiSelect && q.options.some((op) => op.preview);
         const focusedPreview = hasPreview ? q.options[focused[qi] ?? 0]?.preview : undefined;
         const optionList = (

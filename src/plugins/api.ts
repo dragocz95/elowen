@@ -1592,12 +1592,12 @@ export interface PluginContext {
    *  Discord). Fire-and-forget; no-op when nothing is wired. Used by cron/tick to echo results. */
   notify(text: string, channelId?: string): Promise<void>;
   /** Ask the current user one or more multiple-choice questions and await their pick(s). PARKS the turn
-   *  until the user answers (or a timeout elapses), then resolves with one AskAnswer per question. Only
-   *  valid inside a prompt turn driven by an interactive transport (chat/Discord); throws otherwise. */
+   *  until the user answers (or a timeout elapses), then resolves with one AskAnswer per question. The
+   *  active transport may render clickable controls or numbered input; throws without an interactive sink. */
   askUser(questions: AskQuestion[]): Promise<AskAnswer[]>;
   /** Deliver a user's answer to a parked AskUserQuestion back to its waiting turn — for interactive
-   *  transports (Discord) that receive the pick out-of-band via their own event loop rather than through
-   *  /brain/answer. Returns whether a pending question matched (false for an unknown/expired id). */
+   *  transports that receive the pick out-of-band rather than through /brain/answer. Returns true only when
+   *  the pending id and exact answer contract match; invalid payloads leave the prompt pending. */
   answerQuestion(id: string, answers: AskAnswer[]): boolean;
   /** Push a structured display card to the current conversation's clients — a live panel keyed by
    *  `card.id` so re-emitting the same id replaces it and an empty card (no items/body) removes it. The

@@ -85,7 +85,7 @@ export type BrainEvent =
   /** The agent is asking the user to pick from predefined options and has PARKED the turn until they
    *  answer (see `AskUserQuestion` plugin + ElicitationRegistry). Synthetic — not derived from a PI
    *  event; the elicitor emits it straight into `listeners`. A client renders the questions as
-   *  interactive choices and POSTs the answer to `/brain/answer` (Discord resolves it in-process).
+   *  interactive choices and POSTs the answer to `/brain/answer` (platform adapters resolve it in-process).
    *  `kind: 'approval'` marks a blocking tool-permission prompt (three fixed options — see
    *  brain/toolPermissions.ts) so frontends can style it differently; absent = a regular question. */
   | { type: 'ask'; id: string; questions: AskQuestion[]; kind?: 'approval' }

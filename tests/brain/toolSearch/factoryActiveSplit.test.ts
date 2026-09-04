@@ -68,7 +68,7 @@ describe('initialActiveToolNames (factory active/registry split)', () => {
     expect(composeFixture('disabled').map((entry) => entry.name)).toEqual([
       'MemoryBuiltin', 'ShareImage', 'PluginWrite', 'ExitPlanMode',
     ]);
-    expect(createHash('sha256').update(configuredOff).digest('hex')).toBe('865d3c34fa49f4859e67bc8b5d70b1d6762c9028f069e8ce3bc65d3b55fea2ba');
+    expect(createHash('sha256').update(configuredOff).digest('hex')).toBe('9425748d7df13e23155ac81493b3c5b638c69c400f8c6047fb24a309ac8454b9');
   });
 
   it.each(['build', 'plan'] as const)('keeps every pre-existing immediate definition byte-identical in %s mode', (mode) => {

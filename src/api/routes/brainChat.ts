@@ -397,8 +397,8 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
   }));
 
   // Answer a parked AskUserQuestion. Deliberately bypasses the per-turn send() lock (the parked turn
-  // holds it) — it just resolves the registry Promise, so it never deadlocks. An unknown/expired id is a
-  // tolerated no-op (matched:false) rather than an error, so a late double-click is harmless.
+  // holds it) — it just resolves the registry Promise, so it never deadlocks. Unknown, expired, or invalid
+  // answers are a tolerated no-op (matched:false); invalid data leaves the pending question intact.
   app.post('/brain/answer', withBrain(async (c, brain) => {
     const { id, answers } = await parseBody(c, brainAnswerSchema);
     const matched = brain.answerQuestion(id, answers, c.get('user').id); // owner route: only the caller's own question

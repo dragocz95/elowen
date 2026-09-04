@@ -456,6 +456,26 @@ describe('shared LiveMessage attachments and settled questions', () => {
     expect(texts).toEqual(['Posílám report.']);
   });
 
+  it('passes approval kind to the adapter that renders the interactive prompt', async () => {
+    const { createLiveMessage } = await load();
+    const posted: unknown[][] = [];
+    const LiveMessage = createLiveMessage({
+      transport: {
+        create: async () => 'mid-1', edit: async () => true, remove: async () => {},
+        replyRef: () => ({}), hasImages: () => false, postImages: async () => {},
+      },
+      style: plainStyle, CHUNK: 4000, splitContent: (t: string) => [t],
+      postWithImages: async () => {}, footerLine: () => '',
+    });
+    const lm = new LiveMessage({
+      cfg: { runtimeFooter: false },
+      postAsk: (...args: unknown[]) => { posted.push(args); return Promise.resolve(); },
+    }, 'chan-1', 'reply-1', 'asker-1');
+    lm.onEvent({ type: 'ask', id: 'approval-1', kind: 'approval', questions: [{ question: 'Allow?' }] });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(posted).toEqual([['chan-1', 'reply-1', 'asker-1', 'approval-1', [{ question: 'Allow?' }], 'approval']]);
+  });
+
   it('tells the adapter to retire a question the core settled, whatever settled it', async () => {
     const { createLiveMessage } = await load();
     const resolved: unknown[][] = [];
