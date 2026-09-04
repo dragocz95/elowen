@@ -2,7 +2,9 @@
 //
 // It holds an initial child turn open until the daemon restart tears its transport down, then answers only
 // the recovery continuation. The unsafe mode instead starts a real Bash tool call that remains unanswered,
-// giving recovery a persisted, observable pending tool-call suffix to classify.
+// giving recovery a persisted, observable pending tool-call suffix to answer. The ownerBash mode does the
+// same in the OWNER turn itself (no delegation), so the pause/resume of a top-level conversation is
+// observable on its own.
 
 import { createServer } from 'node:http';
 
@@ -15,10 +17,18 @@ export const MARKERS = {
   unsafeContinued: 'RECOVERY-UNSAFE-CONTINUED-f6b4',
   unsafeParentContinue: 'RECOVERY-UNSAFE-PARENT-CONTINUE-9a73',
   unsafeChildContinue: 'RECOVERY-UNSAFE-CHILD-CONTINUE-1c84',
+  ownerBashTask: 'RECOVERY-OWNER-BASH-TASK-7e21',
+  ownerBashResult: 'RECOVERY-OWNER-BASH-RESULT-5d09',
+  ownerSteer: 'RECOVERY-OWNER-STEER-3b6f',
+  parentGotResult: 'RECOVERY-PARENT-GOT-RESULT-8c42',
 };
 
 const CHILD_PROMPT = 'You are a focused sub-agent';
-const RECOVERY_PROMPT = 'The daemon restarted and interrupted you mid-task.';
+// Every child recovery instruction opens with this (mid-task, mid-step, or waiting on sub-agents).
+const RECOVERY_PROMPT = 'The daemon restarted and interrupted you';
+// The owner-conversation resume note and the durable result delivery, as the model sees them.
+const OWNER_RESUME_NOTE = 'The daemon restarted and interrupted this conversation';
+const SUBAGENT_RESULT_TAG = '<subagent-result';
 const LISTING_HEADER = 'in this conversation (newest first)';
 
 const contentText = (message) => {
@@ -37,7 +47,7 @@ async function readJson(req) {
 const frame = (payload) => `data: ${JSON.stringify(payload)}\n\n`;
 
 /** Start one isolated scripted provider for a recovery scenario. */
-export async function startRecoveryModel({ task, result, background = false, unsafe = false }) {
+export async function startRecoveryModel({ task, result, background = false, unsafe = false, ownerBash = false }) {
   const requests = [];
   const toolCalls = [];
   let toolCallSequence = 0;
@@ -50,7 +60,7 @@ export async function startRecoveryModel({ task, result, background = false, uns
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     const body = await readJson(req);
-    requests.push({ path: url.pathname, body });
+    requests.push({ path: url.pathname, body, at: Date.now() });
     if (req.method !== 'POST' || url.pathname !== '/v1/chat/completions') {
       res.writeHead(404, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: `unhandled ${req.method} ${url.pathname}` }));
@@ -113,6 +123,23 @@ export async function startRecoveryModel({ task, result, background = false, uns
       }
       await held;
       if (!res.destroyed && !res.writableEnded) say(`Initial child was released. ${result}`);
+      return;
+    }
+
+    // The durable delivery of a recovered child's answer into its parent: acknowledge it, never re-delegate.
+    if (!isChild && allText.includes(SUBAGENT_RESULT_TAG)) {
+      say(`Parent received the recovered sub-agent result. ${MARKERS.parentGotResult}`);
+      return;
+    }
+
+    if (ownerBash && allText.includes(task)) {
+      // The resumed OWNER turn: its Bash call is answered [interrupted] and the resume note follows.
+      if (allText.includes(OWNER_RESUME_NOTE)) {
+        say(`Owner turn resumed after the pause. ${result}`);
+        return;
+      }
+      if (awaitingTool) { say('Owner acknowledged the tool result.'); return; }
+      callTool('Bash', { command: 'node -e "setTimeout(() => {}, 120000)"' });
       return;
     }
 
