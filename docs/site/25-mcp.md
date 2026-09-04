@@ -71,13 +71,13 @@ For example, a server named `github` might expose `mcp__github__create_issue`. S
 
 Automatic tool deferral is enabled by default. It activates only when the conversation has more than 10 unresolved MCP tools and the runtime's tool-deferral policy is enabled. Smaller MCP toolsets remain immediately available.
 
-When deferral is active, Elowen advertises a tool by name and a short description instead of placing its complete parameter schema in the prompt. The assistant uses `ToolSearch` to load the schema; the tool becomes callable on the next turn. For an exact tool name, the query is:
+When deferral is active, Elowen advertises a tool by name and a short description instead of placing its complete parameter schema in the prompt. The assistant uses `ToolSearch` to load the schema; the tool becomes callable on the next model step of the same user turn. For an exact tool name, the query is:
 
 ```text
-ToolSearch({"query":"select:mcp__github__create_issue"})
+ToolSearch({"query":"select:mcp__github__create_issue","max_results":5})
 ```
 
-A keyword query can find matching tools, and `mcp__github` can load deferred tools from one server. This reduces prompt size; it does not change server permissions or account access.
+Both `query` and `max_results` are required. `max_results` defaults to `5` in the schema and limits keyword results up to the hard safety cap of `25`. An explicit `select:` query ignores the keyword limit but still obeys the hard cap. A keyword query can find matching tools, and `mcp__github` can load deferred tools from one server. This reduces prompt size; it does not change server permissions or account access.
 
 The MCP plugin also provides `ListMcpResources` and `ReadMcpResource` for servers that publish resources. These tools are loaded on demand and follow the same server/account visibility rules.
 

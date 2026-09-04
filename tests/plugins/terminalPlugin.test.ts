@@ -660,7 +660,7 @@ describe('terminal plugin — per-call Bash timeout', () => {
 
 // Ctrl+B backgrounds a still-running foreground command: the plugin registers each foreground run as the
 // transient `foreground` mode, and the daemon's detach control flips it to an ordinary `job` that keeps
-// running and nudges the conversation on exit — the exact lifecycle Bash(background=true) already has.
+// running and nudges the conversation on exit — the exact lifecycle Bash(run_in_background=true) already has.
 describe('terminal plugin — foreground detach (Ctrl+B backgrounds a running command)', () => {
   let reg: PluginRegistry;
   let dir: string;
@@ -717,7 +717,7 @@ describe('terminal plugin — foreground detach (Ctrl+B backgrounds a running co
     const out = await inSession(session, 'ProcessOutput', { id: id!, all: true });
     expect(out.content[0].text).toContain('early');
     await settle(1500); // let the detached process finish
-    expect(nudgedId).toBe(id); // the detached run's exit wakes the conversation, like Bash(background)
+    expect(nudgedId).toBe(id); // the detached run's exit wakes the conversation, like Bash(run_in_background)
   }, 15_000);
 
   it('tells a detached run’s FIRST incremental read that its middle was dropped', async () => {

@@ -133,15 +133,15 @@ A delegated child inherits or narrows its parent's effective authority and canno
 
 ### Deferred tools and ToolSearch
 
-Large plugin and MCP tool sets may be deferred to keep the model prompt small. Deferred tools appear by name in the session's tool-awareness block, but their parameter schemas are withheld and they cannot be called until activated. The brain's `ToolSearch` tool can fetch them for the next turn:
+Large plugin and MCP tool sets may be deferred to keep the model prompt small. Deferred tools appear by name in the session's tool-awareness block, but their parameter schemas are withheld and they cannot be called until activated. The brain's `ToolSearch` tool loads them for the next model step of the same user turn:
 
 ```text
-ToolSearch({"query":"select:DiscordCreateChannel,mcp__github__create_issue"})
-ToolSearch({"query":"discord channel"})
-ToolSearch({"query":"+github create"})
+ToolSearch({"query":"select:DiscordCreateChannel,mcp__github__create_issue","max_results":5})
+ToolSearch({"query":"discord channel","max_results":5})
+ToolSearch({"query":"+github create","max_results":5})
 ```
 
-`select:<name>[,<name>...]` fetches exact names; a bare exact name also works. A keyword query searches tool names, descriptions, and parameter names, while `+term` makes a term required. `max_results` limits keyword results (up to the tool's hard cap). Already active tools should be called directly. ToolSearch activation is permission-filtered and does not grant access; normal account, plugin, and execution-time policy checks still apply.
+Both `query` and `max_results` are required. `max_results` defaults to `5` in the schema and limits keyword results up to the hard safety cap of `25`. `select:<name>[,<name>...]` fetches exact names and ignores the keyword limit, while still obeying the hard cap; a bare exact name also works. A keyword query searches tool names, descriptions, and parameter names, while `+term` makes a term required. Already active tools should be called directly. ToolSearch activation is permission-filtered and does not grant access; normal account, plugin, and execution-time policy checks still apply.
 
 ## Non-interactive runs
 

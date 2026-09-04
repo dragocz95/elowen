@@ -1615,7 +1615,7 @@ export interface PluginContext {
     update(ref: PluginChatArtifactRef, update: PluginChatArtifactUpdate): BrainInlineArtifact;
     close(ref: PluginChatArtifactRef): void;
   };
-  /** The daemon-level background-process registry (`Bash(background:true)` children). The terminal
+  /** The daemon-level background-process registry (`Bash(run_in_background:true)` children). The terminal
    *  plugin registers a handle here per spawn so the CLI + web can list/read/kill them from a panel next
    *  to the todos, without going through an agent turn. Process-global (not turn-scoped) — see
    *  processRegistry. */

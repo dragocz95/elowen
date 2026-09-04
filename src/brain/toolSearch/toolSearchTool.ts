@@ -1,7 +1,7 @@
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { currentContributionUserId, currentToolPolicy, toolOwnedByOtherAccount, toolPermitted } from '../../plugins/policyContext.js';
+import { currentContributionUserId, currentToolPolicy, toolOwnedByOtherAccount, toolVisibleUnderPolicy } from '../../plugins/policyContext.js';
 import { logger } from '../../shared/logger.js';
 import { collapseWhitespace, escapeRegExp } from '../../shared/text.js';
 
@@ -236,8 +236,9 @@ export function formatDeferredToolsBlock(
   if (deferredTools.length === 0) return '';
   const shown = deferredTools.slice(0, MAX_AWARENESS_LINES);
   const lines = shown.map((t) => {
-    const desc = clampCodePoints(collapseWhitespace(t.description ?? ''), MAX_DESC_CHARS);
-    return `- ${t.name}${desc ? `: ${desc}` : ''}`;
+    const name = escapeXmlText(t.name);
+    const desc = escapeXmlText(clampCodePoints(collapseWhitespace(t.description ?? ''), MAX_DESC_CHARS));
+    return `- ${name}${desc ? `: ${desc}` : ''}`;
   });
   const overflow = deferredTools.length - shown.length;
   if (overflow > 0) {
@@ -293,7 +294,8 @@ export function formatHostedToolCatalogBlock(
   }
   const lines = [...groups.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([owner, names]) => `- ${owner} (${names.length}): ${[...names].sort((a, b) => a.localeCompare(b)).join(', ')}`);
+    .map(([owner, names]) => `- ${escapeXmlText(owner)} (${names.length}): ${[...names]
+      .sort((a, b) => a.localeCompare(b)).map(escapeXmlText).join(', ')}`);
   const overflow = all.length - Math.min(all.length, MAX_CATALOG_NAMES);
   if (overflow > 0) lines.push(`- …and ${overflow} more tool(s) reachable only through a search query.`);
   return [
@@ -365,8 +367,13 @@ export function toolSearchTool(handle: ToolSearchHandle): ToolDefinition {
     ].join(' '),
     parameters: Type.Object({
       query: Type.String({ description: 'Keywords, or "select:<name>[,<name>...]" for an exact fetch, or "+term" to require a term.' }),
-      max_results: Type.Number({ minimum: 1, maximum: MAX_MAX_RESULTS, description: `Max tools to return, capped at ${MAX_MAX_RESULTS}.` }),
-    }),
+      max_results: Type.Number({
+        minimum: 1,
+        maximum: MAX_MAX_RESULTS,
+        default: DEFAULT_MAX_RESULTS,
+        description: `Keyword result limit. Explicit select:<name> queries ignore this limit but remain capped at ${MAX_MAX_RESULTS} for safety.`,
+      }),
+    }, { additionalProperties: false }),
     execute: async (_id, p: { query: string; max_results: number }) => {
       const session = handle.session;
       if (!session) return ok('ToolSearch is not available in this session.');
@@ -389,13 +396,11 @@ export function toolSearchTool(handle: ToolSearchHandle): ToolDefinition {
       // Defense in depth: only activate tools the ACTING sender is allowed to use. The execute-time gate
       // already refuses a forbidden call, and the per-turn visibility pass hides a forbidden tool again on
       // the next turn — but filtering here stops a forbidden tool's schema from being advertised at all and
-      // stops a foreign/read-only caller from writing it into the shared `activated` set. Keep the same
-      // plugin/builtin distinction as `visibleToolNames`: allow-lists narrow plugins, while built-ins are
-      // narrowed only by an exact deny. No turn policy (tests) → allow.
+      // stops a foreign/read-only caller from writing it into the shared `activated` set. Read the exact same
+      // plugin/allow and wildcard-deny predicate as `visibleToolNames`, so immediate visibility and deferred
+      // schema visibility cannot disagree. No turn policy (tests) means allow.
       const tp = currentToolPolicy();
-      const matched = tp
-        ? found.filter((name) => handle.pluginNames?.has(name) ? toolPermitted(name, tp) : !tp.deny?.has(name))
-        : found;
+      const matched = found.filter((name) => toolVisibleUnderPolicy(name, handle.pluginNames?.has(name) === true, tp));
       if (matched.length === 0) {
         // The model may have re-selected a tool that is ALREADY active (common after compaction/respawn,
         // where its own history says "Activated …"). That name is not in the deferred set, so the search

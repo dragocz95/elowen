@@ -1690,7 +1690,7 @@ export class BrainService {
 
   /** Convert every running foreground `Bash` command in this conversation into a detached background job.
    * Mirror of detachForegroundSubagents against the terminal plugin's control — the plugin keeps the
-   * process running and its eventual exit nudges this same conversation, exactly like Bash(background). */
+   * process running and its eventual exit nudges this same conversation, exactly like Bash(run_in_background). */
   async detachForegroundCommands(
     userId: number,
     session?: string,

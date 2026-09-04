@@ -584,7 +584,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     // as disabled.
     const grant = target.is_admin ? null : new Set(target.allowed_tools);
     type ToolState = 'allowed' | 'inherited' | 'unavailable' | 'disabled';
-    const pills: { name: string; label: string; icon: string | null; plugin: string | null; group: 'memory' | 'image' | 'plugin'; state: ToolState; toggleable: boolean }[] = [];
+    const pills: { name: string; label: string; icon: string | null; plugin: string | null; group: 'memory' | 'image' | 'core' | 'plugin'; state: ToolState; toggleable: boolean }[] = [];
     // What is left of the built-ins is memory and image: per-user, composed for every interactive
     // session, and inherited rather than granted. The control plane that used to be listed here as an
     // admin-only `elowen` group rides its plugins now and appears below with the other plugin tools.

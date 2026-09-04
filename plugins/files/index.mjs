@@ -991,7 +991,7 @@ export function register(ctx) {
         const truncated = byteTruncated || endShown < total;
         let text = addLineNumbers(shownText, start + 1);
         if (r.firstLineExceedsLimit) {
-          text += `\n\n[Line ${start + 1} exceeds the ${formatSize(readCap)} read limit; showing the first ${formatSize(Buffer.byteLength(shownText))}. Use bash (sed/head) to read the rest.]`;
+          text += `\n\n[Line ${start + 1} exceeds the ${formatSize(readCap)} read limit; showing the first ${formatSize(Buffer.byteLength(shownText))}. Use Bash with sed or head to read the rest.]`;
         } else if (truncated) {
           text += `\n\n[Showing lines ${start + 1}-${endShown} of ${total}. Use offset=${endShown + 1} to continue.]`;
         }

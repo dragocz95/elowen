@@ -384,7 +384,7 @@ export class BrainClient {
     return (await res.json()) as { text: string | null };
   }
 
-  /** The owner's background shell processes (terminal plugin's `Bash(background:true)` children)
+  /** The owner's background shell processes (terminal plugin's `Bash(run_in_background:true)` children)
    *  — the snapshot the process panel boot-seeds from; live spawn/exit/kill updates ride the `process`
    *  stream event. Owner-only server-side (403 for a non-owner). */
   async processes(session = this.bound): Promise<ProcessInfo[]> {

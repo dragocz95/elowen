@@ -152,7 +152,7 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
   }));
 
   // Ctrl+B: move a running foreground Bash command to the background without killing it. The plugin keeps
-  // it running; its exit later nudges this same conversation, exactly like Bash(background=true).
+  // it running; its exit later nudges this same conversation, exactly like Bash(run_in_background=true).
   app.post('/brain/commands/background', withBrain(async (c, brain) => {
     const { session, client, generation } = await parseBody(c, brainStopSchema);
     const boundClient = session && client && generation ? { id: client, generation } : undefined;

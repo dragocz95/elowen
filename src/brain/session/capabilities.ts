@@ -1,5 +1,5 @@
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import { currentContributionUserId, currentSessionId, currentToolPolicy, currentTurnMode, currentTurnPermissions, listCovers, toolOwnedByOtherAccount, toolPermitted, type PersonalToolOwnership, type ToolPolicy } from '../../plugins/policyContext.js';
+import { currentContributionUserId, currentSessionId, currentToolPolicy, currentTurnMode, currentTurnPermissions, listCovers, toolOwnedByOtherAccount, toolPermitted, toolVisibleUnderPolicy, type PersonalToolOwnership, type ToolPolicy } from '../../plugins/policyContext.js';
 import { isSessionPlanPath } from '../../plugins/pathGuard.js';
 import type { ToolDeferralOverrides } from '../../shared/wireContract.js';
 import { buildExitPlanModeTool } from '../tools/exitPlanMode.js';
@@ -343,9 +343,10 @@ export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
   const capped: ExternalToolCap[] = [];
   // ToolSearch returns to its historical stable position between memory and ShareImage. Externally
   // authored `mcp__*` definitions are bounded FIRST, so the size check sees what the server actually
-  // supplied. Every composed tool then gains an optional leading `_reason` (excluded ToolSearch/mcp__*
-  // pass through), takes the deny and granular permission gates, and finally strips `_reason` before the
-  // inner handler sees the arguments.
+  // supplied. Every eligible local tool then gains a status argument: Bash keeps Fable's canonical
+  // `description`, while the others use optional leading `_reason` (ToolSearch/mcp__* pass through).
+  // The tools then take the deny and granular permission gates before the status field is stripped from
+  // the arguments the inner handler receives.
   const tools = [...memoryTools, ...toolSearchTools, ...shareImageTools, ...pluginTools, ...planTools]
     .map((tool) => capExternalToolSchema(tool, (cap) => capped.push(cap)))
     .map(withReason).map(gateDeniedTools).map(gatePermissions).map(stripReason);
@@ -378,7 +379,7 @@ export function visibleToolNames(
   const ownedByOther = (name: string): boolean => toolOwnedByOtherAccount(name, personal);
   if (!tp) return personal ? all.filter((name) => !ownedByOther(name)) : all;
   return all.filter((name) => !ownedByOther(name)
-    && (pluginNames.has(name) ? toolPermitted(name, tp) : !(tp.deny && listCovers(tp.deny, name))));
+    && toolVisibleUnderPolicy(name, pluginNames.has(name), tp));
 }
 
 /** The minimal PI-session surface tool visibility needs — the SAME structural target ToolSearch uses to

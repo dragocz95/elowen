@@ -60,10 +60,11 @@ describe('tool naming convention', () => {
     expect(reg.tools.map((t) => t.name).filter((n) => !TITLE_CASE.test(n))).toEqual([]);
   });
 
-  it('every built-in brain tool is TitleCase', () => {
+  it('every built-in brain tool is TitleCase and the catalog includes session-only built-ins', () => {
     const metas = builtinToolMetas();
     expect(metas.length).toBeGreaterThan(0);
     expect(metas.map((m) => m.name).filter((n) => !TITLE_CASE.test(n))).toEqual([]);
+    expect(metas.map((m) => m.name)).toEqual(expect.arrayContaining(['ToolSearch', 'ExitPlanMode']));
   });
 });
 

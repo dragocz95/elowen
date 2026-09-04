@@ -29,8 +29,9 @@ export type BrainEvent =
    *  needs no id — the first `tool` of the turn clears it. `detail` is the call's salient argument as it
    *  streams in (file path, command, query…), so a long-duration tool can show a localized action label
    *  instead of the generic hint; absent until the arguments have streamed far enough to derive one.
-   *  `reason` is the model-authored status note (the tool's leading `reason` arg) as it streams — when
-   *  present it supersedes the localized label; the CLI shows it verbatim next to the spinner. */
+   *  `reason` is the model-authored status note from optional `_reason`, or Bash's canonical `description`,
+   *  as it streams. When present it supersedes the localized label; the CLI shows it verbatim next to the
+   *  spinner. */
   | { type: 'tool_authoring'; name?: string; detail?: string; reason?: string }
   /** A tool call starting. `icon` is resolved daemon-side from the core map + plugin manifest `icons`
    *  (single source; clients render it, falling back to a generic glyph when absent). */
@@ -173,7 +174,7 @@ export type BrainEvent =
    *  reconnect snapshot is consistent without it). */
   | { type: 'discard_user'; durableId: string; text: string }
   /** A FULL snapshot of the owner's background shell processes (the terminal plugin's
-   *  `Bash(background:true)` children), pushed to the owner's live client streams whenever one
+   *  `Bash(run_in_background:true)` children), pushed to the owner's live client streams whenever one
    *  spawns/exits/is killed — so the CLI/web process panel updates OUT of turn. Owner-only: a command
    *  line can carry a secret, so the daemon emits it only to the owner's own streams (never a second
    *  admin's). A client renders the running ones as a killable panel; empty snapshot clears it. Safe to
