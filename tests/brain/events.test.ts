@@ -141,6 +141,18 @@ describe('message_update → assistant stream events', () => {
     expect(delta({ _reason: 'Píšu soubor', path: 'a.ts' }, 5_900)).toEqual({ type: 'tool_authoring', name: 'Write', detail: 'a.ts', reason: 'Píšu soubor' });
   });
 
+  it('uses Bash description as its canonical streamed status label', () => {
+    const emitted = toBrainEvent({
+      type: 'message_update',
+      assistantMessageEvent: {
+        type: 'toolcall_delta', contentIndex: 0,
+        partial: { content: [{ type: 'toolCall', id: 'bash-description', name: 'Bash',
+          arguments: { description: 'Run focused tests', command: 'npm test' } }] },
+      },
+    } as unknown as AgentSessionEvent, 6_500);
+    expect(emitted).toEqual({ type: 'tool_authoring', name: 'Bash', detail: 'npm test', reason: 'Run focused tests' });
+  });
+
   // A model that writes the note as JSON text a second time (seen live on claude-opus-5, on every Delegate
   // call of one session) put `Zad\u00e1v\u00e1m…` on the spinner. The whole path — streamed arguments to
   // the label the CLI paints — must show the characters, including one outside the BMP.

@@ -155,7 +155,7 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   app.delete('/brain/managed-sessions/:id', withBrain((c, brain) =>
     c.json({ deleted: brain.deleteManagedSession(c.get('user').id, c.req.param('id')!, 'any') }), { admin: true }));
 
-  // Background processes (terminal plugin's `Bash(background:true)` children) — the panel next to
+  // Background processes (terminal plugin's `Bash(run_in_background:true)` children) — the panel next to
   // the todos lists them, reads output for the modal, and kills on demand. Restricted to whoever operates
   // the instance, exactly like the terminal tools that spawn these: the underlying shell reads any absolute
   // path — secrets, the config DB — so an ordinary user must never see the buffers. Each caller still sees

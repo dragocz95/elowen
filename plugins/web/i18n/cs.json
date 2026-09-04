@@ -1,5 +1,5 @@
 {
-  "description": "Vyhledávání na webu pomocí WebSearch a načítání stránek jako čitelného textu pomocí WebFetch.",
+  "description": "Vyhledávání na webu s filtrováním domén a načítání veřejných stránek pro cílené odpovědi modelu.",
   "fields": {
     "provider": {
       "label": "Vyhledávač",

@@ -1,76 +1,110 @@
 // Ask-user plugin: a single tool `AskUserQuestion` that pauses the turn and lets the user pick from
-// predefined options — the Elowen analogue of Claude Code's AskUserQuestion / opencode's question tool.
-// The heavy lifting (parking the turn, emitting the interactive event, awaiting the answer) lives in the
-// core ElicitationRegistry; this plugin is just the tool surface. `ctx.askUser(questions)` returns one
-// answer per question once the user responds on any surface (CLI picker, web form, Discord components,
-// WhatsApp numbered reply).
+// predefined options. The heavy lifting lives in the core ElicitationRegistry; this plugin owns the
+// strict model-facing contract and the model-readable result.
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 
 const ok = (text) => ({ content: [{ type: 'text', text }], details: {} });
 const fail = (e) => ok(`Error: ${e instanceof Error ? e.message : String(e)}`);
 
-/** One selectable option — accept the SIMPLE form (a plain label string) or the rich form
- *  ({label, optional description}), so the model can send `["Blue","Green"]` and it just works. */
-const optionSchema = Type.Union(
-  [
-    Type.String({ description: 'A choice label, e.g. "Blue".' }),
-    Type.Object({
-      label: Type.String({ description: 'Display text (1-5 words, concise).' }),
-      description: Type.Optional(Type.String({ description: 'Optional one-line explanation of the choice.' })),
-      preview: Type.Optional(Type.String({
-        description: 'Optional monospace content shown beside the list when this option is focused — an ASCII '
-          + 'mockup, a code snippet, a diagram. Use it when the choice is something the user should SEE rather '
-          + 'than read about (UI layouts, API shapes, config). Single-select questions only; newlines are kept.',
-      })),
-    }),
-  ],
-  { description: 'Either a plain string label, or an object {label, description?, preview?}.' },
-);
+const canonicalOptionSchema = Type.Object({
+  label: Type.String({ minLength: 1, description: 'Concise display label (1-5 words).' }),
+  description: Type.String({ minLength: 1, description: 'Explanation of the choice and its trade-offs.' }),
+  preview: Type.Optional(Type.String({
+    minLength: 1,
+    description: 'Markdown preview for a single-select visual comparison. Do not use with multiSelect.',
+  })),
+}, { additionalProperties: false });
 
-/** One question, mirroring opencode's structured question schema. ONLY `question` + `options` are
- *  required — everything else defaults sensibly, and each option may be a bare string. Deliberately
- *  forgiving so the tool never bounces on a minimal, obvious call. `multiSelect` is the legacy alias
- *  of `multiple`, still accepted for backward compatibility. */
 const questionSchema = Type.Object({
-  question: Type.String({ description: 'A clear, specific question ending with "?". Put the choices in `options`; do NOT number them in the text.' }),
-  options: Type.Array(optionSchema, { minItems: 2, maxItems: 25, description: '2–25 distinct choices — a plain string each (e.g. "Blue"), or {label, description?}. For single-select, make them mutually exclusive. Put the safest/recommended option first. Do not add an "Other" option; free text is offered automatically unless `custom` is false.' }),
-  header: Type.Optional(Type.String({ description: 'Very short label (max 30 chars), e.g. "Colour". Defaults to the start of the question.' })),
-  multiple: Type.Optional(Type.Boolean({ description: 'Optional — true lets the user select multiple choices. Default false (pick one).' })),
-  multiSelect: Type.Optional(Type.Boolean({ description: 'Deprecated alias of `multiple`.' })),
-  custom: Type.Optional(Type.Boolean({ description: 'Allow typing a custom free-text answer (default: true). Set false only when the answer must be one of the options.' })),
-});
+  question: Type.String({ minLength: 1, pattern: '\\?$', description: 'The complete, clear, specific question ending with "?".' }),
+  header: Type.String({ minLength: 1, maxLength: 12, description: 'Very short chip label (at most 12 characters).' }),
+  options: Type.Array(canonicalOptionSchema, {
+    minItems: 2,
+    maxItems: 4,
+    description: 'Two to four distinct rich choices. Do not add an Other option; custom input is controlled separately.',
+  }),
+  multiSelect: Type.Boolean({ description: 'Whether the user may select multiple options.' }),
+  custom: Type.Optional(Type.Boolean({ default: true, description: 'Whether the user may type a custom answer. Defaults to true.' })),
+}, { additionalProperties: false });
 
-/** Coerce a loosely-shaped question into the canonical {question, header, multiSelect, custom,
- *  options:[{label, description?}]} the clients render — bare-string options become {label}, a missing
- *  header derives from the question, empty-label options are dropped. `multiple` (opencode name) and
- *  the legacy `multiSelect` are both honored; `custom` defaults to true (free-text answer allowed). */
+/** Normalize historical pre-canonical calls for replay/migration code. Legacy string options, a missing
+ * header, and `multiple` stay deliberately absent from the model-facing schema. Live execution validates
+ * the canonical payload before calling this helper, so invalid current calls are never silently repaired. */
 export function normalizeQuestion(q) {
-  const multiSelect = q.multiple === true || q.multiSelect === true;
-  const options = (Array.isArray(q.options) ? q.options : [])
+  const multiSelect = q?.multiple === true || q?.multiSelect === true;
+  const options = (Array.isArray(q?.options) ? q.options : [])
     .map((o) => {
       if (typeof o === 'string') return { label: o.trim() };
       const option = { label: String(o?.label ?? '').trim(), description: o?.description };
-      // A preview is a side-by-side pane for the FOCUSED option — a concept multi-select does not have
-      // (every row is independently on or off). Dropping it here keeps every surface consistent, instead
-      // of each renderer having to decide what a preview means when three boxes are ticked.
       if (!multiSelect && typeof o?.preview === 'string' && o.preview.trim()) option.preview = o.preview;
       return option;
     })
     .filter((o) => o.label);
-  const header = (typeof q.header === 'string' && q.header.trim() ? q.header : String(q.question ?? '')).trim().slice(0, 30);
+  const fallbackHeader = String(q?.question ?? '').trim();
+  const header = (typeof q?.header === 'string' && q.header.trim() ? q.header.trim() : fallbackHeader).slice(0, 12);
   return {
-    question: String(q.question ?? '').trim(),
+    question: String(q?.question ?? '').trim(),
     header,
     multiSelect,
-    custom: q.custom !== false,
+    custom: q?.custom !== false,
     options,
   };
 }
 
+const QUESTION_FIELDS = new Set(['question', 'header', 'options', 'multiSelect', 'custom']);
+const OPTION_FIELDS = new Set(['label', 'description', 'preview']);
+
+function canonicalQuestions(value) {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 4) {
+    throw new Error('questions must contain 1-4 questions.');
+  }
+  return value.map((raw, questionIndex) => {
+    const at = `questions[${questionIndex}]`;
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`${at} must be an object.`);
+    const q = raw;
+    const unknownQuestionField = Object.keys(q).find((key) => !QUESTION_FIELDS.has(key));
+    if (unknownQuestionField) throw new Error(`${at}.${unknownQuestionField} is not supported.`);
+    if (typeof q.question !== 'string' || !q.question.trim()) throw new Error(`${at}.question must be a non-empty string.`);
+    if (!q.question.endsWith('?')) throw new Error(`${at}.question must end with "?".`);
+    if (typeof q.header !== 'string' || !q.header.trim()) throw new Error(`${at}.header must be a non-empty string.`);
+    if (q.header.length > 12) throw new Error(`${at}.header must be at most 12 characters.`);
+    if (typeof q.multiSelect !== 'boolean') throw new Error(`${at}.multiSelect must be a boolean.`);
+    if (q.custom !== undefined && typeof q.custom !== 'boolean') throw new Error(`${at}.custom must be a boolean when provided.`);
+    if (!Array.isArray(q.options) || q.options.length < 2 || q.options.length > 4) {
+      throw new Error(`${at}.options must contain 2-4 options.`);
+    }
+    const labels = new Set();
+    for (const [optionIndex, rawOption] of q.options.entries()) {
+      const optionAt = `${at}.options[${optionIndex}]`;
+      if (!rawOption || typeof rawOption !== 'object' || Array.isArray(rawOption)) {
+        throw new Error(`${optionAt} must contain a label and description.`);
+      }
+      const option = rawOption;
+      const unknownOptionField = Object.keys(option).find((key) => !OPTION_FIELDS.has(key));
+      if (unknownOptionField) throw new Error(`${optionAt}.${unknownOptionField} is not supported.`);
+      if (typeof option.label !== 'string' || !option.label.trim()) throw new Error(`${optionAt}.label must be a non-empty string.`);
+      if (option.label.trim().toLowerCase() === 'other') {
+        throw new Error(`${optionAt}.label must not use the reserved "Other" label.`);
+      }
+      if (typeof option.description !== 'string' || !option.description.trim()) {
+        throw new Error(`${optionAt}.description must be a non-empty string.`);
+      }
+      if (labels.has(option.label.trim())) throw new Error(`${at}.options must have distinct labels.`);
+      labels.add(option.label.trim());
+      if (option.preview !== undefined && (typeof option.preview !== 'string' || !option.preview.trim())) {
+        throw new Error(`${optionAt}.preview must be a non-empty string when provided.`);
+      }
+      if (q.multiSelect && option.preview !== undefined) {
+        throw new Error(`${optionAt}.preview is only valid for a single-select question.`);
+      }
+    }
+    return normalizeQuestion(q);
+  });
+}
+
 /** Format the user's picks into a compact, model-readable result: one `"<question>" = "<answer>"` line
- *  per question (opencode's format). Answers are index-aligned to questions (every client returns them
- *  in question order); multiple picks and any free-text answer join with ', '. */
+ * per question. Answers are index-aligned to the validated pending questions. */
 export function formatAnswers(questions, answers) {
   const list = Array.isArray(answers) ? answers : [];
   const lines = questions.map((q, i) => {
@@ -87,37 +121,22 @@ export function register(ctx) {
     name: 'AskUserQuestion',
     label: 'Ask the user',
     description:
-      'Ask the user one or more structured questions and WAIT for their answer before continuing. It shows '
-      + 'clickable choices and pauses the turn until they pick.\n'
-      + 'Use it ONLY when you are blocked on a decision that is genuinely the user\'s to make — one you cannot '
-      + 'resolve from the request, the codebase, the environment, or a sensible default. Reserve it for choices '
-      + 'where their answer changes what you do next. If the choice is reversible and low-stakes, make the most '
-      + 'reasonable assumption, say so in one line, and carry on. Never ask "Should I proceed?" — if you can act, act.\n'
-      + 'When you do ask, give a recommendation rather than an open question: put the safest option FIRST and '
-      + 'mark it in its description (e.g. "recommended"), so the user can one-click it. Keep labels to 1-5 words '
-      + 'and put the trade-offs in each option\'s `description`. Bundle related decisions into one call (up to 4 '
-      + 'questions) instead of asking them one after another.\n'
-      + 'Only `question` and `options` are required; an option may be a plain string. `header` (≤30 chars) is a '
-      + 'short chip label, `multiple` lets the user pick several, and `custom` (default true) offers a free-text '
-      + 'answer — set it false only when the answer MUST be one of the options. Never add an "Other" option '
-      + 'yourself; free text is offered automatically.\n'
-      + 'Give an option a `preview` (monospace: an ASCII mockup, a code snippet, a diagram) when the user needs '
-      + 'to SEE the choice rather than read about it — comparing UI layouts, API shapes or config. The picker '
-      + 'then shows the focused option\'s preview beside the list. Single-select only; do not use previews for '
-      + 'plain preference questions where the labels already say it.\n'
-      + 'The question is rendered wherever the user actually is — the CLI picker, the web form, Discord '
-      + 'buttons or a numbered WhatsApp reply — and the turn stays parked until they answer, so do not use '
-      + 'it in unattended work (a scheduled job or a task worker has nobody to click). You get back one '
-      + '"question" = "answer" line per question, with multiple picks and any free-text answer joined by '
-      + 'commas; a question with fewer than 2 options or an empty text is rejected.\n'
-      + 'Minimal example: {"questions":[{"question":"Which colour?","options":["Blue","Green","Red"]}]}',
+      'Ask the user one to four structured questions and wait for the answer. Use this only for a decision that '
+      + 'cannot be resolved from the request, code, environment, convention, or a reversible default. Each '
+      + 'question requires a clear question ending with "?", a header of at most 12 characters, 2-4 rich options '
+      + 'with label and description, and multiSelect. Put a recommendation first when one is appropriate. Use '
+      + 'preview only for a single-select choice the user should see before deciding. Set custom false only when '
+      + 'free-text input would be invalid. Interactive surfaces show clickable controls; text-only surfaces may '
+      + 'ask for numbered input. The tool always waits for the real user response.',
     parameters: Type.Object({
-      questions: Type.Array(questionSchema, { minItems: 1, maxItems: 4, description: '1–4 questions asked together.' }),
-    }),
+      questions: Type.Array(questionSchema, { minItems: 1, maxItems: 4, description: 'One to four questions asked together.' }),
+    }, { additionalProperties: false }),
     execute: async (_id, p) => {
       try {
-        const questions = (p.questions ?? []).map(normalizeQuestion).filter((q) => q.question && q.options.length >= 2);
-        if (questions.length === 0) return ok('Error: each question needs a non-empty `question` and at least 2 `options`.');
+        if (!p || typeof p !== 'object' || Array.isArray(p)) throw new Error('arguments must be an object.');
+        const unknownField = Object.keys(p).find((key) => key !== 'questions');
+        if (unknownField) throw new Error(`${unknownField} is not supported.`);
+        const questions = canonicalQuestions(p.questions);
         const answers = await ctx.askUser(questions);
         return ok(formatAnswers(questions, answers));
       } catch (e) {
@@ -126,15 +145,14 @@ export function register(ctx) {
     },
   }));
 
-  // Nudge the model to reach for the tool at decision points instead of burying options in prose.
   ctx.registerSystemPromptFragment(
     'When a decision is genuinely the user\'s to make, call `AskUserQuestion` rather than asking an '
-    + 'open-ended question in prose — it shows clickable options and pauses until they pick. Ask only once '
-    + 'the cheaper answers are exhausted: resolve it from the environment, from convention, or from a '
-    + 'reversible default first, and state the assumption instead of blocking. When you do ask, lead with a '
-    + 'recommendation: safest option first, labels of 1–5 words, the trade-offs in each option\'s '
-    + 'description, and a `preview` when the user should SEE the choice (a layout, a code shape) rather '
-    + 'than read about it. Put choices only in `options`, never numbered in the question text.',
+    + 'open-ended question in prose. It pauses until the user answers and shows clickable controls where '
+    + 'supported; text-only surfaces may request numbered input. Ask only after cheaper answers are exhausted. '
+    + 'Each question needs a clear `question` ending with "?", a non-empty `header` of at most 12 characters, '
+    + '2-4 distinct options with non-empty `label` and `description`, and boolean `multiSelect`. Put a recommended '
+    + 'option first when appropriate. Use `preview` only for a single-select visual choice. Custom input defaults '
+    + 'to enabled; set `custom` false only when free text would be invalid.',
   );
 
   ctx.logger.info('askuser tool registered');

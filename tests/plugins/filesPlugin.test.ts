@@ -42,29 +42,45 @@ describe('files plugin', () => {
   // schema says: 12 of 38 recorded schema-validation failures were a model sending file_path or
   // old_string/new_string to the old camelCase spelling. The names are the wire contract with the model, so
   // they are asserted here rather than left to drift back.
-  const schemaOf = (name: string): { properties: Record<string, unknown>; required?: string[] } =>
-    (reg.tools.find((t) => t.name === name) as unknown as { parameters: { properties: Record<string, unknown>; required?: string[] } }).parameters;
+  const schemaOf = (name: string): { properties: Record<string, Record<string, unknown>>; required?: string[]; additionalProperties?: boolean } =>
+    (reg.tools.find((t) => t.name === name) as unknown as { parameters: { properties: Record<string, Record<string, unknown>>; required?: string[]; additionalProperties?: boolean } }).parameters;
 
   it('Read/Write/Edit declare the reference parameter spelling and no camelCase alias', () => {
     expect(Object.keys(schemaOf('Read'))).toContain('properties');
     expect(schemaOf('Read').properties).toHaveProperty('file_path');
     expect(schemaOf('Read').properties).not.toHaveProperty('path');
     expect(schemaOf('Read').required).toContain('file_path');
+    expect(schemaOf('Read').additionalProperties).toBe(false);
+    expect(schemaOf('Read').properties).toMatchObject({
+      offset: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      limit: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+    });
 
     expect(schemaOf('Write').properties).toHaveProperty('file_path');
     expect(schemaOf('Write').properties).not.toHaveProperty('path');
     expect(schemaOf('Write').required).toEqual(expect.arrayContaining(['file_path', 'content']));
+    expect(schemaOf('Write').additionalProperties).toBe(false);
 
     const edit = schemaOf('Edit');
     expect(Object.keys(edit.properties)).toEqual(expect.arrayContaining(['file_path', 'old_string', 'new_string', 'replace_all']));
     for (const stale of ['path', 'oldText', 'newText', 'replaceAll']) expect(edit.properties).not.toHaveProperty(stale);
     expect(edit.required).toEqual(expect.arrayContaining(['file_path', 'old_string', 'new_string']));
     expect(edit.required).not.toContain('replace_all'); // optional, default false — same as the reference
+    expect(edit.additionalProperties).toBe(false);
+    expect(edit.properties.replace_all).toMatchObject({ type: 'boolean', default: false });
+    expect(edit.properties.fuzzy_match).toMatchObject({ type: 'boolean', default: false });
   });
 
   // The rename is only safe if the OLD shape fails loudly. An Edit that quietly reported success while
   // writing nothing is the failure mode worth a regression test: the agent would move on believing the
   // change landed.
+  it('describes only complete, model-visible reads as satisfying the modify guard', () => {
+    const descriptionOf = (name: string) => reg.tools.find((tool) => tool.name === name)?.description ?? '';
+    expect(descriptionOf('Read')).toContain('continue paged reads until the complete file has been visible');
+    expect(descriptionOf('Write')).toMatch(/partial or truncated Read.*does not count/);
+    expect(descriptionOf('Edit')).toMatch(/partial or truncated reads.*do not count/);
+  });
+
   it('a call in the OLD parameter shape fails loudly instead of silently doing nothing', async () => {
     const f = join(dir, 'stale-shape.txt');
     writeFileSync(f, 'keep me');
@@ -126,12 +142,25 @@ describe('files plugin', () => {
     expect((res as { details?: { replacements?: number } }).details?.replacements).toBe(3);
   });
 
-  it('Edit fuzzy-matches smart quotes while preserving the other lines byte-for-byte', async () => {
+  it('Edit requires an exact match by default and keeps fuzzy matching opt-in', async () => {
     const f = join(dir, 'fuzzy.txt');
-    // The target line uses curly quotes; old_string is supplied with straight ASCII quotes.
     writeFileSync(f, 'const a = 1;\nconst s = “hello”;\nconst b = 2;');
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Edit', { file_path: f, old_string: 'const s = "hello";', new_string: 'const s = "world";' }));
-    expect(res.content[0].text).toContain('1 replacement');
+
+    const exact = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Edit', {
+      file_path: f,
+      old_string: 'const s = "hello";',
+      new_string: 'const s = "world";',
+    }));
+    expect(exact.content[0].text).toMatch(/not found/i);
+    expect(readFileSync(f, 'utf-8')).toBe('const a = 1;\nconst s = “hello”;\nconst b = 2;');
+
+    const fuzzy = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Edit', {
+      file_path: f,
+      old_string: 'const s = "hello";',
+      new_string: 'const s = "world";',
+      fuzzy_match: true,
+    }));
+    expect(fuzzy.content[0].text).toContain('1 replacement');
     expect(readFileSync(f, 'utf-8')).toBe('const a = 1;\nconst s = "world";\nconst b = 2;');
   });
 
@@ -189,6 +218,32 @@ describe('files plugin', () => {
     expect((res as { details?: { truncated?: boolean } }).details?.truncated).toBe(true);
     const beyond = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { file_path: f, offset: 999 }));
     expect(beyond.content[0].text).toMatch(/beyond end of file/);
+  });
+
+  it('Read treats offsets 0 and 1 as the first line', async () => {
+    const f = join(dir, 'offset-origin.txt');
+    writeFileSync(f, 'first\nsecond\nthird');
+    const zero = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { file_path: f, offset: 0, limit: 1 }));
+    const one = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { file_path: f, offset: 1, limit: 1 }));
+    expect(zero.content[0].text).toContain('1\tfirst');
+    expect(one.content[0].text).toContain('1\tfirst');
+  });
+
+  it('Read returns at most 2000 lines when limit is omitted', async () => {
+    const f = join(dir, 'default-line-cap.txt');
+    writeFileSync(f, Array.from({ length: 2005 }, (_, i) => `row ${i + 1}`).join('\n'));
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { file_path: f }));
+    expect(res.content[0].text).toContain('row 2000');
+    expect(res.content[0].text).not.toContain('row 2001');
+    expect(res.content[0].text).toContain('Showing lines 1-2000 of 2005. Use offset=2001 to continue.');
+  });
+
+  it('Read rejects an empty file', async () => {
+    const f = join(dir, 'empty.txt');
+    writeFileSync(f, '');
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { file_path: f }));
+    expect(res.content[0].text).toMatch(/Error.*empty file/i);
+    expect((res as { details?: { ok?: boolean } }).details?.ok).toBe(false);
   });
 
   it('Read returns an image content block with a base64 attachment', async () => {

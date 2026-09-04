@@ -86,15 +86,15 @@
       "key": "pdfMaxPages",
       "label": "PDF pages per read",
       "type": "number",
-      "min": 5,
-      "max": 50,
+      "min": 10,
+      "max": 20,
       "step": 5,
       "placeholder": "20",
       "default": 20,
       "display": {
         "control": "slider"
       },
-      "hint": "Maximum PDF pages one Read call may request. Raising this limit lets the model request wider ranges. Range 5–50; default 20."
+      "hint": "Maximum PDF pages one Read call may request. PDFs up to 10 pages can be read without a range. Range 10–20; default 20."
     }
   ]
 }

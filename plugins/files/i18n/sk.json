@@ -19,7 +19,7 @@
     },
     "pdfMaxPages": {
       "label": "Strany PDF na jedno čítanie",
-      "hint": "Maximálny počet strán PDF, ktoré možno vyžiadať jedným volaním nástroja Read. Nástroj Read tento limit uvádza modelu, takže jeho zvýšenie zároveň modelu dovolí vyžadovať širšie rozsahy. Rozsah 5–50, predvolené 20."
+      "hint": "Maximálny počet strán PDF pre jedno volanie Read. PDF do 10 strán možno čítať bez rozsahu. Rozsah 10–20, predvolené 20."
     }
   }
 }

@@ -14,10 +14,12 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const userPolicy = (roots: string[]): Policy => ({ allowedProjectIds: new Set([1]), allowedPaths: () => roots });
 
 interface ToolResult { content: { text?: string }[]; details?: Record<string, unknown> }
-const runTool = (reg: PluginRegistry, name: string, params: Record<string, unknown>) => {
+const runTool = (reg: PluginRegistry, name: string, params: Record<string, unknown>, executionContext?: unknown) => {
   const tool = reg.tools.find((t) => t.name === name);
   if (!tool) throw new Error(`tool ${name} not registered`);
-  return (tool as unknown as { execute: (id: string, p: unknown) => Promise<ToolResult> }).execute('t', params);
+  return (tool as unknown as {
+    execute: (id: string, p: unknown, signal?: AbortSignal, onUpdate?: unknown, context?: unknown) => Promise<ToolResult>;
+  }).execute('t', params, undefined, undefined, executionContext);
 };
 
 // Editing a file the conversation never read is how content silently disappears: the model writes from
@@ -172,6 +174,74 @@ describe('files plugin — read-before-modify guard', () => {
     });
   });
 
+  it('a text Read error does not count as having read the file', async () => {
+    const path = fixture('invalid-read.txt', 'precious\n');
+    const read = await inSession('Read', { file_path: path, offset: -1 });
+    expect(read.details).toMatchObject({ ok: false });
+
+    const write = await inSession('Write', { file_path: path, content: 'clobber' });
+    expect(write.content[0].text).toMatch(/has not been read in this conversation/);
+    expect(readFileSync(path, 'utf-8')).toBe('precious\n');
+  });
+
+  it('a truncated text Read does not authorize a full-file Write', async () => {
+    const path = fixture('partial-write.txt', 'one\ntwo\nthree\nfour\n');
+    const read = await inSession('Read', { file_path: path, limit: 2 });
+    expect(read.details).toMatchObject({ ok: true, truncated: true });
+
+    const write = await inSession('Write', { file_path: path, content: 'clobber' });
+    expect(write.content[0].text).toMatch(/not been fully read/i);
+    expect(readFileSync(path, 'utf-8')).toBe('one\ntwo\nthree\nfour\n');
+  });
+
+  it('paged text Reads authorize Edit only after their visible coverage is complete', async () => {
+    const path = fixture('paged-edit.txt', 'one\ntwo\nthree\nfour\n');
+    await inSession('Read', { file_path: path, offset: 1, limit: 2 });
+    const partial = await inSession('Edit', { file_path: path, old_string: 'four', new_string: 'FOUR' });
+    expect(partial.content[0].text).toMatch(/not been fully read/i);
+
+    await inSession('Read', { file_path: path, offset: 3, limit: 2 });
+    const complete = await inSession('Edit', { file_path: path, old_string: 'four', new_string: 'FOUR' });
+    expect(complete.content[0].text).toContain('Edited');
+    expect(readFileSync(path, 'utf-8')).toBe('one\ntwo\nthree\nFOUR\n');
+  });
+
+  it('an image omitted from the model request does not count as having read the file', async () => {
+    const path = join(dir, `${n}-omitted.png`);
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC', 'base64');
+    writeFileSync(path, png);
+
+    const read = await runWithPolicy(userPolicy([dir]), () => runTool(
+      reg, 'Read', { file_path: path }, { model: { input: ['text'] } },
+    ), { sessionId: session });
+    expect(read.content[0].text).toContain('does not support images');
+    expect(read.content).not.toContainEqual(expect.objectContaining({ type: 'image' }));
+
+    const write = await inSession('Write', { file_path: path, content: 'clobber' });
+    expect(write.content[0].text).toMatch(/has not been read in this conversation/);
+    expect(readFileSync(path)).toEqual(png);
+  });
+
+  it('an image-only notebook omitted for a text-only model does not authorize Write', async () => {
+    const path = fixture('image-only.ipynb', JSON.stringify({
+      cells: [{
+        cell_type: 'code', source: [], execution_count: 1,
+        outputs: [{ output_type: 'display_data', data: {
+          'image/png': 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC',
+        } }],
+      }],
+    }));
+    const read = await runWithPolicy(userPolicy([dir]), () => runTool(
+      reg, 'Read', { file_path: path }, { model: { input: ['text'] } },
+    ), { sessionId: session });
+    expect(read.details).toMatchObject({ ok: true, truncated: true });
+    expect(read.content).not.toContainEqual(expect.objectContaining({ type: 'image' }));
+
+    const write = await inSession('Write', { file_path: path, content: 'clobber' });
+    expect(write.content[0].text).toMatch(/not been fully read|has not been read/i);
+    expect(readFileSync(path, 'utf-8')).toContain('image/png');
+  });
+
   it('a PDF read that FAILED does not count as having read the file', async () => {
     // Marking a failed read as "seen" would license a later Write over a document nobody ever saw.
     const pdf = join(dir, `${n}-broken.pdf`);
@@ -263,24 +333,39 @@ describe('files plugin — read-before-modify guard', () => {
     it('does not vouch for a read that compaction dropped from the context', async () => {
       const path = fixture('restart-compacted.txt', 'alpha\n');
       await inSession('Read', { file_path: path });
-      const revived = `${session}-revived`;
-      await afterSpawn(revived, []);
+      await afterSpawn(session, []);
 
-      const res = await inSession('Edit', { file_path: path, old_string: 'alpha', new_string: 'X' }, revived);
+      const res = await inSession('Edit', { file_path: path, old_string: 'alpha', new_string: 'X' });
       expect(res.content[0].text).toMatch(/has not been read in this conversation/);
     });
 
-    // Content WE wrote sits in a softer tier so a post-write reformat does not block the next edit. That
-    // tier has to survive the restart too, or the first edit after one trips over the formatter's rewrite.
-    it('keeps the formatter window open for a file we wrote before the restart', async () => {
+    it('atomically replaces stale session state with only visible successful full Read results', async () => {
+      const removed = fixture('restart-removed.txt', 'removed\n');
+      const visible = fixture('restart-visible.txt', 'visible\n');
+      const authoredPath = join(dir, `${n}-authored.txt`);
+      await inSession('Read', { file_path: removed });
+      const visibleRead = await inSession('Read', { file_path: visible }, `${session}-source`);
+      const authored = await inSession('Write', { file_path: authoredPath, content: 'authored\n' }, `${session}-source`);
+
+      await afterSpawn(session, [toolResult(authored.details), toolResult(visibleRead.details)]);
+
+      expect((await inSession('Write', { file_path: removed, content: 'clobber' })).content[0].text)
+        .toMatch(/has not been read in this conversation/);
+      expect((await inSession('Write', { file_path: authoredPath, content: 'clobber' })).content[0].text)
+        .toMatch(/has not been read in this conversation/);
+      expect((await inSession('Edit', { file_path: visible, old_string: 'visible', new_string: 'VISIBLE' })).content[0].text)
+        .toContain('Edited');
+    });
+
+    it('does not replay Write results as a full-file read baseline', async () => {
       const path = join(dir, `${n}-restart-authored.txt`);
       const write = await inSession('Write', { file_path: path, content: 'one\ntwo\n' });
-      writeFileSync(path, 'one\ntwo\n\n'); // stand-in for the formatters hook reshaping our output
+      writeFileSync(path, 'one\ntwo\n\n');
       const revived = `${session}-revived`;
       await afterSpawn(revived, [toolResult(write.details)]);
 
       const res = await inSession('Edit', { file_path: path, old_string: 'two', new_string: 'TWO' }, revived);
-      expect(res.details).toMatchObject({ ok: true });
+      expect(res.content[0].text).toMatch(/has not been read in this conversation/);
     });
 
     it('replays in order, so the newest result for a file is the one that counts', async () => {

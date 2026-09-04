@@ -396,7 +396,7 @@ export class WorkflowPanel implements Component {
 }
 
 /** A slim fixed panel under the Sub-agents card listing the owner's live background shell processes
- *  (the terminal plugin's `Bash(background:true)` children). One row per RUNNING process — a
+ *  (the terminal plugin's `Bash(run_in_background:true)` children). One row per RUNNING process — a
  *  status dot, the truncated command, its run time and a clickable ✕ that kills it. Exited/killed
  *  processes drop off (the daemon's `process` snapshot is the single source of truth); renders nothing
  *  when none run, so the bottom stack pays zero rows at rest. */

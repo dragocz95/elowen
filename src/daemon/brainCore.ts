@@ -2,8 +2,9 @@ import { openDb } from '../store/db.js';
 import type { Db } from '../store/db.js';
 import { makePluginDb } from '../store/pluginDb.js';
 import type { PluginHostPush, PluginUserView } from '../plugins/api.js';
-import { currentContributionUserId, runWithContributionUser } from '../plugins/policyContext.js';
+import { currentContributionUserId, currentSessionId, currentTurnModel, runWithContributionUser } from '../plugins/policyContext.js';
 import { RelayClient } from '../inference/client.js';
+import { withOriginUsage } from '../inference/originUsage.js';
 import { EventBus, ACTIVITY_SURFACES, type ActivitySurface } from '../api/sse.js';
 import { ConfigStore } from '../store/configStore.js';
 import { ThemeStore, activeThemeName } from '../store/themeStore.js';
@@ -19,6 +20,7 @@ import { platformIdentity } from '../shared/platformIdentity.js';
 import { UserPluginConfigStore } from '../store/userPluginConfigStore.js';
 import { PluginSecretVault } from '../store/pluginSecretVault.js';
 import { grantablePluginNames, isPluginAllowedForUser } from '../shared/pluginAccess.js';
+import { INTERNAL_ORIGIN } from '../api/clientIp.js';
 import { PromptService } from '../prompts/promptService.js';
 import { setPluginPromptCatalog } from '../prompts/catalog.js';
 import { setPluginPromptSources, rawTemplate } from '../prompts/index.js';
@@ -53,6 +55,7 @@ import { makeSubagentCatalog } from '../brain/agents/catalogService.js';
 import { listBrainModels } from '../brain/models.js';
 import { setToolOutputCaps, setToolOutputPolicy } from '../brain/messageView.js';
 import { isSubagentSession } from '../brain/sessionId.js';
+import { publicHttpTransport } from '../plugins/publicHttp.js';
 import { platformTurnParkEligible } from '../brain/platformTurnRecovery.js';
 import { setSpillMaxResultBytes, setToolResultGroupBudget } from '../brain/session/toolResultClearing.js';
 import { dataDir, dbPath as configuredDbPath, setSpillNamespaceResolver } from '../shared/paths.js';
@@ -485,6 +488,27 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       route: () => ({ providerId: block.providerId, model: block.model }),
     });
   };
+  /** Plugin one-shot inference prefers the configured workspace categorization model, then falls back to
+   * the current turn's already-authorized provider route. Both paths stay inside PI's host runtime, so no
+   * provider configuration or credentials cross into the plugin. Outside a turn, an unset categorization
+   * route still resolves to null rather than guessing a model. */
+  const pluginDefaultInference = (): InferenceClient | null => {
+    let inference = memoryModelInference();
+    if (!inference) {
+      const turn = currentTurnModel();
+      if (!turn?.provider || !turn.model) return null;
+      inference = piInferenceClient({
+        runtime: brainRuntime, config: brainConfig,
+        route: () => ({ providerId: turn.provider!, model: turn.model }),
+      });
+    }
+    if (!inference) return null;
+    const userId = currentContributionUserId();
+    if (userId === null) return inference;
+    const sessionId = currentSessionId();
+    const origin = sessionId ? usageOrigins.pinnedOrigin(sessionId) ?? INTERNAL_ORIGIN : INTERNAL_ORIGIN;
+    return withOriginUsage(inference, { origins: usageOrigins, userId, origin });
+  };
   const memoryCategorizer = new MemoryCategorizer({
     categories: memoryCategoryStore, memories: memoryStore, inference: memoryModelInference, logger: log,
   });
@@ -669,6 +693,10 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
           userOverride: (userId, name) => userPrompts.get(userId, name),
         },
         relayClient: (cfg) => new RelayClient(cfg),
+        // Plugins receive the live client only, never provider configuration or credentials. The accessor
+        // follows Settings → Memory changes and falls back to the current turn's already-authorized route.
+        defaultInference: pluginDefaultInference,
+        publicHttp: publicHttpTransport,
         git: {
           projectSnapshot: (root) => git.snapshot(root),
           projectHead,

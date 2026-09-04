@@ -1,5 +1,5 @@
 {
-  "description": "Webový výskum: WebSearch (Tavily alebo Serper) a WebFetch (načítanie stránky ako čitateľný text).",
+  "description": "Vyhľadávanie na webe s filtrovaním domén a načítanie verejných stránok pre cielené odpovede modelu.",
   "fields": {
     "provider": {
       "label": "Vyhľadávač",

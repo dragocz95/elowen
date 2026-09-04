@@ -29,8 +29,9 @@ export type BrainEvent =
    *  needs no id — the first `tool` of the turn clears it. `detail` is the call's salient argument as it
    *  streams in (file path, command, query…), so a long-duration tool can show a localized action label
    *  instead of the generic hint; absent until the arguments have streamed far enough to derive one.
-   *  `reason` is the model-authored status note (the tool's leading `reason` arg) as it streams — when
-   *  present it supersedes the localized label; the CLI shows it verbatim next to the spinner. */
+   *  `reason` is the model-authored status note from optional `_reason`, or Bash's canonical `description`,
+   *  as it streams. When present it supersedes the localized label; the CLI shows it verbatim next to the
+   *  spinner. */
   | { type: 'tool_authoring'; name?: string; detail?: string; reason?: string }
   /** A tool call starting. `icon` is resolved daemon-side from the core map + plugin manifest `icons`
    *  (single source; clients render it, falling back to a generic glyph when absent). */
@@ -85,7 +86,7 @@ export type BrainEvent =
   /** The agent is asking the user to pick from predefined options and has PARKED the turn until they
    *  answer (see `AskUserQuestion` plugin + ElicitationRegistry). Synthetic — not derived from a PI
    *  event; the elicitor emits it straight into `listeners`. A client renders the questions as
-   *  interactive choices and POSTs the answer to `/brain/answer` (Discord resolves it in-process).
+   *  interactive choices and POSTs the answer to `/brain/answer` (platform adapters resolve it in-process).
    *  `kind: 'approval'` marks a blocking tool-permission prompt (three fixed options — see
    *  brain/toolPermissions.ts) so frontends can style it differently; absent = a regular question. */
   | { type: 'ask'; id: string; questions: AskQuestion[]; kind?: 'approval' }
@@ -173,7 +174,7 @@ export type BrainEvent =
    *  reconnect snapshot is consistent without it). */
   | { type: 'discard_user'; durableId: string; text: string }
   /** A FULL snapshot of the owner's background shell processes (the terminal plugin's
-   *  `Bash(background:true)` children), pushed to the owner's live client streams whenever one
+   *  `Bash(run_in_background:true)` children), pushed to the owner's live client streams whenever one
    *  spawns/exits/is killed — so the CLI/web process panel updates OUT of turn. Owner-only: a command
    *  line can carry a secret, so the daemon emits it only to the owner's own streams (never a second
    *  admin's). A client renders the running ones as a killable panel; empty snapshot clears it. Safe to
@@ -548,7 +549,7 @@ export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now(), ima
       // The model-authored `reason` (the tool's leading arg) as it streams — it supersedes the derived
       // label in the CLI. Grows character-by-character; `toolDetail` never reads `reason`, so detail is
       // unaffected. A reason-only change must still emit, so it joins the dedup key below.
-      const reason = extractReason(block.arguments);
+      const reason = extractReason(block.arguments, name);
       if (!id) return (detail || reason) ? { type: 'tool_authoring', ...(name ? { name } : {}), detail, ...(reason ? { reason } : {}) } : null;
       if (last && last.detail === detail && last.reason === reason) return null; // unchanged → nothing new
       // The delta that FIRST carries a reason bypasses the throttle window: a provider that still delivers

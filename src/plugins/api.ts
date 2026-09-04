@@ -640,8 +640,27 @@ export interface PluginProjectFiles {
   safe(root: string, rel: string, forWrite?: boolean): string;
 }
 
+export interface PluginPublicHttpResponse {
+  url: string;
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  body: AsyncIterable<Uint8Array>;
+  cancel(reason?: Error): void;
+}
+
+/** Host-owned outbound HTTP transport. It resolves and validates every destination, then pins the
+ * validated address into the socket lookup while preserving the URL host for HTTP and TLS. */
+export interface PluginPublicHttp {
+  validate(url: string): Promise<string>;
+  request(url: string, options?: {
+    headers?: Record<string, string>;
+    signal?: AbortSignal;
+  }): Promise<PluginPublicHttpResponse>;
+}
+
 /** Narrow core infrastructure exposed to plugins. Every accessor is deny-by-default behind its own
- *  `reads` grant, and throws (never degrades) — a subsystem built on these cannot half-work. */
+ *  grant, and throws (never degrades) — a subsystem built on these cannot half-work. */
 export interface PluginHost {
   // @platform-keep plugin-host-tmux :: tmux(): TmuxDriver
   /** Generic plugin platform retained for future github/sandblox consumers; zero in-repo callers is expected. */
@@ -658,6 +677,12 @@ export interface PluginHost {
   // @platform-keep plugin-host-relay :: relayClient(cfg: RelayConfig): InferenceClient
   /** Generic inference relay platform retained for future github/sandblox consumers; zero in-repo callers is expected. */
   relayClient(cfg: RelayConfig): InferenceClient;
+  /** A live host-owned inference route. The workspace categorization model is preferred; inside a prompt
+   * turn the current session model is the safe fallback. Credentials remain in core. Gated by
+   * `reads:['inference']`; null means neither route exists in the current context. */
+  defaultInference(): InferenceClient | null;
+  /** Public-only request transport. Gated by `network:true`; DNS validation and socket pinning stay in core. */
+  publicHttp(): PluginPublicHttp;
   /** Read-only git helpers over a project checkout. Gated by `reads:['git']`. */
   git(): {
     /** Generic live checkout snapshot: sanitized remotes plus branch/head/upstream and worktree counts. */
@@ -1666,12 +1691,12 @@ export interface PluginContext {
    *  Discord). Fire-and-forget; no-op when nothing is wired. Used by cron/tick to echo results. */
   notify(text: string, channelId?: string): Promise<void>;
   /** Ask the current user one or more multiple-choice questions and await their pick(s). PARKS the turn
-   *  until the user answers (or a timeout elapses), then resolves with one AskAnswer per question. Only
-   *  valid inside a prompt turn driven by an interactive transport (chat/Discord); throws otherwise. */
+   *  until the user answers (or a timeout elapses), then resolves with one AskAnswer per question. The
+   *  active transport may render clickable controls or numbered input; throws without an interactive sink. */
   askUser(questions: AskQuestion[]): Promise<AskAnswer[]>;
   /** Deliver a user's answer to a parked AskUserQuestion back to its waiting turn — for interactive
-   *  transports (Discord) that receive the pick out-of-band via their own event loop rather than through
-   *  /brain/answer. Returns whether a pending question matched (false for an unknown/expired id). */
+   *  transports that receive the pick out-of-band rather than through /brain/answer. Returns true only when
+   *  the pending id and exact answer contract match; invalid payloads leave the prompt pending. */
   answerQuestion(id: string, answers: AskAnswer[]): boolean;
   /** Push a structured display card to the current conversation's clients — a live panel keyed by
    *  `card.id` so re-emitting the same id replaces it and an empty card (no items/body) removes it. The
@@ -1689,7 +1714,7 @@ export interface PluginContext {
     update(ref: PluginChatArtifactRef, update: PluginChatArtifactUpdate): BrainInlineArtifact;
     close(ref: PluginChatArtifactRef): void;
   };
-  /** The daemon-level background-process registry (`Bash(background:true)` children). The terminal
+  /** The daemon-level background-process registry (`Bash(run_in_background:true)` children). The terminal
    *  plugin registers a handle here per spawn so the CLI + web can list/read/kill them from a panel next
    *  to the todos, without going through an agent turn. Process-global (not turn-scoped) — see
    *  processRegistry. */

@@ -1,7 +1,9 @@
+import { createToolSearchHandle, toolSearchTool } from '../toolSearch/toolSearchTool.js';
+import { buildExitPlanModeTool } from './exitPlanMode.js';
 import { buildMemoryTools } from './memoryTools.js';
 import { buildShareFileTool } from './shareFileTool.js';
 import { buildShareImageTool } from './shareImageTool.js';
-export type BuiltinToolGroup = 'memory' | 'image';
+export type BuiltinToolGroup = 'memory' | 'image' | 'core';
 
 export { buildMemoryTools } from './memoryTools.js';
 
@@ -62,14 +64,21 @@ export const BUILTIN_TOOL_PLAN_SAFE: string[] = [
 
 /** Name/label/group for every BUILT-IN (native, non-plugin) brain tool, derived from the real tool
  *  definitions so it can never drift from what a session actually composes. Used by the users overview
- *  to list a user's effective tools without spinning up a session. The tool factories only touch their
- *  deps inside `execute`, so passing a stub here is safe — we read only the static name/label. */
-export function builtinToolMetas(): { name: string; label: string; group: BuiltinToolGroup }[] {
-  const meta = (group: BuiltinToolGroup) => (t: { name: string; label?: string }) => ({ name: t.name, label: t.label ?? t.name, group });
+ *  and deferral settings without spinning up a session. The factories touch their dependencies only inside
+ *  `execute`, so inert stubs are safe here. Session-only tools use their real factories too: adding metadata
+ *  by hand beside them would create a second catalog that can omit or rename one silently. */
+export function builtinToolMetas(): { name: string; label: string; description?: string; group: BuiltinToolGroup }[] {
+  const meta = (group: BuiltinToolGroup) => (t: { name: string; label?: string; description?: string }) => ({
+    name: t.name,
+    label: t.label ?? t.name,
+    ...(typeof t.description === 'string' ? { description: t.description } : {}),
+    group,
+  });
   const memory = buildMemoryTools(undefined as never).map(meta('memory'));
-  // Its own group because neither of the others describes it: the control plane is admin-only, memory is
-  // per-user, and sharing an image is simply something every interactive session can do.
-  const images = [buildShareImageTool(undefined as never)].map(meta('image'));
-  const files = [buildShareFileTool(undefined as never)].map(meta('image'));
-  return [...memory, ...images, ...files];
+  const sharing = [buildShareImageTool(undefined as never), buildShareFileTool(undefined as never)].map(meta('image'));
+  const session = [
+    toolSearchTool(createToolSearchHandle(new Set())),
+    buildExitPlanModeTool(),
+  ].map(meta('core'));
+  return [...memory, ...sharing, ...session];
 }

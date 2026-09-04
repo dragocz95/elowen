@@ -64,7 +64,7 @@ WhatsApp does not rely on native buttons or lists. Model, reasoning, context, an
 
 Model, reasoning, and context pickers require an admin policy. Session controls follow their command gates, and `/fast` requires a linked account. WhatsApp has no `/display` or `/voice` command.
 
-An `AskUserQuestion` is posted as a numbered prompt with up to four questions and up to 25 options per question. For a single question, reply with one option number; multi-select accepts comma-separated numbers. Unless `custom` is disabled, free text is also accepted. Multi-question prompts can be submitted with `submit`; numbered option selection is supported only for single-question prompts, while free text is collected for the first question when allowed. The default timeout is 6 minutes, configurable with `askTimeoutMs` from 30 seconds to 30 minutes; the same timeout applies to numbered menus. Expired or cancelled prompts are closed and can no longer consume a later number reply.
+An `AskUserQuestion` is posted as a numbered prompt with up to four questions and two to four options per question. For a single question, reply with one option number; multi-select accepts comma-separated numbers. Unless `custom` is disabled, free text is also accepted. Multi-question prompts can be submitted with `submit`; numbered option selection is supported only for single-question prompts, while free text is collected for the first question when allowed. The default timeout is 6 minutes, configurable with `askTimeoutMs` from 30 seconds to 30 minutes; the same timeout applies to numbered menus. Expired or cancelled prompts are closed and can no longer consume a later number reply.
 
 ## Live messages and notifications
 

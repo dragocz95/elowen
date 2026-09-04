@@ -274,9 +274,10 @@ export class BrainClient {
     await this.post('/brain/send', { text, cwd: process.cwd(), surface: 'cli', ...binding, ...(mode ? { mode } : {}), ...(images?.length ? { images } : {}), ...(display !== undefined && display !== text ? { display } : {}) });
   }
 
-  /** Answer a parked AskUserQuestion — settles the paused turn so it resumes with the user's picks. */
-  async answer(id: string, answers: AskAnswer[]): Promise<void> {
-    await this.post('/brain/answer', { id, answers });
+  /** Answer a parked AskUserQuestion. `false` means the id/payload no longer matches the pending prompt. */
+  async answer(id: string, answers: AskAnswer[]): Promise<boolean> {
+    const res = await this.post('/brain/answer', { id, answers });
+    return ((await res.json()) as { matched?: boolean }).matched === true;
   }
 
   /** Manually compact the bound conversation; resolves with the post-compaction usage plus whether
@@ -384,7 +385,7 @@ export class BrainClient {
     return (await res.json()) as { text: string | null };
   }
 
-  /** The owner's background shell processes (terminal plugin's `Bash(background:true)` children)
+  /** The owner's background shell processes (terminal plugin's `Bash(run_in_background:true)` children)
    *  — the snapshot the process panel boot-seeds from; live spawn/exit/kill updates ride the `process`
    *  stream event. Owner-only server-side (403 for a non-owner). */
   async processes(session = this.bound): Promise<ProcessInfo[]> {

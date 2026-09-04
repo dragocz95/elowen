@@ -260,7 +260,7 @@ interface BrainInlineArtifactClosed {
 }
 export type BrainInlineArtifactEvent = BrainInlineArtifact | BrainInlineArtifactClosed;
 
-/** One background shell process (terminal plugin's `Bash(background:true)`). The transcript panel next to
+/** One background shell process (terminal plugin's `Bash(run_in_background:true)`). The transcript panel next to
  *  the todos lists the ones the open conversation owns; the telemetry rail lists those plus, in a separate
  *  section, everything it does not. Both read output for the modal and kill on demand. `sessionId` is the
  *  brain session it was started in, or null when it has none — the rail names the origin (sub-agent,
@@ -703,7 +703,7 @@ export interface ToolCatalogOption {
   label: string;
   icon: string | null;
   plugin: string | null;
-  group: 'memory' | 'image' | 'plugin';
+  group: 'memory' | 'image' | 'core' | 'plugin';
 }
 /** Live WhatsApp pairing state for the plugin "Pair" modal: a QR rendered as a PNG data URL, the phone
  *  pairing code (phoneNumber flow), and whether the device is already linked. */
@@ -1026,7 +1026,7 @@ export interface UserToolPill {
   label: string;
   icon: string | null;
   plugin: string | null;
-  group: 'memory' | 'image' | 'plugin';
+  group: 'memory' | 'image' | 'core' | 'plugin';
   state: UserToolState;
   toggleable: boolean;
 }

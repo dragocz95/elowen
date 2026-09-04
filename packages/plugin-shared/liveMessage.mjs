@@ -463,7 +463,7 @@ export function createLiveMessage({ transport, style, CHUNK, splitContent, postW
         // The turn parked on AskUserQuestion — post the interactive choice message (fire-and-forget; the
         // turn stays blocked in the tool until the user answers via a component/button/text interaction).
         this.postedBelowProgress = true;
-        void this.a.postAsk(this.channelId, this.replyToId, this.askerId, e.id, e.questions).catch(() => {});
+        void this.a.postAsk(this.channelId, this.replyToId, this.askerId, e.id, e.questions, e.kind).catch(() => {});
       } else if (e.type === 'ask_resolved' && e.id) {
         // The parked question is settled — by an answer, the core timeout, an abort, or a newer question
         // superseding it. Every surface that raised it must stop showing it: a room otherwise keeps live
