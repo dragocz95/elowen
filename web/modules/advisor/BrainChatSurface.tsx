@@ -1068,6 +1068,66 @@ const OLDER_TRIGGER = 120;
 const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
 /** Keep a short causal window between an input gesture and the browser's resulting scroll event. */
 const USER_SCROLL_WINDOW_MS = 350;
+/** The gap a docked plugin card keeps above the composer. It mirrors the `.75rem` term in the browser
+ *  plugin's own `bottom: calc(...)`: the plugin decides where its card sits, so clearance measured against
+ *  that card has to be written from the same offset. */
+const DOCK_CARD_GAP_REM = 0.75;
+/** One rem in real pixels. The card's offset is authored in rem and the app rescales the root font size
+ *  (`--ui-scale`), so a hardcoded 12 would drift away from the card at every zoom except 100%. */
+const remPx = (): number => parseFloat(getComputedStyle(document.documentElement).fontSize) || 16;
+/** Where the transcript's content actually ENDS, as a rect.
+ *
+ *  Not plain `lastElementChild`: the transcript's final child is the out-of-band extras group, and
+ *  `empty:hidden` drops it to `display: none` whenever there are no cards, agents or pending question. A
+ *  display-none element reports an all-zero rect, which would read as "the conversation ends at the top of
+ *  the page", so walk back to the last child that still has a box. Nor the transcript's own rect: it is
+ *  `flex-1`, so under a short conversation it is stretched well past where its content stops. */
+const lastContentRect = (transcript: HTMLElement): DOMRect | null => {
+  for (let node = transcript.lastElementChild; node; node = node.previousElementSibling) {
+    const rect = node.getBoundingClientRect();
+    if (rect.width > 0 || rect.height > 0) return rect;
+  }
+  return null;
+};
+
+/** The docked plugin card, found by GEOMETRY rather than by name.
+ *
+ *  The contract this relies on: a docked live view is an absolutely positioned element inside one of the
+ *  inline-artifact hosts the core itself renders (`data-artifact-id`, see InlineArtifact), and it is the
+ *  element whose height the plugin published in `--chat-dock-height`. Matching that height is what
+ *  identifies it, so this never has to name `.browser-artifact` — the core does not depend on any
+ *  plugin's class, and a second plugin docking a card the same way works with no change here.
+ *
+ *  Why not `:scope > .browser-artifact`: the card is NOT a child of the surface. It is rendered deep in
+ *  the transcript, inside a turn, and only its `position: absolute` lifts it out to the surface, which is
+ *  its containing block. A child selector matches nothing at all. */
+const dockedCardRect = (root: HTMLElement, publishedHeight: number): DOMRect | null => {
+  for (const host of root.querySelectorAll<HTMLElement>('[data-artifact-id]')) {
+    for (const node of [host, ...host.querySelectorAll<HTMLElement>('*')]) {
+      if (getComputedStyle(node).position !== 'absolute') continue;
+      const rect = node.getBoundingClientRect();
+      // The plugin rounds the height up when it publishes, hence the tolerance rather than equality.
+      if (Math.abs(rect.height - publishedHeight) <= 2) return rect;
+    }
+  }
+  return null;
+};
+
+/** The block the wrap spacer rides on: the last prose block of the last turn.
+ *
+ *  It has to be prose specifically. A float only makes the LINE BOXES beside it shorter, and the turn's
+ *  own wrapper is a grid while its body is a flex column — a float in either is ignored by the children,
+ *  or makes the whole body shrink for its full height, which is a narrower column and not a wrap. The
+ *  markdown block is the one element in the chain with ordinary block flow and real line boxes. A turn
+ *  ending in tool rows, a diff or an image therefore has no wrap target, and the caller falls back to
+ *  clearing that overlap vertically instead. */
+const wrapTarget = (transcript: HTMLElement): HTMLElement | null => {
+  const turns = transcript.querySelectorAll<HTMLElement>('[data-tk]');
+  const lastTurn = turns[turns.length - 1];
+  if (!lastTurn) return null;
+  const prose = lastTurn.querySelectorAll<HTMLElement>('.chat-markdown');
+  return prose[prose.length - 1] ?? null;
+};
 
 /** The presentational brain chat surface, driven entirely by the shared controller (BrainChatProvider)
  *  read from context. It owns NO network or session state: only pure view affordances (the picker-open
@@ -1543,6 +1603,138 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
       root.style.removeProperty('--chat-visual-bottom-offset');
       root.style.removeProperty('--chat-composer-height');
       delete root.dataset.chatKeyboardOpen;
+    };
+  }, [variant, pinToNewest]);
+
+  // Clearance under the transcript for a docked plugin card — today the browser monitor, which floats just
+  // above the composer and publishes its measured height back as `--chat-dock-height` on this surface.
+  //
+  // The card is a LAYER: it takes no room in the flow, so a conversation long enough to fill the page ends
+  // UNDERNEATH it, and scrolling never brings those lines out. `scroll-margin-bottom` moves where autoscroll
+  // comes to REST but does not extend the scroll RANGE, so the last turn stays covered at the bottom of the
+  // page — which is exactly the report this fixes.
+  //
+  // Reserving the card's height unconditionally is what this replaces. The composer dock follows the
+  // content rather than the viewport, so under a short conversation that reserve became a tall empty band
+  // below the last message. The reserve here is geometric instead: it exists only while the transcript's
+  // content would actually come to rest inside the card's zone, and stays 0 for every conversation that
+  // ends above it.
+  //
+  // HYSTERESIS. Both terms are compared against the layout WITHOUT the current reserve — the applied value
+  // is subtracted from the dock's measured top, which is the only thing the reserve moves (the content
+  // above it does not shift). Applying a reserve therefore cannot change the answer that asked for it, so
+  // the two states cannot oscillate. Measuring the dock's real rect rather than recomputing from the CSS
+  // variables also keeps this correct while the visual viewport shifts the sticky dock.
+  //
+  // The plugin owns the card and writes `--chat-dock-height` as an inline style. Its API is fixed and
+  // read-only from here, so the style attribute IS the seam, and a MutationObserver is how this side reads
+  // it. Nothing docked means no variable, no reserve, and no work beyond one comparison.
+  useLayoutEffect(() => {
+    if (variant !== 'full') return;
+    const root = surfaceRootRef.current;
+    const transcript = scrollRef.current;
+    const dock = composerDockRef.current;
+    if (!root || !transcript || !dock) return;
+
+    let frame = 0;
+    let wrapped: HTMLElement | null = null;
+    /** Take the wrap off, everywhere it might still be on. Also the teardown path. */
+    const clearWrap = (): void => {
+      if (!wrapped) return;
+      wrapped.removeAttribute('data-chat-dock-wrap');
+      wrapped.style.removeProperty('--chat-dock-spacer-top');
+      wrapped = null;
+    };
+    const setReserve = (px: number): boolean => {
+      const next = px > 0 ? `${Math.round(px)}px` : '';
+      if (transcript.style.getPropertyValue('--chat-dock-reserve') === next) return false;
+      if (next) transcript.style.setProperty('--chat-dock-reserve', next);
+      else transcript.style.removeProperty('--chat-dock-reserve');
+      return true;
+    };
+
+    const measure = (): void => {
+      cancelAnimationFrame(frame);
+      frame = requestAnimationFrame(() => {
+        const cardHeight = parseFloat(root.style.getPropertyValue('--chat-dock-height')) || 0;
+        const target = cardHeight > 0 ? wrapTarget(transcript) : null;
+
+        // PHASE ONE — measure the layout the wrap is NOT in. The float makes its own block taller, so a
+        // margin computed from a wrapped block would feed its own growth back in and never settle. The
+        // spacer therefore goes off before anything is read, in this same frame, and only comes back at
+        // the end; the reserve is subtracted from the dock for exactly the same reason.
+        const previous = wrapped;
+        previous?.removeAttribute('data-chat-dock-wrap');
+        const applied = parseFloat(transcript.style.getPropertyValue('--chat-dock-reserve')) || 0;
+        const gap = DOCK_CARD_GAP_REM * remPx();
+        const zoneBottom = dock.getBoundingClientRect().top - applied - gap;
+        const zoneTop = zoneBottom - cardHeight;
+        const content = cardHeight > 0 ? lastContentRect(transcript) : null;
+        const targetHeight = target ? target.getBoundingClientRect().height : 0;
+        const card = cardHeight > 0 ? dockedCardRect(root, cardHeight) : null;
+
+        // Nothing docked, or a conversation that ends above the card: no wrap, no reserve, no band.
+        if (!card || !content || content.bottom <= zoneTop) {
+          clearWrap();
+          previous?.style.removeProperty('--chat-dock-spacer-top');
+          if (setReserve(0)) pinToNewest();
+          return;
+        }
+
+        // PHASE TWO — place the wrap. The spacer sits at the START of the prose block (a float may not be
+        // higher than the line boxes before it), pushed down so its box covers the block's LAST
+        // `cardHeight` pixels, which is where the card actually is.
+        const spacerTop = Math.max(0, targetHeight - cardHeight);
+        // Whatever the wrap cannot clear. The wrapped block looks after itself, so what is left is the
+        // content ABOVE it — earlier turns the card's zone still reaches over when the block is shorter
+        // than the card. Clearing them means pushing the card down to the block's top edge, and no
+        // further: the reserve moves the dock (and with it the absolutely positioned card) rather than the
+        // content, so `target.top - zoneTop` is exactly the deficit and never a whole card height. With no
+        // wrap target at all (a turn ending in tool rows or an image) the same measure falls back to the
+        // real end of the content.
+        const reserve = Math.max(0, (target ? target.getBoundingClientRect().top : content.bottom) - zoneTop);
+
+        // Guarded: this lands on the SAME style attribute the MutationObserver below watches, so an
+        // unconditional write would re-enter this measurement every frame, forever.
+        const width = `${Math.round(card.width)}px`;
+        if (root.style.getPropertyValue('--chat-dock-width') !== width) {
+          root.style.setProperty('--chat-dock-width', width);
+        }
+        if (target) {
+          target.style.setProperty('--chat-dock-spacer-top', `${Math.round(spacerTop)}px`);
+          if (previous && previous !== target) {
+            previous.removeAttribute('data-chat-dock-wrap');
+            previous.style.removeProperty('--chat-dock-spacer-top');
+          }
+          target.setAttribute('data-chat-dock-wrap', 'on');
+          wrapped = target;
+        } else {
+          clearWrap();
+          previous?.style.removeProperty('--chat-dock-spacer-top');
+        }
+        if (setReserve(reserve)) pinToNewest();
+      });
+    };
+
+    measure();
+    const resize = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
+    resize?.observe(transcript);
+    resize?.observe(dock);
+    // A new last turn, or a turn that grew a new segment, changes what the wrap rides on.
+    const children = typeof MutationObserver === 'undefined' ? null : new MutationObserver(measure);
+    children?.observe(transcript, { childList: true, subtree: true });
+    // The surface's own style attribute carries `--chat-dock-height` (the plugin) and the composer
+    // measurements (the effect above); both move the card, so both are worth a remeasure.
+    const style = typeof MutationObserver === 'undefined' ? null : new MutationObserver(measure);
+    style?.observe(root, { attributes: true, attributeFilter: ['style'] });
+    return () => {
+      cancelAnimationFrame(frame);
+      resize?.disconnect();
+      children?.disconnect();
+      style?.disconnect();
+      clearWrap();
+      transcript.style.removeProperty('--chat-dock-reserve');
+      root.style.removeProperty('--chat-dock-width');
     };
   }, [variant, pinToNewest]);
 
