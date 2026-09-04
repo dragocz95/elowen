@@ -22,7 +22,7 @@ interface EditPlan {
 
 const mod = await import(resolve(repoRoot, 'plugins/files/index.mjs')) as {
   detectImageMime(buf: Buffer): string | null;
-  planEdit(before: string, oldText: string, newText: string, replaceAll: boolean): EditPlan;
+  planEdit(before: string, oldText: string, newText: string, replaceAll: boolean, fuzzyMatch?: boolean): EditPlan;
 };
 
 // ── image sniff fixtures ─────────────────────────────────────────────────────
@@ -123,7 +123,7 @@ describe('files plugin — image sniff (port of PI mime.js)', () => {
   });
 });
 
-describe('files plugin — fuzzy-edit core (port of PI edit-diff.js)', () => {
+describe('files plugin — exact edit with opt-in fuzzy extension', () => {
   it('replaces an exact unique match and reports one replacement', () => {
     const plan = mod.planEdit('line one\nline two\nline three', 'line two', 'line 2', false);
     expect(plan.error).toBeUndefined();
@@ -163,37 +163,36 @@ describe('files plugin — fuzzy-edit core (port of PI edit-diff.js)', () => {
     expect(mod.planEdit('a\rb\rc', 'b', 'X', false).after).toBe('a\nX\nc');
   });
 
-  it('falls back to a normalised match for smart quotes, Unicode dashes, exotic spaces and NFKC forms', () => {
-    expect(mod.planEdit('const s = \u201Chello\u201D;', 'const s = "hello";', 'const s = "world";', false).after)
+  it('keeps normalized matching behind the explicit fuzzy extension', () => {
+    expect(mod.planEdit('const s = \u201Chello\u201D;', 'const s = "hello";', 'const s = "world";', false).error)
+      .toBe('notfound');
+    expect(mod.planEdit('const s = \u201Chello\u201D;', 'const s = "hello";', 'const s = "world";', false, true).after)
       .toBe('const s = "world";');
-    expect(mod.planEdit('a \u2014 b', 'a - b', 'a + b', false).after).toBe('a + b');
-    expect(mod.planEdit('a\u00A0b', 'a b', 'ab', false).after).toBe('ab');
-    expect(mod.planEdit('\uFF46\uFF4F\uFF4F()', 'foo()', 'bar()', false).after).toBe('bar()');
-    // Trailing whitespace is ignored when comparing, so a multi-line anchor still matches a file whose
-    // lines end in stray spaces.
-    expect(mod.planEdit('let x = 1;   \nlet y = 2;', 'let x = 1;\nlet y = 2;', 'let z = 3;', false).after)
+    expect(mod.planEdit('a \u2014 b', 'a - b', 'a + b', false, true).after).toBe('a + b');
+    expect(mod.planEdit('a\u00A0b', 'a b', 'ab', false, true).after).toBe('ab');
+    expect(mod.planEdit('\uFF46\uFF4F\uFF4F()', 'foo()', 'bar()', false, true).after).toBe('bar()');
+    expect(mod.planEdit('let x = 1;   \nlet y = 2;', 'let x = 1;\nlet y = 2;', 'let z = 3;', false, true).after)
       .toBe('let z = 3;');
   });
 
   it('prefers an exact match, which leaves whitespace the fuzzy pass would have normalised untouched', () => {
-    expect(mod.planEdit('keep   \nother', 'keep', 'kept', false).after).toBe('kept   \nother');
+    expect(mod.planEdit('keep   \nother', 'keep', 'kept', false, true).after).toBe('kept   \nother');
   });
 
-  it('rewrites only the matched line block, so every untouched line keeps its exact original bytes', () => {
+  it('rewrites only the fuzzy-matched line block, so untouched lines keep their original bytes', () => {
     const before = 'let a = \u201Cone\u201D;\nlet b = \u201Ctwo\u201D;\nlet c = \u201Cthree\u201D;';
-    const plan = mod.planEdit(before, 'let b = "two";', 'let b = 2;', false);
-    // Lines 1 and 3 keep their curly quotes; only the edited line is rewritten.
+    const plan = mod.planEdit(before, 'let b = "two";', 'let b = 2;', false, true);
     expect(plan.after).toBe('let a = \u201Cone\u201D;\nlet b = 2;\nlet c = \u201Cthree\u201D;');
   });
 
-  it('applies a fuzzy replaceAll across several lines without disturbing the ones between them', () => {
+  it('applies fuzzy replaceAll without disturbing the lines between matches', () => {
     const before = 'x = \u201Ca\u201D;\nkeep \u201Cme\u201D;\nx = \u201Ca\u201D;';
-    const plan = mod.planEdit(before, 'x = "a";', 'x = 1;', true);
+    const plan = mod.planEdit(before, 'x = "a";', 'x = 1;', true, true);
     expect(plan.count).toBe(2);
     expect(plan.after).toBe('x = 1;\nkeep \u201Cme\u201D;\nx = 1;');
   });
 
-  it('reports not-found when the anchor only normalises to something empty', () => {
-    expect(mod.planEdit('a\nb\n', '   ', 'x', false).error).toBe('notfound');
+  it('reports not-found when a fuzzy anchor only normalises to empty', () => {
+    expect(mod.planEdit('a\nb\n', '   ', 'x', false, true).error).toBe('notfound');
   });
 });

@@ -19,7 +19,7 @@
     },
     "pdfMaxPages": {
       "label": "Stránky PDF na jedno čtení",
-      "hint": "Maximální počet stránek PDF pro jedno volání Read. Vyšší limit umožní vyžádat širší rozsah. Rozsah 5–50, výchozí 20."
+      "hint": "Maximální počet stránek PDF pro jedno volání Read. PDF do 10 stran lze číst bez rozsahu. Rozsah 10–20, výchozí 20."
     }
   }
 }

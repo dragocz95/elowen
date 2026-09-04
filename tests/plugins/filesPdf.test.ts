@@ -83,14 +83,17 @@ describe('Read — PDF', () => {
   let reg: PluginRegistry;
   let dir: string;
   let pdf: string;
+  let longPdf: string;
   let scanned: string;
 
   beforeAll(async () => {
     reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['files'], logger: log });
     dir = mkdtempSync(join(tmpdir(), 'elowen-files-pdf-'));
     pdf = join(dir, 'spec.pdf');
+    longPdf = join(dir, 'long.pdf');
     scanned = join(dir, 'scan.pdf');
     writeFileSync(pdf, buildPdf(['Hello page one', 'Second page here', 'Third page text']));
+    writeFileSync(longPdf, buildPdf(Array.from({ length: 11 }, (_, i) => `Long page ${i + 1}`)));
     writeFileSync(scanned, buildPdf(['Cover page text', null])); // page 2 has no text layer
   });
   afterAll(() => { rmSync(dir, { recursive: true, force: true }); });
@@ -117,12 +120,17 @@ describe('Read — PDF', () => {
     expect(list).not.toContain('Second page here');
   });
 
-  it('demands `pages` for a PDF instead of handing back decoded binary', async () => {
+  it('reads PDFs up to 10 pages without an explicit page range', async () => {
     const res = await read({ file_path: pdf });
-    expect(res.content[0].text).toContain('This is a PDF');
-    expect(res.content[0].text).toContain('pages=');
-    expect(res.details).toMatchObject({ ok: false, pdf: true });
-    // The failure mode this prevents: a UTF-8 decode of the raw file, which "succeeds" and looks like data.
+    expect(res.content[0].text).toContain('Hello page one');
+    expect(res.content[0].text).toContain('Third page text');
+    expect(res.details).toMatchObject({ ok: true, pdf: true, pages: [1, 2, 3] });
+  });
+
+  it('requires `pages` for PDFs longer than 10 pages', async () => {
+    const res = await read({ file_path: longPdf });
+    expect(res.content[0].text).toMatch(/11 pages.*pass `pages`/i);
+    expect(res.details).toMatchObject({ ok: false, pdf: true, pageCount: 11 });
     expect(res.content[0].text).not.toContain('%PDF');
   });
 

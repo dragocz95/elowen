@@ -8,13 +8,13 @@ import { defineTool, formatSize } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { spawn } from 'node:child_process';
 import { StringDecoder } from 'node:string_decoder';
+import { isAbsolute, join } from 'node:path';
 
 const DEFAULT_MAX = 60_000;              // output cap per foreground run / background buffer
-const DEFAULT_TIMEOUT_MS = 120_000;      // foreground runs get killed after this
-// Per-call foreground `timeout` (seconds). A caller may stretch a slow-but-finite run (npm install, a
-// full build) past the default instead of pushing it to the background just to survive; 10 minutes is the
-// ceiling — anything longer belongs in the background, where nothing kills it.
-const MAX_TIMEOUT_S = 600;
+const DEFAULT_TIMEOUT_MS = 20_000;       // canonical Fable foreground deadline
+// Safe Elowen superset for slow local builds. The argument stays unambiguously milliseconds.
+const MAX_TIMEOUT_MS = 600_000;
+const MIN_TIMEOUT_MS = 1;
 const MIN_TIMEOUT_S = 1;
 // Blocking `ProcessOutput` — wait for a background process to finish instead of polling it. Capped
 // well under the foreground ceiling: a blocked read holds the agent's turn open, and the process keeps
@@ -36,6 +36,42 @@ const clampSeconds = (value, def, min, max) => {
   if (!Number.isFinite(n)) return def;
   return Math.min(Math.max(Math.round(n), min), max);
 };
+
+const cwdReportingCommand = (command) =>
+  `trap '__elowen_status=$?; printf "%s\\0" "$PWD" >&3; trap - EXIT; exit "$__elowen_status"' EXIT\n${command}`;
+const durationLabel = (ms) => ms % 1000 === 0 ? `${ms / 1000}s` : `${ms}ms`;
+
+function resolveBackground(input) {
+  // `background` is replay-only compatibility for transcripts created before the canonical rename. It is
+  // deliberately absent from the schema so a model sees exactly one argument for this concept.
+  if (input.run_in_background !== undefined && input.background !== undefined
+    && input.run_in_background !== input.background) {
+    throw new Error('run_in_background conflicts with the replay-only background value');
+  }
+  return input.run_in_background ?? input.background ?? false;
+}
+
+function resolveTimeoutMs(input) {
+  if (input.timeout === undefined) return DEFAULT_TIMEOUT_MS;
+  const timeout = Number(input.timeout);
+  if (!Number.isFinite(timeout) || timeout < MIN_TIMEOUT_MS || timeout > MAX_TIMEOUT_MS) {
+    throw new Error(`timeout must be between ${MIN_TIMEOUT_MS} and ${MAX_TIMEOUT_MS} milliseconds`);
+  }
+  return Math.round(timeout);
+}
+
+/** Convert the cwd reported from inside a workspace namespace back to its host path, then run the ordinary
+ * path authority check again. A guest path outside /workspace is never interpreted as a host path. */
+export function mapReportedCwd(reported, prepared, assertAllowed) {
+  let candidate = reported;
+  if (prepared.workspace) {
+    if (reported === '/workspace') candidate = prepared.workspace.path;
+    else if (reported.startsWith('/workspace/')) candidate = join(prepared.workspace.path, reported.slice('/workspace/'.length));
+    else throw new Error('reported cwd is outside the assigned workspace');
+  }
+  if (!isAbsolute(candidate)) throw new Error('reported cwd is not absolute');
+  return assertAllowed(candidate);
+}
 
 /** Tokenize top-level shell commands just far enough for the restart safety check below. Control
  *  operators split commands only OUTSIDE quotes, so an SSH payload remains an argument of `ssh` rather
@@ -271,11 +307,17 @@ class ForegroundRun {
     // character split across stdout chunks gets finished with stderr's bytes and both come out mojibake.
     this._stdoutDecoder = new StringDecoder('utf8');
     this._stderrDecoder = new StringDecoder('utf8');
+    this._cwdDecoder = new StringDecoder('utf8');
+    this._reportedCwd = '';
     this._timer = null;
     this._resolveDetached = null;
     this.detachedPromise = new Promise((resolve) => { this._resolveDetached = resolve; });
   }
   get running() { return this.exitCode === null; }
+  get reportedCwd() {
+    const end = this._reportedCwd.indexOf('\0');
+    return end < 0 ? null : this._reportedCwd.slice(0, end);
+  }
   detach() {
     if (this.detached) return;
     this.detached = true;
@@ -343,7 +385,8 @@ class ForegroundRun {
         };
         try {
           this.child = spawn(this.launch.command, {
-            cwd: this.spawnCwd, shell: true, env: this.launch.env, detached: true, stdio: ['ignore', 'pipe', 'pipe'],
+            cwd: this.spawnCwd, shell: true, env: this.launch.env, detached: true,
+            stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
           });
         } catch (error) {
           finish(error);
@@ -351,6 +394,9 @@ class ForegroundRun {
         }
         this.child.stdout.on('data', onData(this._stdoutDecoder));
         this.child.stderr.on('data', onData(this._stderrDecoder));
+        this.child.stdio[3]?.on('data', (chunk) => {
+          if (this._reportedCwd.length < 16_384) this._reportedCwd += this._cwdDecoder.write(chunk);
+        });
         this.child.once('error', finish);
         this.child.once('close', (code) => {
           this.exitCode = this.killed || this.timedOut ? null : code ?? -1;
@@ -363,6 +409,7 @@ class ForegroundRun {
     } finally {
       if (this._timer) { clearTimeout(this._timer); this._timer = null; }
       this.output += this._stdoutDecoder.end() + this._stderrDecoder.end();
+      this._reportedCwd += this._cwdDecoder.end();
       await this.releaseLease();
     }
   }
@@ -525,6 +572,17 @@ function withDropNotice(bg, text) {
 export function register(ctx) {
   const currentSessionId = () => ctx.currentSessionId?.() ?? null;
   const currentAccountUserId = () => ctx.currentContributionUserId?.() ?? ctx.currentIdentity?.()?.elowenUserId ?? null;
+  const sessionCwds = new Map();
+  const cwdStateKey = () => {
+    const sessionId = currentSessionId();
+    return sessionId ? `${currentAccountUserId() ?? 'accountless'}\0${sessionId}` : null;
+  };
+  const rememberCwd = (key, cwd) => {
+    if (!key) return;
+    sessionCwds.delete(key);
+    sessionCwds.set(key, cwd);
+    if (sessionCwds.size > 256) sessionCwds.delete(sessionCwds.keys().next().value);
+  };
   // The daemon-level registry (ctx.processes) is the SINGLE source of truth for background children: it is
   // what the CLI + web panel list/read/kill, and what deleteSession/killSession prunes. The plugin used to
   // keep a parallel Map, which nothing else could reach — so a registry-side kill (session deleted, panel ✕)
@@ -590,15 +648,19 @@ export function register(ctx) {
 
   // Also caps the rolling buffer kept for background processes (BgProcess.output trim above).
   const outputCap = Math.min(Math.max(Number(ctx.config.outputCap) || DEFAULT_MAX, 10_000), 500_000);
-  const commandTimeoutMs = Math.min(Math.max(Number(ctx.config.commandTimeoutMs) || DEFAULT_TIMEOUT_MS, 30_000), 600_000);
   // The bounds here MUST mirror the manifest's, because the server stores plugin config unvalidated —
   // a wider clamp would honour a value the settings UI rejects, a narrower one would silently ignore an
   // accepted setting.
   const maxBackgroundProcesses = Math.min(Math.max(Number(ctx.config.maxBackgroundProcesses) || DEFAULT_MAX_BG, 1), 64);
 
-  // Default cwd is host-resolved (ctx.defaultCwd): the session's bound project path when there is one,
-  // re-established every run — an explicit `cwd` from one call never carries into the next.
-  const guardCwd = (cwd) => ctx.assertPathAllowed(cwd ?? (ctx.currentAccess().workspaceRef ? '.' : ctx.defaultCwd()));
+  // Explicit cwd wins. Otherwise a successful foreground call's final cwd persists for this account/session;
+  // a new session starts from the bound workspace or project default. Every reuse passes authority again.
+  const guardCwd = (cwd) => {
+    const key = cwdStateKey();
+    const requested = cwd ?? (key ? sessionCwds.get(key) : undefined)
+      ?? (ctx.currentAccess().workspaceRef ? '.' : ctx.defaultCwd());
+    return ctx.assertPathAllowed(requested);
+  };
 
   /** Resolve the live Sandbox owner for every command. A disabled/missing owner never becomes an implicit
    * host-shell grant: only a true instance operator gets the explicit compatibility fallback. */
@@ -630,44 +692,51 @@ export function register(ctx) {
     description: [
       'Execute a shell command in a real shell and return its combined stdout and stderr with the exit code.',
       'Treat it as the most dangerous tool available: nothing here asks for confirmation, so never reach for rm, git reset/checkout/clean, force push, a package publish, a deploy or a service restart as a shortcut around a blocker. Reaching it at all means an administrator granted this account the terminal plugin, so treat that trust accordingly.',
-      'The working directory is confined to your accessible repositories. Use absolute paths — `cd` inside a compound command is unreliable and can shift context unexpectedly. Shell state (env vars, functions) does not persist between calls; the shell is initialized fresh each time.',
+      'The working directory is confined to accessible repositories and persists between successful foreground calls in this session. Prefer absolute paths. Shell variables and functions do not persist.',
       'Prefer the dedicated file tools (Read, Edit, Write, Search, ListDir) over cat, head, tail, sed, awk, echo, grep or rg. A shell read does NOT satisfy Edit/Write\'s read-before-write check, so reading a file with cat just forces a second Read before you can edit it — Read it directly. Reach for the shell when the task genuinely needs it: builds, tests, git, service inspection, process management.',
       'Quote paths that contain spaces, and create a file\'s parent directory (mkdir -p) before writing into a new location — Write refuses a missing directory.',
-      `Foreground runs are killed after ${Math.round(DEFAULT_TIMEOUT_MS / 1000)} s; raise it with \`timeout\` (seconds, max ${MAX_TIMEOUT_S}) for a slow but finite command such as an install or a full build.`,
-      'Pass background=true for open-ended work (dev servers, watchers) — it runs detached and returns a process id with no command timeout (it does not outlive a daemon restart). Manage those with ListProcesses / ProcessOutput / KillProcess, and use backgroundMode="service" for a long-lived process that should never be collected as a finite job.',
+      `\`timeout\` is milliseconds, defaults to ${DEFAULT_TIMEOUT_MS}, and may not exceed ${MAX_TIMEOUT_MS}. The larger Elowen ceiling supports slow finite local builds without changing units.`,
+      'Pass run_in_background=true for detached work. Manage detached work with ListProcesses, ProcessOutput, and KillProcess. backgroundMode="service" marks a long-lived server or watcher.',
+      'description is optional display context. dangerouslyDisableSandbox=false is a no-op; true is always refused before any process is spawned.',
       `Output is capped at ~${Math.round(outputCap / 1000)} kB: past that only the BEGINNING and the END are returned, with the middle dropped and named in the result, so redirect a long build or test run to a file and grep it instead of re-running it.`,
       'A denied or blocked command means a permission rule stopped it — adjust the approach, do not retry it verbatim. Keep secrets out of command lines and output.',
     ].join(' '),
     parameters: Type.Object({
-      command: Type.String({ description: 'The shell command to run' }),
-      cwd: Type.Optional(Type.String({ description: 'Working directory (must be within your repositories)' })),
+      command: Type.String({ description: 'The command to execute' }),
       timeout: Type.Optional(Type.Number({
-        description: `Foreground timeout in SECONDS (default ${Math.round(DEFAULT_TIMEOUT_MS / 1000)}, max ${MAX_TIMEOUT_S}). On expiry the process tree is killed and the output so far is returned. Ignored when background=true.`,
+        minimum: MIN_TIMEOUT_MS,
+        maximum: MAX_TIMEOUT_MS,
+        description: `Optional timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}, max ${MAX_TIMEOUT_MS})`,
       })),
-      background: Type.Optional(Type.Boolean({ description: 'Run detached and return a process id' })),
+      description: Type.Optional(Type.String({ description: 'Clear, concise description of what the command does' })),
+      run_in_background: Type.Optional(Type.Boolean({ description: 'Run the command in the background' })),
+      dangerouslyDisableSandbox: Type.Optional(Type.Boolean({ description: 'Sandbox bypass request; true is always refused by Elowen' })),
+      cwd: Type.Optional(Type.String({ description: 'Elowen extension: working directory within accessible repositories' })),
       backgroundMode: Type.Optional(Type.Union([Type.Literal('job'), Type.Literal('service')], {
-        description: 'job (default) keeps a delegated agent active until the finite command is collected; service is for long-lived servers/watchers.',
+        description: 'Elowen extension: job waits for collection; service is a long-lived server or watcher',
       })),
     }),
     execute: async (_id, p, _signal, onUpdate) => {
       try {
+        if (p.dangerouslyDisableSandbox === true) {
+          return ok('Error: sandbox bypass was refused before spawning the command. dangerouslyDisableSandbox=true is not supported.');
+        }
+        const background = resolveBackground(p);
+        const timeoutMs = resolveTimeoutMs(p);
         if (isBlockingSelfRestart(p.command)) {
           return ok('Error: refused a blocking restart of elowen-daemon from inside its own service. Run `elowen restart all` as a standalone Bash call; verify health only after the recovered turn resumes. Do not retry the blocking command.');
         }
         const cwd = guardCwd(p.cwd);
-        if (!p.background) {
-          // An explicit per-call `timeout` overrides the configured default, clamped to [1 s, 10 min]; the
-          // background path ignores it entirely (a detached process has no deadline to extend).
-          const timeoutMs = p.timeout === undefined
-            ? commandTimeoutMs
-            : clampSeconds(p.timeout, Math.round(commandTimeoutMs / 1000), MIN_TIMEOUT_S, MAX_TIMEOUT_S) * 1000;
+        const sessionCwdKey = cwdStateKey();
+        if (!background) {
           // Stream the rolling output tail live as it runs. `onUpdate` is PI's 4th execute argument (the
           // agent loop passes it, forwarded verbatim through the Elowen tool wrappers); each call emits a
           // `tool_execution_update` the daemon maps to a throttled `tool_progress` event. Absent for callers
           // that don't stream (background path never uses it — it has ProcessOutput instead).
           const onProgress = onUpdate ? (text) => onUpdate(ok(text)) : undefined;
           const id = newProcessId();
-          const run = new ForegroundRun(id, p.command, cwd, outputCap, timeoutMs, await prepareLaunch(p.command, cwd));
+          const prepared = await prepareLaunch(cwdReportingCommand(p.command), cwd);
+          const run = new ForegroundRun(id, p.command, cwd, outputCap, timeoutMs, prepared);
           // Register the run as `foreground` so Ctrl+B (which reads the live process list) can detach it,
           // and so a detach flips the SAME handle to `job` — an ordinary background process from then on,
           // with no further special-casing. A sessionless (worker/cron) run stays plain and non-detachable:
@@ -703,11 +772,19 @@ export function register(ctx) {
           foregroundRuns.delete(id);
           if (handle) ctx.processes.remove(id);
           if (run.spawnError) return ok(`Error: ${run.spawnError}`);
+          let cwdWarning = '';
+          if (!run.killed && !run.timedOut && run.reportedCwd) {
+            try {
+              rememberCwd(sessionCwdKey, mapReportedCwd(run.reportedCwd, prepared, (candidate) => ctx.assertPathAllowed(candidate)));
+            } catch (error) {
+              cwdWarning = `[working directory was not persisted: ${ctx.sanitizePathOutput(error instanceof Error ? error.message : String(error))}]\n`;
+            }
+          }
           // Name the deadline that actually applied so the model knows whether to re-run with a longer
           // `timeout` or move to the background; a bare kill (registry/session delete) reads as `[killed]`.
-          const note = run.timedOut
-            ? `[killed: timed out after ${Math.round(timeoutMs / 1000)}s]\n`
-            : run.exitCode === null ? '[killed]\n' : '';
+          const note = cwdWarning + (run.timedOut
+            ? `[killed: timed out after ${durationLabel(timeoutMs)}]\n`
+            : run.exitCode === null ? '[killed]\n' : '');
           // The `[exit N]` marker inside the text is framing for the MODEL; the display path reads the
           // exit code structurally from details (tone + status chip), so report it there as well. A
           // killed run has no exit code (null) and its note already says why.
@@ -741,7 +818,7 @@ export function register(ctx) {
   ctx.registerTool(defineTool({
     name: 'ListProcesses', label: 'List processes',
     description: [
-      'List the background shell processes of THIS conversation — the ones started with Bash(background=true) or moved to the background with Ctrl+B — with each process id, whether it is still RUNNING or has exited (and with which code), when it started and the command line.',
+      'List the background shell processes of THIS conversation — the ones started with Bash(run_in_background=true) or moved to the background with Ctrl+B — with each process id, whether it is still RUNNING or has exited (and with which code), when it started and the command line.',
       'Use it to recover a process id you no longer have, to check what is still running before starting another dev server or watcher, and before KillProcess so you kill the right one. It takes no arguments and cannot be pointed at another conversation or at arbitrary system processes: a command still running in the FOREGROUND is deliberately not listed, and neither is anything you did not start here.',
       'It reports state only — read a process\'s output with ProcessOutput and stop one with KillProcess. A background sub-agent is a different thing entirely (see DelegateList).',
     ].join(' '),
@@ -763,7 +840,7 @@ export function register(ctx) {
   ctx.registerTool(defineTool({
     name: 'ProcessOutput', label: 'Read process output',
     description: [
-      'Read the output (stdout + stderr) of a background process started with Bash(background=true).',
+      'Read the output (stdout + stderr) of a background process started with Bash(run_in_background=true).',
       'By default this returns only what was written SINCE your last read and does not wait — the process keeps running.',
       'Pass all=true for the whole buffer from process start.',
       `Pass block=true to WAIT for the process to finish instead of polling: the call returns as soon as it exits, or after \`timeout\` seconds (default ${DEFAULT_BLOCK_S}, max ${MAX_BLOCK_S}) with the output so far and a note that it is still running. Use it whenever you need a finite command's result — never call this in a polling loop.`,
@@ -771,7 +848,7 @@ export function register(ctx) {
       'Reading a process that has already exited returns its remaining output and then collects it, so that id stops working afterwards. This tool is only for shell processes — a background sub-agent result comes back through DelegateResult.',
     ].join(' '),
     parameters: Type.Object({
-      id: Type.String({ description: 'Process id returned by Bash(background=true)' }),
+      id: Type.String({ description: 'Process id returned by Bash(run_in_background=true)' }),
       all: Type.Optional(Type.Boolean({ description: 'Return the whole buffer instead of just new output' })),
       block: Type.Optional(Type.Boolean({ description: 'Wait for the process to finish before returning (default false).' })),
       timeout: Type.Optional(Type.Number({ description: `Seconds to wait when block=true (default ${DEFAULT_BLOCK_S}, max ${MAX_BLOCK_S}). Ignored otherwise.` })),
@@ -805,12 +882,12 @@ export function register(ctx) {
     name: 'KillProcess', label: 'Kill process',
     description: [
       'Stop a background shell process of this conversation by id — a dev server, watcher or build you no longer need, or one that is stuck.',
-      'The process id comes from the Bash(background=true) call that started it, or from ListProcesses when you no longer have it; only processes started in THIS conversation can be killed, and an unknown id is reported back as an error rather than killing anything.',
+      'The process id comes from the Bash(run_in_background=true) call that started it, or from ListProcesses when you no longer have it; only processes started in THIS conversation can be killed, and an unknown id is reported back as an error rather than killing anything.',
       'This is IRREVERSIBLE and abrupt: the whole process group is SIGKILLed, so the shell and everything it forked die immediately with no chance to shut down cleanly or flush — a killed build or migration can leave partial state behind. Read what it has produced with ProcessOutput first if the output still matters, because the entry is dropped afterwards and its buffer is gone.',
       'Do not use it to work around a command that is merely slow (wait, or read it with ProcessOutput block=true), and never to kill processes you did not start.',
     ].join(' '),
     parameters: Type.Object({
-      id: Type.String({ description: 'Process id from Bash(background=true) or ListProcesses. The process group is SIGKILLed immediately and its output buffer is discarded.' }),
+      id: Type.String({ description: 'Process id from Bash(run_in_background=true) or ListProcesses. The process group is SIGKILLed immediately and its output buffer is discarded.' }),
     }),
     execute: async (_id, p) => {
       const handle = scopedHandle(p.id);

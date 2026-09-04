@@ -3,15 +3,11 @@
   "fields": {
     "sec_limits": {
       "label": "Limity",
-      "hint": "Limity velikosti výstupu a délky běhu shellových příkazů."
+      "hint": "Limity velikosti výstupu a procesů na pozadí pro shellové příkazy."
     },
     "outputCap": {
       "label": "Limit výstupu",
       "hint": "Kolik stdout/stderr se z příkazu vrátí. Nad tímto limitem se zahodí prostředek a vrátí se jen začátek a konec, přičemž výsledek uvede, kolik toho ubylo. Zároveň omezuje průběžnou vyrovnávací paměť výstupu udržovanou pro procesy na pozadí. Rozsah 10–500 kB, výchozí 60 kB."
-    },
-    "commandTimeoutMs": {
-      "label": "Časový limit příkazu (ms)",
-      "hint": "Jak dlouho může příkaz na popředí běžet, než se ukončí."
     },
     "maxBackgroundProcesses": {
       "label": "Procesy na pozadí na relaci a účet",

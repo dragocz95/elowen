@@ -126,12 +126,25 @@ describe('files plugin', () => {
     expect((res as { details?: { replacements?: number } }).details?.replacements).toBe(3);
   });
 
-  it('Edit fuzzy-matches smart quotes while preserving the other lines byte-for-byte', async () => {
+  it('Edit requires an exact match by default and keeps fuzzy matching opt-in', async () => {
     const f = join(dir, 'fuzzy.txt');
-    // The target line uses curly quotes; old_string is supplied with straight ASCII quotes.
     writeFileSync(f, 'const a = 1;\nconst s = “hello”;\nconst b = 2;');
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Edit', { file_path: f, old_string: 'const s = "hello";', new_string: 'const s = "world";' }));
-    expect(res.content[0].text).toContain('1 replacement');
+
+    const exact = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Edit', {
+      file_path: f,
+      old_string: 'const s = "hello";',
+      new_string: 'const s = "world";',
+    }));
+    expect(exact.content[0].text).toMatch(/not found/i);
+    expect(readFileSync(f, 'utf-8')).toBe('const a = 1;\nconst s = “hello”;\nconst b = 2;');
+
+    const fuzzy = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Edit', {
+      file_path: f,
+      old_string: 'const s = "hello";',
+      new_string: 'const s = "world";',
+      fuzzy_match: true,
+    }));
+    expect(fuzzy.content[0].text).toContain('1 replacement');
     expect(readFileSync(f, 'utf-8')).toBe('const a = 1;\nconst s = "world";\nconst b = 2;');
   });
 
@@ -189,6 +202,32 @@ describe('files plugin', () => {
     expect((res as { details?: { truncated?: boolean } }).details?.truncated).toBe(true);
     const beyond = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { file_path: f, offset: 999 }));
     expect(beyond.content[0].text).toMatch(/beyond end of file/);
+  });
+
+  it('Read treats offsets 0 and 1 as the first line', async () => {
+    const f = join(dir, 'offset-origin.txt');
+    writeFileSync(f, 'first\nsecond\nthird');
+    const zero = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { file_path: f, offset: 0, limit: 1 }));
+    const one = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { file_path: f, offset: 1, limit: 1 }));
+    expect(zero.content[0].text).toContain('1\tfirst');
+    expect(one.content[0].text).toContain('1\tfirst');
+  });
+
+  it('Read returns at most 2000 lines when limit is omitted', async () => {
+    const f = join(dir, 'default-line-cap.txt');
+    writeFileSync(f, Array.from({ length: 2005 }, (_, i) => `row ${i + 1}`).join('\n'));
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { file_path: f }));
+    expect(res.content[0].text).toContain('row 2000');
+    expect(res.content[0].text).not.toContain('row 2001');
+    expect(res.content[0].text).toContain('Showing lines 1-2000 of 2005. Use offset=2001 to continue.');
+  });
+
+  it('Read rejects an empty file', async () => {
+    const f = join(dir, 'empty.txt');
+    writeFileSync(f, '');
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { file_path: f }));
+    expect(res.content[0].text).toMatch(/Error.*empty file/i);
+    expect((res as { details?: { ok?: boolean } }).details?.ok).toBe(false);
   });
 
   it('Read returns an image content block with a base64 attachment', async () => {
