@@ -20,6 +20,9 @@ export const MARKERS = {
   ownerBashTask: 'RECOVERY-OWNER-BASH-TASK-7e21',
   ownerBashResult: 'RECOVERY-OWNER-BASH-RESULT-5d09',
   ownerSteer: 'RECOVERY-OWNER-STEER-3b6f',
+  grandTask: 'RECOVERY-GRANDCHILD-TASK-9a1e',
+  grandResult: 'RECOVERY-GRANDCHILD-RESULT-6f04',
+  nestedChildResult: 'RECOVERY-NESTED-CHILD-RESULT-2c77',
   parentGotResult: 'RECOVERY-PARENT-GOT-RESULT-8c42',
 };
 
@@ -49,7 +52,7 @@ async function readJson(req) {
 const frame = (payload) => `data: ${JSON.stringify(payload)}\n\n`;
 
 /** Start one isolated scripted provider for a recovery scenario. */
-export async function startRecoveryModel({ task, result, background = false, unsafe = false, ownerBash = false }) {
+export async function startRecoveryModel({ task, result, background = false, unsafe = false, ownerBash = false, nested = false }) {
   const requests = [];
   const toolCalls = [];
   let toolCallSequence = 0;
@@ -104,6 +107,32 @@ export async function startRecoveryModel({ task, result, background = false, uns
       res.write(usage());
       finish();
     };
+
+    // The FIRST user message names the task a session was given — the only reliable way to tell a child
+    // from its grandchild, since the child's own context also contains the grandchild's task (inside its
+    // Delegate call).
+    const firstUserText = contentText(messages.find((m) => m.role === 'user') ?? {});
+    // Nested mode (parent → child → grandchild): the GRANDCHILD is the one held mid-model-call until the
+    // restart; the child, waiting on its Delegate, is paused mid-call too. After the restart the grandchild
+    // finishes, the child finds its Delegate call answered [interrupted, result recovered] and finishes,
+    // and the parent receives the child's answer — exactly once.
+    if (nested && allText.includes(CHILD_PROMPT) && firstUserText.includes(MARKERS.grandTask)) {
+      if (initialChildSignalled) { say(`Grandchild finished. ${MARKERS.grandResult}`); return; }
+      initialChildSignalled = true;
+      signalInitialChild();
+      await held;
+      if (!res.destroyed && !res.writableEnded) say(`Grandchild was released. ${MARKERS.grandResult}`);
+      return;
+    }
+    if (nested && allText.includes(CHILD_PROMPT) && firstUserText.includes(task)) {
+      if (allText.includes('[interrupted, result recovered]') && allText.includes(MARKERS.grandResult)) {
+        say(`Child folded the grandchild's answer. ${MARKERS.nestedChildResult}`);
+        return;
+      }
+      if (awaitingTool) { say(`Child got a tool answer it did not expect. ${MARKERS.nestedChildResult}`); return; }
+      callTool('Delegate', { task: MARKERS.grandTask });
+      return;
+    }
 
     const isChild = allText.includes(CHILD_PROMPT) && allText.includes(task);
     if (isChild) {

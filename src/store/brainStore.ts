@@ -353,6 +353,13 @@ export class BrainStore {
     });
   }
 
+  /** Run several store writes as ONE immediate transaction (see db.ts withWriteLock). For callers that
+   *  must make two facts durable together — a settle and the acknowledgement of what it consumed — and
+   *  cannot afford a crash between them. Store methods that take their own lock nest as savepoints. */
+  atomically<T>(apply: () => T): T {
+    return withWriteLock(this.db, apply);
+  }
+
   /** Discard a checkpointed queue without replaying it — the user cancelled the parked turn. */
   discardPausedQueue(sessionId: string): void {
     this.db.prepare('DELETE FROM brain_paused_queue WHERE session_id = ?').run(sessionId);

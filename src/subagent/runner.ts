@@ -332,8 +332,8 @@ process.on('message', (raw: unknown) => {
   }
 });
 
-/** The daemon is gone. A runner that kept working would be an orphan writing rows nobody is waiting for
- *  — and holding model spend nobody asked for — so abort what is running and leave. */
+/** Leave, aborting what is running: the pool told us to (SIGTERM from pool.reset on a plugin reload),
+ *  so the turns are being rejected on the daemon side and must not keep spending. */
 const leave = (reason: string): void => {
   log.warn(`sub-agent runner shutting down: ${reason}`);
   for (const off of liveTaps.values()) off();
@@ -345,9 +345,18 @@ const leave = (reason: string): void => {
   // A wedged abort must not keep the orphan alive either.
   setTimeout(() => process.exit(0), 5_000).unref();
 };
+/** The daemon is GONE (a pause-for-restart, or a crash): leave at once, WITHOUT aborting. The turns
+ *  running here are checkpointed row by row and the next boot claims and CONTINUES them; an abort would
+ *  unwind through the delegation tree first — a nested Delegate call errors, its child's run row is
+ *  terminalized as failed before the cgroup takes this process down — and the boot would find finished
+ *  failures where it expects interrupted work to resume (a grandchild lost that way is not recoverable).
+ *  Nothing here is worth waiting for: the daemon's cgroup kill follows in milliseconds anyway. */
 process.on('disconnect', () => {
   hostRpc.close();
-  leave('the daemon closed the IPC channel');
+  log.warn('sub-agent runner leaving: the daemon closed the IPC channel — turns are left for the boot to continue');
+  for (const off of liveTaps.values()) off();
+  liveTaps.clear();
+  process.exit(0);
 });
 process.on('SIGTERM', () => leave('SIGTERM'));
 

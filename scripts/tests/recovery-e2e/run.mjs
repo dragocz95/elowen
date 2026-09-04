@@ -473,12 +473,70 @@ async function scenarioLegacyMigration() {
   }
 }
 
+async function scenarioNestedRecovery() {
+  console.log('\n— 6: parent → child → grandchild across a restart: the grandchild\'s answer reaches the parent exactly once —');
+  const model = await startRecoveryModel({
+    task: MARKERS.foregroundTask,
+    result: MARKERS.nestedChildResult,
+    nested: true,
+  });
+  let daemon = null;
+  try {
+    daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'recovery-nested' }); currentDaemon = daemon;
+    const token = daemon.token;
+    await enableRunner(daemon, token);
+    const run = await startDelegation({ daemon, token, task: MARKERS.foregroundTask });
+    // The child delegates in turn; wait for the grandchild's durable row and its first model request.
+    const grand = await waitFor('the grandchild\'s durable running row', () => row(daemon.dataDir,
+      `SELECT parent_session_id, tool_call_id, child_session_id, lifecycle FROM brain_subagent_runs WHERE parent_session_id = ? AND lifecycle = 'running'`,
+      [run.child_session_id]));
+    await model.initialChildArrived;
+    check('three levels are in flight: parent turn, child waiting on its Delegate, grandchild mid-model-call',
+      run.lifecycle === 'running' && grand.lifecycle === 'running');
+
+    await daemon.restart();
+    const grandDone = await waitFor('the grandchild run to complete', () => row(daemon.dataDir,
+      `SELECT lifecycle, attempt FROM brain_subagent_runs WHERE parent_session_id = ? AND tool_call_id = ? AND lifecycle = 'done'`,
+      [grand.parent_session_id, grand.tool_call_id]));
+    const childDone = await waitFor('the child run to complete', () => row(daemon.dataDir,
+      `SELECT lifecycle, attempt, state FROM brain_subagent_runs WHERE parent_session_id = ? AND tool_call_id = ? AND lifecycle = 'done'`,
+      [run.parent_session_id, run.tool_call_id]));
+    const firstAfter = model.requests.find((request) => request.at > daemon.lastRestart().bootAt);
+    checkPause('nested', daemon, firstAfter?.at);
+    checkSilentResume('nested', daemon, model);
+
+    check('both levels recovered exactly once (leaves first)', grandDone.attempt === 1 && childDone.attempt === 1);
+    // The grandchild's answer was folded into the child's own Delegate call answer — and the inbox row it
+    // came from is acknowledged, not left for the drain to deliver a second time.
+    const childRows = rows(daemon.dataDir, 'SELECT content FROM brain_messages WHERE session_id = ? ORDER BY rowid ASC', [run.child_session_id]).map((r) => String(r.content));
+    check('the child\'s Delegate call carries the grandchild\'s answer as [interrupted, result recovered]',
+      childRows.some((c) => c.includes('"toolResult"') && c.includes(grand.tool_call_id) && c.includes('[interrupted, result recovered]') && c.includes(MARKERS.grandResult)));
+    const grandInbox = rows(daemon.dataDir, 'SELECT delivery_state FROM brain_subagent_results WHERE parent_session_id = ? AND tool_call_id = ?', [grand.parent_session_id, grand.tool_call_id]);
+    check('the folded grandchild result is acknowledged in the inbox (never redelivered)', grandInbox.length === 1 && grandInbox[0].delivery_state === 'acknowledged', JSON.stringify(grandInbox));
+    // The grandchild's answer reached the CHILD's context exactly once — never twice (fold + drain).
+    const childSawGrand = model.requests.filter((request) => {
+      const text = (Array.isArray(request.body?.messages) ? request.body.messages : []).map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''))).join('\n');
+      return text.includes(MARKERS.grandResult) && text.includes('<subagent-result');
+    });
+    check('no <subagent-result> delivery of the grandchild\'s answer to the child (the fold was the delivery)', childSawGrand.length === 0, `deliveries=${childSawGrand.length}`);
+    // And the child's answer reaches the PARENT exactly once.
+    const parentDeliveries = model.requests.filter((request) => JSON.stringify(request.body).includes('<subagent-result') && JSON.stringify(request.body).includes(MARKERS.nestedChildResult));
+    await waitFor('the parent to receive the child\'s answer', () => model.requests.find((request) => JSON.stringify(request.body).includes('<subagent-result') && JSON.stringify(request.body).includes(MARKERS.nestedChildResult)));
+    check('the parent received the child\'s answer exactly once', parentDeliveries.length <= 1 && model.requests.filter((request) => JSON.stringify(request.body).includes('<subagent-result') && JSON.stringify(request.body).includes(MARKERS.nestedChildResult)).length === 1);
+    check('the grandchild\'s answer does not reach the parent as a separate delivery', !model.requests.some((request) => JSON.stringify(request.body).includes(`<subagent-result id="restart-${run.child_session_id}`)));
+  } finally {
+    if (daemon) await daemon.stop();
+    await model.close();
+  }
+}
+
 async function main() {
   await scenarioBackgroundRecovery();
   await scenarioForegroundRecovery();
   await scenarioInterruptedToolRecovery();
   await scenarioLegacyMigration();
   await scenarioOwnerTurnPause();
+  await scenarioNestedRecovery();
   console.log(`\nrestart timings (ms), ${USE_RUNNER ? 'sub-agent RUNNER' : 'in-process'} variant: SIGTERM→exit | boot→healthy | boot→first resumed model request`);
   for (const t of timings) {
     console.log(`  ${t.label.padEnd(18)} stop=${String(t.stopMs).padStart(5)}${t.forced ? ' (SIGKILL!)' : ''}  boot=${String(t.bootMs).padStart(5)}  resume=${t.resumeMs === null ? '   n/a' : String(t.resumeMs).padStart(6)}`);

@@ -6494,6 +6494,42 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(d.store.pendingSubagentResults(child)).toEqual([]);
   });
 
+  it('acknowledges the folded grandchild result WITH the settle, so a continuation that fails cannot redeliver it', async () => {
+    // MINOR 8: the fold into `[interrupted, result recovered]` is durable the moment the child's tail is
+    // settled; acknowledging only after the continuation succeeded left a window where a failed
+    // continuation let the ordinary drain deliver the same answer again as a <subagent-result>.
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    const scope = { admin: true, owner: true, projectIds: [], permissionBoundary: null };
+    const child = 'brain-ch-subagent-ack-parent';
+    const grandchild = 'brain-ch-subagent-ack-grandchild';
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId, delegatedAccess: scope });
+    seedChildTask(d, child);
+    d.store.createSession({ id: grandchild, userId: 1, model: 'm', parentSessionId: child, delegatedAccess: scope });
+    d.store.appendMessage({ id: 'g-final', sessionId: grandchild, parentId: null, role: 'assistant', content: { role: 'assistant', content: [{ type: 'text', text: 'GRAND: 42' }], stopReason: 'stop', usage: { input: 10, output: 5 } } });
+    d.store.upsertSubagentRun(sessionId, { id: 'call-ack-child', sessionId: child, status: 'running', task: 'orchestrate', tools: 1, seconds: 5 });
+    d.store.upsertSubagentRun(child, { id: 'call-ack-grand', sessionId: grandchild, status: 'done', task: 'dig', tools: 1, seconds: 5 });
+    d.store.enqueueSubagentResult(child, { id: 'grand-result', toolCallId: 'call-ack-grand', sessionId: grandchild, status: 'done', task: 'dig', result: 'GRAND: 42', tools: 1, seconds: 5 });
+    d.store.appendMessage({
+      id: 'a-ack', sessionId: child, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'call-ack-grand', name: 'Delegate', arguments: {} }] },
+    });
+    d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-ack'").run();
+    // The child's continuation FAILS.
+    d.session.messages.push({ role: 'user', content: 'the interrupted task' } as never);
+    d.session._runAgentPrompt.mockRejectedValueOnce(new Error('provider unavailable'));
+
+    const restarted = new BrainService(d as never);
+    await runBootRecovery(restarted);
+
+    // The fold happened (durable) and the inbox row is acknowledged despite the failed continuation.
+    const folded = d.store.getMessages(child).map((m) => m.content).some((c) => c.includes('"call-ack-grand"') && c.includes('GRAND: 42'));
+    expect(folded).toBe(true);
+    expect(d.store.pendingSubagentResults(child)).toEqual([]);
+    expect(d.db.prepare("SELECT delivery_state FROM brain_subagent_results WHERE result_id = 'grand-result'").get()).toEqual({ delivery_state: 'acknowledged' });
+  });
+
   it('parks an unexpected recovery turn failure and notifies the parent instead of leaving a live claim', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);

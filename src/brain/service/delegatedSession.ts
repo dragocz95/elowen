@@ -284,6 +284,11 @@ export class DelegatedSessionService {
    *  a finished recovery into a failed one. */
   private async deliverRecoveredResult(run: RecoverableRun): Promise<void> {
     if (!this.d.onRecoveredRunCompleted) return;
+    // A parent that is ITSELF a claim of this boot consumes this result through its own recovery: the
+    // deepest-first wait puts this row in its inbox first, and its settle folds the answer into the
+    // Delegate call that was waiting (acknowledging the row). Delivering here as well would run a
+    // <subagent-result> turn on that parent BEFORE its recovery — the same answer twice.
+    if (this.recoveryOf.has(run.parentSessionId)) return;
     const owner = this.d.store.getSession(run.parentSessionId);
     if (!owner) return;
     try { await this.d.onRecoveredRunCompleted(run.parentSessionId, owner.user_id); }
@@ -332,7 +337,21 @@ export class DelegatedSessionService {
     // child's turn is CONTINUED from that tail — no instruction, no message: the explanation sits inside
     // the results the model reads next. The child owns this session id, so sendDelegated resolves its scope.
     const outstanding = outstandingToolCalls(pending.map((row) => row.content));
-    const settled = settlePartialTurn(this.d.store, childSessionId);
+    // The child's already-recovered delegated results: the deepest-first sweep finished its own children
+    // BEFORE this continuation, and settlePartialTurn folds each finished grandchild's answer into the
+    // `[interrupted, result recovered]` answer of the Delegate call that was waiting for it. The fold is
+    // durable the moment it is written, so the inbox rows it consumed are acknowledged IN THE SAME
+    // transaction — a continuation that then fails must not let the ordinary drain deliver the same
+    // answer a second time. Any other pending result (a background child that finished before the pause,
+    // whose call was already answered) is left for the drain.
+    const folded = new Set(outstanding.filter((o) => DELEGATION_WAIT_TOOLS.has(o.name)).map((o) => o.id));
+    const settled = this.d.store.atomically(() => {
+      const outcome = settlePartialTurn(this.d.store, childSessionId);
+      for (const r of this.d.store.pendingSubagentResults(childSessionId)) {
+        if (folded.has(r.toolCallId)) this.d.store.acknowledgeSubagentResult(childSessionId, r.id);
+      }
+      return outcome;
+    });
     const owner = this.d.store.getSession(childSessionId);
     if (!owner) {
       this.d.store.completeRecoveredRun(parentSessionId, toolCallId, {
@@ -351,17 +370,9 @@ export class DelegatedSessionService {
       });
       return 'terminalized';
     }
-    // The child's already-recovered delegated results: the deepest-first sweep finished its own children
-    // BEFORE this continuation, and settlePartialTurn folded each finished grandchild's answer into the
-    // `[interrupted, result recovered]` answer of the Delegate call that was waiting for it. Those inbox
-    // rows are therefore consumed by this turn; any other pending result (a background child that
-    // finished before the pause, whose call was already answered) is left for the ordinary drain.
-    const folded = new Set(outstanding.filter((o) => DELEGATION_WAIT_TOOLS.has(o.name)).map((o) => o.id));
-    const results = this.d.store.pendingSubagentResults(childSessionId).filter((r) => folded.has(r.toolCallId));
     const answer = await this.sendDelegated(owner.user_id, childSessionId, '', {
       internalSystem: { customType: 'restart-continue', resultId: `restart-continue-${randomUUID()}`, continuation: true },
     });
-    for (const r of results) this.d.store.acknowledgeSubagentResult(childSessionId, r.id);
     // The respawn was a continuation turn of the CHILD, which never edits its own run row (that row belongs
     // to the parent), so the lifecycle is still `recovering` and completeRecoveredRun terminalizes it and
     // enqueues the answer in one transaction.
