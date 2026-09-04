@@ -50,6 +50,10 @@ describe('files plugin', () => {
     expect(schemaOf('Read').properties).toHaveProperty('file_path');
     expect(schemaOf('Read').properties).not.toHaveProperty('path');
     expect(schemaOf('Read').required).toContain('file_path');
+    expect(schemaOf('Read').properties).toMatchObject({
+      offset: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
+      limit: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
+    });
 
     expect(schemaOf('Write').properties).toHaveProperty('file_path');
     expect(schemaOf('Write').properties).not.toHaveProperty('path');
@@ -65,6 +69,13 @@ describe('files plugin', () => {
   // The rename is only safe if the OLD shape fails loudly. An Edit that quietly reported success while
   // writing nothing is the failure mode worth a regression test: the agent would move on believing the
   // change landed.
+  it('describes only successful, visible reads as satisfying the modify guard', () => {
+    const descriptionOf = (name: string) => reg.tools.find((tool) => tool.name === name)?.description ?? '';
+    expect(descriptionOf('Read')).toContain('invalid ranges return an error and do not count as reading the file');
+    expect(descriptionOf('Write')).toContain('a Read error or omitted image does not count');
+    expect(descriptionOf('Edit')).toContain('a Read error or omitted image does not count');
+  });
+
   it('a call in the OLD parameter shape fails loudly instead of silently doing nothing', async () => {
     const f = join(dir, 'stale-shape.txt');
     writeFileSync(f, 'keep me');

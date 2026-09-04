@@ -885,7 +885,7 @@ export function register(ctx) {
     description: [
       'Read a UTF-8 text file, an image, a PDF, or a Jupyter notebook within the accessible repositories.',
       'This is the right tool when you need exact source text, config, logs or docs before editing. For broad discovery across the codebase, use Search or ListDir first.',
-      'The path must be absolute. Missing files, directories, and empty files return an error. Text reads return at most 2000 lines by default. For a large file use offset and limit to read only the part you need; offsets 0 and 1 both start at the first line.',
+      'The path must be absolute. Missing files, directories, empty files, and invalid ranges return an error and do not count as reading the file. Text reads return at most 2000 lines by default. For a large file use offset and limit to read only the part you need; offsets 0 and 1 both start at the first line.',
       'Text results use cat -n format: line number + tab + content.',
       'Images (jpg/png/gif/webp/bmp) come back as an attachment. Jupyter notebooks are rendered as cells with text and supported image outputs.',
       `PDFs with at most 10 pages may omit \`pages\`; longer PDFs require it. Page ranges use "3", "1-5" or "1,3,5", with at most ${pdfMaxPages} pages per call. Text-layer pages return text and scanned pages return an image.`,
@@ -893,8 +893,8 @@ export function register(ctx) {
     ].join(' '),
     parameters: Type.Object({
       file_path: Type.String({ description: 'Absolute path to the file' }),
-      offset: Type.Optional(Type.Integer({ minimum: 0, description: 'Line number to start reading from; 0 and 1 both mean the first line' })),
-      limit: Type.Optional(Type.Integer({ minimum: 1, description: 'Maximum number of lines to read' })),
+      offset: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER, description: 'Line number to start reading from; 0 and 1 both mean the first line' })),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER, description: 'Maximum number of lines to read' })),
       pages: Type.Optional(Type.String({ description: `PDF pages to read: "3", "1-5" or "1,3,5" (max ${pdfMaxPages} per call). Required only when the PDF has more than 10 pages; ignored for other files.` })),
     }),
     execute: async (_id, p, _signal, _onUpdate, ectx) => {
@@ -923,8 +923,7 @@ export function register(ctx) {
         }
         const mime = detectImageMime(raw);
         if (mime) {
-          markFileRead(ctx.currentSessionId?.(), statePath(abs), raw);
-          const details = { ok: true, tool: 'Read', truncated: false, ...pathMeta(abs), bytes: raw.length, image: true, mimeType: mime, contentHash: hashOf(raw) };
+          const details = { ok: true, tool: 'Read', truncated: false, ...pathMeta(abs), bytes: raw.length, image: true, mimeType: mime };
           const resized = await resizeImage(raw, mime, { maxWidth: 2000, maxHeight: 2000 }).catch(() => null);
           let data = resized?.data;
           let outMime = resized?.mimeType ?? mime;
@@ -951,11 +950,12 @@ export function register(ctx) {
             note += `\n[Current model does not support images. The image will be omitted from this request.]`;
             return { content: [{ type: 'text', text: note }], details };
           }
-          return { content: [{ type: 'text', text: note }, { type: 'image', data, mimeType: outMime }], details };
+          markFileRead(ctx.currentSessionId?.(), statePath(abs), raw);
+          return {
+            content: [{ type: 'text', text: note }, { type: 'image', data, mimeType: outMime }],
+            details: { ...details, contentHash: hashOf(raw) },
+          };
         }
-        // Record the WHOLE file's bytes, not just the slice returned: the guard tracks what is on disk, and
-        // a paginated read still tells the agent this file exists and what it currently is.
-        markFileRead(ctx.currentSessionId?.(), statePath(abs), raw);
         const body = raw.toString('utf-8');
         const allLines = body.split('\n');
         // A trailing newline yields a phantom empty final element — it terminates the last line, it is not a
@@ -995,6 +995,9 @@ export function register(ctx) {
         } else if (truncated) {
           text += `\n\n[Showing lines ${start + 1}-${endShown} of ${total}. Use offset=${endShown + 1} to continue.]`;
         }
+        // Record the WHOLE file's bytes, not just the slice returned: the guard tracks what is on disk, and
+        // a paginated read still establishes the current file baseline after its range has been validated.
+        markFileRead(ctx.currentSessionId?.(), statePath(abs), raw);
         return ok('Read', text, { ...pathMeta(abs), bytes: Buffer.byteLength(body), truncated, contentHash: hashOf(raw) });
       } catch (e) { return fail('Read', safeError(e)); }
     },
@@ -1005,7 +1008,7 @@ export function register(ctx) {
     description: [
       'Create a new UTF-8 text file, or fully replace an existing one, within the accessible repositories.',
       'Use it only when you intend to replace the ENTIRE file content — for a localized change use Edit instead.',
-      'Creating a new file is always fine. To overwrite an EXISTING file you must have read it in this conversation first: overwriting a file you have not inspected discards content you never reviewed, so the write is refused until you have.',
+      'Creating a new file still requires an allowed path and an existing parent directory. To overwrite an EXISTING file you must have successfully read it in this conversation first; a Read error or omitted image does not count. Overwriting a file you have not inspected discards content you never reviewed, so the write is refused until you have.',
       'The parent directory must already exist — create it with Bash (mkdir -p) first if needed. Never create documentation files (*.md, README) unless the user explicitly asked, and keep emojis out of file content unless asked.',
       'Output includes a human summary, details.diff for review and details.patch (unified) for tooling. Read the diff before you consider an overwrite done.',
     ].join(' '),
@@ -1046,7 +1049,7 @@ export function register(ctx) {
     name: 'Edit', label: 'Edit file',
     description: [
       'Replace an exact text snippet in a UTF-8 file within the accessible repositories. Use it for a targeted change, after reading enough surrounding context to locate the change precisely.',
-      'You must have read the file in this conversation before editing it, and it must not have changed on disk since — an edit written from assumption, or against content that moved, is how work gets silently discarded.',
+      'You must have successfully read the file in this conversation before editing it; a Read error or omitted image does not count. It must not have changed on disk since — an edit written from assumption, or against content that moved, is how work gets silently discarded.',
       'By default old_string must match exactly ONCE, including indentation and whitespace. If it appears more than once, include more context. Set replace_all when every occurrence really is the same change. BOM and CRLF line endings are preserved. The optional fuzzy_match extension tolerates smart quotes, Unicode dashes, exotic spaces and trailing whitespace, but canonical calls must leave it false.',
       'This tool applies ONE replacement per call — there is no batch `edits` array. To make several changes to the same file, call it once per change.',
       'Output includes details.diff for review and details.patch (unified). If old_string is missing or ambiguous, read the file again and give more context.',
