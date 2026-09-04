@@ -41,8 +41,10 @@ function toBuffer(raw: RawData): Buffer {
 /** Answer an upgrade request with a plain HTTP status and hang up. Deliberately body-less and
  *  reason-less: the client learns whether it may connect and nothing about why not. */
 function refuse(socket: Duplex, status: number, text: string): void {
-  if (socket.writable) socket.write(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
-  socket.destroy();
+  // `end`, not `write` + `destroy`: destroying discards anything still queued, and a client that never
+  // receives the status sees a bare connection reset — indistinguishable from the daemon being down.
+  if (socket.writable) socket.end(`HTTP/1.1 ${status} ${text}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`);
+  else socket.destroy();
 }
 
 /** Same-origin rule for the handshake. A WebSocket upgrade is NOT covered by CORS — the browser sends it
