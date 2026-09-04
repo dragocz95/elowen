@@ -126,12 +126,15 @@ function projectPendingMessage(store: BrainStore, sessionId: string, message: un
   store.appendPendingMessage({ id: randomUUID(), sessionId, role, content });
 }
 
-/** The exact row sequence a crash-interrupted turn may graduate into durable history.
+/** The rows of a crash-interrupted turn whose work is CONFIRMED — what the status read model displays for
+ *  a parked conversation in the gap between the pause and its resume.
  *
  *  Settled rows are always retained — notably a mid-turn user steer can be interleaved BETWEEN provisional
  *  assistant/tool rows. Pending rows are retained only through the last prefix where every tool call has a
- *  matching result. Filtering the raw rowid sequence rather than concatenating settled + pending preserves
- *  that interleaving and gives the status read model and the recovery write path one definition of truth. */
+ *  matching result: a call still unanswered would render as running for a turn nothing is executing. The
+ *  resume itself (settlePartialTurn) keeps that unanswered call and ANSWERS it with an `interrupted`
+ *  result, so the settled transcript is this sequence plus that tail. Filtering the raw rowid sequence
+ *  rather than concatenating settled + pending preserves the interleaving. */
 export function recoverablePartialTurnRows(rows: readonly BrainMessageRow[]): BrainMessageRow[] {
   const pending = rows.filter((row) => row.pending !== 0);
   if (pending.length === 0) return [...rows];
@@ -140,24 +143,111 @@ export function recoverablePartialTurnRows(rows: readonly BrainMessageRow[]): Br
   return rows.filter((row) => row.pending === 0 || pendingIndex++ < keep);
 }
 
+/** Tool names whose unanswered call in an interrupted tail means the turn was WAITING on delegated work,
+ *  not mid-side-effect. The delegated child is recovered durably on its own (run-row respawn, workflow
+ *  journal resume) and its answer reaches this session as a system message, so the interrupted-call
+ *  result below says exactly that instead of "effect unknown". Names are the subagent plugin's stable
+ *  tool API. */
+export const DELEGATION_WAIT_TOOLS: ReadonlySet<string> = new Set(['Delegate', 'DelegateContinue', 'WorkflowStart', 'WorkflowResume']);
+
+/** Bound on a finished child's answer folded into its parent's interrupted Delegate result. */
+const MAX_INLINE_CHILD_ANSWER_CHARS = 20_000;
+
+/** The text of the `interrupted` result written for one unanswered tool call — what the model reads when
+ *  the turn resumes. Three shapes:
+ *   - a LOCAL tool (Bash, Edit, an MCP call …): its process died with the daemon and its effect is
+ *     unknown, so the model is told to verify before repeating it;
+ *   - a DELEGATION whose child is still to be recovered: the child is respawned by boot recovery and its
+ *     answer arrives as a `<subagent-result>` system message — re-delegating would do the work twice;
+ *   - a DELEGATION whose child already FINISHED before the pause: the answer is folded in right here, so
+ *     the resumed turn continues with it immediately rather than waiting for anything. */
+function interruptedToolResultText(store: BrainStore, sessionId: string, call: { id: string; name: string }): string {
+  if (!DELEGATION_WAIT_TOOLS.has(call.name)) {
+    return `[interrupted] The daemon restarted while this ${call.name} call was running; its process ended with the `
+      + 'daemon and its effect is unknown. Check the current state before repeating it — do not assume it either '
+      + 'completed or did nothing.';
+  }
+  const run = store.getSubagentRuns(sessionId).find((entry) => entry.toolCallId === call.id);
+  if (run && run.status !== 'running') {
+    const answer = run.status === 'done' ? lastNonEmptyAssistantText(store, run.sessionId) : undefined;
+    if (answer) {
+      const clipped = answer.length > MAX_INLINE_CHILD_ANSWER_CHARS
+        ? `${answer.slice(0, MAX_INLINE_CHILD_ANSWER_CHARS)}\n[truncated — read the rest with DelegateRead]`
+        : answer;
+      return `[interrupted, result recovered] The daemon restarted before this ${call.name} call returned, but the `
+        + `sub-agent ${run.sessionId} had already finished. Its final answer:\n\n${clipped}`;
+    }
+    return `[interrupted] The daemon restarted before this ${call.name} call returned; the sub-agent ${run.sessionId} `
+      + `finished with status "${run.status}"${run.detail ? ` (${run.detail})` : ''}. Read its transcript with `
+      + 'DelegateRead if you need its output; do not re-delegate the same work.';
+  }
+  const child = run ? ` ${run.sessionId}` : '';
+  return `[interrupted, resuming] The daemon restarted while this ${call.name} call was waiting for the sub-agent${child}. `
+    + 'The sub-agent is resumed automatically after the restart and its result is delivered to you as a '
+    + '<subagent-result> system message — do NOT re-delegate this work. DelegateList shows its state meanwhile.';
+}
+
+/** The last non-empty assistant text of a session, scanning backwards — what "the sub-agent's answer"
+ *  means (a later errored follow-up may append an empty assistant row after the real answer). */
+function lastNonEmptyAssistantText(store: BrainStore, sessionId: string): string | undefined {
+  const rows = store.getMessages(sessionId);
+  for (let i = rows.length - 1; i >= 0; i -= 1) {
+    if (rows[i]!.role !== 'assistant') continue;
+    try {
+      const text = extractText(JSON.parse(rows[i]!.content));
+      if (text.trim()) return text;
+    } catch { /* malformed row — keep scanning */ }
+  }
+  return undefined;
+}
+
 /** Rows still marked pending when a session is (re)spawned belong to a turn that never settled — the
- *  daemon went down mid-run. They are the only record that work happened, so they graduate to history.
+ *  daemon went down mid-run (a pause-for-restart by design, or a crash). They are the only record that
+ *  work happened, so they graduate to history.
  *
  *  But a half-turn cannot be handed back to a provider as-is: it can end on an assistant message whose
- *  tool calls never got their results (the crash landed between the call and its result), and every
- *  provider rejects a context with an unanswered tool call. So the tail is trimmed back to the last point
- *  where every tool call had been answered — that prefix is real, complete work; what follows is a
- *  fragment of a step that never happened. Their cost is whatever PI recorded per message: the provider
- *  cost stamp is an `agent_end` act, and that never came. */
-export function settlePartialTurn(store: BrainStore, sessionId: string): void {
+ *  tool calls never got their results (the process left between the call and its result), and every
+ *  provider rejects a context with an unanswered tool call. The first version trimmed that tail away —
+ *  and with it the model's own memory that it had started the call at all, so a resumed turn could run
+ *  the same mutation again without knowing. Now every unanswered call is ANSWERED with a synthetic
+ *  `interrupted` error result (see interruptedToolResultText): the transcript stays consistent, nothing
+ *  the agent did is hidden from it, and the resume note tells it what happened. Their cost is whatever PI
+ *  recorded per message: the provider cost stamp is an `agent_end` act, and that never came.
+ *
+ *  Returns the calls it answered, so a caller can tell a clean boundary from an interrupted step. */
+export function settlePartialTurn(store: BrainStore, sessionId: string): { id: string; name: string }[] {
   const rows = store.getMessages(sessionId);
   const pending = rows.filter((row) => row.pending !== 0);
-  if (pending.length === 0) return;
-  const keep = new Set(recoverablePartialTurnRows(rows).map((row) => row.id));
-  for (const row of pending) {
-    if (!keep.has(row.id)) store.deleteMessage(sessionId, row.id);
+  if (pending.length === 0) return [];
+  // A pending row that cannot be parsed is not a step we can answer for: keep the verifiable prefix and
+  // drop the rest, exactly as before.
+  const verifiable = answeredToolCallPrefixOrParseLimit(pending.map((row) => row.content));
+  for (const row of pending.slice(verifiable)) store.deleteMessage(sessionId, row.id);
+  const kept = pending.slice(0, verifiable);
+  const outstanding = outstandingToolCalls(kept.map((row) => row.content));
+  for (const call of outstanding) {
+    store.appendPendingMessage({
+      id: randomUUID(), sessionId, role: 'toolResult',
+      content: {
+        role: 'toolResult', toolCallId: call.id, toolName: call.name,
+        content: [{ type: 'text', text: interruptedToolResultText(store, sessionId, call) }],
+        details: { interrupted: true }, isError: true, timestamp: Date.now(),
+      },
+    });
   }
   store.settlePendingMessages(sessionId);
+  return outstanding;
+}
+
+/** How many leading serialized messages parse as JSON — the prefix whose tool calls can be answered for.
+ *  Everything from the first unreadable row on is discarded rather than trusted. */
+function answeredToolCallPrefixOrParseLimit(contents: string[]): number {
+  let readable = 0;
+  for (const raw of contents) {
+    try { JSON.parse(raw); } catch { break; }
+    readable += 1;
+  }
+  return readable;
 }
 
 /** How many of these serialized messages form a prefix in which every assistant tool call has a matching

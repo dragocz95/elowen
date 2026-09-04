@@ -110,12 +110,62 @@ describe('a turn interrupted by a daemon restart', () => {
     expect(store.pendingMessages('s1')).toEqual([]); // settled — the next turn must not discard them
   });
 
-  it('drops a tool call the crash cut off from its result, so the history stays replayable', () => {
+  it('answers a tool call the restart cut off with an `interrupted` error result, so the history stays replayable AND honest', () => {
     projectUserTurn(store, 's1', 'do the thing');
     midTurn(assistantCalling('t1'), toolResult('t1'), assistantCalling('t2')); // died before t2 answered
 
+    const answered = settlePartialTurn(store, 's1');
+    // The call is KEPT (the first version deleted it, and a resumed turn could then repeat the mutation
+    // without knowing it had already started) and answered, so no provider rejects the context.
+    expect(answered).toEqual([{ id: 't2', name: 'bash' }]);
+    expect(rolesOf(store, 's1')).toEqual(['user', 'assistant', 'toolResult', 'assistant', 'toolResult']);
+    const synthetic = JSON.parse(store.getMessages('s1').at(-1)!.content) as { toolCallId: string; isError: boolean; details: unknown; content: { text: string }[] };
+    expect(synthetic.toolCallId).toBe('t2');
+    expect(synthetic.isError).toBe(true);
+    expect(synthetic.details).toEqual({ interrupted: true });
+    expect(synthetic.content[0]!.text).toMatch(/\[interrupted\].*effect is unknown/);
+    expect(store.pendingMessages('s1')).toEqual([]);
+  });
+
+  it('answers EVERY unanswered call of a parallel batch, one result per call', () => {
+    projectUserTurn(store, 's1', 'do the thing');
+    midTurn(assistantCalling('a', 'b', 'c'), toolResult('b')); // b answered, a and c cut off
+
+    expect(settlePartialTurn(store, 's1').map((call) => call.id).sort()).toEqual(['a', 'c']);
+    const results = store.getMessages('s1').filter((row) => row.role === 'toolResult')
+      .map((row) => JSON.parse(row.content) as { toolCallId: string; isError: boolean });
+    expect(results.map((r) => r.toolCallId).sort()).toEqual(['a', 'b', 'c']);
+    expect(results.filter((r) => r.isError).map((r) => r.toolCallId).sort()).toEqual(['a', 'c']);
+  });
+
+  it('tells a waiting Delegate call that its sub-agent resumes on its own, never "effect unknown"', () => {
+    store.createSession({ id: 'brain-ch-subagent-kid', userId: 1, model: 'm', parentSessionId: 's1' });
+    store.upsertSubagentRun('s1', { id: 'd1', sessionId: 'brain-ch-subagent-kid', status: 'running', task: 'dig', tools: 0, seconds: 1 });
+    projectUserTurn(store, 's1', 'delegate it');
+    midTurn({ role: 'assistant', content: [{ type: 'toolCall', id: 'd1', name: 'Delegate', arguments: {} }] });
+
     settlePartialTurn(store, 's1');
-    expect(rolesOf(store, 's1')).toEqual(['user', 'assistant', 'toolResult']);
+    const text = (JSON.parse(store.getMessages('s1').at(-1)!.content) as { content: { text: string }[] }).content[0]!.text;
+    expect(text).toContain('brain-ch-subagent-kid');
+    expect(text).toMatch(/resumed automatically/);
+    expect(text).toMatch(/do NOT re-delegate/);
+    expect(text).not.toMatch(/effect is unknown/);
+  });
+
+  it('folds a sub-agent answer that was already final before the pause straight into the interrupted Delegate result', () => {
+    // The parent's blocked Delegate call never returned, but the child HAD finished: its answer is in
+    // its transcript. Handing it over here is what lets the resumed parent continue at once instead of
+    // waiting for anything (the "parent does not get the result" symptom).
+    store.createSession({ id: 'brain-ch-subagent-done', userId: 1, model: 'm', parentSessionId: 's1' });
+    store.appendMessage({ id: 'kid-a', sessionId: 'brain-ch-subagent-done', parentId: null, role: 'assistant', content: assistantSaying('THE ANSWER: 42') });
+    store.upsertSubagentRun('s1', { id: 'd2', sessionId: 'brain-ch-subagent-done', status: 'done', task: 'dig', tools: 0, seconds: 1 });
+    projectUserTurn(store, 's1', 'delegate it');
+    midTurn({ role: 'assistant', content: [{ type: 'toolCall', id: 'd2', name: 'Delegate', arguments: {} }] });
+
+    settlePartialTurn(store, 's1');
+    const text = (JSON.parse(store.getMessages('s1').at(-1)!.content) as { content: { text: string }[] }).content[0]!.text;
+    expect(text).toContain('THE ANSWER: 42');
+    expect(text).toMatch(/result recovered/);
   });
 
   it('defines the same ordered rows for parked display and later settlement', () => {
@@ -129,9 +179,13 @@ describe('a turn interrupted by a daemon restart', () => {
     expect(displayed.map((row) => JSON.parse(row.content).content?.[0]?.text ?? JSON.parse(row.content).content))
       .toContain('finished before restart');
 
+    // The settled transcript is exactly the displayed prefix, plus the interrupted call and its synthetic
+    // answer — the display never shows a call as running that nothing is executing.
     settlePartialTurn(store, 's1');
-    expect(store.getMessages('s1').map((row) => row.id)).toEqual(displayed.map((row) => row.id));
-    expect(store.getMessages('s1').every((row) => row.pending === 0)).toBe(true);
+    const settled = store.getMessages('s1');
+    expect(settled.slice(0, displayed.length).map((row) => row.id)).toEqual(displayed.map((row) => row.id));
+    expect(settled.slice(displayed.length).map((row) => row.role)).toEqual(['assistant', 'toolResult']);
+    expect(settled.every((row) => row.pending === 0)).toBe(true);
   });
 
   it('leaves a conversation with no interrupted turn completely alone', () => {
