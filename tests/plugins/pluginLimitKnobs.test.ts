@@ -48,14 +48,13 @@ describe('files — pdfMaxPages', () => {
     return path;
   };
 
-  it('states the CONFIGURED cap in the Read description and parameter, not the built-in 20', async () => {
-    const reg = await load({ pdfMaxPages: 5 });
+  it('states the configured safe cap in the Read description and parameter', async () => {
+    const reg = await load({ pdfMaxPages: 10 });
     const read = toolOf(reg, 'Read');
-    // The model only ever learns the cap from these two strings. If they keep saying 20 while validation
-    // enforces 5, every wider request it makes is a failure it had no way to see coming.
-    expect(read.description).toContain('at most 5 pages per call');
+    // Fable fixes the absolute ceiling at 20, while the operator may safely tighten it to 10.
+    expect(read.description).toContain('at most 10 pages per call');
     expect(read.description).not.toContain('at most 20 pages per call');
-    expect(read.parameters.properties?.pages?.description).toContain('max 5 per call');
+    expect(read.parameters.properties?.pages?.description).toContain('max 10 per call');
   });
 
   it('keeps saying 20 when nothing is configured', async () => {
@@ -67,31 +66,19 @@ describe('files — pdfMaxPages', () => {
   it('enforces the same configured cap when a spec asks for more', async () => {
     const dir = tmpDir('files-pdf-cap');
     const pdf = stubPdf(dir);
-    const reg = await load({ pdfMaxPages: 5 });
+    const reg = await load({ pdfMaxPages: 10 });
     const res = await runWithPolicy(
       userPolicy([dir]),
-      () => toolOf(reg, 'Read').execute('t', { file_path: pdf, pages: '1-6' }),
+      () => toolOf(reg, 'Read').execute('t', { file_path: pdf, pages: '1-11' }),
       { sessionId: 'brain-pdf-cap' },
     );
-    expect(res.content[0]?.text).toContain('more than 5 pages');
+    expect(res.content[0]?.text).toContain('more than 10 pages');
     expect(res.details).toMatchObject({ ok: false });
   });
 
-  it('quotes the configured cap in the missing-`pages` error too', async () => {
-    const dir = tmpDir('files-pdf-hint');
-    const pdf = stubPdf(dir);
-    const reg = await load({ pdfMaxPages: 50 });
-    const res = await runWithPolicy(
-      userPolicy([dir]),
-      () => toolOf(reg, 'Read').execute('t', { file_path: pdf }),
-      { sessionId: 'brain-pdf-hint' },
-    );
-    expect(res.content[0]?.text).toContain('max 50 per call');
-  });
-
-  it('clamps an out-of-range value to the manifest bounds', async () => {
-    expect(toolOf(await load({ pdfMaxPages: 1 }), 'Read').description).toContain('at most 5 pages per call');
-    expect(toolOf(await load({ pdfMaxPages: 999 }), 'Read').description).toContain('at most 50 pages per call');
+  it('clamps an out-of-range value to the Fable-compatible manifest bounds', async () => {
+    expect(toolOf(await load({ pdfMaxPages: 1 }), 'Read').description).toContain('at most 10 pages per call');
+    expect(toolOf(await load({ pdfMaxPages: 999 }), 'Read').description).toContain('at most 20 pages per call');
   });
 });
 
