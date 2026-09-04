@@ -20,7 +20,7 @@ import type { ChannelSendOpts, DelegatedSteerOutcome } from './channels.js';
 import { PlatformOrchestrator } from './platforms.js';
 import { delegatedChannelSendOpts, type DelegatedTurnRequest } from './delegatedTurn.js';
 import { SubagentDispatch } from '../subagent/dispatch.js';
-import { lastAssistant, lastAssistantTextIn, type BrainMessageView } from './messageView.js';
+import { lastAssistantTextIn, type BrainMessageView } from './messageView.js';
 import { runCompaction, withDescendantUsage } from './events.js';
 import type { AskAnswer, BrainEvent, BrainInlineArtifact, BrainInlineArtifactClosed, CompactResult, PluginChatArtifact, PluginChatArtifactUpdate, WorkflowCompletion } from './events.js';
 import { InlineArtifactRegistry } from './inlineArtifacts.js';
@@ -109,14 +109,6 @@ export interface PauseSummary {
  *  custom-message seam (`display:false`) so it never renders as a fake user bubble; it appends at the
  *  transcript's TAIL, after the fully-answered pending step the park left behind, so the cached prefix
  *  above it is untouched. The turn it triggers produces the answer the restart interrupted. */
-const PARKED_RESUME_NOTE = 'The daemon restarted and interrupted this conversation\'s active turn. '
-  + 'The remaining work was not done and the final answer was never delivered. A tool result marked [interrupted] '
-  + 'belongs to a call the restart cut off: its effect is unknown, so check the current state before repeating it '
-  + 'and never assume it completed; every other tool result above is complete. '
-  + 'Continue exactly where the transcript leaves off and finish the turn: complete any remaining work and give the user '
-  + 'the answer they are still waiting for. Do not redo work whose results are already above, and do not dwell on the '
-  + 'interruption. If the transcript shows the request was in fact fully answered, reply with a one-line confirmation only.';
-
 /** A result-specific follow-up when the durable custom result reached context but its parent retry ended before
  * answering. This is not the generic restart note: the result remains the subject and no work is replayed. */
 const RESULT_CONTINUATION_NOTE = 'A recovered delegated result is already present immediately above in this conversation, '
@@ -694,10 +686,13 @@ export class BrainService {
       logger('brain').warn(`recovered sub-agent result(s) for unparked platform room ${parentSessionId} stay in the inbox; the room reads them through DelegateRead`);
       return;
     }
+    // The one thing a silent resume still has to SAY: the result itself (a room has no inbox drain). The
+    // wording names the work, never the restart — the transcript's [interrupted] tool result already
+    // explains why the Delegate call has no answer of its own.
     const note = `${results.map(subagentResultReminder).join('\n')}\n`
-      + 'The daemon restarted while this conversation was waiting on the sub-agent work above; the interrupted '
-      + 'Delegate call is marked [interrupted] in the transcript. Continue from these results and give the sender '
-      + 'the answer they are waiting for. Do not re-delegate the same work.';
+      + 'The delegated work this conversation was waiting on has finished; its Delegate call is marked '
+      + '[interrupted] in the transcript and the result above is its answer. Continue from these results and '
+      + 'give the sender the answer they are waiting for. Do not re-delegate the same work.';
     const outcome = await this.resumeParkedPlatformTurn({ id: row.id, park_attempts: row.park_attempts }, {
       note,
       acknowledge: () => { for (const result of results) this.d.store.acknowledgeSubagentResult(parentSessionId, result.id); },
@@ -1048,23 +1043,17 @@ export class BrainService {
       return 'released';
     }
     try {
-      // A UNIQUE resultId, for two reasons: without one, sendCustomSystem's "already in context"
-      // forgiveness (`resultInContext(…, undefined)`) matches ANY custom row lacking a resultId — our
-      // own note included — and would report an errored resume as landed; and it keeps a crashed-boot
-      // retry honest (a second attempt's note is a different id, never mistaken for the first).
-      const beforeResume = this.sessions.get(row.id)?.session.messages.length ?? 0;
-      await this.turnRunner.sendCustomSystem(row.user_id, row.id, 'restart-resume', PARKED_RESUME_NOTE, `restart-resume-${randomUUID()}`);
-      // sendCustomSystem throws on definite non-delivery but forgives a turn that ERRORED after the
-      // note entered the context (right for sub-agent results, whose delivery is the note itself — not
-      // for us, where the deliverable is the ANSWER the triggered turn produces). Verify the outcome:
-      // this attempt itself must have produced a normally settled assistant, not merely inherit an older one.
-      const messages = this.sessions.get(row.id)?.session.messages as { role?: string; stopReason?: string; errorMessage?: string }[] ?? [];
-      const settled = lastAssistant(messages.slice(beforeResume));
-      if (!settled || settled.stopReason === 'aborted' || settled.stopReason === 'error') {
-        throw new Error(settled?.errorMessage?.trim() || `the resume turn ${settled?.stopReason ?? 'produced no assistant reply'}`);
-      }
+      // SILENT resume: the turn continues from its checkpointed tail — the interrupted tool calls were
+      // answered with `[interrupted]` results at spawn (settlePartialTurn), so no message is injected
+      // and the cached prefix is untouched. A transcript that already ends on a settled answer has
+      // nothing to continue: the pause hit after the model's last word, only the settlement was lost.
+      const outcome = await this.turnRunner.continueInterrupted(row.user_id, row.id);
       this.d.store.clearSessionPark(row.id);
-      log.info(`boot resume finished parked conversation ${row.id} (attempt ${row.park_attempts + 1})`);
+      if (outcome === 'nothing') {
+        log.info(`parked conversation ${row.id} already ended on a settled answer — nothing to continue`);
+        return 'released';
+      }
+      log.info(`boot resume continued parked conversation ${row.id} (attempt ${row.park_attempts + 1})`);
       // The answer the user was waiting for has just landed while (almost certainly) nobody was
       // watching a reconnected client — same push the ordinary settled-turn notifier sends.
       if (this.attachments.watchingCount(row.id) === 0) {

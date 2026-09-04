@@ -128,7 +128,7 @@ describe('BrainStore', () => {
       toolCallId: 'delegate-1', sessionId: 'child', status: 'running', task: 'inspect',
       detail: 'Read src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm',
       thinkingLevel: 'high', thinkingLabel: 'High', background: true, workspaceId: 'ws_abc123',
-      startedAt: '2026-08-30 05:00:00', updatedAt: '2026-08-30 05:00:07',
+      startedAt: '2026-08-30 05:00:00', updatedAt: '2026-08-30 05:00:07', rowid: 1,
     }]);
     expect(store.upsertSubagentRun('root', {
       id: 'unrelated', sessionId: 'same-owner-unrelated', status: 'running', task: 'x', tools: 0, seconds: 0,
