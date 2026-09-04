@@ -286,6 +286,14 @@ describe('plugin WebSocket routes (/ws/plugins/:name/*)', () => {
     expect(await refusalStatus(`${base}/ws/plugins/demo/echo?ticket=${ticket}`, { origin: `http://127.0.0.1:${port}` })).toBe(101);
   });
 
+  // The installed nginx forwards `Host $host`, which carries no port, so comparing host:port would refuse
+  // every socket on a deployment served on a non-default port. The comparison is on the hostname.
+  it('accepts an Origin on the same hostname but a different port', async () => {
+    const { app, token, base } = await startDaemon();
+    const ticket = await mintTicket(app, token);
+    expect(await refusalStatus(`${base}/ws/plugins/demo/echo?ticket=${ticket}`, { origin: 'https://127.0.0.1' })).toBe(101);
+  });
+
   it('404s a path no plugin declared, including one the manifest did not allow', async () => {
     const { app, token, base } = await startDaemon();
     expect(await refusalStatus(`${base}/ws/plugins/demo/undeclared?ticket=${await mintTicket(app, token)}`)).toBe(404);

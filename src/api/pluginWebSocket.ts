@@ -59,12 +59,24 @@ function refuse(socket: Duplex, status: number, text: string): void {
 function originAllowed(req: IncomingMessage): boolean {
   const origin = req.headers.origin;
   if (typeof origin !== 'string' || origin === '') return true;
+  const host = hostnameOf(req.headers.host);
+  if (host === undefined) return false;
   try {
-    return new URL(origin).host === req.headers.host;
+    // HOSTNAME, not host:port. The installed vhost forwards `Host $host`, which nginx defines WITHOUT
+    // the port, so on any deployment served on a non-default port the browser's Origin would carry a
+    // port the daemon never sees and every legitimate socket would be refused.
+    return new URL(origin).hostname === host;
   } catch {
     // Includes the literal `null` origin a sandboxed iframe sends.
     return false;
   }
+}
+
+/** The hostname of a `Host` header value, port stripped, IPv6 literals kept in their brackets so the two
+ *  sides of the comparison are written the same way. */
+function hostnameOf(value: string | undefined): string | undefined {
+  if (value === undefined || value === '') return undefined;
+  try { return new URL(`http://${value}`).hostname; } catch { return undefined; }
 }
 
 /** The one seam this needs from the running server. Structural rather than `http.Server` because
