@@ -496,3 +496,27 @@ describe('the default shutdown is a PAUSE: checkpoint, then exit within seconds'
     expect((await runSignal(undefined)).exited).toEqual([0]);
   });
 });
+
+describe('a pause whose checkpoint throws still exits', () => {
+  afterEach(() => { process.removeAllListeners('SIGTERM'); process.removeAllListeners('SIGINT'); });
+
+  it('logs the failure and leaves instead of hanging until SIGKILL', async () => {
+    const errors: string[] = [];
+    const brain = ({
+      busy: () => ({ turns: 1, children: 0, undelivered: 0 }),
+      beginDrain: () => { /* quiet */ },
+      pauseForRestart: () => { throw new Error('disk full'); },
+      notify: async () => { /* quiet */ },
+    }) as unknown as BrainService;
+    const exited: number[] = [];
+    await new Promise<void>((resolve) => {
+      installGracefulShutdown(brain, { info: () => { /* quiet */ }, error: (m) => { errors.push(m); } }, {
+        pollMs: 5, drainMs: 60_000, notify: false, mode: () => 'pause',
+        exit: ((code: number) => { exited.push(code); resolve(); }) as never,
+      });
+      process.emit('SIGTERM');
+    });
+    expect(exited).toEqual([0]);
+    expect(errors.some((m) => m.includes('pause checkpoint failed'))).toBe(true);
+  });
+});

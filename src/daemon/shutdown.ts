@@ -136,8 +136,12 @@ export function installGracefulShutdown(
     void (async () => {
       const started = Date.now();
       // Everything durable happens synchronously in here (SQLite writes): after this line the checkpoint
-      // is complete and only best-effort courtesies remain between us and the exit.
-      const at = brain?.pauseForRestart?.() ?? { turns: 0, children: 0, parked: [], queued: 0 };
+      // is complete and only best-effort courtesies remain between us and the exit. A failing checkpoint
+      // is logged, not fatal: the per-message mirror is already on disk, and a process that refuses to
+      // exit on SIGTERM only earns systemd's SIGKILL.
+      let at = { turns: 0, children: 0, parked: [] as string[], queued: 0 };
+      try { at = brain?.pauseForRestart?.() ?? at; }
+      catch (error) { log.error('pause checkpoint failed — exiting anyway', error); }
       log.info(`${cause} — pausing (${at.turns} turn(s), ${at.children} sub-agent(s)): parked ${at.parked.length} turn(s), checkpointed ${at.queued} queued message(s)`);
       if (at.parked.length > 0) log.info(`parked for boot resume: ${at.parked.join(', ')}`);
       if (opts?.notify !== false && exitCode !== RESTART_EXIT_CODE && (at.turns > 0 || at.children > 0)) {
