@@ -4,7 +4,6 @@ import { SessionManager } from '@earendil-works/pi-coding-agent';
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { BrainMessageRow, BrainRunMessage, BrainStore } from '../store/brainStore.js';
 import { extractText, NO_REPLY_NUDGE } from './messageView.js';
-import { isChannelSession, isSubagentSession } from './sessionId.js';
 import { HISTORY_IMAGE_PLACEHOLDER } from './session/historyImageStripping.js';
 import { externalizeImageBlocks } from './chatImages.js';
 import type { StoredChatImage } from './chatImages.js';
@@ -183,13 +182,9 @@ function interruptedToolResultText(store: BrainStore, sessionId: string, call: {
       + 'DelegateRead if you need its output; do not re-delegate the same work.';
   }
   const child = run ? ` ${run.sessionId}` : '';
-  // A top-level platform room has no durable result inbox drain (only owner conversations and delegated
-  // sessions receive <subagent-result> messages), so it is told where to read the answer instead.
-  const delivery = isChannelSession(sessionId) && !isSubagentSession(sessionId)
-    ? 'once it finishes, read its answer with DelegateRead (DelegateList shows its state meanwhile)'
-    : 'its result is delivered to you as a <subagent-result> system message (DelegateList shows its state meanwhile)';
   return `[interrupted, resuming] The daemon restarted while this ${call.name} call was waiting for the sub-agent${child}. `
-    + `The sub-agent is resumed automatically after the restart and ${delivery} — do NOT re-delegate this work.`;
+    + 'The sub-agent is resumed automatically after the restart and its result is delivered to you as a '
+    + '<subagent-result> system message (DelegateList shows its state meanwhile) — do NOT re-delegate this work.';
 }
 
 /** The last non-empty assistant text of a session, scanning backwards — what "the sub-agent's answer"

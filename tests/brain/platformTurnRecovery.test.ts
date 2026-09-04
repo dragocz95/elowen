@@ -217,6 +217,38 @@ describe('resumePlatformTurn — the boot resume of a parked platform channel tu
     expect(brains).toHaveLength(1);
   });
 
+  it('a room paused on its own delegation waits durably at boot: attempt counted, no model turn, marker kept', async () => {
+    const { store, brains, delivered, deps, park, sessionId } = setup();
+    const row = park(envelopeFor());
+
+    const outcome = await resumePlatformTurn(deps, { ...row, awaitsDelegations: true });
+
+    expect(outcome).toBe('released');
+    expect(brains).toHaveLength(0);
+    expect(delivered).toEqual([]);
+    expect(store.getSession(sessionId)!.parked_at).not.toBeNull();
+    expect(store.getSession(sessionId)!.park_attempts).toBe(1); // the same budget every park spends
+  });
+
+  it('delivers a recovered sub-agent result to the room as the continuation, and acknowledges only after the reply', async () => {
+    const { store, brains, delivered, deps, park, sessionId } = setup();
+    const row = park(envelopeFor());
+    const acknowledged: number[] = [];
+
+    const outcome = await resumePlatformTurn(deps, { ...row, awaitsDelegations: true }, {
+      note: '<system-reminder>\n<subagent-result id="r1" status="done">the child says 42</subagent-result>\n</system-reminder>',
+      acknowledge: () => { acknowledged.push(brains[0]!.customSends.length); },
+    });
+
+    expect(outcome).toBe('resumed');
+    expect(brains[0]!.customSends).toHaveLength(1);
+    expect(brains[0]!.customSends[0]!.customType).toBe('subagent-result-resume');
+    expect(brains[0]!.customSends[0]!.content).toContain('the child says 42');
+    expect(delivered).toEqual([{ text: 'resumed answer', target: 'destination:discord:ops' }]);
+    expect(acknowledged).toEqual([1]); // after the model answered, not before
+    expect(store.getSession(sessionId)!.parked_at).toBeNull();
+  });
+
   it('re-derives authority from the account: a vanished account refuses, without a model turn', async () => {
     const { store, spawn, brains, sessionId, delivered, deps, park } = setup();
     const row = park(envelopeFor());

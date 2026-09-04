@@ -4,6 +4,7 @@ import type { PluginRegistry } from '../../plugins/registry.js';
 import type { ToolPolicy } from '../../plugins/policyContext.js';
 import type { HookAuditBuffer } from '../../shared/hookAudit.js';
 import type { BrainStore } from '../../store/brainStore.js';
+import type { BrainSubagentResult } from '../../store/brainDelegationStore.js';
 import type { MemoryService } from '../memoryService.js';
 import type { MemoryCurator } from '../memoryCurator.js';
 import type { ConversationTitler } from '../conversationTitler.js';
@@ -128,6 +129,30 @@ interface TurnRunnerDeps {
  *  lifecycle), the live-prompt assembly (memory/hook/permissions blocks + turn context), the
  *  runWithPolicy scope with its turn-bound emitters, the thinking-only nudge, the post-turn curator
  *  kickoff, auto-compact and the goal judge. */
+/** The system reminder that carries ONE durable delegated result into its parent's context — the shape a
+ *  parent's model reads for a background sub-agent, a boot-recovered child, or a workflow. Exported so the
+ *  platform resume can deliver the same block as a room's continuation. */
+export function subagentResultReminder(result: BrainSubagentResult): string {
+  return result.kind === 'workflow'
+    // A workflow delivers one whole-DAG summary body (which itself names each node's outcome), so
+    // it rides a <workflow-result> block rather than the sub-agent <result>/<error> split.
+    ? '<system-reminder>\n'
+      + `<workflow-result id="${xmlEscape(result.id)}" status="${result.status}">\n`
+      + `<task>${xmlEscape(result.task)}</task>\n<result>${xmlEscape(result.result ?? '(the workflow returned nothing)')}</result>\n</workflow-result>\n`
+      + '<instruction>A background workflow finished. Incorporate this result into your current work. '
+      + 'The node transcripts remain available separately; do not claim their internal tool calls as your own.</instruction>\n'
+      + '</system-reminder>'
+    : '<system-reminder>\n'
+      + `<subagent-result id="${xmlEscape(result.id)}" session="${xmlEscape(result.sessionId)}" status="${result.status}">\n`
+      + `<task>${xmlEscape(result.task)}</task>\n`
+      + `${result.status === 'done'
+        ? `<result>${xmlEscape(result.result ?? '(the sub-agent returned nothing)')}</result>`
+        : `<error>${xmlEscape(result.error ?? 'unknown sub-agent error')}</error>`}\n</subagent-result>\n`
+      + '<instruction>A background sub-agent finished. Incorporate this result into your current work. '
+      + 'The child transcript remains available separately; do not claim its internal tool calls as your own.</instruction>\n'
+      + '</system-reminder>';
+}
+
 export class BrainTurnRunner {
   private contextBuilder: TurnContextBuilder;
   /** One shared promise per parent: overlapping wake paths join the same delivery instead of silently
@@ -372,24 +397,7 @@ export class BrainTurnRunner {
       const result = this.d.store.pendingSubagentResults(parentSessionId).find((row) => !attempted.has(row.id));
       if (!result) break;
       attempted.add(result.id);
-      const content = result.kind === 'workflow'
-        // A workflow delivers one whole-DAG summary body (which itself names each node's outcome), so
-        // it rides a <workflow-result> block rather than the sub-agent <result>/<error> split.
-        ? '<system-reminder>\n'
-          + `<workflow-result id="${xmlEscape(result.id)}" status="${result.status}">\n`
-          + `<task>${xmlEscape(result.task)}</task>\n<result>${xmlEscape(result.result ?? '(the workflow returned nothing)')}</result>\n</workflow-result>\n`
-          + '<instruction>A background workflow finished. Incorporate this result into your current work. '
-          + 'The node transcripts remain available separately; do not claim their internal tool calls as your own.</instruction>\n'
-          + '</system-reminder>'
-        : '<system-reminder>\n'
-          + `<subagent-result id="${xmlEscape(result.id)}" session="${xmlEscape(result.sessionId)}" status="${result.status}">\n`
-          + `<task>${xmlEscape(result.task)}</task>\n`
-          + `${result.status === 'done'
-            ? `<result>${xmlEscape(result.result ?? '(the sub-agent returned nothing)')}</result>`
-            : `<error>${xmlEscape(result.error ?? 'unknown sub-agent error')}</error>`}\n</subagent-result>\n`
-          + '<instruction>A background sub-agent finished. Incorporate this result into your current work. '
-          + 'The child transcript remains available separately; do not claim its internal tool calls as your own.</instruction>\n'
-          + '</system-reminder>';
+      const content = subagentResultReminder(result);
       try {
         const delivery = await this.sendCustomSystem(
           userId,

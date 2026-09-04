@@ -39,7 +39,7 @@ import { LiveSessionSpawner } from './service/spawner.js';
 import { ConversationLifecycle } from './service/lifecycle.js';
 import { recordSessionEvent, scheduleReasoningMarker } from './service/sessionEvents.js';
 import { clientDir } from './service/workDir.js';
-import { BrainTurnRunner } from './service/turnRunner.js';
+import { BrainTurnRunner, subagentResultReminder } from './service/turnRunner.js';
 import type { BoundClientRequest, TurnRequest } from './service/turnRequest.js';
 import { BrainStatusService } from './service/statusService.js';
 import type { SessionListItem, SessionPage, SessionPageOpts, MessagePage, MessagePageOpts, BrainStatusView, ManagedSessionView } from './service/statusService.js';
@@ -55,7 +55,7 @@ import { SessionQueueService } from './service/sessionQueue.js';
 import { exportBrainSession } from './session/exportSession.js';
 import type { ExportFormat, SessionExport } from './session/exportSession.js';
 import { toolAuthorityForUser } from './brainDeps.js';
-import { resumePlatformTurn, type ParkedPlatformTurn } from './platformTurnRecovery.js';
+import { resumePlatformTurn, type PlatformResumeContinuation, type ParkedPlatformTurn } from './platformTurnRecovery.js';
 import type { OwnerConversationRecovery } from './recovery/providers.js';
 import type { RecoveryOutcome } from './recovery/types.js';
 import type { BrainDeps } from './brainDeps.js';
@@ -418,6 +418,12 @@ export class BrainService {
       // resumeParkedConversation) is un-parked once the answer has actually been consumed by a turn, so
       // the next boot does not resume a conversation the result already finished.
       onRecoveredRunCompleted: async (parentSessionId, ownerUserId) => {
+        // A top-level platform room has no inbox drain (its turns run under a durable envelope, not an
+        // owner's live session): the result is delivered as the room's own resume continuation.
+        if (isChannelSession(parentSessionId) && !isSubagentSession(parentSessionId)) {
+          await this.deliverRecoveredResultToRoom(parentSessionId);
+          return;
+        }
         const outcome = await this.turnRunner.drainPendingSubagentResults(ownerUserId, parentSessionId);
         if (outcome.answered && !this.d.store.hasPendingDelivery(parentSessionId)) {
           this.d.store.clearSessionPark(parentSessionId);
@@ -640,6 +646,34 @@ export class BrainService {
       }
     }
     if (items.length > 0) logger('brain').info(`replayed ${items.length} message(s) queued before the pause into ${row.id}`);
+  }
+
+  /** A platform room paused on its delegation receives the recovered result the way the owner does — as
+   *  the continuation of the interrupted turn — through the platform resume with a `<subagent-result>`
+   *  note in place of the generic restart note (resumePlatformTurn's `continuation`). The inbox rows are
+   *  acknowledged only once the room's model has answered on them. Waits for a sibling that is still
+   *  recovering, exactly like the owner path. */
+  private async deliverRecoveredResultToRoom(parentSessionId: string): Promise<void> {
+    const row = this.d.store.getSession(parentSessionId);
+    if (!row) return;
+    if (this.d.store.recoveringSubagentSessionIds(parentSessionId).length > 0) return;
+    const results = this.d.store.pendingSubagentResults(parentSessionId);
+    if (results.length === 0) return;
+    if (!row.parked_at) {
+      // The pause could not park this room turn (see platformTurnParkEligible): nobody continues it, so
+      // the answer stays readable through DelegateRead and the room is told so by the resumed sender.
+      logger('brain').warn(`recovered sub-agent result(s) for unparked platform room ${parentSessionId} stay in the inbox; the room reads them through DelegateRead`);
+      return;
+    }
+    const note = `${results.map(subagentResultReminder).join('\n')}\n`
+      + 'The daemon restarted while this conversation was waiting on the sub-agent work above; the interrupted '
+      + 'Delegate call is marked [interrupted] in the transcript. Continue from these results and give the sender '
+      + 'the answer they are waiting for. Do not re-delegate the same work.';
+    const outcome = await this.resumeParkedPlatformTurn({ id: row.id, park_attempts: row.park_attempts }, {
+      note,
+      acknowledge: () => { for (const result of results) this.d.store.acknowledgeSubagentResult(parentSessionId, result.id); },
+    });
+    logger('brain').info(`platform room ${parentSessionId}: recovered result delivered as its continuation (${outcome})`);
   }
 
   /** The safety net under a parent PAUSED on its delegation (resumeParkedConversation's durable wait): the
@@ -1038,7 +1072,8 @@ export class BrainService {
    *  that writes the delivery row), but deduplicated anyway so a hand-edited database cannot turn one
    *  session into two items. */
   claimParkedPlatformTurns(): ParkedPlatformTurn[] {
-    const parked = this.d.store.parkedSessions().filter((row) => isNonUserSession(row.id));
+    const parked = this.d.store.parkedSessions().filter((row) => isNonUserSession(row.id))
+      .map((row) => ({ id: row.id, park_attempts: row.park_attempts, awaitsDelegations: this.parkedTurnAwaitsDelegations(row.id) }));
     const claimed = new Set(parked.map((row) => row.id));
     const undelivered = this.d.store.pendingPlatformDeliveries()
       .filter((delivery) => isNonUserSession(delivery.sessionId) && !claimed.has(delivery.sessionId))
@@ -1051,7 +1086,7 @@ export class BrainService {
    *  post THAT text without spending a model turn. All the policy — authority re-derived from the account
    *  (never replayed), both attempt caps, the visible give-ups, the compute/deliver split — lives in
    *  resumePlatformTurn; this only wires the brain in. */
-  async resumeParkedPlatformTurn(row: ParkedPlatformTurn): Promise<RecoveryOutcome> {
+  async resumeParkedPlatformTurn(row: ParkedPlatformTurn, continuation?: PlatformResumeContinuation): Promise<RecoveryOutcome> {
     return resumePlatformTurn({
       store: this.d.store,
       users: this.d.users,
@@ -1070,7 +1105,7 @@ export class BrainService {
       canDeliver: (target) => this.platforms.canDeliver(target),
       deliver: (text, target) => this.platforms.notify(text, target),
       log: logger('brain'),
-    }, row);
+    }, row, continuation);
   }
 
   /** D3 — never replay authority from disk unchecked. The workflow recovery journal lives in the plugin

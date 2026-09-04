@@ -6026,6 +6026,45 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(seen[0]).toBe(1);
   });
 
+  it('a platform ROOM paused on its Delegate waits at boot and then gets the recovered result as its own continuation', async () => {
+    // MAJOR 5: a room has no owner inbox drain. The room-side twin of the owner path: no generic resume
+    // at boot (the room is told nothing it cannot use), and when the child lands, the platform resume is
+    // invoked WITH the result as the continuation note.
+    const d = fakeDeps();
+    const room = 'brain-ch-discord-ops';
+    d.store.createSession({ id: room, userId: 1, model: 'm' });
+    const child = 'brain-ch-subagent-room-child';
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: room, delegatedAccess: { admin: true, owner: true, projectIds: [], permissionBoundary: null } });
+    d.store.upsertSubagentRun(room, { id: 'call-room', sessionId: child, status: 'running', task: 'dig', tools: 1, seconds: 5 });
+    d.store.appendMessage({
+      id: 'a-room', sessionId: room, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'call-room', name: 'Delegate', arguments: {} }] },
+    });
+    d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-room'").run();
+    d.store.markSessionParked(room);
+
+    const restarted = new BrainService(d as never);
+    const resumes: { row: { id: string; awaitsDelegations?: boolean }; note?: string }[] = [];
+    vi.spyOn(restarted, 'resumeParkedPlatformTurn').mockImplementation(async (row, continuation) => {
+      resumes.push({ row, ...(continuation ? { note: continuation.note } : {}) });
+      if (continuation) { continuation.acknowledge(); d.store.clearSessionPark(row.id); }
+      return 'resumed';
+    });
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll();
+    await recovery.resumeAll();
+
+    // First the boot sweep's own visit, marked as a wait (the real resume records the attempt and returns).
+    expect(resumes[0]).toMatchObject({ row: { id: room, awaitsDelegations: true } });
+    expect(resumes[0]!.note).toBeUndefined();
+    // Then the completion hook, carrying the child's real answer in the <subagent-result> shape.
+    const withResult = resumes.find((r) => r.note);
+    expect(withResult?.note).toContain('<subagent-result');
+    expect(withResult?.note).toContain(child);
+    expect(withResult?.note).toContain('echo:'); // the child's recovered answer body
+    expect(d.store.pendingSubagentResults(room)).toEqual([]); // acknowledged through the continuation
+  });
+
   it('uses recovered results as the continuation of a genuinely parked owner turn', async () => {
     const d = fakeDeps();
     d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });

@@ -87,8 +87,10 @@ export const MAX_PLATFORM_DELIVERY_ATTEMPTS = 3;
 /** The hidden continuation injected into a parked platform conversation — the channel twin of
  *  brainService's PARKED_RESUME_NOTE, delivered through the same custom-message seam (`internalSystem`)
  *  so it appends at the transcript's TAIL and never renders as a fake user bubble. */
-const PLATFORM_RESUME_NOTE = 'The daemon restarted and interrupted this conversation\'s active turn at a step boundary. '
-  + 'Every tool result above is complete, but the remaining work was not done and the final answer was never delivered. '
+const PLATFORM_RESUME_NOTE = 'The daemon restarted and interrupted this conversation\'s active turn. '
+  + 'The remaining work was not done and the final answer was never delivered. A tool result marked [interrupted] '
+  + 'belongs to a call the restart cut off: its effect is unknown, so check the current state before repeating it '
+  + 'and never assume it completed; every other tool result above is complete. '
   + 'Continue exactly where the transcript leaves off and finish the turn: complete any remaining work and give the '
   + 'sender the answer they are still waiting for. Do not redo work whose results are already above, and do not dwell '
   + 'on the interruption. If the transcript shows the request was in fact fully answered, reply with a one-line '
@@ -275,6 +277,18 @@ export async function deliverPendingPlatformReply(
 export interface ParkedPlatformTurn {
   id: string;
   park_attempts: number;
+  /** The pause caught this turn blocked only on delegation calls whose children this boot is recovering
+   *  — the room's twin of OwnerConversationRecovery.awaitsDelegations: no resume turn at boot, the
+   *  recovered result is delivered as the continuation (see resumePlatformTurn's `continuation`). */
+  awaitsDelegations?: boolean;
+}
+
+/** A continuation that CARRIES something: the recovered sub-agent result(s) a room was paused on, in
+ *  place of the generic restart note. `acknowledge` runs once the resumed turn settled with an answer, so
+ *  the durable inbox rows are retired exactly when the room has consumed them. */
+export interface PlatformResumeContinuation {
+  note: string;
+  acknowledge(): void;
 }
 
 /** `platform-conversations` provider, RESUME: continue ONE parked platform channel turn from its own
@@ -284,8 +298,17 @@ export interface ParkedPlatformTurn {
 export async function resumePlatformTurn(
   deps: PlatformTurnRecoveryDeps,
   row: ParkedPlatformTurn,
+  continuation?: PlatformResumeContinuation,
 ): Promise<RecoveryOutcome> {
   const { log } = deps;
+  // A turn paused on its own delegation(s) is not continued at boot: the recovered child's answer IS the
+  // continuation and arrives through the recovery's completion hook, which calls back in here WITH it.
+  // The attempt is still counted, so a delivery that never comes ends at the same cap as any park.
+  if (row.awaitsDelegations && !continuation) {
+    if (!deps.store.claimParkResumeAttempt(row.id)) return 'released';
+    log.info(`parked platform turn ${row.id} waits durably for its recovering sub-agent(s); no resume turn`);
+    return 'released';
+  }
   // FIRST, before any envelope parsing or invariant check: a computed answer outranks everything else
   // here, and this branch needs nothing but its own row. Asking later would let one of the fail-closed
   // envelope refusals below read an answer that already exists as "nothing to do" and drop it.
@@ -439,8 +462,8 @@ export async function resumePlatformTurn(
       // The same custom-system continuation shape the owner sweep uses: appends at the transcript's
       // TAIL, never a fake user row, never a history rewrite — and send() verifies the triggered turn
       // produced a fresh, normally settled assistant before returning.
-      internalSystem: { customType: 'restart-resume', resultId: `restart-resume-${randomUUID()}` },
-    }, PLATFORM_RESUME_NOTE);
+      internalSystem: { customType: continuation ? 'subagent-result-resume' : 'restart-resume', resultId: `restart-resume-${randomUUID()}` },
+    }, continuation?.note ?? PLATFORM_RESUME_NOTE);
   } catch (e) {
     // Marker deliberately kept: the attempt is durably counted, so the next boot retries up to the cap.
     log.error(`boot resume failed for parked platform turn ${row.id} (attempt ${row.park_attempts + 1}/${MAX_PLATFORM_RESUME_ATTEMPTS}); marker kept for the next boot`, e);
@@ -451,6 +474,9 @@ export async function resumePlatformTurn(
     log.error(`parked platform turn ${row.id}: the resume turn settled with an empty reply — nothing to deliver`);
     return 'terminalized';
   }
+  // The room's model has consumed the recovered result(s): retire their inbox rows now, before the
+  // promotion deletes the envelope — a later boot must neither redeliver them nor find them orphaned.
+  continuation?.acknowledge();
   // THE PROMOTION, in ONE transaction and strictly BEFORE the post: the marker and the envelope go, and
   // the computed answer becomes durably deliverable in their place. Past this line the model can never
   // run for this turn again — the prompt inputs it would need no longer exist — and the answer can no

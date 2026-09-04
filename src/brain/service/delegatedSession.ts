@@ -12,7 +12,7 @@ import { extractText } from '../messageView.js';
 import type { BrainModelSelection } from '../providers.js';
 import type { LiveBrain } from '../session/liveBrain.js';
 import type { LiveSessionRegistry } from '../session/liveRegistry.js';
-import { channelIdOf, isChannelSession, isSubagentSession, subagentSessionId } from '../sessionId.js';
+import { channelIdOf, isSubagentSession, subagentSessionId } from '../sessionId.js';
 import type { DelegatedContinueResult, KnownControls, SubagentProgressEvent } from '../../plugins/api.js';
 import type { RecoveryOutcome } from '../recovery/types.js';
 import { logger } from '../../shared/logger.js';
@@ -126,8 +126,8 @@ interface DelegatedSessionDeps {
    *  Wired to the same delivery a background delegation uses in normal operation, so the parent receives
    *  the answer NOW rather than at the next boot: the owner-conversations sweep no longer waits for the
    *  delegation sweep (see recovery/providers.ts), so a result produced after the owner's wake has to
-   *  find its own way in. Owner and nested sub-agent parents only — a top-level platform room has no
-   *  inbox drain and reads its child through DelegateRead. */
+   *  find its own way in. The host routes by parent class: the owner/sub-agent inbox drain, or the
+   *  platform room's own resume carrying the result. */
   onRecoveredRunCompleted?: (parentSessionId: string, ownerUserId: number) => Promise<void>;
 }
 
@@ -295,7 +295,6 @@ export class DelegatedSessionService {
    *  a finished recovery into a failed one. */
   private async deliverRecoveredResult(run: RecoverableRun): Promise<void> {
     if (!this.d.onRecoveredRunCompleted) return;
-    if (isChannelSession(run.parentSessionId) && !isSubagentSession(run.parentSessionId)) return;
     const owner = this.d.store.getSession(run.parentSessionId);
     if (!owner) return;
     try { await this.d.onRecoveredRunCompleted(run.parentSessionId, owner.user_id); }
