@@ -80,7 +80,7 @@ export async function runLifecycle(
     }
     case 'down': {
       const force = argv.includes('--force') || argv.includes('-f');
-      if (!force) deps.log('Stopping elowen — waiting for running turns to finish (--force to kill now)…');
+      if (!force) deps.log('Stopping elowen — checkpointing running turns (--force to kill now)…');
       await deps.stop(env, { force });
       deps.log('elowen stopped');
       return true;

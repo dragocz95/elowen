@@ -30,7 +30,7 @@ import type { TmuxDriver } from '../tmux/types.js';
 import { logger } from '../shared/logger.js';
 import { HookAuditBuffer } from '../shared/hookAudit.js';
 import { BrainService } from '../brain/brainService.js';
-import { StepDrainCoordinator } from '../brain/stepDrain.js';
+import { TurnParkPolicy } from '../brain/turnPark.js';
 import { BrainOAuthManager } from '../brain/oauth.js';
 import { ModelRuntime, readStoredCredential } from '@earendil-works/pi-coding-agent';
 import { InMemoryCredentialStore } from '@earendil-works/pi-ai';
@@ -54,7 +54,6 @@ import { loadAgentRegistry, subagentCatalog, type AgentDef } from '../brain/agen
 import { makeSubagentCatalog } from '../brain/agents/catalogService.js';
 import { listBrainModels } from '../brain/models.js';
 import { setToolOutputCaps, setToolOutputPolicy } from '../brain/messageView.js';
-import { isSubagentSession } from '../brain/sessionId.js';
 import { publicHttpTransport } from '../plugins/publicHttp.js';
 import { platformTurnParkEligible } from '../brain/platformTurnRecovery.js';
 import { setSpillMaxResultBytes, setToolResultGroupBudget } from '../brain/session/toolResultClearing.js';
@@ -751,17 +750,13 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // Bounded ring of recent mutating-hook execution records. The brain's owner-chat hook runner is the
   // sole writer (via the audit sink below); the admin plugins API reads it (per-plugin hook-audit view).
   const hookAudit = new HookAuditBuffer();
-  // One step-boundary shutdown coordinator per PROCESS (daemon and each runner build their own core, so
-  // each gets exactly one). The factory installs its holds/bookkeeping on every spawned session; the
-  // shutdown drain reads it through BrainService.midStepWork. A parked OWNER conversation and a parked
-  // ordinary PLATFORM CHANNEL turn both write the durable park marker here, synchronously, so their boot
-  // resume sweeps can continue the turn — sub-agent sessions (the only ones a runner process ever parks)
-  // have their own run-row/journal recovery and deliberately leave no marker. A platform channel turn is park-eligible only when its current turn's durable
-  // resume envelope proves a faithful resume exists (platformTurnParkEligible — fail closed, and never
-  // for cron/scheduled turns).
-  const stepDrain = new StepDrainCoordinator({
+  // The pause-for-restart's park decision (turnPark.ts). A parked OWNER conversation and a parked ordinary
+  // PLATFORM CHANNEL turn both write the durable park marker here, synchronously, so their boot resume
+  // sweeps can continue the turn — sub-agent sessions have their own run-row/journal recovery and never
+  // take a marker. A platform channel turn is park-eligible only when its current turn's durable resume
+  // envelope proves a faithful resume exists (platformTurnParkEligible — fail closed, never cron/scheduled).
+  const turnPark = new TurnParkPolicy({
     onParked: (sessionId) => {
-      if (isSubagentSession(sessionId)) return;
       try { brainStore.markSessionParked(sessionId); } catch (e) { log.error(`park marker write failed for ${sessionId}`, e); }
     },
     parksPlatformTurn: (sessionId) => platformTurnParkEligible(brainStore, sessionId),
@@ -834,14 +829,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         // Present only in the daemon: a runner builds its core without one and therefore always runs a
         // nested delegation itself.
         ...(opts.subagentRunner ? { subagentRunner: opts.subagentRunner } : {}),
-        stepDrain,
-        // The remote half of the step-boundary drain, only where a runner pool exists and speaks the seam.
-        ...(opts.subagentRunner?.beginDrain && opts.subagentRunner.midStepWork ? {
-          remoteStepDrain: {
-            begin: () => opts.subagentRunner?.beginDrain?.(),
-            midStepWork: () => opts.subagentRunner?.midStepWork?.() ?? Promise.resolve(0),
-          },
-        } : {}),
+        turnPark,
         // The typed sub-agent registry, resolved host-side when a delegate call names a subagent_type.
         agents: () => getAgentRegistry(),
         // Private long-term memory: the owner-chat memory tools + per-turn retrieval injection + the

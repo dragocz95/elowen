@@ -1,6 +1,6 @@
 import type { ServiceNotice } from '../plugins/api.js';
 
-/** English wording for the daemon's own lifecycle announcements — shutdown, restart, coming back up.
+/** English wording for the daemon's own lifecycle announcements — pause, restart, coming back up.
  *
  *  This is the source of truth for the English text. Every adapter is handed it as the fallback, so an
  *  adapter that predates translated notices (or one configured in English) delivers exactly what the
@@ -8,9 +8,9 @@ import type { ServiceNotice } from '../plugins/api.js';
  *  other side of a boundary this file cannot import across, and tests/contract/lifecycleMessageParity
  *  fails the moment the English half drifts from its mirror there. */
 const NOTICES = {
-  stopping: (turns: number, children: number, undelivered: number) =>
-    `🛑 **Stopping** — waiting for ${turns} turn(s), ${children} sub-agent(s) and ${undelivered} undelivered result(s)…`,
-  stoppingIdle: () => '🛑 **Stopping** — Elowen is shutting down.',
+  pausing: (turns: number, children: number) => turns + children > 0
+    ? `⏸️ **Pausing** — ${turns} turn(s) and ${children} sub-agent(s) are checkpointed and resume after the restart.`
+    : '⏸️ **Pausing** — Elowen is restarting; nothing was in flight.',
   backOnline: () => '✅ **Back online** — Elowen restarted and is ready.',
   backOnlineVersion: (version: string) => `✅ **Back online** — the daemon started (v${version}).`,
   restarting: () => '🔄 **Restart** — Elowen is restarting, back in a moment…',

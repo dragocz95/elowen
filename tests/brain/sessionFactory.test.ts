@@ -14,7 +14,6 @@ import {
 } from '../../src/brain/session/factory.js';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
-import { StepDrainCoordinator } from '../../src/brain/stepDrain.js';
 import { CLEAR_MIN_BYTES } from '../../src/brain/session/toolResultClearing.js';
 
 let dirs: string[] = [];
@@ -891,68 +890,6 @@ describe('BrainSessionFactory turn-boundary compaction toggle', () => {
     applyCompaction(false, 80);
     await runBoundary(session);
     expect(session.checkCompaction).toHaveBeenCalledOnce();
-  });
-});
-
-describe('BrainSessionFactory step-drain hold install order', () => {
-  // Mirrors compactionSession above, but on a SUB-AGENT session id — the only kind the hold installs on.
-  function heldSession() {
-    const checkCompaction = vi.fn(async (message?: { usage?: { totalTokens?: number } }) =>
-      (message?.usage?.totalTokens ?? 0) > 500_000);
-    return {
-      checkCompaction,
-      sessionId: 'brain-ch-subagent-held',
-      _checkCompaction: checkCompaction,
-      abortCompaction: vi.fn(),
-      agent: {
-        state: { messages: [], model: {}, thinkingLevel: 'high' },
-        prepareNextTurnWithContext: undefined as unknown,
-      },
-      subscribe: () => () => {},
-      // The prefill baseline is measured off these: a real PI session always exposes its rendered
-      // prompt and its tool registry, so a fake that omits them is simply incomplete.
-      systemPrompt: '', getAllTools: () => [], getActiveToolNames: () => [],
-      messages: [] as unknown[],
-      setSteeringMode: vi.fn(),
-    };
-  }
-
-  it('installs the hold OUTSIDE the compaction wrapper, so a parked turn never spends a compaction call', async () => {
-    // The order is factory code, not coordinator code: installTurnBoundaryAutoCompaction first, then
-    // installHold, so the hold (installed last) runs FIRST at each boundary. A reorder would pass every
-    // coordinator unit test and silently cost one compaction model call per parked turn — exactly the
-    // criterion this pins.
-    const session = heldSession();
-    const stepDrain = new StepDrainCoordinator();
-    const factory = new BrainSessionFactory({
-      store: new BrainStore(openDb(':memory:')),
-      createSession: vi.fn(async () => ({ session })) as never,
-      resourceLoaderFactory: () => undefined,
-      stepDrain,
-    });
-    await factory.create({
-      sessionId: session.sessionId, ownerUserId: 1, runtime: undefined,
-      model: { id: 'test-model', provider: 'kimi-coding', contextWindow: 200_000 },
-      cwd: process.cwd(), systemPrompt: 'sp', appendSystemPrompt: [], skills: [], tools: [],
-      autoCompact: true, autoCompactAtPct: 80,
-    } as never);
-
-    stepDrain.begin();
-    const controller = new AbortController();
-    const hook = session.agent.prepareNextTurnWithContext as (turn: unknown, signal?: AbortSignal) => Promise<unknown>;
-    let settled = false;
-    const held = hook({
-      message: { role: 'assistant', content: [], stopReason: 'toolUse', timestamp: 1, usage: undefined },
-      context: { messages: [] },
-      toolResults: [],
-    }, controller.signal).then(() => { settled = true; });
-    await new Promise((r) => setTimeout(r, 0));
-
-    expect(settled).toBe(false); // parked at the boundary…
-    expect(session.checkCompaction).not.toHaveBeenCalled(); // …BEFORE the compaction wrapper could run
-    controller.abort();
-    await held;
-    expect(session.checkCompaction).not.toHaveBeenCalled(); // the aborted release skips it too
   });
 });
 

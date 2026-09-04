@@ -46,17 +46,18 @@ describe('install/systemdUnits.daemonUnit', () => {
   it('pins a UTF-8 locale so accented output never depends on the box default environment', () => {
     expect(u).toMatch(/^Environment=LANG=C\.UTF-8$/m);
   });
-  // The daemon drains running turns for up to 10 minutes on SIGTERM. systemd's default 90 s stop timeout
-  // would SIGKILL it mid-drain and destroy the very work being waited for, so this must stay ABOVE the
-  // drain budget — the daemon is always the one that gives up first.
-  it('allows the full shutdown drain before systemd resorts to SIGKILL', () => {
+  // The daemon PAUSES on SIGTERM: a synchronous checkpoint, one bounded 20 s wait for turns nothing can
+  // resume, and bounded courtesies — its own guards keep the whole of it under ~28 s. The stop timeout
+  // sits just above that: long enough for the pause, short enough that a wedged daemon is killed fast.
+  it('gives the pause its bounded budget and no more before systemd resorts to SIGKILL', () => {
     const seconds = Number(/^TimeoutStopSec=(\d+)$/m.exec(u)?.[1]);
-    expect(seconds).toBeGreaterThan(10 * 60);
+    expect(seconds).toBeGreaterThanOrEqual(28);
+    expect(seconds).toBeLessThanOrEqual(60);
   });
   // With the default KillMode=control-group, SIGTERM reaches the forked sub-agent runners at the same
-  // instant as the daemon, so they abort their delegations before the drain can wait for them. `mixed`
-  // signals the main process alone; the drain above then actually protects the delegated work too.
-  it('signals the daemon alone on stop so runners survive the drain (KillMode=mixed)', () => {
+  // instant as the daemon. `mixed` signals the main process alone; the runners go down with the cgroup
+  // once it has checkpointed and left.
+  it('signals the daemon alone on stop (KillMode=mixed)', () => {
     expect(u).toMatch(/^KillMode=mixed$/m);
   });
   it('binds 127.0.0.1 by default (private behind a proxy / on localhost)', () => expect(u).toMatch(/^Environment=ELOWEN_HOST=127\.0\.0\.1$/m));

@@ -19,7 +19,7 @@ import type { BrainResourceLoaderOptions } from './session/factory.js';
 import type { ProjectModelPreference } from '../store/userSettingStore.js';
 import type { ProjectStore } from '../store/projectStore.js';
 import type { DelegatedTurnRunner } from './delegatedTurn.js';
-import type { StepDrainCoordinator } from './stepDrain.js';
+import type { TurnParkPolicy } from './turnPark.js';
 import type { ResolvedBrand } from '../shared/brand.js';
 
 // The daemon-wiring seam of the brain, in its own module so the service/* units can depend on it
@@ -167,13 +167,9 @@ export interface BrainDeps {
   /** Report a platform turn to the team activity feed. Optional: a minimal wiring simply has no feed.
    *  Deliberately a plain callback — the brain layer owns no event bus, and the daemon supplies one. */
   recordActivity?: (e: { actorUserId: number | null; surface: string; target: string }) => void;
-  /** This process's step-boundary drain coordinator (see stepDrain.ts). Owned by buildBrainCore so the
-   *  daemon and each sub-agent runner carry exactly one; absent (minimal test wiring) → sessions get no
-   *  boundary hold and the shutdown drain falls back to whole-turn waiting. */
-  stepDrain?: StepDrainCoordinator;
-  /** Daemon-only: broadcast the drain latch to the runner pool and poll its mid-step count, so the
-   *  step-boundary drain sees turns running out of process too. Absent ⇒ no runners (or a runner itself). */
-  remoteStepDrain?: { begin(): void; midStepWork(): Promise<number> };
+  /** The pause-for-restart's park decision (see turnPark.ts). Owned by buildBrainCore; absent (minimal
+   *  test wiring) → a pause parks nothing and records every live turn as interrupted. */
+  turnPark?: TurnParkPolicy;
 }
 
 /** What an ACCOUNT may reach, as one ToolPolicy. Three inputs, two of them subtractive:

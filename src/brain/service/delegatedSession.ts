@@ -1,6 +1,6 @@
 import type { BrainStore, RecoverableRun, RecoverableWorkflow } from '../../store/brainStore.js';
 import { syntheticRestartResultId } from '../../store/brainStore.js';
-import { settlePartialTurn, outstandingToolCalls } from '../persistence.js';
+import { DELEGATION_WAIT_TOOLS, settlePartialTurn, outstandingToolCalls } from '../persistence.js';
 import { toolAuthorityForUser } from '../brainDeps.js';
 import type { BrainDeps } from '../brainDeps.js';
 import type { ChannelSessionService } from '../channels.js';
@@ -69,22 +69,40 @@ const RECOVERY_INSTRUCTION =
   'The daemon restarted and interrupted you mid-task. Your transcript above is intact up to your last '
   + 'completed step. Continue from there, finish the task you were originally given, and give your final '
   + 'answer as usual.';
-/** The variant used when the discarded tail held unanswered DELEGATION calls (see
- *  DELEGATION_WAIT_TOOLS): the step-boundary drain deliberately exits while a child waits only on its own
- *  delegations, so this tail shape is the DESIGNED restart path, not an anomaly. The delegated children
- *  were recovered separately; their results (when already in) ride along in the same message. */
+/** The variant for a tail that held an unanswered LOCAL tool call: the pause-for-restart leaves a turn
+ *  wherever it stands, so this is the ordinary restart shape. The call was answered with an `interrupted`
+ *  result (persistence.ts settlePartialTurn); the process it ran in died with the daemon, and only the
+ *  model — which knows what the call was for — can tell whether it has to be repeated. */
+const RECOVERY_INSTRUCTION_INTERRUPTED =
+  'The daemon restarted and interrupted you mid-step. Your transcript above is intact; the tool call(s) '
+  + 'marked [interrupted] were cut off by the restart and their effect is unknown — check the current state '
+  + 'before repeating any of them, and never assume one completed. Then finish the task you were originally '
+  + 'given and give your final answer as usual.';
+/** The variant used when the tail held unanswered DELEGATION calls only: the turn was WAITING, not
+ *  mutating. The delegated children were recovered separately; their results (when already in) ride along
+ *  in the same message. */
 const RECOVERY_INSTRUCTION_DELEGATIONS =
   'The daemon restarted while you were waiting on sub-agent(s) you had delegated to. Your transcript '
-  + 'above is intact up to your last completed step; the interrupted delegation call itself is gone from '
-  + 'it. The delegated work was recovered separately — any results already in are included below; check '
+  + 'above is intact up to your last completed step; the interrupted delegation call is marked as such. '
+  + 'The delegated work was recovered separately — any results already in are included below; check '
   + 'DelegateList/DelegateRead for the rest before re-delegating, so you never redo finished work. Then '
   + 'finish your task and give your final answer as usual.';
-/** Tool names whose unanswered call in a crash-discarded tail means the turn was WAITING on delegated
- *  work, not mid-side-effect. Replaying such a turn repeats no local mutation — the delegated child is
- *  itself recovered durably (run-row respawn, workflow journal resume) and its answer reaches this
- *  session's inbox — so these do NOT park the run as recovery_required. Names are the subagent plugin's
- *  stable tool API. */
-const DELEGATION_WAIT_TOOLS = new Set(['Delegate', 'DelegateContinue', 'WorkflowStart', 'WorkflowResume']);
+
+/** The final answer of a child whose interrupted tail ENDS on a settled assistant message with text and
+ *  no tool call — the model had finished and only the terminal bookkeeping was lost. Anything else
+ *  (aborted, errored, ended on a tool call, empty) is undefined: the child still has work to do. */
+function finishedAnswerOf(contents: string[]): string | undefined {
+  const raw = contents.at(-1);
+  if (!raw) return undefined;
+  let message: { role?: string; content?: unknown; stopReason?: string };
+  try { message = JSON.parse(raw) as typeof message; } catch { return undefined; }
+  if (message.role !== 'assistant') return undefined;
+  if (message.stopReason === 'aborted' || message.stopReason === 'error' || message.stopReason === 'length') return undefined;
+  const parts = Array.isArray(message.content) ? message.content as { type?: string }[] : [];
+  if (parts.some((part) => part?.type === 'toolCall')) return undefined;
+  const text = extractText(message).trim();
+  return text ? text : undefined;
+}
 
 interface DelegatedSessionDeps {
   store: BrainStore;
@@ -104,6 +122,13 @@ interface DelegatedSessionDeps {
   /** Steer a parent's follow-up into a child turn RUNNING in the sub-agent runner — the cross-process
    *  half of continueSubagent's mid-turn delivery. Absent (no runner) ⇒ no remote turn can exist. */
   steerRemote?: (channelId: string, text: string) => Promise<{ outcome: 'delivered' | 'idle' | 'aborted' }>;
+  /** A boot-recovered run just reached its terminal row (result or error enqueued in the durable inbox).
+   *  Wired to the same delivery a background delegation uses in normal operation, so the parent receives
+   *  the answer NOW rather than at the next boot: the owner-conversations sweep no longer waits for the
+   *  delegation sweep (see recovery/providers.ts), so a result produced after the owner's wake has to
+   *  find its own way in. The host routes by parent class: the owner/sub-agent inbox drain, or the
+   *  platform room's own resume carrying the result. */
+  onRecoveredRunCompleted?: (parentSessionId: string, ownerUserId: number) => Promise<void>;
 }
 
 /** The sub-agent delegation half of the brain facade: the durable boot reconcile of restart-zombie
@@ -137,7 +162,7 @@ export class DelegatedSessionService {
   reconcileDelegationsOnBoot(): void {
     // Retire results addressed to a sub-agent that has already finished. Delivery needs a parent TURN to
     // acknowledge it, and a terminal sub-agent is never prompted again, so such a row stays pending for
-    // good — and the shutdown drain waits on that count globally, which is how one dead row from 18 Aug
+    // good — and the old shutdown drain waited on that count globally, which is how one dead row from 18 Aug
     // made every restart afterwards burn the full ten-minute budget. Swept BEFORE the claim below, so a
     // run about to be respawned still counts as live and keeps its results.
     const orphaned = this.d.store.discardOrphanedDeliveries();
@@ -180,6 +205,12 @@ export class DelegatedSessionService {
     });
   }
 
+  /** Every run claimed THIS boot, keyed by child session — the leaves-first dependency the concurrent
+   *  resume pass keeps: a claim whose child is itself a claimed parent waits for those deeper claims
+   *  (see recoverClaimedRun). Populated by the claim, settled as each recovery ends, never a leak: a
+   *  deferred that no recovery ever awaits is simply garbage after the pass. */
+  private recoveryOf = new Map<string, { parentSessionId: string; done: Promise<void>; settle: () => void }>();
+
   /** Hand the phase-1 workflow claims to phase 2 exactly once (the `workflows` provider's claim). */
   takePendingWorkflowRecovery(): RecoverableWorkflow[] {
     const claimed = this.pendingWorkflowRecovery;
@@ -192,10 +223,15 @@ export class DelegatedSessionService {
   takePendingRecovery(): RecoverableRun[] {
     const claimed = this.pendingRecovery;
     this.pendingRecovery = [];
+    this.recoveryOf = new Map(claimed.map((run) => {
+      let settle = (): void => { /* replaced below */ };
+      const done = new Promise<void>((resolve) => { settle = resolve; });
+      return [run.childSessionId, { parentSessionId: run.parentSessionId, done, settle }];
+    }));
     return claimed;
   }
 
-  /** DEEPEST first. A parent that was blocked on its own delegation (the step-boundary drain exits in
+  /** DEEPEST first. A parent that was blocked on its own delegation (the pause leaves it in
    *  exactly that shape) must be respawned AFTER the child it was waiting on, so the child's recovered
    *  result is already in the parent's durable inbox and rides into the parent's recovery turn — in the
    *  other order the parent would re-delegate work whose answer was about to arrive. Depth is walked over
@@ -219,6 +255,14 @@ export class DelegatedSessionService {
    *  notice when the recovery turn itself fails unexpectedly — otherwise a current-boot `recovering` claim
    *  would sit with no worker until another daemon restart happened to retry it. */
   async recoverClaimedRun(run: RecoverableRun): Promise<RecoveryOutcome> {
+    // Leaves first, kept under a CONCURRENT sweep: this child may itself be a parent whose own children
+    // were claimed too; their recovered answers must sit in its inbox before its respawn folds them in.
+    // Only claims of THIS boot are awaited (a cycle in a corrupt relation cannot form: a run never waits
+    // for a claim whose child is its own parent chain, because that chain is what makes it deeper).
+    const deeper = [...this.recoveryOf.entries()]
+      .filter(([, entry]) => entry.parentSessionId === run.childSessionId)
+      .map(([, entry]) => entry.done);
+    if (deeper.length > 0) await Promise.allSettled(deeper);
     try { return await this.recoverOne(run); }
     catch (e) {
       const message = (e instanceof Error ? e.message : String(e)).slice(0, 2_000);
@@ -240,14 +284,30 @@ export class DelegatedSessionService {
       // The claim was durably parked as recovery_required WITH a parent notice, so nothing retries it and
       // the parent has been told — a terminal give-up, not an outstanding failure.
       return 'terminalized';
+    } finally {
+      this.recoveryOf.get(run.childSessionId)?.settle();
+      await this.deliverRecoveredResult(run);
     }
   }
 
-  /** Recover ONE claimed delegation. Gives up as an error past the attempt cap; parks as recovery_required
-   *  when the interrupted transcript ends on an UNANSWERED tool call (replaying it might repeat a side
-   *  effect the parent must decide on); otherwise trims the partial tail and respawns the child to finish,
-   *  then completes the run atomically — enqueuing the result even for a foreground delegation, whose
-   *  blocking parent turn did not survive the restart. */
+  /** Hand a just-terminalized recovery's inbox row to its parent right away (see onRecoveredRunCompleted).
+   *  Best-effort: the row is durable and the ordinary drains retry it; a delivery failure must never turn
+   *  a finished recovery into a failed one. */
+  private async deliverRecoveredResult(run: RecoverableRun): Promise<void> {
+    if (!this.d.onRecoveredRunCompleted) return;
+    const owner = this.d.store.getSession(run.parentSessionId);
+    if (!owner) return;
+    try { await this.d.onRecoveredRunCompleted(run.parentSessionId, owner.user_id); }
+    catch (e) { logger('brain').warn(`recovered result delivery to ${run.parentSessionId} failed (durable, will retry): ${e instanceof Error ? e.message : String(e)}`); }
+  }
+
+  /** Recover ONE claimed delegation. Gives up as an error past the attempt cap; completes a child that had
+   *  already answered straight from its transcript; otherwise answers the interrupted tail with
+   *  `interrupted` results and respawns the child to finish, then completes the run atomically —
+   *  enqueuing the result even for a foreground delegation, whose blocking parent turn did not survive
+   *  the restart. `recovery_required` is now reserved for a recovery turn that itself fails (see
+   *  recoverClaimedRun): a pause leaves every busy child mid-step by design, so parking each of them for
+   *  the user to continue by hand would make every restart a chore. */
   private async recoverOne(run: RecoverableRun): Promise<RecoveryOutcome> {
     const { parentSessionId, toolCallId, childSessionId, attempt, state } = run;
     const base = {
@@ -262,26 +322,27 @@ export class DelegatedSessionService {
       });
       return 'terminalized';
     }
-    // Classify the crash-interrupted tail BEFORE trimming it. An unanswered LOCAL tool call in the
-    // discarded suffix means a step STARTED whose effect is unknown — replaying the turn could repeat it,
-    // so the parent decides via DelegateContinue instead of the daemon guessing. An unanswered DELEGATION
-    // call is different: the turn was WAITING, not mutating — the step-boundary drain exits in exactly
-    // that shape by design — and the delegated work is recovered durably on its own, so the turn replays.
+    // A child whose LAST word before the pause was a plain final answer (no tool call, not aborted or
+    // errored) had in fact finished: only its terminal bookkeeping was lost with the process. Complete
+    // the run from the transcript — no model call, the parent gets the answer right away, and the status
+    // bar stops showing a sub-agent that "finished long ago" as running.
     const pending = this.d.store.pendingMessages(childSessionId);
+    const finished = finishedAnswerOf(pending.map((row) => row.content));
+    if (finished !== undefined) {
+      settlePartialTurn(this.d.store, childSessionId);
+      this.d.store.completeRecoveredRun(parentSessionId, toolCallId, { ...base, status: 'done', result: finished });
+      logger('brain').info(`boot recovery completed ${childSessionId} from its transcript: it had already answered before the restart`);
+      return 'resumed';
+    }
+    // Classify the interrupted tail BEFORE settling it. An unanswered LOCAL tool call means a step STARTED
+    // whose effect is unknown; settlePartialTurn answers it with an `interrupted` result and the respawn
+    // instruction tells the model to verify before repeating it — the model knows what the call was for,
+    // the daemon does not. An unanswered DELEGATION call means the turn was WAITING, not mutating: the
+    // delegated work is recovered durably on its own and its result rides along below.
     const outstanding = outstandingToolCalls(pending.map((row) => row.content));
     const blocking = outstanding.filter((o) => !DELEGATION_WAIT_TOOLS.has(o.name));
-    if (blocking.length > 0) {
-      const names = blocking.map((o) => o.name).join(', ');
-      const reason = `interrupted by a daemon restart with unanswered tool call(s): ${names}`;
-      this.d.store.markRecoveryRequired(parentSessionId, toolCallId, reason, {
-        ...base, status: 'error',
-        error: `${reason}. Not auto-recovered because replaying the turn could repeat a side effect. `
-          + `To resume, continue the sub-agent ${childSessionId} with DelegateContinue — be aware the interrupted step may run again.`,
-      });
-      return 'terminalized';
-    }
-    // Safe to replay: drop the partial tail so the transcript ends clean, then respawn the child with a
-    // suffix instruction to finish. The child owns this session id, so sendDelegated resolves its scope.
+    // Answer the interrupted tail so the transcript ends clean, then respawn the child with a suffix
+    // instruction to finish. The child owns this session id, so sendDelegated resolves its scope.
     settlePartialTurn(this.d.store, childSessionId);
     const owner = this.d.store.getSession(childSessionId);
     if (!owner) {
@@ -303,7 +364,8 @@ export class DelegatedSessionService {
         : `Error:\n${r.error ?? r.result ?? 'unknown sub-agent error'}`;
       return `--- ${r.kind === 'workflow' ? `workflow ${r.workflowId ?? ''}` : `sub-agent ${r.sessionId}`} (${r.status})\nTask: ${r.task}\n${body}`;
     });
-    const instruction = (outstanding.length > 0 ? RECOVERY_INSTRUCTION_DELEGATIONS : RECOVERY_INSTRUCTION)
+    const instruction = (blocking.length > 0 ? RECOVERY_INSTRUCTION_INTERRUPTED
+      : outstanding.length > 0 ? RECOVERY_INSTRUCTION_DELEGATIONS : RECOVERY_INSTRUCTION)
       + (resultBlocks.length > 0 ? `\n\nRecovered delegated result(s):\n\n${resultBlocks.join('\n\n')}` : '');
     const answer = await this.sendDelegated(owner.user_id, childSessionId, instruction);
     for (const r of results) this.d.store.acknowledgeSubagentResult(childSessionId, r.id);
