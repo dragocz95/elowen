@@ -40,7 +40,7 @@ export function piInferenceClient(deps: {
 
   return {
     model: `${route.providerId}/${route.model}`,
-    async decide(prompt: string, opts?: { signal?: AbortSignal }): Promise<{ text: string }> {
+    async decide(prompt: string, opts?: { signal?: AbortSignal }) {
       const context: Context = { messages: [{ role: 'user', content: prompt, timestamp: Date.now() }] };
       const deadline = AbortSignal.timeout(COMPLETION_TIMEOUT_MS);
       const message = await deps.runtime.completeSimple(model, context, {
@@ -52,8 +52,20 @@ export function piInferenceClient(deps: {
         throw new Error(message.errorMessage || `completion ${message.stopReason}`);
       }
       // Thinking blocks and tool calls (a hosted model should produce none — no tools are offered)
-      // are dropped; only the answer text matters to a JSON-reply consumer.
-      return { text: contentText(message.content.filter((c) => c.type === 'text')) };
+      // are dropped; only the answer text matters to a JSON-reply consumer. Usage remains host metadata
+      // so plugin-triggered secondary inference can join the write-time origin rollup without persistence.
+      const usage = message.usage;
+      return {
+        text: contentText(message.content.filter((c) => c.type === 'text')),
+        usage: {
+          input: usage.input,
+          output: usage.output,
+          cacheRead: usage.cacheRead,
+          cacheWrite: usage.cacheWrite,
+          total: usage.totalTokens,
+          cost: Number.isFinite(usage.cost.total) ? usage.cost.total : null,
+        },
+      };
     },
   };
 }

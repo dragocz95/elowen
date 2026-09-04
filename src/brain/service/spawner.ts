@@ -101,12 +101,14 @@ export function workspaceToolDefinition<T extends { name: string; description?: 
     ? ((parameters as Record<string, unknown>).properties as Record<string, Record<string, unknown>> | undefined)
     : undefined;
   if (properties?.path) properties.path.description = 'Workspace-relative logical path (for example "src/file.ts")';
+  if (properties?.file_path) properties.file_path.description = 'Workspace-relative logical path to the file (for example "src/file.ts")';
   if (properties?.nodesFile) properties.nodesFile.description = 'Workspace-relative path to the JSON workflow definition';
   if (properties?.cwd) properties.cwd.description = 'Workspace-relative working directory; omit to use the workspace root';
   const description = tool.name === 'WorkflowStart'
     ? 'Run a DAG of sub-agents from a JSON definition inside this assigned workspace. nodesFile must be workspace-relative. Nodes may inherit this exact workspace or explicitly name the same/narrower workspaceId; they cannot widen to a sibling worktree.'
     : `${String(tool.description ?? '')
         .replace('The path must be absolute.', 'The path must be relative to the assigned workspace.')
+        .replace('Prefer absolute paths.', 'Use short workspace-relative paths. An absolute cwd or host path is refused.')
         .replace('Use absolute paths — `cd` inside a compound command is unreliable and can shift context unexpectedly.', 'Use short workspace-relative paths. An absolute cwd or host path is refused.')}`;
   return { ...tool, description, ...(parameters ? { parameters } : {}) };
 }
@@ -306,6 +308,9 @@ export class LiveSessionSpawner {
           .map(workspaceToolDefinition)
           .filter((tool): tool is NonNullable<typeof tool> => !!tool)
       : rawPluginTools;
+    // One exact set follows the filtered definitions into both per-turn visibility and ToolSearch. Rebuilding
+    // it at either consumer risks classifying a plugin definition as a built-in, which would bypass allow-lists.
+    const pluginToolNames = new Set(pluginTools.map((tool) => tool.name));
     const personalToolOwners = perTurnContributions
       ? plugins?.sharedRoomToolOwners() ?? new Map<string, ReadonlySet<number>>()
       : undefined;
@@ -344,7 +349,7 @@ export class LiveSessionSpawner {
         // add the local search tool or a local handle: mixing both paths costs the extra model round again
         // and lets historical `addedToolNames` trigger pi's additional_tools replay.
         if (providerHostedToolSearch) return [];
-        toolSearchHandle = createToolSearchHandle(deferred, undefined, personalToolOwners);
+        toolSearchHandle = createToolSearchHandle(deferred, pluginToolNames, personalToolOwners);
         return [toolSearchTool(toolSearchHandle)];
       },
       // Sharing needs a PERSON on the other end, and a sub-agent has none: whatever it shares lands in
@@ -644,7 +649,7 @@ export class LiveSessionSpawner {
       requestProfile, fastAvailable: fastRoute !== undefined,
       thinkingLabels: Object.fromEntries(capabilities.levels.map((level) => [level, capabilities.labels[level] ?? level])),
       policy: opts.policy, applyCompaction, assessColdCompaction, listeners, replay, turnContext,
-      pluginToolNames: new Set(pluginTools.map((t) => t.name)),
+      pluginToolNames,
       // Carried so each turn's visibility pass can hide the tools that belong to somebody else in the room
       // — the same map the execute gate above was built from, never a second copy of the ownership rule.
       ...(personalToolOwners ? { personalToolOwners } : {}),

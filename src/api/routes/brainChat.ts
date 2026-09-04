@@ -156,7 +156,7 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
   }));
 
   // Ctrl+B: move a running foreground Bash command to the background without killing it. The plugin keeps
-  // it running; its exit later nudges this same conversation, exactly like Bash(background=true).
+  // it running; its exit later nudges this same conversation, exactly like Bash(run_in_background=true).
   app.post('/brain/commands/background', withBrain(async (c, brain) => {
     const { session, client, generation } = await parseBody(c, brainStopSchema);
     const boundClient = session && client && generation ? { id: client, generation } : undefined;
@@ -401,8 +401,8 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
   }));
 
   // Answer a parked AskUserQuestion. Deliberately bypasses the per-turn send() lock (the parked turn
-  // holds it) — it just resolves the registry Promise, so it never deadlocks. An unknown/expired id is a
-  // tolerated no-op (matched:false) rather than an error, so a late double-click is harmless.
+  // holds it) — it just resolves the registry Promise, so it never deadlocks. Unknown, expired, or invalid
+  // answers are a tolerated no-op (matched:false); invalid data leaves the pending question intact.
   app.post('/brain/answer', withBrain(async (c, brain) => {
     const { id, answers } = await parseBody(c, brainAnswerSchema);
     const matched = brain.answerQuestion(id, answers, c.get('user').id); // owner route: only the caller's own question

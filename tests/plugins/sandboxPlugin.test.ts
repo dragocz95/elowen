@@ -326,6 +326,31 @@ describe('sandbox plugin workspaces', () => {
     expect(status.content[0]!.text).toContain('scoped.txt');
     expect(JSON.stringify(status)).not.toContain(workspace.path);
   });
+
+  it('persists a workspace cwd through the real PathView resolver', async () => {
+    const { registry, projectPath } = await setup(['sandbox', 'terminal'], false);
+    const created = await runAs(registry, projectPath, 1, 'brain-workspace-cwd', 'SandboxCreateWorkspace', {
+      projectId: 1, label: 'Workspace cwd', baseRef: 'main',
+    });
+    const workspace = created.details.workspace;
+    mkdirSync(join(workspace.path, 'nested'));
+    const pathView = createWorkspacePathView({ accountUserId: 1, workspaceId: workspace.id, projectId: 1, path: workspace.path });
+    const scope = {
+      identity: operator(3), contributionUserId: 1, sessionId: 'brain-workspace-cwd',
+      workDir: workspace.path, pathView,
+    };
+
+    const changed = await runWithPolicy(adminPolicy, () => tool(registry, 'Bash').execute('t', {
+      command: 'cd nested',
+    }), scope);
+    expect(changed.content[0]!.text).toContain('[exit 0]');
+    expect(changed.content[0]!.text).not.toContain('working directory was not persisted');
+    const next = await runWithPolicy(adminPolicy, () => tool(registry, 'Bash').execute('t', {
+      command: 'pwd',
+    }), scope);
+    expect(next.content[0]!.text).toContain('/workspace/nested');
+    expect(next.content[0]!.text).not.toContain(workspace.path);
+  });
 });
 
 describe('sandbox execution HOME and leases', () => {

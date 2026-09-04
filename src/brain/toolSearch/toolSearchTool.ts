@@ -1,7 +1,7 @@
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { currentContributionUserId, currentToolPolicy, toolOwnedByOtherAccount, toolPermitted } from '../../plugins/policyContext.js';
+import { currentContributionUserId, currentToolPolicy, toolOwnedByOtherAccount, toolVisibleUnderPolicy } from '../../plugins/policyContext.js';
 import { logger } from '../../shared/logger.js';
 import { collapseWhitespace, escapeRegExp } from '../../shared/text.js';
 
@@ -11,7 +11,8 @@ const log = logger('tool-search');
  *  typed structurally (a subset of both PI's `AgentSession` and `ExtensionAPI`) so the search/activation
  *  logic stays unit-testable without a real session. */
 export interface ToolActivationTarget {
-  getAllTools(): { name: string; description?: string }[];
+  /** PI's live registry contains the final callable definitions after schema caps and `_reason` transforms. */
+  getAllTools(): { name: string; description?: string; parameters?: unknown }[];
   getActiveToolNames(): string[];
   setActiveToolsByName(names: string[]): void;
 }
@@ -141,7 +142,44 @@ function nameParts(name: string): string[] {
     .filter(Boolean);
 }
 
-interface Candidate { name: string; description: string }
+interface Candidate { name: string; description: string; parameterNames?: string }
+
+const MAX_PARAMETER_NAMES = 128;
+const MAX_PARAMETER_DEPTH = 6;
+const MAX_PARAMETER_TEXT_CHARS = 2_048;
+
+/** Extract only schema property names, never values or defaults. The live registry has already applied the
+ * schema cap, but this traversal remains independently bounded because ToolSearch runs on the turn path and
+ * plugin schemas are untrusted input. */
+function schemaParameterNames(parameters: unknown): string {
+  const names: string[] = [];
+  const seen = new WeakSet<object>();
+  const visit = (value: unknown, depth: number): void => {
+    if (!value || typeof value !== 'object' || depth > MAX_PARAMETER_DEPTH || names.length >= MAX_PARAMETER_NAMES) return;
+    if (seen.has(value)) return;
+    seen.add(value);
+    const schema = value as Record<string, unknown>;
+    const properties = schema.properties;
+    if (properties && typeof properties === 'object' && !Array.isArray(properties)) {
+      for (const [name, child] of Object.entries(properties as Record<string, unknown>)) {
+        names.push(name, ...nameParts(name));
+        if (names.length >= MAX_PARAMETER_NAMES) break;
+        visit(child, depth + 1);
+      }
+    }
+    visit(schema.items, depth + 1);
+    for (const keyword of ['allOf', 'anyOf', 'oneOf']) {
+      const branches = schema[keyword];
+      if (Array.isArray(branches)) for (const branch of branches) visit(branch, depth + 1);
+    }
+  };
+  visit(parameters, 0);
+  return clampCodePoints(names.join(' '), MAX_PARAMETER_TEXT_CHARS);
+}
+
+function candidateText(cand: Candidate): string {
+  return `${cand.description} ${cand.parameterNames ?? ''}`.toLowerCase();
+}
 
 /** Pre-compile a word-boundary matcher (`\bterm\b`) per term, once per search. Word boundaries — not raw
  *  substring — for the DESCRIPTION channel: MCP descriptions are long prose, and a short query term as a
@@ -161,12 +199,12 @@ function compileTermPatterns(terms: readonly string[]): Map<string, RegExp> {
  *  we need (no MCP-vs-non weighting: deferred tools may come from any source; no searchHint: PI tools have none). */
 function scoreCandidate(cand: Candidate, terms: readonly string[], patterns: Map<string, RegExp>): number {
   const parts = nameParts(cand.name);
-  const desc = cand.description.toLowerCase();
+  const text = candidateText(cand);
   let score = 0;
   for (const term of terms) {
     if (parts.includes(term)) score += 10;
     else if (parts.some((p) => p.includes(term))) score += 5;
-    if (patterns.get(term)?.test(desc)) score += 2;
+    if (patterns.get(term)?.test(text)) score += 2;
   }
   return score;
 }
@@ -211,8 +249,8 @@ export function resolveToolSearch(
   const eligible = candidates.filter((c) => {
     if (required.length === 0) return true;
     const parts = nameParts(c.name);
-    const desc = c.description.toLowerCase();
-    return required.every((term) => parts.some((p) => p.includes(term)) || patterns.get(term)?.test(desc));
+    const text = candidateText(c);
+    return required.every((term) => parts.some((p) => p.includes(term)) || patterns.get(term)?.test(text));
   });
 
   return eligible
@@ -235,8 +273,9 @@ export function formatDeferredToolsBlock(
   if (deferredTools.length === 0) return '';
   const shown = deferredTools.slice(0, MAX_AWARENESS_LINES);
   const lines = shown.map((t) => {
-    const desc = clampCodePoints(collapseWhitespace(t.description ?? ''), MAX_DESC_CHARS);
-    return `- ${t.name}${desc ? `: ${desc}` : ''}`;
+    const name = escapeXmlText(t.name);
+    const desc = escapeXmlText(clampCodePoints(collapseWhitespace(t.description ?? ''), MAX_DESC_CHARS));
+    return `- ${name}${desc ? `: ${desc}` : ''}`;
   });
   const overflow = deferredTools.length - shown.length;
   if (overflow > 0) {
@@ -247,7 +286,8 @@ export function formatDeferredToolsBlock(
     '<available_tools_deferred>',
     'These tools exist in this session but are advertised by NAME ONLY to keep the prompt light — their full',
     'parameter schema is withheld until you fetch it. To call one, first run ToolSearch (e.g.',
-    'ToolSearch({"query":"select:<name>"}) or a keyword query); it becomes callable on your next turn.',
+    'ToolSearch({"query":"select:tool_name","max_results":5}) or a keyword query); it becomes callable in the',
+    'next model step of this user turn.',
     ...lines,
     '</available_tools_deferred>',
   ].join('\n');
@@ -291,7 +331,8 @@ export function formatHostedToolCatalogBlock(
   }
   const lines = [...groups.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([owner, names]) => `- ${owner} (${names.length}): ${[...names].sort((a, b) => a.localeCompare(b)).join(', ')}`);
+    .map(([owner, names]) => `- ${escapeXmlText(owner)} (${names.length}): ${[...names]
+      .sort((a, b) => a.localeCompare(b)).map(escapeXmlText).join(', ')}`);
   const overflow = all.length - Math.min(all.length, MAX_CATALOG_NAMES);
   if (overflow > 0) lines.push(`- …and ${overflow} more tool(s) reachable only through a search query.`);
   return [
@@ -319,28 +360,81 @@ export function requestedExactNames(query: string): string[] {
 
 const ok = (text: string, details: Record<string, unknown> = {}) => ({ content: [{ type: 'text' as const, text }], details });
 
+function sanitizeXmlText(text: string): string {
+  return text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/gu, '\uFFFD');
+}
+
+function escapeXmlText(text: string): string {
+  // XML 1.0 rejects most C0 controls even when they came from otherwise valid JavaScript strings. Replace
+  // them before escaping metacharacters so every dynamic block remains parseable by a real XML parser.
+  return sanitizeXmlText(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function sanitizeXmlData(value: unknown, seen = new WeakMap<object, unknown>()): unknown {
+  if (typeof value === 'string') return sanitizeXmlText(value);
+  if (!value || typeof value !== 'object') return value;
+  const known = seen.get(value);
+  if (known) return known;
+  if (Array.isArray(value)) {
+    const out: unknown[] = [];
+    seen.set(value, out);
+    for (const item of value) out.push(sanitizeXmlData(item, seen));
+    return out;
+  }
+  const out: Record<string, unknown> = {};
+  seen.set(value, out);
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    out[sanitizeXmlText(key)] = sanitizeXmlData(item, seen);
+  }
+  return out;
+}
+
+/** Serialize the definitions PI can actually call, not the pre-transform plugin schemas. Escaping the
+ * complete JSON payload prevents an authored description from closing the function/XML block. */
+export function formatToolSearchFunctions(
+  tools: readonly { name: string; description?: string; parameters?: unknown }[],
+  names: readonly string[],
+): string {
+  const byName = new Map(tools.map((tool) => [tool.name, tool]));
+  const lines = names
+    .map((name) => byName.get(name))
+    .filter((tool): tool is { name: string; description?: string; parameters?: unknown } => tool !== undefined)
+    .map((tool) => escapeXmlText(JSON.stringify(sanitizeXmlData({
+      description: tool.description ?? '',
+      name: tool.name,
+      parameters: tool.parameters ?? { type: 'object', properties: {} },
+    }))))
+    .map((definition) => `<function>${definition}</function>`);
+  return ['<functions>', ...lines, '</functions>'].join('\n');
+}
+
 /** The `ToolSearch` tool. Always active in the prompt; it fetches full schemas for deferred tools and
- *  activates them for the next turn via the handle's live session. Modelled on Claude Code's ToolSearch:
- *  `select:` for direct pick, keywords for search, `+term` for a required term. */
+ *  activates them before the next model step via the handle's live session. Modelled on Claude Code's
+ *  ToolSearch: `select:` for direct pick, keywords for search, `+term` for a required term. */
 export function toolSearchTool(handle: ToolSearchHandle): ToolDefinition {
   return defineTool({
     name: 'ToolSearch',
     label: 'Search tools',
     description: [
-      'Fetch full parameter schemas for deferred tools so you can call them. Deferred tools are advertised by',
-      'NAME ONLY in the <available_tools_deferred> block: until fetched, only the name is known — there is no',
-      'parameter schema, so the tool cannot be invoked. This tool matches a query against the deferred list and',
-      'activates the matches; they become callable ON YOUR NEXT TURN. Query forms:',
+      'Fetch full schema definitions for deferred tools so they can be called. Deferred tools are advertised by',
+      'NAME ONLY in the <available_tools_deferred> block: until fetched, only the name is known and calling one',
+      'fails validation. Matching definitions are returned inside a <functions> block and become callable in the',
+      'next model step of this same user turn. Query forms:',
       '"select:DiscordCreateChannel,mcp__github__create_issue" — fetch these exact tools by name (a bare exact',
       'name works too); "mcp__github" — every deferred tool under that bridged MCP server; "discord channel" —',
-      'keyword search over names and descriptions, best matches up to max_results; "+github create" — require',
+      'keyword search over names, descriptions and bounded nested parameter names, best matches up to max_results; "+github create" — require',
       '"github", rank by "create". If nothing is deferred this tool is a no-op.',
     ].join(' '),
     parameters: Type.Object({
       query: Type.String({ description: 'Keywords, or "select:<name>[,<name>...]" for an exact fetch, or "+term" to require a term.' }),
-      max_results: Type.Optional(Type.Number({ description: `Max tools to activate (default ${DEFAULT_MAX_RESULTS}, capped at ${MAX_MAX_RESULTS}).` })),
-    }),
-    execute: async (_id, p: { query: string; max_results?: number }) => {
+      max_results: Type.Number({
+        minimum: 1,
+        maximum: MAX_MAX_RESULTS,
+        default: DEFAULT_MAX_RESULTS,
+        description: `Keyword result limit. Explicit select:<name> queries ignore this limit but remain capped at ${MAX_MAX_RESULTS} for safety.`,
+      }),
+    }, { additionalProperties: false }),
+    execute: async (_id, p: { query: string; max_results: number }) => {
       const session = handle.session;
       if (!session) return ok('ToolSearch is not available in this session.');
       if (handle.deferred.size === 0) {
@@ -357,18 +451,20 @@ export function toolSearchTool(handle: ToolSearchHandle): ToolDefinition {
       // Only deferred tools are searchable — an already-active tool needs no fetch.
       const candidates: Candidate[] = session.getAllTools()
         .filter((t) => handle.deferred.has(t.name) && !toolOwnedByOtherAccount(t.name, personal))
-        .map((t) => ({ name: t.name, description: t.description ?? '' }));
+        .map((t) => ({
+          name: t.name,
+          description: t.description ?? '',
+          parameterNames: schemaParameterNames(t.parameters),
+        }));
       const found = resolveToolSearch(p.query, candidates, max);
       // Defense in depth: only activate tools the ACTING sender is allowed to use. The execute-time gate
       // already refuses a forbidden call, and the per-turn visibility pass hides a forbidden tool again on
       // the next turn — but filtering here stops a forbidden tool's schema from being advertised at all and
-      // stops a foreign/read-only caller from writing it into the shared `activated` set. Keep the same
-      // plugin/builtin distinction as `visibleToolNames`: allow-lists narrow plugins, while built-ins are
-      // narrowed only by an exact deny. No turn policy (tests) → allow.
+      // stops a foreign/read-only caller from writing it into the shared `activated` set. Read the exact same
+      // plugin/allow and wildcard-deny predicate as `visibleToolNames`, so immediate visibility and deferred
+      // schema visibility cannot disagree. No turn policy (tests) means allow.
       const tp = currentToolPolicy();
-      const matched = tp
-        ? found.filter((name) => handle.pluginNames?.has(name) ? toolPermitted(name, tp) : !tp.deny?.has(name))
-        : found;
+      const matched = found.filter((name) => toolVisibleUnderPolicy(name, handle.pluginNames?.has(name) === true, tp));
       if (matched.length === 0) {
         // The model may have re-selected a tool that is ALREADY active (common after compaction/respawn,
         // where its own history says "Activated …"). That name is not in the deferred set, so the search
@@ -397,8 +493,8 @@ export function toolSearchTool(handle: ToolSearchHandle): ToolDefinition {
       }
       // Record for future turns, then activate now. `activated` is the authoritative record the per-turn
       // applyToolVisibility reconciles against (it recomputes desired = visible ∩ (¬deferred ∪ activated)
-      // each turn); the setActiveToolsByName here makes the tool self-contained — it takes effect on the
-      // next agent turn (PI rebuilds the prompt on the boundary), which is why the result says so.
+      // each turn); setActiveToolsByName updates PI's live slice before the agent loop builds the next model
+      // request, so the tool is callable in the next model step of this same user turn.
       const before = new Set(session.getActiveToolNames());
       const active = new Set(before);
       for (const name of matched) active.add(name);
@@ -414,8 +510,11 @@ export function toolSearchTool(handle: ToolSearchHandle): ToolDefinition {
         return ok(`ToolSearch could not activate ${matched.join(', ')} — the tool(s) are not in this session's registry. Proceed without them.`, { matched: [] });
       }
       const failed = matched.filter((name) => missing.has(name));
-      const note = failed.length ? ` ${failed.join(', ')} could NOT be activated — proceed without ${failed.length === 1 ? 'it' : 'them'}.` : '';
-      return ok(`Activated ${stuck.length} tool(s): ${stuck.join(', ')}. They are callable on your next turn.${note}`, { matched: stuck });
+      const functions = formatToolSearchFunctions(session.getAllTools(), stuck);
+      const note = failed.length
+        ? `\n${failed.join(', ')} could NOT be activated — proceed without ${failed.length === 1 ? 'it' : 'them'}.`
+        : '';
+      return ok(`${functions}${note}`, { matched: stuck });
     },
   });
 }

@@ -3,11 +3,11 @@
 // react, not thrown, matching how the Elowen* tools surface API errors.
 import { defineTool, withFileMutationQueue, truncateHead, truncateLine, formatSize, generateDiffString, generateUnifiedPatch, resizeImage, formatDimensionNote } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { readFileSync, writeFileSync, readdirSync, statSync, mkdtempSync, rmSync } from 'node:fs';
+import { closeSync, fstatSync, openSync, readFileSync, readSync, writeFileSync, readdirSync, statSync, mkdtempSync, rmSync } from 'node:fs';
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { dirname, extname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 
 const DEFAULT_MAX = 100_000;
@@ -161,9 +161,10 @@ function findAllOccurrences(haystack, needle) {
   while (i !== -1) { out.push(i); i = haystack.indexOf(needle, i + needle.length); }
   return out;
 }
-/** Plan a fuzzy-tolerant edit: exact match first, then a normalized-space match; preserve BOM/CRLF. Returns
- *  { content, newContent, after, count } (both LF, no BOM, for diffing) or { error } for the caller to surface. */
-export function planEdit(rawBefore, oldTextRaw, newTextRaw, replaceAll) {
+/** Plan an edit with exact matching by default. The optional fuzzy pass is an explicit Elowen extension;
+ *  canonical Edit calls never normalize quotes, dashes, spaces, or trailing whitespace implicitly. BOM and
+ *  line endings are preserved in either mode. */
+export function planEdit(rawBefore, oldTextRaw, newTextRaw, replaceAll, fuzzyMatch = false) {
   const { bom, text } = stripBom(rawBefore);
   const ending = detectLineEnding(text);
   const content = normalizeToLF(text);
@@ -174,7 +175,7 @@ export function planEdit(rawBefore, oldTextRaw, newTextRaw, replaceAll) {
   let needle = oldLF;
   let fuzzy = false;
   let idxs = findAllOccurrences(content, oldLF);
-  if (idxs.length === 0) {
+  if (idxs.length === 0 && fuzzyMatch) {
     base = normalizeForFuzzyMatch(content);
     needle = normalizeForFuzzyMatch(oldLF);
     fuzzy = true;
@@ -322,6 +323,9 @@ export function parsePageSpec(spec, maxPages = DEFAULT_PDF_MAX_PAGES) {
     if (range) { from = Number(range[1]); to = Number(range[2]); }
     else if (single) { from = Number(single[1]); to = from; }
     else return { error: `"${part}" is not a page or a range — use "3", "1-5" or "1,3,5"` };
+    if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to)) {
+      return { error: `"${part}" uses a non-finite or unsafe integer page number` };
+    }
     if (from < 1 || to < from) return { error: `"${part}" is not a valid page range (pages start at 1)` };
     if (to - from + 1 > maxPages) return { error: `"${part}" spans more than ${maxPages} pages` };
     for (let page = from; page <= to; page += 1) {
@@ -382,9 +386,6 @@ async function pdfImageBlock(png) {
 /** Read the requested pages of a PDF: text where there is a text layer, a rendered image where there is
  *  not. Returns the PI tool-result shape directly. */
 async function readPdf(abs, pageSpec, supportsImages, readCap, maxPages) {
-  const parsed = parsePageSpec(pageSpec, maxPages);
-  if (parsed.error) return fail('Read', new Error(`Invalid pages: ${parsed.error}.`), { path: abs, pdf: true });
-
   let total = null;
   try {
     total = await pdfPageCount(abs);
@@ -395,6 +396,17 @@ async function readPdf(abs, pageSpec, supportsImages, readCap, maxPages) {
     }
     return fail('Read', new Error(`Could not read the PDF: ${e instanceof Error ? e.message : String(e)}`), { path: abs, pdf: true });
   }
+
+  if (pageSpec === undefined) {
+    if (total === null || total > 10) {
+      return fail('Read', new Error(`The PDF has ${total ?? 'more than 10'} pages. Pass \`pages\` to select at most ${maxPages} pages.`), {
+        path: abs, pdf: true, pageCount: total,
+      });
+    }
+    pageSpec = total === 1 ? '1' : `1-${total}`;
+  }
+  const parsed = parsePageSpec(pageSpec, maxPages);
+  if (parsed.error) return fail('Read', new Error(`Invalid pages: ${parsed.error}.`), { path: abs, pdf: true, pageCount: total });
 
   const wanted = total === null ? parsed.pages : parsed.pages.filter((p) => p <= total);
   const outOfRange = total === null ? [] : parsed.pages.filter((p) => p > total);
@@ -433,11 +445,88 @@ async function readPdf(abs, pageSpec, supportsImages, readCap, maxPages) {
       : `[${skippedImages} page(s) had no text layer and the current model cannot accept images.]`);
   }
   const text = [capped.content || '(no text on the requested pages)', ...notes].join('\n\n');
+  const truncated = capped.truncated || skippedImages > 0;
+  const fullContentVisible = total !== null && wanted.length === total
+    && wanted.every((page, index) => page === index + 1) && !truncated;
   return {
     content: [{ type: 'text', text }, ...images],
     details: {
       ok: true, tool: 'Read', path: abs, pdf: true, pageCount: total,
-      pages: wanted, renderedPages: rendered, truncated: capped.truncated || skippedImages > 0,
+      pages: wanted, renderedPages: rendered, truncated, fullContentVisible,
+    },
+  };
+}
+
+// ── Jupyter notebooks ────────────────────────────────────────────────────────
+const NOTEBOOK_IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+const notebookText = (value) => Array.isArray(value) ? value.map(String).join('') : String(value ?? '');
+
+/** Render a notebook as cells and outputs rather than exposing its JSON encoding. Image outputs use the
+ * same supported inline MIME set as ordinary image reads and are validated by their bytes before embedding. */
+function readNotebook(raw, supportsImages, readCap) {
+  let notebook;
+  try { notebook = JSON.parse(raw.toString('utf8')); }
+  catch (error) { return fail('Read', new Error(`Could not parse Jupyter notebook: ${error instanceof Error ? error.message : String(error)}`), { notebook: true }); }
+  if (!notebook || !Array.isArray(notebook.cells)) {
+    return fail('Read', new Error('Invalid Jupyter notebook: `cells` must be an array.'), { notebook: true });
+  }
+
+  const sections = [];
+  const images = [];
+  let omittedImages = 0;
+  notebook.cells.forEach((cell, cellIndex) => {
+    const type = typeof cell?.cell_type === 'string' ? cell.cell_type : 'unknown';
+    const execution = type === 'code' && cell?.execution_count != null ? `, execution_count=${cell.execution_count}` : '';
+    const lines = [`Cell ${cellIndex + 1} [${type}${execution}]`, notebookText(cell?.source)];
+    const outputs = Array.isArray(cell?.outputs) ? cell.outputs : [];
+    outputs.forEach((output, outputIndex) => {
+      const outputType = typeof output?.output_type === 'string' ? output.output_type : 'unknown';
+      if (outputType === 'stream') {
+        lines.push(`Output ${outputIndex + 1} [stream ${String(output?.name ?? 'stdout')}]`, notebookText(output?.text));
+        return;
+      }
+      if (outputType === 'error') {
+        const name = String(output?.ename ?? 'Error');
+        const value = String(output?.evalue ?? '');
+        lines.push(`Output ${outputIndex + 1} [error ${name}${value ? `: ${value}` : ''}]`,
+          Array.isArray(output?.traceback) ? output.traceback.map(String).join('\n') : `${name}${value ? `: ${value}` : ''}`);
+        return;
+      }
+      const data = output?.data && typeof output.data === 'object' ? output.data : {};
+      lines.push(`Output ${outputIndex + 1} [${outputType}]`);
+      const plain = notebookText(data['text/plain']);
+      if (plain) lines.push(plain);
+      for (const mime of NOTEBOOK_IMAGE_MIMES) {
+        const encoded = notebookText(data[mime]).replace(/\s+/gu, '');
+        if (!encoded) continue;
+        const bytes = Buffer.from(encoded, 'base64');
+        if (bytes.length === 0 || bytes.length > IMAGE_MAX_BYTES || detectImageMime(bytes) !== mime) {
+          omittedImages += 1;
+          lines.push(`[Invalid or oversized ${mime} output omitted.]`);
+          continue;
+        }
+        if (!supportsImages) {
+          omittedImages += 1;
+          lines.push(`[${mime} output omitted because the current model does not support images.]`);
+          continue;
+        }
+        images.push({ type: 'image', data: encoded, mimeType: mime });
+        lines.push(`[${mime} output attached below.]`);
+      }
+    });
+    sections.push(lines.filter((line) => line !== '').join('\n'));
+  });
+
+  const rendered = sections.join('\n\n');
+  const capped = truncateHead(rendered, { maxBytes: readCap, maxLines: 2000 });
+  const notes = [];
+  if (capped.truncated) notes.push(`[Notebook text truncated; read a smaller notebook or inspect selected cells with Python.]`);
+  if (omittedImages) notes.push(`[${omittedImages} notebook image output(s) were omitted.]`);
+  return {
+    content: [{ type: 'text', text: [capped.content || '(notebook has no cells)', ...notes].join('\n\n') }, ...images],
+    details: {
+      ok: true, tool: 'Read', notebook: true, cells: notebook.cells.length, images: images.length,
+      truncated: capped.truncated || omittedImages > 0,
     },
   };
 }
@@ -465,18 +554,20 @@ async function readPdf(abs, pageSpec, supportsImages, readCap, maxPages) {
 //     the formatter's window — while a file we only READ and never wrote is fully protected either way.
 const READ_STATE_MAX_SESSIONS = 64;
 const READ_STATE_MAX_FILES = 512;
-/** sessionId → (absolute path → { hash, ours }). Bounded LRU-ish: Map preserves insertion order, so the
- *  oldest entry is evicted once a cap is passed. */
+/** sessionId → (path-state key → authorization). Partial text reads retain bounded line coverage but do not
+ * authorize mutation until the complete file has been visible across one or more reads of the same snapshot. */
 const readState = new Map();
 
 const hashOf = (buf) => createHash('sha256').update(buf).digest('hex');
 
+function installSessionFiles(sessionId, files) {
+  readState.delete(sessionId);
+  if (files.size > 0) readState.set(sessionId, files);
+  if (readState.size > READ_STATE_MAX_SESSIONS) readState.delete(readState.keys().next().value);
+}
+
 function sessionFiles(sessionId) {
   let files = readState.get(sessionId);
-  // Re-insert on every touch, so eviction is by least-recently-USED, not by creation order. Insertion
-  // order alone would evict the oldest-OPENED conversation — typically the long-running CLI session the
-  // operator is actually sitting in — as soon as 64 short-lived sub-agent/cron sessions had come and gone,
-  // and its next edit would be refused with a bewildering "has not been read in this conversation".
   if (files) readState.delete(sessionId);
   else files = new Map();
   readState.set(sessionId, files);
@@ -484,80 +575,200 @@ function sessionFiles(sessionId) {
   return files;
 }
 
-function recordHash(sessionId, abs, hash, ours) {
-  if (!sessionId) return;
-  const files = sessionFiles(sessionId);
-  files.delete(abs); // re-insert so the entry counts as freshest for eviction
-  files.set(abs, { hash, ours });
+function recordEntry(files, key, entry) {
+  files.delete(key);
+  files.set(key, entry);
   if (files.size > READ_STATE_MAX_FILES) files.delete(files.keys().next().value);
 }
 
-/** Record that this conversation now knows `abs` holds exactly `content`. `ours` marks content WE just
- *  wrote (as opposed to read), which is what earns the one post-write formatter forgiveness above. */
+function recordHash(sessionId, key, hash, ours) {
+  if (!sessionId) return;
+  recordEntry(sessionFiles(sessionId), key, { hash, ours, complete: true });
+}
+
+/** Record that this conversation now knows `key` holds exactly `content`. `ours` marks bytes written by us,
+ * which earns Edit's narrow post-formatter tolerance in the live process only. */
 export function markFileRead(sessionId, key, content, ours = false) {
   recordHash(sessionId, key, hashOf(content), ours);
 }
 
-/** Which tool results vouch for a file's content, and whether that content counts as OURS — the `ours`
- *  tier has to survive a restart too, or the first edit after one would trip over a formatter rewrite
- *  that the live session would have forgiven. */
-const VOUCHING_TOOLS = { Read: false, Write: true, Edit: true };
+function mergeCoverage(ranges, start, end) {
+  const merged = [];
+  for (const range of [...ranges, [start, end]].sort((a, b) => a[0] - b[0])) {
+    const last = merged.at(-1);
+    if (last && range[0] <= last[1]) last[1] = Math.max(last[1], range[1]);
+    else merged.push([...range]);
+  }
+  return merged;
+}
 
-/** Re-seed this session's read state from its own rehydrated history.
- *
- *  The state above lives in daemon memory, but the CONVERSATION outlives the process — and Elowen
- *  restarts routinely (auto-update). Without this, reopening a conversation made the guard insist the
- *  agent had never seen a file it read three messages ago and still has in its context: a pointless
- *  re-read of a file that had not changed, on every restart, for every file.
- *
- *  Seeding from the transcript rather than from a persisted map is what keeps the guard HONEST. The
- *  recorded hash is replayed from the very tool result the model can still see, so the two move
- *  together: a Read that compaction dropped from the context seeds nothing and the guard correctly
- *  forgets it too. A persisted map would keep vouching for content the model no longer holds.
- *
- *  Messages arrive oldest-first, so the newest result for a file wins — the same last-write-wins order
- *  the live path has. Nothing is trusted about the file itself: the replayed hash still has to match
- *  what is on disk now, so anything edited while the daemon was down is refused exactly as before. */
+function recordTextRead(sessionId, key, hash, start, end, totalLines, fullyVisiblePage) {
+  if (!sessionId) return fullyVisiblePage && start === 0 && end >= totalLines;
+  const files = sessionFiles(sessionId);
+  const prior = files.get(key);
+  if (prior?.hash === hash && prior.complete === true) {
+    recordEntry(files, key, prior);
+    return true;
+  }
+  const coverage = prior?.hash === hash && prior?.ours === false && Array.isArray(prior.coverage)
+    ? prior.coverage
+    : [];
+  const nextCoverage = fullyVisiblePage ? mergeCoverage(coverage, start, end) : coverage;
+  const complete = totalLines > 0 && nextCoverage.length === 1
+    && nextCoverage[0][0] === 0 && nextCoverage[0][1] >= totalLines;
+  recordEntry(files, key, { hash, ours: false, complete, coverage: nextCoverage, totalLines });
+  return complete;
+}
+
+/** Rebuild this session's authorization atomically from the visible transcript. Only successful Read results
+ * that explicitly prove the complete file was model-visible can vouch. Write/Edit results contain diffs, not
+ * the complete baseline, and legacy Read results lack enough information to distinguish a full read from the
+ * final page of a partial read. */
 export function seedReadStateFromHistory(sessionId, messages) {
-  if (!sessionId || !Array.isArray(messages)) return 0;
+  if (!sessionId) return 0;
+  const files = new Map();
   let seeded = 0;
-  for (const m of messages) {
+  for (const m of Array.isArray(messages) ? messages : []) {
     const d = m?.details;
-    if (!d || d.ok !== true || typeof d.path !== 'string' || typeof d.contentHash !== 'string') continue;
-    const ours = VOUCHING_TOOLS[d.tool];
-    if (ours === undefined) continue; // some other tool's result that happens to carry a path
+    if (m?.role !== 'toolResult' || m?.isError === true
+      || !d || d.ok !== true || d.tool !== 'Read' || d.fullContentVisible !== true
+      || typeof d.path !== 'string' || typeof d.contentHash !== 'string') continue;
     const key = typeof d.workspaceId === 'string' && d.workspaceId
       ? `${d.workspaceId}\0${d.path}`
       : d.path;
-    recordHash(sessionId, key, d.contentHash, ours);
+    recordEntry(files, key, { hash: d.contentHash, ours: false, complete: true });
     seeded++;
   }
+  installSessionFiles(sessionId, files);
   return seeded;
 }
 
-/** Why a mutation of `abs` must not proceed, or null when it may. `current` is the file's bytes on disk, or
- *  null when it does not exist yet (a brand-new file is always allowed — there is nothing to lose).
- *  `tolerateAuthoredDrift` is set by Edit only: see the note above on why an anchored edit may proceed
- *  through the formatter's window while a blind overwrite may not.
- *
- *  PURE — it decides, it never records. A mutation that is allowed here but then FAILS (an `old_string` that
- *  no longer matches) must leave the recorded state exactly as it was: baselining the divergent bytes at
- *  decision time would bless content the agent never actually saw, and the blind overwrite it is supposed
- *  to refuse would sail through on the next call. Only a mutation that really lands re-records (markFileRead). */
+/** Why a mutation must not proceed, or null when it may. */
 export function readGuardError(sessionId, key, current, tolerateAuthoredDrift = false, display = key) {
-  if (!sessionId) return null;  // no turn scope to key on — inert, not wrong
-  if (current === null) return null; // new file: nothing was there to overwrite
+  if (!sessionId) return null;
+  if (current === null) return null;
   const entry = readState.get(sessionId)?.get(key);
   if (!entry) {
     return `${display} has not been read in this conversation. Read it first — editing a file you have not seen `
       + 'risks overwriting content you never reviewed.';
   }
+  if (!entry.complete) {
+    return `${display} has not been fully read in this conversation. Continue with paged Read calls until the `
+      + 'complete file has been visible before modifying it.';
+  }
   if (hashOf(current) === entry.hash) return null;
-  // Content we wrote, reshaped afterwards (the formatters hook). An anchored edit may proceed: its `old_string`
-  // still has to match these current bytes to apply at all, which is what keeps it honest.
   if (entry.ours && tolerateAuthoredDrift) return null;
   return `${display} has changed on disk since you last read it. Read it again before writing — otherwise your `
     + 'change is based on stale content and would discard whatever else was written.';
+}
+
+const TEXT_READ_CHUNK_BYTES = 64 * 1024;
+const FILE_PROBE_BYTES = 64;
+
+function sameFileSnapshot(before, after) {
+  return before.dev === after.dev && before.ino === after.ino && before.size === after.size
+    && before.mtimeNs === after.mtimeNs && before.ctimeNs === after.ctimeNs;
+}
+
+/** Read only enough bytes to classify the file before choosing a bounded text path or a binary renderer. */
+function readFileProbe(abs) {
+  const fd = openSync(abs, 'r');
+  try {
+    const probe = Buffer.allocUnsafe(FILE_PROBE_BYTES);
+    const bytesRead = readSync(fd, probe, 0, probe.length, 0);
+    return probe.subarray(0, bytesRead);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function looksLikeImage(probe) {
+  return startsWithBytes(probe, [0xff, 0xd8, 0xff]) || startsWithBytes(probe, PNG_SIGNATURE)
+    || startsWithAscii(probe, 0, 'GIF87a') || startsWithAscii(probe, 0, 'GIF89a')
+    || (startsWithAscii(probe, 0, 'RIFF') && startsWithAscii(probe, 8, 'WEBP'))
+    || startsWithAscii(probe, 0, 'BM');
+}
+
+/** Stream one text snapshot through a fixed-size buffer. The selected output is retained only up to readCap
+ * plus a small UTF-8 boundary allowance, while line counting and hashing continue without retaining the file. */
+function readTextSnapshot(abs, start, requestedLines, readCap, expectedProbe) {
+  const fd = openSync(abs, 'r');
+  try {
+    const before = fstatSync(fd, { bigint: true });
+    if (!before.isFile()) throw new Error('path is not a regular file');
+    const hash = createHash('sha256');
+    const chunk = Buffer.allocUnsafe(TEXT_READ_CHUNK_BYTES);
+    const retained = [];
+    const retainLimit = readCap + 4;
+    let retainedBytes = 0;
+    let selectedBytes = 0;
+    let currentLine = 0;
+    let selectedLines = 0;
+    let atLineStart = true;
+    let totalBytes = 0;
+    let lastByte = null;
+    const actualProbe = Buffer.allocUnsafe(expectedProbe.length);
+    let actualProbeBytes = 0;
+    const selectedEnd = start + requestedLines;
+    const retain = (buf) => {
+      selectedBytes += buf.length;
+      if (retainedBytes >= retainLimit || buf.length === 0) return;
+      const slice = buf.subarray(0, Math.min(buf.length, retainLimit - retainedBytes));
+      retained.push(Buffer.from(slice));
+      retainedBytes += slice.length;
+    };
+    const beginSelectedLine = () => {
+      if (!atLineStart) return;
+      if (selectedLines > 0) retain(Buffer.from('\n'));
+      selectedLines += 1;
+      atLineStart = false;
+    };
+    for (;;) {
+      const bytesRead = readSync(fd, chunk, 0, chunk.length, null);
+      if (bytesRead === 0) break;
+      const data = chunk.subarray(0, bytesRead);
+      if (actualProbeBytes < actualProbe.length) {
+        const copy = Math.min(data.length, actualProbe.length - actualProbeBytes);
+        data.copy(actualProbe, actualProbeBytes, 0, copy);
+        actualProbeBytes += copy;
+      }
+      hash.update(data);
+      totalBytes += bytesRead;
+      lastByte = data[data.length - 1];
+      let cursor = 0;
+      for (let index = 0; index < data.length; index += 1) {
+        if (data[index] !== 0x0A) continue;
+        if (currentLine >= start && currentLine < selectedEnd) {
+          beginSelectedLine();
+          retain(data.subarray(cursor, index));
+        }
+        currentLine += 1;
+        atLineStart = true;
+        cursor = index + 1;
+      }
+      if (cursor < data.length && currentLine >= start && currentLine < selectedEnd) {
+        beginSelectedLine();
+        retain(data.subarray(cursor));
+      }
+    }
+    const totalLines = currentLine + (totalBytes > 0 && lastByte !== 0x0A ? 1 : 0);
+    const after = fstatSync(fd, { bigint: true });
+    if (!sameFileSnapshot(before, after) || actualProbeBytes !== expectedProbe.length
+      || !actualProbe.subarray(0, actualProbeBytes).equals(expectedProbe)) {
+      throw new Error('file changed while it was being read; retry the Read');
+    }
+    const content = Buffer.concat(retained, retainedBytes).toString('utf8');
+    return {
+      content: selectedBytes > readCap ? sliceBytes(content, readCap) : content,
+      contentHash: hash.digest('hex'),
+      totalLines,
+      totalBytes,
+      byteTruncated: selectedBytes > readCap,
+      selectedEnd: Math.min(selectedEnd, totalLines),
+    };
+  } finally {
+    closeSync(fd);
+  }
 }
 
 function safeRegex(query) {
@@ -764,7 +975,7 @@ export function register(ctx) {
   // Resolved BEFORE the tool is defined, because the Read description below quotes this cap to the model.
   // The bounds MUST mirror the manifest's: the server stores plugin config unvalidated, so this clamp is
   // the only one there is.
-  const pdfMaxPages = Math.min(Math.max(Number(ctx.config.pdfMaxPages) || DEFAULT_PDF_MAX_PAGES, 5), 50);
+  const pdfMaxPages = Math.min(Math.max(Number(ctx.config.pdfMaxPages) || DEFAULT_PDF_MAX_PAGES, 10), DEFAULT_PDF_MAX_PAGES);
   const pathMeta = (abs) => {
     const path = ctx.displayPath(abs);
     const workspaceId = ctx.currentAccess().workspaceRef?.workspaceId;
@@ -794,116 +1005,114 @@ export function register(ctx) {
   // their own: `ctx.assertPathAllowed` resolves through the active PathView BEFORE the admin all-access
   // branch (so an admin parent cannot widen a confined child), `ctx.defaultCwd` is the workspace root,
   // and results leave through displayPath/pathStateKey/sanitizePathOutput so no host prefix crosses the
-  // boundary. The spawner rewrites their "path must be absolute" wording and their `path` parameter into
+  // boundary. The spawner rewrites their "path must be absolute" wording and path parameters into
   // the workspace-relative contract, so the descriptions stay true in both modes.
   // Without the declaration the spawner drops them fail-closed and the child has no file access at all.
   ctx.registerTool(defineTool({
     name: 'Read', label: 'Read file',
     description: [
-      'Read a UTF-8 text file, an image, or a PDF within the accessible repositories.',
+      'Read a UTF-8 text file, an image, a PDF, or a Jupyter notebook within the accessible repositories.',
       'This is the right tool when you need exact source text, config, logs or docs before editing. For broad discovery across the codebase, use Search or ListDir first.',
-      'The path must be absolute. It is okay to read a file that does not exist — you get an error, not a crash. Directories cannot be read: use ListDir for those. For a large file use offset (1-indexed line to start from) and limit (max lines) and read only the part you need — details.truncated and the continuation hint tell you where to resume.',
-      'Results are returned with line numbers (cat -n format: line number + tab + content), starting at 1.',
-      'Images (jpg/png/gif/webp/bmp) come back as an attachment you can see.',
-      `PDFs require \`pages\` ("3", "1-5" or "1,3,5"; at most ${pdfMaxPages} pages per call). Pages with a text layer are returned as text; a scanned page with no text layer is rendered and returned as an image.`,
+      'The path must be absolute. Missing files, directories, empty files, and invalid ranges return an error and do not count as reading the file. Text reads return at most 2000 lines by default. For a large file use offset and limit to read only the part you need; offsets 0 and 1 both start at the first line. Before Write or Edit, continue paged reads until the complete file has been visible; truncated pages do not authorize modification.',
+      'Text results use cat -n format: line number + tab + content.',
+      'Images (jpg/png/gif/webp/bmp) come back as an attachment. Jupyter notebooks are rendered as cells with text and supported image outputs.',
+      `PDFs with at most 10 pages may omit \`pages\`; longer PDFs require it. Page ranges use "3", "1-5" or "1,3,5", with at most ${pdfMaxPages} pages per call. Text-layer pages return text and scanned pages return an image.`,
       'Do not re-read a file you just edited to check the change landed — Edit and Write would have errored if the write failed, so a verification read costs a round and tells you nothing.',
     ].join(' '),
     parameters: Type.Object({
       file_path: Type.String({ description: 'Absolute path to the file' }),
-      offset: Type.Optional(Type.Number({ description: 'Line number to start reading from (1-indexed)' })),
-      limit: Type.Optional(Type.Number({ description: 'Maximum number of lines to read' })),
-      pages: Type.Optional(Type.String({ description: `PDF pages to read: "3", "1-5" or "1,3,5" (max ${pdfMaxPages} per call). Required for a PDF; ignored for any other file.` })),
-    }),
+      offset: Type.Optional(Type.Integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER, description: 'Line number to start reading from; 0 and 1 both mean the first line' })),
+      limit: Type.Optional(Type.Integer({ minimum: 1, maximum: Number.MAX_SAFE_INTEGER, description: 'Maximum number of lines to read' })),
+      pages: Type.Optional(Type.String({ description: `PDF pages to read: "3", "1-5" or "1,3,5" (max ${pdfMaxPages} per call). Required only when the PDF has more than 10 pages; ignored for other files.` })),
+    }, { additionalProperties: false }),
     execute: async (_id, p, _signal, _onUpdate, ectx) => {
       try {
         const abs = ctx.assertPathAllowed(p.file_path);
-        const raw = readFileSync(abs);
+        if (p.offset !== undefined && (!Number.isSafeInteger(p.offset) || p.offset < 0)) {
+          return fail('Read', new Error('offset must be a non-negative integer.'), pathMeta(abs));
+        }
+        if (p.limit !== undefined && (!Number.isSafeInteger(p.limit) || p.limit < 1)) {
+          return fail('Read', new Error('limit must be a positive integer.'), pathMeta(abs));
+        }
+        const probe = readFileProbe(abs);
+        if (probe.length === 0) return fail('Read', new Error('Cannot read an empty file.'), pathMeta(abs));
         const model = ectx?.model ?? ctx.model;
         const supportsImages = !model || (Array.isArray(model.input) ? model.input.includes('image') : true);
-        if (isPdf(raw)) {
-          // A PDF has no meaningful line-based read, so `pages` is not optional here — decoding it as UTF-8
-          // would hand the model a screenful of binary and look like a successful read.
-          if (p.pages === undefined) {
-            return fail('Read', new Error(`This is a PDF. Pass \`pages\` to read it — e.g. pages="1-5" (max ${pdfMaxPages} per call).`), { ...pathMeta(abs), pdf: true });
-          }
+        if (isPdf(probe)) {
+          const raw = readFileSync(abs);
           const result = sanitizeResult(await readPdf(abs, p.pages, supportsImages, readCap, pdfMaxPages), abs);
-          // Only a read that actually SHOWED the agent something counts. A bad `pages` spec, an encrypted
-          // PDF or a missing poppler must not leave the file marked as read — that would license a later
-          // blind Write over a document nobody ever saw.
           if (!result.details?.ok) return result;
-          markFileRead(ctx.currentSessionId?.(), statePath(abs), raw);
-          // The hash rides the RESULT so a later process can re-seed the read state from this very
-          // message (see seedReadStateFromHistory) instead of demanding the file be read again.
-          return { ...result, details: { ...result.details, contentHash: hashOf(raw) } };
+          const contentHash = hashOf(raw);
+          const fullContentVisible = result.details.fullContentVisible === true;
+          if (fullContentVisible) markFileRead(ctx.currentSessionId?.(), statePath(abs), raw);
+          return { ...result, details: { ...result.details, contentHash, fullContentVisible } };
         }
-        const mime = detectImageMime(raw);
-        if (mime) {
-          markFileRead(ctx.currentSessionId?.(), statePath(abs), raw);
-          const details = { ok: true, tool: 'Read', truncated: false, ...pathMeta(abs), bytes: raw.length, image: true, mimeType: mime, contentHash: hashOf(raw) };
-          const resized = await resizeImage(raw, mime, { maxWidth: 2000, maxHeight: 2000 }).catch(() => null);
-          let data = resized?.data;
-          let outMime = resized?.mimeType ?? mime;
-          const hints = [];
-          if (resized) {
-            const dim = formatDimensionNote(resized);
-            if (dim) hints.push(dim);
-          } else if (INLINE_IMAGE_TYPES.has(mime) && raw.length <= IMAGE_MAX_BYTES) {
-            data = raw.toString('base64'); // Photon unavailable: embed the original bytes for supported formats
-            outMime = mime;
-          }
-          // The API accepts only jpeg/png/gif/webp image blocks. resizeImage can hand back a small BMP
-          // unconverted (raw bytes, mimeType still image/bmp); embedding that would 400 the whole turn, so
-          // drop any image whose final type isn't inline-supported and fall through to the text-only note.
-          if (data && !INLINE_IMAGE_TYPES.has(outMime)) data = undefined;
-          details.mimeType = outMime;
-          let note = `Read image file [${outMime}]`;
-          if (hints.length) note += `\n${hints.join('\n')}`;
-          if (!data) {
-            note += `\n[Image omitted: could not be resized or embedded inline.]`;
-            return { content: [{ type: 'text', text: note }], details };
-          }
-          if (!supportsImages) {
-            note += `\n[Current model does not support images. The image will be omitted from this request.]`;
-            return { content: [{ type: 'text', text: note }], details };
-          }
-          return { content: [{ type: 'text', text: note }, { type: 'image', data, mimeType: outMime }], details };
+        if (extname(abs).toLowerCase() === '.ipynb') {
+          const raw = readFileSync(abs);
+          const result = sanitizeResult(readNotebook(raw, supportsImages, readCap), abs);
+          if (!result.details?.ok) return result;
+          const contentHash = hashOf(raw);
+          const fullContentVisible = result.details.truncated !== true;
+          if (fullContentVisible) markFileRead(ctx.currentSessionId?.(), statePath(abs), raw);
+          return { ...result, details: { ...result.details, contentHash, fullContentVisible } };
         }
-        // Record the WHOLE file's bytes, not just the slice returned: the guard tracks what is on disk, and
-        // a paginated read still tells the agent this file exists and what it currently is.
-        markFileRead(ctx.currentSessionId?.(), statePath(abs), raw);
-        const body = raw.toString('utf-8');
-        const allLines = body.split('\n');
-        // A trailing newline yields a phantom empty final element — it terminates the last line, it is not a
-        // line of its own. Drop it from the count so pagination doesn't advertise (and truncate at) a bogus
-        // extra empty line, which would report `truncated: true` and hand out a continuation offset that
-        // reads back nothing.
-        const total = allLines.length - (body.endsWith('\n') && allLines.length > 1 ? 1 : 0);
-        const start = p.offset ? Math.max(0, Math.floor(p.offset) - 1) : 0;
+        if (looksLikeImage(probe)) {
+          const raw = readFileSync(abs);
+          const mime = detectImageMime(raw);
+          if (mime) {
+            const details = { ok: true, tool: 'Read', truncated: false, ...pathMeta(abs), bytes: raw.length, image: true, mimeType: mime };
+            const resized = await resizeImage(raw, mime, { maxWidth: 2000, maxHeight: 2000 }).catch(() => null);
+            let data = resized?.data;
+            let outMime = resized?.mimeType ?? mime;
+            const hints = [];
+            if (resized) {
+              const dim = formatDimensionNote(resized);
+              if (dim) hints.push(dim);
+            } else if (INLINE_IMAGE_TYPES.has(mime) && raw.length <= IMAGE_MAX_BYTES) {
+              data = raw.toString('base64');
+              outMime = mime;
+            }
+            if (data && !INLINE_IMAGE_TYPES.has(outMime)) data = undefined;
+            details.mimeType = outMime;
+            let note = `Read image file [${outMime}]`;
+            if (hints.length) note += `\n${hints.join('\n')}`;
+            if (!data) {
+              note += `\n[Image omitted: could not be resized or embedded inline.]`;
+              return { content: [{ type: 'text', text: note }], details };
+            }
+            if (!supportsImages) {
+              note += `\n[Current model does not support images. The image will be omitted from this request.]`;
+              return { content: [{ type: 'text', text: note }], details };
+            }
+            markFileRead(ctx.currentSessionId?.(), statePath(abs), raw);
+            return {
+              content: [{ type: 'text', text: note }, { type: 'image', data, mimeType: outMime }],
+              details: { ...details, contentHash: hashOf(raw), fullContentVisible: true },
+            };
+          }
+        }
+        const start = p.offset === undefined || p.offset <= 1 ? 0 : p.offset - 1;
+        const requestedLines = p.limit ?? 2000;
+        const snapshot = readTextSnapshot(abs, start, requestedLines, readCap, probe);
+        const total = snapshot.totalLines;
+        if (total === 0) return fail('Read', new Error('Cannot read an empty file.'), pathMeta(abs));
         if (start >= total) return fail('Read', new Error(`Offset ${p.offset} is beyond end of file (${total} lines total)`), pathMeta(abs));
-        const endLine = p.limit !== undefined ? Math.min(start + Math.max(0, Math.floor(p.limit)), total) : total;
-        const selected = allLines.slice(start, endLine).join('\n');
-        const r = truncateHead(selected, { maxBytes: readCap, maxLines: Infinity });
-        let shownText;
-        let shownLines;
-        let byteTruncated;
-        if (r.firstLineExceedsLimit) {
-          shownText = sliceBytes(selected, readCap);
-          shownLines = 1;
-          byteTruncated = true;
-        } else {
-          shownText = r.content;
-          byteTruncated = r.truncated;
-          shownLines = r.truncated ? r.outputLines : (endLine - start);
-        }
-        const endShown = start + shownLines; // 1-indexed last line shown
-        const truncated = byteTruncated || endShown < total;
-        let text = addLineNumbers(shownText, start + 1);
-        if (r.firstLineExceedsLimit) {
-          text += `\n\n[Line ${start + 1} exceeds the ${formatSize(readCap)} read limit; showing the first ${formatSize(Buffer.byteLength(shownText))}. Use bash (sed/head) to read the rest.]`;
+        const endShown = snapshot.selectedEnd;
+        const truncated = snapshot.byteTruncated || endShown < total;
+        let text = addLineNumbers(snapshot.content, start + 1);
+        if (snapshot.byteTruncated) {
+          text += `\n\n[Selected text exceeds the ${formatSize(readCap)} read limit. Use a smaller line limit; this partial page does not count toward full-file read authorization.]`;
         } else if (truncated) {
           text += `\n\n[Showing lines ${start + 1}-${endShown} of ${total}. Use offset=${endShown + 1} to continue.]`;
         }
-        return ok('Read', text, { ...pathMeta(abs), bytes: Buffer.byteLength(body), truncated, contentHash: hashOf(raw) });
+        const fullContentVisible = recordTextRead(
+          ctx.currentSessionId?.(), statePath(abs), snapshot.contentHash,
+          start, snapshot.selectedEnd, total, !snapshot.byteTruncated,
+        );
+        return ok('Read', text, {
+          ...pathMeta(abs), bytes: snapshot.totalBytes, truncated,
+          contentHash: snapshot.contentHash, fullContentVisible,
+        });
       } catch (e) { return fail('Read', safeError(e)); }
     },
   }), { workspaceSafe: true });
@@ -913,14 +1122,14 @@ export function register(ctx) {
     description: [
       'Create a new UTF-8 text file, or fully replace an existing one, within the accessible repositories.',
       'Use it only when you intend to replace the ENTIRE file content — for a localized change use Edit instead.',
-      'Creating a new file is always fine. To overwrite an EXISTING file you must have read it in this conversation first: overwriting a file you have not inspected discards content you never reviewed, so the write is refused until you have.',
+      'Creating a new file still requires an allowed path and an existing parent directory. To overwrite an EXISTING file you must have successfully read its complete content in this conversation first; a partial or truncated Read, a Read error, or an omitted image does not count. Overwriting a file you have not fully inspected discards content you never reviewed, so the write is refused until you have.',
       'The parent directory must already exist — create it with Bash (mkdir -p) first if needed. Never create documentation files (*.md, README) unless the user explicitly asked, and keep emojis out of file content unless asked.',
       'Output includes a human summary, details.diff for review and details.patch (unified) for tooling. Read the diff before you consider an overwrite done.',
     ].join(' '),
     parameters: Type.Object({
       file_path: Type.String({ description: 'Absolute path to the file' }),
       content: Type.String({ description: 'The complete new content of the file' }),
-    }),
+    }, { additionalProperties: false }),
     execute: async (_id, p) => {
       try {
         const abs = ctx.assertPathAllowed(p.file_path);
@@ -954,17 +1163,18 @@ export function register(ctx) {
     name: 'Edit', label: 'Edit file',
     description: [
       'Replace an exact text snippet in a UTF-8 file within the accessible repositories. Use it for a targeted change, after reading enough surrounding context to locate the change precisely.',
-      'You must have read the file in this conversation before editing it, and it must not have changed on disk since — an edit written from assumption, or against content that moved, is how work gets silently discarded.',
-      'By default old_string must match exactly ONCE, so the snippet has to be unique — if it appears more than once, include more surrounding context. Matching tolerates smart quotes, Unicode dashes and trailing whitespace, and the file\'s BOM and CRLF line endings are preserved. Set replace_all when every occurrence really is the same change — e.g. renaming a symbol across the whole file in one call.',
+      'You must have successfully read the file\'s complete content in this conversation before editing it; partial or truncated reads, Read errors, and omitted images do not count. It must not have changed on disk since — an edit written from assumption, or against content that moved, is how work gets silently discarded.',
+      'By default old_string must match exactly ONCE, including indentation and whitespace. If it appears more than once, include more context. Set replace_all when every occurrence really is the same change. BOM and CRLF line endings are preserved. The optional fuzzy_match extension tolerates smart quotes, Unicode dashes, exotic spaces and trailing whitespace, but canonical calls must leave it false.',
       'This tool applies ONE replacement per call — there is no batch `edits` array. To make several changes to the same file, call it once per change.',
       'Output includes details.diff for review and details.patch (unified). If old_string is missing or ambiguous, read the file again and give more context.',
     ].join(' '),
     parameters: Type.Object({
       file_path: Type.String({ description: 'Absolute path to the file' }),
-      old_string: Type.String({ description: 'Text to replace (whitespace/quote tolerant)' }),
-      new_string: Type.String({ description: 'Replacement text' }),
-      replace_all: Type.Optional(Type.Boolean({ description: 'Replace every occurrence (default false)' })),
-    }),
+      old_string: Type.String({ description: 'Exact text to replace' }),
+      new_string: Type.String({ description: 'Replacement text; must differ from old_string' }),
+      replace_all: Type.Optional(Type.Boolean({ default: false, description: 'Replace every occurrence (default false)' })),
+      fuzzy_match: Type.Optional(Type.Boolean({ default: false, description: 'Elowen extension: normalize smart quotes, Unicode dashes, exotic spaces and trailing whitespace before matching (default false)' })),
+    }, { additionalProperties: false }),
     execute: async (_id, p) => {
       try {
         const abs = ctx.assertPathAllowed(p.file_path);
@@ -980,7 +1190,7 @@ export function register(ctx) {
           if (guard) return ok('Edit', `Error: ${guard}`, { ok: false, ...pathMeta(abs) });
           const before = beforeBuf.toString('utf-8');
           if (p.old_string === p.new_string) return ok('Edit', 'Error: old_string and new_string are identical.', { ok: false, ...pathMeta(abs) });
-          const plan = planEdit(before, p.old_string, p.new_string, p.replace_all ?? false);
+          const plan = planEdit(before, p.old_string, p.new_string, p.replace_all ?? false, p.fuzzy_match === true);
           if (plan.error === 'empty') return ok('Edit', 'Error: old_string must not be empty.', { ok: false, ...pathMeta(abs) });
           if (plan.error === 'notfound') return ok('Edit', 'Error: old_string not found in the file. Match it exactly, including whitespace.', { ok: false, ...pathMeta(abs) });
           if (plan.error === 'ambiguous') return ok('Edit', `Error: old_string matches ${plan.count} times. Provide more context to make it unique, or set replace_all.`, { ok: false, ...pathMeta(abs), matches: plan.count });

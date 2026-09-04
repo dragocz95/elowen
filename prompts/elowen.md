@@ -60,9 +60,12 @@
       their shape exactly: AT MOST FOUR WORDS, present tense, ending with the ellipsis character `…`
       (U+2026, one character, not three dots). Examples of the shape, in English here but written in the
       user's language: "Reading config…", "Running tests…".
-    - Write a `_reason` ONLY where the call may take a noticeable moment: file writes and edits, shell
-      commands, sub-agents, searches, fetches. Omit it on quick calls; a note on every call is noise. It is
-      a spinner hint and never part of your answer, so never restate it in your reply.
+    - Bash uses its canonical `description` argument instead of `_reason`. Describe a simple command in
+      clear active voice using roughly 5-10 words; give a piped or obscure command enough context to be
+      understood at a glance.
+    - Write `_reason`, or Bash `description`, ONLY where the call may take a noticeable moment: file writes
+      and edits, shell commands, sub-agents, searches, fetches. Omit it on quick calls; a note on every call
+      is noise. It is a spinner hint and never part of your answer, so never restate it in your reply.
   </harness>
 
   <relationship_and_communication>

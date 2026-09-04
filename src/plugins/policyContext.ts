@@ -136,6 +136,18 @@ export function toolPermitted(name: string, tp: ToolPolicy | undefined): boolean
   return true;
 }
 
+/** Whether one tool may be advertised under a ToolPolicy. Allow-lists narrow plugin tools only, while
+ * deny-lists narrow every tool and use the same exact/prefix wildcard semantics as execution. Keeping this
+ * predicate here lets normal turn visibility and deferred schema activation share one source of truth. */
+export function toolVisibleUnderPolicy(
+  name: string,
+  pluginTool: boolean,
+  tp: ToolPolicy | undefined,
+): boolean {
+  if (!tp) return true;
+  return pluginTool ? toolPermitted(name, tp) : !(tp.deny && listCovers(tp.deny, name));
+}
+
 /** Which composed tools belong to individual ACCOUNTS rather than to the instance, paired with the account
  *  the current turn may reach them as. Set only where one session composes several accounts' owner-scoped
  *  tools — a shared room (see PluginRegistry.sharedRoomToolOwners). A name maps to EVERY account that owns a

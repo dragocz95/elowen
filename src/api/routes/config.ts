@@ -17,7 +17,6 @@ import { ConfigRevisionConflict } from '../../store/configStore.js';
 import { readSystemDiagnostics } from '../systemDiagnostics.js';
 import { webhookProxyStatus } from '../webhookProxy.js';
 import { BUILTIN_TOOL_DEFER_LOADING, BUILTIN_TOOL_PLAN_SAFE, builtinToolMetas } from '../../brain/tools/index.js';
-import { buildExitPlanModeTool } from '../../brain/tools/exitPlanMode.js';
 import {
   isDeferrable,
   resolveToolDeferralDecisions,
@@ -78,12 +77,6 @@ export function buildToolDeferralCatalog(registry: PluginRegistry | undefined, r
   }
 
   for (const tool of builtinToolMetas()) add('builtin', 'Built-in', 'builtin', tool);
-  const exitPlanMode = buildExitPlanModeTool();
-  add('builtin', 'Built-in', 'builtin', {
-    name: exitPlanMode.name,
-    label: exitPlanMode.label ?? exitPlanMode.name,
-    ...(typeof exitPlanMode.description === 'string' ? { description: exitPlanMode.description } : {}),
-  });
   // Exact core-default names whose live definition may be absent in this process (a PI/provider integration
   // or a marketplace plugin — image-gen/image-edit — that isn't installed here). Keep them configurable, but
   // ONLY as a 'builtin' fallback when the registry doesn't already know their owning plugin. When the plugin

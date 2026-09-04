@@ -927,13 +927,18 @@ function useBrainChatController(): BrainChatValue {
   // on screen (and the card's form re-enable) — losing it here would leave no way to answer without a
   // reconnect or reload.
   const onAnswer = async (id: string, answers: AskAnswer[]): Promise<void> => {
+    let response: { ok: boolean; matched: boolean };
     try {
-      await elowenClient.brainAnswer(id, answers);
-      setAsk(null);
+      response = await elowenClient.brainAnswer(id, answers);
     } catch (e) {
       toast(t.brainChat.askError, 'error');
       throw e;
     }
+    if (!response.matched) {
+      toast(t.brainChat.askError, 'error');
+      throw new Error('The answer no longer matches the pending question.');
+    }
+    setAsk((cur) => (cur?.id === id ? null : cur));
   };
   const abort = (): void => { void elowenClient.brainAbort(boundSessionRef.current).catch(() => undefined); };
 

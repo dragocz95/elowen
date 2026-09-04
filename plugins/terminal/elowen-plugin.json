@@ -33,7 +33,7 @@
       "key": "sec_limits",
       "label": "Limits",
       "type": "section",
-      "hint": "Output size and timeout caps for shell commands."
+      "hint": "Output and background-process limits for shell commands."
     },
     {
       "key": "outputCap",
@@ -44,23 +44,12 @@
       "step": 1000,
       "placeholder": "60000",
       "default": 60000,
-      "hint": "How much stdout/stderr a command returns. Past this the middle is dropped and only the beginning and the end come back, with the discarded amount named in the result. Also caps the rolling output buffer kept for background processes. Range 10–500 kB; default 60 kB.",
+      "hint": "How much stdout/stderr a foreground command returns. Past this the middle is dropped and only the beginning and the end come back, with the discarded amount named in the result. Background processes keep a rolling tail under the same byte cap and report when earlier output was dropped. Range 10–500 kB; default 60 kB.",
       "display": {
         "control": "slider",
         "unit": "kB",
         "divisor": 1000
       }
-    },
-    {
-      "key": "commandTimeoutMs",
-      "label": "Command timeout (ms)",
-      "type": "number",
-      "min": 30000,
-      "max": 600000,
-      "step": 5000,
-      "placeholder": "120000",
-      "default": 120000,
-      "hint": "How long a foreground command may run before it is killed."
     },
     {
       "key": "maxBackgroundProcesses",
@@ -71,7 +60,7 @@
       "step": 1,
       "placeholder": "16",
       "default": 16,
-      "hint": "How many background processes one session and account may keep running at once; starting another is refused until one is killed. Range 1-64, default 16."
+      "hint": "How many background processes one session and account may keep at once; starting or detaching another is refused until one exits and is collected, or is killed. Range 1-64, default 16."
     }
   ],
   "capabilities": {

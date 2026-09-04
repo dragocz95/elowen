@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createWorkspacePathView } from '../../src/plugins/pathView.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
 import type { Policy } from '../../src/plugins/policy.js';
@@ -17,6 +18,9 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const userPolicy = (roots: string[]): Policy => ({ allowedProjectIds: new Set([1]), allowedPaths: () => roots });
 const adminPolicy: Policy = { allowedProjectIds: 'all', allowedPaths: () => [] };
 const owner: TurnIdentity = { platform: 'elowen', userId: '1', admin: true, owner: true };
+const terminalModule = await import(resolve(repoRoot, 'plugins/terminal/index.mjs')) as {
+  mapReportedCwd(reported: string, prepared: { workspace?: { path: string } | null }, assertAllowed: (path: string) => string, workspacePathView?: boolean): string;
+};
 
 const runTool = (reg: PluginRegistry, name: string, params: Record<string, unknown>) => {
   const tool = reg.tools.find((t) => t.name === name);
@@ -72,6 +76,51 @@ describe('terminal plugin', () => {
     expect(reg.tools.map((t) => t.name).sort()).toEqual(['Bash', 'KillProcess', 'ListProcesses', 'ProcessOutput']);
   });
 
+  it('exposes one canonical argument per Bash concept plus unique Elowen features', () => {
+    const bash = reg.tools.find((tool) => tool.name === 'Bash') as unknown as {
+      parameters: { properties: Record<string, { description?: string; maximum?: number }>; additionalProperties?: boolean };
+    };
+    expect(Object.keys(bash.parameters.properties).sort()).toEqual([
+      'backgroundMode', 'command', 'cwd', 'dangerouslyDisableSandbox', 'description', 'run_in_background', 'timeout',
+    ]);
+    expect(bash.parameters.properties).not.toHaveProperty('background');
+    expect(bash.parameters.properties).not.toHaveProperty('timeout_seconds');
+    expect(bash.parameters.properties.timeout.maximum).toBe(600_000);
+    expect(bash.parameters.properties.timeout.description).toMatch(/milliseconds/i);
+    expect(bash.parameters.additionalProperties).toBe(false);
+  });
+
+  it('maps a workspace guest cwd through the real workspace PathView contract', () => {
+    const workspace = join(dir, 'workspace-host');
+    mkdirSync(join(workspace, 'nested'), { recursive: true });
+    const pathView = createWorkspacePathView({
+      accountUserId: 1, workspaceId: 'ws_terminal_cwd', projectId: 1, path: workspace,
+    });
+    const checked: string[] = [];
+    const mapped = terminalModule.mapReportedCwd('/workspace/nested', { workspace: { path: workspace } }, (path) => {
+      checked.push(path);
+      return pathView.resolve(path);
+    }, true);
+    expect(mapped).toBe(realpathSync(join(workspace, 'nested')));
+    expect(checked).toEqual(['nested']);
+  });
+
+  it('fails closed before spawn when sandbox bypass is requested, while false is a no-op', async () => {
+    const marker = join(dir, 'sandbox-bypass-marker');
+    const refused = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', {
+      command: `touch ${JSON.stringify(marker)}`,
+      dangerouslyDisableSandbox: true,
+    }), { identity: owner });
+    expect(refused.content[0].text).toMatch(/sandbox bypass.*refused/i);
+    expect(existsSync(marker)).toBe(false);
+
+    const allowed = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', {
+      command: 'echo sandboxed',
+      dangerouslyDisableSandbox: false,
+    }), { identity: owner });
+    expect(allowed.content[0].text).toContain('sandboxed');
+  });
+
   it('runs a command in an allowed repo (default cwd = first root)', async () => {
     const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'echo terminaltest' }), { identity: owner });
     expect(res.content[0].text).toContain('terminaltest');
@@ -94,6 +143,45 @@ describe('terminal plugin', () => {
     expect(res.content[0].text).toContain(join(realpathSync(dir), 'bound'));
     expect(res.content[0].text).toContain('[exit 0]');
   });
+
+  it('persists a successful foreground cwd per session', async () => {
+    const sub = join(dir, 'persistent-subdir');
+    mkdirSync(sub, { recursive: true });
+    const scope = { identity: owner, sessionId: 'brain-cwd-persist' };
+    await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'cd persistent-subdir' }), scope);
+    const next = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'pwd' }), scope);
+    expect(next.content[0].text).toContain(realpathSync(sub));
+  });
+
+  it('persists cwd only after a normal zero exit, never background, nonzero, or timeout', async () => {
+    const sub = join(dir, 'nonpersistent-subdir');
+    mkdirSync(sub, { recursive: true });
+    const scope = { identity: owner, sessionId: 'brain-cwd-nonpersist' };
+    const expectDefaultCwd = async () => {
+      const next = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'pwd' }), scope);
+      expect(next.content[0].text).toContain(realpathSync(dir));
+      expect(next.content[0].text).not.toContain(realpathSync(sub));
+    };
+
+    const bg = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', {
+      command: 'cd nonpersistent-subdir; sleep 20', run_in_background: true,
+    }), scope);
+    expect(bg.content[0].text).toContain('Started background process');
+    await expectDefaultCwd();
+
+    const failed = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', {
+      command: 'cd nonpersistent-subdir; exit 7',
+    }), scope);
+    expect(failed.content[0].text).toContain('[exit 7]');
+    await expectDefaultCwd();
+
+    const timedOut = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', {
+      command: 'cd nonpersistent-subdir; sleep 20', timeout: 100,
+    }), scope);
+    expect(timedOut.content[0].text).toContain('timed out after 100ms');
+    expect(timedOut.content[0].text).not.toContain('[exit null]');
+    await expectDefaultCwd();
+  }, 20_000);
 
   it('refuses a cwd outside the allowed roots', async () => {
     const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'echo x', cwd: '/etc' }), { identity: owner });
@@ -165,6 +253,51 @@ describe('terminal plugin', () => {
     expect(existsSync(reached)).toBe(false);
   });
 
+  it('refuses the systemctl restart family before any local command path executes', async () => {
+    for (const action of ['restart', 'try-restart', 'reload-or-restart', 'reload-or-try-restart']) {
+      const reached = join(dir, `restart-family-${action}`);
+      const fakeSudo = markerExecutable(dir, 'sudo', reached);
+      const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', {
+        command: `${fakeSudo} systemctl ${action} elowen-daemon`,
+      }), { identity: owner });
+      expect(res.content[0].text, action).toMatch(/refused.*elowen restart all/i);
+      expect(existsSync(reached), action).toBe(false);
+    }
+  });
+
+  it('refuses local self-restarts inside command substitutions before the substituted path executes', async () => {
+    const reached = join(dir, 'substitution-restart-executed');
+    const fakeSystemctl = markerExecutable(dir, 'systemctl', reached);
+    const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', {
+      command: `printf '%s' "$(${fakeSystemctl} reload-or-restart elowen-daemon)"`,
+    }), { identity: owner });
+
+    expect(res.content[0].text).toMatch(/refused.*elowen restart all/i);
+    expect(existsSync(reached)).toBe(false);
+  });
+
+  it.each(['bash', 'sh'])('refuses a blocking self-restart hidden behind local %s -c', async (shell) => {
+    const reached = join(dir, `${shell}-c-restart-executed`);
+    const fakeSystemctl = markerExecutable(dir, 'systemctl', reached);
+    const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', {
+      command: `${shell} -c '${fakeSystemctl} restart elowen-daemon'`,
+    }), { identity: owner });
+
+    expect(res.content[0].text).toMatch(/refused.*elowen restart all/i);
+    expect(existsSync(reached)).toBe(false);
+  });
+
+  it('refuses a blocking self-restart inside local process substitution', async () => {
+    const reached = join(dir, 'process-substitution-restart-executed');
+    const fakeSystemctl = markerExecutable(dir, 'systemctl', reached);
+    const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', {
+      command: `cat <(${fakeSystemctl} restart elowen-daemon)`,
+    }), { identity: owner });
+
+    expect(res.content[0].text).toMatch(/refused.*elowen restart all/i);
+    expect(existsSync(reached)).toBe(false);
+  });
+
   it('a user with no repos cannot run anything', async () => {
     const res = await runWithPolicy(userPolicy([]), () => runTool(reg, 'Bash', { command: 'echo nope' }), { identity: owner });
     expect(res.content[0].text).toMatch(/not allowed/);
@@ -181,10 +314,13 @@ describe('terminal plugin', () => {
   it('keeps the shell behind a grant: the manifest must stay userGrantable', async () => {
     const manifest = JSON.parse(
       await readFile(new URL('../../plugins/terminal/elowen-plugin.json', import.meta.url), 'utf8'),
-    ) as { userGrantable?: boolean; provides?: { tools?: string[] } };
+    ) as { userGrantable?: boolean; provides?: { tools?: string[] }; configSchema?: Array<{ key?: string; hint?: string }> };
     expect(manifest.userGrantable).toBe(true);
     // Every tool this plugin ships rides on that one flag, so none of them may be added without it.
     expect(manifest.provides?.tools).toEqual(['Bash', 'ListProcesses', 'ProcessOutput', 'KillProcess']);
+    const limitHint = manifest.configSchema?.find((field) => field.key === 'maxBackgroundProcesses')?.hint ?? '';
+    expect(limitHint).not.toMatch(/until one is killed/i);
+    expect(limitHint).toMatch(/exits|finishes|collected/i);
   });
 
   it('withholds every terminal tool from an account without the grant, and hands them over with it', () => {
@@ -420,12 +556,12 @@ describe('terminal plugin — configurable outputCap', () => {
       config: { terminal: { outputCap: 10_000 } },
     });
     const scope = { identity: owner, sessionId: 'brain-terminal-output-cap' };
-    const started = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: bigOutput(15_000), background: true }), scope);
+    const started = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: bigOutput(15_000), run_in_background: true }), scope);
     const id = /Started background process (\S+):/.exec(started.content[0].text)?.[1];
     expect(id).toBeTruthy();
     await new Promise((r) => setTimeout(r, 500)); // let the short-lived child finish and flush its output
     const out = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'ProcessOutput', { id, all: true }), scope);
-    expect(out.content[0].text.length).toBeLessThanOrEqual(10_000 + '\n[exited 0]'.length);
+    expect(Buffer.byteLength(out.content[0].text, 'utf8')).toBeLessThanOrEqual(10_000 + 200 + '\n[exited 0]'.length);
   });
 
   it('bounds that buffer in BYTES even when its character count is below the cap', async () => {
@@ -438,15 +574,100 @@ describe('terminal plugin — configurable outputCap', () => {
     });
     const scope = { identity: owner, sessionId: 'brain-terminal-output-cap-bytes' };
     const command = 'node -e "process.stdout.write(\'\\u20ac\'.repeat(9000))"';
-    const started = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command, background: true }), scope);
+    const started = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command, run_in_background: true }), scope);
     const id = /Started background process (\S+):/.exec(started.content[0].text)?.[1];
     expect(id).toBeTruthy();
     await new Promise((r) => setTimeout(r, 500));
     const out = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'ProcessOutput', { id, all: true }), scope);
 
-    expect(Buffer.byteLength(out.content[0].text, 'utf8')).toBeLessThanOrEqual(10_000 + '\n[exited 0]'.length);
+    expect(Buffer.byteLength(out.content[0].text, 'utf8')).toBeLessThanOrEqual(10_000 + 200 + '\n[exited 0]'.length);
     expect(out.content[0].text).toContain('\u20ac');
     expect(out.content[0].text).not.toContain('\uFFFD'); // cut on a character boundary, not mid-character
+    expect(out.content[0].text).toContain('dropped from the beginning');
+  });
+
+  it('describes all=true as the whole retained tail, never the whole output from process start', async () => {
+    const reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log });
+    const output = reg.tools.find((tool) => tool.name === 'ProcessOutput') as unknown as { description: string };
+    expect(output.description).toMatch(/whole retained buffer/i);
+    expect(output.description).toMatch(/tail/i);
+    expect(output.description).not.toMatch(/whole buffer from process start/i);
+  });
+});
+
+describe('terminal plugin — atomic background capacity', () => {
+  let dir: string;
+  beforeAll(() => { dir = tmpDir('term-capacity'); });
+
+  const prepared = (command: string, cwd: string) => ({
+    mode: 'direct', cwd, displayCwd: cwd, home: dir, roots: [dir], workspace: null,
+    launch: { type: 'shell', command, env: { ...process.env } },
+    lease: { id: 'lease', accountUserId: 1, workspaceId: null, homeGeneration: null, heartbeat() {}, release() {} },
+    sanitizeOutput: (text: unknown) => String(text),
+  });
+
+  it('reserves the last slot before async prepare so concurrent starts cannot oversubscribe it', async () => {
+    const reg = await loadPlugins({
+      dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log,
+      config: { terminal: { maxBackgroundProcesses: 1 } },
+    });
+    let releasePrepare!: () => void;
+    let markPreparing!: () => void;
+    const preparing = new Promise<void>((resolvePreparing) => { markPreparing = resolvePreparing; });
+    const gate = new Promise<void>((resolveGate) => { releasePrepare = resolveGate; });
+    let prepares = 0;
+    reg.controls.set('sandbox', {
+      workspaceRoots: () => [], resolveWorkspace: () => { throw new Error('unused'); },
+      acquireDelegationLease: () => { throw new Error('unused'); }, workspacesFor: () => [], activeWorkspace: () => null,
+      prepareExecution: async ({ command, cwd }: { command: { command: string }; cwd: string }) => {
+        prepares += 1;
+        markPreparing();
+        await gate;
+        return prepared(command.command, cwd);
+      },
+    } as never);
+    reg.controlOwner.set('sandbox', 'sandbox');
+    const scope = { identity: owner, sessionId: 'brain-capacity-atomic' };
+    const first = runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', {
+      command: 'sleep 20', run_in_background: true,
+    }), scope);
+    await preparing;
+
+    const refused = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', {
+      command: 'sleep 20', run_in_background: true,
+    }), scope);
+    expect(refused.content[0].text).toMatch(/too many background processes/);
+    expect(prepares).toBe(1);
+
+    releasePrepare();
+    expect((await first).content[0].text).toContain('Started background process');
+  });
+
+  it('releases a reservation when prepare fails, so the next start can use the slot', async () => {
+    const reg = await loadPlugins({
+      dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log,
+      config: { terminal: { maxBackgroundProcesses: 1 } },
+    });
+    let fail = true;
+    reg.controls.set('sandbox', {
+      workspaceRoots: () => [], resolveWorkspace: () => { throw new Error('unused'); },
+      acquireDelegationLease: () => { throw new Error('unused'); }, workspacesFor: () => [], activeWorkspace: () => null,
+      prepareExecution: async ({ command, cwd }: { command: { command: string }; cwd: string }) => {
+        if (fail) { fail = false; throw new Error('prepare failed'); }
+        return prepared(command.command, cwd);
+      },
+    } as never);
+    reg.controlOwner.set('sandbox', 'sandbox');
+    const scope = { identity: owner, sessionId: 'brain-capacity-release' };
+    const failed = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', {
+      command: 'sleep 20', run_in_background: true,
+    }), scope);
+    expect(failed.content[0].text).toContain('prepare failed');
+
+    const next = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', {
+      command: 'sleep 20', run_in_background: true,
+    }), scope);
+    expect(next.content[0].text).toContain('Started background process');
   });
 });
 
@@ -465,7 +686,7 @@ describe('terminal plugin — the process registry is the single source of truth
     runWithPolicy(userPolicy([dir]), () => runTool(reg, name, params), { identity: owner, sessionId });
 
   const startBg = async (sessionId: string, command: string): Promise<string> => {
-    const res = await inSession(sessionId, 'Bash', { command, background: true });
+    const res = await inSession(sessionId, 'Bash', { command, run_in_background: true });
     const id = /Started background process (\S+):/.exec(res.content[0].text)?.[1];
     expect(id).toBeTruthy();
     return id!;
@@ -477,7 +698,7 @@ describe('terminal plugin — the process registry is the single source of truth
     const ids: string[] = [];
     for (let i = 0; i < 16; i += 1) ids.push(await startBg(a, 'sleep 30')); // MAX_BG, per session
     const bId = await startBg(b, 'sleep 30');
-    const refused = await inSession(a, 'Bash', { command: 'sleep 30', background: true });
+    const refused = await inSession(a, 'Bash', { command: 'sleep 30', run_in_background: true });
     expect(refused.content[0].text).toMatch(/too many background processes/);
 
     expect(processRegistry.killSession(a)).toBe(16);
@@ -513,6 +734,54 @@ describe('terminal plugin — the process registry is the single source of truth
   }, 15_000);
 });
 
+describe('terminal plugin — direct-host process termination', () => {
+  let reg: PluginRegistry;
+  let dir: string;
+  beforeAll(async () => {
+    reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log });
+    dir = tmpDir('term-direct-kill');
+  });
+
+  it.skipIf(process.platform !== 'linux')('redacts the descendant-tracking token in command output', async () => {
+    const result = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'env' }), {
+      identity: owner, sessionId: 'brain-direct-token-redaction',
+    });
+    expect(result.content[0].text).toContain('ELOWEN_TERMINAL_PROCESS_TOKEN=[REDACTED]');
+    expect(result.content[0].text).not.toMatch(/ELOWEN_TERMINAL_PROCESS_TOKEN=[a-f0-9]{48}/u);
+  });
+
+  it.skipIf(process.platform !== 'linux')('KillProcess also terminates descendants that created a new session', async () => {
+    const session = 'brain-direct-descendant';
+    const pidFile = join(dir, 'escaped.pid');
+    const scope = { identity: owner, sessionId: session };
+    const script = `const {spawn}=require('child_process'); const fs=require('fs');`
+      + `const child=spawn('setsid',['sleep','30'],{stdio:'ignore'});`
+      + `fs.writeFileSync(${JSON.stringify(pidFile)},String(child.pid)); setTimeout(()=>{},30000)`;
+    const command = `node -e ${JSON.stringify(script)}`;
+    const started = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', {
+      command, run_in_background: true,
+    }), scope);
+    const id = /Started background process (\S+):/.exec(started.content[0].text)?.[1];
+    expect(id).toBeTruthy();
+    for (let i = 0; i < 100 && !existsSync(pidFile); i += 1) await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+    const escapedPid = Number(readFileSync(pidFile, 'utf8'));
+    expect(() => process.kill(escapedPid, 0)).not.toThrow();
+
+    try {
+      const killed = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'KillProcess', { id }), scope);
+      expect(killed.content[0].text).toContain(`Killed ${id}`);
+      let alive = true;
+      for (let i = 0; i < 100 && alive; i += 1) {
+        await new Promise((resolveWait) => setTimeout(resolveWait, 25));
+        try { process.kill(escapedPid, 0); } catch { alive = false; }
+      }
+      expect(alive).toBe(false);
+    } finally {
+      try { process.kill(escapedPid, 'SIGKILL'); } catch { /* already gone */ }
+    }
+  }, 15_000);
+});
+
 describe('terminal plugin — UTF-8 streaming', () => {
   let dir: string;
   beforeAll(() => { dir = tmpDir('term-utf8'); });
@@ -534,84 +803,60 @@ describe('terminal plugin — UTF-8 streaming', () => {
   });
 });
 
-// commandTimeoutMs is clamped to a 30000ms floor, and a real child process's 'close' event does not
-// reliably fire under vi.useFakeTimers() (Node defers it past the fake clock), so these run in real
-// time at the clamp boundary — the fastest a genuine kill can be observed. Both share one `sleep 32`
-// duration: the override kills it at ~30s while the (much larger) default lets the same duration
-// finish normally, so the pair proves the override actually shortens the wait, without the default
-// case needing a full real 120s to prove the constant wasn't shrunk.
-describe('terminal plugin — configurable commandTimeoutMs', () => {
-  let dir: string;
-  beforeAll(() => { dir = tmpDir('term-timeout'); });
-
-  it('a configured commandTimeoutMs (min-clamped 30000) kills a command sooner than the default', async () => {
-    const reg = await loadPlugins({
-      dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log,
-      config: { terminal: { commandTimeoutMs: 30_000 } },
-    });
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'sleep 32' }), { identity: owner });
-    // The kill note names the deadline that fired, so the model can tell "raise the timeout" from
-    // "this belongs in the background".
-    expect(res.content[0].text).toContain('[killed: timed out after 30s]');
-  }, 40_000);
-
-  it('unset commandTimeoutMs keeps the (larger) default: the same duration finishes normally', async () => {
-    const reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log });
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'sleep 32' }), { identity: owner });
-    expect(res.content[0].text).not.toContain('[killed:');
-    expect(res.content[0].text).toContain('[exit 0]');
-  }, 40_000);
-});
-
-// The per-call `timeout` is what lets a slow-but-finite command (npm install, a full build) run to
-// completion in the foreground instead of being pushed to the background purely to survive the clock.
 describe('terminal plugin — per-call Bash timeout', () => {
   let reg: PluginRegistry;
   let dir: string;
   beforeAll(async () => {
-    // A configured 30s default (the floor) — every case below must beat it, proving the per-call value,
-    // not the config, decided the outcome.
-    reg = await loadPlugins({
-      dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log,
-      config: { terminal: { commandTimeoutMs: 30_000 } },
-    });
+    reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log });
     dir = tmpDir('term-calltimeout');
   });
 
-  it('an explicit timeout overrides the configured default and kills the command at ITS deadline', async () => {
+  it('interprets canonical timeout in milliseconds', async () => {
     const started = Date.now();
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'sleep 20', timeout: 1 }), { identity: owner });
-    expect(res.content[0].text).toContain('[killed: timed out after 1s]');
-    expect(Date.now() - started).toBeLessThan(15_000); // nowhere near the configured 30s default
-  }, 30_000);
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'sleep 20', timeout: 100 }), { identity: owner });
+    expect(res.content[0].text).toContain('[killed: timed out after 100ms]');
+    expect(res.content[0].text).not.toContain('[exit null]');
+    expect(Date.now() - started).toBeLessThan(10_000);
+  }, 20_000);
 
-  it('output produced before the deadline survives the kill', async () => {
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'echo partial; sleep 20', timeout: 1 }), { identity: owner });
+  it('output produced before the millisecond deadline survives the kill', async () => {
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'echo partial; sleep 20', timeout: 100 }), { identity: owner });
     expect(res.content[0].text).toContain('partial');
-    expect(res.content[0].text).toContain('[killed: timed out after 1s]');
-  }, 30_000);
+    expect(res.content[0].text).toContain('[killed: timed out after 100ms]');
+  }, 20_000);
 
-  it('a timeout past the 600s ceiling is clamped, not honored verbatim', async () => {
-    // Proving the clamp without waiting 10 minutes: the clamped value is what the kill note reports.
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'echo fast', timeout: 99_999 }), { identity: owner });
-    expect(res.content[0].text).toContain('[exit 0]');
-    const capped = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'sleep 20', timeout: 0 }), { identity: owner });
-    expect(capped.content[0].text).toContain('[killed: timed out after 1s]'); // 0 clamps UP to the 1s floor
-  }, 30_000);
+  it('keeps one millisecond timeout argument with a safe 10-minute ceiling', async () => {
+    const tooLong = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', {
+      command: 'echo nope', timeout: 600_001,
+    }), { identity: owner });
+    expect(tooLong.content[0].text).toMatch(/timeout.*between 1 and 600000 milliseconds/i);
+    const fast = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', {
+      command: 'echo milliseconds', timeout: 30_000,
+    }), { identity: owner });
+    expect(fast.content[0].text).toContain('milliseconds');
+    expect(fast.content[0].text).toContain('[exit 0]');
+  });
 
-  it('background=true ignores timeout — a detached process has no deadline to shorten', async () => {
+  it('run_in_background ignores timeout and runtime-only legacy background conflicts safely', async () => {
     const scope = { identity: owner, sessionId: 'brain-term-bg-timeout' };
-    const started = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'sleep 20', background: true, timeout: 1 }), scope);
+    const started = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', {
+      command: 'sleep 20', run_in_background: true, timeout: 100,
+    }), scope);
     const id = /Started background process (\S+):/.exec(started.content[0].text)?.[1];
     expect(id).toBeTruthy();
-    await new Promise((r) => setTimeout(r, 2_500)); // well past the (ignored) 1s timeout
+    await new Promise((r) => setTimeout(r, 500));
     expect(processRegistry.list().find((p) => p.id === id)?.running).toBe(true);
+
+    const conflict = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', {
+      command: 'echo nope', run_in_background: true, background: false,
+    }), scope);
+    expect(conflict.content[0].text).toMatch(/run_in_background.*conflicts.*background/i);
   }, 20_000);
 });
 
 // Ctrl+B backgrounds a still-running foreground command: the plugin registers each foreground run as the
 // transient `foreground` mode, and the daemon's detach control flips it to an ordinary `job` that keeps
-// running and nudges the conversation on exit — the exact lifecycle Bash(background=true) already has.
+// running and nudges the conversation on exit — the exact lifecycle Bash(run_in_background=true) already has.
 describe('terminal plugin — foreground detach (Ctrl+B backgrounds a running command)', () => {
   let reg: PluginRegistry;
   let dir: string;
@@ -628,7 +873,10 @@ describe('terminal plugin — foreground detach (Ctrl+B backgrounds a running co
   const control = () => {
     const c = reg.controls.get('terminal');
     if (!c) throw new Error('terminal control not registered');
-    return c as unknown as { detachForeground: (i: { sessionId: string; principal: string }) => { detached: number } };
+    return c as unknown as {
+      detachForeground: (i: { sessionId: string; principal: string }) => { detached: number };
+      killForeground: (i: { sessionId: string; principal: string }) => { killed: number };
+    };
   };
   const inSession = (sessionId: string, name: string, params: Record<string, unknown>) =>
     runWithPolicy(userPolicy([dir]), () => runTool(reg, name, params), { identity: uidOwner, sessionId });
@@ -665,7 +913,7 @@ describe('terminal plugin — foreground detach (Ctrl+B backgrounds a running co
     const out = await inSession(session, 'ProcessOutput', { id: id!, all: true });
     expect(out.content[0].text).toContain('early');
     await settle(1500); // let the detached process finish
-    expect(nudgedId).toBe(id); // the detached run's exit wakes the conversation, like Bash(background)
+    expect(nudgedId).toBe(id); // the detached run's exit wakes the conversation, like Bash(run_in_background)
   }, 15_000);
 
   it('tells a detached run’s FIRST incremental read that its middle was dropped', async () => {
@@ -693,13 +941,39 @@ describe('terminal plugin — foreground detach (Ctrl+B backgrounds a running co
 
   it('detaching cancels the deadline: the command survives past its per-call timeout', async () => {
     const session = 'brain-fg-deadline';
-    const p = inSession(session, 'Bash', { command: 'sleep 10', timeout: 2 }); // would be killed at 2s
+    const p = inSession(session, 'Bash', { command: 'sleep 10', timeout: 2_000 }); // would be killed at 2s
     await settle(500);
     expect(control().detachForeground({ sessionId: session, principal: 'elowen:1' })).toEqual({ detached: 1 });
     const res = await p;
     const id = /Moved to background as process (\S+):/.exec(res.content[0].text)?.[1];
     await settle(2200); // past the original 2s deadline
     expect(processRegistry.listForSession(session).find((x) => x.id === id)?.running).toBe(true);
+  }, 15_000);
+
+  it('does not persist cwd from a detached foreground run', async () => {
+    const session = 'brain-fg-detached-cwd';
+    const sub = join(dir, 'detached-cwd');
+    mkdirSync(sub, { recursive: true });
+    const p = inSession(session, 'Bash', { command: 'cd detached-cwd; sleep 10' });
+    await settle(250);
+    expect(control().detachForeground({ sessionId: session, principal: 'elowen:1' })).toEqual({ detached: 1 });
+    expect((await p).content[0].text).toContain('Moved to background');
+    const next = await inSession(session, 'Bash', { command: 'pwd' });
+    expect(next.content[0].text).toContain(realpathSync(dir));
+    expect(next.content[0].text).not.toContain(realpathSync(sub));
+  }, 15_000);
+
+  it('does not persist cwd from a killed foreground run', async () => {
+    const session = 'brain-fg-killed-cwd';
+    const sub = join(dir, 'killed-cwd');
+    mkdirSync(sub, { recursive: true });
+    const p = inSession(session, 'Bash', { command: 'cd killed-cwd; sleep 10', timeout: 2_0000 });
+    await settle(250);
+    expect(control().killForeground({ sessionId: session, principal: 'elowen:1' })).toEqual({ killed: 1 });
+    expect((await p).content[0].text).toContain('[killed]');
+    const next = await inSession(session, 'Bash', { command: 'pwd' });
+    expect(next.content[0].text).toContain(realpathSync(dir));
+    expect(next.content[0].text).not.toContain(realpathSync(sub));
   }, 15_000);
 
   it('a session or principal mismatch detaches nothing and the command completes in the foreground', async () => {
@@ -719,14 +993,41 @@ describe('terminal plugin — foreground detach (Ctrl+B backgrounds a running co
     await settle(200);
     expect(processRegistry.listForSession(session).some((x) => x.completionMode === 'foreground')).toBe(true);
     for (let i = 0; i < 16; i += 1) { // all MAX_BG slots still free — the foreground run is excluded
-      const r = await inSession(session, 'Bash', { command: 'sleep 8', background: true });
+      const r = await inSession(session, 'Bash', { command: 'sleep 8', run_in_background: true });
       expect(r.content[0].text).toMatch(/Started background process/);
     }
-    const refused = await inSession(session, 'Bash', { command: 'sleep 8', background: true });
+    const refused = await inSession(session, 'Bash', { command: 'sleep 8', run_in_background: true });
     expect(refused.content[0].text).toMatch(/too many background processes/);
-    control().detachForeground({ sessionId: session, principal: 'elowen:1' }); // resolve the fg run cleanly
+    expect(control().detachForeground({ sessionId: session, principal: 'elowen:1' })).toEqual({ detached: 0 });
+    expect(control().killForeground({ sessionId: session, principal: 'elowen:1' })).toEqual({ killed: 1 });
     await fg;
   }, 25_000);
+
+  it('leaves Ctrl+B foreground when the background limit is already full', async () => {
+    const reg = await loadPlugins({
+      dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log,
+      config: { terminal: { maxBackgroundProcesses: 1 } },
+    });
+    const terminal = reg.controls.get('terminal') as unknown as {
+      detachForeground: (i: { sessionId: string; principal: string }) => { detached: number };
+    };
+    const session = 'brain-fg-cap-one';
+    const scope = { identity: uidOwner, sessionId: session };
+    const bg = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', {
+      command: 'sleep 8', run_in_background: true,
+    }), scope);
+    expect(bg.content[0].text).toContain('Started background process');
+    const fg = runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', {
+      command: `node -e "setTimeout(() => console.log('foreground-finished'), 500)"`,
+    }), scope);
+    await settle(150);
+
+    expect(terminal.detachForeground({ sessionId: session, principal: 'elowen:1' })).toEqual({ detached: 0 });
+    const result = await fg;
+    expect(result.content[0].text).toContain('foreground-finished');
+    expect(result.content[0].text).toContain('[exit 0]');
+    expect(result.content[0].text).not.toContain('Moved to background');
+  }, 15_000);
 });
 
 // The stop escalation (a further Esc / repeat Ctrl+C after the graceful interrupt): the daemon's
@@ -764,6 +1065,7 @@ describe('terminal plugin — foreground kill (stop escalation)', () => {
     expect(control().killForeground({ sessionId: session, principal: 'elowen:1' })).toEqual({ killed: 1 });
     const res = await p;
     expect(res.content[0].text).toContain('[killed]');
+    expect(res.content[0].text).not.toContain('[exit null]');
     expect(res.details.exitCode).toBeUndefined(); // no structural exit code — the run was killed, not finished
     expect(processRegistry.listForSession(session)).toHaveLength(0); // same settle path as a normal finish
     expect(nudged).toBe(0); // a killed foreground command never wakes the conversation
@@ -794,7 +1096,7 @@ describe('terminal plugin — foreground kill (stop escalation)', () => {
 
   it('spares detached and background runs — only a run still blocking the turn is killable', async () => {
     const session = 'brain-fgkill-spares';
-    const bg = await inSession(session, 'Bash', { command: 'sleep 8', background: true });
+    const bg = await inSession(session, 'Bash', { command: 'sleep 8', run_in_background: true });
     const bgId = /Started background process (\S+):/.exec(bg.content[0].text)?.[1];
     expect(bgId).toBeTruthy();
     const p = inSession(session, 'Bash', { command: 'sleep 8' });
@@ -819,7 +1121,7 @@ describe('terminal plugin — ProcessOutput(block)', () => {
   const inSession = (sessionId: string, name: string, params: Record<string, unknown>) =>
     runWithPolicy(userPolicy([dir]), () => runTool(reg, name, params), { identity: owner, sessionId });
   const startBg = async (sessionId: string, command: string): Promise<string> => {
-    const res = await inSession(sessionId, 'Bash', { command, background: true });
+    const res = await inSession(sessionId, 'Bash', { command, run_in_background: true });
     const id = /Started background process (\S+):/.exec(res.content[0].text)?.[1];
     expect(id).toBeTruthy();
     return id!;

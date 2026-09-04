@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { Type } from 'typebox';
 import { defineTool } from '@earendil-works/pi-coding-agent';
-import type { AgentSession, ModelRuntime } from '@earendil-works/pi-coding-agent';
+import type { AgentSession, ModelRuntime, ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { LiveSessionSpawner, workspaceToolDefinition } from '../../src/brain/service/spawner.js';
 import { inMemoryModelRuntime, type BrainRuntimeConfig } from '../../src/brain/providers.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
@@ -16,6 +16,7 @@ import { BrainStore } from '../../src/store/brainStore.js';
 import type { RuntimeConfig } from '../../src/store/configStore.js';
 import type { ToolDeferralOverrides } from '../../src/shared/wireContract.js';
 import { BUILTIN_TOOL_DEFER_LOADING } from '../../src/brain/tools/index.js';
+import { runWithPolicy } from '../../src/plugins/policyContext.js';
 
 let sharedRuntime: ModelRuntime;
 beforeAll(async () => { sharedRuntime = await inMemoryModelRuntime(); });
@@ -85,10 +86,13 @@ function makeSpawner(
   };
 }
 
-const factoryToolNames = (create: ReturnType<typeof vi.fn>): string[] => {
-  const spec = create.mock.calls.at(-1)?.[0] as { tools: { name: string }[] };
-  return spec.tools.map((tool) => tool.name);
+const factoryTools = (create: ReturnType<typeof vi.fn>) => {
+  const spec = create.mock.calls.at(-1)?.[0] as { tools: ToolDefinition[] };
+  return spec.tools;
 };
+
+const factoryToolNames = (create: ReturnType<typeof vi.fn>): string[] =>
+  factoryTools(create).map((tool) => tool.name);
 
 describe('LiveSessionSpawner — deferred-tool policy from the runtime config', () => {
   it('flows the bundled-plugin and two core defaults from manifests through the spawned handle', async () => {
@@ -150,6 +154,52 @@ describe('LiveSessionSpawner — deferred-tool policy from the runtime config', 
     expect(live.toolSearch?.deferred).toEqual(new Set(['ScanCode']));
     expect(factoryToolNames(create)).toContain('ToolSearch');
     expect((create.mock.calls.at(-1)?.[0] as { toolSearch?: unknown }).toolSearch).toBe(live.toolSearch);
+  });
+
+  it('wires the production ToolSearch handle with plugin ownership and wildcard permission semantics', async () => {
+    const registry = new PluginRegistry();
+    addTool(registry, 'discord', 'DiscordCreateChannel');
+    addTool(registry, 'discord', 'DiscordDeleteChannel');
+    registry.toolDeferLoading.add('DiscordCreateChannel');
+    registry.toolDeferLoading.add('DiscordDeleteChannel');
+    const { spawn, create } = makeSpawner(registry, () => runtime(20));
+
+    const live = await spawn();
+    const handle = live.toolSearch!;
+    expect(handle.pluginNames).toEqual(new Set(['DiscordCreateChannel', 'DiscordDeleteChannel']));
+    const tools = factoryTools(create);
+    let active = tools.map((tool) => tool.name).filter((name) => !handle.deferred.has(name));
+    handle.session = {
+      getAllTools: () => tools.map((tool) => ({
+        name: tool.name,
+        description: tool.description,
+        parameters: tool.parameters,
+      })),
+      getActiveToolNames: () => active,
+      setActiveToolsByName: (names) => { active = names.filter((name) => tools.some((tool) => tool.name === name)); },
+    };
+
+    const search = tools.find((tool) => tool.name === 'ToolSearch')!;
+    expect(search.parameters).toMatchObject({
+      type: 'object',
+      additionalProperties: false,
+      required: ['query', 'max_results'],
+      properties: { max_results: { default: 5, maximum: 25 } },
+    });
+    const result = await runWithPolicy(policy, () => search.execute(
+      'id', { query: 'discord channel', max_results: 5 }, undefined, undefined, {} as never,
+    ), {
+      toolPolicy: {
+        allow: new Set(['DiscordCreate*', 'ToolSearch']),
+        deny: new Set(['DiscordDelete*']),
+      },
+    });
+
+    expect((result.details as { matched: string[] }).matched).toEqual(['DiscordCreateChannel']);
+    expect(active).toContain('DiscordCreateChannel');
+    expect(active).not.toContain('DiscordDeleteChannel');
+    expect(result.content[0].text).toContain('"name":"DiscordCreateChannel"');
+    expect(result.content[0].text).not.toContain('DiscordDeleteChannel');
   });
 
   it('registers marketplace image tools and applies Elowen defaults in their plugin override namespaces', async () => {
@@ -321,12 +371,22 @@ describe('workspace-scoped tool composition', () => {
     expect(factoryToolNames(create)).toContain('GitStatus');
   });
 
-  it('rewrites filesystem schemas to logical relative paths', () => {
-    const read = workspaceToolDefinition({
-      name: 'Read', description: 'The path must be absolute.',
-      parameters: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path' } } },
+  it('rewrites filesystem and Bash schemas to logical relative paths', () => {
+    for (const name of ['Read', 'Write', 'Edit']) {
+      const tool = workspaceToolDefinition({
+        name, description: 'The path must be absolute.',
+        parameters: { type: 'object', properties: { file_path: { type: 'string', description: 'Absolute path to the file' } } },
+      });
+      expect(tool?.description).toContain('relative to the assigned workspace');
+      expect((tool?.parameters as any).properties.file_path.description).toContain('Workspace-relative');
+    }
+
+    const bash = workspaceToolDefinition({
+      name: 'Bash', description: 'The working directory is confined to accessible repositories. Prefer absolute paths. Shell variables do not persist.',
+      parameters: { type: 'object', properties: { cwd: { type: 'string', description: 'Working directory' } } },
     });
-    expect(read?.description).toContain('relative to the assigned workspace');
-    expect((read?.parameters as any).properties.path.description).toContain('Workspace-relative');
+    expect((bash?.parameters as any).properties.cwd.description).toContain('Workspace-relative');
+    expect(bash?.description).toContain('Use short workspace-relative paths');
+    expect(bash?.description).not.toMatch(/prefer absolute paths/i);
   });
 });

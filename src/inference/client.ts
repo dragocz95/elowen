@@ -11,7 +11,7 @@ const RELAY_TIMEOUT_MS = 60_000;
 export class RelayClient implements InferenceClient {
   readonly model: string;
   constructor(private cfg: RelayConfig) { this.model = cfg.model; }
-  async decide(prompt: string, opts?: { signal?: AbortSignal }): Promise<{ text: string }> {
+  async decide(prompt: string, opts?: { signal?: AbortSignal }) {
     const deadline = AbortSignal.timeout(RELAY_TIMEOUT_MS);
     const res = await fetch(chatUrl(this.cfg.baseUrl), {
       method: 'POST',
@@ -23,10 +23,35 @@ export class RelayClient implements InferenceClient {
     if (!res.ok) throw new Error(`relay HTTP ${res.status}`);
     // A proxy can return 200 with an HTML error page; res.json() would then throw an opaque
     // SyntaxError. Surface a clear error so callers (deriver/engine) can escalate conservatively.
-    let j: { choices?: { message?: { content?: string } }[] };
+    let j: {
+      choices?: { message?: { content?: string } }[];
+      usage?: {
+        prompt_tokens?: number;
+        completion_tokens?: number;
+        total_tokens?: number;
+        prompt_tokens_details?: { cached_tokens?: number };
+        cache_write_tokens?: number;
+        cost?: number;
+      };
+    };
     try { j = await res.json() as typeof j; }
     catch { throw new Error(`relay returned non-JSON (HTTP ${res.status})`); }
-    return { text: j.choices?.[0]?.message?.content ?? '' };
+    const usage = j.usage;
+    const cacheRead = Math.max(0, usage?.prompt_tokens_details?.cached_tokens ?? 0);
+    const cacheWrite = Math.max(0, usage?.cache_write_tokens ?? 0);
+    const input = Math.max(0, (usage?.prompt_tokens ?? 0) - cacheRead - cacheWrite);
+    const output = Math.max(0, usage?.completion_tokens ?? 0);
+    return {
+      text: j.choices?.[0]?.message?.content ?? '',
+      ...(usage ? { usage: {
+        input,
+        output,
+        cacheRead,
+        cacheWrite,
+        total: Math.max(0, usage.total_tokens ?? input + output + cacheRead + cacheWrite),
+        cost: typeof usage.cost === 'number' && Number.isFinite(usage.cost) ? usage.cost : null,
+      } } : {}),
+    };
   }
 }
 

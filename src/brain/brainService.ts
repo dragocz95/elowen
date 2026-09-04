@@ -1232,7 +1232,7 @@ export class BrainService {
   /** Settle a parked `AskUserQuestion` with the user's picks (from POST /brain/answer or a Discord
    *  interaction). Deliberately NOT serialized: the parked turn holds the session lock, so resolving
    *  through the lock would deadlock — it just resolves the registry Promise directly. Returns whether
-   *  a pending question matched (false for an unknown/expired id — tolerated). */
+   *  both the pending id and its exact answer contract matched; invalid payloads leave it parked. */
   answerQuestion(id: string, answers: AskAnswer[], ownerUserId?: number): boolean {
     // When answered via the owner HTTP route, authorize: the caller may only settle a question parked in
     // their OWN owner-chat conversation — never someone else's, and never a shared channel session (those
@@ -1774,7 +1774,7 @@ export class BrainService {
 
   /** Convert every running foreground `Bash` command in this conversation into a detached background job.
    * Mirror of detachForegroundSubagents against the terminal plugin's control — the plugin keeps the
-   * process running and its eventual exit nudges this same conversation, exactly like Bash(background). */
+   * process running and its eventual exit nudges this same conversation, exactly like Bash(run_in_background). */
   async detachForegroundCommands(
     userId: number,
     session?: string,

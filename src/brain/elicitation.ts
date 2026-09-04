@@ -23,23 +23,55 @@ interface Pending {
   emit: (e: BrainEvent) => void;
 }
 
+interface ApprovalState {
+  tail: Promise<void>;
+  cancellation: { error: Error | null };
+}
+
+/** Validate an untrusted surface payload against the exact questions that are still pending. Labels are
+ * the wire identity, so an unknown/duplicate pick, a reordered header, or custom text the question did not
+ * allow is a mismatch, not input to normalize. Fail closed without settling the parked Promise. */
+function answersMatch(questions: readonly AskQuestion[], answers: unknown): answers is AskAnswer[] {
+  if (!Array.isArray(answers) || answers.length !== questions.length) return false;
+  return answers.every((raw, index) => {
+    const question = questions[index];
+    if (!question || !raw || typeof raw !== 'object' || Array.isArray(raw)) return false;
+    const answer = raw as { header?: unknown; selected?: unknown; other?: unknown };
+    if (answer.header !== question.header || !Array.isArray(answer.selected)) return false;
+    if (!answer.selected.every((label): label is string => typeof label === 'string')) return false;
+    const selected = answer.selected as string[];
+    const hasOther = typeof answer.other === 'string' && answer.other.trim().length > 0;
+    if (selected.length === 0 && !hasOther) return false;
+    const distinct = new Set(selected);
+    if (distinct.size !== selected.length) return false;
+    if (!question.multiSelect && selected.length > 1) return false;
+    if (selected.length > question.options.length) return false;
+    const allowed = new Set(question.options.map((option) => option.label));
+    if (selected.some((label) => !allowed.has(label))) return false;
+    if (answer.other !== undefined) {
+      if (question.custom === false || typeof answer.other !== 'string') return false;
+    }
+    return true;
+  });
+}
+
 /** In-memory registry of parked `AskUserQuestion` calls. One instance is owned by BrainService and
- *  serves every surface (web/CLI via `/brain/answer`, Discord in-process): a tool's `execute` awaits
+ *  serves every surface (owner clients via `/brain/answer`, platform adapters in-process): a tool's `execute` awaits
  *  `ask()`, which emits an `ask` BrainEvent to the conversation's clients and parks a Promise keyed by a
  *  fresh question id; whichever client answers first calls `answer(id, …)` to settle it. Since a turn is
  *  single-threaded and parks on one `askUser` call, there is at most one pending entry per conversation. */
 export class ElicitationRegistry {
   private readonly pending = new Map<string, Pending>();
-  /** Per-session tail of the serialized APPROVAL chain: a new approval parks only after the previous one
-   *  for the same conversation settles (see {@link ask}). Never rejects. */
-  private readonly approvalChain = new Map<string, Promise<void>>();
+  /** Per-session serialized APPROVAL state. Every queued approval captures the shared cancellation token,
+   *  so aborting the session invalidates deferred parks before their `then` callback can emit. */
+  private readonly approvalStates = new Map<string, ApprovalState>();
 
   /** `timeoutMs` may be a fixed number or a resolver read per park, so an operator's config change to the
    *  elicitation limit takes effect on the next question without rebuilding the registry. */
   constructor(private readonly timeoutMs: number | (() => number) = DEFAULT_TIMEOUT_MS) {}
 
   /** Emit the question(s) to the conversation's clients and park until answered, timed out, or cancelled.
-   *  `emit` fans the event into that conversation's listener set (SSE clients + Discord's in-process handler).
+   *  `emit` fans the event into that conversation's listener set (SSE clients and platform handlers).
    *
    *  Two approval prompts can arise in ONE turn (parallel tool calls each needing sign-off). Those are
    *  SERIALIZED — the second parks only after the first settles — instead of the second superseding
@@ -48,13 +80,22 @@ export class ElicitationRegistry {
    *  one drops the earlier. */
   ask(sessionId: string, questions: AskQuestion[], emit: (e: BrainEvent) => void, kind?: 'approval'): Promise<AskAnswer[]> {
     if (kind === 'approval') {
-      const prev = this.approvalChain.get(sessionId);
+      const previous = this.approvalStates.get(sessionId);
+      const cancellation = previous?.cancellation ?? { error: null };
+      const park = (): Promise<AskAnswer[]> => cancellation.error
+        ? Promise.reject(cancellation.error)
+        : this.park(sessionId, questions, emit, kind);
       // No prior approval in flight → park now (synchronous emit, unchanged behaviour). Otherwise queue
       // behind it so both prompts get shown in turn rather than the newer one cancelling the older.
-      const result = prev ? prev.then(() => this.park(sessionId, questions, emit, kind)) : this.park(sessionId, questions, emit, kind);
-      const tail = result.then(() => {}, () => {}); // settles (either way) when this approval is done
-      this.approvalChain.set(sessionId, tail);
-      void tail.then(() => { if (this.approvalChain.get(sessionId) === tail) this.approvalChain.delete(sessionId); });
+      const result = previous ? previous.tail.then(park) : park();
+      const state: ApprovalState = {
+        cancellation,
+        tail: result.then(() => {}, () => {}),
+      };
+      this.approvalStates.set(sessionId, state);
+      void state.tail.then(() => {
+        if (this.approvalStates.get(sessionId) === state) this.approvalStates.delete(sessionId);
+      });
       return result;
     }
     // Enforce one pending question per conversation: if the model somehow fired two AskUserQuestion
@@ -81,11 +122,11 @@ export class ElicitationRegistry {
     });
   }
 
-  /** Settle a parked question with the user's picks. No-op on an unknown/already-settled id (tolerates a
-   *  late double-click or a stale client answering an expired question). */
+  /** Settle a parked question only when the payload matches its exact questions. Unknown, stale, or invalid
+   * answers are no-ops, so a late click is harmless and a malformed payload cannot consume the prompt. */
   answer(id: string, answers: AskAnswer[]): boolean {
     const p = this.pending.get(id);
-    if (!p) return false;
+    if (!p || !answersMatch(p.questions, answers)) return false;
     this.pending.delete(id);
     clearTimeout(p.timer);
     // Announced BEFORE resolve: resolving lets the parked turn run on, and its first events must not
@@ -112,6 +153,11 @@ export class ElicitationRegistry {
   /** Reject every question parked for a conversation — called on turn abort / session dispose so a
    *  parked tool fails cleanly instead of hanging. */
   cancelForSession(sessionId: string, reason = 'turn cancelled'): void {
+    const approval = this.approvalStates.get(sessionId);
+    if (approval) {
+      approval.cancellation.error = new Error(reason);
+      this.approvalStates.delete(sessionId);
+    }
     for (const [id, p] of this.pending) {
       if (p.sessionId !== sessionId) continue;
       this.pending.delete(id);
@@ -124,12 +170,13 @@ export class ElicitationRegistry {
   /** Reject every parked question across all conversations — called when the whole live-session set is
    *  torn down (plugin reload / channel dispose-all) so no parked turn is left hanging on a dead session. */
   cancelAll(reason = 'sessions reset'): void {
+    for (const state of this.approvalStates.values()) state.cancellation.error = new Error(reason);
+    this.approvalStates.clear();
     for (const [id, p] of this.pending) {
       this.pending.delete(id);
       clearTimeout(p.timer);
       p.emit({ type: 'ask_resolved', id, reason: 'cancelled' });
       p.reject(new Error(reason));
     }
-    this.approvalChain.clear();
   }
 }

@@ -343,7 +343,7 @@ export const elowenClient = {
     if (opts.before !== undefined) q.set('before', String(opts.before));
     return req<BrainMessagePage>(`/brain/messages?${q.toString()}`);
   },
-  /** Background processes (terminal `Bash(background:true)`) — the panel next to the todos. */
+  /** Background processes (terminal `Bash(run_in_background:true)`) — the panel next to the todos. */
   brainProcesses: () => req<ProcessInfo[]>('/brain/processes'),
   brainProcessOutput: (id: string) => req<{ output: string }>(`/brain/processes/${encodeURIComponent(id)}/output`),
   brainKillProcess: (id: string) => req<{ killed: boolean }>(`/brain/processes/${encodeURIComponent(id)}`, { method: 'DELETE' }),
