@@ -32,15 +32,18 @@ export async function makeTestApp(opts: TestAppOpts = {}) {
   const tmux = new FakeTmuxDriver();
   const bus = new EventBus();
 
-  const app = createServer({
+  // Bound to a name so a test can attach a SECOND surface to the same dependency set — the plugin
+  // WebSocket dispatcher takes ServerDeps and has to see the same stores and plugin registry as the app.
+  const serverDeps = {
     tmux, bus,
     project: { id: 1, path: '/o' },
     clock: new FakeClock(0), config, users, projects,
     ...(opts.userProjects ? { userProjects: new UserProjectStore(db) } : {}),
     ...(opts.extra ?? {}),
-  });
+  };
+  const app = createServer(serverDeps);
 
-  return { app, token, db, deps: { config, users, projects, bus, tmux } };
+  return { app, token, db, serverDeps, deps: { config, users, projects, bus, tmux } };
 }
 
 /** Complete generic plugin-host wiring for tests that load plugin manifests. */

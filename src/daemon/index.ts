@@ -1,5 +1,6 @@
 import { serve } from '@hono/node-server';
 import { buildApp } from './bootstrap.js';
+import { attachPluginWebSocketRoutes } from '../api/pluginWebSocket.js';
 import { logger, LOG_DIR } from '../shared/logger.js';
 import { dbPath } from '../shared/paths.js';
 
@@ -61,7 +62,7 @@ try {
   log.error('daemon boot failed', e);
   process.exit(1);
 }
-const { app, startLoops } = built;
+const { app, startLoops, serverDeps } = built;
 
 // Bind to localhost by default: a daemon token can spawn agents (effectively RCE), so the daemon
 // must not be publicly reachable. Front it with the web app's BFF proxy (or a reverse proxy). Set
@@ -80,6 +81,11 @@ const server = serve({
   // not cover a second daemon started on a *different* port against the same database.
   startLoops();
 });
+// Plugin WebSocket routes ride on THIS server, not a sidecar: nginx proxies `/ws/` to this same port, so
+// a browser socket and a REST call reach the daemon through one process and one bind. Attached after
+// serve() because the upgrade listener needs the Node server object it returns.
+attachPluginWebSocketRoutes(server, serverDeps);
+
 // Without an error handler an EADDRINUSE (zombie daemon still holding the port) crashes with a bare
 // stack trace; give it a clear exit message instead.
 server.on('error', (e: NodeJS.ErrnoException) => {

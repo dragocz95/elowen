@@ -31,7 +31,7 @@ export type ElowenContext = Context<{ Variables: ElowenVariables }>;
 
 /** Minimal structural view of the request context the access predicates read (the real Hono context
  *  satisfies it). Overloaded `get` so a caller can read both the user and the token scope. */
-type AccessCtx = { get: { (k: 'user'): User | undefined; (k: 'tokenScope'): TokenScope | undefined } };
+export type AccessCtx = { get: { (k: 'user'): User | undefined; (k: 'tokenScope'): TokenScope | undefined } };
 
 /** Narrower context shape for the admin/user-only predicates that read just the user. */
 type UserCtx = { get: (k: 'user') => User | undefined };
@@ -66,40 +66,24 @@ export interface RouteContext {
   memoryMaintenance?: MemoryMaintenanceService;
 }
 
-/** Build the shared {@link RouteContext} from the daemon's injected {@link ServerDeps}. Core reasoning
- *  stores are optional in deps for back-compat with existing call sites/tests; defaulted here so every
- *  route has a working store. The helper bodies are lifted verbatim from the old `createServer`
- *  closure, so tenancy/path semantics are unchanged. */
-export function createRouteContext(d: ServerDeps): RouteContext {
-  const log = logger('api');
-  const loginRateLimiter = createLoginRateLimiter();
-  const microsoftSso = d.microsoftSso ?? (d.users ? new MicrosoftSsoService({
-    config: d.config,
-    users: d.users,
-    userSettings: d.userSettings,
-    projects: d.projects,
-    userProjects: d.userProjects,
-    project: d.project,
-    catalogs: {
-      models: async () => {
-        const cfg = brainConfigFromElowen(d.config, d.brainAuth);
-        if (!cfg) return [];
-        return (await listBrainModels(cfg)).map((model) => elowenExec(model.provider, model.model));
-      },
-      plugins: async () => {
-        const removed = new Set(d.config.get().plugins.removed);
-        return grantablePluginNames(discoverPlugins(d.pluginDirs ?? [])
-          .map((plugin) => plugin.manifest)
-          .filter((manifest) => !removed.has(manifest.name)));
-      },
-      tools: async () => {
-        const registry = await d.plugins?.get();
-        return [...builtinToolMetas().map((tool) => tool.name), ...(registry?.tools ?? []).map((tool) => tool.name)];
-      },
-    },
-    clock: d.clock,
-    bus: d.bus,
-  }) : null);
+/** Present an already-resolved account as the structural context {@link createAccessHelpers}' predicates
+ *  read. For the callers that hold a user but no Hono request — the plugin WebSocket dispatcher resolves
+ *  its account from a ticket, outside any request the middleware ever saw. `tokenScope` answers 'user'
+ *  because that is the only scope that exists; there is no other kind of credential to represent. */
+export function accessContextFor(user: User | undefined): AccessCtx {
+  return { get: ((k: 'user' | 'tokenScope') => (k === 'user' ? user : 'user')) as AccessCtx['get'] };
+}
+
+/** The tenancy predicates on their own, without the per-server services {@link createRouteContext} also
+ *  builds. Extracted so a caller that must answer "is this an admin / what may they see" OUTSIDE a Hono
+ *  request reuses the exact rules rather than restating them: the plugin WebSocket dispatcher
+ *  authenticates by ticket, minutes after the request that minted it is gone, and it hands the resolved
+ *  answer to the plugin as the connection's `auth` block. Constructing a second RouteContext for that
+ *  would also mean a second MemoryMaintenanceService, whose locks are meant to be one per HTTP server.
+ *
+ *  The predicates read a structural context (`{ get('user') }`), so a caller outside Hono passes a plain
+ *  object carrying the resolved user. */
+export function createAccessHelpers(d: ServerDeps): Pick<RouteContext, 'canAccessProject' | 'notAdmin' | 'notAdminUnlessSetup' | 'accessibleProjects'> {
   // A non-admin user may only see/operate projects assigned to them; the admin (and open mode)
   // sees everything.
   const canAccessProject = (c: AccessCtx, id: number): boolean => {
@@ -139,6 +123,46 @@ export function createRouteContext(d: ServerDeps): RouteContext {
     if (!u || d.userProjects.isAdmin(u.id)) return null;
     return new Set(d.userProjects.forUser(u.id));
   };
+
+  return { canAccessProject, notAdmin, notAdminUnlessSetup, accessibleProjects };
+}
+
+/** Build the shared {@link RouteContext} from the daemon's injected {@link ServerDeps}. Core reasoning
+ *  stores are optional in deps for back-compat with existing call sites/tests; defaulted here so every
+ *  route has a working store. The helper bodies are lifted verbatim from the old `createServer`
+ *  closure, so tenancy/path semantics are unchanged. */
+export function createRouteContext(d: ServerDeps): RouteContext {
+  const log = logger('api');
+  const loginRateLimiter = createLoginRateLimiter();
+  const microsoftSso = d.microsoftSso ?? (d.users ? new MicrosoftSsoService({
+    config: d.config,
+    users: d.users,
+    userSettings: d.userSettings,
+    projects: d.projects,
+    userProjects: d.userProjects,
+    project: d.project,
+    catalogs: {
+      models: async () => {
+        const cfg = brainConfigFromElowen(d.config, d.brainAuth);
+        if (!cfg) return [];
+        return (await listBrainModels(cfg)).map((model) => elowenExec(model.provider, model.model));
+      },
+      plugins: async () => {
+        const removed = new Set(d.config.get().plugins.removed);
+        return grantablePluginNames(discoverPlugins(d.pluginDirs ?? [])
+          .map((plugin) => plugin.manifest)
+          .filter((manifest) => !removed.has(manifest.name)));
+      },
+      tools: async () => {
+        const registry = await d.plugins?.get();
+        return [...builtinToolMetas().map((tool) => tool.name), ...(registry?.tools ?? []).map((tool) => tool.name)];
+      },
+    },
+    clock: d.clock,
+    bus: d.bus,
+  }) : null);
+  // One source of truth for the tenancy rules; the WebSocket dispatcher reads the same helpers.
+  const { canAccessProject, notAdmin, notAdminUnlessSetup, accessibleProjects } = createAccessHelpers(d);
 
   // The retrieval-debugging seam — built only when both the memory store and the embedder are wired, so
   // the /memory/retrieve route can rank the caller's memories. Reads the live embedding config each call

@@ -96,12 +96,13 @@ Declare the public surfaces the plugin contributes:
   "destinations": ["my-platform"],
   "httpRoutes": ["callback"],
   "apiRoutes": ["status", "/legacy/items/:id"],
+  "wsRoutes": ["stream", "session/:id"],
   "mcpTools": ["my_tool"],
   "controls": ["my-domain"]
 }
 ```
 
-`registerHttpRoute`, `registerApiRoute`, `registerNotificationDestinationProvider`, and `registerMcpTool` are deny-by-default: their paths or names must be declared in the corresponding manifest list. A published control key must be declared in `provides.controls`; `requiresControls` names control contracts this plugin cannot operate without. Tools, skills and platforms should also be declared so the manifest remains an accurate audit surface.
+`registerHttpRoute`, `registerApiRoute`, `registerWebSocketRoute`, `registerNotificationDestinationProvider`, and `registerMcpTool` are deny-by-default: their paths or names must be declared in the corresponding manifest list. A published control key must be declared in `provides.controls`; `requiresControls` names control contracts this plugin cannot operate without. Tools, skills and platforms should also be declared so the manifest remains an accurate audit surface.
 
 There is no `provides.hooks` field. Hooks are registered with `registerHook`; their mutations are governed by `capabilities.mutates`.
 
@@ -216,6 +217,7 @@ The main registration methods are:
 | `registerPlatform` | Register a chat transport adapter. |
 | `registerHttpRoute` | Add a public webhook under `/hooks/<plugin>/...`. |
 | `registerApiRoute` | Add an authenticated route under `/plugins/<plugin>/api/...`. |
+| `registerWebSocketRoute` / `issueWebSocketTicket` | Add a ticket-authenticated WebSocket under `/ws/plugins/<plugin>/...`. |
 | `registerService` / `registerInterval` | Register host-managed background work. |
 | `registerControl` / `control` | Publish or resolve a live domain control. |
 | `registerMcpTool` | Add a tool to Elowen's own authenticated `/mcp` server. |
@@ -303,6 +305,50 @@ The route is served at `/plugins/<plugin>/api/status`. The daemon authenticates 
 A `rootMount` can preserve an existing top-level API path, but the full root path must be declared in `provides.apiRoutes` with its leading slash. Root mounts are still authenticated, core routes win conflicts, and `:param` segments are supported. Use the namespaced route unless compatibility with an existing client requires a root mount.
 
 An API handler may return a buffered body or an SSE callback through `response.sse`. Validate every route parameter and enforce the caller's Project ownership using `req.auth.accessibleProjects`; a `null` list is a list-scoping result for admin/open/setup contexts, not permission to access an arbitrary Project.
+
+### WebSocket routes
+
+Use a WebSocket route for a bidirectional byte protocol that SSE cannot carry, such as a VNC/RFB stream. The route is served at `/ws/plugins/<plugin>/<path>` on the daemon port; the installed nginx vhost already proxies `/ws/` there, so the browser connects to it directly rather than through the web application.
+
+```json
+{
+  "provides": { "apiRoutes": ["stream-ticket"], "wsRoutes": ["stream"] }
+}
+```
+
+```javascript
+// Mint a ticket from an authenticated API route.
+ctx.registerApiRoute({
+  path: 'stream-ticket',
+  method: 'POST',
+  access: 'user',
+  handler: async (req) => ({
+    body: ctx.issueWebSocketTicket({ userId: req.auth.userId, payload: { sessionId: 'vnc-1' } }),
+  }),
+});
+
+ctx.registerWebSocketRoute({
+  path: 'stream',
+  access: 'user',
+  handler: (conn) => {
+    conn.onMessage((data, isBinary) => { if (isBinary) upstream.write(data); });
+    conn.onClose(() => upstream.end());
+    upstream.on('data', (chunk) => {
+      if (conn.bufferedAmount() > 4 * 1024 * 1024) return; // the client is behind
+      conn.send(chunk);
+    });
+    conn.signal.addEventListener('abort', () => upstream.destroy());
+  },
+});
+```
+
+Because the browser reaches this mount directly, it carries no Elowen bearer token and the daemon's authentication middleware cannot run on the upgrade. Authentication is therefore by ticket: the page fetches one from an authenticated API route and connects to `wss://<host>/ws/plugins/<plugin>/stream?ticket=<ticket>`. A ticket is single-use, expires after 30 seconds by default (five minutes at most), and is bound to the account named in `userId` — pass `req.auth.userId`, because nothing else re-checks who asked.
+
+The daemon redeems the ticket before the handshake. An invalid, expired, foreign or already-used ticket is answered with HTTP 401 and no upgrade at all, and a route declared `access: 'admin'` refuses a ticket whose owner is not an administrator. An upgrade whose `Origin` header does not match the request `Host` is refused with 403; a request without an `Origin` header, which is what a non-browser client sends, is accepted.
+
+Inside the handler, `conn.auth` is the resolved identity of the ticket owner, in the same shape as `req.auth` on an API route, and `conn.payload` is whatever the plugin stored when it issued the ticket. A `Uint8Array` passed to `conn.send` is transmitted as one binary frame unchanged, and `conn.bufferedAmount()` reports the bytes still queued on the socket, which is the signal to stop producing frames for a client that cannot keep up. `conn.signal` aborts when the socket closes, when the plugin is reloaded or disabled, and on daemon shutdown; a reload closes every live connection with code 1001. A handler that throws closes its connection with 1011 and is logged under the plugin's name.
+
+Feature-detect the surface with `typeof ctx.registerWebSocketRoute === 'function'` when the plugin must also load on an older daemon.
 
 ## Persistence and lifecycle
 

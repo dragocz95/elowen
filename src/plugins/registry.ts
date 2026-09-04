@@ -2,7 +2,8 @@ import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginChatArtifactRef, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginProjectIndicatorProvider, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginUiVisibility, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginChatArtifactRef, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginProjectIndicatorProvider, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginUiVisibility, PluginWebSocketRoute, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import { webSocketTickets } from './wsTickets.js';
 import type { BrainInlineArtifact, PluginChatArtifact, PluginChatArtifactUpdate } from '../brain/events.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { InferenceClient, RelayConfig } from '../inference/types.js';
@@ -231,6 +232,22 @@ export class PluginRegistry {
    *  '/sandboxes/:id'). Served by the daemon's root fallback dispatcher with the same auth/access
    *  mechanics as `apiRoutes`; a mount that collides with a core route is skipped there (core wins). */
   readonly rootApiRoutes = new Map<string, { plugin: string; routes: { method?: string; access: PluginApiAccess; handler: PluginApiRoute['handler'] }[] }>();
+  /** WebSocket mounts, keyed `<plugin>/<path>` — dispatched by the daemon's `/ws/plugins/` upgrade
+   *  handler. Like `apiRoutes` the key embeds the owner, so two plugins cannot contest one mount. The
+   *  owning plugin's scoped logger travels with the route: a handler that throws is the plugin's fault
+   *  and has to be reported under the plugin's name, long after `contextFor` returned. */
+  readonly wsRoutes = new Map<string, {
+    plugin: string;
+    /** Pre-split path segments; ':param' segments match any one segment. */
+    segments: string[];
+    access: PluginApiAccess;
+    handler: PluginWebSocketRoute['handler'];
+    logger: PluginLogger;
+  }>();
+  /** Every WebSocket accepted against THIS registry generation. Owned by the registry for the same reason
+   *  as `busSubscriptions`: a reload must be able to hang up the whole old generation at once, or a
+   *  handler closure from a plugin that no longer exists keeps streaming beside its replacement. */
+  readonly liveWebSockets = new Set<{ plugin: string; close: (code: number, reason: string) => void }>();
   /** Host-managed background services (started after boot reconcile, cycled around plugin reloads) and
    *  boot reconciles (run sequentially BEFORE platforms serve turns). Both carry their owner for logs. */
   readonly services: { plugin: string; service: PluginService }[] = [];
@@ -376,6 +393,7 @@ export class PluginRegistry {
     }
     // Keys embed the plugin name, so cross-plugin collisions cannot happen by construction — copy as-is.
     for (const [k, v] of other.apiRoutes) this.apiRoutes.set(k, v);
+    for (const [k, v] of other.wsRoutes) this.wsRoutes.set(k, v);
     // Root mounts are a GLOBAL namespace: first registrant wins, a colliding sibling is skipped loudly.
     for (const [k, v] of other.rootApiRoutes) {
       const prior = this.rootApiRoutes.get(k);
@@ -450,6 +468,17 @@ export class PluginRegistry {
     }
   }
 
+  /** Hang up every WebSocket this generation accepted — called on the OLD registry during a plugin
+   *  reload and on the daemon's terminal shutdown. 1001 ("going away") is the honest code for both: the
+   *  endpoint is leaving, and a client may reconnect once the new generation is serving. Idempotent, and
+   *  a socket that is already dead simply drops out of the set. */
+  closeWebSockets(code = 1001, reason = 'plugin reloaded'): void {
+    for (const conn of [...this.liveWebSockets]) {
+      try { conn.close(code, reason); } catch { /* already gone */ }
+    }
+    this.liveWebSockets.clear();
+  }
+
   /** Resolve the handler for a `/hooks/…` request path (everything after `/hooks/`): exact mount first,
    *  then the longest declared prefix on a `/` boundary — the remainder reaches the handler as
    *  `PluginHttpRequest.path`. Undefined when nothing matches (the router 404s). */
@@ -488,6 +517,33 @@ export class PluginRegistry {
       at = clean.lastIndexOf('/', at - 1);
     }
     return undefined;
+  }
+
+  /** Resolve a plugin WebSocket mount for the path after `/ws/plugins/<plugin>/`. Matching is by exact
+   *  segment COUNT — a socket carries no sub-path a handler could route on, so the prefix semantics of
+   *  {@link apiRoute} would only let one mount silently swallow another plugin path. Among the routes of
+   *  the right length the one matching the most segments LITERALLY wins, so 'session/live' beats
+   *  'session/:id' for that exact path. */
+  wsRoute(plugin: string, path: string): { access: PluginApiAccess; handler: PluginWebSocketRoute['handler']; logger: PluginLogger; params: Record<string, string> } | undefined {
+    const parts = path.replace(/^\/+|\/+$/g, '').split('/').filter(Boolean);
+    let best: { literals: number; access: PluginApiAccess; handler: PluginWebSocketRoute['handler']; logger: PluginLogger; params: Record<string, string> } | undefined;
+    for (const route of this.wsRoutes.values()) {
+      if (route.plugin !== plugin || route.segments.length !== parts.length) continue;
+      const params: Record<string, string> = {};
+      let literals = 0;
+      let ok = true;
+      for (const [i, seg] of route.segments.entries()) {
+        const got = parts[i]!;
+        if (seg.startsWith(':')) { params[seg.slice(1)] = decodeURIComponent(got); continue; }
+        if (seg !== got) { ok = false; break; }
+        literals += 1;
+      }
+      if (!ok) continue;
+      if (best && best.literals >= literals) continue;
+      best = { literals, access: route.access, handler: route.handler, logger: route.logger, params };
+    }
+    if (!best) return undefined;
+    return { access: best.access, handler: best.handler, logger: best.logger, params: best.params };
   }
 
   /** Resolve a ROOT-mounted plugin route for an absolute request path — the mount matching the MOST
@@ -1102,6 +1158,42 @@ export class PluginRegistry {
         entry.routes.push({ ...(route.method ? { method: route.method.toUpperCase() } : {}), access: route.access, handler: route.handler });
         this.apiRoutes.set(key, entry);
       },
+      // Same STRICT deny-by-default as the HTTP surfaces, against `provides.wsRoutes`. A socket is the
+      // longest-lived surface a plugin can open, so it is the last one that should be registerable by
+      // accident.
+      registerWebSocketRoute: (route) => {
+        const clean = route.path?.trim().replace(/^\/+|\/+$/g, '') ?? '';
+        const segments = clean.split('/');
+        // Lowercase literals or ':param' placeholders, same vocabulary as an API root mount.
+        const segsOk = clean !== '' && segments.every((seg) =>
+          /^[a-z0-9][a-z0-9\-]*$/.test(seg) || /^:[a-zA-Z][a-zA-Z0-9]*$/.test(seg));
+        if (!segsOk) {
+          scoped.warn(`registerWebSocketRoute('${route.path}') refused: path must be lowercase slash-separated segments (a segment may be ':param')`);
+          return;
+        }
+        if (route.access !== 'admin' && route.access !== 'user') {
+          scoped.warn(`registerWebSocketRoute('${clean}') refused: access must be admin or user`);
+          return;
+        }
+        if (typeof route.handler !== 'function') {
+          scoped.warn(`registerWebSocketRoute('${clean}') refused: handler must be a function`);
+          return;
+        }
+        if (!provides?.wsRoutes?.includes(clean)) {
+          scoped.warn(`registerWebSocketRoute('${clean}') refused: not declared in manifest provides.wsRoutes`);
+          return;
+        }
+        this.wsRoutes.set(`${name}/${clean}`, { plugin: name, segments, access: route.access, handler: route.handler, logger: scoped });
+      },
+      // Ungated on purpose: minting is not itself an authority. The ticket only ever carries the userId
+      // the plugin passes, and the DISPATCHER resolves that account's real permissions at redeem time —
+      // so a plugin can hand out no access it could not already exercise through its own API routes.
+      issueWebSocketTicket: (input) => webSocketTickets.issue({
+        plugin: name,
+        userId: input?.userId ?? null,
+        payload: input?.payload,
+        ...(input?.ttlMs !== undefined ? { ttlMs: input.ttlMs } : {}),
+      }),
       registerService: (service) => {
         if (!service?.name?.trim() || typeof service.start !== 'function' || typeof service.stop !== 'function') {
           scoped.warn('registerService refused: a service needs a name and start/stop functions');

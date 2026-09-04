@@ -437,6 +437,62 @@ export interface PluginApiRoute {
   rootMount?: string;
 }
 
+/** A live WebSocket, handed to a {@link PluginWebSocketRoute} handler after the ticket was redeemed and
+ *  the upgrade completed. Deliberately framework-agnostic (no `ws` types leak into the plugin API) and
+ *  deliberately BINARY-faithful: a `Uint8Array` goes out as one binary frame with no re-encoding, which
+ *  is what a byte protocol tunnelled over this — RFB, a terminal stream — requires to survive. */
+export interface PluginWebSocketConnection {
+  /** The identity of the account the ticket was minted for, resolved by the daemon AT REDEEM TIME (so a
+   *  ticket issued before a permission change carries the permissions in force now, not then). */
+  auth: PluginApiAuth;
+  /** Whatever the plugin stored when it issued the ticket (e.g. `{ sessionId, interactive }`). Untyped
+   *  by construction: the daemon never inspects it, so the plugin validates its own shape. */
+  payload: unknown;
+  /** Values of ':param' segments in the registered path, already URL-decoded. */
+  params: Record<string, string>;
+  /** Query parameters of the upgrade URL. `ticket` is stripped — it is spent, and it must not reach a
+   *  plugin that might log its own connection parameters. */
+  query: Record<string, string>;
+  /** Send one frame: a string goes out as text, bytes as binary, unchanged. */
+  send(data: string | Uint8Array): void;
+  /** Register the inbound frame callback. `isBinary` distinguishes the two frame types, because for a
+   *  byte protocol an empty text frame and an empty binary frame are not the same event. */
+  onMessage(cb: (data: string | Uint8Array, isBinary: boolean) => void): void;
+  onClose(cb: (code: number, reason: string) => void): void;
+  close(code?: number, reason?: string): void;
+  /** Aborted when the socket closes, when the owning plugin is reloaded or disabled, and on daemon
+   *  shutdown. The handler's one signal for "stop producing frames"; a producer that ignores it keeps
+   *  running against a dead socket. */
+  signal: AbortSignal;
+  /** Bytes still queued on the socket. The only honest backpressure signal a frame producer has: a VNC
+   *  server outruns a slow client easily, and a handler that keeps writing regardless buffers the whole
+   *  difference in daemon memory. */
+  bufferedAmount(): number;
+}
+
+/** A WebSocket route a plugin exposes on the daemon at `/ws/plugins/<plugin>/<path>`.
+ *
+ *  Deny-by-default like every other plugin route surface: the path must be declared in the manifest's
+ *  `provides.wsRoutes`, so the manifest stays the single audit surface for what a plugin serves.
+ *
+ *  Authentication is by TICKET, not by bearer. The browser reaches this mount DIRECTLY (nginx proxies
+ *  `/ws/` to the daemon), so it carries no Elowen token; the plugin mints a ticket from an already
+ *  authenticated API route and the page presents it as `?ticket=…`. The daemon redeems it BEFORE the
+ *  upgrade — an unusable ticket is answered with a plain HTTP 401, never with a 101 followed by a close,
+ *  so a client can tell "not authorised" from "the handler hung up". */
+export interface PluginWebSocketRoute {
+  /** Mount path RELATIVE to `/ws/plugins/<plugin>/` — lowercase slash-separated segments; a segment may
+   *  be ':param' (e.g. 'session/:id'). Matched by exact segment COUNT, unlike the prefix-matched API
+   *  surface: a socket has no sub-path for a handler to route on. */
+  path: string;
+  /** Enforced by the dispatcher against the TICKET OWNER, using the same setup-tolerant admin gate as the
+   *  authenticated API surface. */
+  access: PluginApiAccess;
+  /** Runs once per accepted connection. A throw (or a rejected promise) closes the socket with 1011 and
+   *  is logged through the plugin's own logger — it never takes the daemon down. */
+  handler: (conn: PluginWebSocketConnection) => void | Promise<void>;
+}
+
 /** One editable prompt template a plugin contributes — the shape of a core catalog entry
  *  (src/prompts/catalog.ts). `name` is the bare template name (== `<name>.md` in the registered dir, and
  *  the per-user override key in `user_prompts`); `group` may extend the account UI's grouping. */
@@ -1397,6 +1453,28 @@ export interface PluginContext {
    *  middleware run first and the dispatcher enforces the declared access level, so the handler receives
    *  a verified {@link PluginApiAuth} instead of re-implementing auth (see {@link PluginApiRoute}). */
   registerApiRoute(route: PluginApiRoute): void;
+  /** Expose a WEBSOCKET route on the daemon at `/ws/plugins/<plugin>/<path>` — the streaming sibling of
+   *  `registerApiRoute`, for a bidirectional byte protocol (a VNC/RFB stream, a live terminal) that SSE
+   *  cannot carry. Deny-by-default: the path must be declared in the manifest's `provides.wsRoutes`.
+   *
+   *  Callers may feature-detect an older daemon with
+   *  `typeof ctx.registerWebSocketRoute === 'function'` and degrade instead of throwing.
+   *
+   *  See {@link PluginWebSocketRoute} for the ticket-based authentication this surface uses instead of a
+   *  bearer token, and {@link issueWebSocketTicket} for minting one. */
+  registerWebSocketRoute(route: PluginWebSocketRoute): void;
+  /** Mint a one-shot ticket for THIS plugin's WebSocket routes. Call it from an already authenticated
+   *  API route and hand the ticket to the browser, which appends it as `?ticket=…` on the upgrade URL.
+   *
+   *  The ticket binds to `userId`: the dispatcher resolves that account's admin flag and project scope
+   *  when the ticket is redeemed and gives the handler the result as
+   *  {@link PluginWebSocketConnection.auth}. Pass the id the CALLING request authenticated as
+   *  (`req.auth.userId`) — nothing here re-checks who asked, so minting for another account hands out
+   *  that account's access.
+   *
+   *  One-shot (the first redeem attempt spends it, successful or not), and `ttlMs` is clamped to at most
+   *  five minutes; it defaults to 30 s, which is ample for a page that opens the socket right away. */
+  issueWebSocketTicket(input: { userId: number | null; payload?: unknown; ttlMs?: number }): { ticket: string; expiresAt: number };
   /** Contribute a host-managed background service (see {@link PluginService}): started after boot
    *  reconcile on a full daemon start, stopped/restarted around plugin reloads. The first-class home for
    *  what plugins used to smuggle into fake platform adapters' connect/disconnect. */
