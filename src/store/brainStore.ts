@@ -1211,6 +1211,11 @@ export class BrainStore {
     return this.delegation.recoveringSubagentSessionIds(parentSessionId);
   }
 
+  /** {@link BrainDelegationStore.recoveringWorkflowIds}. */
+  recoveringWorkflowIds(parentSessionId: string): ReturnType<BrainDelegationStore['recoveringWorkflowIds']> {
+    return this.delegation.recoveringWorkflowIds(parentSessionId);
+  }
+
   /** Claim every restart-orphaned delegation for this boot — see
    *  {@link BrainDelegationStore.claimRecoverableRuns}. */
   claimRecoverableRuns(leaseMs: number): ReturnType<BrainDelegationStore['claimRecoverableRuns']> {

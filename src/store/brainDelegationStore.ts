@@ -415,6 +415,21 @@ export class BrainDelegationStore {
     return out;
   }
 
+  /** Workflow ids THIS boot owns: rows it claimed for resume at boot, and rows the engine stamped with this
+   *  boot while running. A read-model liveness source, the workflow twin of recoveringSubagentSessionIds:
+   *  in the window between the HTTP boot and the engine's resume (the plugin registry is still loading,
+   *  the liveness probe answers "unknown") such a row is being recovered, not dead, and must not be
+   *  terminalized for display. A previous boot's row stays out: nothing of this process holds it. */
+  recoveringWorkflowIds(parentSessionId: string): string[] {
+    const cur = this.bootId;
+    if (!cur) return [];
+    return (this.db.prepare(
+      `SELECT workflow_id FROM brain_workflows
+        WHERE parent_session_id = ? AND owner_boot_id = ?
+          AND json_valid(state) AND json_extract(state, '$.status') = 'running'`
+    ).all(parentSessionId, cur) as { workflow_id: string }[]).map((row) => row.workflow_id);
+  }
+
   /** Child sessions THIS boot still durably owns during restart recovery. This is a read-model liveness
    *  source: all rows are claimed before serial recovery starts, so later queued rows may outlive the initial
    *  lease while still owned by this process. A previous boot stays hidden because it has no worker. Keep the

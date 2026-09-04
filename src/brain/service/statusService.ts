@@ -168,6 +168,9 @@ function windowViews(all: BrainMessageView[], opts: MessagePageOpts): MessagePag
 
 interface StatusServiceDeps {
   store: BrainStore;
+  /** Whether a workflow claimed at boot is still waiting for (or inside) its resume — the boot's own word
+   *  on a DAG the engine has not been handed back yet, which outranks a probe that says "not held". */
+  workflowResumePending?: (workflowId: string) => boolean;
   /** The shared live-session state (owned by the BrainService facade). */
   sessions: LiveSessionRegistry<LiveBrain>;
   attachments: ClientAttachments;
@@ -244,9 +247,18 @@ export class BrainStatusService {
   private workflowRuns(sessionId: string): BrainWorkflowRun[] {
     const sessionLive = this.d.sessions.has(sessionId)
       || (isChannelSession(sessionId) && !!this.d.sessions.channelGet(channelIdOf(sessionId)));
+    // What THIS boot is recovering is alive until the engine says otherwise. In the boot window (HTTP up,
+    // plugin registry still loading, the probe answering "unknown"; or loaded but the resume wave not yet
+    // reached this DAG) a snapshot used to terminalize the row for display — a client that reconnected
+    // right after the restart saw every node fail and the card vanish, while the engine resumed the
+    // workflow two seconds later. The claim is the boot's own word: the same rule
+    // recoveringSubagentSessionIds already gives a claimed delegation.
+    const recovering = new Set(this.d.store.recoveringWorkflowIds(sessionId));
     return this.d.store.getWorkflowRuns(sessionId).map((run) => {
       if (run.status !== 'running') return run;
-      const live = probeWorkflowLiveness(run.id) ?? sessionLive;
+      if (this.d.workflowResumePending?.(run.id)) return run;
+      const probe = probeWorkflowLiveness(run.id);
+      const live = probe ?? (recovering.has(run.id) || sessionLive);
       return live ? run : terminalizeWorkflow(run);
     });
   }
