@@ -379,6 +379,10 @@ export class BrainDelegationStore {
 
   /** Read only still-valid direct same-owner relations. Malformed legacy/corrupted JSON is ignored at
    *  this boundary, so all downstream wire shapes remain trusted and finite. */
+  /** In INSERTION order (rowid), oldest first: a later run of the same child (a DelegateContinue after
+   *  its Delegate) always comes after, so "the newest run of a child" is the last row for that session.
+   *  Deliberately not updated_at — a boot-claimed `recovering` row keeps the pause's timestamp for as
+   *  long as its respawn runs, while a finished older row may be touched later. */
   getSubagentRuns(parentSessionId: string): BrainSubagentRun[] {
     const rows = this.db.prepare(
       `SELECT r.tool_call_id, r.child_session_id, r.state, c.created_at AS started_at,
@@ -391,7 +395,7 @@ export class BrainDelegationStore {
         WHERE r.parent_session_id = ?
           AND c.parent_session_id = p.id
           AND c.user_id = p.user_id
-        ORDER BY r.updated_at ASC, r.rowid ASC`
+        ORDER BY r.rowid ASC`
     ).all(parentSessionId) as {
       tool_call_id: string; child_session_id: string; state: string;
       started_at: string; updated_at: string; delivery_state: string | null;

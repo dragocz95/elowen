@@ -6366,7 +6366,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.store.upsertSubagentRun(sessionId, { id: 'delegate-finished', sessionId: 'brain-ch-subagent-finished', status: 'running', task: 'dig', tools: 1, seconds: 5 });
     d.store.appendMessage({
       id: 'a-final', sessionId: 'brain-ch-subagent-finished', parentId: null, role: 'assistant',
-      content: { role: 'assistant', content: [{ type: 'text', text: 'FINAL: the answer is 42' }], stopReason: 'stop' },
+      content: { role: 'assistant', content: [{ type: 'text', text: 'FINAL: the answer is 42' }], stopReason: 'stop', usage: { input: 1200, output: 40, cacheRead: 0, cacheWrite: 0, totalTokens: 1240 } },
     });
     d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-final'").run();
 

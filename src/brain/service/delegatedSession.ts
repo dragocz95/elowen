@@ -88,20 +88,33 @@ const RECOVERY_INSTRUCTION_DELEGATIONS =
   + 'DelegateList/DelegateRead for the rest before re-delegating, so you never redo finished work. Then '
   + 'finish your task and give your final answer as usual.';
 
-/** The final answer of a child whose interrupted tail ENDS on a settled assistant message with text and
- *  no tool call — the model had finished and only the terminal bookkeeping was lost. Anything else
- *  (aborted, errored, ended on a tool call, empty) is undefined: the child still has work to do. */
-function finishedAnswerOf(contents: string[]): string | undefined {
+/** The final answer of a child whose interrupted tail ENDS on a PROVABLY complete assistant message —
+ *  the model had finished and only the terminal bookkeeping was lost. Fail-safe by construction: only a
+ *  message the provider closed with `stopReason: 'stop'` AND stamped with its usage counts (what PI
+ *  records at message_end of a fully received response) qualifies; a message without either is a partial
+ *  stream or a shape this code cannot vouch for, and the child is respawned to continue instead. A tool
+ *  call, an abort, an error, a length cut or empty text never count. Completing a child that was not
+ *  done would hand its parent a half answer and call it finished. */
+export function finishedAnswerOf(contents: string[]): string | undefined {
   const raw = contents.at(-1);
   if (!raw) return undefined;
-  let message: { role?: string; content?: unknown; stopReason?: string };
+  let message: { role?: string; content?: unknown; stopReason?: string; usage?: unknown };
   try { message = JSON.parse(raw) as typeof message; } catch { return undefined; }
   if (message.role !== 'assistant') return undefined;
-  if (message.stopReason === 'aborted' || message.stopReason === 'error' || message.stopReason === 'length') return undefined;
+  if (message.stopReason !== 'stop') return undefined;
+  if (!hasCompleteUsage(message.usage)) return undefined;
   const parts = Array.isArray(message.content) ? message.content as { type?: string }[] : [];
   if (parts.some((part) => part?.type === 'toolCall')) return undefined;
   const text = extractText(message).trim();
   return text ? text : undefined;
+}
+
+/** PI stamps `usage` on an assistant message when the provider's final chunk arrived; a partial stream
+ *  never carries it. Input and output token counts are the two every provider reports. */
+function hasCompleteUsage(usage: unknown): boolean {
+  if (typeof usage !== 'object' || usage === null) return false;
+  const u = usage as { input?: unknown; output?: unknown };
+  return Number.isFinite(u.input) && Number.isFinite(u.output);
 }
 
 interface DelegatedSessionDeps {

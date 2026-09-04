@@ -1,3 +1,4 @@
+import type { BrainSubagentRun } from '../../store/brainDelegationStore.js';
 import { createAgentSession, SessionManager, DefaultResourceLoader } from '@earendil-works/pi-coding-agent';
 import type { BrainStore, BrainSearchHit, BrainMessageRow, BrainWorkflowRun } from '../../store/brainStore.js';
 import type { BrainRuntimeConfig } from '../providers.js';
@@ -206,7 +207,15 @@ export class BrainStatusService {
       ...this.d.sessions.childrenOf(sessionId),
       ...this.d.store.recoveringSubagentSessionIds(sessionId),
     ]);
-    return this.d.store.getSubagentRuns(sessionId)
+    // ONE state per child: its NEWEST run row. A child continued after it finished (DelegateContinue,
+    // or a boot-claimed recovery of that continuation) has two rows, and every client projects
+    // sub-agent state by child session — so two rows for one child is two voices, and whichever the
+    // client happened to apply last won (a prepended synthetic anchor for the running row lost to the
+    // older row's terminal chip later in the page: a working sub-agent shown as done). The store returns
+    // rows in insertion order, so the last row for a session is its newest.
+    const newest = new Map<string, BrainSubagentRun>();
+    for (const run of this.d.store.getSubagentRuns(sessionId)) newest.set(run.sessionId, run);
+    return [...newest.values()]
       .filter((run) => run.status !== 'running' || active.has(run.sessionId));
   }
 
