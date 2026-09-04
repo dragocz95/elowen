@@ -5,7 +5,8 @@ const repoRoot = join(__dirname, '..', '..');
 
 interface Normalized { question: string; header: string; multiSelect: boolean; custom: boolean; options: { label: string; description?: string; preview?: string }[] }
 interface RegisteredTool {
-  parameters: { properties: { questions: { items: { properties: { question: { description?: string }; options: { description?: string } } } } } };
+  parameters: Record<string, unknown>;
+  execute(id: string, params: unknown): Promise<{ content: { text: string }[] }>;
 }
 type NormalizeFn = (q: unknown) => Normalized;
 type FormatFn = (questions: { question: string }[], answers: unknown) => string;
@@ -17,19 +18,59 @@ const load = async () => await import(join(repoRoot, 'plugins/askuser/index.mjs'
   register: RegisterFn;
 };
 
-describe('AskUserQuestion — schema guidance', () => {
-  it('asks for a specific question and distinct single-select choices', async () => {
+describe('AskUserQuestion — Fable-compatible surface', () => {
+  const registered = async (askUser: (questions: Normalized[]) => Promise<unknown[]>) => {
     const tools: RegisteredTool[] = [];
     const { register } = await load();
     register({
       registerTool: (tool: RegisteredTool) => tools.push(tool),
       registerSystemPromptFragment: () => undefined,
+      askUser,
       logger: { info: () => undefined },
     });
-    const properties = tools[0]!.parameters.properties.questions.items.properties;
-    expect(properties.question.description).toContain('ending with "?"');
-    expect(properties.options.description).toContain('distinct choices');
-    expect(properties.options.description).toContain('mutually exclusive');
+    return tools[0]!;
+  };
+
+  it('declares required headers, 2-4 rich options, multiSelect, and optional response metadata', async () => {
+    const tool = await registered(async () => []);
+    const schema = JSON.stringify(tool.parameters);
+    expect(schema).toContain('"header"');
+    expect(schema).toContain('"multiSelect"');
+    expect(schema).toContain('"minItems":2');
+    expect(schema).toContain('"maxItems":4');
+    expect(schema).toContain('"description"');
+    expect(schema).toContain('"answers"');
+    expect(schema).toContain('"annotations"');
+    expect(schema).toContain('"metadata"');
+    expect(schema).toContain('"custom"');
+    expect(schema).not.toContain('"multiple"');
+    expect(schema).not.toContain('"anyOf"');
+  });
+
+  it('accepts the canonical payload and always asks the user even when answers are prefilled', async () => {
+    const calls: Normalized[][] = [];
+    const tool = await registered(async (questions) => {
+      calls.push(questions);
+      return [{ selected: ['Safe'] }];
+    });
+    const result = await tool.execute('t', {
+      questions: [{
+        question: 'Which approach?',
+        header: 'Approach',
+        options: [
+          { label: 'Safe', description: 'Use the safer implementation.' },
+          { label: 'Fast', description: 'Use the faster implementation.' },
+        ],
+        multiSelect: false,
+      }],
+      answers: { 'Which approach?': 'Fast' },
+      annotations: { 'Which approach?': { preview: 'ignored', notes: 'prefilled' } },
+      metadata: { source: 'test' },
+    });
+    expect(calls).toHaveLength(1);
+    expect(calls[0]![0]).toMatchObject({ header: 'Approach', multiSelect: false });
+    expect(result.content[0].text).toContain('"Which approach?" = "Safe"');
+    expect(result.content[0].text).not.toContain('"Fast"');
   });
 });
 

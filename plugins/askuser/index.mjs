@@ -10,36 +10,28 @@ import { Type } from 'typebox';
 const ok = (text) => ({ content: [{ type: 'text', text }], details: {} });
 const fail = (e) => ok(`Error: ${e instanceof Error ? e.message : String(e)}`);
 
-/** One selectable option — accept the SIMPLE form (a plain label string) or the rich form
- *  ({label, optional description}), so the model can send `["Blue","Green"]` and it just works. */
-const optionSchema = Type.Union(
-  [
-    Type.String({ description: 'A choice label, e.g. "Blue".' }),
-    Type.Object({
-      label: Type.String({ description: 'Display text (1-5 words, concise).' }),
-      description: Type.Optional(Type.String({ description: 'Optional one-line explanation of the choice.' })),
-      preview: Type.Optional(Type.String({
-        description: 'Optional monospace content shown beside the list when this option is focused — an ASCII '
-          + 'mockup, a code snippet, a diagram. Use it when the choice is something the user should SEE rather '
-          + 'than read about (UI layouts, API shapes, config). Single-select questions only; newlines are kept.',
-      })),
-    }),
-  ],
-  { description: 'Either a plain string label, or an object {label, description?, preview?}.' },
-);
-
-/** One question, mirroring opencode's structured question schema. ONLY `question` + `options` are
- *  required — everything else defaults sensibly, and each option may be a bare string. Deliberately
- *  forgiving so the tool never bounces on a minimal, obvious call. `multiSelect` is the legacy alias
- *  of `multiple`, still accepted for backward compatibility. */
-const questionSchema = Type.Object({
-  question: Type.String({ description: 'A clear, specific question ending with "?". Put the choices in `options`; do NOT number them in the text.' }),
-  options: Type.Array(optionSchema, { minItems: 2, maxItems: 25, description: '2–25 distinct choices — a plain string each (e.g. "Blue"), or {label, description?}. For single-select, make them mutually exclusive. Put the safest/recommended option first. Do not add an "Other" option; free text is offered automatically unless `custom` is false.' }),
-  header: Type.Optional(Type.String({ description: 'Very short label (max 30 chars), e.g. "Colour". Defaults to the start of the question.' })),
-  multiple: Type.Optional(Type.Boolean({ description: 'Optional — true lets the user select multiple choices. Default false (pick one).' })),
-  multiSelect: Type.Optional(Type.Boolean({ description: 'Deprecated alias of `multiple`.' })),
-  custom: Type.Optional(Type.Boolean({ description: 'Allow typing a custom free-text answer (default: true). Set false only when the answer must be one of the options.' })),
+const canonicalOptionSchema = Type.Object({
+  label: Type.String({ description: 'Concise display label (1-5 words).' }),
+  description: Type.String({ description: 'Explanation of the choice and its trade-offs.' }),
+  preview: Type.Optional(Type.String({ description: 'Optional markdown preview for a single-select visual comparison.' })),
 });
+
+const questionSchema = Type.Object({
+  question: Type.String({ description: 'The complete, clear, specific question, normally ending with "?".' }),
+  header: Type.String({ maxLength: 12, description: 'Very short chip label (max 12 characters).' }),
+  options: Type.Array(canonicalOptionSchema, {
+    minItems: 2,
+    maxItems: 4,
+    description: '2-4 distinct rich choices. Do not add an Other option; the UI provides it automatically.',
+  }),
+  multiSelect: Type.Boolean({ description: 'Whether the user may select multiple options.' }),
+  custom: Type.Optional(Type.Boolean({ description: 'Elowen feature: whether the user may type a custom answer (default true).' })),
+});
+const annotationsSchema = Type.Record(Type.String(), Type.Object({
+  preview: Type.Optional(Type.String()),
+  notes: Type.Optional(Type.String()),
+}));
+const metadataSchema = Type.Object({ source: Type.Optional(Type.String()) });
 
 /** Coerce a loosely-shaped question into the canonical {question, header, multiSelect, custom,
  *  options:[{label, description?}]} the clients render — bare-string options become {label}, a missing
@@ -87,32 +79,17 @@ export function register(ctx) {
     name: 'AskUserQuestion',
     label: 'Ask the user',
     description:
-      'Ask the user one or more structured questions and WAIT for their answer before continuing. It shows '
-      + 'clickable choices and pauses the turn until they pick.\n'
-      + 'Use it ONLY when you are blocked on a decision that is genuinely the user\'s to make — one you cannot '
-      + 'resolve from the request, the codebase, the environment, or a sensible default. Reserve it for choices '
-      + 'where their answer changes what you do next. If the choice is reversible and low-stakes, make the most '
-      + 'reasonable assumption, say so in one line, and carry on. Never ask "Should I proceed?" — if you can act, act.\n'
-      + 'When you do ask, give a recommendation rather than an open question: put the safest option FIRST and '
-      + 'mark it in its description (e.g. "recommended"), so the user can one-click it. Keep labels to 1-5 words '
-      + 'and put the trade-offs in each option\'s `description`. Bundle related decisions into one call (up to 4 '
-      + 'questions) instead of asking them one after another.\n'
-      + 'Only `question` and `options` are required; an option may be a plain string. `header` (≤30 chars) is a '
-      + 'short chip label, `multiple` lets the user pick several, and `custom` (default true) offers a free-text '
-      + 'answer — set it false only when the answer MUST be one of the options. Never add an "Other" option '
-      + 'yourself; free text is offered automatically.\n'
-      + 'Give an option a `preview` (monospace: an ASCII mockup, a code snippet, a diagram) when the user needs '
-      + 'to SEE the choice rather than read about it — comparing UI layouts, API shapes or config. The picker '
-      + 'then shows the focused option\'s preview beside the list. Single-select only; do not use previews for '
-      + 'plain preference questions where the labels already say it.\n'
-      + 'The question is rendered wherever the user actually is — the CLI picker, the web form, Discord '
-      + 'buttons or a numbered WhatsApp reply — and the turn stays parked until they answer, so do not use '
-      + 'it in unattended work (a scheduled job or a task worker has nobody to click). You get back one '
-      + '"question" = "answer" line per question, with multiple picks and any free-text answer joined by '
-      + 'commas; a question with fewer than 2 options or an empty text is rejected.\n'
-      + 'Minimal example: {"questions":[{"question":"Which colour?","options":["Blue","Green","Red"]}]}',
+      'Ask the user one to four structured questions and wait for the answer. Use this only for a decision that '
+      + 'cannot be resolved from the request, code, environment, convention, or a reversible default. Each '
+      + 'canonical question requires question, a header of at most 12 characters, 2-4 rich options with label '
+      + 'and description, and multiSelect. Put the recommended option first. Do not add Other because the UI '
+      + 'provides custom input automatically. Preview is for single-select visual comparisons only. Optional '
+      + 'answers, annotations, and metadata are transport fields; supplied answers never skip the interactive prompt.',
     parameters: Type.Object({
-      questions: Type.Array(questionSchema, { minItems: 1, maxItems: 4, description: '1–4 questions asked together.' }),
+      questions: Type.Array(questionSchema, { minItems: 1, maxItems: 4, description: '1-4 questions asked together.' }),
+      answers: Type.Optional(Type.Record(Type.String(), Type.String(), { description: 'Answers collected by a permission component.' })),
+      annotations: Type.Optional(annotationsSchema),
+      metadata: Type.Optional(metadataSchema),
     }),
     execute: async (_id, p) => {
       try {
