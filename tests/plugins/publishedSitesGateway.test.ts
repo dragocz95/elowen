@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { createPublishedSitesGatewayControl } from '../../src/privileged/publishedSitesGateway.js';
+import {
+  createPublishedSitesGatewayControl,
+  siteGatewayHelperTimeoutMs,
+} from '../../src/privileged/publishedSitesGateway.js';
 
 const TOKEN = 'a'.repeat(43);
 
@@ -16,6 +19,39 @@ describe('published sites gateway control', () => {
     const control = createPublishedSitesGatewayControl({ publicWebUrl: 'http://127.0.0.1:4500', invoke });
     expect(await control.status()).toEqual(expect.objectContaining({ available: false, active: false }));
     expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it('publishes the exact environment readiness and provisioning control shape', async () => {
+    const invoke = vi.fn(async (request: { op: string }) => ({
+      ok: true,
+      ready: true,
+      items: [{ id: 'package:podman', label: 'Podman', ok: true, detail: 'installed' }],
+      detail: request.op,
+    }));
+    const audit = { info: vi.fn(), warn: vi.fn() };
+    const control = createPublishedSitesGatewayControl({ publicWebUrl: 'https://agent.example.com', invoke, audit });
+
+    expect(await control.environmentsStatus()).toEqual({
+      ready: true,
+      items: [{ id: 'package:podman', label: 'Podman', ok: true, detail: 'installed' }],
+      detail: 'environments-status',
+    });
+    expect(await control.provisionEnvironments()).toEqual(expect.objectContaining({ ready: true }));
+    expect(invoke.mock.calls.map(([request]) => request)).toEqual([
+      { op: 'environments-status' },
+      { op: 'environments-provision' },
+    ]);
+    expect(audit.info).toHaveBeenCalledTimes(2);
+    expect(audit.warn).not.toHaveBeenCalled();
+    expect('environmentSupportStatus' in control).toBe(false);
+    expect('installEnvironmentSupport' in control).toBe(false);
+  });
+
+  it('routes only certificate issuance and environment provisioning to extended bounded timeouts', () => {
+    expect(siteGatewayHelperTimeoutMs({ op: 'status' })).toBe(30_000);
+    expect(siteGatewayHelperTimeoutMs({ op: 'ensure-site', slug: 'alpha', email: 'ops@example.com', gatewayToken: TOKEN })).toBe(6 * 60_000);
+    expect(siteGatewayHelperTimeoutMs({ op: 'environments-provision' })).toBe(12 * 60_000);
+    expect(siteGatewayHelperTimeoutMs({ op: 'environments-status' })).toBe(30_000);
   });
 
   it('asks the helper for one site at a time, by slug, over the bounded protocol', async () => {

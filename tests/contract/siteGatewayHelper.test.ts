@@ -63,6 +63,8 @@ describe('root-owned published-sites gateway helper', () => {
     }
     expect(config).toContain('proxy_set_header X-Elowen-Site-Gateway "');
     expect(config).toContain('proxy_set_header Authorization "";');
+    expect(config).toContain('client_max_body_size 1m;');
+    expect(config).not.toContain('client_max_body_size 64m;');
     expect(config).not.toContain('$elowen_site_slug');
     expect(() => renderActiveConfig(deployment, TOKEN, ['../etc'])).toThrow(/slug/);
     expect(() => renderActiveConfig(deployment, 'short', ['alpha'])).toThrow(/token/);

@@ -1,22 +1,33 @@
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
-import type { PublishedSitesGatewayControl, PublishedSitesGatewayStatus } from '../plugins/api.js';
+import type {
+  PublishedSitesEnvironmentItem,
+  PublishedSitesEnvironmentStatus,
+  PublishedSitesGatewayControl,
+  PublishedSitesGatewayStatus,
+} from '../plugins/api.js';
+import { logger, type Logger } from '../shared/logger.js';
 import { SITE_GATEWAY_HELPER_PATH, SITE_RUNTIME_SOCKET_ROOT } from '../shared/siteGateway.js';
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const HELPER_TIMEOUT_MS = 30_000;
 /** Issuance talks to a certificate authority over the network, so it gets its own budget. */
 const ISSUE_TIMEOUT_MS = 6 * 60_000;
+/** A bounded apt transaction may need repository metadata and package downloads. */
+const ENVIRONMENT_PROVISION_TIMEOUT_MS = 12 * 60_000;
+const auditLog = logger('published-sites-gateway');
 const SAFE_SLUG = /^[a-z0-9][a-z0-9-]{1,63}$/;
 const SAFE_EMAIL = /^[^\s@]{1,64}@[a-z0-9][a-z0-9.-]{0,252}[a-z0-9]$/i;
 const SAFE_TOKEN = /^[A-Za-z0-9_-]{43,128}$/;
 
-type HelperRequest =
+export type SiteGatewayHelperRequest =
   | { op: 'sync-sites'; gatewayToken: string }
   | { op: 'ensure-site'; slug: string; email: string; gatewayToken: string }
   | { op: 'remove-site'; slug: string; gatewayToken: string }
   | { op: 'deny' }
   | { op: 'status' }
+  | { op: 'environments-status' }
+  | { op: 'environments-provision' }
   | { op: 'prepare-runtime-socket'; siteId: string }
   | { op: 'seal-runtime-socket'; siteId: string }
   | { op: 'remove-runtime-socket'; siteId: string };
@@ -25,12 +36,20 @@ interface HelperResponse {
   ok: boolean;
   active?: boolean;
   hostnameBase?: string | null;
+  ready?: boolean;
+  items?: unknown[];
   detail?: string;
   socketPath?: string;
   slugs?: string[];
 }
 
-export type SiteGatewayHelperInvoker = (request: HelperRequest) => Promise<HelperResponse>;
+export type SiteGatewayHelperInvoker = (request: SiteGatewayHelperRequest) => Promise<HelperResponse>;
+
+export function siteGatewayHelperTimeoutMs(request: SiteGatewayHelperRequest): number {
+  if (request.op === 'ensure-site') return ISSUE_TIMEOUT_MS;
+  if (request.op === 'environments-provision') return ENVIRONMENT_PROVISION_TIMEOUT_MS;
+  return HELPER_TIMEOUT_MS;
+}
 
 function hostnameBase(publicWebUrl: string | null): string | null {
   if (!publicWebUrl) return null;
@@ -43,7 +62,7 @@ function hostnameBase(publicWebUrl: string | null): string | null {
   }
 }
 
-function defaultInvoker(request: HelperRequest): Promise<HelperResponse> {
+function defaultInvoker(request: SiteGatewayHelperRequest): Promise<HelperResponse> {
   if (!existsSync(SITE_GATEWAY_HELPER_PATH)) {
     return Promise.reject(new Error('the site gateway helper is not installed'));
   }
@@ -98,7 +117,7 @@ function defaultInvoker(request: HelperRequest): Promise<HelperResponse> {
     const timer = setTimeout(() => {
       child.kill('SIGKILL');
       finish(new Error('the site gateway helper timed out'));
-    }, request.op === 'ensure-site' ? ISSUE_TIMEOUT_MS : HELPER_TIMEOUT_MS);
+    }, siteGatewayHelperTimeoutMs(request));
     timer.unref?.();
     child.stdin.end(JSON.stringify(request));
   });
@@ -108,17 +127,37 @@ function unavailable(detail: string): PublishedSitesGatewayStatus {
   return { available: false, active: false, hostnameBase: null, detail };
 }
 
+function environmentsUnavailable(detail: string): PublishedSitesEnvironmentStatus {
+  return { ready: false, items: [], detail };
+}
+
+function environmentItem(value: unknown): PublishedSitesEnvironmentItem | null {
+  if (!value || typeof value !== 'object') return null;
+  const item = value as Record<string, unknown>;
+  if (typeof item.id !== 'string' || !item.id || item.id.length > 80) return null;
+  if (typeof item.label !== 'string' || !item.label || item.label.length > 120) return null;
+  if (typeof item.ok !== 'boolean') return null;
+  return {
+    id: item.id,
+    label: item.label,
+    ok: item.ok,
+    ...(typeof item.detail === 'string' && item.detail ? { detail: item.detail.slice(0, 500) } : {}),
+  };
+}
+
 /** Build the narrow control published sites receive. Hostname and system paths never come from the
  * plugin: the hostname is derived from trusted install metadata here, while the root helper derives all
  * paths and the loopback upstream from its own root-owned deployment record. */
 export function createPublishedSitesGatewayControl(options: {
   publicWebUrl: string | null;
   invoke?: SiteGatewayHelperInvoker;
+  audit?: Pick<Logger, 'info' | 'warn'>;
 }): PublishedSitesGatewayControl {
   const base = hostnameBase(options.publicWebUrl);
   const invoke = options.invoke ?? defaultInvoker;
+  const audit = options.audit ?? auditLog;
 
-  const call = async (request: HelperRequest): Promise<PublishedSitesGatewayStatus> => {
+  const call = async (request: SiteGatewayHelperRequest): Promise<PublishedSitesGatewayStatus> => {
     if (!base) return unavailable('published sites require a trusted HTTPS domain deployment');
     try {
       const result = await invoke(request);
@@ -135,6 +174,23 @@ export function createPublishedSitesGatewayControl(options: {
       };
     } catch (error) {
       return unavailable(error instanceof Error ? error.message : String(error));
+    }
+  };
+
+  const environmentsCall = async (op: 'environments-status' | 'environments-provision'): Promise<PublishedSitesEnvironmentStatus> => {
+    try {
+      const result = await invoke({ op });
+      if (!result.ok) return environmentsUnavailable(result.detail || 'the site gateway helper refused the request');
+      const items = Array.isArray(result.items)
+        ? result.items.map(environmentItem).filter((item): item is PublishedSitesEnvironmentItem => item !== null)
+        : [];
+      return {
+        ready: result.ready === true && items.length > 0 && items.every((item) => item.ok),
+        items,
+        ...(typeof result.detail === 'string' && result.detail ? { detail: result.detail.slice(0, 500) } : {}),
+      };
+    } catch (error) {
+      return environmentsUnavailable(error instanceof Error ? error.message : String(error));
     }
   };
 
@@ -168,6 +224,15 @@ export function createPublishedSitesGatewayControl(options: {
     },
     deny: () => call({ op: 'deny' }),
     status: () => call({ op: 'status' }),
+    environmentsStatus: () => environmentsCall('environments-status'),
+    provisionEnvironments: async () => {
+      audit.info('published sites environment provisioning requested through the privileged control');
+      const result = await environmentsCall('environments-provision');
+      const failedItems = result.items.filter((item) => !item.ok).map((item) => item.id);
+      if (result.ready) audit.info('published sites environment provisioning completed');
+      else audit.warn('published sites environment provisioning remains incomplete', { failedItems });
+      return result;
+    },
     prepareRuntimeSocket: async (siteId) => ({ path: await socketCall('prepare-runtime-socket', siteId) }),
     sealRuntimeSocket: async (siteId) => { await socketCall('seal-runtime-socket', siteId); },
     removeRuntimeSocket: async (siteId) => { await socketCall('remove-runtime-socket', siteId); },
