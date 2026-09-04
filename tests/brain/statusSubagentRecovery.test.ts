@@ -113,6 +113,58 @@ describe('sub-agent recovery status projection', () => {
     expect(projectedSubagent(status)).toMatchObject({ sessionId: CHILD, status: 'running', task: 'queued' });
   });
 
+  it('names ONE state per child — its newest run — when a DelegateContinue row follows a finished Delegate row', () => {
+    // Production shape (4 Sep, parent brain-1-mrxd…): the same child has TWO run rows, the original Delegate
+    // (done, older) and a later DelegateContinue (recovering after the pause, newer, updated_at frozen at
+    // the SIGTERM time). The parent's loaded page holds only the older Delegate tool row, so the newer run
+    // arrives as a prepended synthetic anchor — and the CLI, keyed by child session, let the older row's
+    // `done` overwrite it. The read model must speak with one voice: the newest row, running.
+    const { db, store, status } = harness();
+    const CONTINUE_CALL = 'call-continue|fc_2';
+    store.setDelegationBootId('boot-old');
+    expect(store.upsertSubagentRun(PARENT, {
+      id: TOOL_CALL, sessionId: CHILD, status: 'done', task: 'first ask', tools: 40, seconds: 900,
+    })).toBe(true);
+    expect(store.upsertSubagentRun(PARENT, {
+      id: CONTINUE_CALL, sessionId: CHILD, status: 'running', task: 'continue: fix the blockers', tools: 3, seconds: 60,
+    })).toBe(true);
+    store.setDelegationBootId('boot-new');
+    expect(store.claimRecoverableRuns(30_000)).toHaveLength(1);
+    // The recovering row's updated_at stays frozen at the pause; the finished row was touched later
+    // (a late delivery acknowledgement). updated_at must not decide which row is the newest.
+    db.prepare("UPDATE brain_subagent_runs SET updated_at = '2020-01-01 00:00:00' WHERE tool_call_id = ?").run(CONTINUE_CALL);
+    db.prepare("UPDATE brain_subagent_runs SET updated_at = '2030-01-01 00:00:00' WHERE tool_call_id = ?").run(TOOL_CALL);
+
+    const states = status.messagesOf(1, PARENT)
+      .flatMap((message) => message.segments ?? [])
+      .filter((segment): segment is Extract<typeof segment, { kind: 'tool' }> => segment.kind === 'tool')
+      .map((segment) => segment.sub)
+      .filter((sub): sub is NonNullable<typeof sub> => !!sub && sub.sessionId === CHILD);
+    expect(states).toHaveLength(1);
+    expect(states[0]).toMatchObject({ status: 'running', task: 'continue: fix the blockers' });
+  });
+
+  it('a newer row stuck at display `running` under a terminal lifecycle must not hide the child: the older finished row speaks', () => {
+    // Production DB shape (27 pairs under brain-1-mrxd…): the DelegateContinue row's final upsert never
+    // landed, so its JSON status is still `running` while its lifecycle is `done` and nothing is live.
+    // The liveness filter hides that row; the child is finished and its older `done` row must survive
+    // — a "newest row wins, then filter" order lost 20 of 254 children from the page.
+    const { db, store, status } = harness();
+    const CONTINUE_CALL = 'call-continue|fc_3';
+    store.setDelegationBootId('boot-x');
+    expect(store.upsertSubagentRun(PARENT, { id: TOOL_CALL, sessionId: CHILD, status: 'done', task: 'first ask', tools: 40, seconds: 900 })).toBe(true);
+    expect(store.upsertSubagentRun(PARENT, { id: CONTINUE_CALL, sessionId: CHILD, status: 'running', task: 'continue', tools: 3, seconds: 60 })).toBe(true);
+    db.prepare("UPDATE brain_subagent_runs SET lifecycle = 'done', owner_boot_id = NULL WHERE tool_call_id = ?").run(CONTINUE_CALL);
+
+    const states = status.messagesOf(1, PARENT)
+      .flatMap((message) => message.segments ?? [])
+      .filter((segment): segment is Extract<typeof segment, { kind: 'tool' }> => segment.kind === 'tool')
+      .map((segment) => segment.sub)
+      .filter((sub): sub is NonNullable<typeof sub> => !!sub && sub.sessionId === CHILD);
+    expect(states).toHaveLength(1);
+    expect(states[0]).toMatchObject({ status: 'done', task: 'first ask' });
+  });
+
   it('renders recovery_required as a terminal error with the durable reason', () => {
     const { store, status } = harness();
     store.setDelegationBootId('boot-old');

@@ -22,6 +22,8 @@ function fakeBrain(sessionId: string, contributionUserId?: number) {
     messages,
     promptTemplates: [] as { name: string }[],
     prompt: vi.fn(async (t: string) => { messages.push({ role: 'assistant', content: `re: ${t}` }); }),
+    /** PI's continuation seam (src/brain/session/continueTurn.ts): no message, the next assistant follows. */
+    _runAgentPrompt: vi.fn(async () => { messages.push({ role: 'assistant', content: 'continued' }); }),
     steer: vi.fn(async () => {}),
     dispose: vi.fn(() => {}),
     getAllTools: () => [] as { name: string }[],
@@ -155,6 +157,35 @@ describe('a channel turn carries the same per-turn context as an owner chat', ()
     // Reasoning changes rebuild the same channel from durable rows. Those rows do not contain the first
     // turn's ephemeral orientation, so the fresh provider context must receive it again.
     await svc.send({ ...opts, thinkingLevel: 'high' }, 'after respawn');
+    expect(promptOf()).toContain('<post-compaction-context>');
+    expect(promptOf()).toContain('/workspace/src/room.ts (edited)');
+  });
+});
+
+describe('a continuation composes no prompt and commits no drain', () => {
+  it('leaves the post-compaction orientation pending for the next REAL prompt', async () => {
+    // MAJOR 2: the continuation used to compose the orientation / skills / recall blocks, throw the text
+    // away (nothing is sent) and still commit the drains — marking as delivered what the model never
+    // read. The orientation must survive untouched until a prompt actually carries it.
+    const { store, registry, svc, sessionId, opts, promptOf } = setup({}, 'discord-continuation');
+    store.createSession({ id: sessionId, userId: 1, model: 'kimi' });
+    await svc.send(opts, 'warm up');
+    // A compaction lands, then the daemon pauses mid-turn: the continuation is the first turn after it.
+    store.appendMessage({
+      id: 'div-cont', sessionId, parentId: null, role: 'compaction',
+      content: { role: 'compactionSummary', workingSet: [{ path: '/workspace/src/room.ts', wrote: true }] },
+    });
+    store.appendMessage({ id: 'u-cont', sessionId, parentId: null, role: 'user', content: { role: 'user', content: 'the interrupted question' } });
+    const brain = registry.channelGet('discord-continuation')!;
+    brain.session.messages.push({ role: 'user', content: 'the interrupted question' });
+    const before = brain.session.prompt.mock.calls.length;
+    const reply = await svc.send({ ...opts, internalSystem: { customType: 'restart-continue', resultId: 'rc-1', continuation: true } }, '');
+    expect(reply).toBe('continued');
+    expect(brain.session._runAgentPrompt).toHaveBeenCalledTimes(1);
+    expect(brain.session.prompt.mock.calls.length).toBe(before); // nothing composed, nothing prompted
+
+    // The orientation was NOT consumed by the continuation: the next real prompt still carries it.
+    await svc.send(opts, 'next real message');
     expect(promptOf()).toContain('<post-compaction-context>');
     expect(promptOf()).toContain('/workspace/src/room.ts (edited)');
   });

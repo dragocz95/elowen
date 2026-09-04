@@ -36,6 +36,7 @@ const DIVIDER = '┈┈┈┈┈┈┈┈┈┈'; // separates the tool trace fr
 export const UNRENDERED_EVENT_KINDS = Object.freeze([
   'tool_authoring', // a pre-execution hint; the matching `tool` event is what renders a trace row
   'compacted',      // drives a transcript REBUILD, which a chat surface does not hold
+  'resync',         // an order to refetch the snapshot after boot recovery; a room holds no snapshot
   'session',        // the adapter is told its session id out of band (turnOnEvent) before the turn runs
   'delivery',       // a sink-confirmation for scheduler plugins, not a message
   'workflow',       // no room rendering for a DAG panel yet — a room shows the delegating tool row instead

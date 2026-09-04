@@ -48,6 +48,8 @@ interface LiveStreamHandlers {
   user: (frame: { text: string; durableId?: string; images?: BrainMessageImage[]; createdAt?: string }) => void;
   discardUser: (frame: { durableId: string; text: string }) => void;
   compacted: () => void;
+  /** Boot recovery finished under this stream: refetch status and history as on a reconnect. */
+  resync: () => void;
   sessionEvent: () => void;
   diff: (diff: string) => void;
   toolOutput: (frame: { output: ToolOutputView; id?: string; plan?: string }) => void;
@@ -211,6 +213,7 @@ export function useBrainChatStream({ connectRef, getGeneration, setReady, setRec
     onFrame('user', (e) => handlers.user(JSON.parse((e as MessageEvent).data) as { text: string; durableId?: string; images?: BrainMessageImage[]; createdAt?: string }));
     onFrame('discard_user', (e) => handlers.discardUser(JSON.parse((e as MessageEvent).data) as { durableId: string; text: string }));
     onFrame('compacted', handlers.compacted);
+    onFrame('resync', handlers.resync);
     onFrame('session-event', handlers.sessionEvent);
     onFrame('diff', (e) => handlers.diff((JSON.parse((e as MessageEvent).data) as { diff: string }).diff));
     // Final tool output supersedes any live progress tail and may carry a submitted plan.

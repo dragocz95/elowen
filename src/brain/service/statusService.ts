@@ -1,3 +1,4 @@
+import type { BrainSubagentRun } from '../../store/brainDelegationStore.js';
 import { createAgentSession, SessionManager, DefaultResourceLoader } from '@earendil-works/pi-coding-agent';
 import type { BrainStore, BrainSearchHit, BrainMessageRow, BrainWorkflowRun } from '../../store/brainStore.js';
 import type { BrainRuntimeConfig } from '../providers.js';
@@ -167,6 +168,9 @@ function windowViews(all: BrainMessageView[], opts: MessagePageOpts): MessagePag
 
 interface StatusServiceDeps {
   store: BrainStore;
+  /** Whether a workflow claimed at boot is still waiting for (or inside) its resume — the boot's own word
+   *  on a DAG the engine has not been handed back yet, which outranks a probe that says "not held". */
+  workflowResumePending?: (workflowId: string) => boolean;
   /** The shared live-session state (owned by the BrainService facade). */
   sessions: LiveSessionRegistry<LiveBrain>;
   attachments: ClientAttachments;
@@ -206,8 +210,24 @@ export class BrainStatusService {
       ...this.d.sessions.childrenOf(sessionId),
       ...this.d.store.recoveringSubagentSessionIds(sessionId),
     ]);
-    return this.d.store.getSubagentRuns(sessionId)
-      .filter((run) => run.status !== 'running' || active.has(run.sessionId));
+    // ONE state per child: the NEWEST run row (by insertion, never updated_at) that the liveness filter
+    // KEEPS. A child continued after it finished (DelegateContinue, or a boot-claimed recovery of that
+    // continuation) has two rows, and every client projects sub-agent state by child session — two rows
+    // for one child is two voices, and whichever the client applied last won (a prepended synthetic
+    // anchor for the running row lost to the older row's terminal chip later in the page: a working
+    // sub-agent shown as done). Filtering FIRST matters: a newer row whose display state is still
+    // `running` while its lifecycle is long terminal (its final upsert never landed) is exactly what the
+    // filter hides, and hiding it must not take the older finished row down with it — the child was
+    // finished, and that is what the page should say.
+    const runs = this.d.store.getSubagentRuns(sessionId);
+    const newest = new Map<string, BrainSubagentRun>();
+    for (const run of runs) {
+      if (run.status === 'running' && !active.has(run.sessionId)) continue;
+      const current = newest.get(run.sessionId);
+      if (!current || run.rowid > current.rowid) newest.set(run.sessionId, run);
+    }
+    // The store's own order (updated_at) is what every other consumer sees; keep it here too.
+    return runs.filter((run) => newest.get(run.sessionId) === run);
   }
 
   /** The conversation's durable DAGs. Same read-time fallback as subagentRuns, but a TRANSFORM rather than
@@ -227,9 +247,18 @@ export class BrainStatusService {
   private workflowRuns(sessionId: string): BrainWorkflowRun[] {
     const sessionLive = this.d.sessions.has(sessionId)
       || (isChannelSession(sessionId) && !!this.d.sessions.channelGet(channelIdOf(sessionId)));
+    // What THIS boot is recovering is alive until the engine says otherwise. In the boot window (HTTP up,
+    // plugin registry still loading, the probe answering "unknown"; or loaded but the resume wave not yet
+    // reached this DAG) a snapshot used to terminalize the row for display — a client that reconnected
+    // right after the restart saw every node fail and the card vanish, while the engine resumed the
+    // workflow two seconds later. The claim is the boot's own word: the same rule
+    // recoveringSubagentSessionIds already gives a claimed delegation.
+    const recovering = new Set(this.d.store.recoveringWorkflowIds(sessionId));
     return this.d.store.getWorkflowRuns(sessionId).map((run) => {
       if (run.status !== 'running') return run;
-      const live = probeWorkflowLiveness(run.id) ?? sessionLive;
+      if (this.d.workflowResumePending?.(run.id)) return run;
+      const probe = probeWorkflowLiveness(run.id);
+      const live = probe ?? (recovering.has(run.id) || sessionLive);
       return live ? run : terminalizeWorkflow(run);
     });
   }

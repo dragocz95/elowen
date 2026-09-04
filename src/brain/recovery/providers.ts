@@ -48,7 +48,8 @@ export function createBootRecovery(host: BootRecoveryHost, log: RecoveryLog): Bo
   //  - the CLAIM (synchronous, cheap): the compare-and-swap on the owning boot id, which also decides
   //    which owner turns are waiting on a recovering child. The owner and platform sweeps depend on THIS —
   //    they read the claim set — and on nothing slower;
-  //  - the RUN (asynchronous, long): the respawns. Only the workflow resume is ordered after it.
+  //  - the RUN (asynchronous, long): the respawns. Nothing is ordered after it: every other sweep reads
+  //    the claim and runs alongside, and late results travel through the recovery's completion hook.
   // Registration order carries no meaning: the coordinator sequences both passes by these dependencies.
   coordinator.register<never>({
     id: 'delegations-claim',
@@ -82,9 +83,14 @@ export function createBootRecovery(host: BootRecoveryHost, log: RecoveryLog): Bo
     // (the resumed node re-issues the delegation itself), so the two claim sets have to be reconciled
     // against each other before either is handed out — that reconciliation is storage, and it stays in the
     // store-facing service where it already lives.
-    dependsOn: ['delegations'],
+    //
+    // On the CLAIM, not the RUN. The reconciliation is finished once the claim pass is, and nothing a
+    // generic respawn produces is owed to a DAG: a delegation under a workflow node was superseded, not
+    // claimed. Waiting for the run held a claimed workflow idle for as long as the longest UNRELATED
+    // respawn's whole turn — the DAG showed "running" with no node moving, right after a restart.
+    dependsOn: ['delegations-claim'],
     claim: () => host.claimWorkflowRecovery(),
-    // Serial, and after the generic respawns above, so their durable results are queued first.
+    // Serial: one engine, and a DAG's own nodes fan out inside it.
     resume: (workflow) => host.resumeWorkflow(workflow),
   });
 

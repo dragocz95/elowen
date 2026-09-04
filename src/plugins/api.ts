@@ -1040,6 +1040,14 @@ export interface WorkflowRecoveryControl {
       emit: (update: WorkflowUpdate) => void;
       complete: (completion: WorkflowCompletion) => void;
       stopChild: (childSessionId: string) => Promise<{ stopped: boolean }>;
+      /** Finish a node's child the way a restart finishes any delegated child, instead of prompting it
+       *  with its task again: `answered` when its transcript already ended on a final answer (that text
+       *  is the node's result, no model call), `continued` when its interrupted turn was continued
+       *  silently over `[interrupted]` tool results (the reply is the continuation's answer), `empty` when
+       *  there is nothing to continue over — the engine then launches the node as a fresh prompt. The
+       *  events are the same live progress a fresh spawn streams (`session`, `tool`, `step`, `idle`). */
+      continueNode: (childSessionId: string, onEvent?: (e: { type: string; name?: string; sessionId?: string; detail?: string; usage?: { totalTokens?: number } }) => void)
+        => Promise<{ outcome: 'answered' | 'continued'; reply: string } | { outcome: 'empty' }>;
       /** The journal lives on DISK, writable by the same uid the agent's tools run as, so a boundary read
        *  from it is UNTRUSTED authority. Core re-validates every journaled boundary (the workflow's
        *  parentAccess and each dynamically-added node's) against the origin user's authority AS IT STANDS

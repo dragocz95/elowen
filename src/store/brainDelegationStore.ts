@@ -27,6 +27,9 @@ interface BrainSubagentRunState {
 export interface BrainSubagentRun extends BrainSubagentRunState {
   toolCallId: string;
   sessionId: string;
+  /** Insertion order of the run row — the only honest "which run of this child is newest" (a
+   *  boot-claimed `recovering` row keeps the pause's updated_at for as long as its respawn runs). */
+  rowid: number;
   /** The delegated child's existing brain_sessions.created_at value. */
   startedAt?: string;
   /** The run sidecar's existing brain_subagent_runs.updated_at value. */
@@ -382,7 +385,7 @@ export class BrainDelegationStore {
   getSubagentRuns(parentSessionId: string): BrainSubagentRun[] {
     const rows = this.db.prepare(
       `SELECT r.tool_call_id, r.child_session_id, r.state, c.created_at AS started_at,
-              r.updated_at, x.delivery_state
+              r.updated_at, x.delivery_state, r.rowid AS rowid
          FROM brain_subagent_runs r
          JOIN brain_sessions p ON p.id = r.parent_session_id
          JOIN brain_sessions c ON c.id = r.child_session_id
@@ -394,6 +397,7 @@ export class BrainDelegationStore {
         ORDER BY r.updated_at ASC, r.rowid ASC`
     ).all(parentSessionId) as {
       tool_call_id: string; child_session_id: string; state: string;
+      rowid: number;
       started_at: string; updated_at: string; delivery_state: string | null;
     }[];
     const out: BrainSubagentRun[] = [];
@@ -403,12 +407,27 @@ export class BrainDelegationStore {
       const state = normalizeSubagentState(parsed);
       if (state) out.push({
         toolCallId: row.tool_call_id, sessionId: row.child_session_id, ...state,
-        startedAt: row.started_at, updatedAt: row.updated_at,
+        startedAt: row.started_at, updatedAt: row.updated_at, rowid: row.rowid,
         ...(row.delivery_state === 'pending' || row.delivery_state === 'acknowledged'
           ? { resultDelivery: row.delivery_state } : {}),
       });
     }
     return out;
+  }
+
+  /** Workflow ids THIS boot owns: rows it claimed for resume at boot, and rows the engine stamped with this
+   *  boot while running. A read-model liveness source, the workflow twin of recoveringSubagentSessionIds:
+   *  in the window between the HTTP boot and the engine's resume (the plugin registry is still loading,
+   *  the liveness probe answers "unknown") such a row is being recovered, not dead, and must not be
+   *  terminalized for display. A previous boot's row stays out: nothing of this process holds it. */
+  recoveringWorkflowIds(parentSessionId: string): string[] {
+    const cur = this.bootId;
+    if (!cur) return [];
+    return (this.db.prepare(
+      `SELECT workflow_id FROM brain_workflows
+        WHERE parent_session_id = ? AND owner_boot_id = ?
+          AND json_valid(state) AND json_extract(state, '$.status') = 'running'`
+    ).all(parentSessionId, cur) as { workflow_id: string }[]).map((row) => row.workflow_id);
   }
 
   /** Child sessions THIS boot still durably owns during restart recovery. This is a read-model liveness
@@ -919,6 +938,11 @@ export class BrainDelegationStore {
       // mid-turn tool result from a crash is not proof that the parent turn completed and still needs normal
       // recovery. This is boot-time, read-derived healing, so existing databases repair themselves without a
       // migration or a one-shot live data write.
+      //
+      // A synthetic `[interrupted]` result (details.interrupted) is the one settled toolResult that proves
+      // the OPPOSITE: the pause wrote it in place of an answer that never came, and it promises the parent
+      // the child resumes. Counting it as "this call already returned" healed the run to `error` on the
+      // NEXT restart, nobody respawned the child, and the parent sat on a promise with no worker behind it.
       this.db.prepare(
         `UPDATE brain_subagent_runs AS r
             SET lifecycle = CASE WHEN EXISTS (
@@ -926,6 +950,7 @@ export class BrainDelegationStore {
                    WHERE m.session_id = r.parent_session_id AND m.pending = 0 AND json_valid(m.content)
                      AND json_extract(m.content, '$.role') = 'toolResult'
                      AND json_extract(m.content, '$.toolCallId') = r.tool_call_id
+                     AND COALESCE(json_extract(m.content, '$.details.interrupted'), 0) = 0
                      AND json_extract(m.content, '$.isError') = 1
                 ) THEN 'error' ELSE 'done' END,
                 state = CASE WHEN json_valid(state) THEN json_set(
@@ -934,6 +959,7 @@ export class BrainDelegationStore {
                      WHERE m.session_id = r.parent_session_id AND m.pending = 0 AND json_valid(m.content)
                        AND json_extract(m.content, '$.role') = 'toolResult'
                        AND json_extract(m.content, '$.toolCallId') = r.tool_call_id
+                       AND COALESCE(json_extract(m.content, '$.details.interrupted'), 0) = 0
                        AND json_extract(m.content, '$.isError') = 1
                   ) THEN 'error' ELSE 'done' END
                 ) ELSE state END,
@@ -948,6 +974,7 @@ export class BrainDelegationStore {
                WHERE m.session_id = r.parent_session_id AND m.pending = 0 AND json_valid(m.content)
                  AND json_extract(m.content, '$.role') = 'toolResult'
                  AND json_extract(m.content, '$.toolCallId') = r.tool_call_id
+                 AND COALESCE(json_extract(m.content, '$.details.interrupted'), 0) = 0
             )`
       ).run();
       this.db.prepare(

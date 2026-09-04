@@ -11,7 +11,7 @@
 // bound plus the time from boot to the first resumed model request — the two numbers the redesign is for.
 
 import Database from 'better-sqlite3';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnRealDaemon } from '../brain-e2e/spawn-daemon.mjs';
 import { MARKERS, startRecoveryModel } from './model.mjs';
@@ -41,8 +41,12 @@ async function waitFor(label, read, deadlineMs = DEADLINE_MS) {
     if (last) return last;
     await pause(50);
   }
-  throw new Error(`timed out waiting for ${label}; last observation: ${typeof last === 'string' ? last : JSON.stringify(last)}`);
+  // The daemon logs to ELOWEN_LOG_DIR, not stdout: attach its tail, or a timeout explains nothing.
+  const tail = currentDaemon ? daemonLog(currentDaemon).split('\n').filter((line) => /ERROR|WARN|DBG|recover|resume|continu|parked/.test(line)).slice(-25).join('\n') : '';
+  throw new Error(`timed out waiting for ${label}; last observation: ${typeof last === 'string' ? last : JSON.stringify(last)}\n--- daemon log (filtered tail) ---\n${tail}`);
 }
+/** The scenario's daemon, for diagnostics on a timeout. */
+let currentDaemon = null;
 
 function rows(dataDir, sql, params = []) {
   const db = new Database(`${dataDir}/elowen.db`, { readonly: true });
@@ -107,6 +111,14 @@ function wireOrderProblems(messages) {
 function hasEmptyAssistant(messages) {
   return (Array.isArray(messages) ? messages : []).some((message) => message.role === 'assistant'
     && !(message.tool_calls?.length) && !(typeof message.content === 'string' ? message.content.trim() : JSON.stringify(message.content ?? '').length > 2));
+}
+
+/** The silent resume's two invariants, asserted per scenario: no request the model received and no row of
+ *  any transcript announces the restart (the old resume notes), and no `restart-resume` custom row exists. */
+function checkSilentResume(label, daemon, model) {
+  check(`${label}: no restart note reached the model in any request`, model.resumeNotesSeen() === 0, `notes seen=${model.resumeNotesSeen()}`);
+  const noted = rows(daemon.dataDir, "SELECT session_id FROM brain_messages WHERE content LIKE '%The daemon restarted%' OR content LIKE '%restart-resume%' OR content LIKE '%restart-continue%'", []);
+  check(`${label}: no restart note or resume custom row in any transcript`, noted.length === 0, JSON.stringify(noted));
 }
 
 /** Assert the restart was a PAUSE (own exit, no SIGKILL, inside the bound) and record its numbers. */
@@ -179,7 +191,7 @@ async function scenarioBackgroundRecovery() {
   });
   let daemon = null;
   try {
-    daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'recovery-bg' });
+    daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'recovery-bg' }); currentDaemon = daemon;
     const token = daemon.token;
     await enableRunner(daemon, token);
     const run = await startDelegation({ daemon, token, task: MARKERS.backgroundTask });
@@ -197,12 +209,25 @@ async function scenarioBackgroundRecovery() {
       return found.length === 1 ? found[0] : null;
     });
     const payload = JSON.parse(inbox.payload);
-    const recoveredRequests = model.childRequests().filter((request) => JSON.stringify(request.body).includes('The daemon restarted and interrupted you mid-task.'));
+    const restartAt = daemon.lastRestart().bootAt;
+    const recoveredRequests = model.childRequests().filter((request) => request.at > restartAt);
     checkPause('background', daemon, recoveredRequests[0]?.at);
 
-    check('boot recovery respawned the child exactly once', terminal.attempt === 1 && model.childRequests().length === 2,
+    check('boot recovery continued the child exactly once', terminal.attempt === 1 && model.childRequests().length === 2,
       `attempt=${terminal.attempt}; child requests=${model.childRequests().length}`);
-    check('the respawn carried the recovery instruction', recoveredRequests.length === 1);
+    // SILENT: the continuation request is the SAME context the child was working in — no note, no new
+    // message of any role appended behind the task it was given.
+    const before = model.childRequests()[0]?.body?.messages ?? [];
+    const after = recoveredRequests[0]?.body?.messages ?? [];
+    // Same roles in the same order, the task still the last user message, and NOTHING appended. (The
+    // ambient before-user context block is composed per prompt, never persisted, so it is the one part
+    // of the user message a rehydrated continuation does not carry — nothing to do with the resume.)
+    const roles = (messages) => messages.filter((m) => m.role !== 'system').map((m) => m.role);
+    check('the continuation replays exactly the interrupted context (no message appended)', recoveredRequests.length === 1
+      && JSON.stringify(roles(after)) === JSON.stringify(roles(before)) && roles(after).at(-1) === 'user'
+      && JSON.stringify(after.at(-1)?.content ?? '').includes(MARKERS.backgroundTask),
+      `before=${JSON.stringify(roles(before))} after=${JSON.stringify(roles(after))}`);
+    checkSilentResume('background', daemon, model);
     check('no empty assistant message reaches the provider on the respawn', !hasEmptyAssistant(recoveredRequests[0]?.body?.messages));
     check('the original run is terminal done', terminal.lifecycle === 'done' && JSON.parse(terminal.state).status === 'done');
     check('the inbox contains the child\'s actual recovered answer', inbox.status === 'done' && payload.result?.includes(MARKERS.backgroundResult), JSON.stringify(payload));
@@ -232,7 +257,7 @@ async function scenarioForegroundRecovery() {
   });
   let daemon = null;
   try {
-    daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'recovery-fg' });
+    daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'recovery-fg' }); currentDaemon = daemon;
     const token = daemon.token;
     await enableRunner(daemon, token);
     const run = await startDelegation({ daemon, token, task: MARKERS.foregroundTask });
@@ -251,7 +276,7 @@ async function scenarioForegroundRecovery() {
       return found.length === 1 ? found[0] : null;
     });
     const payload = JSON.parse(inbox.payload);
-    const recovered = model.childRequests().find((request) => JSON.stringify(request.body).includes('The daemon restarted and interrupted you'));
+    const recovered = model.childRequests().find((request) => request.at > daemon.lastRestart().bootAt);
     checkPause('foreground', daemon, recovered?.at);
 
     check('the pause wrote the park marker for the owner turn blocked on its Delegate', parkedAtBoot);
@@ -269,8 +294,7 @@ async function scenarioForegroundRecovery() {
     check('the foreground parent got the result as its continuation', !!delivered);
     const parentWire = wireOrderProblems(Array.isArray(delivered?.body?.messages) ? delivered.body.messages : []);
     check('the parent continuation payload is a valid provider wire order', parentWire.length === 0, parentWire.join('; '));
-    check('no generic restart continuation was injected into the parent', !model.requests.some((request) =>
-      JSON.stringify(request.body).includes('The daemon restarted and interrupted this conversation')));
+    checkSilentResume('foreground', daemon, model);
     const parentTail = rows(daemon.dataDir, 'SELECT content FROM brain_messages WHERE session_id = ? ORDER BY rowid ASC', [run.parent_session_id])
       .map((entry) => String(entry.content));
     // Either shape is right, and which one appears depends on the race between the child's respawn and
@@ -294,7 +318,7 @@ async function scenarioInterruptedToolRecovery() {
   });
   let daemon = null;
   try {
-    daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'recovery-unsafe' });
+    daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'recovery-unsafe' }); currentDaemon = daemon;
     const token = daemon.token;
     await enableRunner(daemon, token);
     const run = await startDelegation({ daemon, token, task: MARKERS.unsafeTask });
@@ -311,11 +335,16 @@ async function scenarioInterruptedToolRecovery() {
     const terminal = await waitFor('the interrupted run to complete', () => row(daemon.dataDir,
       `SELECT lifecycle, attempt, state FROM brain_subagent_runs
        WHERE parent_session_id = ? AND tool_call_id = ? AND lifecycle = 'done'`, [run.parent_session_id, run.tool_call_id]));
-    const respawn = model.childRequests().find((request) => JSON.stringify(request.body).includes('The daemon restarted and interrupted you mid-step'));
+    const respawn = model.childRequests().find((request) => request.at > daemon.lastRestart().bootAt);
     checkPause('interrupted-tool', daemon, respawn?.at);
 
-    check('the child was respawned exactly once, with the interrupted-step instruction', !!respawn && model.childRequests().length === 2,
+    check('the child was continued exactly once, with no instruction of any kind', !!respawn && model.childRequests().length === 2,
       `child requests=${model.childRequests().length}`);
+    checkSilentResume('interrupted-tool', daemon, model);
+    // The continuation's last message IS the interrupted result: the explanation sits inside it.
+    const lastOnWire = respawn?.body?.messages?.at(-1);
+    check('the continuation ends on the [interrupted] tool result, with the explanation inside it', lastOnWire?.role === 'tool'
+      && String(lastOnWire?.content).includes('interrupted by a daemon restart') && String(lastOnWire?.content).includes('Verify the current state before repeating'));
     // What the model saw: its own Bash call, answered with an [interrupted] error — never a silently
     // trimmed transcript, never a parked run waiting for a human.
     const respawnWire = wireOrderProblems(Array.isArray(respawn?.body?.messages) ? respawn.body.messages : []);
@@ -323,7 +352,7 @@ async function scenarioInterruptedToolRecovery() {
     check('no empty assistant message (an orphaned runner\'s abort fragment) reaches the provider', !hasEmptyAssistant(respawn?.body?.messages));
     const respawnBody = JSON.stringify(respawn?.body ?? {});
     check('the respawn context carries the Bash call and its [interrupted] answer', respawnBody.includes('call_recovery_')
-      && respawnBody.includes('[interrupted]') && respawnBody.includes('effect is unknown'));
+      && respawnBody.includes('[interrupted]') && respawnBody.includes('may or may not have taken effect'));
     const childRows = rows(daemon.dataDir, 'SELECT content, pending FROM brain_messages WHERE session_id = ? ORDER BY rowid ASC', [run.child_session_id]);
     check('the child transcript is settled with the synthetic result right behind the call', childRows.every((entry) => entry.pending === 0)
       && childRows.some((entry) => String(entry.content).includes('"toolResult"') && String(entry.content).includes('[interrupted]')));
@@ -348,7 +377,7 @@ async function scenarioOwnerTurnPause() {
   });
   let daemon = null;
   try {
-    daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'recovery-owner' });
+    daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'recovery-owner' }); currentDaemon = daemon;
     const token = daemon.token;
     const parentSessionId = await startParent(daemon.baseUrl, token);
     await post(daemon.baseUrl, token, '/brain/send', { text: `Do this: ${MARKERS.ownerBashTask}`, session: parentSessionId, mode: 'build' });
@@ -365,15 +394,17 @@ async function scenarioOwnerTurnPause() {
 
     await daemon.restart();
     const parked = daemonLog(daemon).includes(`parked for boot resume: ${parentSessionId}`);
-    const resumed = await waitFor('the resumed owner turn to reach the model', () => model.requests.find((request) =>
-      JSON.stringify(request.body).includes('The daemon restarted and interrupted this conversation')));
+    const resumed = await waitFor('the continued owner turn to reach the model', () => model.requests.find((request) =>
+      request.at > daemon.lastRestart().bootAt && JSON.stringify(request.body).includes('[interrupted]')));
     checkPause('owner-bash', daemon, resumed?.at);
+    checkSilentResume('owner-bash', daemon, model);
+    check('the continuation ends on the [interrupted] Bash result, nothing appended behind it', resumed?.body?.messages?.at(-1)?.role === 'tool');
 
     check('the pause parked the owner turn', parked);
     const wire = wireOrderProblems(Array.isArray(resumed?.body?.messages) ? resumed.body.messages : []);
     check('the resumed payload is a valid provider wire order (tool results behind their calls, no duplicate ids)', wire.length === 0, wire.join('; '));
     const body = JSON.stringify(resumed?.body ?? {});
-    check('the resumed turn sees its Bash call answered [interrupted]', body.includes('[interrupted]') && body.includes('effect is unknown'));
+    check('the resumed turn sees its Bash call answered [interrupted]', body.includes('[interrupted]') && body.includes('may or may not have taken effect'));
     // The queued message is NOT in the resumed context (that would put a user row between the Bash call
     // and its answer); it is replayed as its own turn AFTER the continuation, with a valid wire order.
     check('the resumed continuation does not carry the queued message inside the interrupted step', !body.includes(MARKERS.ownerSteer));
@@ -389,10 +420,10 @@ async function scenarioOwnerTurnPause() {
     const answer = await waitFor('the final owner answer to be stored', () => rows(daemon.dataDir,
       `SELECT content FROM brain_messages WHERE session_id = ? AND role = 'assistant' ORDER BY rowid DESC`, [parentSessionId])
       .find((entry) => String(entry.content).includes(MARKERS.ownerBashResult)) ?? null);
-    // Exactly one continuation turn: the note stays in the context of the replayed turn too, so count
-    // the requests that carry the note but not yet the replayed message.
+    // Exactly one continuation turn: one request after the restart ends on the interrupted result and
+    // does not yet carry the replayed message.
     check('the owner got the answer the pause interrupted, exactly once', !!answer && model.requests.filter((request) =>
-      JSON.stringify(request.body).includes('The daemon restarted and interrupted this conversation')
+      request.at > daemon.lastRestart().bootAt && request.body?.messages?.at(-1)?.role === 'tool'
       && !JSON.stringify(request.body).includes(MARKERS.ownerSteer)).length === 1);
   } finally {
     if (daemon) await daemon.stop();
@@ -442,12 +473,161 @@ async function scenarioLegacyMigration() {
   }
 }
 
+async function scenarioNestedRecovery() {
+  console.log('\n— 6: parent → child → grandchild across a restart: the grandchild\'s answer reaches the parent exactly once —');
+  const model = await startRecoveryModel({
+    task: MARKERS.foregroundTask,
+    result: MARKERS.nestedChildResult,
+    nested: true,
+  });
+  let daemon = null;
+  try {
+    daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'recovery-nested' }); currentDaemon = daemon;
+    const token = daemon.token;
+    await enableRunner(daemon, token);
+    const run = await startDelegation({ daemon, token, task: MARKERS.foregroundTask });
+    // The child delegates in turn; wait for the grandchild's durable row and its first model request.
+    const grand = await waitFor('the grandchild\'s durable running row', () => row(daemon.dataDir,
+      `SELECT parent_session_id, tool_call_id, child_session_id, lifecycle FROM brain_subagent_runs WHERE parent_session_id = ? AND lifecycle = 'running'`,
+      [run.child_session_id]));
+    await model.initialChildArrived;
+    check('three levels are in flight: parent turn, child waiting on its Delegate, grandchild mid-model-call',
+      run.lifecycle === 'running' && grand.lifecycle === 'running');
+
+    await daemon.restart();
+    const grandDone = await waitFor('the grandchild run to complete', () => row(daemon.dataDir,
+      `SELECT lifecycle, attempt FROM brain_subagent_runs WHERE parent_session_id = ? AND tool_call_id = ? AND lifecycle = 'done'`,
+      [grand.parent_session_id, grand.tool_call_id]));
+    const childDone = await waitFor('the child run to complete', () => row(daemon.dataDir,
+      `SELECT lifecycle, attempt, state FROM brain_subagent_runs WHERE parent_session_id = ? AND tool_call_id = ? AND lifecycle = 'done'`,
+      [run.parent_session_id, run.tool_call_id]));
+    const firstAfter = model.requests.find((request) => request.at > daemon.lastRestart().bootAt);
+    checkPause('nested', daemon, firstAfter?.at);
+    checkSilentResume('nested', daemon, model);
+
+    check('both levels recovered exactly once (leaves first)', grandDone.attempt === 1 && childDone.attempt === 1);
+    // The grandchild's answer was folded into the child's own Delegate call answer — and the inbox row it
+    // came from is acknowledged, not left for the drain to deliver a second time.
+    const childRows = rows(daemon.dataDir, 'SELECT content FROM brain_messages WHERE session_id = ? ORDER BY rowid ASC', [run.child_session_id]).map((r) => String(r.content));
+    check('the child\'s Delegate call carries the grandchild\'s answer as [interrupted, result recovered]',
+      childRows.some((c) => c.includes('"toolResult"') && c.includes(grand.tool_call_id) && c.includes('[interrupted, result recovered]') && c.includes(MARKERS.grandResult)));
+    const grandInbox = rows(daemon.dataDir, 'SELECT delivery_state FROM brain_subagent_results WHERE parent_session_id = ? AND tool_call_id = ?', [grand.parent_session_id, grand.tool_call_id]);
+    check('the folded grandchild result is acknowledged in the inbox (never redelivered)', grandInbox.length === 1 && grandInbox[0].delivery_state === 'acknowledged', JSON.stringify(grandInbox));
+    // The grandchild's answer reached the CHILD's context exactly once — never twice (fold + drain).
+    const childSawGrand = model.requests.filter((request) => {
+      const text = (Array.isArray(request.body?.messages) ? request.body.messages : []).map((m) => (typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''))).join('\n');
+      return text.includes(MARKERS.grandResult) && text.includes('<subagent-result');
+    });
+    check('no <subagent-result> delivery of the grandchild\'s answer to the child (the fold was the delivery)', childSawGrand.length === 0, `deliveries=${childSawGrand.length}`);
+    // And the child's answer reaches the PARENT exactly once.
+    const parentDeliveries = model.requests.filter((request) => JSON.stringify(request.body).includes('<subagent-result') && JSON.stringify(request.body).includes(MARKERS.nestedChildResult));
+    await waitFor('the parent to receive the child\'s answer', () => model.requests.find((request) => JSON.stringify(request.body).includes('<subagent-result') && JSON.stringify(request.body).includes(MARKERS.nestedChildResult)));
+    check('the parent received the child\'s answer exactly once', parentDeliveries.length <= 1 && model.requests.filter((request) => JSON.stringify(request.body).includes('<subagent-result') && JSON.stringify(request.body).includes(MARKERS.nestedChildResult)).length === 1);
+    check('the grandchild\'s answer does not reach the parent as a separate delivery', !model.requests.some((request) => JSON.stringify(request.body).includes(`<subagent-result id="restart-${run.child_session_id}`)));
+  } finally {
+    if (daemon) await daemon.stop();
+    await model.close();
+  }
+}
+
+async function scenarioWorkflowRecovery() {
+  console.log('\n— 7: a workflow node interrupted mid-tool-call is continued after the restart; its dependent runs; the summary reaches the parent once —');
+  const model = await startRecoveryModel({
+    task: MARKERS.workflowTask,
+    result: MARKERS.workflowNodeTwoResult,
+    workflow: true,
+  });
+  let daemon = null;
+  try {
+    daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'recovery-workflow' }); currentDaemon = daemon;
+    const token = daemon.token;
+    await enableRunner(daemon, token);
+    const nodesFile = join(daemon.dataDir, 'recovery-workflow.json');
+    writeFileSync(nodesFile, JSON.stringify({
+      title: 'recovery chain',
+      nodes: [
+        { id: 'one', task: MARKERS.workflowNodeOneTask },
+        { id: 'two', task: MARKERS.workflowNodeTwoTask, deps: ['one'] },
+      ],
+    }));
+    const parentSessionId = await startParent(daemon.baseUrl, token);
+    const sent = await post(daemon.baseUrl, token, '/brain/send', {
+      text: `Start this recovery scenario: ${MARKERS.workflowTask} nodesFile=${nodesFile}`,
+      session: parentSessionId,
+      mode: 'build',
+    });
+    if (sent?.accepted === false) throw new Error('parent turn was not accepted');
+    const nodeState = (state, id) => JSON.parse(state).nodes.find((node) => node.id === id);
+    const wf = await waitFor('a durable running workflow row with node one running', () => {
+      const found = row(daemon.dataDir, 'SELECT workflow_id, tool_call_id, state FROM brain_workflows WHERE parent_session_id = ?', [parentSessionId]);
+      return found && nodeState(found.state, 'one')?.status === 'running' && nodeState(found.state, 'one')?.sessionId ? found : null;
+    });
+    const nodeOneSession = nodeState(wf.state, 'one').sessionId;
+    await model.initialChildArrived;
+    const pending = await waitFor('the persisted unanswered Bash call of node one', () => rows(daemon.dataDir,
+      'SELECT content FROM brain_messages WHERE session_id = ? AND pending = 1 ORDER BY rowid ASC', [nodeOneSession])
+      .find((entry) => String(entry.content).includes('call_recovery_') && String(entry.content).includes('Bash')) ?? null);
+    const nodeOneRequests = () => model.requests.filter((request) => JSON.stringify(request.body).includes(MARKERS.workflowNodeOneTask)
+      && JSON.stringify(request.body).includes('You are a focused sub-agent'));
+    check('node one is mid-tool-call with a persisted Bash call and no workflow run row of its own', !!pending && nodeOneRequests().length === 1
+      && !row(daemon.dataDir, 'SELECT 1 AS x FROM brain_subagent_runs WHERE child_session_id = ?', [nodeOneSession]));
+    const journalDir = join(daemon.dataDir, 'plugins-data', 'subagent', 'workflows', 'state');
+    check('the engine journaled node one\'s session for the resume', readdirSync(journalDir).some((name) => name.startsWith(wf.workflow_id))
+      && readFileSync(join(journalDir, `${wf.workflow_id}.json`), 'utf8').includes(nodeOneSession));
+
+    await daemon.restart();
+    const done = await waitFor('the workflow to finish with both nodes done', () => {
+      const found = row(daemon.dataDir, 'SELECT state FROM brain_workflows WHERE parent_session_id = ? AND tool_call_id = ?', [parentSessionId, wf.tool_call_id]);
+      const state = found ? JSON.parse(found.state) : null;
+      return state?.status === 'done' && state.nodes.every((node) => node.status === 'done') ? state : null;
+    });
+    const bootAt = daemon.lastRestart().bootAt;
+    const continued = nodeOneRequests().filter((request) => request.at > bootAt);
+    checkPause('workflow', daemon, continued[0]?.at);
+    checkSilentResume('workflow', daemon, model);
+    check('node one was CONTINUED exactly once, never re-prompted with its task', continued.length === 1 && nodeOneRequests().length === 2,
+      `after-restart node-one requests=${continued.length}`);
+    const lastOnWire = continued[0]?.body?.messages?.at(-1);
+    check('the continuation ends on the [interrupted] Bash result — the same silent resume a delegation gets', lastOnWire?.role === 'tool'
+      && String(lastOnWire?.content).includes('[interrupted]') && String(lastOnWire?.content).includes('Verify the current state before repeating'));
+    const userTurns = (continued[0]?.body?.messages ?? []).filter((m) => m.role === 'user');
+    check('no second user message was appended to node one (the task was not sent again)', userTurns.length === 1, `user messages=${userTurns.length}`);
+    const wire = wireOrderProblems(Array.isArray(continued[0]?.body?.messages) ? continued[0].body.messages : []);
+    check('the continuation payload is a valid provider wire order', wire.length === 0, wire.join('; '));
+    check('node one kept its session across the restart', done.nodes.find((node) => node.id === 'one')?.sessionId === nodeOneSession);
+    check('node two ran AFTER node one finished, with node one\'s result as its context',
+      model.requests.some((request) => request.at > bootAt && JSON.stringify(request.body).includes(MARKERS.workflowNodeTwoTask))
+      && !model.requests.some((request) => JSON.stringify(request.body).includes(`${MARKERS.workflowNodeTwoResult}-MISSING-DEP`)));
+    const summaryDeliveries = () => model.requests.filter((request) => JSON.stringify(request.body).includes('<workflow-result')
+      && JSON.stringify(request.body).includes(MARKERS.workflowNodeTwoResult));
+    await waitFor('the parent to receive the workflow summary', () => summaryDeliveries()[0] ?? null);
+    const inbox = await waitFor('the workflow result to be acknowledged in the inbox', () => {
+      const found = resultRows(daemon.dataDir, parentSessionId, wf.tool_call_id);
+      return found.length === 1 && found[0].delivery_state === 'acknowledged' ? found[0] : null;
+    });
+    // Let any stray second delivery show up before counting.
+    await pause(1_500);
+    check('the summary reached the parent exactly once, in this boot', summaryDeliveries().length === 1 && inbox.status === 'done',
+      `deliveries=${summaryDeliveries().length}`);
+    check('the recovery journal was dropped once the workflow finished', !readdirSync(journalDir).some((name) => name.startsWith(wf.workflow_id)));
+  } finally {
+    if (daemon) await daemon.stop();
+    await model.close();
+  }
+}
+
+/** `RECOVERY_E2E_ONLY=1,7` runs a subset while iterating on one scenario; the default is the whole suite. */
+const SCENARIOS = [
+  scenarioBackgroundRecovery, scenarioForegroundRecovery, scenarioInterruptedToolRecovery, scenarioLegacyMigration,
+  scenarioOwnerTurnPause, scenarioNestedRecovery, scenarioWorkflowRecovery,
+];
+const only = new Set((process.env.RECOVERY_E2E_ONLY ?? '').split(',').map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0));
+
 async function main() {
-  await scenarioBackgroundRecovery();
-  await scenarioForegroundRecovery();
-  await scenarioInterruptedToolRecovery();
-  await scenarioLegacyMigration();
-  await scenarioOwnerTurnPause();
+  for (const [index, scenario] of SCENARIOS.entries()) {
+    if (only.size && !only.has(index + 1)) continue;
+    await scenario();
+  }
   console.log(`\nrestart timings (ms), ${USE_RUNNER ? 'sub-agent RUNNER' : 'in-process'} variant: SIGTERM→exit | boot→healthy | boot→first resumed model request`);
   for (const t of timings) {
     console.log(`  ${t.label.padEnd(18)} stop=${String(t.stopMs).padStart(5)}${t.forced ? ' (SIGKILL!)' : ''}  boot=${String(t.bootMs).padStart(5)}  resume=${t.resumeMs === null ? '   n/a' : String(t.resumeMs).padStart(6)}`);

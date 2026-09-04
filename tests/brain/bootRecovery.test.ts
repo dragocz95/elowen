@@ -221,8 +221,9 @@ describe('createBootRecovery', () => {
       // descendants), so a fleet of independent trees no longer serializes on one another.
       { id: 'delegations', dependsOn: ['delegations-claim'], parallel: true },
       // The workflow claim is taken by the delegation reconcile, and a delegation claimed under a claimed
-      // workflow's node session is superseded by that workflow's resume.
-      { id: 'workflows', dependsOn: ['delegations'], parallel: false },
+      // workflow's node session is superseded by that workflow's resume. On the CLAIM, not the run: a DAG
+      // gated on the respawn sweep sat idle for the whole turn of an unrelated child (production, 4 Sep).
+      { id: 'workflows', dependsOn: ['delegations-claim'], parallel: false },
       // Woken alongside the delegation RUN (not after it): a result that is already durable reaches its
       // owner at once, and a later one arrives through the recovery's completion hook. The dependency on
       // the claim is what makes the wait-on-delegation decision independent of registration order.
@@ -243,8 +244,29 @@ describe('createBootRecovery', () => {
     await coordinator.resumeAll();
     const resumed = trace.slice(4);
     expect(resumed.sort()).toEqual(['order:delegations', 'resume:conversations', 'resume:delegations', 'resume:platform', 'resume:workflows']);
-    // The one ordering that is load-bearing: a workflow resumes only after the delegation sweep.
-    expect(trace.indexOf('resume:workflows')).toBeGreaterThan(trace.indexOf('resume:delegations'));
+    // The load-bearing ordering is on the CLAIMS (above); every resume runs in the wave after them.
+  });
+
+  it('reports each provider the moment ITS resume pass finished — the workflows hand-back before the long delegation sweep ends', async () => {
+    // The daemon's client-resync signal hangs on this: 'workflows' completing means the claim pass is
+    // done, the plugins are loaded and every claimed DAG is back with its engine, while delegation
+    // respawns may run on for minutes.
+    const trace: string[] = [];
+    let finishDelegation: () => void = () => {};
+    const host = {
+      ...stubHost(trace),
+      recoverDelegation: async () => { await new Promise<void>((resolve) => { finishDelegation = resolve; }); return 'resumed' as const; },
+    };
+    const coordinator = createBootRecovery(host, silentLog());
+    coordinator.claimAll(0);
+    const resumed: string[] = [];
+    const done = coordinator.resumeAll({ onProviderResumed: (id) => { resumed.push(id); } });
+    for (let i = 0; i < 50 && !resumed.includes('workflows'); i += 1) await new Promise((r) => setTimeout(r, 1));
+    expect(resumed).toContain('workflows');
+    expect(resumed).not.toContain('delegations'); // still running
+    finishDelegation();
+    await done;
+    expect(resumed).toContain('delegations');
   });
 
   it('wakes owner and platform conversations WHILE the delegation sweep is still running', async () => {
@@ -268,10 +290,35 @@ describe('createBootRecovery', () => {
     expect(trace).toContain('resume:conversations');
     expect(trace).toContain('resume:platform');
     expect(trace).not.toContain('resume:delegations:end');
-    expect(trace).not.toContain('resume:workflows'); // still gated on the sweep
     finishDelegation();
     await done;
-    expect(trace.indexOf('resume:workflows')).toBeGreaterThan(trace.indexOf('resume:delegations:end'));
+    expect(trace).toContain('resume:delegations:end');
+  });
+
+  it('resumes a claimed workflow WHILE an unrelated respawn is still running its turn', async () => {
+    // Production, 4 Sep: a DAG claimed at boot showed "running" with no node moving for as long as one
+    // unrelated child's recovery turn lasted, because the workflow sweep was gated on the whole respawn
+    // RUN. Its claim is reconciled in the synchronous pass; the run owes it nothing.
+    const trace: string[] = [];
+    let finishDelegation: () => void = () => {};
+    const host = {
+      ...stubHost(trace),
+      recoverDelegation: async () => {
+        trace.push('resume:delegations:start');
+        await new Promise<void>((resolve) => { finishDelegation = resolve; });
+        trace.push('resume:delegations:end');
+        return 'resumed' as const;
+      },
+    };
+    const coordinator = createBootRecovery(host, silentLog());
+    coordinator.claimAll(0);
+    const done = coordinator.resumeAll();
+    for (let i = 0; i < 50 && !trace.includes('resume:workflows'); i += 1) await new Promise((r) => setTimeout(r, 1));
+    expect(trace).toContain('resume:delegations:start');
+    expect(trace).toContain('resume:workflows');
+    expect(trace).not.toContain('resume:delegations:end');
+    finishDelegation();
+    await done;
   });
 
   it('sequences the claims by dependency, not by registration order (the owner sweep reads the delegation claim)', async () => {
@@ -305,7 +352,7 @@ describe('createBootRecovery', () => {
     expect(trace.indexOf('claim:delegations')).toBeLessThan(trace.indexOf('claim:platform'));
     expect(trace.indexOf('claim:delegations')).toBeLessThan(trace.indexOf('claim:workflows'));
     await reversed.resumeAll();
-    expect(trace.indexOf('resume:workflows')).toBeGreaterThan(trace.indexOf('resume:delegations'));
+    expect(trace).toContain('resume:workflows');
   });
 
   it('still resumes workflows and conversations when the delegation sweep fails', async () => {

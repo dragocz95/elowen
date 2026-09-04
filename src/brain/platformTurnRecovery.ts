@@ -84,18 +84,6 @@ export const MAX_PLATFORM_RESUME_ATTEMPTS = 3;
  *  bump-before-you-act discipline, same visible give-up. */
 export const MAX_PLATFORM_DELIVERY_ATTEMPTS = 3;
 
-/** The hidden continuation injected into a parked platform conversation — the channel twin of
- *  brainService's PARKED_RESUME_NOTE, delivered through the same custom-message seam (`internalSystem`)
- *  so it appends at the transcript's TAIL and never renders as a fake user bubble. */
-const PLATFORM_RESUME_NOTE = 'The daemon restarted and interrupted this conversation\'s active turn. '
-  + 'The remaining work was not done and the final answer was never delivered. A tool result marked [interrupted] '
-  + 'belongs to a call the restart cut off: its effect is unknown, so check the current state before repeating it '
-  + 'and never assume it completed; every other tool result above is complete. '
-  + 'Continue exactly where the transcript leaves off and finish the turn: complete any remaining work and give the '
-  + 'sender the answer they are still waiting for. Do not redo work whose results are already above, and do not dwell '
-  + 'on the interruption. If the transcript shows the request was in fact fully answered, reply with a one-line '
-  + 'confirmation only.';
-
 /** Visible give-ups, posted into the affected conversation itself (best-effort — the log always carries
  *  the diagnosis). Formal on purpose: this is application copy read by whoever was waiting. */
 const RESUME_GIVE_UP_NOTICE = 'A restart interrupted a reply in this conversation and it could not be resumed '
@@ -498,8 +486,14 @@ export async function resumePlatformTurn(
       // The same custom-system continuation shape the owner sweep uses: appends at the transcript's
       // TAIL, never a fake user row, never a history rewrite — and send() verifies the triggered turn
       // produced a fresh, normally settled assistant before returning.
-      internalSystem: { customType: continuation ? 'subagent-result-resume' : 'restart-resume', resultId: `restart-resume-${randomUUID()}` },
-    }, continuation?.note ?? PLATFORM_RESUME_NOTE);
+      // SILENT resume: without a result to hand over, the turn is CONTINUED from its checkpointed tail
+      // (its interrupted calls were answered with `[interrupted]` results at spawn) — no message of
+      // any kind, the cached prefix untouched. A recovered sub-agent result is the one thing that has
+      // to be said, and it rides the same hidden custom seam every durable result does.
+      internalSystem: continuation
+        ? { customType: 'subagent-result-resume', resultId: `subagent-result-resume-${randomUUID()}` }
+        : { customType: 'restart-continue', resultId: `restart-continue-${randomUUID()}`, continuation: true },
+    }, continuation?.note ?? '');
   } catch (e) {
     // Marker deliberately kept: the attempt is durably counted, so the next boot retries up to the cap.
     log.error(`boot resume failed for parked platform turn ${row.id} (attempt ${row.park_attempts + 1}/${MAX_PLATFORM_RESUME_ATTEMPTS}); marker kept for the next boot`, e);

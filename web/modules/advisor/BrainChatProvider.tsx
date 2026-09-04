@@ -683,6 +683,18 @@ function useBrainChatController(): BrainChatValue {
             })
             .catch(() => { /* best-effort */ });
         },
+        // Boot recovery finished under this stream (the daemon restarted and this tab reattached in the
+        // window before its state was recovered): refetch history and status exactly as on a reconnect.
+        resync: () => {
+          void loadHistory(genRef.current).catch(() => { /* best-effort */ });
+          const usageRead = startUsageRead();
+          void elowenClient.brainStatus(boundSessionRef.current)
+            .then((status) => {
+              if (generation !== genRef.current) return;
+              setUsageIfFresh(status.usage, usageRead);
+            })
+            .catch(() => { /* best-effort */ });
+        },
         // In-place model/mode/reasoning changes keep the same stream. Refresh history and status without
         // reconnecting; usage stays fenced against a newer stream event.
         sessionEvent: () => {
