@@ -7,7 +7,7 @@ import { readFileSync, writeFileSync, readdirSync, statSync, mkdtempSync, rmSync
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { dirname, extname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 
 const DEFAULT_MAX = 100_000;
@@ -161,9 +161,10 @@ function findAllOccurrences(haystack, needle) {
   while (i !== -1) { out.push(i); i = haystack.indexOf(needle, i + needle.length); }
   return out;
 }
-/** Plan a fuzzy-tolerant edit: exact match first, then a normalized-space match; preserve BOM/CRLF. Returns
- *  { content, newContent, after, count } (both LF, no BOM, for diffing) or { error } for the caller to surface. */
-export function planEdit(rawBefore, oldTextRaw, newTextRaw, replaceAll) {
+/** Plan an edit with exact matching by default. The optional fuzzy pass is an explicit Elowen extension;
+ *  canonical Edit calls never normalize quotes, dashes, spaces, or trailing whitespace implicitly. BOM and
+ *  line endings are preserved in either mode. */
+export function planEdit(rawBefore, oldTextRaw, newTextRaw, replaceAll, fuzzyMatch = false) {
   const { bom, text } = stripBom(rawBefore);
   const ending = detectLineEnding(text);
   const content = normalizeToLF(text);
@@ -174,7 +175,7 @@ export function planEdit(rawBefore, oldTextRaw, newTextRaw, replaceAll) {
   let needle = oldLF;
   let fuzzy = false;
   let idxs = findAllOccurrences(content, oldLF);
-  if (idxs.length === 0) {
+  if (idxs.length === 0 && fuzzyMatch) {
     base = normalizeForFuzzyMatch(content);
     needle = normalizeForFuzzyMatch(oldLF);
     fuzzy = true;
@@ -382,9 +383,6 @@ async function pdfImageBlock(png) {
 /** Read the requested pages of a PDF: text where there is a text layer, a rendered image where there is
  *  not. Returns the PI tool-result shape directly. */
 async function readPdf(abs, pageSpec, supportsImages, readCap, maxPages) {
-  const parsed = parsePageSpec(pageSpec, maxPages);
-  if (parsed.error) return fail('Read', new Error(`Invalid pages: ${parsed.error}.`), { path: abs, pdf: true });
-
   let total = null;
   try {
     total = await pdfPageCount(abs);
@@ -395,6 +393,17 @@ async function readPdf(abs, pageSpec, supportsImages, readCap, maxPages) {
     }
     return fail('Read', new Error(`Could not read the PDF: ${e instanceof Error ? e.message : String(e)}`), { path: abs, pdf: true });
   }
+
+  if (pageSpec === undefined) {
+    if (total === null || total > 10) {
+      return fail('Read', new Error(`The PDF has ${total ?? 'more than 10'} pages. Pass \`pages\` to select at most ${maxPages} pages.`), {
+        path: abs, pdf: true, pageCount: total,
+      });
+    }
+    pageSpec = total === 1 ? '1' : `1-${total}`;
+  }
+  const parsed = parsePageSpec(pageSpec, maxPages);
+  if (parsed.error) return fail('Read', new Error(`Invalid pages: ${parsed.error}.`), { path: abs, pdf: true, pageCount: total });
 
   const wanted = total === null ? parsed.pages : parsed.pages.filter((p) => p <= total);
   const outOfRange = total === null ? [] : parsed.pages.filter((p) => p > total);
@@ -438,6 +447,80 @@ async function readPdf(abs, pageSpec, supportsImages, readCap, maxPages) {
     details: {
       ok: true, tool: 'Read', path: abs, pdf: true, pageCount: total,
       pages: wanted, renderedPages: rendered, truncated: capped.truncated || skippedImages > 0,
+    },
+  };
+}
+
+// ── Jupyter notebooks ────────────────────────────────────────────────────────
+const NOTEBOOK_IMAGE_MIMES = ['image/png', 'image/jpeg', 'image/gif', 'image/webp'];
+const notebookText = (value) => Array.isArray(value) ? value.map(String).join('') : String(value ?? '');
+
+/** Render a notebook as cells and outputs rather than exposing its JSON encoding. Image outputs use the
+ * same supported inline MIME set as ordinary image reads and are validated by their bytes before embedding. */
+function readNotebook(raw, supportsImages, readCap) {
+  let notebook;
+  try { notebook = JSON.parse(raw.toString('utf8')); }
+  catch (error) { return fail('Read', new Error(`Could not parse Jupyter notebook: ${error instanceof Error ? error.message : String(error)}`), { notebook: true }); }
+  if (!notebook || !Array.isArray(notebook.cells)) {
+    return fail('Read', new Error('Invalid Jupyter notebook: `cells` must be an array.'), { notebook: true });
+  }
+
+  const sections = [];
+  const images = [];
+  let omittedImages = 0;
+  notebook.cells.forEach((cell, cellIndex) => {
+    const type = typeof cell?.cell_type === 'string' ? cell.cell_type : 'unknown';
+    const execution = type === 'code' && cell?.execution_count != null ? `, execution_count=${cell.execution_count}` : '';
+    const lines = [`Cell ${cellIndex + 1} [${type}${execution}]`, notebookText(cell?.source)];
+    const outputs = Array.isArray(cell?.outputs) ? cell.outputs : [];
+    outputs.forEach((output, outputIndex) => {
+      const outputType = typeof output?.output_type === 'string' ? output.output_type : 'unknown';
+      if (outputType === 'stream') {
+        lines.push(`Output ${outputIndex + 1} [stream ${String(output?.name ?? 'stdout')}]`, notebookText(output?.text));
+        return;
+      }
+      if (outputType === 'error') {
+        const name = String(output?.ename ?? 'Error');
+        const value = String(output?.evalue ?? '');
+        lines.push(`Output ${outputIndex + 1} [error ${name}${value ? `: ${value}` : ''}]`,
+          Array.isArray(output?.traceback) ? output.traceback.map(String).join('\n') : `${name}${value ? `: ${value}` : ''}`);
+        return;
+      }
+      const data = output?.data && typeof output.data === 'object' ? output.data : {};
+      lines.push(`Output ${outputIndex + 1} [${outputType}]`);
+      const plain = notebookText(data['text/plain']);
+      if (plain) lines.push(plain);
+      for (const mime of NOTEBOOK_IMAGE_MIMES) {
+        const encoded = notebookText(data[mime]).replace(/\s+/gu, '');
+        if (!encoded) continue;
+        const bytes = Buffer.from(encoded, 'base64');
+        if (bytes.length === 0 || bytes.length > IMAGE_MAX_BYTES || detectImageMime(bytes) !== mime) {
+          omittedImages += 1;
+          lines.push(`[Invalid or oversized ${mime} output omitted.]`);
+          continue;
+        }
+        if (!supportsImages) {
+          omittedImages += 1;
+          lines.push(`[${mime} output omitted because the current model does not support images.]`);
+          continue;
+        }
+        images.push({ type: 'image', data: encoded, mimeType: mime });
+        lines.push(`[${mime} output attached below.]`);
+      }
+    });
+    sections.push(lines.filter((line) => line !== '').join('\n'));
+  });
+
+  const rendered = sections.join('\n\n');
+  const capped = truncateHead(rendered, { maxBytes: readCap, maxLines: 2000 });
+  const notes = [];
+  if (capped.truncated) notes.push(`[Notebook text truncated; read a smaller notebook or inspect selected cells with Python.]`);
+  if (omittedImages) notes.push(`[${omittedImages} notebook image output(s) were omitted.]`);
+  return {
+    content: [{ type: 'text', text: [capped.content || '(notebook has no cells)', ...notes].join('\n\n') }, ...images],
+    details: {
+      ok: true, tool: 'Read', notebook: true, cells: notebook.cells.length, images: images.length,
+      truncated: capped.truncated || omittedImages > 0,
     },
   };
 }
@@ -764,7 +847,7 @@ export function register(ctx) {
   // Resolved BEFORE the tool is defined, because the Read description below quotes this cap to the model.
   // The bounds MUST mirror the manifest's: the server stores plugin config unvalidated, so this clamp is
   // the only one there is.
-  const pdfMaxPages = Math.min(Math.max(Number(ctx.config.pdfMaxPages) || DEFAULT_PDF_MAX_PAGES, 5), 50);
+  const pdfMaxPages = Math.min(Math.max(Number(ctx.config.pdfMaxPages) || DEFAULT_PDF_MAX_PAGES, 10), DEFAULT_PDF_MAX_PAGES);
   const pathMeta = (abs) => {
     const path = ctx.displayPath(abs);
     const workspaceId = ctx.currentAccess().workspaceRef?.workspaceId;
@@ -800,32 +883,28 @@ export function register(ctx) {
   ctx.registerTool(defineTool({
     name: 'Read', label: 'Read file',
     description: [
-      'Read a UTF-8 text file, an image, or a PDF within the accessible repositories.',
+      'Read a UTF-8 text file, an image, a PDF, or a Jupyter notebook within the accessible repositories.',
       'This is the right tool when you need exact source text, config, logs or docs before editing. For broad discovery across the codebase, use Search or ListDir first.',
-      'The path must be absolute. It is okay to read a file that does not exist — you get an error, not a crash. Directories cannot be read: use ListDir for those. For a large file use offset (1-indexed line to start from) and limit (max lines) and read only the part you need — details.truncated and the continuation hint tell you where to resume.',
-      'Results are returned with line numbers (cat -n format: line number + tab + content), starting at 1.',
-      'Images (jpg/png/gif/webp/bmp) come back as an attachment you can see.',
-      `PDFs require \`pages\` ("3", "1-5" or "1,3,5"; at most ${pdfMaxPages} pages per call). Pages with a text layer are returned as text; a scanned page with no text layer is rendered and returned as an image.`,
+      'The path must be absolute. Missing files, directories, and empty files return an error. Text reads return at most 2000 lines by default. For a large file use offset and limit to read only the part you need; offsets 0 and 1 both start at the first line.',
+      'Text results use cat -n format: line number + tab + content.',
+      'Images (jpg/png/gif/webp/bmp) come back as an attachment. Jupyter notebooks are rendered as cells with text and supported image outputs.',
+      `PDFs with at most 10 pages may omit \`pages\`; longer PDFs require it. Page ranges use "3", "1-5" or "1,3,5", with at most ${pdfMaxPages} pages per call. Text-layer pages return text and scanned pages return an image.`,
       'Do not re-read a file you just edited to check the change landed — Edit and Write would have errored if the write failed, so a verification read costs a round and tells you nothing.',
     ].join(' '),
     parameters: Type.Object({
       file_path: Type.String({ description: 'Absolute path to the file' }),
-      offset: Type.Optional(Type.Number({ description: 'Line number to start reading from (1-indexed)' })),
-      limit: Type.Optional(Type.Number({ description: 'Maximum number of lines to read' })),
-      pages: Type.Optional(Type.String({ description: `PDF pages to read: "3", "1-5" or "1,3,5" (max ${pdfMaxPages} per call). Required for a PDF; ignored for any other file.` })),
+      offset: Type.Optional(Type.Integer({ minimum: 0, description: 'Line number to start reading from; 0 and 1 both mean the first line' })),
+      limit: Type.Optional(Type.Integer({ minimum: 1, description: 'Maximum number of lines to read' })),
+      pages: Type.Optional(Type.String({ description: `PDF pages to read: "3", "1-5" or "1,3,5" (max ${pdfMaxPages} per call). Required only when the PDF has more than 10 pages; ignored for other files.` })),
     }),
     execute: async (_id, p, _signal, _onUpdate, ectx) => {
       try {
         const abs = ctx.assertPathAllowed(p.file_path);
         const raw = readFileSync(abs);
+        if (raw.length === 0) return fail('Read', new Error('Cannot read an empty file.'), pathMeta(abs));
         const model = ectx?.model ?? ctx.model;
         const supportsImages = !model || (Array.isArray(model.input) ? model.input.includes('image') : true);
         if (isPdf(raw)) {
-          // A PDF has no meaningful line-based read, so `pages` is not optional here — decoding it as UTF-8
-          // would hand the model a screenful of binary and look like a successful read.
-          if (p.pages === undefined) {
-            return fail('Read', new Error(`This is a PDF. Pass \`pages\` to read it — e.g. pages="1-5" (max ${pdfMaxPages} per call).`), { ...pathMeta(abs), pdf: true });
-          }
           const result = sanitizeResult(await readPdf(abs, p.pages, supportsImages, readCap, pdfMaxPages), abs);
           // Only a read that actually SHOWED the agent something counts. A bad `pages` spec, an encrypted
           // PDF or a missing poppler must not leave the file marked as read — that would license a later
@@ -834,6 +913,12 @@ export function register(ctx) {
           markFileRead(ctx.currentSessionId?.(), statePath(abs), raw);
           // The hash rides the RESULT so a later process can re-seed the read state from this very
           // message (see seedReadStateFromHistory) instead of demanding the file be read again.
+          return { ...result, details: { ...result.details, contentHash: hashOf(raw) } };
+        }
+        if (extname(abs).toLowerCase() === '.ipynb') {
+          const result = sanitizeResult(readNotebook(raw, supportsImages, readCap), abs);
+          if (!result.details?.ok) return result;
+          markFileRead(ctx.currentSessionId?.(), statePath(abs), raw);
           return { ...result, details: { ...result.details, contentHash: hashOf(raw) } };
         }
         const mime = detectImageMime(raw);
@@ -878,9 +963,16 @@ export function register(ctx) {
         // extra empty line, which would report `truncated: true` and hand out a continuation offset that
         // reads back nothing.
         const total = allLines.length - (body.endsWith('\n') && allLines.length > 1 ? 1 : 0);
-        const start = p.offset ? Math.max(0, Math.floor(p.offset) - 1) : 0;
+        if (p.offset !== undefined && (!Number.isSafeInteger(p.offset) || p.offset < 0)) {
+          return fail('Read', new Error('offset must be a non-negative integer.'), pathMeta(abs));
+        }
+        if (p.limit !== undefined && (!Number.isSafeInteger(p.limit) || p.limit < 1)) {
+          return fail('Read', new Error('limit must be a positive integer.'), pathMeta(abs));
+        }
+        const start = p.offset === undefined || p.offset <= 1 ? 0 : p.offset - 1;
         if (start >= total) return fail('Read', new Error(`Offset ${p.offset} is beyond end of file (${total} lines total)`), pathMeta(abs));
-        const endLine = p.limit !== undefined ? Math.min(start + Math.max(0, Math.floor(p.limit)), total) : total;
+        const requestedLines = p.limit ?? 2000;
+        const endLine = Math.min(start + requestedLines, total);
         const selected = allLines.slice(start, endLine).join('\n');
         const r = truncateHead(selected, { maxBytes: readCap, maxLines: Infinity });
         let shownText;
@@ -955,15 +1047,16 @@ export function register(ctx) {
     description: [
       'Replace an exact text snippet in a UTF-8 file within the accessible repositories. Use it for a targeted change, after reading enough surrounding context to locate the change precisely.',
       'You must have read the file in this conversation before editing it, and it must not have changed on disk since — an edit written from assumption, or against content that moved, is how work gets silently discarded.',
-      'By default old_string must match exactly ONCE, so the snippet has to be unique — if it appears more than once, include more surrounding context. Matching tolerates smart quotes, Unicode dashes and trailing whitespace, and the file\'s BOM and CRLF line endings are preserved. Set replace_all when every occurrence really is the same change — e.g. renaming a symbol across the whole file in one call.',
+      'By default old_string must match exactly ONCE, including indentation and whitespace. If it appears more than once, include more context. Set replace_all when every occurrence really is the same change. BOM and CRLF line endings are preserved. The optional fuzzy_match extension tolerates smart quotes, Unicode dashes, exotic spaces and trailing whitespace, but canonical calls must leave it false.',
       'This tool applies ONE replacement per call — there is no batch `edits` array. To make several changes to the same file, call it once per change.',
       'Output includes details.diff for review and details.patch (unified). If old_string is missing or ambiguous, read the file again and give more context.',
     ].join(' '),
     parameters: Type.Object({
       file_path: Type.String({ description: 'Absolute path to the file' }),
-      old_string: Type.String({ description: 'Text to replace (whitespace/quote tolerant)' }),
-      new_string: Type.String({ description: 'Replacement text' }),
+      old_string: Type.String({ description: 'Exact text to replace' }),
+      new_string: Type.String({ description: 'Replacement text; must differ from old_string' }),
       replace_all: Type.Optional(Type.Boolean({ description: 'Replace every occurrence (default false)' })),
+      fuzzy_match: Type.Optional(Type.Boolean({ description: 'Elowen extension: normalize smart quotes, Unicode dashes, exotic spaces and trailing whitespace before matching (default false)' })),
     }),
     execute: async (_id, p) => {
       try {
@@ -980,7 +1073,7 @@ export function register(ctx) {
           if (guard) return ok('Edit', `Error: ${guard}`, { ok: false, ...pathMeta(abs) });
           const before = beforeBuf.toString('utf-8');
           if (p.old_string === p.new_string) return ok('Edit', 'Error: old_string and new_string are identical.', { ok: false, ...pathMeta(abs) });
-          const plan = planEdit(before, p.old_string, p.new_string, p.replace_all ?? false);
+          const plan = planEdit(before, p.old_string, p.new_string, p.replace_all ?? false, p.fuzzy_match === true);
           if (plan.error === 'empty') return ok('Edit', 'Error: old_string must not be empty.', { ok: false, ...pathMeta(abs) });
           if (plan.error === 'notfound') return ok('Edit', 'Error: old_string not found in the file. Match it exactly, including whitespace.', { ok: false, ...pathMeta(abs) });
           if (plan.error === 'ambiguous') return ok('Edit', `Error: old_string matches ${plan.count} times. Provide more context to make it unique, or set replace_all.`, { ok: false, ...pathMeta(abs), matches: plan.count });
