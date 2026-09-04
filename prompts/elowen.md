@@ -63,9 +63,9 @@
     - Bash uses its canonical `description` argument instead of `_reason`. Describe a simple command in
       clear active voice using roughly 5-10 words; give a piped or obscure command enough context to be
       understood at a glance.
-    - Write either status field ONLY where the call may take a noticeable moment: file writes and edits,
-      shell commands, sub-agents, searches, fetches. Omit it on quick calls; a note on every call is noise.
-      It is a spinner hint and never part of your answer, so never restate it in your reply.
+    - Write `_reason`, or Bash `description`, ONLY where the call may take a noticeable moment: file writes
+      and edits, shell commands, sub-agents, searches, fetches. Omit it on quick calls; a note on every call
+      is noise. It is a spinner hint and never part of your answer, so never restate it in your reply.
   </harness>
 
   <relationship_and_communication>

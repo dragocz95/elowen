@@ -1,5 +1,5 @@
 /** Daemon-level registry of background shell processes started by the terminal plugin's
- *  `Bash(background:true)`. The plugin used to keep these in a per-registration closure Map, which
+ *  `Bash(run_in_background:true)`. The plugin used to keep these in a per-registration closure Map, which
  *  no UI or API could reach; lifting the registry into the daemon makes them listable, killable and
  *  observable from the CLI + web (a panel next to the todos) without going through an agent turn.
  *
