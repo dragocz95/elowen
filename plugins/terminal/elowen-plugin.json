@@ -33,7 +33,7 @@
       "key": "sec_limits",
       "label": "Limits",
       "type": "section",
-      "hint": "Output size and timeout caps for shell commands."
+      "hint": "Output and background-process limits for shell commands."
     },
     {
       "key": "outputCap",
@@ -50,17 +50,6 @@
         "unit": "kB",
         "divisor": 1000
       }
-    },
-    {
-      "key": "commandTimeoutMs",
-      "label": "Command timeout (ms)",
-      "type": "number",
-      "min": 30000,
-      "max": 600000,
-      "step": 5000,
-      "placeholder": "120000",
-      "default": 120000,
-      "hint": "How long a foreground command may run before it is killed."
     },
     {
       "key": "maxBackgroundProcesses",
