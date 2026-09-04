@@ -323,9 +323,13 @@ describe('brain providers', () => {
     expect(oauthRoute.compactionFallback?.id).toBe('gpt-5.5');
 
     const apiRoute = resolveBrainModelRoute(registry, providers, { provider: 'api', model: astra });
-    expect(apiRoute.model.provider).toBe('elowen-api');
+    expect(apiRoute.model).toMatchObject({ provider: 'elowen-api', api: 'openai-responses' });
+    expect(apiRoute.model.cost).not.toEqual(added!.cost);
+    expect(apiRoute.model.compat).toBeUndefined();
+    expect(resolveFastModeRoute(providers.providers[0]!, oauthRoute.model)).toBeUndefined();
     expect(registry.find('anthropic', astra)).toBeUndefined();
     expect(registry.find('github-copilot', astra)).toBeUndefined();
+    expect(registry.find('kimi-coding', astra)).toBeUndefined();
   });
 
   it('declares known OpenAI reasoning levels centrally and labels xhigh as ultra', () => {
@@ -720,6 +724,26 @@ describe('pinned context windows', () => {
   it('reaches the runtime descriptor of an OAuth built-in model, not just the picker', () => {
     const registry = buildBrainRegistry(oauthCfg({ 'openai-codex/gpt-5.6-sol': 372_000 }), runtime);
     expect(registry.find('openai-codex', 'gpt-5.6-sol')?.contextWindow).toBe(372_000);
+  });
+
+  it('pins GPT-6 Astra without losing inherited OAuth metadata', async () => {
+    const baseline = buildBrainRegistry(oauthCfg(), await inMemoryModelRuntime()).find('openai-codex', 'gpt-6-astra');
+    expect(baseline).toBeDefined();
+
+    const registry = buildBrainRegistry(oauthCfg({ 'openai-codex/gpt-6-astra': 333_000 }), runtime);
+    const pinned = registry.find('openai-codex', 'gpt-6-astra');
+    expect(pinned).toMatchObject({
+      contextWindow: 333_000,
+      api: baseline!.api,
+      baseUrl: baseline!.baseUrl,
+      cost: baseline!.cost,
+      reasoning: baseline!.reasoning,
+      thinkingLevelMap: baseline!.thinkingLevelMap,
+      input: baseline!.input,
+      maxTokens: baseline!.maxTokens,
+      samplingParams: baseline!.samplingParams,
+      compat: baseline!.compat,
+    });
   });
 
   it('leaves an unpinned model of the same provider on the catalog window', async () => {

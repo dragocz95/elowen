@@ -28,6 +28,9 @@ describe('OpenAI hosted tool search — GPT-5.4+ ChatGPT OAuth', () => {
       id: 'gpt-5.6-luna', provider: 'openai-codex', api: 'openai-codex-responses',
     }, 'oauth-openai-codex')).toBe(true);
     expect(supportsOpenAIHostedToolSearch({
+      id: 'gpt-6-astra', provider: 'openai-codex', api: 'openai-codex-responses',
+    }, 'oauth-openai-codex')).toBe(true);
+    expect(supportsOpenAIHostedToolSearch({
       id: 'gpt-5.3-codex-spark', provider: 'openai-codex', api: 'openai-codex-responses',
     }, 'oauth-openai-codex')).toBe(false);
     expect(supportsOpenAIHostedToolSearch({
