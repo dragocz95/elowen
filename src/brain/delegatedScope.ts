@@ -151,12 +151,17 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     if (!spawnedBy || spawnedBy.length > MAX_PRINCIPAL_CHARS) return undefined;
   }
   let settingsUserId: number | undefined;
-  if (own(value, 'settingsUserId')) {
+  // `null` is how the plugin API spells "no settings account" (PluginToolContext.settingsUserId is
+  // `number | null`), and a workflow journal captures the parent's access exactly as that API handed it
+  // over. Read as corrupt, every DAG started from an owner conversation failed its boundary check at
+  // resume and was terminalized as cancelled on the first restart. Null is absence, not a forgery.
+  if (own(value, 'settingsUserId') && value.settingsUserId !== null) {
     if (!Number.isSafeInteger(value.settingsUserId) || (value.settingsUserId as number) <= 0) return undefined;
     settingsUserId = value.settingsUserId as number;
   }
   let contributionUserId: number | undefined;
-  if (own(value, 'contributionUserId')) {
+  // Same spelling of absence as settingsUserId above; absence fails closed to instance contributions.
+  if (own(value, 'contributionUserId') && value.contributionUserId !== null) {
     if (!Number.isSafeInteger(value.contributionUserId) || (value.contributionUserId as number) <= 0) return undefined;
     contributionUserId = value.contributionUserId as number;
   }

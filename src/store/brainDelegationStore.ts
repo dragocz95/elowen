@@ -923,6 +923,11 @@ export class BrainDelegationStore {
       // mid-turn tool result from a crash is not proof that the parent turn completed and still needs normal
       // recovery. This is boot-time, read-derived healing, so existing databases repair themselves without a
       // migration or a one-shot live data write.
+      //
+      // A synthetic `[interrupted]` result (details.interrupted) is the one settled toolResult that proves
+      // the OPPOSITE: the pause wrote it in place of an answer that never came, and it promises the parent
+      // the child resumes. Counting it as "this call already returned" healed the run to `error` on the
+      // NEXT restart, nobody respawned the child, and the parent sat on a promise with no worker behind it.
       this.db.prepare(
         `UPDATE brain_subagent_runs AS r
             SET lifecycle = CASE WHEN EXISTS (
@@ -930,6 +935,7 @@ export class BrainDelegationStore {
                    WHERE m.session_id = r.parent_session_id AND m.pending = 0 AND json_valid(m.content)
                      AND json_extract(m.content, '$.role') = 'toolResult'
                      AND json_extract(m.content, '$.toolCallId') = r.tool_call_id
+                     AND COALESCE(json_extract(m.content, '$.details.interrupted'), 0) = 0
                      AND json_extract(m.content, '$.isError') = 1
                 ) THEN 'error' ELSE 'done' END,
                 state = CASE WHEN json_valid(state) THEN json_set(
@@ -938,6 +944,7 @@ export class BrainDelegationStore {
                      WHERE m.session_id = r.parent_session_id AND m.pending = 0 AND json_valid(m.content)
                        AND json_extract(m.content, '$.role') = 'toolResult'
                        AND json_extract(m.content, '$.toolCallId') = r.tool_call_id
+                       AND COALESCE(json_extract(m.content, '$.details.interrupted'), 0) = 0
                        AND json_extract(m.content, '$.isError') = 1
                   ) THEN 'error' ELSE 'done' END
                 ) ELSE state END,
@@ -952,6 +959,7 @@ export class BrainDelegationStore {
                WHERE m.session_id = r.parent_session_id AND m.pending = 0 AND json_valid(m.content)
                  AND json_extract(m.content, '$.role') = 'toolResult'
                  AND json_extract(m.content, '$.toolCallId') = r.tool_call_id
+                 AND COALESCE(json_extract(m.content, '$.details.interrupted'), 0) = 0
             )`
       ).run();
       this.db.prepare(
