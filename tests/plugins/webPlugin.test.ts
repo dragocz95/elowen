@@ -305,6 +305,51 @@ describe('web plugin WebFetch pipeline', () => {
     expect(payload.content).toContain('[A \\[link\\]](https://example.com/a_%28b%29)');
   });
 
+  it('keeps only safe parsed link and image destination schemes', async () => {
+    const html = [
+      '<a href="https://example.com/ok">HTTPS</a>',
+      '<a href="/relative/path">Relative</a>',
+      '<a href="mailto:test@example.com">Mail</a>',
+      '<a href="javascript:alert(1)">JavaScript</a>',
+      '<a href="java&#x0A;script:alert(1)">Obfuscated</a>',
+      '<a href="data:text/html,bad">Data</a>',
+      '<a href="file:///etc/passwd">File</a>',
+      '<img src="https://example.com/ok.png" alt="HTTPS image">',
+      '<img src="/relative.png" alt="Relative image">',
+      '<img src="javascript:alert(1)" alt="JavaScript image">',
+      '<img src="java&#x09;script:alert(1)" alt="Obfuscated image">',
+      '<img src="data:image/png;base64,AA" alt="Data image">',
+      '<img src="file:///etc/passwd" alt="File image">',
+    ].join('');
+    const { fetchTool, inferenceCalls } = await mount({}, undefined, async () => new Response(
+      html, { status: 200, headers: { 'content-type': 'text/html' } },
+    ));
+
+    await fetchTool.execute('f', { url: 'https://93.184.216.34/safe-schemes', prompt: 'Summarize' });
+
+    const payload = JSON.parse(inferenceCalls[0]!.prompt.split('\n').find((line) => line.startsWith('{"content":'))!);
+    expect(payload.content).toContain('[HTTPS](https://example.com/ok)');
+    expect(payload.content).toContain('[Relative](/relative/path)');
+    expect(payload.content).toContain('[Mail](mailto:test@example.com)');
+    expect(payload.content).toContain('![HTTPS image](https://example.com/ok.png)');
+    expect(payload.content).toContain('![Relative image](/relative.png)');
+    expect(payload.content).not.toMatch(/\]\((?:javascript|data|file):/i);
+    expect(payload.content).not.toContain('java%0Ascript:');
+    expect(payload.content).not.toContain('java%09script:');
+  });
+
+  it('detects HTML content types case-insensitively', async () => {
+    const { fetchTool, inferenceCalls } = await mount({}, undefined, async () => new Response(
+      '<h1>Uppercase HTML</h1>', { status: 200, headers: { 'content-type': 'TEXT/HTML; CHARSET=UTF-8' } },
+    ));
+
+    await fetchTool.execute('f', { url: 'https://93.184.216.34/content-type-case', prompt: 'Summarize' });
+
+    const payload = JSON.parse(inferenceCalls[0]!.prompt.split('\n').find((line) => line.startsWith('{"content":'))!);
+    expect(payload.content).toContain('# Uppercase HTML');
+    expect(payload.content).not.toContain('<h1>');
+  });
+
   it('normalizes IDN fetch hosts through URL punycode', async () => {
     const { fetchTool, calls } = await mount({}, undefined, async () => new Response(
       '<p>IDN</p>', { status: 200, headers: { 'content-type': 'text/html' } },
@@ -437,6 +482,24 @@ describe('web plugin WebFetch pipeline', () => {
     }
     await fetchTool.execute('again', { url: overflow, prompt: 'Again' });
     expect(calls.filter((call) => call.url === overflow)).toHaveLength(2);
+  });
+
+  it('clears expiry timers when cache entries are evicted', async () => {
+    vi.useFakeTimers();
+    try {
+      const large = 'x'.repeat(150_000);
+      const { fetchTool } = await mount({}, undefined, async () => new Response(
+        large, { status: 200, headers: { 'content-type': 'text/plain' } },
+      ));
+      const baseline = vi.getTimerCount();
+      for (let i = 0; i < 21; i++) {
+        await fetchTool.execute(String(i), { url: `https://93.184.216.34/cache-timer-${i}`, prompt: 'Summarize' });
+      }
+      await vi.advanceTimersByTimeAsync(20_001);
+      expect(vi.getTimerCount() - baseline).toBe(19);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('bounds the fetch cache by retained content bytes', async () => {

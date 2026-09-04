@@ -50,6 +50,12 @@ export function makePinnedRequestOptions(
   headers: Record<string, string> = {},
 ): RequestOptions {
   const hostname = hostnameOf(pinned.url);
+  const safeHeaders: Record<string, string> = {};
+  for (const [name, value] of Object.entries(headers)) {
+    const normalized = name.toLowerCase();
+    if (normalized === 'host' || normalized === ':authority') continue;
+    safeHeaders[name] = value;
+  }
   return {
     protocol: pinned.url.protocol,
     method: 'GET',
@@ -57,7 +63,7 @@ export function makePinnedRequestOptions(
     port: pinned.url.port || undefined,
     path: `${pinned.url.pathname}${pinned.url.search}`,
     servername: isIP(hostname) ? undefined : hostname,
-    headers: { host: pinned.url.host, ...headers },
+    headers: { ...safeHeaders, host: pinned.url.host },
     lookup: (_hostname, _options, callback) => callback(null, pinned.address, pinned.family),
   };
 }

@@ -44,4 +44,24 @@ describe('public HTTP DNS pinning', () => {
     expect(callback).toHaveBeenCalledWith(null, '93.184.216.34', 4);
     expect(lookup).toHaveBeenCalledTimes(1);
   });
+
+  it('prevents caller headers from overriding validated authority while preserving ordinary headers', async () => {
+    const lookup = vi.fn(async () => [lookupResult('93.184.216.34', 4)]);
+    const pinned = await resolvePublicHttpUrl('https://example.com:8443/path', lookup);
+
+    const options = makePinnedRequestOptions(pinned, {
+      Host: 'attacker.example',
+      host: 'other-attacker.example',
+      ':authority': 'third-attacker.example',
+      accept: 'text/plain',
+      'user-agent': 'custom-agent/1.0',
+    });
+
+    expect(options.servername).toBe('example.com');
+    expect(options.headers).toEqual({
+      accept: 'text/plain',
+      'user-agent': 'custom-agent/1.0',
+      host: 'example.com:8443',
+    });
+  });
 });

@@ -87,19 +87,35 @@ function markdownDestination(value) {
     (char) => `%${char.codePointAt(0).toString(16).toUpperCase().padStart(2, '0')}`);
 }
 
+function safeMarkdownDestination(value, allowMailto = false) {
+  const raw = String(value).trim();
+  if (!raw) return undefined;
+  for (const char of raw) {
+    const codePoint = char.codePointAt(0);
+    if (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f)) return undefined;
+  }
+  let parsed;
+  try { parsed = new URL(raw, 'https://relative.invalid/'); } catch { return undefined; }
+  const allowed = parsed.protocol === 'http:' || parsed.protocol === 'https:'
+    || (allowMailto && parsed.protocol === 'mailto:');
+  return allowed ? markdownDestination(raw) : undefined;
+}
+
 const htmlConverter = new NodeHtmlMarkdown({
   bulletMarker: '-',
   ignore: ['head', 'nav', 'script', 'style', 'noscript', 'svg'],
 }, {
   a: ({ node }) => {
     const href = node.getAttribute('href');
-    if (!href) return {};
-    return { content: `[${markdownLabel(node.textContent) || markdownLabel(href)}](${markdownDestination(href)})`, recurse: false, noEscape: true };
+    const destination = href && safeMarkdownDestination(href, true);
+    if (!destination) return {};
+    return { content: `[${markdownLabel(node.textContent) || markdownLabel(href)}](${destination})`, recurse: false, noEscape: true };
   },
   img: ({ node }) => {
     const src = node.getAttribute('src');
-    if (!src || /^data:/i.test(src)) return { ignore: true };
-    return { content: `![${markdownLabel(node.getAttribute('alt') ?? '')}](${markdownDestination(src)})`, recurse: false, noEscape: true };
+    const destination = src && safeMarkdownDestination(src);
+    if (!destination) return { ignore: true };
+    return { content: `![${markdownLabel(node.getAttribute('alt') ?? '')}](${destination})`, recurse: false, noEscape: true };
   },
 });
 
@@ -148,7 +164,7 @@ async function fetchUncached(startUrl, signal, transport) {
     if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
     const type = res.headers['content-type'] ?? '';
     const body = await responseText(res);
-    const converted = type.includes('html') ? htmlToMarkdown(body) : body;
+    const converted = type.toLowerCase().includes('html') ? htmlToMarkdown(body) : body;
     const markdown = converted.length > MAX_MARKDOWN_CHARS
       ? `${converted.slice(0, MAX_MARKDOWN_CHARS)}\n\n[Content truncated]`
       : converted;
@@ -171,6 +187,10 @@ function removeCacheEntry(key, entry) {
   if (fetchCache.get(key) !== entry) return;
   fetchCache.delete(key);
   fetchCacheBytes -= entry.bytes;
+  if (entry.timer) {
+    clearTimeout(entry.timer);
+    entry.timer = undefined;
+  }
 }
 
 function trimFetchCache(now, protectedEntry) {
@@ -198,7 +218,15 @@ function cachedFetch(rawUrl, signal, transport) {
 
   const controller = new AbortController();
   const promise = fetchUncached(key, withDeadline(controller.signal), transport);
-  const entry = { expiresAt: now + FETCH_CACHE_TTL_MS, promise, controller, pending: true, waiters: 0, bytes: 0 };
+  const entry = {
+    expiresAt: now + FETCH_CACHE_TTL_MS,
+    promise,
+    controller,
+    pending: true,
+    waiters: 0,
+    bytes: 0,
+    timer: undefined,
+  };
   // Do not let a burst of distinct pending URLs grow the cache beyond its entry ceiling. The request still
   // runs and remains abortable, but is deliberately not retained or coalesced when every slot is busy.
   const retained = fetchCache.size < MAX_CACHE_ENTRIES;
@@ -218,8 +246,8 @@ function cachedFetch(rawUrl, signal, transport) {
     },
   );
   if (retained) {
-    const timer = setTimeout(() => removeCacheEntry(key, entry), FETCH_CACHE_TTL_MS);
-    timer.unref?.();
+    entry.timer = setTimeout(() => removeCacheEntry(key, entry), FETCH_CACHE_TTL_MS);
+    entry.timer.unref?.();
   }
   return waitForCacheEntry(entry, signal);
 }
