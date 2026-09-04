@@ -5925,6 +5925,42 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(rows.every((row) => row.pending === 0)).toBe(true);
   });
 
+  it('a paused owner turn with one child finished and one still recovering waits for the recovering one — never two answers', async () => {
+    const d = fakeDeps();
+    const sessionId = 'brain-1';
+    d.store.createSession({ id: sessionId, userId: 1, model: 'm' });
+    const done = 'brain-ch-subagent-mixed-done';
+    const running = 'brain-ch-subagent-mixed-running';
+    for (const child of [done, running]) {
+      d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId, delegatedAccess: { admin: true, owner: true, projectIds: [], permissionBoundary: null } });
+    }
+    d.store.appendMessage({ id: 'done-a', sessionId: done, parentId: null, role: 'assistant', content: { role: 'assistant', content: [{ type: 'text', text: 'A is finished' }] } });
+    d.store.upsertSubagentRun(sessionId, { id: 'call-a', sessionId: done, status: 'done', task: 'a', tools: 1, seconds: 1 });
+    d.store.upsertSubagentRun(sessionId, { id: 'call-b', sessionId: running, status: 'running', task: 'b', tools: 1, seconds: 1 });
+    d.store.appendMessage({
+      id: 'a-owner-mixed', sessionId, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [
+        { type: 'toolCall', id: 'call-a', name: 'Delegate', arguments: {} },
+        { type: 'toolCall', id: 'call-b', name: 'Delegate', arguments: {} },
+      ] },
+    });
+    d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-owner-mixed'").run();
+    d.store.markSessionParked(sessionId);
+
+    const restarted = new BrainService(d as never);
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll();
+    await recovery.resumeAll();
+
+    const customs = d.session.sendCustomMessage.mock.calls.map((call) => (call[0] as { customType?: string }).customType);
+    expect(customs).not.toContain('restart-resume'); // no generic continuation on A's answer alone
+    expect(customs.filter((type) => type === 'subagent-result')).toHaveLength(1); // exactly one: B's
+    expect(d.store.getSession(sessionId)!.parked_at).toBeNull();
+    // A's answer is folded into its interrupted tool result, so the single continuation had both.
+    const rows = d.store.getMessages(sessionId).map((row) => row.content);
+    expect(rows.some((content) => content.includes('"call-a"') && content.includes('A is finished'))).toBe(true);
+  });
+
   it('uses recovered results as the continuation of a genuinely parked owner turn', async () => {
     const d = fakeDeps();
     d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });

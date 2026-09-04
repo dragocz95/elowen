@@ -684,8 +684,13 @@ export class BrainService {
    *  still-pending tail, before any spawn settles it (see OwnerConversationRecovery.awaitsDelegations). */
   private parkedTurnAwaitsDelegations(sessionId: string): boolean {
     const outstanding = outstandingToolCalls(this.d.store.pendingMessages(sessionId).map((row) => row.content));
-    return outstanding.length > 0 && outstanding.every((call) =>
-      DELEGATION_WAIT_TOOLS.has(call.name) && this.bootClaimedCalls.has(`${sessionId}\u0000${call.id}`));
+    // EVERY outstanding call must be a delegation (a local tool in the batch means the turn has to be
+    // continued now), and at least ONE of them must still be recovering this boot: a batch where child A
+    // already finished and child B is being recovered still waits for B — resuming on A's answer alone
+    // would make the turn answer twice, once now and once when B's result lands.
+    return outstanding.length > 0
+      && outstanding.every((call) => DELEGATION_WAIT_TOOLS.has(call.name))
+      && outstanding.some((call) => this.bootClaimedCalls.has(`${sessionId}\u0000${call.id}`));
   }
 
   /** `delegations` provider, ORDER: deepest first — see DelegatedSessionService.orderForRecovery. */
