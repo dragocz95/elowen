@@ -1,7 +1,7 @@
 'use client';
 import { useDeferredValue, useMemo, useRef, useState } from 'react';
 import { Users, UserPlus, Trash2, Shield, ShieldCheck, Lock, LogIn, MoreHorizontal, Search, FolderGit2, Cpu } from 'lucide-react';
-import { useUsers, useMe, useProjects, useConfig } from '../../lib/queries';
+import { useBrainModels, useUsers, useMe, useProjects } from '../../lib/queries';
 import { useCreateUser, useDeleteUser, useUpdateUser } from '../../lib/mutations';
 import type { User as ElowenUser } from '../../lib/types';
 import { impersonateUser } from '../../lib/token';
@@ -34,7 +34,7 @@ export function UsersView() {
   const deleteUser = useDeleteUser();
   const createUser = useCreateUser();
   const updateUser = useUpdateUser();
-  const config = useConfig();
+  const brainModels = useBrainModels();
   const { toast } = useToast();
   const { t, locale } = useTranslation();
 
@@ -107,8 +107,6 @@ export function UsersView() {
 
   const data = useMemo(() => users.data ?? [], [users.data]);
   const isAdmin = me.data?.user?.is_admin ?? false;
-  const globalExecs = config.data?.allowedExecs ?? [];
-  const customModels = config.data?.customModels ?? [];
   const selected = data.find((u) => u.id === selectedId) ?? null;
   const filteredUsers = useMemo(() => {
     const needle = deferredQuery.trim().toLowerCase();
@@ -196,7 +194,7 @@ export function UsersView() {
             <WorkspaceMetric label={t.users.metricUsers} value={data.length} icon={Users} />
             <WorkspaceMetric label={t.users.metricAdmins} value={adminCount} icon={ShieldCheck} />
             <WorkspaceMetric label={t.users.projects} value={projects.data?.length ?? 0} icon={FolderGit2} />
-            <WorkspaceMetric label={t.users.allowedModels} value={globalExecs.length} icon={Cpu} />
+            <WorkspaceMetric label={t.users.allowedModels} value={brainModels.data?.length ?? 0} icon={Cpu} />
           </>,
         }}
         // Search-only, and deliberately no `filters`: the directory narrows on one text query and
@@ -258,7 +256,7 @@ export function UsersView() {
                   </DataTable>
                 )}
               </div>
-              {selected ? <WorkspaceDetailRail label={t.users.detailTitle} closeLabel={t.common.close} onClose={() => setSelectedId(null)}><UserDetailPane key={selected.id} user={selected} projects={projects.data ?? []} globalExecs={globalExecs} customModels={customModels} /></WorkspaceDetailRail> : null}
+              {selected ? <WorkspaceDetailRail label={t.users.detailTitle} closeLabel={t.common.close} onClose={() => setSelectedId(null)}><UserDetailPane key={selected.id} user={selected} projects={projects.data ?? []} /></WorkspaceDetailRail> : null}
             </div>
             </ControlSurfaceRegister>
           )}

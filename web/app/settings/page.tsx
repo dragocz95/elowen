@@ -3,17 +3,14 @@ export const dynamic = 'force-dynamic';
 // Aliased: `dynamic` is already this route's Next segment-config export, two lines up.
 import nextDynamic from 'next/dynamic';
 import { Activity, useCallback, useEffect, useState, useRef, type ReactNode } from 'react';
-import { SlidersHorizontal, X, Pencil, Gauge, LayoutDashboard, Lock, RefreshCw, RotateCcw, Sparkles, KeyRound, Boxes, Blocks, HardDrive, Server, CalendarClock, ScrollText, BellRing, MessageSquareText, MemoryStick, Timer, ToggleRight } from 'lucide-react';
-import { PROVIDERS, ProviderLogo } from '../../modules/settings/providers';
+import { SlidersHorizontal, Gauge, LayoutDashboard, Lock, RefreshCw, RotateCcw, Sparkles, KeyRound, Boxes, Blocks, HardDrive, Server, CalendarClock, ScrollText, BellRing, MessageSquareText, MemoryStick, Timer, ToggleRight } from 'lucide-react';
 import { ModelIcon } from '../../components/ui/ModelIcon';
-import { ModelModal } from '../../modules/settings/ModelModal';
-import { ModelNoteModal } from '../../modules/settings/ModelNoteModal';
+import { groupBrainModelsByProvider } from '../../components/ui/brainModelSelection';
 import { ContextWindowModal } from '../../modules/settings/ContextWindowModal';
 import { PluginsSection } from '../../modules/settings/PluginsSection';
 import { BrainSection } from '../../modules/settings/BrainSection';
 import { ModelRolesSection } from '../../modules/settings/ModelRolesSection';
 import { DashboardSection } from '../../modules/settings/DashboardSection';
-import { execProvider, execModel, type ProviderId } from '../../lib/modelProvider';
 import { formatTokens } from '../../lib/format';
 import { useBrainModels, useConfig, useMe, usePluginUi, useSystem, useLogFiles } from '../../lib/queries';
 import { useBrand } from '../../lib/brand';
@@ -23,7 +20,6 @@ import { formatBytes } from '../../lib/format';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { combineSaveFeedback, type SaveFeedback } from '../../lib/saveFeedback';
 import { useUpdateConfig, useSystemUpdate, useSystemRestart } from '../../lib/mutations';
-import { allModels, isPresetExec, removeModel, upsertModel } from '../../lib/execPresets';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { SECTION_ALIASES, SETTINGS_CATEGORY_VALUES, SETTINGS_SECTIONS, type SettingsCategory } from '../../modules/settings/categories';
@@ -47,7 +43,6 @@ import { DaysPolicyEditor } from '../../modules/settings/DaysPolicyEditor';
 import { MotionReveal } from '../../components/ui/Motion';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
-import { HelpTip } from '../../components/ui/HelpTip';
 import { LoadingState, ErrorState, EmptyState } from '../../components/ui/states';
 import { ModuleShell } from '../../components/shell/ModuleShell';
 import { interpolate, useTranslation } from '../../lib/i18n';
@@ -202,14 +197,10 @@ export default function SettingsPage() {
   };
 
   const [allowed, setAllowed] = useState<string[]>([]);
-  const [customModels, setCustomModels] = useState<{ label: string; exec: string }[]>([]);
-  const [modelNotes, setModelNotes] = useState<Record<string, string>>({});
   // Per-model max context window overrides (Elowen AI models only), keyed `providerId/model`. Lives here
   // in the Models section next to where models are enabled — one home for all Elowen AI model config.
   const [modelWindows, setModelWindows] = useState<Record<string, number>>({});
   const [modelQuery, setModelQuery] = useState('');
-  // The model whose model description is being edited (null = editor closed).
-  const [noteFor, setNoteFor] = useState<{ label: string; exec: string } | null>(null);
   // The Elowen AI model whose context-window override is being edited (null = editor closed).
   const [ctxFor, setCtxFor] = useState<{ model: string; key: string; effective: number } | null>(null);
   const [defTokenTtl, setDefTokenTtl] = useState(30);
@@ -226,15 +217,6 @@ export default function SettingsPage() {
   const retentionDirty = useRef<Partial<{ enabled: boolean; days: number }>>({});
   const [retentionOpen, setRetentionOpen] = useState(false);
 
-  // Add / edit model modal state
-  const [showAddForm, setShowAddForm] = useState(false);
-  const [editingExec, setEditingExec] = useState<string | null>(null);
-
-  const [hiddenPresets, setHiddenPresets] = useState<string[]>([]);
-
-  // Pending delete (drives the ConfirmDialog)
-  const [pendingDelete, setPendingDelete] = useState<string | null>(null);
-
   // Seed the form from the config ONCE. useConfig is stale-while-revalidate, so it refetches on
   // window focus; re-seeding on every refetch would wipe a model the user just added before they
   // hit Save. We seed on first load only — subsequent server updates don't clobber in-progress edits.
@@ -243,10 +225,7 @@ export default function SettingsPage() {
     if (config.data && !seeded.current) {
       seeded.current = true;
       setAllowed(config.data.allowedExecs ?? []);
-      setCustomModels(config.data.customModels ?? []);
-      setModelNotes(config.data.modelNotes ?? {});
       setModelWindows(config.data.brain?.modelContextWindows ?? {});
-      setHiddenPresets(config.data.hiddenPresets ?? []);
       setDefTokenTtl(config.data.security?.tokenTtlDays ?? 30);
       setAutoUpdate(config.data.autoUpdate ?? false);
       setPushContact(config.data.webPushContact ?? '');
@@ -296,8 +275,8 @@ export default function SettingsPage() {
     try { await update.mutateAsync({ brain: { modelContextWindows: modelWindows } }); }
     catch (error) { toast(apiErrorMessage(error), 'error'); throw error; }
   }, { ready });
-  const modelsSave = useAutoSaveStatus([allowed, customModels, hiddenPresets, modelNotes], async () => {
-    try { await update.mutateAsync({ allowedExecs: allowed, customModels, hiddenPresets, modelNotes }); }
+  const modelsSave = useAutoSaveStatus([allowed], async () => {
+    try { await update.mutateAsync({ allowedExecs: allowed }); }
     catch (error) { toast(apiErrorMessage(error), 'error'); throw error; }
   }, { ready, delay: 0 });
   const autoUpdateSave = useAutoSaveStatus([autoUpdate], async () => {
@@ -330,67 +309,15 @@ export default function SettingsPage() {
   // Administration surface — admins only. A non-admin who deep-links here gets a clear stop.
   if (me.data?.user && !me.data.user.is_admin) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><EmptyState title={t.settings.adminOnly} description={t.settings.adminOnlyDesc} icon={Lock} /></ModuleShell>;
 
-  const resetForm = () => {
-    setShowAddForm(false);
-    setEditingExec(null);
-  };
-
-  // Model changes auto-persist immediately — no separate "save models" step to forget (a two-step
-  // add-then-save was a footgun where edits silently vanished on reload). Each handler computes the
-  // next state, applies it, and PUTs it in one go. Success is silent; only errors toast.
-  const persistModels = (next: { allowed?: string[]; customModels?: { label: string; exec: string }[]; hiddenPresets?: string[]; modelNotes?: Record<string, string> }) => {
-    const allowedExecs = next.allowed ?? allowed;
-    const cm = next.customModels ?? customModels;
-    const hp = next.hiddenPresets ?? hiddenPresets;
-    const mn = next.modelNotes ?? modelNotes;
-    setAllowed(allowedExecs);
-    setCustomModels(cm);
-    setHiddenPresets(hp);
-    setModelNotes(mn);
-  };
-
-  // Persist a single model's model description (empty string clears the entry). Persist-only — the
-  // modal auto-saves and owns its own close, so this must NOT dismiss it.
-  const saveNote = (exec: string, note: string) => {
-    const next = { ...modelNotes };
-    if (note) next[exec] = note; else delete next[exec];
-    persistModels({ modelNotes: next });
-  };
-
+  // Model allow-list changes auto-persist immediately. The catalog itself is owned by configured brain
+  // providers; retired worker presets and custom worker entries are not editable on this surface.
   const toggle = (exec: string) =>
-    persistModels({ allowed: allowed.includes(exec) ? allowed.filter((e) => e !== exec) : [...allowed, exec] });
-
-  // Delete and edit go through the pure helpers so a custom override of a preset (which lives in BOTH
-  // customModels and the preset list) is handled correctly — the old split-by-`PRESET_EXECS` logic
-  // left the other half behind, so presets wouldn't delete and renames duplicated.
-  const deleteModel = (exec: string) => {
-    persistModels(removeModel({ allowed, customModels, hiddenPresets, modelNotes }, exec));
-    if (editingExec === exec) resetForm();
-  };
-
-  const startEdit = (m: { label: string; exec: string }) => {
-    setEditingExec(m.exec);
-    setShowAddForm(true);
-  };
-
-  const saveModel = (m: { label: string; exec: string }) => {
-    persistModels(upsertModel({ allowed, customModels, hiddenPresets, modelNotes }, m, editingExec ?? undefined));
-    resetForm();
-  };
+    setAllowed((current) => current.includes(exec) ? current.filter((entry) => entry !== exec) : [...current, exec]);
 
   // 'models' auto-saves; 'data' is a one-off danger action; 'system'
   // auto-saves its toggle + has its own update button; 'plugins' toggles apply instantly — none of
   // these use the shared footer save button.
 
-  const models = allModels(customModels, hiddenPresets);
-  const visibleProviders = PROVIDERS.filter((provider) => provider.embedded);
-
-  const deleteTarget = models.find((m) => m.exec === pendingDelete);
-  // Providers the user has actually configured (non-empty binary; edited in the agents plugin's
-  // CLI Agents deck) — the only ones offered when adding a model, and the source for the executor
-  // picker's grouping.
-  const configProviders = config.data?.providers ?? {};
-  const activeProviders = PROVIDERS.filter((p) => (configProviders[p.id]?.bin ?? '').trim() !== '').map((p) => p.id as ProviderId);
   // Sections that report their own state (core panels and plugin-contributed ones alike) come straight
   // from the sink; the two whose state is assembled from several independent autosaves are folded here.
   const feedbackByCategory: Partial<Record<string, SaveFeedback>> = {
@@ -423,7 +350,8 @@ export default function SettingsPage() {
   // dash rather than a zero, because "no answer yet" and "none" are different answers.
   const brainProviders = config.data?.brain?.providers ?? [];
   const brainCatalog = brainModels.data ?? [];
-  const catalogExecs = [...models.map((m) => m.exec), ...brainCatalog.map((m) => m.exec)];
+  const brainModelGroups = groupBrainModelsByProvider(brainCatalog);
+  const catalogExecs = brainCatalog.map((model) => model.exec);
   const pluginEntries = pluginUi.data ?? [];
   const logBytes = logFiles.data?.files.reduce((sum, file) => sum + file.bytes, 0);
   const sectionMetrics: Record<Category, ReactNode> = {
@@ -448,7 +376,7 @@ export default function SettingsPage() {
       <>
         <WorkspaceMetric label={t.settings.metric.catalog} value={catalogExecs.length} icon={Boxes} />
         <WorkspaceMetric label={t.settings.metric.enabled} value={catalogExecs.filter((exec) => allowed.includes(exec)).length} icon={ToggleRight} />
-        <WorkspaceMetric label={t.settings.metric.custom} value={customModels.length} icon={Pencil} />
+        <WorkspaceMetric label={t.settings.metric.accounts} value={brainModelGroups.length} icon={Server} />
         <WorkspaceMetric label={t.settings.metric.overrides} value={Object.keys(modelWindows).length} icon={Gauge} />
       </>
     ),
@@ -555,105 +483,57 @@ export default function SettingsPage() {
                 stay exactly as they are, but without this the page went from the roles group straight to
                 unlabelled provider cards and the second half of the question had no name. */}
             <SettingsGroup title={t.settings.modelCatalog} description={t.settings.modelCatalogHint} icon={Boxes} />
-            {/* One catalog, grouped by the engine that runs the model — the same grouping the
-             *  executor picker uses, so what admins configure here matches what users pick. */}
-            {visibleProviders.map((prov) => {
+            {/* The same provider groups drive these catalog cards and every model picker. The provider id
+                comes from the daemon's structured catalog; model ids remain opaque and may contain slashes. */}
+            {brainModelGroups.map((group) => {
               const needle = modelQuery.trim().toLocaleLowerCase();
-              const allCliItems = models.filter((m) => execProvider(m.exec) === prov.id);
-              const allElowenItems = prov.id === 'elowen' ? (brainModels.data ?? []) : [];
-              const cliItems = needle ? allCliItems.filter((m) => `${prov.label} ${m.label} ${m.exec} ${execModel(m.exec)} ${modelNotes[m.exec] ?? ''}`.toLocaleLowerCase().includes(needle)) : allCliItems;
-              const elowenItems = needle ? allElowenItems.filter((m) => `${prov.label} ${m.model} ${m.exec} ${m.providerLabel}`.toLocaleLowerCase().includes(needle)) : allElowenItems;
-              if (cliItems.length === 0 && elowenItems.length === 0) return null;
-              const groupExecs = [...allCliItems.map((m) => m.exec), ...allElowenItems.map((m) => m.exec)];
-              const enabledCount = groupExecs.filter((e) => allowed.includes(e)).length;
+              const visibleModels = needle
+                ? group.models.filter((model) => `${group.label} ${model.model} ${model.exec}`.toLocaleLowerCase().includes(needle))
+                : group.models;
+              if (visibleModels.length === 0) return null;
+              const enabledCount = group.models.filter((model) => allowed.includes(model.exec)).length;
               return (
-                <SettingsGroup key={prov.id} density="compact">
+                <SettingsGroup key={group.id} density="compact">
                   <header className="settings-group__header">
                     <div className="settings-group__heading">
-                      <ProviderLogo meta={prov} size={28} />
+                      <span className="inline-flex h-7 w-7 shrink-0 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted text-muted-foreground">
+                        <ModelIcon name={group.label} size={17} />
+                      </span>
                       <div className="flex items-center gap-2">
-                        <h2>{prov.label}</h2>
-                        <span className="font-mono text-tiny text-muted-foreground">{enabledCount}/{groupExecs.length}</span>
-                        {prov.embedded ? <HelpTip align="left">{t.help.elowenModels}</HelpTip> : null}
+                        <h2>{group.label}</h2>
+                        <span className="font-mono text-tiny text-muted-foreground">{enabledCount}/{group.models.length}</span>
                       </div>
                     </div>
                   </header>
                   <div className="settings-model-rows @container">
-                    {cliItems.map((p) => {
-                      const isCustom = !isPresetExec(p.exec);
-                      return (
-                        <div data-testid="model-row" key={p.exec} className="settings-model-row settings-model-row--cli group flex min-w-0 items-center gap-3 transition-colors">
-                          <span className="settings-model-row__icon flex h-9 w-9 shrink-0 items-center justify-center text-muted-foreground">
-                            <ModelIcon name={p.exec} size={20} />
-                          </span>
-                          <div className="settings-model-row__identity min-w-0 @2xl:w-56 @2xl:shrink-0">
-                            <div className="flex min-w-0 items-center gap-2">
-                              <span className="truncate text-sm font-medium text-foreground">{p.label}</span>
-                              {!isCustom ? <span className="text-[9px] uppercase tracking-wide text-muted-foreground/70">{t.settings.presetTag}</span> : null}
-                            </div>
-                            <span className="block truncate font-mono text-[11px] text-muted-foreground">{execModel(p.exec)}</span>
-                          </div>
-                          <button
-                            type="button"
-                            onClick={() => setNoteFor({ label: p.label, exec: p.exec })}
-                            title={t.settings.modelNoteEdit}
-                            className={`hidden min-w-0 flex-1 truncate text-left text-xs @2xl:block ${modelNotes[p.exec]?.trim() ? 'text-muted-foreground hover:text-foreground' : 'italic text-muted-foreground/60 hover:text-muted-foreground'}`}
-                          >
-                            {modelNotes[p.exec]?.trim() || t.settings.modelNoteAdd}
-                          </button>
-                          <div className="settings-model-row__controls ml-auto flex shrink-0 items-center gap-1.5">
-                            <button
-                              type="button"
-                              aria-label={t.settings.editLabel.replace('{exec}', p.exec)}
-                              title={t.settings.editLabel.replace('{exec}', p.exec)}
-                              onClick={() => startEdit(p)}
-                              className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                            >
-                              <Pencil size={13} aria-hidden />
-                            </button>
-                            <button
-                              type="button"
-                              aria-label={t.settings.deleteLabel.replace('{exec}', p.exec)}
-                              title={t.settings.deleteLabel.replace('{exec}', p.exec)}
-                              onClick={() => setPendingDelete(p.exec)}
-                              className="flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
-                            >
-                              <X size={13} aria-hidden />
-                            </button>
-                            <Toggle checked={allowed.includes(p.exec)} onChange={() => toggle(p.exec)} label={p.label} />
-                          </div>
-                        </div>
-                      );
-                    })}
-                    {elowenItems.map((m) => {
-                      const winKey = `${m.provider}/${m.model}`;
+                    {visibleModels.map((model) => {
+                      const winKey = `${model.provider}/${model.model}`;
                       // Local state is the live truth for overrides (seeded from the same config
-                      // `m.contextWindowSet` derives from, then autosaved), so a just-set or
-                      // just-cleared override renders immediately without waiting for a refetch.
+                      // `contextWindowSet` derives from, then autosaved), so a just-set or just-cleared
+                      // override renders immediately without waiting for a refetch.
                       const override = modelWindows[winKey];
                       const overridden = override != null;
                       return (
-                      <div data-testid="model-row" key={m.exec} className="settings-model-row settings-model-row--elowen flex min-w-0 items-center gap-3 transition-colors">
-                          <span className="settings-model-row__icon flex h-9 w-9 shrink-0 items-center justify-center text-muted-foreground"><ModelIcon name={m.model} size={20} /></span>
+                        <div data-testid="model-row" key={model.exec} className="settings-model-row settings-model-row--elowen flex min-w-0 items-center gap-3 transition-colors">
+                          <span className="settings-model-row__icon flex h-9 w-9 shrink-0 items-center justify-center text-muted-foreground"><ModelIcon name={model.model} size={20} /></span>
                           <div className="settings-model-row__identity min-w-0 flex-1">
-                            <span className="block truncate text-sm font-medium text-foreground">{m.model}</span>
-                            <span className="block truncate font-mono text-[11px] text-muted-foreground">{m.exec}</span>
+                            <span className="block truncate text-sm font-medium text-foreground">{model.model}</span>
+                            <span className="block truncate font-mono text-[11px] text-muted-foreground">{model.exec}</span>
                           </div>
                           <div className="settings-model-row__controls ml-auto flex shrink-0 items-center gap-2">
-                            <span className="settings-model-row__provider min-w-0"><Badge>{m.providerLabel}</Badge></span>
                             <button
                               type="button"
-                              onClick={() => setCtxFor({ model: m.model, key: winKey, effective: m.contextWindow })}
-                              title={`${t.brain.contextWindowEdit} · ${formatTokens(override ?? m.contextWindow)}`}
-                              aria-label={`${t.brain.contextWindowEdit}: ${m.model}`}
+                              onClick={() => setCtxFor({ model: model.model, key: winKey, effective: model.contextWindow })}
+                              title={`${t.brain.contextWindowEdit} · ${formatTokens(override ?? model.contextWindow)}`}
+                              aria-label={`${t.brain.contextWindowEdit}: ${model.model}`}
                               className={`settings-model-row__context inline-flex h-8 shrink-0 items-center gap-1 px-2 font-mono text-[11px] transition-colors ${overridden ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
                             >
                               <Gauge size={12} aria-hidden />
-                              {formatTokens(override ?? m.contextWindow)}
+                              {formatTokens(override ?? model.contextWindow)}
                             </button>
-                            <Toggle checked={allowed.includes(m.exec)} onChange={() => toggle(m.exec)} label={m.model} />
+                            <Toggle checked={allowed.includes(model.exec)} onChange={() => toggle(model.exec)} label={model.model} />
                           </div>
-                      </div>
+                        </div>
                       );
                     })}
                   </div>
@@ -661,35 +541,13 @@ export default function SettingsPage() {
               );
             })}
 
-            {modelQuery.trim() && ![
-
-              ...(brainModels.data ?? []).map((m) => `${PROVIDERS.find((provider) => provider.id === 'elowen')?.label ?? ''} ${m.model} ${m.exec} ${m.providerLabel}`),
-            ].some((value) => value.toLocaleLowerCase().includes(modelQuery.trim().toLocaleLowerCase())) ? (
+            {modelQuery.trim() && !brainModelGroups.some((group) => group.models.some((model) =>
+              `${group.label} ${model.model} ${model.exec}`.toLocaleLowerCase().includes(modelQuery.trim().toLocaleLowerCase()))) ? (
               <SettingsState>{t.settings.modelNoMatches}</SettingsState>
             ) : null}
 
           </>
         </SettingsPanel>
-
-        {showAddForm && (
-          <ModelModal
-            initial={editingExec ? models.find((m) => m.exec === editingExec) ?? null : null}
-            existingExecs={new Set(models.map((m) => m.exec))}
-            activeProviders={activeProviders}
-            onClose={resetForm}
-            onSave={saveModel}
-          />
-        )}
-
-        {noteFor && (
-          <ModelNoteModal
-            label={noteFor.label}
-            exec={noteFor.exec}
-            initial={modelNotes[noteFor.exec] ?? ''}
-            onClose={() => setNoteFor(null)}
-            onSave={(note) => saveNote(noteFor.exec, note)}
-          />
-        )}
 
         {ctxFor && (
           <ContextWindowModal
@@ -959,18 +817,6 @@ export default function SettingsPage() {
           });
         }}
         onClose={() => setRestartTarget(null)}
-      />
-
-      <ConfirmDialog
-        open={pendingDelete !== null}
-        title={t.settings.deleteModel}
-        description={deleteTarget ? t.settings.deleteModelDesc.replace('{label}', deleteTarget.label).replace('{exec}', deleteTarget.exec) : undefined}
-        confirmLabel={t.common.delete}
-        onConfirm={() => {
-          if (pendingDelete) deleteModel(pendingDelete);
-          setPendingDelete(null);
-        }}
-        onClose={() => setPendingDelete(null)}
       />
 
     </ModuleShell>

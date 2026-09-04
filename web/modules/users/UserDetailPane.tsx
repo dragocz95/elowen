@@ -4,9 +4,7 @@ import { FolderGit2, Cpu, Wrench, ShieldCheck, Puzzle, Pencil } from 'lucide-rea
 import { useBrainModels, usePlugins, useUserProjects } from '../../lib/queries';
 import { useAssignProject, useUpdateUser } from '../../lib/mutations';
 import type { Project, User as ElowenUser } from '../../lib/types';
-import { allModels } from '../../lib/execPresets';
-import { brainModelId, brainModelLabel, execProvider, type ProviderId } from '../../lib/modelProvider';
-import { PROVIDERS, ProviderIcon, providerMeta } from '../settings/providers';
+import { brainModelId, brainModelLabel } from '../../lib/modelProvider';
 import { useToast } from '../../components/ui/Toast';
 import { ElowenApiError } from '../../lib/elowenClient';
 import { Input } from '../../components/ui/Input';
@@ -25,13 +23,6 @@ import { localDateTime } from '../../lib/format';
 import { ToolPills } from './ToolPills';
 import { UserStatsInline } from './UserStatsInline';
 import { PluginUserPanels } from './PluginUserPanels';
-
-/** Small provider logo for the modal's worker-provider group headers/filter chips. */
-function ProviderGroupIcon({ provider }: { provider: ProviderId }) {
-  const meta = providerMeta(provider);
-  if (!meta) return null;
-  return <ProviderIcon meta={meta} size={14} />;
-}
 
 /** Admin-only: assign a user to projects (the access boundary for non-admins). A compact summary
  *  card on the page; the full pick list lives in the manage modal. */
@@ -94,87 +85,32 @@ function ProjectChips({ userId, projects }: { userId: number; projects: Project[
   );
 }
 
-/** Admin-only: restrict which models a user may run on tasks. Empty selection → no restriction.
- *  Summary shows the effective allowance; the manage modal groups brain models by their catalog provider
- *  (the shared picker grouping) and worker execs by their executor provider. */
-function ModelChips({ user, globalExecs, custom }: { user: ElowenUser; globalExecs: string[]; custom: { label: string; exec: string }[] }) {
+/** Admin-only: restrict which live brain models a user may run. Empty selection means no restriction.
+ *  The modal is built exclusively from `/brain/models`; retired worker presets are not selectable here. */
+function ModelChips({ user }: { user: ElowenUser }) {
   const { t } = useTranslation();
   const update = useUpdateUser();
   const { toast } = useToast();
   const [open, setOpen] = useState(false);
   const brainModels = useBrainModels();
+  const catalog = brainModels.data ?? [];
+  if (catalog.length === 0 && user.allowed_execs.length === 0) return <p className="text-xs italic text-muted-foreground">—</p>;
 
-  // Display names come from the catalogs — worker presets first, then the Elowen AI model list — never
-  // from splitting the exec at its first slash: a brain model id may itself contain slashes
-  // (`elowen:relay/ollama/kimi-k2.7-code`), which that split would truncate into the wrong name. The row
-  // id below stays the full exec, so the same model offered by two providers remains two entries.
-  const workerModels = allModels(custom);
-  const catalogModelOf = (exec: string) => brainModels.data?.find((m) => brainModelId(m) === exec);
+  const { items, groupIcons } = brainModelSelection(catalog, brainModelId);
+  const catalogByExec = new Map(catalog.map((model) => [brainModelId(model), model]));
   const labelOf = (exec: string) => {
-    const catalogModel = catalogModelOf(exec);
-    return catalogModel ? brainModelLabel(catalogModel) : workerModels.find((m) => m.exec === exec)?.label ?? exec;
+    const model = catalogByExec.get(exec);
+    return model ? brainModelLabel(model) : exec;
   };
-  const iconNameOf = (exec: string) => brainModelLabel(exec, brainModels.data);
-  // The compact summary uses the same catalog model name as the grouped rows. Full execs remain the
-  // selection keys, so same-named models from different providers are still distinct grants.
-  const summaryLabelOf = labelOf;
-
-  // What may be OFFERED is derived, never read straight out of stored config — the same rule the daemon's
-  // isOfferableExec applies, so this modal cannot advertise something the PATCH would refuse. Worker execs
-  // come from the global allow-list, which is where they legitimately live. A brain model, though, exists
-  // only as long as its provider does, so its rows come from the live catalog: deleting a provider leaves
-  // its `provider/model` strings behind in `globalExecs`, and reading them from there is exactly why
-  // `alibaba/…` stayed listed and selectable after that provider was removed.
-  const brainCatalog = brainModels.data ?? [];
-  const brainExecs = brainCatalog.map(brainModelId);
-  const cliExecs = globalExecs.filter((e) => execProvider(e) !== 'elowen');
-  if (cliExecs.length === 0 && brainExecs.length === 0) return <p className="text-xs italic text-muted-foreground">—</p>;
-
-  // Brain rows take the ONE shared picker grouping, so this modal and the Settings role pickers group by
-  // the same authoritative `provider`/`providerLabel` and cannot drift. Worker rows keep the executor
-  // grouping, under `cli:`-prefixed group keys so a worker provider id can never collide with a configured
-  // brain provider id (`providerMeta` would otherwise answer a brain provider literally named `codex`).
-  const cliGroup = (prov: ProviderId) => `cli:${prov}`;
-  const providerOrder = (id: ProviderId) => {
-    const i = PROVIDERS.findIndex((p) => p.id === id);
-    return i === -1 ? PROVIDERS.length : i;
-  };
-  const cliGroups = [...new Set(cliExecs.map(execProvider))].sort((a, b) => providerOrder(a) - providerOrder(b));
-  const cliItems: ManageSelectionItem[] = cliGroups.flatMap((prov) => cliExecs
-    .filter((e) => execProvider(e) === prov)
-    .map((exec) => ({
-      id: exec,
-      label: labelOf(exec),
-      group: cliGroup(prov),
-      groupLabel: providerMeta(prov)?.label ?? prov,
-      icon: <ModelIcon name={iconNameOf(exec)} size={14} />,
-    })));
-  const { items: brainItems, groupIcons: brainGroupIcons } = brainModelSelection(brainCatalog, brainModelId);
-  const items: ManageSelectionItem[] = [...cliItems, ...brainItems];
-  const groupIcons = {
-    ...Object.fromEntries(cliGroups.map((prov) => [cliGroup(prov), <ProviderGroupIcon key={prov} provider={prov} />])),
-    ...brainGroupIcons,
-  };
-
-  const selected = new Set(user.allowed_execs);
-  // The summary counts the user's OWN grants, not their intersection with what is currently offered. A
-  // grant whose model has since disappeared still restricts this account to nothing else, so folding it out
-  // here would report them as unrestricted — a permission surface reading wider than it is. The dead grant
-  // simply has no row to click; the PATCH filter drops it the next time the admin saves.
   const grants = user.allowed_execs;
   const restricted = grants.length > 0;
-  const summarySource = restricted ? grants : items.map((it) => it.id);
-  // {p} counts the DISTINCT provider groups behind the grants, resolved exactly the way the modal
-  // displays them — a brain grant through its catalog provider, a CLI grant through its executor
-  // provider — so two brain providers never collapse into the embedded brain's single bucket. A dead
-  // grant has no displayed group and contributes no provider, while still counting as a model below.
-  const groupKeyOf = (exec: string): string | null => {
-    const inCatalog = brainCatalog.find((m) => brainModelId(m) === exec);
-    if (inCatalog) return inCatalog.provider;
-    const prov = execProvider(exec);
-    return prov === 'elowen' ? null : cliGroup(prov);
-  };
-  const providerCount = new Set(grants.map(groupKeyOf).filter((key) => key !== null)).size;
+  // Keep stale grants visible in the summary because they still restrict the account server-side, but do
+  // not offer them as selectable rows. Saving the modal replaces the list with live catalog identities.
+  const summarySource = restricted ? grants : items.map((item) => item.id);
+  const providerCount = new Set(grants.flatMap((exec) => {
+    const provider = catalogByExec.get(exec)?.provider;
+    return provider ? [provider] : [];
+  })).size;
   const countText = restricted
     ? t.managePicker.modelsCount
         .replace('{n}', String(grants.length))
@@ -195,7 +131,7 @@ function ModelChips({ user, globalExecs, custom }: { user: ElowenUser; globalExe
     <>
       <SelectionSummary
         countText={countText}
-        samples={summarySource.slice(0, 3).map((exec) => ({ id: exec, label: summaryLabelOf(exec), icon: <ModelIcon name={iconNameOf(exec)} size={13} /> }))}
+        samples={summarySource.slice(0, 3).map((exec) => ({ id: exec, label: labelOf(exec), icon: <ModelIcon name={labelOf(exec)} size={13} /> }))}
         moreCount={Math.max(0, summarySource.length - 3)}
         onManage={() => setOpen(true)}
         manageLabel={t.managePicker.manage}
@@ -207,7 +143,7 @@ function ModelChips({ user, globalExecs, custom }: { user: ElowenUser; globalExe
         open={open}
         onClose={() => setOpen(false)}
         items={items}
-        selected={selected}
+        selected={new Set(grants)}
         onSave={handleSave}
         saving={update.isPending}
         emptySelectionHint={t.users.allModelsHint}
@@ -343,11 +279,9 @@ function IdentityHeader({ user }: { user: ElowenUser }) {
 /** The detail for a selected user: an identity header carrying a compact overview strip (memories /
  *  sessions / top model) beside the name, then full-width admin access controls — projects, allowed
  *  models, and the effective tool set (whose plugin tools toggle on/off per user). */
-export function UserDetailPane({ user, projects, globalExecs, customModels }: {
+export function UserDetailPane({ user, projects }: {
   user: ElowenUser;
   projects: Project[];
-  globalExecs: string[];
-  customModels: { label: string; exec: string }[];
 }) {
   const { t } = useTranslation();
   return (
@@ -361,7 +295,7 @@ export function UserDetailPane({ user, projects, globalExecs, customModels }: {
 
       <div className="flex flex-col gap-5">
         <DetailBlock icon={FolderGit2} title={t.users.projects}><ProjectChips userId={user.id} projects={projects} /></DetailBlock>
-        <DetailBlock icon={Cpu} title={t.users.allowedModels}><ModelChips user={user} globalExecs={globalExecs} custom={customModels} /></DetailBlock>
+        <DetailBlock icon={Cpu} title={t.users.allowedModels}><ModelChips user={user} /></DetailBlock>
         <DetailBlock icon={Puzzle} title={t.users.grantedPlugins} hint={t.users.grantedPluginsHint}><PluginGrantChips user={user} /></DetailBlock>
         <DetailBlock icon={Wrench} title={t.users.tools} hint={t.users.toolsHint}><ToolPills user={user} /></DetailBlock>
         <PluginUserPanels user={user} />
