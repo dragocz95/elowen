@@ -103,6 +103,12 @@ function wireOrderProblems(messages) {
   return problems;
 }
 
+/** An assistant message with neither text nor tool calls — what providers reject with a 400. */
+function hasEmptyAssistant(messages) {
+  return (Array.isArray(messages) ? messages : []).some((message) => message.role === 'assistant'
+    && !(message.tool_calls?.length) && !(typeof message.content === 'string' ? message.content.trim() : JSON.stringify(message.content ?? '').length > 2));
+}
+
 /** Assert the restart was a PAUSE (own exit, no SIGKILL, inside the bound) and record its numbers. */
 function checkPause(label, daemon, firstResumedAt) {
   const restart = daemon.lastRestart();
@@ -111,6 +117,27 @@ function checkPause(label, daemon, firstResumedAt) {
   check(`${label}: the daemon paused on SIGTERM and exited on its own within ${PAUSE_EXIT_BOUND_MS} ms`,
     !restart.forced && restart.exit?.code === 0 && restart.stopMs < PAUSE_EXIT_BOUND_MS,
     `stopMs=${restart.stopMs} forced=${restart.forced} exit=${JSON.stringify(restart.exit)}`);
+}
+
+/** Runner variant (`ELOWEN_SUBAGENT_RUNNER=1`): delegated turns execute in a forked sub-agent runner, the
+ *  production shape, so the pause leaves an ORPHANED runner behind (it aborts on IPC close and dies with
+ *  the daemon) and the child's checkpoint is whatever that race wrote — an empty aborted assistant row
+ *  included. The switch is a runtime config flag, set after boot exactly like subagent-e2e does. */
+const USE_RUNNER = process.env.ELOWEN_SUBAGENT_RUNNER === '1';
+async function enableRunner(daemon, token) {
+  if (!USE_RUNNER) return;
+  const res = await fetch(`${daemon.baseUrl}/config`, {
+    method: 'PUT',
+    headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
+    body: JSON.stringify({ runtime: { subagentRunnerEnabled: true } }),
+  });
+  if (!res.ok) throw new Error(`enabling the sub-agent runner failed: HTTP ${res.status} ${await res.text()}`);
+}
+
+/** Proof the runner path was actually taken: the pool logs every fork. */
+function checkRunnerUsed(label, daemon) {
+  if (!USE_RUNNER) return;
+  check(`${label}: the delegated turn ran in a forked sub-agent runner`, daemonLog(daemon).includes('sub-agent pool: forking a runner'));
 }
 
 async function startParent(baseUrl, token) {
@@ -154,10 +181,12 @@ async function scenarioBackgroundRecovery() {
   try {
     daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'recovery-bg' });
     const token = daemon.token;
+    await enableRunner(daemon, token);
     const run = await startDelegation({ daemon, token, task: MARKERS.backgroundTask });
     await model.initialChildArrived;
     check('the background child reached the provider while its durable row is running', run.lifecycle === 'running'
       && model.childRequests().length === 1);
+    checkRunnerUsed('background', daemon);
 
     await daemon.restart();
     const terminal = await waitFor('the recovered background row to become done', () => row(daemon.dataDir,
@@ -174,6 +203,7 @@ async function scenarioBackgroundRecovery() {
     check('boot recovery respawned the child exactly once', terminal.attempt === 1 && model.childRequests().length === 2,
       `attempt=${terminal.attempt}; child requests=${model.childRequests().length}`);
     check('the respawn carried the recovery instruction', recoveredRequests.length === 1);
+    check('no empty assistant message reaches the provider on the respawn', !hasEmptyAssistant(recoveredRequests[0]?.body?.messages));
     check('the original run is terminal done', terminal.lifecycle === 'done' && JSON.parse(terminal.state).status === 'done');
     check('the inbox contains the child\'s actual recovered answer', inbox.status === 'done' && payload.result?.includes(MARKERS.backgroundResult), JSON.stringify(payload));
     // Recovery uses the `restart-` id namespace as its stable key, so semantic synthetic-ness is the payload:
@@ -204,6 +234,7 @@ async function scenarioForegroundRecovery() {
   try {
     daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'recovery-fg' });
     const token = daemon.token;
+    await enableRunner(daemon, token);
     const run = await startDelegation({ daemon, token, task: MARKERS.foregroundTask });
     await model.initialChildArrived;
     check('the foreground child is genuinely in flight before restart', run.lifecycle === 'running' && model.childRequests().length === 1);
@@ -265,6 +296,7 @@ async function scenarioInterruptedToolRecovery() {
   try {
     daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'recovery-unsafe' });
     const token = daemon.token;
+    await enableRunner(daemon, token);
     const run = await startDelegation({ daemon, token, task: MARKERS.unsafeTask });
     const pending = await waitFor('the persisted unanswered Bash tool call', () => {
       const pendingRows = rows(daemon.dataDir,
@@ -273,6 +305,7 @@ async function scenarioInterruptedToolRecovery() {
     });
     check('the child is running with a persisted mutating Bash call and no result row yet', run.lifecycle === 'running'
       && String(pending.content).includes('Bash') && model.childRequests().length === 1);
+    checkRunnerUsed('interrupted-tool', daemon);
 
     await daemon.restart();
     const terminal = await waitFor('the interrupted run to complete', () => row(daemon.dataDir,
@@ -287,6 +320,7 @@ async function scenarioInterruptedToolRecovery() {
     // trimmed transcript, never a parked run waiting for a human.
     const respawnWire = wireOrderProblems(Array.isArray(respawn?.body?.messages) ? respawn.body.messages : []);
     check('the respawn payload is a valid provider wire order', respawnWire.length === 0, respawnWire.join('; '));
+    check('no empty assistant message (an orphaned runner\'s abort fragment) reaches the provider', !hasEmptyAssistant(respawn?.body?.messages));
     const respawnBody = JSON.stringify(respawn?.body ?? {});
     check('the respawn context carries the Bash call and its [interrupted] answer', respawnBody.includes('call_recovery_')
       && respawnBody.includes('[interrupted]') && respawnBody.includes('effect is unknown'));
@@ -414,7 +448,7 @@ async function main() {
   await scenarioInterruptedToolRecovery();
   await scenarioLegacyMigration();
   await scenarioOwnerTurnPause();
-  console.log('\nrestart timings (ms): SIGTERM→exit | boot→healthy | boot→first resumed model request');
+  console.log(`\nrestart timings (ms), ${USE_RUNNER ? 'sub-agent RUNNER' : 'in-process'} variant: SIGTERM→exit | boot→healthy | boot→first resumed model request`);
   for (const t of timings) {
     console.log(`  ${t.label.padEnd(18)} stop=${String(t.stopMs).padStart(5)}${t.forced ? ' (SIGKILL!)' : ''}  boot=${String(t.bootMs).padStart(5)}  resume=${t.resumeMs === null ? '   n/a' : String(t.resumeMs).padStart(6)}`);
   }

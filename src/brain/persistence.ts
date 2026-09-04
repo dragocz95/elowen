@@ -223,7 +223,16 @@ export function settlePartialTurn(store: BrainStore, sessionId: string): { id: s
   // drop the rest, exactly as before.
   const verifiable = answeredToolCallPrefixOrParseLimit(pending.map((row) => row.content));
   for (const row of pending.slice(verifiable)) store.deleteMessage(sessionId, row.id);
-  const kept = pending.slice(0, verifiable);
+  let kept = pending.slice(0, verifiable);
+  // An orphaned sub-agent runner aborts its turn when the daemon's IPC closes, and the abort can leave a
+  // trailing assistant row with NO content at all (`content: []`, stopReason aborted) — a fragment of a
+  // response that never started. Providers refuse an empty assistant message, so it must not be handed
+  // back; there is nothing in it to keep.
+  const last = kept.at(-1);
+  if (last && last.role === 'assistant' && isEmptyAssistant(last.content)) {
+    store.deleteMessage(sessionId, last.id);
+    kept = kept.slice(0, -1);
+  }
   const outstanding = outstandingToolCalls(kept.map((row) => row.content));
   for (const call of outstanding) {
     store.appendPendingMessage({
@@ -237,6 +246,20 @@ export function settlePartialTurn(store: BrainStore, sessionId: string): { id: s
   }
   store.settlePendingMessages(sessionId);
   return outstanding;
+}
+
+/** An assistant row that carries neither text nor a tool call — nothing a provider accepts or a model
+ *  needs. Unparseable content is not "empty": that row was already cut by the parse limit. */
+function isEmptyAssistant(raw: string): boolean {
+  try {
+    const message = JSON.parse(raw) as { content?: unknown };
+    if (typeof message.content === 'string') return message.content.trim() === '';
+    if (!Array.isArray(message.content)) return message.content == null;
+    return message.content.every((part) => {
+      const p = part as { type?: string; text?: string };
+      return p?.type === 'text' ? !(p.text ?? '').trim() : false;
+    });
+  } catch { return false; }
 }
 
 /** How many leading serialized messages parse as JSON — the prefix whose tool calls can be answered for.

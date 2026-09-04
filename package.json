@@ -80,6 +80,8 @@
     "test:e2e:delegate": "npm run build --silent && node scripts/tests/delegate-e2e/run.mjs",
     "test:e2e:subagent": "npm run build --silent && node scripts/tests/subagent-e2e/run.mjs",
     "test:e2e:subagent:runner": "npm run build --silent && ELOWEN_SUBAGENT_RUNNER=1 node scripts/tests/subagent-e2e/run.mjs",
+    "test:e2e:recovery": "npm run build --silent && node scripts/tests/recovery-e2e/run.mjs",
+    "test:e2e:recovery:runner": "npm run build --silent && ELOWEN_SUBAGENT_RUNNER=1 node scripts/tests/recovery-e2e/run.mjs",
     "test:e2e:workflow": "npm run build --silent && node scripts/tests/workflow-e2e/run.mjs",
     "test:install": "node scripts/install-smoke/run.mjs",
     "lint": "eslint .",

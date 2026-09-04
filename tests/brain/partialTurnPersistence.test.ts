@@ -127,6 +127,22 @@ describe('a turn interrupted by a daemon restart', () => {
     expect(store.pendingMessages('s1')).toEqual([]);
   });
 
+  it('drops a trailing EMPTY assistant row (an orphaned runner\'s abort fragment) — providers refuse it', () => {
+    projectUserTurn(store, 's1', 'do the thing');
+    midTurn(assistantCalling('t1'), toolResult('t1'), { role: 'assistant', content: [], stopReason: 'aborted' });
+
+    expect(settlePartialTurn(store, 's1')).toEqual([]);
+    expect(rolesOf(store, 's1')).toEqual(['user', 'assistant', 'toolResult']);
+    expect(store.pendingMessages('s1')).toEqual([]);
+  });
+
+  it('keeps a trailing assistant that says something, even when it was cut off', () => {
+    projectUserTurn(store, 's1', 'do the thing');
+    midTurn(assistantCalling('t1'), toolResult('t1'), { role: 'assistant', content: [{ type: 'text', text: 'half a' }], stopReason: 'aborted' });
+    settlePartialTurn(store, 's1');
+    expect(rolesOf(store, 's1')).toEqual(['user', 'assistant', 'toolResult', 'assistant']);
+  });
+
   it('answers EVERY unanswered call of a parallel batch, one result per call', () => {
     projectUserTurn(store, 's1', 'do the thing');
     midTurn(assistantCalling('a', 'b', 'c'), toolResult('b')); // b answered, a and c cut off
