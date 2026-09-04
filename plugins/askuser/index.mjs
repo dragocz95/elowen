@@ -33,10 +33,9 @@ const annotationsSchema = Type.Record(Type.String(), Type.Object({
 }));
 const metadataSchema = Type.Object({ source: Type.Optional(Type.String()) });
 
-/** Coerce a loosely-shaped question into the canonical {question, header, multiSelect, custom,
- *  options:[{label, description?}]} the clients render — bare-string options become {label}, a missing
- *  header derives from the question, empty-label options are dropped. `multiple` (opencode name) and
- *  the legacy `multiSelect` are both honored; `custom` defaults to true (free-text answer allowed). */
+/** Normalize the canonical Fable shape for clients. The hidden string-option, missing-header and `multiple`
+ *  branches exist only so stored pre-migration calls can replay; none is advertised in the tool schema.
+ *  `custom` remains a distinct Elowen feature and defaults to free-text input enabled. */
 export function normalizeQuestion(q) {
   const multiSelect = q.multiple === true || q.multiSelect === true;
   const options = (Array.isArray(q.options) ? q.options : [])
@@ -81,10 +80,11 @@ export function register(ctx) {
     description:
       'Ask the user one to four structured questions and wait for the answer. Use this only for a decision that '
       + 'cannot be resolved from the request, code, environment, convention, or a reversible default. Each '
-      + 'canonical question requires question, a header of at most 12 characters, 2-4 rich options with label '
-      + 'and description, and multiSelect. Put the recommended option first. Do not add Other because the UI '
-      + 'provides custom input automatically. Preview is for single-select visual comparisons only. Optional '
-      + 'answers, annotations, and metadata are transport fields; supplied answers never skip the interactive prompt.',
+      + 'question requires a clear question ending with "?", a header of at most 12 characters, 2-4 rich options '
+      + 'with label and description, and multiSelect. If you recommend an option, put it first and append '
+      + '"(Recommended)" to its label. Do not add Other; the UI provides it automatically unless the distinct '
+      + 'Elowen `custom` option is false. Preview is for single-select visual comparisons only. Optional answers, '
+      + 'annotations, and metadata are transport fields; supplied answers never skip the interactive prompt.',
     parameters: Type.Object({
       questions: Type.Array(questionSchema, { minItems: 1, maxItems: 4, description: '1-4 questions asked together.' }),
       answers: Type.Optional(Type.Record(Type.String(), Type.String(), { description: 'Answers collected by a permission component.' })),
@@ -107,11 +107,11 @@ export function register(ctx) {
   ctx.registerSystemPromptFragment(
     'When a decision is genuinely the user\'s to make, call `AskUserQuestion` rather than asking an '
     + 'open-ended question in prose — it shows clickable options and pauses until they pick. Ask only once '
-    + 'the cheaper answers are exhausted: resolve it from the environment, from convention, or from a '
-    + 'reversible default first, and state the assumption instead of blocking. When you do ask, lead with a '
-    + 'recommendation: safest option first, labels of 1–5 words, the trade-offs in each option\'s '
-    + 'description, and a `preview` when the user should SEE the choice (a layout, a code shape) rather '
-    + 'than read about it. Put choices only in `options`, never numbered in the question text.',
+    + 'the cheaper answers are exhausted: resolve it from the environment, convention, or a reversible '
+    + 'default first. Each question needs a clear `question` ending with "?", a `header` of at most 12 '
+    + 'characters, 2–4 options with `label` and `description`, and `multiSelect`. Put a recommendation first '
+    + 'and append "(Recommended)" to its label. Use `preview` only when the user should SEE a single-select '
+    + 'choice. Never add an Other option; the UI provides it unless `custom` is false.',
   );
 
   ctx.logger.info('askuser tool registered');
