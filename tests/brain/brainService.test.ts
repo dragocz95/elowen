@@ -5961,6 +5961,71 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(rows.some((content) => content.includes('"call-a"') && content.includes('A is finished'))).toBe(true);
   });
 
+  /** A parent paused on one foreground Delegate whose child row is `running` at boot. */
+  function pausedOnDelegate(d: ReturnType<typeof fakeDeps>, child: string, toolCallId: string): string {
+    const sessionId = 'brain-1';
+    d.store.createSession({ id: sessionId, userId: 1, model: 'm' });
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId, delegatedAccess: { admin: true, owner: true, projectIds: [], permissionBoundary: null } });
+    d.store.upsertSubagentRun(sessionId, { id: toolCallId, sessionId: child, status: 'running', task: 'dig', tools: 1, seconds: 5 });
+    d.store.appendMessage({
+      id: `a-${toolCallId}`, sessionId, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: toolCallId, name: 'Delegate', arguments: {} }] },
+    });
+    d.db.prepare('UPDATE brain_messages SET pending = 1 WHERE id = ?').run(`a-${toolCallId}`);
+    d.store.markSessionParked(sessionId);
+    return sessionId;
+  }
+
+  it('a parent paused on a delegation that hits the recovery attempt cap gets the error as its continuation and is un-parked', async () => {
+    const d = fakeDeps();
+    const sessionId = pausedOnDelegate(d, 'brain-ch-subagent-capped', 'call-capped');
+    d.db.prepare("UPDATE brain_subagent_runs SET attempt = 3 WHERE tool_call_id = 'call-capped'").run(); // three boots already tried
+
+    const restarted = new BrainService(d as never);
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll();
+    await recovery.resumeAll();
+
+    const delivered = d.session.sendCustomMessage.mock.calls.map((call) => call[0] as { customType?: string; content?: string });
+    expect(delivered.filter((m) => m.customType === 'subagent-result')).toHaveLength(1);
+    expect(String(delivered[0]?.content)).toContain('could not be recovered');
+    expect(d.store.getSession(sessionId)).toMatchObject({ parked_at: null, park_attempts: 0 });
+    expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);
+  });
+
+  it('a parent paused on a delegation whose recovery turn fails is not left parked forever', async () => {
+    const d = fakeDeps();
+    const sessionId = pausedOnDelegate(d, 'brain-ch-subagent-broken', 'call-broken');
+    d.session.prompt.mockRejectedValueOnce(new Error('provider unavailable')); // the child's recovery turn
+
+    const restarted = new BrainService(d as never);
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll();
+    await recovery.resumeAll();
+
+    // The child parked as recovery_required with a notice the user must act on; that notice is stored
+    // for the parent and the park marker is gone — the user's next message is the continuation, and
+    // nothing waits for a delivery that will never answer.
+    const row = d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'call-broken'").get() as { lifecycle: string };
+    expect(row.lifecycle).toBe('recovery_required');
+    expect(d.store.getSession(sessionId)!.parked_at).toBeNull();
+    expect(d.store.pendingSubagentResults(sessionId).some((r) => r.requiresUserAction)).toBe(true);
+  });
+
+  it('the delegation wait spends the park attempt budget like every other park', async () => {
+    const d = fakeDeps();
+    const sessionId = pausedOnDelegate(d, 'brain-ch-subagent-counted', 'call-counted');
+    const restarted = new BrainService(d as never);
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll();
+    // Observe the counter the moment the owner sweep records the wait, before the child's result lands.
+    const seen: number[] = [];
+    const original = d.store.claimParkResumeAttempt.bind(d.store);
+    d.store.claimParkResumeAttempt = (id: string) => { const ok = original(id); seen.push(d.store.getSession(id)!.park_attempts); return ok; };
+    await recovery.resumeAll();
+    expect(seen[0]).toBe(1);
+  });
+
   it('uses recovered results as the continuation of a genuinely parked owner turn', async () => {
     const d = fakeDeps();
     d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });

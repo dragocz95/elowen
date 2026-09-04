@@ -417,7 +417,11 @@ export class BrainService {
       // the next boot does not resume a conversation the result already finished.
       onRecoveredRunCompleted: async (parentSessionId, ownerUserId) => {
         const outcome = await this.turnRunner.drainPendingSubagentResults(ownerUserId, parentSessionId);
-        if (outcome.answered && !this.d.store.hasPendingDelivery(parentSessionId)) this.d.store.clearSessionPark(parentSessionId);
+        if (outcome.answered && !this.d.store.hasPendingDelivery(parentSessionId)) {
+          this.d.store.clearSessionPark(parentSessionId);
+          return;
+        }
+        await this.rescueParkedParent(parentSessionId);
       },
     });
     this.pluginServices = new PluginServiceRunner(() => this.resolvePlugins());
@@ -634,6 +638,25 @@ export class BrainService {
       }
     }
     if (items.length > 0) logger('brain').info(`replayed ${items.length} message(s) queued before the pause into ${row.id}`);
+  }
+
+  /** The safety net under a parent PAUSED on its delegation (resumeParkedConversation's durable wait): the
+   *  recovered child's result did not un-park it — delivery failed, or the child terminalized with a
+   *  notice the parent must see. Once no other child of this boot is still recovering, run the ordinary
+   *  parked resume: the result wake retries the delivery and then the generic continuation; on repeated
+   *  failure the marker stays for the next boot, and the attempt cap ends it visibly. Nothing here may
+   *  leave a conversation parked with nobody left to un-park it. */
+  private async rescueParkedParent(parentSessionId: string): Promise<void> {
+    const row = this.d.store.getSession(parentSessionId);
+    if (!row?.parked_at || isNonUserSession(parentSessionId)) return;
+    if (this.d.store.recoveringSubagentSessionIds(parentSessionId).length > 0) return; // a sibling still delivers later
+    logger('brain').info(`parked conversation ${parentSessionId}: recovered result did not un-park it — running the ordinary parked resume`);
+    try {
+      const outcome = await this.resumeParkedConversation({ row, parked: true, resultsExpected: true });
+      logger('brain').info(`parked conversation ${parentSessionId}: rescue resume ${outcome}`);
+    } catch (e) {
+      logger('brain').error(`parked conversation ${parentSessionId}: rescue resume failed`, e);
+    }
   }
 
   /** The turn drain has finished and process exit is now terminal. Stop browser/process-owning plugin
@@ -934,7 +957,13 @@ export class BrainService {
     // that might even answer the user prematurely. The marker stays, so a delivery that never comes is
     // retried by the next boot like any other park.
     if (item.awaitsDelegations) {
-      log.info(`parked conversation ${row.id} waits durably for its recovering sub-agent(s); no resume turn`);
+      // Counted like every other park: a delivery that keeps failing boot after boot reaches the same
+      // cap and the same visible give-up (top of this method) instead of parking forever.
+      if (!this.d.store.claimParkResumeAttempt(row.id)) {
+        log.info(`parked conversation ${row.id}: marker cleared before the delegation wait was recorded (the user spoke) — skipping`);
+        return 'released';
+      }
+      log.info(`parked conversation ${row.id} waits durably for its recovering sub-agent(s); no resume turn (attempt ${row.park_attempts + 1}/${MAX_PARK_RESUME_ATTEMPTS})`);
       return 'released';
     }
     // The durable claim: bump the attempt counter, but only while the marker still stands. Losing this
