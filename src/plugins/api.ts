@@ -1251,6 +1251,21 @@ export interface PublishedSitesGatewayStatus {
   slugs?: string[];
 }
 
+export interface PublishedSitesEnvironmentItem {
+  /** Stable machine key for settings UI reconciliation and diagnostics. */
+  id: string;
+  /** Short host-provided label. Plugins should not infer package or command names from it. */
+  label: string;
+  ok: boolean;
+  detail?: string;
+}
+
+export interface PublishedSitesEnvironmentStatus {
+  ready: boolean;
+  items: PublishedSitesEnvironmentItem[];
+  detail?: string;
+}
+
 /** Core-owned privileged boundary for the wildcard gateway used by published sites. The plugin never
  * receives a command, path, upstream or nginx fragment: core derives the hostname from trusted install
  * metadata and the root helper owns every system path, every certificate and the whole certbot
@@ -1268,6 +1283,10 @@ export interface PublishedSitesGatewayControl {
   removeSite(input: { slug: string; gatewayToken: string }): Promise<PublishedSitesGatewayStatus>;
   deny(): Promise<PublishedSitesGatewayStatus>;
   status(): Promise<PublishedSitesGatewayStatus>;
+  /** Inspect the fixed host dependencies required by confined published-site environments. Read-only. */
+  environmentsStatus(): Promise<PublishedSitesEnvironmentStatus>;
+  /** Install and configure only core's fixed environment dependency allowlist, then return the checklist. */
+  provisionEnvironments(): Promise<PublishedSitesEnvironmentStatus>;
   /** Create a root-owned, group-writable directory for one confined runtime to bind its pathname socket. */
   prepareRuntimeSocket(siteId: string): Promise<{ path: string }>;
   /** Revoke directory write permission and prove the runtime created a socket rather than a symlink. */

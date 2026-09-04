@@ -7,6 +7,9 @@ All notable changes to Elowen are documented here. The format loosely follows
 
 ### Added
 
+- Added a core-owned published-sites environment readiness and provisioning control. It reports a detailed
+  fixed dependency checklist and lets an authenticated Sites admin install only the audited rootless Podman
+  support allowlist without exposing a general command surface or restarting Elowen services.
 - Plugin UI API 16 publishes the shared `ProjectIcon` component so browser plugins render project images
   and the default folder glyph through the host's canonical cached path.
 - Plugin UI API 15: an inline chat artifact also receives `pendingInput` while the app is waiting on an

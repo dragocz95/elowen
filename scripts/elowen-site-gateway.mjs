@@ -22,6 +22,20 @@ const SAFE_HOST = /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/;
 const SAFE_TOKEN = /^[A-Za-z0-9_-]{43,128}$/;
 const SAFE_SLUG = /^[a-z0-9][a-z0-9-]{1,63}$/;
 const SAFE_EMAIL = /^[^\s@]{1,64}@[a-z0-9][a-z0-9.-]{0,252}[a-z0-9]$/i;
+const SAFE_USER = /^[a-z_][a-z0-9_-]{0,31}$/i;
+export const ENVIRONMENT_PACKAGES = Object.freeze([
+  'podman', 'crun', 'uidmap', 'dbus-user-session', 'passt', 'slirp4netns',
+]);
+const OPTIONAL_OVERLAY_PACKAGE = 'fuse-overlayfs';
+const PACKAGE_LABELS = Object.freeze({
+  podman: 'Podman',
+  crun: 'crun',
+  uidmap: 'UID mapping tools',
+  'dbus-user-session': 'D-Bus user session',
+  passt: 'passt network backend',
+  slirp4netns: 'slirp4netns network backend',
+  'fuse-overlayfs': 'FUSE overlay storage',
+});
 
 function fail(message) {
   throw new Error(message);
@@ -112,7 +126,7 @@ function siteBlock(deployment, slug, gatewayToken) {
     '        proxy_set_header Connection "";',
     '        proxy_buffering off;',
     '        proxy_read_timeout 3600s;',
-    '        client_max_body_size 64m;',
+    '        client_max_body_size 1m;',
     '    }',
     '}',
   ];
@@ -321,6 +335,229 @@ function removeSite(request, deployment) {
   return { ok: true, active: true, hostnameBase: deployment.hostnameBase, slugs: remaining };
 }
 
+function commandErrorText(error) {
+  if (!error || typeof error !== 'object') return '';
+  const stderr = 'stderr' in error ? String(error.stderr || '').trim() : '';
+  return stderr.slice(-1_000);
+}
+
+function defaultCommandRunner(file, args) {
+  try {
+    const stdout = execFileSync(file, args, {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+      timeout: file === '/usr/bin/apt-get' ? 5 * 60_000 : 30_000,
+      maxBuffer: 2 * 1024 * 1024,
+    });
+    return { ok: true, stdout: String(stdout) };
+  } catch (error) {
+    return { ok: false, stderr: commandErrorText(error) };
+  }
+}
+
+export function helperRequestFields(request) {
+  if (!request || typeof request !== 'object' || Array.isArray(request)) fail('request is invalid');
+  const fields = Object.keys(request);
+  if (request.op !== 'environments-status' && request.op !== 'environments-provision') {
+    fail('environment operation is invalid');
+  }
+  if (fields.length !== 1 || fields[0] !== 'op') fail('environment request has extra fields');
+  return fields;
+}
+
+function serviceUser(runner, env) {
+  const name = typeof env.SUDO_USER === 'string' ? env.SUDO_USER : '';
+  if (!SAFE_USER.test(name) || name === 'root') fail('the invoking service user cannot be determined');
+  const result = runner('/usr/bin/getent', ['passwd', name]);
+  if (!result.ok) fail('the invoking service user does not exist');
+  const fields = String(result.stdout || '').trim().split(':');
+  const uid = Number.parseInt(fields[2] || '', 10);
+  const gid = Number.parseInt(fields[3] || '', 10);
+  const home = fields[5] || '';
+  if (!Number.isInteger(uid) || uid <= 0 || !Number.isInteger(gid) || gid < 0 || !home.startsWith('/')) {
+    fail('the invoking service user record is invalid');
+  }
+  if (env.SUDO_UID && Number.parseInt(env.SUDO_UID, 10) !== uid) fail('the invoking service user id does not match sudo');
+  if (env.SUDO_GID && Number.parseInt(env.SUDO_GID, 10) !== gid) fail('the invoking service group id does not match sudo');
+  return { name, uid, gid, home };
+}
+
+function runAsServiceUser(runner, user, command, args) {
+  return runner('/usr/sbin/runuser', [
+    '-u', user.name, '--', '/usr/bin/env',
+    `HOME=${user.home}`,
+    `XDG_RUNTIME_DIR=/run/user/${user.uid}`,
+    `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${user.uid}/bus`,
+    command, ...args,
+  ]);
+}
+
+function packageInstalled(runner, name) {
+  const result = runner('/usr/bin/dpkg-query', ['-W', '-f=${Status}', name]);
+  return result.ok && String(result.stdout || '').trim() === 'install ok installed';
+}
+
+function defaultReadText(path) {
+  try { return readFileSync(path, 'utf8'); } catch { return ''; }
+}
+
+function subidEntries(readText, path) {
+  return String(readText(path) || '').split('\n').flatMap((line) => {
+    const [name, rawStart, rawCount] = line.trim().split(':');
+    const start = Number.parseInt(rawStart || '', 10);
+    const count = Number.parseInt(rawCount || '', 10);
+    return name && Number.isInteger(start) && start >= 0 && Number.isInteger(count) && count > 0
+      ? [{ name, start, end: start + count - 1 }]
+      : [];
+  });
+}
+
+function subidPresent(readText, path, user) {
+  return subidEntries(readText, path).some((entry) => entry.name === user.name);
+}
+
+function nextSubidRange(readText) {
+  const used = [
+    ...subidEntries(readText, '/etc/subuid'),
+    ...subidEntries(readText, '/etc/subgid'),
+  ];
+  for (let start = 100000; start <= 2_000_000_000; start += 65536) {
+    const end = start + 65535;
+    if (used.every((entry) => end < entry.start || start > entry.end)) return `${start}-${end}`;
+  }
+  fail('no subordinate id range is available');
+}
+
+function lingerEnabled(runner, user) {
+  const result = runner('/usr/bin/loginctl', ['show-user', user.name, '--property=Linger', '--value']);
+  return result.ok && String(result.stdout || '').trim() === 'yes';
+}
+
+function podmanInfo(runner, user) {
+  const result = runAsServiceUser(runner, user, '/usr/bin/podman', ['info', '--format', 'json']);
+  if (!result.ok) {
+    const stderr = String(result.stderr || '');
+    return {
+      ok: false,
+      detail: /overlay|fuse-overlayfs|mount_program/i.test(stderr)
+        ? 'rootless overlay storage is unavailable'
+        : 'rootless podman info failed',
+    };
+  }
+  try {
+    const info = JSON.parse(String(result.stdout || ''));
+    const rootless = info?.host?.security?.rootless === true;
+    const manager = typeof info?.host?.cgroupManager === 'string' ? info.host.cgroupManager : 'unknown';
+    const version = typeof info?.host?.cgroupVersion === 'string' ? info.host.cgroupVersion : String(info?.host?.cgroupVersion ?? 'unknown');
+    const storage = typeof info?.store?.graphDriverName === 'string' ? info.store.graphDriverName : 'unknown';
+    const compatible = rootless && manager === 'systemd' && (version === 'v2' || version === '2');
+    return {
+      ok: compatible,
+      detail: rootless
+        ? `rootless; storage ${storage}; cgroup manager ${manager}; cgroup ${version}`
+        : 'podman info did not report rootless mode',
+    };
+  } catch {
+    return { ok: false, detail: 'podman info returned invalid JSON' };
+  }
+}
+
+function environmentStatus(options = {}) {
+  const runner = options.runner ?? defaultCommandRunner;
+  const readText = options.readText ?? defaultReadText;
+  const env = options.env ?? process.env;
+  const user = serviceUser(runner, env);
+  const packageState = new Map(ENVIRONMENT_PACKAGES.map((name) => [name, packageInstalled(runner, name)]));
+  const podman = packageState.get('podman') ? podmanInfo(runner, user) : { ok: false, detail: 'podman is not installed' };
+  const fuseInstalled = packageInstalled(runner, OPTIONAL_OVERLAY_PACKAGE);
+  const overlayRequired = !podman.ok && /overlay|fuse-overlayfs|mount_program/i.test(podman.detail);
+  const delegate = runner('/usr/bin/systemctl', [
+    'show', `user@${user.uid}.service`, '--property=Delegate', '--property=DelegateControllers', '--value',
+  ]);
+  const delegateLines = String(delegate.stdout || '').trim().split('\n');
+  const delegated = new Set((delegateLines[1] || '').trim().split(/\s+/).filter(Boolean));
+  const delegateEnabled = delegate.ok && delegateLines[0] === 'yes';
+  const bus = runAsServiceUser(runner, user, '/usr/bin/systemctl', ['--user', 'show-environment']);
+  const items = ENVIRONMENT_PACKAGES.map((name) => ({
+    id: `package:${name}`,
+    label: PACKAGE_LABELS[name],
+    ok: packageState.get(name) === true,
+    detail: packageState.get(name) ? 'installed' : 'not installed',
+  }));
+  items.push({
+    id: `package:${OPTIONAL_OVERLAY_PACKAGE}`,
+    label: PACKAGE_LABELS[OPTIONAL_OVERLAY_PACKAGE],
+    ok: fuseInstalled || !overlayRequired,
+    detail: fuseInstalled ? 'installed' : overlayRequired ? 'required by rootless overlay storage' : 'not required',
+  });
+  const hasSubuid = subidPresent(readText, '/etc/subuid', user);
+  const hasSubgid = subidPresent(readText, '/etc/subgid', user);
+  items.push(
+    { id: 'subuid', label: 'Subordinate user IDs', ok: hasSubuid, detail: hasSubuid ? `configured for ${user.name}` : 'not configured' },
+    { id: 'subgid', label: 'Subordinate group IDs', ok: hasSubgid, detail: hasSubgid ? `configured for ${user.name}` : 'not configured' },
+    { id: 'linger', label: 'Persistent user manager', ok: lingerEnabled(runner, user), detail: 'systemd linger' },
+    { id: 'user-bus', label: 'User D-Bus', ok: bus.ok, detail: bus.ok ? 'reachable' : 'not reachable' },
+  );
+  for (const controller of ['cpu', 'memory', 'pids']) {
+    const ok = delegateEnabled && delegated.has(controller);
+    items.push({
+      id: `cgroup:${controller}`,
+      label: `${controller} cgroup delegation`,
+      ok,
+      detail: ok ? 'delegated through cgroup v2' : 'not delegated to the user manager',
+    });
+  }
+  items.push({ id: 'podman-rootless', label: 'Rootless Podman', ok: podman.ok, detail: podman.detail });
+  return { ok: true, ready: items.every((item) => item.ok), items };
+}
+
+function runRequired(runner, file, args, failure) {
+  const result = runner(file, args);
+  if (!result.ok) fail(failure);
+}
+
+function provisionEnvironments(options = {}) {
+  const runner = options.runner ?? defaultCommandRunner;
+  const readText = options.readText ?? defaultReadText;
+  const env = options.env ?? process.env;
+  const user = serviceUser(runner, env);
+  const missing = ENVIRONMENT_PACKAGES.filter((name) => !packageInstalled(runner, name));
+  let aptUpdated = false;
+  if (missing.length > 0) {
+    runRequired(runner, '/usr/bin/apt-get', ['update'], 'apt package metadata update failed');
+    aptUpdated = true;
+    runRequired(runner, '/usr/bin/apt-get', ['install', '--yes', '--no-install-recommends', ...missing], 'environment package installation failed');
+  }
+  const hasSubuid = subidPresent(readText, '/etc/subuid', user);
+  const hasSubgid = subidPresent(readText, '/etc/subgid', user);
+  const range = hasSubuid && hasSubgid ? null : nextSubidRange(readText);
+  if (!hasSubuid) {
+    runRequired(runner, '/usr/sbin/usermod', ['--add-subuids', range, user.name], 'subordinate user id configuration failed');
+  }
+  if (!hasSubgid) {
+    runRequired(runner, '/usr/sbin/usermod', ['--add-subgids', range, user.name], 'subordinate group id configuration failed');
+  }
+  if (!lingerEnabled(runner, user)) {
+    runRequired(runner, '/usr/bin/loginctl', ['enable-linger', user.name], 'systemd linger enablement failed');
+  }
+  let status = environmentStatus({ runner, readText, env });
+  const fuse = status.items.find((item) => item.id === `package:${OPTIONAL_OVERLAY_PACKAGE}`);
+  if (fuse && !fuse.ok && fuse.detail === 'required by rootless overlay storage') {
+    if (!aptUpdated) runRequired(runner, '/usr/bin/apt-get', ['update'], 'apt package metadata update failed');
+    runRequired(
+      runner,
+      '/usr/bin/apt-get',
+      ['install', '--yes', '--no-install-recommends', OPTIONAL_OVERLAY_PACKAGE],
+      'rootless overlay storage package installation failed',
+    );
+    status = environmentStatus({ runner, readText, env });
+  }
+  return {
+    ...status,
+    ...(status.ready ? {} : { detail: 'environment support remains incomplete' }),
+  };
+}
+
 const SAFE_SITE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function runtimeSocketPathFor(siteId) {
@@ -355,8 +592,12 @@ function runtimeSocketRequest(request) {
   fail('runtime socket operation is not supported');
 }
 
-export async function applyRequest(request, deployment) {
+export async function applyRequest(request, deployment, options = {}) {
   if (!request || typeof request !== 'object' || typeof request.op !== 'string') fail('request is invalid');
+  if (request.op === 'environments-status' || request.op === 'environments-provision') {
+    helperRequestFields(request);
+    return request.op === 'environments-status' ? environmentStatus(options) : provisionEnvironments(options);
+  }
   if (request.op === 'prepare-runtime-socket' || request.op === 'seal-runtime-socket' || request.op === 'remove-runtime-socket') {
     return runtimeSocketRequest(request);
   }
@@ -432,6 +673,11 @@ async function main() {
   // argument vector and there is no argv surface left to reach.
   if (process.argv.length > 2) fail('helper accepts no command-line arguments');
   const request = await readStdin();
+  if (request?.op === 'environments-status') {
+    const response = await applyRequest(request);
+    process.stdout.write(`${JSON.stringify(response)}\n`);
+    return;
+  }
   if (request?.op === 'status'
     || request?.op === 'prepare-runtime-socket'
     || request?.op === 'seal-runtime-socket'
@@ -442,7 +688,9 @@ async function main() {
   }
   const release = await acquireMutationLock();
   try {
-    const response = await applyRequest(request, readDeployment());
+    const response = request?.op === 'environments-provision'
+      ? await applyRequest(request)
+      : await applyRequest(request, readDeployment());
     process.stdout.write(`${JSON.stringify(response)}\n`);
   } finally {
     release();
