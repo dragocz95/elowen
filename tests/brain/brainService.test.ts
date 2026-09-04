@@ -6101,6 +6101,10 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(withResult?.note).toContain('<subagent-result');
     expect(withResult?.note).toContain(child);
     expect(withResult?.note).toContain('continued after the pause'); // the child's recovered answer body
+    // The silent-resume invariant holds on this path too: nothing the room reads announces a restart.
+    expect(withResult?.note).not.toContain('daemon restarted');
+    expect(withResult?.note).toContain('delegated work this conversation was waiting on has finished');
+    expect(d.store.getMessages(room).map((m) => m.content).join('\n')).not.toContain('The daemon restarted');
     expect(d.store.pendingSubagentResults(room)).toEqual([]); // acknowledged through the continuation
   });
 

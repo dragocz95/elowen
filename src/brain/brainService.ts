@@ -686,10 +686,13 @@ export class BrainService {
       logger('brain').warn(`recovered sub-agent result(s) for unparked platform room ${parentSessionId} stay in the inbox; the room reads them through DelegateRead`);
       return;
     }
+    // The one thing a silent resume still has to SAY: the result itself (a room has no inbox drain). The
+    // wording names the work, never the restart — the transcript's [interrupted] tool result already
+    // explains why the Delegate call has no answer of its own.
     const note = `${results.map(subagentResultReminder).join('\n')}\n`
-      + 'The daemon restarted while this conversation was waiting on the sub-agent work above; the interrupted '
-      + 'Delegate call is marked [interrupted] in the transcript. Continue from these results and give the sender '
-      + 'the answer they are waiting for. Do not re-delegate the same work.';
+      + 'The delegated work this conversation was waiting on has finished; its Delegate call is marked '
+      + '[interrupted] in the transcript and the result above is its answer. Continue from these results and '
+      + 'give the sender the answer they are waiting for. Do not re-delegate the same work.';
     const outcome = await this.resumeParkedPlatformTurn({ id: row.id, park_attempts: row.park_attempts }, {
       note,
       acknowledge: () => { for (const result of results) this.d.store.acknowledgeSubagentResult(parentSessionId, result.id); },
