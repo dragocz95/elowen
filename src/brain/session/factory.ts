@@ -38,6 +38,7 @@ import { logger } from '../../shared/logger.js';
 import { ProviderRequestRecorder } from './providerRequestRecorder.js';
 import { wrapFastModeRuntime, type FastModeRoute } from '../fastMode.js';
 import { recoverMalformedToolCalls } from './malformedToolCallRecovery.js';
+import { installExitPlanModeTermination } from './exitPlanModeTermination.js';
 import { realPathWithin } from '../../plugins/pathGuard.js';
 import {
   localResidentContextTokens,
@@ -924,6 +925,9 @@ export class BrainSessionFactory {
     // a draining daemon parks the loop before spending a compaction model call on a turn it will not
     // continue. See StepDrainCoordinator.installHold.
     this.d.stepDrain?.installHold(session, spec.sessionId);
+    // Outermost turn-boundary owner: a submitted plan must skip compaction, drain holds and every other
+    // next-step preparer before PI emits the normal terminal lifecycle for the run.
+    installExitPlanModeTermination(session);
 
     // Count compaction outcomes for the circuit breaker installed above. Its cancel gate reads this
     // count on the next `session_before_compact`, so a session that cannot summarize stops trying.

@@ -11,7 +11,7 @@
     },
     "maxBackgroundProcesses": {
       "label": "Procesy na pozadí na relaci a účet",
-      "hint": "Kolik procesů na pozadí může současně běžet v jedné relaci pro jeden účet. Další spuštění se odmítne, dokud některý neukončíte. Rozsah 1–64, výchozí 16."
+      "hint": "Kolik procesů na pozadí může jedna relace a účet současně udržovat; spuštění nebo odpojení dalšího se odmítne, dokud některý neskončí a jeho výstup nebude vyzvednut, nebo dokud nebude ukončen. Rozsah 1–64, výchozí 16."
     }
   }
 }
