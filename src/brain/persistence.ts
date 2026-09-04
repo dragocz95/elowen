@@ -4,6 +4,7 @@ import { SessionManager } from '@earendil-works/pi-coding-agent';
 import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-agent';
 import type { BrainMessageRow, BrainRunMessage, BrainStore } from '../store/brainStore.js';
 import { extractText, NO_REPLY_NUDGE } from './messageView.js';
+import { isSubagentSession } from './sessionId.js';
 import { HISTORY_IMAGE_PLACEHOLDER } from './session/historyImageStripping.js';
 import { externalizeImageBlocks } from './chatImages.js';
 import type { StoredChatImage } from './chatImages.js';
@@ -163,9 +164,8 @@ const MAX_INLINE_CHILD_ANSWER_CHARS = 20_000;
  *     the resumed turn continues with it immediately rather than waiting for anything. */
 function interruptedToolResultText(store: BrainStore, sessionId: string, call: { id: string; name: string }): string {
   if (!DELEGATION_WAIT_TOOLS.has(call.name)) {
-    return `[interrupted] The daemon restarted while this ${call.name} call was running; its process ended with the `
-      + 'daemon and its effect is unknown. Check the current state before repeating it — do not assume it either '
-      + 'completed or did nothing.';
+    return `[interrupted] This ${call.name} call was interrupted by a daemon restart; it may or may not have taken `
+      + 'effect. Verify the current state before repeating it.';
   }
   const run = store.getSubagentRuns(sessionId).find((entry) => entry.toolCallId === call.id);
   if (run && run.status !== 'running') {
@@ -174,17 +174,17 @@ function interruptedToolResultText(store: BrainStore, sessionId: string, call: {
       const clipped = answer.length > MAX_INLINE_CHILD_ANSWER_CHARS
         ? `${answer.slice(0, MAX_INLINE_CHILD_ANSWER_CHARS)}\n[truncated — read the rest with DelegateRead]`
         : answer;
-      return `[interrupted, result recovered] The daemon restarted before this ${call.name} call returned, but the `
-        + `sub-agent ${run.sessionId} had already finished. Its final answer:\n\n${clipped}`;
+      return `[interrupted, result recovered] A daemon restart interrupted this ${call.name} call, but the sub-agent `
+        + `${run.sessionId} had already finished. Its final answer:\n\n${clipped}`;
     }
-    return `[interrupted] The daemon restarted before this ${call.name} call returned; the sub-agent ${run.sessionId} `
+    return `[interrupted] A daemon restart interrupted this ${call.name} call; the sub-agent ${run.sessionId} `
       + `finished with status "${run.status}"${run.detail ? ` (${run.detail})` : ''}. Read its transcript with `
       + 'DelegateRead if you need its output; do not re-delegate the same work.';
   }
   const child = run ? ` ${run.sessionId}` : '';
-  return `[interrupted, resuming] The daemon restarted while this ${call.name} call was waiting for the sub-agent${child}. `
-    + 'The sub-agent is resumed automatically after the restart and its result is delivered to you as a '
-    + '<subagent-result> system message (DelegateList shows its state meanwhile) — do NOT re-delegate this work.';
+  return `[interrupted, resuming] A daemon restart interrupted this ${call.name} call while it waited for the sub-agent${child}. `
+    + 'The sub-agent resumes automatically and its result is delivered to you as a <subagent-result> system '
+    + 'message (DelegateList shows its state meanwhile) — do NOT re-delegate this work.';
 }
 
 /** The last non-empty assistant text of a session, scanning backwards — what "the sub-agent's answer"
@@ -201,39 +201,61 @@ function lastNonEmptyAssistantText(store: BrainStore, sessionId: string): string
   return undefined;
 }
 
+/** How a settled interrupted tail ends — what the resume has to do with it. */
+export interface SettledTail {
+  /** The tool calls answered with a synthetic `interrupted` result. */
+  answered: { id: string; name: string }[];
+  /** A partially streamed assistant message was dropped (see below); the model regenerates that step. */
+  droppedPartial: boolean;
+  /** `continuable`: ends on a user / tool-result message — the turn continues from here without any new
+   *  message (session/continueTurn.ts). `final`: ends on a provably complete assistant answer — nothing to
+   *  resume. `empty`: no rows at all. */
+  tail: 'continuable' | 'final' | 'empty';
+}
+
 /** Rows still marked pending when a session is (re)spawned belong to a turn that never settled — the
  *  daemon went down mid-run (a pause-for-restart by design, or a crash). They are the only record that
- *  work happened, so they graduate to history.
- *
- *  But a half-turn cannot be handed back to a provider as-is: it can end on an assistant message whose
- *  tool calls never got their results (the process left between the call and its result), and every
- *  provider rejects a context with an unanswered tool call. The first version trimmed that tail away —
- *  and with it the model's own memory that it had started the call at all, so a resumed turn could run
- *  the same mutation again without knowing. Now every unanswered call is ANSWERED with a synthetic
- *  `interrupted` error result (see interruptedToolResultText): the transcript stays consistent, nothing
- *  the agent did is hidden from it, and the resume note tells it what happened. Their cost is whatever PI
- *  recorded per message: the provider cost stamp is an `agent_end` act, and that never came.
- *
- *  Returns the calls it answered, so a caller can tell a clean boundary from an interrupted step. */
-export function settlePartialTurn(store: BrainStore, sessionId: string): { id: string; name: string }[] {
+ *  work happened, so they graduate to history — in a shape a provider accepts and a resume can continue
+ *  WITHOUT a new message:
+ *   - an assistant message whose tool calls never got their results is kept, and every unanswered call is
+ *     ANSWERED with a synthetic `interrupted` error result (see interruptedToolResultText): the transcript
+ *     stays consistent, nothing the agent did is hidden from it, and the interruption is explained right
+ *     where it happened, inside the result the model reads next;
+ *   - a trailing assistant message with no tool call that is NOT provably final (no `stopReason: 'stop'`,
+ *     no usage stamp — a partial stream, an abort, a length cut) is DROPPED: it is the fragment of a
+ *     response the model will simply produce again from the message before it, and keeping it would
+ *     either be sent as a half answer or force a second "continue" message on the user. The one row the
+ *     resume may rewrite; everything before it stays byte-identical for the prompt cache;
+ *   - a trailing assistant message that IS provably final is kept and reported as such: the turn had in
+ *     fact finished, only its settlement was lost.
+ *  Their cost is whatever PI recorded per message: the provider cost stamp is an `agent_end` act, and
+ *  that never came. */
+export function settlePartialTurn(store: BrainStore, sessionId: string): SettledTail {
   const rows = store.getMessages(sessionId);
   const pending = rows.filter((row) => row.pending !== 0);
-  if (pending.length === 0) return [];
   // A pending row that cannot be parsed is not a step we can answer for: keep the verifiable prefix and
   // drop the rest, exactly as before.
   const verifiable = answeredToolCallPrefixOrParseLimit(pending.map((row) => row.content));
   for (const row of pending.slice(verifiable)) store.deleteMessage(sessionId, row.id);
-  let kept = pending.slice(0, verifiable);
-  // An orphaned sub-agent runner aborts its turn when the daemon's IPC closes, and the abort can leave a
-  // trailing assistant row with NO content at all (`content: []`, stopReason aborted) — a fragment of a
-  // response that never started. Providers refuse an empty assistant message, so it must not be handed
-  // back; there is nothing in it to keep.
-  const last = kept.at(-1);
-  if (last && last.role === 'assistant' && isEmptyAssistant(last.content)) {
-    store.deleteMessage(sessionId, last.id);
-    kept = kept.slice(0, -1);
-  }
+  const kept = pending.slice(0, verifiable);
   const outstanding = outstandingToolCalls(kept.map((row) => row.content));
+  let droppedPartial = false;
+  // A trailing assistant with no tool call of its own that is not provably final is a partial stream, or
+  // an abort fragment. A PENDING one is always the pause's cut and is dropped. A SETTLED one is dropped
+  // when it is a fragment nothing wants back — a provider error, an empty abort — or, in a sub-agent
+  // session, any unfinished text: an orphaned runner aborts its turn when the daemon's IPC closes and
+  // its agent_end settles a `stopReason: 'aborted'` assistant before the cgroup takes it down, and no
+  // person ever asked to keep it. A user's own Esc-cut answer (settled, aborted, with text) stays: they
+  // saw it, and it is theirs.
+  const last = kept.at(-1) ?? rows.filter((row) => row.pending === 0).at(-1);
+  if (last && last.role === 'assistant' && !hasToolCalls(last.content) && !isProvablyFinalAssistant(last.content)
+    && (last.pending !== 0 || isFragment(last.content) || isSubagentSession(sessionId))) {
+    store.deleteMessage(sessionId, last.id);
+    droppedPartial = !isEmptyAssistant(last.content);
+  }
+  if (pending.length === 0 && outstanding.length === 0) {
+    return { answered: [], droppedPartial, tail: tailOf(store.getMessages(sessionId)) };
+  }
   for (const call of outstanding) {
     store.appendPendingMessage({
       id: randomUUID(), sessionId, role: 'toolResult',
@@ -245,7 +267,41 @@ export function settlePartialTurn(store: BrainStore, sessionId: string): { id: s
     });
   }
   store.settlePendingMessages(sessionId);
-  return outstanding;
+  return { answered: outstanding, droppedPartial, tail: tailOf(store.getMessages(sessionId)) };
+}
+
+function tailOf(rows: readonly { role: string; content: string }[]): SettledTail['tail'] {
+  const last = rows.at(-1);
+  if (!last) return 'empty';
+  return last.role === 'assistant' ? 'final' : 'continuable';
+}
+
+function hasToolCalls(raw: string): boolean {
+  try {
+    const message = JSON.parse(raw) as { content?: unknown };
+    return Array.isArray(message.content) && message.content.some((part) => (part as { type?: string })?.type === 'toolCall');
+  } catch { return false; }
+}
+
+/** An assistant message the provider CLOSED: `stopReason: 'stop'` and the usage stamp PI records at the
+ *  end of a fully received response. A partial stream carries neither; an abort, an error or a length cut
+ *  carries a different stopReason. Shared with the child recovery's "already answered" shortcut, which
+ *  must never complete a run on a half answer. */
+export function isProvablyFinalAssistant(raw: string): boolean {
+  let message: { role?: string; stopReason?: string; usage?: unknown };
+  try { message = JSON.parse(raw) as typeof message; } catch { return false; }
+  if (message.role !== 'assistant' || message.stopReason !== 'stop') return false;
+  if (typeof message.usage !== 'object' || message.usage === null) return false;
+  const usage = message.usage as { input?: unknown; output?: unknown };
+  return Number.isFinite(usage.input) && Number.isFinite(usage.output);
+}
+
+/** A settled assistant nobody wants back: a provider error, or an abort that produced nothing. */
+function isFragment(raw: string): boolean {
+  try {
+    const message = JSON.parse(raw) as { stopReason?: string };
+    return message.stopReason === 'error' || (message.stopReason === 'aborted' && isEmptyAssistant(raw));
+  } catch { return false; }
 }
 
 /** An assistant row that carries neither text nor a tool call — nothing a provider accepts or a model

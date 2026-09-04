@@ -8,6 +8,9 @@ import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-
 
 /** PI message shapes, trimmed to the fields the persistence path actually reads. */
 const assistantSaying = (text: string) => ({ role: 'assistant', content: [{ type: 'text', text }] });
+/** A PROVABLY final assistant: the provider closed it (stopReason stop) and PI stamped its usage. */
+const usage = { input: 1200, output: 40, cacheRead: 0, cacheWrite: 0, totalTokens: 1240 };
+const assistantFinal = (text: string) => ({ role: 'assistant', content: [{ type: 'text', text }], stopReason: 'stop', usage });
 const assistantCalling = (...ids: string[]) => ({ role: 'assistant', content: ids.map((id) => ({ type: 'toolCall', id, name: 'bash', arguments: {} })) });
 const toolResult = (toolCallId: string) => ({ role: 'toolResult', toolCallId, toolName: 'bash', content: [{ type: 'text', text: 'ok' }], isError: false });
 
@@ -100,30 +103,49 @@ describe('a turn interrupted by a daemon restart', () => {
     expect(store.pendingMessages('s1')).toEqual([]);
   });
 
-  it('keeps the work the agent had already done when the daemon dies mid-turn', () => {
+  it('keeps the work the agent had already done when the daemon dies mid-turn, and drops the half-streamed thought', () => {
     projectUserTurn(store, 's1', 'do the thing');
     midTurn(assistantCalling('t1'), toolResult('t1'), assistantSaying('half a thought'));
 
-    settlePartialTurn(store, 's1'); // the daemon restarts → the conversation is respawned
-    expect(rolesOf(store, 's1')).toEqual(['user', 'assistant', 'toolResult', 'assistant']);
-    expect(textsOf(store, 's1')[3]).toBe('half a thought');
+    const settled = settlePartialTurn(store, 's1'); // the daemon restarts → the conversation is respawned
+    // The answered step is kept byte for byte. The trailing text carries no stopReason and no usage: it
+    // is a partial stream, dropped so the continuation regenerates it from the tool result instead of
+    // sending a half answer (or needing a "continue" message to finish it).
+    expect(rolesOf(store, 's1')).toEqual(['user', 'assistant', 'toolResult']);
+    expect(settled).toEqual({ answered: [], droppedPartial: true, tail: 'continuable' });
     expect(store.pendingMessages('s1')).toEqual([]); // settled — the next turn must not discard them
+  });
+
+  it('keeps a trailing assistant the provider closed (stopReason stop + usage) and reports the turn as final', () => {
+    projectUserTurn(store, 's1', 'do the thing');
+    midTurn(assistantCalling('t1'), toolResult('t1'), assistantFinal('the whole answer'));
+
+    const settled = settlePartialTurn(store, 's1');
+    expect(rolesOf(store, 's1')).toEqual(['user', 'assistant', 'toolResult', 'assistant']);
+    expect(textsOf(store, 's1')[3]).toBe('the whole answer');
+    expect(settled).toEqual({ answered: [], droppedPartial: false, tail: 'final' });
+  });
+
+  it('a settled transcript with nothing pending still reports its tail shape', () => {
+    projectUserTurn(store, 's1', 'do the thing');
+    expect(settlePartialTurn(store, 's1')).toEqual({ answered: [], droppedPartial: false, tail: 'continuable' });
+    expect(settlePartialTurn(store, 'never-spoken')).toEqual({ answered: [], droppedPartial: false, tail: 'empty' });
   });
 
   it('answers a tool call the restart cut off with an `interrupted` error result, so the history stays replayable AND honest', () => {
     projectUserTurn(store, 's1', 'do the thing');
     midTurn(assistantCalling('t1'), toolResult('t1'), assistantCalling('t2')); // died before t2 answered
 
-    const answered = settlePartialTurn(store, 's1');
+    const settled = settlePartialTurn(store, 's1');
     // The call is KEPT (the first version deleted it, and a resumed turn could then repeat the mutation
     // without knowing it had already started) and answered, so no provider rejects the context.
-    expect(answered).toEqual([{ id: 't2', name: 'bash' }]);
+    expect(settled).toEqual({ answered: [{ id: 't2', name: 'bash' }], droppedPartial: false, tail: 'continuable' });
     expect(rolesOf(store, 's1')).toEqual(['user', 'assistant', 'toolResult', 'assistant', 'toolResult']);
     const synthetic = JSON.parse(store.getMessages('s1').at(-1)!.content) as { toolCallId: string; isError: boolean; details: unknown; content: { text: string }[] };
     expect(synthetic.toolCallId).toBe('t2');
     expect(synthetic.isError).toBe(true);
     expect(synthetic.details).toEqual({ interrupted: true });
-    expect(synthetic.content[0]!.text).toMatch(/\[interrupted\].*effect is unknown/);
+    expect(synthetic.content[0]!.text).toMatch(/\[interrupted\].*interrupted by a daemon restart.*may or may not have taken effect.*Verify the current state before repeating/);
     expect(store.pendingMessages('s1')).toEqual([]);
   });
 
@@ -131,23 +153,59 @@ describe('a turn interrupted by a daemon restart', () => {
     projectUserTurn(store, 's1', 'do the thing');
     midTurn(assistantCalling('t1'), toolResult('t1'), { role: 'assistant', content: [], stopReason: 'aborted' });
 
-    expect(settlePartialTurn(store, 's1')).toEqual([]);
+    expect(settlePartialTurn(store, 's1')).toEqual({ answered: [], droppedPartial: false, tail: 'continuable' });
     expect(rolesOf(store, 's1')).toEqual(['user', 'assistant', 'toolResult']);
     expect(store.pendingMessages('s1')).toEqual([]);
   });
 
-  it('keeps a trailing assistant that says something, even when it was cut off', () => {
+  it('drops a trailing assistant an abort cut off mid-sentence: the continuation says it again, whole', () => {
     projectUserTurn(store, 's1', 'do the thing');
     midTurn(assistantCalling('t1'), toolResult('t1'), { role: 'assistant', content: [{ type: 'text', text: 'half a' }], stopReason: 'aborted' });
+    expect(settlePartialTurn(store, 's1').droppedPartial).toBe(true);
+    expect(rolesOf(store, 's1')).toEqual(['user', 'assistant', 'toolResult']);
+  });
+
+  it('never touches a settled final assistant that sits BEFORE the pending tail (prompt cache stays byte-identical)', () => {
+    projectUserTurn(store, 's1', 'first');
+    store.appendMessage({ id: 'a-final', sessionId: 's1', parentId: null, role: 'assistant', content: assistantFinal('first answer') });
+    projectUserTurn(store, 's1', 'second');
+    midTurn(assistantCalling('t9'));
+    const before = store.getMessages('s1').slice(0, 3).map((row) => [row.id, row.content]);
     settlePartialTurn(store, 's1');
-    expect(rolesOf(store, 's1')).toEqual(['user', 'assistant', 'toolResult', 'assistant']);
+    expect(store.getMessages('s1').slice(0, 3).map((row) => [row.id, row.content])).toEqual(before);
+    expect(rolesOf(store, 's1')).toEqual(['user', 'assistant', 'user', 'assistant', 'toolResult']);
+  });
+
+  it('a SETTLED abort fragment of a sub-agent (the orphaned runner shape) is dropped so the child can be continued', () => {
+    // What the runner's agent_end settles when the daemon's IPC closes mid-model-call: user + aborted
+    // assistant with text, pending = 0 (no pause checkpoint rows at all). The child must be continuable.
+    const child = 'brain-ch-subagent-orphan';
+    store.createSession({ id: child, userId: 1, model: 'm' });
+    projectUserTurn(store, child, 'do the delegated thing');
+    store.appendMessage({ id: 'orphan-a', sessionId: child, parentId: null, role: 'assistant', content: { role: 'assistant', content: [{ type: 'text', text: 'I was about to' }], stopReason: 'aborted' } });
+    expect(settlePartialTurn(store, child)).toEqual({ answered: [], droppedPartial: true, tail: 'continuable' });
+    expect(rolesOf(store, child)).toEqual(['user']);
+  });
+
+  it("keeps a user's own Esc-cut answer (settled, aborted, with text): they saw it and it is theirs", () => {
+    projectUserTurn(store, 's1', 'tell me a story');
+    store.appendMessage({ id: 'cut', sessionId: 's1', parentId: null, role: 'assistant', content: { role: 'assistant', content: [{ type: 'text', text: 'Once upon a' }], stopReason: 'aborted' } });
+    expect(settlePartialTurn(store, 's1')).toEqual({ answered: [], droppedPartial: false, tail: 'final' });
+    expect(rolesOf(store, 's1')).toEqual(['user', 'assistant']);
+  });
+
+  it('drops a settled provider-error assistant (empty, stopReason error) from any session', () => {
+    projectUserTurn(store, 's1', 'hello');
+    store.appendMessage({ id: 'err', sessionId: 's1', parentId: null, role: 'assistant', content: { role: 'assistant', content: [], stopReason: 'error', errorMessage: 'provider unavailable' } });
+    expect(settlePartialTurn(store, 's1').tail).toBe('continuable');
+    expect(rolesOf(store, 's1')).toEqual(['user']);
   });
 
   it('answers EVERY unanswered call of a parallel batch, one result per call', () => {
     projectUserTurn(store, 's1', 'do the thing');
     midTurn(assistantCalling('a', 'b', 'c'), toolResult('b')); // b answered, a and c cut off
 
-    expect(settlePartialTurn(store, 's1').map((call) => call.id).sort()).toEqual(['a', 'c']);
+    expect(settlePartialTurn(store, 's1').answered.map((call) => call.id).sort()).toEqual(['a', 'c']);
     const results = store.getMessages('s1').filter((row) => row.role === 'toolResult')
       .map((row) => JSON.parse(row.content) as { toolCallId: string; isError: boolean });
     expect(results.map((r) => r.toolCallId).sort()).toEqual(['a', 'b', 'c']);
@@ -163,7 +221,7 @@ describe('a turn interrupted by a daemon restart', () => {
     settlePartialTurn(store, 's1');
     const text = (JSON.parse(store.getMessages('s1').at(-1)!.content) as { content: { text: string }[] }).content[0]!.text;
     expect(text).toContain('brain-ch-subagent-kid');
-    expect(text).toMatch(/resumed automatically/);
+    expect(text).toMatch(/resumes automatically/);
     expect(text).toMatch(/do NOT re-delegate/);
     expect(text).not.toMatch(/effect is unknown/);
   });

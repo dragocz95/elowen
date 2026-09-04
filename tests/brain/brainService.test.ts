@@ -44,6 +44,15 @@ function fakeDeps() {
       messages.push({ role: 'user', content: t }, { role: 'assistant', content: `echo:${t}` });
       listeners.forEach((l) => l({ type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: `echo:${t}` }] }));
     }),
+    // PI's session-level continuation seam (see src/brain/session/continueTurn.ts): an EMPTY prompt batch
+    // continues the loop from the transcript's tail — no message appended, the next assistant follows.
+    _runAgentPrompt: vi.fn(async (batch: unknown[]) => {
+      if (batch.length !== 0) throw new Error('the fake continuation seam only accepts an empty batch');
+      const tail = messages.at(-1) as { role?: string } | undefined;
+      if (!tail || tail.role === 'assistant') throw new Error('Cannot continue from message role: assistant');
+      messages.push({ role: 'assistant', content: 'continued after the pause' });
+      listeners.forEach((l) => l({ type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: 'continued after the pause' }] }));
+    }),
     subscribe: (l: (e: unknown) => void) => { listeners.push(l); return () => {}; },
     setModel: vi.fn(), dispose: vi.fn(), abort: vi.fn(async () => {}),
     // Mirrors the split PI 0.84.2 draws between the two ways a custom message can arrive, because the
@@ -5855,12 +5864,16 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     ];
     for (const run of runs) {
       d.store.createSession({ id: run.child, userId: 1, model: 'm', parentSessionId: sessionId, delegatedAccess: scope });
+    seedChildTask(d, run.child);
       d.store.upsertSubagentRun(sessionId, {
         id: run.call, sessionId: run.child, status: 'running', task: run.call, tools: 1, seconds: 2,
         ...(run.background ? { background: true, autoDeliver: true } : {}),
       });
     }
 
+    // The fake PI session is shared and never rehydrated from the store: give it the continuable tail a
+    // checkpointed child transcript ends on, so the silent continuation has something to continue.
+    d.session.messages.push({ role: 'user', content: 'the interrupted task' } as never);
     const restarted = new BrainService(d as never);
     const recovery = bootRecovery(restarted);
     recovery.claimAll(); // owner work is claimed now, before either recovered result exists
@@ -5904,6 +5917,9 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-owner-fg'").run();
     d.store.markSessionParked(sessionId); // what pauseForRestart wrote
 
+    // The fake PI session is shared and never rehydrated from the store: give it the continuable tail a
+    // checkpointed child transcript ends on, so the silent continuation has something to continue.
+    d.session.messages.push({ role: 'user', content: 'the interrupted task' } as never);
     const restarted = new BrainService(d as never);
     const recovery = bootRecovery(restarted);
     recovery.claimAll();
@@ -5946,6 +5962,9 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-owner-mixed'").run();
     d.store.markSessionParked(sessionId);
 
+    // The fake PI session is shared and never rehydrated from the store: give it the continuable tail a
+    // checkpointed child transcript ends on, so the silent continuation has something to continue.
+    d.session.messages.push({ role: 'user', content: 'the interrupted task' } as never);
     const restarted = new BrainService(d as never);
     const recovery = bootRecovery(restarted);
     recovery.claimAll();
@@ -5960,11 +5979,18 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(rows.some((content) => content.includes('"call-a"') && content.includes('A is finished'))).toBe(true);
   });
 
+  /** A child that had STARTED before the pause: its task is a durable user row, the continuable tail the
+   *  silent resume picks up from. A child with an empty transcript never started and errors instead. */
+  function seedChildTask(d: ReturnType<typeof fakeDeps>, child: string): void {
+    d.store.appendMessage({ id: `task-${child}`, sessionId: child, parentId: null, role: 'user', content: { role: 'user', content: 'the delegated task' } });
+  }
+
   /** A parent paused on one foreground Delegate whose child row is `running` at boot. */
   function pausedOnDelegate(d: ReturnType<typeof fakeDeps>, child: string, toolCallId: string): string {
     const sessionId = 'brain-1';
     d.store.createSession({ id: sessionId, userId: 1, model: 'm' });
     d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId, delegatedAccess: { admin: true, owner: true, projectIds: [], permissionBoundary: null } });
+    seedChildTask(d, child);
     d.store.upsertSubagentRun(sessionId, { id: toolCallId, sessionId: child, status: 'running', task: 'dig', tools: 1, seconds: 5 });
     d.store.appendMessage({
       id: `a-${toolCallId}`, sessionId, parentId: null, role: 'assistant',
@@ -5980,6 +6006,9 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     const sessionId = pausedOnDelegate(d, 'brain-ch-subagent-capped', 'call-capped');
     d.db.prepare("UPDATE brain_subagent_runs SET attempt = 3 WHERE tool_call_id = 'call-capped'").run(); // three boots already tried
 
+    // The fake PI session is shared and never rehydrated from the store: give it the continuable tail a
+    // checkpointed child transcript ends on, so the silent continuation has something to continue.
+    d.session.messages.push({ role: 'user', content: 'the interrupted task' } as never);
     const restarted = new BrainService(d as never);
     const recovery = bootRecovery(restarted);
     recovery.claimAll();
@@ -5995,8 +6024,11 @@ describe('sub-agent abort sparing + restart reconcile', () => {
   it('a parent paused on a delegation whose recovery turn fails is not left parked forever', async () => {
     const d = fakeDeps();
     const sessionId = pausedOnDelegate(d, 'brain-ch-subagent-broken', 'call-broken');
-    d.session.prompt.mockRejectedValueOnce(new Error('provider unavailable')); // the child's recovery turn
+    d.session._runAgentPrompt.mockRejectedValueOnce(new Error('provider unavailable')); // the child's recovery continuation
 
+    // The fake PI session is shared and never rehydrated from the store: give it the continuable tail a
+    // checkpointed child transcript ends on, so the silent continuation has something to continue.
+    d.session.messages.push({ role: 'user', content: 'the interrupted task' } as never);
     const restarted = new BrainService(d as never);
     const recovery = bootRecovery(restarted);
     recovery.claimAll();
@@ -6014,6 +6046,9 @@ describe('sub-agent abort sparing + restart reconcile', () => {
   it('the delegation wait spends the park attempt budget like every other park', async () => {
     const d = fakeDeps();
     const sessionId = pausedOnDelegate(d, 'brain-ch-subagent-counted', 'call-counted');
+    // The fake PI session is shared and never rehydrated from the store: give it the continuable tail a
+    // checkpointed child transcript ends on, so the silent continuation has something to continue.
+    d.session.messages.push({ role: 'user', content: 'the interrupted task' } as never);
     const restarted = new BrainService(d as never);
     const recovery = bootRecovery(restarted);
     recovery.claimAll();
@@ -6034,6 +6069,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.store.createSession({ id: room, userId: 1, model: 'm' });
     const child = 'brain-ch-subagent-room-child';
     d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: room, delegatedAccess: { admin: true, owner: true, projectIds: [], permissionBoundary: null } });
+    seedChildTask(d, child);
     d.store.upsertSubagentRun(room, { id: 'call-room', sessionId: child, status: 'running', task: 'dig', tools: 1, seconds: 5 });
     d.store.appendMessage({
       id: 'a-room', sessionId: room, parentId: null, role: 'assistant',
@@ -6042,6 +6078,9 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-room'").run();
     d.store.markSessionParked(room);
 
+    // The fake PI session is shared and never rehydrated from the store: give it the continuable tail a
+    // checkpointed child transcript ends on, so the silent continuation has something to continue.
+    d.session.messages.push({ role: 'user', content: 'the interrupted task' } as never);
     const restarted = new BrainService(d as never);
     const resumes: { row: { id: string; awaitsDelegations?: boolean }; note?: string }[] = [];
     vi.spyOn(restarted, 'resumeParkedPlatformTurn').mockImplementation(async (row, continuation) => {
@@ -6060,7 +6099,7 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     const withResult = resumes.find((r) => r.note);
     expect(withResult?.note).toContain('<subagent-result');
     expect(withResult?.note).toContain(child);
-    expect(withResult?.note).toContain('echo:'); // the child's recovered answer body
+    expect(withResult?.note).toContain('continued after the pause'); // the child's recovered answer body
     expect(d.store.pendingSubagentResults(room)).toEqual([]); // acknowledged through the continuation
   });
 
@@ -6193,14 +6232,22 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     const d = fakeDeps();
     d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
     d.store.markSessionParked('brain-1');
+    // The fake PI session is shared and never rehydrated from the store: give it the continuable tail a
+    // checkpointed child transcript ends on, so the silent continuation has something to continue.
+    d.session.messages.push({ role: 'user', content: 'the interrupted task' } as never);
     const restarted = new BrainService(d as never);
     await restarted.start(1, { session: 'brain-1' });
     d.session.messages.push({ role: 'assistant', content: 'an older answer', stopReason: 'stop' } as never);
     d.session.sendCustomMessage.mockImplementation(async (message: { details?: { resultId?: string } }) => {
       d.session.messages.push({ role: 'custom', details: message.details } as never); // both result and continuation land, neither answers
     });
+    // …and the generic parked continuation is cancelled mid-flight too (no answer, an aborted assistant).
+    d.session._runAgentPrompt.mockImplementation(async () => {
+      d.session.messages.push({ role: 'assistant', content: '', stopReason: 'aborted' } as never);
+    });
     const child = 'brain-ch-subagent-cancelled-parent-retry';
     d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: 'brain-1' });
+    seedChildTask(d, child);
     d.store.upsertSubagentRun('brain-1', {
       id: 'call-cancelled-parent-retry', sessionId: child, status: 'done', task: 'inspect', tools: 1, seconds: 2,
       background: true, autoDeliver: true,
@@ -6214,7 +6261,8 @@ describe('sub-agent abort sparing + restart reconcile', () => {
 
     expect(d.store.pendingSubagentResults('brain-1')).toHaveLength(1); // restored for the next boot, still duplicate-safe by result id
     expect(d.store.getSession('brain-1')?.parked_at).not.toBeNull(); // the interrupted owner turn is unfinished
-    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(3); // result delivery, result continuation, then the counted generic parked retry
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(2); // result delivery, result continuation …
+    expect(d.session._runAgentPrompt).toHaveBeenCalledTimes(1); // … then the counted generic parked retry, a silent continuation
   });
 
   it('bounds a malformed result wake and preserves the parked visible give-up across repeated boots', async () => {
@@ -6230,6 +6278,11 @@ describe('sub-agent abort sparing + restart reconcile', () => {
         { role: 'custom', details: message.details } as never,
         { role: 'assistant', content: '', stopReason: 'error', errorMessage: 'provider unavailable' } as never,
       );
+    });
+    // The interrupted turn's tail, and a generic continuation that errors every time it is tried.
+    d.session.messages.push({ role: 'user', content: 'the interrupted question' } as never);
+    d.session._runAgentPrompt.mockImplementation(async () => {
+      d.session.messages.push({ role: 'assistant', content: '', stopReason: 'error', errorMessage: 'provider unavailable' } as never);
     });
 
     for (let boot = 1; boot <= 3; boot += 1) {
@@ -6331,15 +6384,20 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     });
     d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-mut'").run(); // mark it as un-settled (pause-interrupted)
 
+    // The fake PI session is shared and never rehydrated from the store: give it the continuable tail a
+    // checkpointed child transcript ends on, so the silent continuation has something to continue.
+    d.session.messages.push({ role: 'user', content: 'the interrupted task' } as never);
     const restarted = new BrainService(d as never);
     await runBootRecovery(restarted);
 
     const row = d.db.prepare("SELECT lifecycle, state FROM brain_subagent_runs WHERE tool_call_id = 'delegate-mut'").get() as { lifecycle: string; state: string };
     expect(row.lifecycle).toBe('done');
-    // Exactly one respawn, carrying the interrupted-step instruction, never a blind replay.
-    expect(d.session.prompt).toHaveBeenCalledTimes(1);
-    expect(String(d.session.prompt.mock.calls[0]?.[0])).toContain('marked [interrupted]');
-    expect(String(d.session.prompt.mock.calls[0]?.[0])).toContain('check the current state before repeating');
+    // Exactly one CONTINUATION — no instruction, no prompt, no custom message: the child's transcript
+    // carries the explanation inside the synthetic tool result it reads next.
+    expect(d.session._runAgentPrompt).toHaveBeenCalledTimes(1);
+    expect(d.session.prompt).not.toHaveBeenCalled();
+    // The only custom message is the PARENT receiving the recovered result — never a resume note.
+    expect(d.session.sendCustomMessage.mock.calls.map((call) => (call[0] as { customType?: string }).customType)).toEqual(['subagent-result']);
     // The transcript keeps the Write call AND its synthetic answer, in order, all settled.
     const rows = d.store.getMessages('brain-ch-subagent-mut');
     const writeIndex = rows.findIndex((m) => m.id === 'a-mut');
@@ -6347,6 +6405,8 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     const answer = JSON.parse(rows[writeIndex + 1]!.content) as { role: string; toolCallId: string; isError: boolean; content: { text: string }[] };
     expect(answer).toMatchObject({ role: 'toolResult', toolCallId: 'w1', isError: true });
     expect(answer.content[0]!.text).toContain('[interrupted]');
+    expect(answer.content[0]!.text).toContain('may or may not have taken effect');
+    expect(answer.content[0]!.text).toContain('Verify the current state before repeating');
     expect(rows.every((m) => m.pending === 0)).toBe(true);
     // The parent gets the child's real answer through the durable inbox, and nothing gates the user.
     expect(d.store.pendingSubagentResults(sessionId).some((r) => r.requiresUserAction)).toBe(false);
@@ -6395,27 +6455,37 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     const child = 'brain-ch-subagent-blocked-parent';
     const grandchild = 'brain-ch-subagent-grandchild';
     d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId, delegatedAccess: scope });
+    seedChildTask(d, child);
     d.store.createSession({ id: grandchild, userId: 1, model: 'm', parentSessionId: child, delegatedAccess: scope });
+    seedChildTask(d, grandchild);
     d.store.upsertSubagentRun(sessionId, { id: 'call-blocked', sessionId: child, status: 'running', task: 'orchestrate', tools: 1, seconds: 5 });
     d.store.upsertSubagentRun(child, { id: 'call-grand', sessionId: grandchild, status: 'running', task: 'dig', tools: 1, seconds: 5 });
     // The child's crash-interrupted tail: a pending assistant whose Delegate call never got its result.
     d.store.appendMessage({
       id: 'a-blocked', sessionId: child, parentId: null, role: 'assistant',
-      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'dcall-1', name: 'Delegate', arguments: {} }] },
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'call-grand', name: 'Delegate', arguments: {} }] },
     });
     d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-blocked'").run();
 
+    // The fake PI session is shared and never rehydrated from the store: give it the continuable tail a
+    // checkpointed child transcript ends on, so the silent continuation has something to continue.
+    d.session.messages.push({ role: 'user', content: 'the interrupted task' } as never);
     const restarted = new BrainService(d as never);
     await runBootRecovery(restarted);
 
     const lc = (tc: string) => (d.db.prepare('SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = ?').get(tc) as { lifecycle: string }).lifecycle;
     expect(lc('call-grand')).toBe('done');
     expect(lc('call-blocked')).toBe('done'); // NOT recovery_required — an unanswered Delegate is a wait, not a side effect
-    // Proof of consumption: the grandchild's recovered result was delivered INSIDE the parent's recovery
-    // turn (it is in the child transcript), and the folded inbox rows were acknowledged, not left pending.
-    const transcript = d.store.getMessages(child).map((m) => m.content).join('\n');
-    expect(transcript).toContain('Recovered delegated result(s)');
-    expect(transcript).toContain(grandchild);
+    // Proof of consumption: the grandchild's recovered answer was folded INTO the answer of the child's own
+    // Delegate call (the `[interrupted, result recovered]` tool result the continuation reads next) — no
+    // instruction, no note — and the folded inbox row was acknowledged, not left pending.
+    const rows = d.store.getMessages(child);
+    const folded = rows.map((m) => JSON.parse(m.content) as { role?: string; toolCallId?: string; content?: { text?: string }[] })
+      .find((m) => m.role === 'toolResult' && m.toolCallId === 'call-grand');
+    expect(folded?.content?.[0]?.text).toContain('[interrupted, result recovered]');
+    expect(folded?.content?.[0]?.text).toContain(grandchild);
+    expect(folded?.content?.[0]?.text).toContain('continued after the pause'); // the grandchild's answer body
+    expect(rows.map((m) => m.content).join('\n')).not.toContain('The daemon restarted');
     expect(d.store.pendingSubagentResults(child)).toEqual([]);
   });
 
@@ -6427,12 +6497,16 @@ describe('sub-agent abort sparing + restart reconcile', () => {
       id: 'brain-ch-subagent-failed-recovery', userId: 1, model: 'm', parentSessionId: sessionId,
       delegatedAccess: { admin: true, owner: true, projectIds: [], permissionBoundary: null },
     });
+    seedChildTask(d, 'brain-ch-subagent-failed-recovery');
     d.store.upsertSubagentRun(sessionId, {
       id: 'delegate-failed-recovery', sessionId: 'brain-ch-subagent-failed-recovery', status: 'running',
       task: 'recover and fail', tools: 1, seconds: 5,
     });
-    d.session.prompt.mockRejectedValueOnce(new Error('provider unavailable'));
+    d.session._runAgentPrompt.mockRejectedValueOnce(new Error('provider unavailable'));
 
+    // The fake PI session is shared and never rehydrated from the store: give it the continuable tail a
+    // checkpointed child transcript ends on, so the silent continuation has something to continue.
+    d.session.messages.push({ role: 'user', content: 'the interrupted task' } as never);
     const restarted = new BrainService(d as never);
     await runBootRecovery(restarted);
 
@@ -6643,25 +6717,29 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     const d = fakeDeps();
     d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
     d.store.markSessionParked('brain-1');
-    // The rehydrated prefix a resume must not touch (prompt cache: the provider re-caches by byte prefix).
+    // The rehydrated prefix a resume must not touch (prompt cache: the provider re-caches by byte prefix):
+    // the tail ends on the answered tool call, exactly what the checkpoint leaves behind.
     d.session.messages.push(
       { role: 'user', content: 'do the thing' },
-      { role: 'assistant', content: 'tool call + answered result' },
+      { role: 'assistant', content: [{ type: 'toolCall', id: 't1', name: 'Bash', arguments: {} }] },
+      { role: 'toolResult', toolCallId: 't1', toolName: 'Bash', content: [{ type: 'text', text: '[exit 0]' }] },
     );
     const prefix = d.session.messages.slice();
 
     const restarted = new BrainService(d as never);
     await runBootRecovery(restarted);
 
-    // Exactly one hidden continuation — a custom system message, never a fake user bubble.
-    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);
-    expect(d.session.sendCustomMessage.mock.calls[0]?.[0]).toMatchObject({ customType: 'restart-resume', display: false });
-    expect(d.session.sendCustomMessage.mock.calls[0]?.[1]).toMatchObject({ triggerTurn: true });
-    // Tail-append only: every prefix row is untouched (same objects, same order), the resume's custom
-    // note and the produced answer follow AFTER them.
+    // SILENT: the turn is CONTINUED from the tail — no custom message, no user bubble, no prompt.
+    expect(d.session._runAgentPrompt).toHaveBeenCalledTimes(1);
+    expect(d.session._runAgentPrompt.mock.calls[0]?.[0]).toEqual([]);
+    expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
+    expect(d.session.prompt).not.toHaveBeenCalled();
+    // Tail-append only: every prefix row is untouched (same objects, same order), the produced answer
+    // follows DIRECTLY after them.
     expect(d.session.messages.slice(0, prefix.length)).toEqual(prefix);
     prefix.forEach((row, i) => expect(d.session.messages[i]).toBe(row));
-    expect(d.session.messages.at(-1)).toMatchObject({ role: 'assistant', stopReason: 'stop' });
+    expect(d.session.messages).toHaveLength(prefix.length + 1);
+    expect(d.session.messages.at(-1)).toMatchObject({ role: 'assistant', content: 'continued after the pause' });
     // The park is spent: marker cleared, attempts reset — nothing resumes this conversation twice.
     const row = d.store.getSession('brain-1')!;
     expect(row.parked_at).toBeNull();
@@ -6680,18 +6758,19 @@ describe('sub-agent abort sparing + restart reconcile', () => {
       { text: 'and then summarize', images: [{ data: 'AAAA', mimeType: 'image/png' }] },
     ]);
 
+    d.session.messages.push({ role: 'user', content: 'do the thing' }); // the interrupted turn's tail
     const restarted = new BrainService(d as never);
     await runBootRecovery(restarted);
 
-    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);
-    expect(d.session.sendCustomMessage.mock.calls[0]?.[0]).toMatchObject({ customType: 'restart-resume' });
+    expect(d.session._runAgentPrompt).toHaveBeenCalledTimes(1); // the silent continuation
+    expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
     const prompted = d.session.prompt.mock.calls.map((call) => String(call[0]));
     expect(prompted.filter((text) => text.includes('also check the logs'))).toHaveLength(1);
     expect(prompted.filter((text) => text.includes('and then summarize'))).toHaveLength(1);
     expect(prompted.indexOf(prompted.find((t) => t.includes('also check the logs'))!))
       .toBeLessThan(prompted.indexOf(prompted.find((t) => t.includes('and then summarize'))!));
-    // The resume note went out before either replayed turn was prompted.
-    expect(d.session.sendCustomMessage.mock.invocationCallOrder[0]!).toBeLessThan(d.session.prompt.mock.invocationCallOrder[0]!);
+    // The continuation ran before either replayed turn was prompted.
+    expect(d.session._runAgentPrompt.mock.invocationCallOrder[0]!).toBeLessThan(d.session.prompt.mock.invocationCallOrder[0]!);
     // Consumed: nothing replays the same words on the next boot.
     expect(d.store.takePausedQueue('brain-1')).toEqual([]);
     // The transcript holds the replayed messages as ordinary user rows, after the resume.
@@ -6804,10 +6883,10 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     const d = fakeDeps();
     d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
     d.store.markSessionParked('brain-1');
-    // The resume turn reaches the model but errors — the custom note lands, no answer is produced.
-    d.session.sendCustomMessage.mockImplementation(async (message: Record<string, unknown>, options?: { triggerTurn?: boolean }) => {
-      d.session.messages.push({ role: 'custom', ...message } as never);
-      if (options?.triggerTurn) d.session.messages.push({ role: 'assistant', content: '', stopReason: 'error' } as never);
+    // The continuation reaches the model but errors — no answer is produced.
+    d.session.messages.push({ role: 'user', content: 'do the thing' } as never);
+    d.session._runAgentPrompt.mockImplementation(async () => {
+      d.session.messages.push({ role: 'assistant', content: '', stopReason: 'error' } as never);
     });
     const notified: unknown[][] = [];
     (d as Record<string, unknown>).notifyTurnComplete = (...args: unknown[]) => { notified.push(args); };

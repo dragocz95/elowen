@@ -24,10 +24,12 @@ export const MARKERS = {
 };
 
 const CHILD_PROMPT = 'You are a focused sub-agent';
-// Every child recovery instruction opens with this (mid-task, mid-step, or waiting on sub-agents).
-const RECOVERY_PROMPT = 'The daemon restarted and interrupted you';
-// The owner-conversation resume note and the durable result delivery, as the model sees them.
-const OWNER_RESUME_NOTE = 'The daemon restarted and interrupted this conversation';
+// The resume is SILENT: no note of any kind enters the context. What the model sees after a restart is
+// its own transcript, with the tool calls the restart cut off answered by `[interrupted …]` results —
+// and for a child held mid-model-call, exactly the request it was making before. Any wording that
+// announces a restart in a request is counted, so the suite can assert it never appears.
+const RESUME_NOTE_WORDING = 'The daemon restarted';
+const INTERRUPTED_RESULT = '[interrupted';
 const SUBAGENT_RESULT_TAG = '<subagent-result';
 const LISTING_HEADER = 'in this conversation (newest first)';
 
@@ -56,11 +58,13 @@ export async function startRecoveryModel({ task, result, background = false, uns
   let signalInitialChild = () => {};
   const initialChildArrived = new Promise((resolve) => { signalInitialChild = resolve; });
   let initialChildSignalled = false;
+  let resumeNotesSeen = 0;
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     const body = await readJson(req);
     requests.push({ path: url.pathname, body, at: Date.now() });
+    if (JSON.stringify(body).includes(RESUME_NOTE_WORDING)) resumeNotesSeen += 1;
     if (req.method !== 'POST' || url.pathname !== '/v1/chat/completions') {
       res.writeHead(404, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: `unhandled ${req.method} ${url.pathname}` }));
@@ -107,7 +111,10 @@ export async function startRecoveryModel({ task, result, background = false, uns
         say(`The paused child was continued deliberately. ${MARKERS.unsafeContinued}`);
         return;
       }
-      if (allText.includes(RECOVERY_PROMPT)) {
+      // The continuation after the restart: the interrupted call is answered [interrupted] (unsafe mode),
+      // or — for a child that was held mid-model-call — the same request arrives a second time from a
+      // fresh transport. Either way the child simply finishes.
+      if (allText.includes(INTERRUPTED_RESULT) || (!unsafe && initialChildSignalled)) {
         say(`Recovered child completed its original task. ${result}`);
         return;
       }
@@ -133,8 +140,8 @@ export async function startRecoveryModel({ task, result, background = false, uns
     }
 
     if (ownerBash && allText.includes(task)) {
-      // The resumed OWNER turn: its Bash call is answered [interrupted] and the resume note follows.
-      if (allText.includes(OWNER_RESUME_NOTE)) {
+      // The resumed OWNER turn: its Bash call is answered [interrupted]; nothing else was added.
+      if (allText.includes(INTERRUPTED_RESULT)) {
         say(`Owner turn resumed after the pause. ${result}`);
         return;
       }
@@ -183,6 +190,8 @@ export async function startRecoveryModel({ task, result, background = false, uns
     requests,
     toolCalls,
     initialChildArrived,
+    /** How many requests carried a restart announcement — must stay 0. */
+    resumeNotesSeen: () => resumeNotesSeen,
     childRequests: () => requests.filter((request) => {
       const text = (Array.isArray(request.body?.messages) ? request.body.messages : []).map(contentText).join('\n');
       return text.includes(CHILD_PROMPT) && text.includes(task);

@@ -50,6 +50,7 @@ import type { LiveBrain, QueuedUserEcho, SpawnOpts } from './session/liveBrain.j
 import { clearDeliveredUserEchoes, echoDeliveredId, enqueueMirrored } from './session/queueMirror.js';
 import { abortSessionWork } from './session/abortSessionWork.js';
 import { steerCustomMessage } from './session/steerCustomMessage.js';
+import { continueInterruptedTurn } from './session/continueTurn.js';
 import { execRefSpec, fromRegistryProvider } from '../shared/execs.js';
 
 /** How a delegated steer ended: `delivered` = the message provably reached the child's context (its
@@ -425,8 +426,11 @@ export interface ChannelSendOpts {
    *  owner's own delegation, so the owner steering it can never escalate. Platform adapters (Discord)
    *  must NEVER set this — a shared channel keeps each sender's turn isolated (see the comment below). */
   ownerSteer?: boolean;
-  /** Host-owned hidden custom turn (durable sub-agent result); never projected as a user row. */
-  internalSystem?: { customType: string; resultId: string };
+  /** Host-owned hidden turn; never projected as a user row. With `continuation`, NO message at all: the
+   *  turn is continued from the transcript's current tail (session/continueTurn.ts) — the resume of an
+   *  interrupted turn after a pause-for-restart. Otherwise a hidden custom message carrying `text`
+   *  (a durable sub-agent result). */
+  internalSystem?: { customType: string; resultId: string; continuation?: boolean };
 }
 
 export interface ChannelServiceDeps {
@@ -981,6 +985,8 @@ export class ChannelSessionService {
         const emitWorkflowCompletion = parentSessionId && this.d.completeWorkflow
           ? (completion: WorkflowCompletion) => { this.d.completeWorkflow!(ch.sessionId, ownerUserId, completion); }
           : undefined;
+        // Set by a continuation that found the transcript already ending on a settled answer.
+        let alreadyAnswered = false;
         const assistantBefore = [...(ch.session.messages as { role?: string }[])].reverse()
           .find((message) => message.role === 'assistant');
         // Resolve from THIS writer and THIS turn. `ch.workDir` is only the static spawn cwd (often the room
@@ -1104,7 +1110,12 @@ export class ChannelSessionService {
             // DURING this turn, so a commit after the loop meant it always saw an empty set, retrieved the
             // memories the prompt had just printed and injected them a second time.
             commitRecall();
-            if (opts.internalSystem) {
+            if (opts.internalSystem?.continuation) {
+              // A transcript that already ends on a settled answer has nothing to continue: the pause hit
+              // after the model's last word and only the delivery was lost — the answer below is it.
+              const outcome = await continueInterruptedTurn(ch.session, { store: this.d.store, sessionId });
+              if (outcome === 'nothing') alreadyAnswered = true;
+            } else if (opts.internalSystem) {
               await ch.session.sendCustomMessage({
                 customType: opts.internalSystem.customType, content: prompted, display: false,
                 details: { source: 'elowen', resultId: opts.internalSystem.resultId },
@@ -1146,7 +1157,7 @@ export class ChannelSessionService {
         const msgs = ch.session.messages as { role?: string; stopReason?: string; errorMessage?: string }[];
         const last = lastAssistant(msgs);
         const assistantText = last ? extractText(last) : '';
-        if (opts.internalSystem && (!last || last === assistantBefore || last.stopReason === 'error'
+        if (opts.internalSystem && !alreadyAnswered && (!last || last === assistantBefore || last.stopReason === 'error'
           || last.stopReason === 'aborted' || !assistantText.trim())) {
           throw new Error(last?.errorMessage?.trim() || 'sub-agent result was not processed by the delegated parent');
         }
@@ -1389,6 +1400,8 @@ export class ChannelSessionService {
       // ending between the isStreaming read and here leaves the message waiting for the next turn instead
       // of starting one outside the channel lock (see steerCustomMessage for what changed in PI 0.84.2).
       if (opts.internalSystem) {
+        // A continuation has nothing to steer: the turn it would continue is the one already running.
+        if (opts.internalSystem.continuation) throw new Error('cannot continue a turn that is already running');
         if (delegationAborted()) throw new Error('delegation aborted');
         steerCustomMessage(streaming.session, {
           customType: opts.internalSystem.customType, content: turnText, display: false,
