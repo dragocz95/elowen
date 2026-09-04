@@ -363,7 +363,7 @@ export function register(ctx) {
       query: Type.String({ minLength: 2, description: 'Search query, at least 2 characters.' }),
       allowed_domains: Type.Optional(Type.Array(Type.String(), { description: 'Only return these hosts and their subdomains. Host names only.' })),
       blocked_domains: Type.Optional(Type.Array(Type.String(), { description: 'Never return these hosts or their subdomains. Host names only; takes precedence.' })),
-    }),
+    }, { additionalProperties: false }),
     execute: async (_id, p, signal) => {
       try {
         if (typeof p.query !== 'string' || p.query.trim().length < 2) throw new Error('query must contain at least 2 characters');
@@ -391,9 +391,9 @@ export function register(ctx) {
     name: 'WebFetch', label: 'Fetch web page',
     description: 'Fetches a public URL, converts HTML to Markdown, and answers prompt against it through a host-owned inference route. HTTP is upgraded to HTTPS. Same-host redirects are followed after validating and pinning every hop; cross-host redirects are returned for a new explicit call. URL content is cached for 15 minutes within bounded memory. Non-global addresses are refused.',
     parameters: Type.Object({
-      url: Type.String({ maxLength: 2000, description: 'Fully formed public http(s) URL.' }),
+      url: Type.String({ format: 'uri', maxLength: 2000, description: 'Fully formed public http(s) URL.' }),
       prompt: Type.String({ minLength: 1, maxLength: MAX_PROMPT_CHARS, description: 'What information to extract from the page.' }),
-    }),
+    }, { additionalProperties: false }),
     execute: async (_id, p, signal) => {
       try {
         if (typeof p.prompt !== 'string' || !p.prompt.trim()) throw new Error('prompt is required');

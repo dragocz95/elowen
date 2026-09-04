@@ -115,4 +115,57 @@ describe('files plugin — host tool validation', () => {
     expect(textOf(write)).toMatch(/has not been read in this conversation/);
     expect(readFileSync(path, 'utf-8')).toBe('precious\n');
   });
+
+  it('rejects the unknown replaceAll alias before Edit executes', async () => {
+    const path = join(dir, 'replace-all-alias.txt');
+    writeFileSync(path, 'keep me\n');
+    const registry = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['files'], logger: log });
+    const readTool = registry.tools.find((tool) => tool.name === 'Read');
+    const editTool = registry.tools.find((tool) => tool.name === 'Edit');
+    if (!readTool || !editTool) throw new Error('files tools missing');
+
+    const runtime = await inMemoryModelRuntime();
+    const models = new ModelRegistry(runtime);
+    const api = 'files-alias-validation' as Api;
+    let calls = 0;
+    models.registerProvider('files-alias-test', {
+      name: 'Files alias validation fixture', api, baseUrl: 'https://provider.invalid', apiKey: 'key',
+      streamSimple: async (model, context: Context) => {
+        calls += 1;
+        if (calls === 1) {
+          return stream(model, message(model, [{
+            type: 'toolCall', id: 'edit-invalid', name: 'Edit',
+            arguments: { file_path: path, old_string: 'keep me', new_string: 'changed', replaceAll: true },
+          }], 'toolUse'));
+        }
+        const validation = context.messages.at(-1);
+        expect(validation).toMatchObject({ role: 'toolResult', toolName: 'Edit', isError: true });
+        expect(textOf(validation)).toContain('Validation failed for tool "Edit"');
+        expect(textOf(validation)).toContain('replaceAll');
+        return stream(model, message(model, [{ type: 'text', text: 'done' }], 'stop'));
+      },
+      models: [{
+        id: 'files-alias-model', name: 'files-alias-model', reasoning: false, input: ['text'],
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }, contextWindow: 4_000, maxTokens: 512,
+      }],
+    });
+    const model = models.find('files-alias-test', 'files-alias-model');
+    if (!model) throw new Error('model missing');
+    const settingsManager = SettingsManager.inMemory(undefined, { projectTrusted: true });
+    const { session } = await createAgentSession({
+      cwd: dir,
+      sessionManager: SessionManager.inMemory(dir),
+      settingsManager,
+      modelRuntime: runtime,
+      model,
+      customTools: [readTool, editTool],
+      tools: ['Read', 'Edit'],
+      noTools: 'builtin',
+    });
+    const sessionId = 'brain-files-alias-validation';
+    await runWithPolicy(userPolicy([dir]), () => readTool.execute('read-before-edit', { file_path: path }), { sessionId });
+    await runWithPolicy(userPolicy([dir]), () => session.prompt('edit the file'), { sessionId });
+
+    expect(readFileSync(path, 'utf-8')).toBe('keep me\n');
+  });
 });

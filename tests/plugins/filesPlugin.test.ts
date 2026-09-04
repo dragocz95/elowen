@@ -42,14 +42,15 @@ describe('files plugin', () => {
   // schema says: 12 of 38 recorded schema-validation failures were a model sending file_path or
   // old_string/new_string to the old camelCase spelling. The names are the wire contract with the model, so
   // they are asserted here rather than left to drift back.
-  const schemaOf = (name: string): { properties: Record<string, unknown>; required?: string[] } =>
-    (reg.tools.find((t) => t.name === name) as unknown as { parameters: { properties: Record<string, unknown>; required?: string[] } }).parameters;
+  const schemaOf = (name: string): { properties: Record<string, Record<string, unknown>>; required?: string[]; additionalProperties?: boolean } =>
+    (reg.tools.find((t) => t.name === name) as unknown as { parameters: { properties: Record<string, Record<string, unknown>>; required?: string[]; additionalProperties?: boolean } }).parameters;
 
   it('Read/Write/Edit declare the reference parameter spelling and no camelCase alias', () => {
     expect(Object.keys(schemaOf('Read'))).toContain('properties');
     expect(schemaOf('Read').properties).toHaveProperty('file_path');
     expect(schemaOf('Read').properties).not.toHaveProperty('path');
     expect(schemaOf('Read').required).toContain('file_path');
+    expect(schemaOf('Read').additionalProperties).toBe(false);
     expect(schemaOf('Read').properties).toMatchObject({
       offset: { type: 'integer', minimum: 0, maximum: Number.MAX_SAFE_INTEGER },
       limit: { type: 'integer', minimum: 1, maximum: Number.MAX_SAFE_INTEGER },
@@ -58,22 +59,26 @@ describe('files plugin', () => {
     expect(schemaOf('Write').properties).toHaveProperty('file_path');
     expect(schemaOf('Write').properties).not.toHaveProperty('path');
     expect(schemaOf('Write').required).toEqual(expect.arrayContaining(['file_path', 'content']));
+    expect(schemaOf('Write').additionalProperties).toBe(false);
 
     const edit = schemaOf('Edit');
     expect(Object.keys(edit.properties)).toEqual(expect.arrayContaining(['file_path', 'old_string', 'new_string', 'replace_all']));
     for (const stale of ['path', 'oldText', 'newText', 'replaceAll']) expect(edit.properties).not.toHaveProperty(stale);
     expect(edit.required).toEqual(expect.arrayContaining(['file_path', 'old_string', 'new_string']));
     expect(edit.required).not.toContain('replace_all'); // optional, default false — same as the reference
+    expect(edit.additionalProperties).toBe(false);
+    expect(edit.properties.replace_all).toMatchObject({ type: 'boolean', default: false });
+    expect(edit.properties.fuzzy_match).toMatchObject({ type: 'boolean', default: false });
   });
 
   // The rename is only safe if the OLD shape fails loudly. An Edit that quietly reported success while
   // writing nothing is the failure mode worth a regression test: the agent would move on believing the
   // change landed.
-  it('describes only successful, visible reads as satisfying the modify guard', () => {
+  it('describes only complete, model-visible reads as satisfying the modify guard', () => {
     const descriptionOf = (name: string) => reg.tools.find((tool) => tool.name === name)?.description ?? '';
-    expect(descriptionOf('Read')).toContain('invalid ranges return an error and do not count as reading the file');
-    expect(descriptionOf('Write')).toContain('a Read error or omitted image does not count');
-    expect(descriptionOf('Edit')).toContain('a Read error or omitted image does not count');
+    expect(descriptionOf('Read')).toContain('continue paged reads until the complete file has been visible');
+    expect(descriptionOf('Write')).toMatch(/partial or truncated Read.*does not count/);
+    expect(descriptionOf('Edit')).toMatch(/partial or truncated reads.*do not count/);
   });
 
   it('a call in the OLD parameter shape fails loudly instead of silently doing nothing', async () => {

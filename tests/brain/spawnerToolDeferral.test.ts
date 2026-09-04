@@ -371,12 +371,22 @@ describe('workspace-scoped tool composition', () => {
     expect(factoryToolNames(create)).toContain('GitStatus');
   });
 
-  it('rewrites filesystem schemas to logical relative paths', () => {
-    const read = workspaceToolDefinition({
-      name: 'Read', description: 'The path must be absolute.',
-      parameters: { type: 'object', properties: { path: { type: 'string', description: 'Absolute path' } } },
+  it('rewrites filesystem and Bash schemas to logical relative paths', () => {
+    for (const name of ['Read', 'Write', 'Edit']) {
+      const tool = workspaceToolDefinition({
+        name, description: 'The path must be absolute.',
+        parameters: { type: 'object', properties: { file_path: { type: 'string', description: 'Absolute path to the file' } } },
+      });
+      expect(tool?.description).toContain('relative to the assigned workspace');
+      expect((tool?.parameters as any).properties.file_path.description).toContain('Workspace-relative');
+    }
+
+    const bash = workspaceToolDefinition({
+      name: 'Bash', description: 'The working directory is confined to accessible repositories. Prefer absolute paths. Shell variables do not persist.',
+      parameters: { type: 'object', properties: { cwd: { type: 'string', description: 'Working directory' } } },
     });
-    expect(read?.description).toContain('relative to the assigned workspace');
-    expect((read?.parameters as any).properties.path.description).toContain('Workspace-relative');
+    expect((bash?.parameters as any).properties.cwd.description).toContain('Workspace-relative');
+    expect(bash?.description).toContain('Use short workspace-relative paths');
+    expect(bash?.description).not.toMatch(/prefer absolute paths/i);
   });
 });
