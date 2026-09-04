@@ -28,6 +28,7 @@ const brainMessagesPage = vi.fn(async (): Promise<HistoryPage> => ({ items: [], 
 const brainMessages = vi.fn(async () => []);
 const brainStatus = vi.fn(async () => ({ running: true, sessionId: 'brain-1', model: 'model-a', usage: null, statusline: null }));
 const brainSetModel = vi.fn(async () => ({ model: 'gpt-5.6-sol' }));
+const brainAnswer = vi.fn(async () => ({ ok: true, matched: true }));
 vi.mock('../../lib/elowenClient', () => ({
   BASE: '/api',
   elowenClient: {
@@ -36,6 +37,7 @@ vi.mock('../../lib/elowenClient', () => ({
     brainMessages: (...a: unknown[]) => brainMessages(...(a as [])),
     brainStatus: (...a: unknown[]) => brainStatus(...(a as [])),
     brainSetModel: (...a: unknown[]) => brainSetModel(...(a as [])),
+    brainAnswer: (...a: unknown[]) => brainAnswer(...(a as [])),
     brainModels: async () => [],
     brainCommands: async () => ({ commands: [] }),
     brainSessions: async () => [],
@@ -58,7 +60,9 @@ function Harness() {
       <span data-testid="turns">{c.turns.length}</span>
       <span data-testid="draft">{c.input}</span>
       <span data-testid="hasMore">{c.hasMoreHistory ? 'yes' : 'no'}</span>
+      <span data-testid="ask">{c.ask?.id ?? 'none'}</span>
       <button onClick={() => c.setInput('unsent draft')}>type</button>
+      <button onClick={() => { if (c.ask) void c.onAnswer(c.ask.id, [{ header: 'Choice', selected: ['A'] }]).catch(() => undefined); }}>answer</button>
       <button onClick={() => c.setModel(FIX_MODEL)}>switch</button>
       <button onClick={() => { void c.loadOlder(); }}>older</button>
     </div>
@@ -149,5 +153,24 @@ describe('BrainChatProvider model-switch reconcile', () => {
     await act(async () => { fireEvent.click(screen.getByText('switch')); });
     await waitFor(() => expect(brainSetModel).toHaveBeenCalledTimes(1));
     expect(screen.getByTestId('draft').textContent).toBe('unsent draft'); // draft survives the switch
+  });
+
+  it('keeps the pending prompt and reports a fail-soft error when answer returns matched:false', async () => {
+    brainAnswer.mockResolvedValueOnce({ ok: true, matched: false });
+    renderChat();
+    await waitFor(() => expect(FakeEventSource.instances).toHaveLength(1));
+    await act(async () => {
+      FakeEventSource.instances[0]!.emit('ask', JSON.stringify({
+        id: 'ask-1',
+        questions: [{ question: 'Pick one?', header: 'Choice', multiSelect: false, options: [{ label: 'A' }, { label: 'B' }] }],
+      }));
+    });
+    expect(screen.getByTestId('ask').textContent).toBe('ask-1');
+
+    await act(async () => { fireEvent.click(screen.getByText('answer')); });
+
+    await waitFor(() => expect(brainAnswer).toHaveBeenCalledTimes(1));
+    expect(screen.getByTestId('ask').textContent).toBe('ask-1');
+    expect(await screen.findByText(/The answer was not sent|Odpověď se nepodařilo odeslat/)).toBeInTheDocument();
   });
 });

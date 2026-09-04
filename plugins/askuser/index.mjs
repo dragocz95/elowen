@@ -66,7 +66,7 @@ function canonicalQuestions(value) {
     const unknownQuestionField = Object.keys(q).find((key) => !QUESTION_FIELDS.has(key));
     if (unknownQuestionField) throw new Error(`${at}.${unknownQuestionField} is not supported.`);
     if (typeof q.question !== 'string' || !q.question.trim()) throw new Error(`${at}.question must be a non-empty string.`);
-    if (!q.question.trim().endsWith('?')) throw new Error(`${at}.question must end with "?".`);
+    if (!q.question.endsWith('?')) throw new Error(`${at}.question must end with "?".`);
     if (typeof q.header !== 'string' || !q.header.trim()) throw new Error(`${at}.header must be a non-empty string.`);
     if (q.header.length > 12) throw new Error(`${at}.header must be at most 12 characters.`);
     if (typeof q.multiSelect !== 'boolean') throw new Error(`${at}.multiSelect must be a boolean.`);
@@ -84,6 +84,9 @@ function canonicalQuestions(value) {
       const unknownOptionField = Object.keys(option).find((key) => !OPTION_FIELDS.has(key));
       if (unknownOptionField) throw new Error(`${optionAt}.${unknownOptionField} is not supported.`);
       if (typeof option.label !== 'string' || !option.label.trim()) throw new Error(`${optionAt}.label must be a non-empty string.`);
+      if (option.label.trim().toLowerCase() === 'other') {
+        throw new Error(`${optionAt}.label must not use the reserved "Other" label.`);
+      }
       if (typeof option.description !== 'string' || !option.description.trim()) {
         throw new Error(`${optionAt}.description must be a non-empty string.`);
       }

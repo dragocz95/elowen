@@ -23,6 +23,11 @@ interface Pending {
   emit: (e: BrainEvent) => void;
 }
 
+interface ApprovalState {
+  tail: Promise<void>;
+  cancellation: { error: Error | null };
+}
+
 /** Validate an untrusted surface payload against the exact questions that are still pending. Labels are
  * the wire identity, so an unknown/duplicate pick, a reordered header, or custom text the question did not
  * allow is a mismatch, not input to normalize. Fail closed without settling the parked Promise. */
@@ -35,6 +40,8 @@ function answersMatch(questions: readonly AskQuestion[], answers: unknown): answ
     if (answer.header !== question.header || !Array.isArray(answer.selected)) return false;
     if (!answer.selected.every((label): label is string => typeof label === 'string')) return false;
     const selected = answer.selected as string[];
+    const hasOther = typeof answer.other === 'string' && answer.other.trim().length > 0;
+    if (selected.length === 0 && !hasOther) return false;
     const distinct = new Set(selected);
     if (distinct.size !== selected.length) return false;
     if (!question.multiSelect && selected.length > 1) return false;
@@ -55,9 +62,9 @@ function answersMatch(questions: readonly AskQuestion[], answers: unknown): answ
  *  single-threaded and parks on one `askUser` call, there is at most one pending entry per conversation. */
 export class ElicitationRegistry {
   private readonly pending = new Map<string, Pending>();
-  /** Per-session tail of the serialized APPROVAL chain: a new approval parks only after the previous one
-   *  for the same conversation settles (see {@link ask}). Never rejects. */
-  private readonly approvalChain = new Map<string, Promise<void>>();
+  /** Per-session serialized APPROVAL state. Every queued approval captures the shared cancellation token,
+   *  so aborting the session invalidates deferred parks before their `then` callback can emit. */
+  private readonly approvalStates = new Map<string, ApprovalState>();
 
   /** `timeoutMs` may be a fixed number or a resolver read per park, so an operator's config change to the
    *  elicitation limit takes effect on the next question without rebuilding the registry. */
@@ -73,13 +80,22 @@ export class ElicitationRegistry {
    *  one drops the earlier. */
   ask(sessionId: string, questions: AskQuestion[], emit: (e: BrainEvent) => void, kind?: 'approval'): Promise<AskAnswer[]> {
     if (kind === 'approval') {
-      const prev = this.approvalChain.get(sessionId);
+      const previous = this.approvalStates.get(sessionId);
+      const cancellation = previous?.cancellation ?? { error: null };
+      const park = (): Promise<AskAnswer[]> => cancellation.error
+        ? Promise.reject(cancellation.error)
+        : this.park(sessionId, questions, emit, kind);
       // No prior approval in flight → park now (synchronous emit, unchanged behaviour). Otherwise queue
       // behind it so both prompts get shown in turn rather than the newer one cancelling the older.
-      const result = prev ? prev.then(() => this.park(sessionId, questions, emit, kind)) : this.park(sessionId, questions, emit, kind);
-      const tail = result.then(() => {}, () => {}); // settles (either way) when this approval is done
-      this.approvalChain.set(sessionId, tail);
-      void tail.then(() => { if (this.approvalChain.get(sessionId) === tail) this.approvalChain.delete(sessionId); });
+      const result = previous ? previous.tail.then(park) : park();
+      const state: ApprovalState = {
+        cancellation,
+        tail: result.then(() => {}, () => {}),
+      };
+      this.approvalStates.set(sessionId, state);
+      void state.tail.then(() => {
+        if (this.approvalStates.get(sessionId) === state) this.approvalStates.delete(sessionId);
+      });
       return result;
     }
     // Enforce one pending question per conversation: if the model somehow fired two AskUserQuestion
@@ -137,6 +153,11 @@ export class ElicitationRegistry {
   /** Reject every question parked for a conversation — called on turn abort / session dispose so a
    *  parked tool fails cleanly instead of hanging. */
   cancelForSession(sessionId: string, reason = 'turn cancelled'): void {
+    const approval = this.approvalStates.get(sessionId);
+    if (approval) {
+      approval.cancellation.error = new Error(reason);
+      this.approvalStates.delete(sessionId);
+    }
     for (const [id, p] of this.pending) {
       if (p.sessionId !== sessionId) continue;
       this.pending.delete(id);
@@ -149,12 +170,13 @@ export class ElicitationRegistry {
   /** Reject every parked question across all conversations — called when the whole live-session set is
    *  torn down (plugin reload / channel dispose-all) so no parked turn is left hanging on a dead session. */
   cancelAll(reason = 'sessions reset'): void {
+    for (const state of this.approvalStates.values()) state.cancellation.error = new Error(reason);
+    this.approvalStates.clear();
     for (const [id, p] of this.pending) {
       this.pending.delete(id);
       clearTimeout(p.timer);
       p.emit({ type: 'ask_resolved', id, reason: 'cancelled' });
       p.reject(new Error(reason));
     }
-    this.approvalChain.clear();
   }
 }

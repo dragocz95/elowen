@@ -111,7 +111,9 @@ describe('AskUserQuestion — canonical model surface', () => {
 
   it.each([
     ['question without a question mark', { question: 'Which approach', header: 'Approach', options: [{ label: 'A', description: 'a' }, { label: 'B', description: 'b' }], multiSelect: false }, 'end with "?"'],
+    ['question with whitespace after its question mark', { question: 'Which approach? ', header: 'Approach', options: [{ label: 'A', description: 'a' }, { label: 'B', description: 'b' }], multiSelect: false }, 'end with "?"'],
     ['header longer than twelve characters', { question: 'Which approach?', header: 'Longer header', options: [{ label: 'A', description: 'a' }, { label: 'B', description: 'b' }], multiSelect: false }, 'at most 12'],
+    ['an explicit Other option', { question: 'Which approach?', header: 'Approach', options: [{ label: 'Safe', description: 'a' }, { label: 'oThEr', description: 'b' }], multiSelect: false }, 'must not use the reserved "Other" label'],
     ['fewer than two options', { question: 'Which approach?', header: 'Approach', options: [{ label: 'A', description: 'a' }], multiSelect: false }, '2-4 options'],
     ['more than four options', { question: 'Which approach?', header: 'Approach', options: [{ label: 'A', description: 'a' }, { label: 'B', description: 'b' }, { label: 'C', description: 'c' }, { label: 'D', description: 'd' }, { label: 'E', description: 'e' }], multiSelect: false }, '2-4 options'],
     ['an option without a description', { question: 'Which approach?', header: 'Approach', options: [{ label: 'A' }, { label: 'B', description: 'b' }], multiSelect: false }, 'description'],
