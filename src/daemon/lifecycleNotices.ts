@@ -11,6 +11,8 @@ const NOTICES = {
   stopping: (turns: number, children: number, undelivered: number) =>
     `🛑 **Stopping** — waiting for ${turns} turn(s), ${children} sub-agent(s) and ${undelivered} undelivered result(s)…`,
   stoppingIdle: () => '🛑 **Stopping** — Elowen is shutting down.',
+  pausing: (turns: number, children: number) =>
+    `⏸️ **Pausing** — ${turns} turn(s) and ${children} sub-agent(s) are checkpointed and resume after the restart.`,
   backOnline: () => '✅ **Back online** — Elowen restarted and is ready.',
   backOnlineVersion: (version: string) => `✅ **Back online** — the daemon started (v${version}).`,
   restarting: () => '🔄 **Restart** — Elowen is restarting, back in a moment…',

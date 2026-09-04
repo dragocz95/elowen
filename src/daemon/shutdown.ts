@@ -7,11 +7,10 @@ import { lifecycleNotice } from './lifecycleNotices.js';
  *  RestartSec and far shorter than any plausible gap between two real deploys. */
 const BOOT_ANNOUNCE_DEBOUNCE_MS = 60_000;
 
-/** How long a shutdown waits for running work to finish before exiting anyway.
- *
- *  Ten minutes, because the work being waited for is a MODEL TURN: an agent thinking, or a sub-agent
- *  researching, routinely runs for minutes, and the first version's 60s cut one off and lost its result.
- *  A budget shorter than the work it is protecting is not a graceful shutdown, just a delayed kill.
+/** How long an EXPLICIT drain (`elowen restart --drain`, `/restart drain`) waits for running work to
+ *  reach its step boundary before exiting anyway. Ten minutes, because the work being waited for is a
+ *  MODEL TURN: an agent thinking, or a sub-agent researching, routinely runs for minutes, and a budget
+ *  shorter than the work it is protecting is not a graceful shutdown, just a delayed kill.
  *
  *  MUST stay below the unit's TimeoutStopSec (set to 11 minutes in systemdUnits.ts), because when that
  *  expires systemd sends SIGKILL — the exact outcome this drain exists to prevent. The two numbers are a
@@ -20,6 +19,41 @@ const BOOT_ANNOUNCE_DEBOUNCE_MS = 60_000;
  *  anyone who cannot wait. */
 const SHUTDOWN_DRAIN_MS = 600_000;
 const SHUTDOWN_POLL_MS = 500;
+
+/** The pause's only waits, and both are bounded: the platform "pausing" notice (a chat API round-trip)
+ *  and the plugin service shutdown (browser / VNC processes). Neither may hold the exit for long — the
+ *  whole point of a pause is that the process is gone within seconds, so the supervisor can start the
+ *  new build and boot recovery can resume the checkpointed work. */
+const PAUSE_NOTIFY_MS = 1_500;
+const PAUSE_PLUGIN_SHUTDOWN_MS = 3_000;
+/** A drain already waited minutes for the work; its plugin teardown gets a generous but finite bound so
+ *  a wedged service can no longer hold the exit until systemd's SIGKILL. */
+const DRAIN_PLUGIN_SHUTDOWN_MS = 30_000;
+
+/** How the daemon leaves on SIGTERM. `pause` (the default) checkpoints and exits within seconds — see
+ *  BrainService.pauseForRestart for what survives and how. `drain` is the historical step-boundary wait
+ *  and is only ever chosen explicitly: through `ELOWEN_SHUTDOWN_MODE=drain` on the unit, the one-shot
+ *  marker file `elowen restart --drain` drops next to the database, or `/restart drain` from chat. */
+export type ShutdownMode = 'pause' | 'drain';
+
+/** Resolve the mode for THIS shutdown. The marker is consumed, so a `--drain` asked for once cannot
+ *  silently turn every later restart into a ten-minute wait. */
+export function resolveShutdownMode(env: NodeJS.ProcessEnv, drainMarker: string | undefined): ShutdownMode {
+  if (drainMarker && existsSync(drainMarker)) {
+    try { unlinkSync(drainMarker); } catch { /* consumed on a best-effort basis */ }
+    return 'drain';
+  }
+  return env.ELOWEN_SHUTDOWN_MODE === 'drain' ? 'drain' : 'pause';
+}
+
+/** Race a best-effort wait against a bound; the pause never blocks on a chat API or a plugin teardown. */
+async function bounded(work: Promise<unknown> | undefined, ms: number): Promise<void> {
+  if (!work) return;
+  let timer: NodeJS.Timeout | undefined;
+  const limit = new Promise<void>((resolve) => { timer = setTimeout(resolve, ms); timer.unref?.(); });
+  try { await Promise.race([work, limit]); }
+  finally { if (timer) clearTimeout(timer); }
+}
 
 /** How long a shutdown waits for an already-finished delegation to hand its result to the parent.
  *
@@ -50,37 +84,72 @@ export const RESTART_EXIT_CODE = 75;
 
 /** Handle returned by {@link installGracefulShutdown} for asking the daemon to restart itself. */
 export interface ShutdownControl {
-  /** Drain exactly like a stop, then exit {@link RESTART_EXIT_CODE} so the supervisor starts us again. */
-  requestRestart(reason: string): void;
+  /** Pause (or, when asked, drain) exactly like a stop, then exit {@link RESTART_EXIT_CODE} so the
+   *  supervisor starts us again. */
+  requestRestart(reason: string, opts?: { mode?: ShutdownMode }): void;
 }
 
-/** Drain and exit on SIGTERM/SIGINT instead of dying where we stand.
+/** Checkpoint-and-exit on SIGTERM/SIGINT instead of dying where we stand — or, on request, drain.
  *
  *  The daemon had NO signal handler, so a deploy's `systemctl restart` killed it at whatever instruction
- *  it happened to be executing: a turn mid-stream, a sub-agent mid-task, both simply gone. This waits for
- *  the work to finish first, and says so on the platforms — the stop is the half nobody was told about,
- *  since only the following boot ever announced itself.
+ *  it happened to be executing: a turn mid-stream, a sub-agent mid-task, both simply gone. The first fix
+ *  WAITED for the work (whole turns, later the step boundary), and the wait itself became the problem:
+ *  measured over 106 restarts, a restart with a sub-agent in flight took a median of four minutes to
+ *  exit and one in five burned the full ten-minute budget, while an owner turn blocked on a foreground
+ *  Delegate had to be waited for whole. The default is now a PAUSE: every turn is checkpointed
+ *  (BrainService.pauseForRestart) and the process leaves within seconds; boot recovery resumes the
+ *  work. A drain remains available for the operator who explicitly wants the current step finished.
  *
  *  A SECOND signal exits immediately. Someone sending it twice is telling us they are not waiting, and
- *  that is also the escape hatch if the drain itself ever wedges. `elowen down --force` skips straight to
- *  SIGKILL and never reaches this code at all.
+ *  that is also the escape hatch if a drain ever wedges. `elowen down --force` skips straight to SIGKILL
+ *  and never reaches this code at all.
  *
- *  Handlers registered once, at boot. Exit code 0 throughout: a drained shutdown is a clean one, and
- *  `Restart=on-failure` must not read a deliberate stop as a crash to bounce back from. */
+ *  Handlers registered once, at boot. Exit code 0 throughout: a paused or drained shutdown is a clean
+ *  one, and `Restart=on-failure` must not read a deliberate stop as a crash to bounce back from. */
 export function installGracefulShutdown(
   brain: BrainService | undefined,
   log: { info: (m: string) => void; error: (m: string, e?: unknown) => void },
-  opts?: { drainMs?: number; pollMs?: number; exit?: (code: number) => never; notify?: boolean },
+  opts?: {
+    drainMs?: number; pollMs?: number; exit?: (code: number) => never; notify?: boolean;
+    /** The mode for a signal-initiated shutdown; a requested restart may name its own. Defaults to the
+     *  env / marker resolution above (`pause` unless asked otherwise). */
+    mode?: () => ShutdownMode;
+  },
 ): ShutdownControl {
   const drainMs = opts?.drainMs ?? SHUTDOWN_DRAIN_MS;
   const pollMs = opts?.pollMs ?? SHUTDOWN_POLL_MS;
   const exit = opts?.exit ?? ((code: number) => process.exit(code));
+  const resolveMode = opts?.mode ?? (() => resolveShutdownMode(process.env, undefined));
   let draining = false;
   // The code the drain will exit with, fixed when the drain starts: a second signal has to reproduce the
   // decision already taken, or asking to restart and then losing patience would exit 0 and leave the
   // daemon down.
   let exitCode = 0;
-  const drain = (cause: string, code: number): void => {
+  const finish = async (budgetMs: number): Promise<void> => {
+    try {
+      await bounded(brain?.shutdownPluginServices?.(), budgetMs);
+    } catch (error) {
+      log.error('plugin service shutdown failed — exiting anyway', error);
+    }
+  };
+  const pause = (cause: string): void => {
+    void (async () => {
+      const started = Date.now();
+      // Everything durable happens synchronously in here (SQLite writes): after this line the checkpoint
+      // is complete and only best-effort courtesies remain between us and the exit.
+      const at = brain?.pauseForRestart?.() ?? { turns: 0, children: 0, parked: [], queued: 0 };
+      log.info(`${cause} — pausing (${at.turns} turn(s), ${at.children} sub-agent(s)): parked ${at.parked.length} turn(s), checkpointed ${at.queued} queued message(s)`);
+      if (at.parked.length > 0) log.info(`parked for boot resume: ${at.parked.join(', ')}`);
+      if (opts?.notify !== false && exitCode !== RESTART_EXIT_CODE && (at.turns > 0 || at.children > 0)) {
+        const { text, notice } = lifecycleNotice('pausing', at.turns, at.children);
+        await bounded(brain?.notify(text, undefined, notice).catch(() => { /* best-effort: never block the exit on a chat API */ }), PAUSE_NOTIFY_MS);
+      }
+      await finish(PAUSE_PLUGIN_SHUTDOWN_MS);
+      log.info(`paused in ${Date.now() - started} ms — exiting ${exitCode}${exitCode === RESTART_EXIT_CODE ? ' (supervisor restarts us)' : ''}`);
+      exit(exitCode);
+    })();
+  };
+  const drain = (cause: string, code: number, mode: ShutdownMode = resolveMode()): void => {
     if (draining) {
       log.info(`${cause} while already draining — exiting now, without waiting for the remaining work`);
       exit(exitCode);
@@ -88,6 +157,7 @@ export function installGracefulShutdown(
     }
     draining = true;
     exitCode = code;
+    if (mode === 'pause') { pause(cause); return; }
     // Stop admitting new turns at once, so fresh input arriving through the drain window cannot keep
     // busy() above zero for the whole budget. Existing turns, delegation and result delivery are
     // unaffected — they reach the brain through seams other than the two gated send() entries.
@@ -147,18 +217,17 @@ export function installGracefulShutdown(
         }
         await new Promise((r) => setTimeout(r, pollMs));
       }
-      try {
-        await brain?.shutdownPluginServices?.();
-      } catch (error) {
-        log.error('plugin service shutdown failed — exiting anyway', error);
-      }
+      await finish(DRAIN_PLUGIN_SHUTDOWN_MS);
       log.info(`drained — exiting ${exitCode}${exitCode === RESTART_EXIT_CODE ? ' (supervisor restarts us)' : ''}`);
       exit(exitCode);
     })();
   };
   process.on('SIGTERM', (s) => drain(s, 0));
   process.on('SIGINT', (s) => drain(s, 0));
-  return { requestRestart: (reason: string) => drain(`restart requested (${reason})`, RESTART_EXIT_CODE) };
+  return {
+    requestRestart: (reason: string, o?: { mode?: ShutdownMode }) =>
+      drain(`restart requested (${reason})`, RESTART_EXIT_CODE, o?.mode ?? resolveMode()),
+  };
 }
 
 /** Once the platforms are back up, announce that the daemon is running — for EVERY boot, not just a
@@ -204,19 +273,19 @@ export function createRestartDaemon(
   restartMarker: string | undefined,
   shutdown: () => ShutdownControl | undefined,
   log: { info: (m: string) => void; error: (m: string, e?: unknown) => void },
-): ((byUserId: number) => Promise<void>) | undefined {
+): ((byUserId: number, opts?: { mode?: ShutdownMode }) => Promise<void>) | undefined {
   if (!restartMarker) return undefined;
-  return async (byUserId: number): Promise<void> => {
-    log.info(`/restart requested by user ${byUserId}`);
+  return async (byUserId: number, opts?: { mode?: ShutdownMode }): Promise<void> => {
+    log.info(`/restart requested by user ${byUserId}${opts?.mode ? ` (${opts.mode})` : ''}`);
     const restartingNotice = lifecycleNotice('restarting');
     await brain?.notify(restartingNotice.text, undefined, restartingNotice.notice).catch(() => { /* best-effort */ });
     // Drop the marker (timestamped) so the NEXT boot echoes "back online".
     try { writeFileSync(restartMarker, String(Date.now())); } catch { /* marker is a nicety, not required */ }
-    // Drain and exit RESTART_EXIT_CODE rather than shelling out to `systemctl restart`, which asked
-    // systemd to kill the very process issuing the command. The drain is the same one a stop performs,
-    // so a running turn or sub-agent finishes first instead of being cut off mid-stream.
+    // Pause (or drain, when asked) and exit RESTART_EXIT_CODE rather than shelling out to `systemctl
+    // restart`, which asked systemd to kill the very process issuing the command. Same path as a stop, so
+    // a running turn or sub-agent is checkpointed and resumed instead of being cut off mid-stream.
     const control = shutdown();
-    if (control) { control.requestRestart(`user ${byUserId}`); return; }
+    if (control) { control.requestRestart(`user ${byUserId}`, opts?.mode ? { mode: opts.mode } : undefined); return; }
     // No shutdown handle means the loops never started (a partially built test daemon). Undo the marker
     // rather than leaving a future unrelated boot to announce a recovery that never happened.
     log.error('/restart requested before the shutdown handler was installed — ignoring');

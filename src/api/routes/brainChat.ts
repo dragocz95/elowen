@@ -106,10 +106,14 @@ export const SERVER_COMMANDS: Readonly<Record<string, ServerCommandHandler>> = {
       : brain.setFast(userId, typeof body.on === 'boolean' ? body.on : argument === 'on' ? true : argument === 'off' ? false : undefined, session);
     return c.json({ ok: true, message: `Fast mode ${r.fast ? 'enabled' : 'disabled'}.`, data: r });
   },
-  restart: async ({ c, route }) => {
+  restart: async ({ c, route, body }) => {
     if (!route.d.restartDaemon) return c.json({ error: 'restart is not available on this deployment' }, 501);
-    await route.d.restartDaemon(c.get('user').id);
-    return c.json({ ok: true, message: 'Restarting the Elowen daemon…' });
+    // `/restart` pauses (checkpoint, exit within seconds); `/restart drain` is the explicit request to
+    // finish the current step of every running turn first — see daemon/shutdown.ts.
+    const argument = typeof body.argument === 'string' ? body.argument.trim() : '';
+    if (argument && argument !== 'drain') return c.json({ error: 'usage: /restart · /restart drain' }, 400);
+    await route.d.restartDaemon(c.get('user').id, argument === 'drain' ? { mode: 'drain' } : undefined);
+    return c.json({ ok: true, message: argument === 'drain' ? 'Draining running work, then restarting the Elowen daemon…' : 'Restarting the Elowen daemon…' });
   },
 };
 

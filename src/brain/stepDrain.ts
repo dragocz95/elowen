@@ -106,6 +106,18 @@ export class StepDrainCoordinator {
     return this.draining;
   }
 
+  /** PAUSE-mode park: mark THIS live turn parked right now, without waiting for its loop to reach the
+   *  step boundary. Same eligibility as the hold (only a session with a boot resume may park, a platform
+   *  turn only when its envelope proves it), same durable marker through `onParked`. Returns whether the
+   *  turn was parked; the caller exits the process immediately afterwards and boot recovery continues the
+   *  turn from its durable tail — see BrainService.pauseForRestart. */
+  parkNow(sessionId: string): boolean {
+    if (!this.parkEligible(sessionId) || !this.mayParkNow(sessionId)) return false;
+    this.parked.add(sessionId);
+    this.hooks?.onParked?.(sessionId);
+    return true;
+  }
+
   /** Install the boundary hold on a freshly spawned session. Installed LAST (after the compaction
    *  wrapper), so it runs FIRST: a draining daemon must not spend a compaction model call on a turn it is
    *  about to park. The hold releases only on the turn's own abort signal (`/stop` still works and lets

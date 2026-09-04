@@ -1,5 +1,9 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { installGracefulShutdown, RESTART_EXIT_CODE } from '../../src/daemon/bootstrap.js';
+import { resolveShutdownMode } from '../../src/daemon/shutdown.js';
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import type { BrainService } from '../../src/brain/brainService.js';
 import { StepDrainCoordinator } from '../../src/brain/stepDrain.js';
 
@@ -20,6 +24,9 @@ const brainBusy = (sequence: Busy[], sent?: string[], notices?: unknown[]) => {
 };
 
 const silentLog = { info: () => { /* quiet */ }, error: () => { /* quiet */ } };
+/** The describe blocks below pin the STEP-BOUNDARY DRAIN, which is now the explicit, opt-in shutdown
+ *  (`elowen restart --drain`); the default pause has its own block at the bottom of this file. */
+const drainMode = () => 'drain' as const;
 
 describe('a requested restart drains like a stop but exits for the supervisor to start again', () => {
   afterEach(() => { process.removeAllListeners('SIGTERM'); process.removeAllListeners('SIGINT'); });
@@ -29,7 +36,7 @@ describe('a requested restart drains like a stop but exits for the supervisor to
     const exited: number[] = [];
     await new Promise<void>((resolve) => {
       const control = installGracefulShutdown(brain, silentLog, {
-        pollMs: 1, drainMs: 200, notify: false,
+        pollMs: 1, drainMs: 200, notify: false, mode: drainMode,
         exit: ((code: number) => { exited.push(code); resolve(); }) as never,
       });
       control.requestRestart('test');
@@ -71,7 +78,7 @@ describe('a requested restart drains like a stop but exits for the supervisor to
     const startedAt = Date.now();
     await new Promise<void>((resolve) => {
       installGracefulShutdown(brain, silentLog, {
-        pollMs: 1, drainMs: 60_000, notify: false,
+        pollMs: 1, drainMs: 60_000, notify: false, mode: drainMode,
         exit: ((code: number) => { exited.push(code); resolve(); }) as never,
       });
       process.emit('SIGTERM');
@@ -86,7 +93,7 @@ describe('a requested restart drains like a stop but exits for the supervisor to
     const exited: number[] = [];
     await new Promise<void>((resolve) => {
       installGracefulShutdown(brainBusy([{ turns: 0, children: 0 }]).brain, silentLog, {
-        pollMs: 1, drainMs: 200, notify: false,
+        pollMs: 1, drainMs: 200, notify: false, mode: drainMode,
         exit: ((code: number) => { exited.push(code); resolve(); }) as never,
       });
       process.emit('SIGTERM');
@@ -103,7 +110,7 @@ describe('installGracefulShutdown — a stop waits for running work instead of c
     const exited: number[] = [];
     await new Promise<void>((resolve) => {
       installGracefulShutdown(brain, silentLog, {
-        pollMs: 1, drainMs: 200, notify: false, ...opts,
+        pollMs: 1, drainMs: 200, notify: false, mode: drainMode, ...opts,
         exit: ((code: number) => { exited.push(code); resolve(); }) as never,
       });
       process.emit('SIGTERM');
@@ -127,7 +134,7 @@ describe('installGracefulShutdown — a stop waits for running work instead of c
     }) as unknown as BrainService;
     await new Promise<void>((resolve) => {
       installGracefulShutdown(brain, silentLog, {
-        pollMs: 1, drainMs: 200, notify: false,
+        pollMs: 1, drainMs: 200, notify: false, mode: drainMode,
         exit: ((code: number) => { order.push(`exit-${code}`); resolve(); }) as never,
       });
       process.emit('SIGTERM');
@@ -195,7 +202,7 @@ describe('installGracefulShutdown — a stop waits for running work instead of c
     const { brain } = brainBusy([{ turns: 1, children: 0 }]); // would otherwise drain forever
     await new Promise<void>((resolve) => {
       installGracefulShutdown(brain, silentLog, {
-        pollMs: 5, drainMs: 60_000, notify: false,
+        pollMs: 5, drainMs: 60_000, notify: false, mode: drainMode,
         exit: ((code: number) => { exited.push(code); resolve(); }) as never,
       });
       process.emit('SIGTERM');
@@ -336,7 +343,7 @@ describe('installGracefulShutdown — a stop waits for running work instead of c
     const exited: number[] = [];
     await new Promise<void>((resolve) => {
       installGracefulShutdown(undefined, silentLog, {
-        pollMs: 1, drainMs: 50, notify: false,
+        pollMs: 1, drainMs: 50, notify: false, mode: drainMode,
         exit: ((code: number) => { exited.push(code); resolve(); }) as never,
       });
       process.emit('SIGTERM');
@@ -350,12 +357,142 @@ describe('installGracefulShutdown — a stop waits for running work instead of c
     const brain = ({ busy: spy, beginDrain: () => { /* quiet */ }, notify: async () => { /* quiet */ } }) as unknown as BrainService;
     await new Promise<void>((resolve) => {
       installGracefulShutdown(brain, silentLog, {
-        pollMs: 1, drainMs: 50, notify: false,
+        pollMs: 1, drainMs: 50, notify: false, mode: drainMode,
         exit: ((code: number) => { exited.push(code); resolve(); }) as never,
       });
       process.emit('SIGINT');
     });
     expect(exited).toEqual([0]);
     expect(spy).toHaveBeenCalled();
+  });
+});
+
+describe('the default shutdown is a PAUSE: checkpoint, then exit within seconds', () => {
+  afterEach(() => {
+    process.removeAllListeners('SIGTERM'); process.removeAllListeners('SIGINT');
+    delete process.env.ELOWEN_SHUTDOWN_MODE;
+  });
+
+  /** Install with the production mode resolution (env + marker), raise the signal, resolve on exit. */
+  const runSignal = async (brain: BrainService | undefined, marker?: string) => {
+    const exited: number[] = [];
+    const startedAt = Date.now();
+    await new Promise<void>((resolve) => {
+      installGracefulShutdown(brain, silentLog, {
+        pollMs: 5, drainMs: 60_000, notify: false,
+        mode: () => resolveShutdownMode(process.env, marker),
+        exit: ((code: number) => { exited.push(code); resolve(); }) as never,
+      });
+      process.emit('SIGTERM');
+    });
+    return { exited, elapsedMs: Date.now() - startedAt };
+  };
+
+  it('does not wait for a running turn or sub-agent: it checkpoints and exits at once', async () => {
+    // The exact regression: a restart with a sub-agent in flight took a median of four minutes to exit
+    // (a fifth of them the full ten-minute budget). Here the work NEVER finishes, and the exit still
+    // comes right away — the drain loop is not entered at all.
+    const { brain, state } = brainBusy([{ turns: 3, children: 2 }]);
+    const paused: number[] = [];
+    (brain as unknown as { pauseForRestart: () => unknown }).pauseForRestart = () => {
+      paused.push(Date.now());
+      return { turns: 3, children: 2, parked: ['brain-1'], queued: 0 };
+    };
+    const { exited, elapsedMs } = await runSignal(brain);
+    expect(exited).toEqual([0]);
+    expect(paused).toHaveLength(1);
+    expect(state.reads).toBe(0); // never polled busy(): nothing was waited for
+    expect(elapsedMs).toBeLessThan(2_000);
+  });
+
+  it('checkpoints through the brain BEFORE stopping plugin services, and never latches the drain loop', async () => {
+    const order: string[] = [];
+    const brain = ({
+      busy: () => { order.push('busy'); return { turns: 1, children: 0, undelivered: 0 }; },
+      beginDrain: () => order.push('beginDrain'),
+      pauseForRestart: () => { order.push('pause'); return { turns: 1, children: 0, parked: [], queued: 0 }; },
+      shutdownPluginServices: async () => { order.push('stop-services'); },
+      notify: async () => { /* quiet */ },
+    }) as unknown as BrainService;
+    await runSignal(brain);
+    // The real BrainService.pauseForRestart latches admission itself; the handler must not poll busy().
+    expect(order).toEqual(['pause', 'stop-services']);
+  });
+
+  it('a requested restart pauses too and exits with the restart status', async () => {
+    const { brain } = brainBusy([{ turns: 1, children: 1 }]);
+    (brain as unknown as { pauseForRestart: () => unknown }).pauseForRestart =
+      () => ({ turns: 1, children: 1, parked: [], queued: 0 });
+    const exited: number[] = [];
+    await new Promise<void>((resolve) => {
+      const control = installGracefulShutdown(brain, silentLog, {
+        pollMs: 5, drainMs: 60_000, notify: false,
+        exit: ((code: number) => { exited.push(code); resolve(); }) as never,
+      });
+      control.requestRestart('test');
+    });
+    expect(exited).toEqual([RESTART_EXIT_CODE]);
+  });
+
+  it('a requested restart may ask for a drain explicitly (`/restart drain`)', async () => {
+    const { brain, state } = brainBusy([{ turns: 1, children: 0 }, { turns: 1, children: 0 }, { turns: 0, children: 0 }]);
+    const exited: number[] = [];
+    await new Promise<void>((resolve) => {
+      const control = installGracefulShutdown(brain, silentLog, {
+        pollMs: 1, drainMs: 200, notify: false,
+        exit: ((code: number) => { exited.push(code); resolve(); }) as never,
+      });
+      control.requestRestart('test', { mode: 'drain' });
+    });
+    expect(exited).toEqual([RESTART_EXIT_CODE]);
+    expect(state.reads).toBeGreaterThan(2); // it waited for the turn, drain-style
+  });
+
+  it('a bounded plugin teardown cannot hold the pause: a wedged service is abandoned within the budget', async () => {
+    const brain = ({
+      busy: () => ({ turns: 0, children: 0, undelivered: 0 }),
+      beginDrain: () => { /* quiet */ },
+      pauseForRestart: () => ({ turns: 0, children: 0, parked: [], queued: 0 }),
+      shutdownPluginServices: () => new Promise<void>(() => { /* never resolves */ }),
+      notify: async () => { /* quiet */ },
+    }) as unknown as BrainService;
+    const { exited, elapsedMs } = await runSignal(brain);
+    expect(exited).toEqual([0]);
+    expect(elapsedMs).toBeLessThan(10_000);
+  }, 15_000);
+
+  it('the one-shot drain marker turns exactly ONE shutdown into a drain and is consumed', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-shutdown-'));
+    const marker = join(dir, '.shutdown-drain');
+    writeFileSync(marker, String(Date.now()));
+    try {
+      expect(resolveShutdownMode({}, marker)).toBe('drain');
+      expect(existsSync(marker)).toBe(false); // consumed
+      expect(resolveShutdownMode({}, marker)).toBe('pause'); // the next restart is a pause again
+      expect(resolveShutdownMode({ ELOWEN_SHUTDOWN_MODE: 'drain' }, marker)).toBe('drain');
+      expect(resolveShutdownMode({ ELOWEN_SHUTDOWN_MODE: 'anything-else' }, marker)).toBe('pause');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('a signal with the drain marker present waits for the running turn (the opt-in still works end to end)', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-shutdown-'));
+    const marker = join(dir, '.shutdown-drain');
+    writeFileSync(marker, String(Date.now()));
+    try {
+      const { brain, state } = brainBusy([{ turns: 1, children: 0 }, { turns: 1, children: 0 }, { turns: 0, children: 0 }]);
+      const { exited } = await runSignal(brain, marker);
+      expect(exited).toEqual([0]);
+      expect(state.reads).toBeGreaterThan(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('tolerates a brain without the pause seam (minimal test daemons) and having no brain at all', async () => {
+    const { brain } = brainBusy([{ turns: 0, children: 0 }]);
+    expect((await runSignal(brain)).exited).toEqual([0]);
+    expect((await runSignal(undefined)).exited).toEqual([0]);
   });
 });

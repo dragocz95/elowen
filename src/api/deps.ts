@@ -67,7 +67,7 @@ export interface ServerDeps {
   brain?: import('../brain/brainService.js').BrainService;
   /** Restart the Elowen daemon (the admin-only `/restart` slash command): announce it on the platforms,
    *  drop a marker so the next boot announces "back online", then hand off to systemd. Absent → 501. */
-  restartDaemon?: (byUserId: number) => Promise<void>;
+  restartDaemon?: (byUserId: number, opts?: { mode?: 'pause' | 'drain' }) => Promise<void>;
   /** Brain message store for chat usage and history. */
   brainStore?: import('../store/brainStore.js').BrainStore;
   /** Where a turn's spend is attributed: which request origin ordered it, rolled up per day × user ×

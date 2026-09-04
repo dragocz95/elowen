@@ -18,6 +18,8 @@ export const LIFECYCLE_MESSAGES = {
     stopping: (turns, children, undelivered) =>
       `🛑 **Stopping** — waiting for ${turns} turn(s), ${children} sub-agent(s) and ${undelivered} undelivered result(s)…`,
     stoppingIdle: '🛑 **Stopping** — Elowen is shutting down.',
+    pausing: (turns, children) =>
+      `⏸️ **Pausing** — ${turns} turn(s) and ${children} sub-agent(s) are checkpointed and resume after the restart.`,
     backOnline: '✅ **Back online** — Elowen restarted and is ready.',
     backOnlineVersion: (version) => `✅ **Back online** — the daemon started (v${version}).`,
     restarting: '🔄 **Restart** — Elowen is restarting, back in a moment…',
@@ -27,6 +29,8 @@ export const LIFECYCLE_MESSAGES = {
     stopping: (turns, children, undelivered) =>
       `🛑 **Zastavuji** — čekám na dokončení (tahy: ${turns}, subagenti: ${children}, nedoručené výsledky: ${undelivered})…`,
     stoppingIdle: '🛑 **Zastavuji** — Elowen se vypíná.',
+    pausing: (turns, children) =>
+      `⏸️ **Pozastavuji** — rozpracovaná práce (tahy: ${turns}, subagenti: ${children}) je uložená a po restartu pokračuje.`,
     backOnline: '✅ **Zpět online** — Elowen se restartoval a je připravený.',
     backOnlineVersion: (version) => `✅ **Zpět online** — daemon nastartoval (v${version}).`,
     restarting: '🔄 **Restart** — Elowen se restartuje, za okamžik jsem zpět…',
@@ -36,6 +40,8 @@ export const LIFECYCLE_MESSAGES = {
     stopping: (turns, children, undelivered) =>
       `🛑 **Zastavujem** — čakám na dokončenie (ťahy: ${turns}, subagenti: ${children}, nedoručené výsledky: ${undelivered})…`,
     stoppingIdle: '🛑 **Zastavujem** — Elowen sa vypína.',
+    pausing: (turns, children) =>
+      `⏸️ **Pozastavujem** — rozpracovaná práca (ťahy: ${turns}, subagenti: ${children}) je uložená a po reštarte pokračuje.`,
     backOnline: '✅ **Späť online** — Elowen sa reštartoval a je pripravený.',
     backOnlineVersion: (version) => `✅ **Späť online** — daemon naštartoval (v${version}).`,
     restarting: '🔄 **Reštart** — Elowen sa reštartuje, o chvíľu som späť…',

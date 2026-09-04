@@ -29,6 +29,7 @@ import { normalizeDelegatedExecutionScope, scopeExceedsCurrentAccess, type Deleg
 import { buildPermissionRuleset, noninteractivePermissionBoundary } from './toolPermissions.js';
 import { isNonUserSession, isOwnedUserSession, isSubagentSession, isChannelSession, channelIdOf, defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId } from './sessionId.js';
 import { lastAssistantText } from './goal.js';
+import { projectUserTurn } from './persistence.js';
 import { ClientAttachments } from './service/attachments.js';
 import { DelegatedSessionService } from './service/delegatedSession.js';
 import { IdleSessionClock } from './service/liveSessionReaper.js';
@@ -545,6 +546,55 @@ export class BrainService {
     const local = this.d.stepDrain.unsafeCount(this.sessions.activeTurnSessionIds());
     const remote = await (this.d.remoteStepDrain?.midStepWork() ?? Promise.resolve(0));
     return local + remote;
+  }
+
+  /** PAUSE for a restart — the default shutdown since the step-boundary drain was measured at a median of
+   *  four minutes (and the full ten-minute budget in a fifth of restarts) whenever a sub-agent was in
+   *  flight. Nothing is waited for: the durable checkpoint already exists, because every assistant and
+   *  tool-result message is mirrored into SQLite the moment PI finishes it (persistence.ts
+   *  projectPendingMessage), so all this has to do is make the resume DETERMINISTIC:
+   *   - every live owner / platform turn gets its park marker NOW (the same marker a step-boundary park
+   *     writes), so the boot sweep continues it from its durable tail — where an unanswered tool call is
+   *     answered with an `interrupted` result (settlePartialTurn) instead of being replayed or lost;
+   *   - every message still queued behind a running turn (PI's steer / follow-up queue is process memory)
+   *     is written as a durable user row at the transcript tail, in delivery order, so it is read by the
+   *     resumed turn rather than vanishing with the process;
+   *   - delegated children need nothing: their run rows stay `running` and the next boot claims and
+   *     respawns them (delegatedSession.ts), and a runner process dies with the daemon's cgroup.
+   *  No PI abort is issued on purpose: an abort unwinds through the delegation tree and terminalizes child
+   *  run rows as aborted, which is exactly the work a pause must keep. The process exits right after. */
+  pauseForRestart(): { turns: number; children: number; parked: string[]; queued: number } {
+    this.beginDrain();
+    const at = this.busy();
+    const parked: string[] = [];
+    let queued = 0;
+    for (const sessionId of this.sessions.activeTurnSessionIds()) {
+      // A held non-session serial key (a plugin reload) counts as a turn but is no conversation.
+      if (!this.d.store.getSession(sessionId)) continue;
+      const live = this.sessions.get(sessionId)
+        ?? (isChannelSession(sessionId) ? this.sessions.channelGet(channelIdOf(sessionId)) : undefined);
+      if (live) queued += this.checkpointQueuedMessages(sessionId, live);
+      if (isSubagentSession(sessionId)) continue; // resumed from its run row, never a park marker
+      if (this.d.stepDrain?.parkNow(sessionId)) parked.push(sessionId);
+    }
+    return { turns: at.turns, children: at.children, parked, queued };
+  }
+
+  /** Persist PI's transient mid-turn queue as user rows, steers first (PI delivers those before the
+   *  follow-ups). Text only: a queued image lives in process memory as raw bytes and has no durable form
+   *  here, so it is reported rather than silently dropped. */
+  private checkpointQueuedMessages(sessionId: string, live: LiveBrain): number {
+    let written = 0;
+    for (const message of this.queuedSnapshot(live)) {
+      const text = message.text.trim();
+      if (!text) continue;
+      projectUserTurn(this.d.store, sessionId, message.text);
+      written += 1;
+      if (message.images?.length) {
+        logger('brain').warn(`pause: queued message for ${sessionId} carried ${message.images.length} image(s) that could not be checkpointed — text kept`);
+      }
+    }
+    return written;
   }
 
   /** The turn drain has finished and process exit is now terminal. Stop browser/process-owning plugin

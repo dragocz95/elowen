@@ -1,5 +1,5 @@
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { planSlug } from './planSlug.js';
 
 /** Single source of truth for where a globally-installed elowen keeps its state. Everything persistent
@@ -19,6 +19,12 @@ export function dataDir(env: NodeJS.ProcessEnv): string {
 
 export function dbPath(env: NodeJS.ProcessEnv): string {
   return env.ELOWEN_DB || join(dataDir(env), 'elowen.db');
+}
+
+/** The one-shot marker `elowen restart --drain` drops next to the database; the daemon's SIGTERM handler
+ *  consumes it to choose a step-boundary drain over the default pause (src/daemon/shutdown.ts). */
+export function shutdownDrainMarker(dbFile: string): string {
+  return join(dirname(dbFile), '.shutdown-drain');
 }
 
 export function logDir(env: NodeJS.ProcessEnv): string {

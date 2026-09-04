@@ -27,6 +27,7 @@ const plugin = await import(pluginPath) as {
 const CASES: { key: LifecycleKey; args: (string | number)[] }[] = [
   { key: 'stopping', args: [3, 2, 1] },
   { key: 'stoppingIdle', args: [] },
+  { key: 'pausing', args: [2, 1] },
   { key: 'backOnline', args: [] },
   { key: 'backOnlineVersion', args: ['0.27.80'] },
   { key: 'restarting', args: [] },
