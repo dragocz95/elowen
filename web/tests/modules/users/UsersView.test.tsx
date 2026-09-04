@@ -63,7 +63,11 @@ describe('UsersView', () => {
     let patched: { id?: string; body?: unknown } = {};
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] } })),
-      http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet', 'codex:gpt-5.4'], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
+      // The allow-list is built from the LIVE brain catalog only — legacy worker presets in the config
+      // must not reappear as choices.
+      http.get('*/api/brain/models', () => HttpResponse.json([
+        { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus-5', exec: 'anthropic/claude-opus-5', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+      ])),
       http.get('*/api/users', () => HttpResponse.json([
         { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] },
         { id: 2, username: 'bob', created_at: '2026-01-02', is_admin: false, allowed_execs: [] },
@@ -71,7 +75,7 @@ describe('UsersView', () => {
       http.get('*/api/users/:id/projects', () => HttpResponse.json([])),
       http.get('*/api/users/:id/tools', () => HttpResponse.json([])),
       http.get('*/api/users/:id/stats', () => HttpResponse.json({ memoryCount: 0, sessionCount: 0, topModel: null })),
-      http.patch('*/api/users/:id', async ({ params, request }) => { patched = { id: String(params.id), body: await request.json() }; return HttpResponse.json({ id: 2, username: 'bob', is_admin: false, allowed_execs: ['sonnet'] }); }),
+      http.patch('*/api/users/:id', async ({ params, request }) => { patched = { id: String(params.id), body: await request.json() }; return HttpResponse.json({ id: 2, username: 'bob', is_admin: false, allowed_execs: ['anthropic/claude-opus-5'] }); }),
     );
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><UsersView /></ToastProvider></Wrapper>);
@@ -80,14 +84,14 @@ describe('UsersView', () => {
     // in the detail pane; Manage opens the selection modal.
     expect(await screen.findByText('Admin')).toBeTruthy();
     fireEvent.click(await screen.findByRole('button', { name: 'Open user bob' }));
-    expect(await screen.findByText('All models allowed · 2 available')).toBeTruthy();
+    expect(await screen.findByText('All models allowed · 1 available')).toBeTruthy();
     fireEvent.click(screen.getByRole('button', { name: 'Manage allowed models' }));
-    fireEvent.click(await screen.findByRole('button', { name: /Claude Sonnet/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'claude-opus-5' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
 
-    // Saving the modal PATCHes that user's allowed_execs.
+    // Saving the modal PATCHes that user's allowed_execs with the live catalog identity.
     await waitFor(() => expect(patched.id).toBe('2'));
-    expect((patched.body as { allowed_execs: string[] }).allowed_execs).toEqual(['sonnet']);
+    expect((patched.body as { allowed_execs: string[] }).allowed_execs).toEqual(['anthropic/claude-opus-5']);
   });
 
   it('deleting a user requires confirmation — no DELETE until the dialog is confirmed', async () => {
