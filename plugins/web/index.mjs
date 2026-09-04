@@ -125,6 +125,21 @@ export function htmlToMarkdown(html) {
   catch { return String(html).replace(/\s+/g, ' ').trim(); }
 }
 
+async function discardResponse(res) {
+  try {
+    res.cancel();
+    return;
+  } catch {
+    // A non-standard transport may refuse cancellation after exposing the response. Draining is the only
+    // remaining way to release its connection without handing an unread body to the next redirect hop.
+  }
+  try {
+    for await (const _chunk of res.body) { /* discard */ }
+  } catch {
+    // The request signal still owns transport abort. Cleanup must not replace the redirect or HTTP error.
+  }
+}
+
 function redirectMessage(originalUrl, redirectUrl, res) {
   return [
     'REDIRECT DETECTED: The URL redirects to a different host.',
@@ -149,6 +164,7 @@ async function fetchUncached(startUrl, signal, transport) {
       signal,
     });
     if (res.status >= 300 && res.status < 400) {
+      await discardResponse(res);
       const location = res.headers.location;
       if (!location) throw new Error(`HTTP ${res.status} redirect without Location`);
       if (hop >= MAX_REDIRECTS) throw new Error('too many redirects');
@@ -161,7 +177,10 @@ async function fetchUncached(startUrl, signal, transport) {
       url = target;
       continue;
     }
-    if (res.status < 200 || res.status >= 300) throw new Error(`HTTP ${res.status}`);
+    if (res.status < 200 || res.status >= 300) {
+      await discardResponse(res);
+      throw new Error(`HTTP ${res.status}`);
+    }
     const type = res.headers['content-type'] ?? '';
     const body = await responseText(res);
     const converted = type.toLowerCase().includes('html') ? htmlToMarkdown(body) : body;

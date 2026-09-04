@@ -69,9 +69,6 @@ export function buildExitPlanModeTool() {
           + 'is acceptable — submitting it already asked. If they approve it, you will be told so and may then '
           + 'start; the plan stays on disk so you can re-read it while you work.' }],
         details: { plan },
-        // PI consumes this structurally after the current tool batch and emits agent_end before another
-        // provider request. The approval decision therefore starts a later user turn, never this one.
-        terminate: true,
       };
     },
   });

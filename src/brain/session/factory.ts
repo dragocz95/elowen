@@ -37,6 +37,7 @@ import { logger } from '../../shared/logger.js';
 import { ProviderRequestRecorder } from './providerRequestRecorder.js';
 import { wrapFastModeRuntime, type FastModeRoute } from '../fastMode.js';
 import { recoverMalformedToolCalls } from './malformedToolCallRecovery.js';
+import { installExitPlanModeTermination } from './exitPlanModeTermination.js';
 import { realPathWithin } from '../../plugins/pathGuard.js';
 import {
   localResidentContextTokens,
@@ -912,6 +913,10 @@ export class BrainSessionFactory {
         'PI runtime does not expose the turn-boundary compaction capability; proactive mid-tool-loop compaction is disabled',
       );
     }
+    // Outermost turn-boundary owner: a submitted plan must skip compaction and every other next-step
+    // preparer before PI emits the normal terminal lifecycle for the run.
+    installExitPlanModeTermination(session);
+
     // Count compaction outcomes for the circuit breaker installed above. Its cancel gate reads this
     // count on the next `session_before_compact`, so a session that cannot summarize stops trying.
     session.subscribe(compactionBreaker.observe);

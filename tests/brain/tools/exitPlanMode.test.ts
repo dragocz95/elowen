@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { createAgentSession, DefaultResourceLoader, ModelRegistry, SessionManager, SettingsManager } from '@earendil-works/pi-coding-agent';
 import { createAssistantMessageEventStream, type Api, type AssistantMessage, type Model } from '@earendil-works/pi-ai';
 import { buildExitPlanModeTool } from '../../../src/brain/tools/exitPlanMode.js';
+import { installExitPlanModeTermination } from '../../../src/brain/session/exitPlanModeTermination.js';
 import { EXIT_PLAN_MODE_TOOL } from '../../../src/shared/planTool.js';
 import { seedPlan } from '../../helpers/plan.js';
 import { runWithPolicy } from '../../../src/plugins/policyContext.js';
@@ -16,7 +17,7 @@ import { inMemoryModelRuntime } from '../../../src/brain/providers.js';
 const POLICY: Policy = { allowedProjectIds: 'all', allowedPaths: () => [] };
 const SESSION = 'brain-ch-owner-1';
 
-type ToolResult = { content: { type: string; text: string }[]; details?: { plan?: string }; terminate?: boolean };
+type ToolResult = { content: { type: string; text: string }[]; details?: { plan?: string } };
 
 function call(opts: { mode?: TurnWorkMode; sessionId?: string } = {}): Promise<ToolResult> {
   const tool = buildExitPlanModeTool();
@@ -77,7 +78,7 @@ describe('ExitPlanMode', () => {
     expect(text).not.toContain('Step one.');
     const result = await call({ mode: 'plan' });
     expect(result.details?.plan).toBe('# Ship it\n\nStep one.');
-    expect(result.terminate).toBe(true); // PI ends this tool loop before another model step.
+    expect(result).not.toHaveProperty('terminate'); // The session-level boundary owns termination.
     // It must not read as approval — the decision has not been taken yet.
     expect(text).toContain('Stop here');
     expect(text).toMatch(/do not begin implementing/i);
@@ -115,6 +116,7 @@ describe('ExitPlanMode', () => {
       cwd, sessionManager: SessionManager.inMemory(cwd), settingsManager, modelRuntime: runtime, model, resourceLoader,
       customTools: [buildExitPlanModeTool()], tools: [EXIT_PLAN_MODE_TOOL], noTools: 'builtin',
     });
+    installExitPlanModeTermination(session);
     await runWithPolicy(POLICY, () => session.prompt('Submit the plan.'), { sessionId: SESSION, mode: 'plan' });
 
     expect(session.messages.find((message) => message.role === 'toolResult')).toMatchObject({

@@ -27,6 +27,7 @@ async function mount(
   const tools: Tool[] = [];
   const inferenceCalls: InferenceCall[] = [];
   const calls: Captured[] = [];
+  const cancellations: { url: string; reason?: Error }[] = [];
   const responseFor = async (url: unknown, init: unknown) => {
     calls.push({ url: String(url), init: init as Captured['init'] });
     if (fetchImpl) return fetchImpl(url, init);
@@ -53,7 +54,7 @@ async function mount(
         statusText: responseValue.statusText,
         headers: Object.fromEntries(responseValue.headers.entries()),
         body: responseValue.body ?? [],
-        cancel: () => {},
+        cancel: (reason?: Error) => cancellations.push({ url: raw, reason }),
       };
     }),
   };
@@ -68,6 +69,7 @@ async function mount(
     search: tools.find((t) => t.name === 'WebSearch')!,
     fetchTool: tools.find((t) => t.name === 'WebFetch')!,
     calls,
+    cancellations,
     inference,
     inferenceCalls,
   };
@@ -373,7 +375,7 @@ describe('web plugin WebFetch pipeline', () => {
 
   it('follows same-host redirects but returns validated cross-host redirects without following', async () => {
     const seen: string[] = [];
-    const { fetchTool } = await mount({}, undefined, async (url) => {
+    const { fetchTool, cancellations } = await mount({}, undefined, async (url) => {
       const value = String(url);
       seen.push(value);
       if (value.endsWith('/start')) return new Response('', { status: 302, headers: { location: '/next' } });
@@ -386,8 +388,22 @@ describe('web plugin WebFetch pipeline', () => {
     }));
 
     expect(seen).toEqual(['https://93.184.216.34/start', 'https://93.184.216.34/next']);
+    expect(cancellations.map((entry) => entry.url)).toEqual(seen);
     expect(text).toContain('REDIRECT DETECTED');
     expect(text).toContain('https://1.1.1.1/final');
+  });
+
+  it('cancels an HTTP error response before reporting it', async () => {
+    const { fetchTool, cancellations, inferenceCalls } = await mount({}, undefined, async () => new Response(
+      'upstream failed', { status: 503 },
+    ));
+    const url = 'https://93.184.216.34/error-cleanup';
+
+    const text = textOf(await fetchTool.execute('f', { url, prompt: 'Summarize' }));
+
+    expect(text).toContain('HTTP 503');
+    expect(cancellations.map((entry) => entry.url)).toEqual([url]);
+    expect(inferenceCalls).toHaveLength(0);
   });
 
   it('treats a port change as a cross-host redirect', async () => {
