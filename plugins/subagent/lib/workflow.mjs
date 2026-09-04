@@ -515,7 +515,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       const channelId = ns.channelId || `wf-${wf.id}-${node.id}-${randomUUID()}`;
       ns.channelId = channelId;
       const collectSource = { platform: 'subagent', userId: 'subagent', roleIds: [], channelId, access };
-      const raw = await getRun()(collectSource, ns.taskNote ? `${node.task}\n\n${ns.taskNote}` : node.task, onEvent);
+      const raw = await runNodeTurn(wf, node, ns, collectSource, onEvent);
       const reply = raw || '(the node returned nothing)';
       if (reply.startsWith('Error:')) { ns.status = 'error'; ns.error = clip(reply.slice('Error:'.length).trim() || reply, MAX_RESULT_CHARS); }
       // The node's answer reaches the parent through `summarize` and its dependents through the blocks above:
@@ -529,6 +529,30 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     writeJournal(wf); // node terminal: the FULL result must reach the journal — snapshots only carry a preview
     snapshot(wf);
     tick(wf);
+  };
+
+  /** One node turn: normally the task prompt (plus the resume/restart note) into the node's channel. A
+   *  node handed back by a BOOT resume that still has its child session gets the host's continuation
+   *  first — the same one a delegated child gets after a restart: a transcript that already ends on the
+   *  node's answer IS the result, an interrupted turn is continued silently over `[interrupted]` tool
+   *  results, and only an empty transcript falls through to the ordinary prompt. Prompting such a node
+   *  with its task again made it start over on top of half-done work (and its earlier answer, when it had
+   *  one, was simply lost). The continuation is consumed once: a later retry of the same node is a
+   *  fresh prompt again. */
+  const runNodeTurn = async (wf, node, ns, source, onEvent) => {
+    if (wf.continueNode && ns.sessionId && wf.continueOnce?.delete(node.id)) {
+      let continued;
+      try { continued = await wf.continueNode(ns.sessionId, onEvent); }
+      catch (e) {
+        ctx.logger.warn(`workflow ${wf.id}: node "${node.id}" could not be continued in ${ns.sessionId}, prompting it afresh: ${errorText(e)}`);
+        continued = { outcome: 'empty' };
+      }
+      if (continued.outcome !== 'empty') {
+        ctx.logger.info(`workflow ${wf.id}: node "${node.id}" ${continued.outcome === 'answered' ? 'had already answered before the restart' : 'continued its interrupted turn'}`);
+        return continued.reply;
+      }
+    }
+    return getRun()(source, ns.taskNote ? `${node.task}\n\n${ns.taskNote}` : node.task, onEvent);
   };
 
   /** Launch every node whose dependencies are all done. Marks them running BEFORE the async spawn so a
@@ -800,6 +824,10 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       background: true,
       emitCompletion: (completion) => hooks.complete(completion),
       resolveDetached: undefined,
+      // Boot-only: nodes whose child session survived get ONE continuation (runNodeTurn) instead of a
+      // fresh prompt. Absent on a live WorkflowResume, whose interrupted children were stopped on purpose.
+      continueNode: typeof hooks.continueNode === 'function' ? hooks.continueNode : undefined,
+      continueOnce: new Set(),
     };
     const journaled = new Map(raw.state.filter((entry) =>
       Array.isArray(entry) && typeof entry[0] === 'string' && isRecord(entry[1])));
@@ -816,7 +844,10 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       // a node that ran resumes inside its own conversation; one that never launched starts clean.
       const next = freshNodeState();
       if (prev?.sessionId) {
-        if (typeof prev.channelId === 'string' && prev.channelId) { next.channelId = prev.channelId; next.taskNote = RESUME_NOTE; }
+        if (typeof prev.channelId === 'string' && prev.channelId) {
+          next.channelId = prev.channelId; next.taskNote = RESUME_NOTE;
+          next.sessionId = prev.sessionId; wf.continueOnce.add(n.id);
+        }
         else next.taskNote = RESTART_NOTE;
       }
       wf.state.set(n.id, next);

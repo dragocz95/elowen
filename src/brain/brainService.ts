@@ -863,6 +863,7 @@ export class BrainService {
             emit: (update) => { this.publishWorkflowUpdate(wf.parentSessionId, update); },
             complete: (completion) => { this.deliverWorkflowCompletion(wf.parentSessionId, completion); },
             stopChild: (childSessionId) => this.delegated.stopSubagent(wf.parentSessionId, childSessionId),
+            continueNode: (childSessionId, onEvent) => this.delegated.continueWorkflowNode(wf.parentSessionId, childSessionId, onEvent as ((e: BrainEvent) => void) | undefined),
             validateBoundary: (access) => this.journaledBoundaryCheck(wf.parentSessionId, access),
           },
         });
