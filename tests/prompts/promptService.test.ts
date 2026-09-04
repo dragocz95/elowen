@@ -53,6 +53,7 @@ describe('PromptService.render', () => {
     expect(template).toMatch(/say so in the first\s+sentence of your report/);
     expect(template).toContain('One idea per sentence, about 20 words, with a verb');
     expect(template).toContain('When a tool schema offers an optional `_reason`');
+    expect(template).toContain('Bash uses its canonical `description` argument instead of `_reason`');
     expect(template).not.toContain('Every tool call accepts an optional `_reason`');
     expect(template).not.toContain('Do exactly what was asked — no more, no less');
 

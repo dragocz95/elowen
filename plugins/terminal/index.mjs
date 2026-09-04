@@ -697,7 +697,7 @@ export function register(ctx) {
       'Quote paths that contain spaces, and create a file\'s parent directory (mkdir -p) before writing into a new location — Write refuses a missing directory.',
       `\`timeout\` is milliseconds, defaults to ${DEFAULT_TIMEOUT_MS}, and may not exceed ${MAX_TIMEOUT_MS}. The larger Elowen ceiling supports slow finite local builds without changing units.`,
       'Pass run_in_background=true for detached work. Manage detached work with ListProcesses, ProcessOutput, and KillProcess. backgroundMode="service" marks a long-lived server or watcher.',
-      'description is optional display context. dangerouslyDisableSandbox=false is a no-op; true is always refused before any process is spawned.',
+      'description is the live display context for the command. dangerouslyDisableSandbox=false is a no-op; true is always refused before any process is spawned.',
       `Output is capped at ~${Math.round(outputCap / 1000)} kB: past that only the BEGINNING and the END are returned, with the middle dropped and named in the result, so redirect a long build or test run to a file and grep it instead of re-running it.`,
       'A denied or blocked command means a permission rule stopped it — adjust the approach, do not retry it verbatim. Keep secrets out of command lines and output.',
     ].join(' '),
@@ -708,7 +708,7 @@ export function register(ctx) {
         maximum: MAX_TIMEOUT_MS,
         description: `Optional timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}, max ${MAX_TIMEOUT_MS})`,
       })),
-      description: Type.Optional(Type.String({ description: 'Clear, concise description of what the command does' })),
+      description: Type.Optional(Type.String({ description: 'Clear, concise active-voice description of what the command does. Use 5-10 words for simple commands; add enough context for piped commands or obscure flags. Describe the action directly without labels such as "complex" or "risky".' })),
       run_in_background: Type.Optional(Type.Boolean({ description: 'Run the command in the background' })),
       dangerouslyDisableSandbox: Type.Optional(Type.Boolean({ description: 'Sandbox bypass request; true is always refused by Elowen' })),
       cwd: Type.Optional(Type.String({ description: 'Elowen extension: working directory within accessible repositories' })),
@@ -753,7 +753,7 @@ export function register(ctx) {
           }
           const execPromise = run.run(onProgress);
           // A DETACHED run that later exits wakes the conversation to read its output — the exact lifecycle
-          // Bash(background:true) gets via BgProcess.onClose. A run that finishes in the foreground uses
+          // Bash(run_in_background:true) gets via BgProcess.onClose. A foreground completion uses
           // remove() below instead, which never notifies.
           void execPromise.then(() => {
             if (!run.detached) return;

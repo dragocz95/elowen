@@ -41,8 +41,9 @@ describe('toolReason.withReason', () => {
     }
   });
 
-  it('leaves excluded tools (ToolSearch, mcp__*) and non-object schemas untouched', () => {
+  it('leaves excluded tools (ToolSearch, Bash, mcp__*) and non-object schemas untouched', () => {
     expect(props(withReason(sampleTool('ToolSearch')))._reason).toBeUndefined();
+    expect(props(withReason(sampleTool('Bash')))._reason).toBeUndefined();
     expect(props(withReason(sampleTool('mcp__chrome__navigate')))._reason).toBeUndefined();
     const scalar = { name: 'Weird', parameters: Type.String() } as unknown as ToolDefinition;
     expect(withReason(scalar)).toBe(scalar);
@@ -50,10 +51,10 @@ describe('toolReason.withReason', () => {
 });
 
 describe('toolReason.isReasonExcluded', () => {
-  it('excludes ToolSearch and any mcp__ tool, includes everything else', () => {
+  it('excludes ToolSearch, Bash, and any mcp__ tool, includes everything else', () => {
     expect(isReasonExcluded('ToolSearch')).toBe(true);
     expect(isReasonExcluded('mcp__server__tool')).toBe(true);
-    expect(isReasonExcluded('Bash')).toBe(false);
+    expect(isReasonExcluded('Bash')).toBe(true);
     expect(isReasonExcluded('ElowenListTasks')).toBe(false);
   });
 });
@@ -120,6 +121,8 @@ describe('toolReason.extractReason', () => {
   it('returns a non-empty string note, else undefined', () => {
     expect(extractReason({ _reason: 'Čtu konfiguraci', path: 'x' })).toBe('Čtu konfiguraci');
     expect(extractReason({ reason: 'Čtu konfiguraci' })).toBe('Čtu konfiguraci'); // legacy key still honored
+    expect(extractReason({ description: 'Run focused tests' }, 'Bash')).toBe('Run focused tests');
+    expect(extractReason({ description: 'Run focused tests' }, 'Write')).toBeUndefined();
     expect(extractReason({ _reason: '   ' })).toBeUndefined();
     expect(extractReason({ path: 'x' })).toBeUndefined();
     expect(extractReason({ _reason: 42 })).toBeUndefined();

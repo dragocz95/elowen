@@ -29,11 +29,11 @@ export const REASON_DESC =
 /** The optional-string property prepended to each tool's input schema. */
 const REASON_PROP = Type.Optional(Type.String({ description: REASON_DESC }));
 
-/** Tools that never carry a `reason`: `ToolSearch` is a quick fetch (nothing to narrate), and `mcp__*`
- *  schemas are externally owned/bridged — reconstructing them risks dropping `$defs`/nested nuance, so they
- *  are left untouched. Everything else (native Elowen, Memory and plugin tools) is augmented. */
+/** Tools that never carry `_reason`: `ToolSearch` is a quick fetch, `Bash` has Fable's canonical
+ *  `description` argument for the same UI purpose, and `mcp__*` schemas are externally owned/bridged.
+ *  Reconstructing an MCP schema risks dropping `$defs` or nested nuance, so it stays untouched. */
 export function isReasonExcluded(name: string): boolean {
-  return name === 'ToolSearch' || name.startsWith(MCP_PREFIX);
+  return name === 'ToolSearch' || name === 'Bash' || name.startsWith(MCP_PREFIX);
 }
 
 /** Prepend an optional `_reason` string to a tool's OBJECT input schema so the model may author it first.
@@ -92,11 +92,12 @@ function decodeJsonEscapes(note: string): string {
 }
 
 /** The model-authored status note on a streaming tool call's partial arguments, when present and non-empty.
- *  Validated as unknown→string at this boundary — partial JSON can hold anything mid-stream. */
-export function extractReason(args: unknown): string | undefined {
+ *  Bash uses Fable's canonical `description`; every other local tool uses `_reason` (or its replay-only
+ *  legacy key). Validated as unknown→string at this boundary because partial JSON can hold anything. */
+export function extractReason(args: unknown, toolName?: string): string | undefined {
   if (!args || typeof args !== 'object') return undefined;
   const a = args as Record<string, unknown>;
-  const r = a[REASON_KEY] ?? a[LEGACY_REASON_KEY];
+  const r = a[REASON_KEY] ?? a[LEGACY_REASON_KEY] ?? (toolName === 'Bash' ? a.description : undefined);
   if (typeof r !== 'string') return undefined;
   const note = decodeJsonEscapes(r);
   return note.trim() ? note : undefined;
