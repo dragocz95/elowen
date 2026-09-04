@@ -20,7 +20,7 @@ function sessionFrom(composed: ToolDefinition[], activeNames: string[]): ToolVis
   const state = { active: [...activeNames], calls: [] as string[][] };
   return {
     calls: state.calls,
-    getAllTools: () => composed.map((t) => ({ name: t.name, description: t.description })),
+    getAllTools: () => composed.map((t) => ({ name: t.name, description: t.description, parameters: t.parameters })),
     getActiveToolNames: () => state.active,
     setActiveToolsByName: (names: string[]) => { state.active = [...names]; state.calls.push(names); },
   };
@@ -83,8 +83,16 @@ describe('tool-search end to end (real composition path)', () => {
 
     handle!.session = sessionFrom(composed, initialActive);
     const search = composed.find((tool) => tool.name === 'ToolSearch')!;
-    await search.execute('id', { query: 'select:mcp__github__op_3,mcp__github__op_7' }, undefined, undefined, {} as never);
+    const result = await search.execute(
+      'id', { query: 'select:mcp__github__op_3,mcp__github__op_7', max_results: 5 },
+      undefined, undefined, {} as never,
+    );
 
+    // PI rebuilds the next model request from the live active set after this tool result, so activation is
+    // available in the next model step of the SAME user turn. There is no second activation path.
+    expect(handle!.session.getActiveToolNames()).toContain('mcp__github__op_3');
+    expect(result.content[0].text).toContain('<functions>');
+    expect(result.content[0].text).not.toContain('next turn');
     expect(handle!.activated.has('mcp__github__op_3')).toBe(true);
     expect(handle!.activated.has('mcp__github__op_7')).toBe(true);
     applyToolVisibility(handle!.session as ToolVisibilityTarget, new Set(pluginTools.map((tool) => tool.name)), undefined, handle);
@@ -96,11 +104,21 @@ describe('tool-search end to end (real composition path)', () => {
     expect(finalActive).toContain('ToolSearch');
   });
 
-  it('composes ToolSearch for a manifest-default plugin tool even with no MCP tools', () => {
+  it('returns the final transformed schema for a manifest-default plugin tool', async () => {
     const discord = stub('DiscordCreateChannel', 'Create a Discord channel');
     const { composed, handle } = composeWithPolicy([discord], { defaults: ['DiscordCreateChannel'] });
     expect(handle?.deferred).toEqual(new Set(['DiscordCreateChannel']));
     expect(composed.map((tool) => tool.name)).toEqual(['ToolSearch', 'DiscordCreateChannel', 'ExitPlanMode']);
+
+    const initialActive = composed.map((tool) => tool.name).filter((name) => !handle!.deferred.has(name));
+    handle!.session = sessionFrom(composed, initialActive);
+    const search = composed.find((tool) => tool.name === 'ToolSearch')!;
+    const result = await search.execute(
+      'id', { query: 'select:DiscordCreateChannel', max_results: 5 }, undefined, undefined, {} as never,
+    );
+    // The returned definition comes from PI's final registry, after the optional `_reason` argument was added.
+    expect(result.content[0].text).toContain('"_reason"');
+    expect(handle!.session.getActiveToolNames()).toContain('DiscordCreateChannel');
   });
 
   it('applies owner-qualified overrides to non-MCP tools in the full composed set', () => {

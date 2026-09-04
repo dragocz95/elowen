@@ -2,7 +2,7 @@ import { openDb } from '../store/db.js';
 import type { Db } from '../store/db.js';
 import { makePluginDb } from '../store/pluginDb.js';
 import type { PluginHostPush, PluginUserView } from '../plugins/api.js';
-import { currentContributionUserId, runWithContributionUser } from '../plugins/policyContext.js';
+import { currentContributionUserId, currentTurnModel, runWithContributionUser } from '../plugins/policyContext.js';
 import { RelayClient } from '../inference/client.js';
 import { EventBus, ACTIVITY_SURFACES, type ActivitySurface } from '../api/sse.js';
 import { ConfigStore } from '../store/configStore.js';
@@ -485,6 +485,20 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       route: () => ({ providerId: block.providerId, model: block.model }),
     });
   };
+  /** Plugin one-shot inference prefers the configured workspace categorization model, then falls back to
+   * the current turn's already-authorized provider route. Both paths stay inside PI's host runtime, so no
+   * provider configuration or credentials cross into the plugin. Outside a turn, an unset categorization
+   * route still resolves to null rather than guessing a model. */
+  const pluginDefaultInference = (): InferenceClient | null => {
+    const configured = memoryModelInference();
+    if (configured) return configured;
+    const turn = currentTurnModel();
+    if (!turn?.provider || !turn.model) return null;
+    return piInferenceClient({
+      runtime: brainRuntime, config: brainConfig,
+      route: () => ({ providerId: turn.provider!, model: turn.model }),
+    });
+  };
   const memoryCategorizer = new MemoryCategorizer({
     categories: memoryCategoryStore, memories: memoryStore, inference: memoryModelInference, logger: log,
   });
@@ -669,6 +683,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
           userOverride: (userId, name) => userPrompts.get(userId, name),
         },
         relayClient: (cfg) => new RelayClient(cfg),
+        // Plugins receive the live client only, never provider configuration or credentials. The accessor
+        // follows Settings → Memory changes and falls back to the current turn's already-authorized route.
+        defaultInference: pluginDefaultInference,
         git: {
           projectSnapshot: (root) => git.snapshot(root),
           projectHead,

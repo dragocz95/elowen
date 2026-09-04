@@ -602,6 +602,10 @@ export interface PluginHost {
   // @platform-keep plugin-host-relay :: relayClient(cfg: RelayConfig): InferenceClient
   /** Generic inference relay platform retained for future github/sandblox consumers; zero in-repo callers is expected. */
   relayClient(cfg: RelayConfig): InferenceClient;
+  /** A live host-owned inference route. The workspace categorization model is preferred; inside a prompt
+   * turn the current session model is the safe fallback. Credentials remain in core. Gated by
+   * `reads:['inference']`; null means neither route exists in the current context. */
+  defaultInference(): InferenceClient | null;
   /** Read-only git helpers over a project checkout. Gated by `reads:['git']`. */
   git(): {
     /** Generic live checkout snapshot: sanitized remotes plus branch/head/upstream and worktree counts. */
