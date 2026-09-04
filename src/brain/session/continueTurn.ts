@@ -30,11 +30,7 @@ export async function continueInterruptedTurn(
   session: AgentSession,
   durable?: { store: BrainStore; sessionId: string },
 ): Promise<'continued' | 'nothing'> {
-  const seam = session as unknown as {
-    _runAgentPrompt?: (messages: unknown[]) => Promise<void>;
-    messages: { role?: string }[];
-    agent?: { state?: { messages: { role?: string }[] } };
-  };
+  const seam = session as unknown as ContinuationSeam;
   if (typeof seam._runAgentPrompt !== 'function') {
     throw new Error('PI runtime does not expose the turn continuation seam (_runAgentPrompt)');
   }
@@ -43,8 +39,46 @@ export async function continueInterruptedTurn(
   if (tail.role === 'assistant') {
     if (!trimUnfinishedTail(seam, durable) || !continuable(seam.messages)) return 'nothing';
   }
-  await seam._runAgentPrompt([]);
+  await seam._runAgentPrompt(await prepareContinuation(seam));
   return 'continued';
+}
+
+/** What PI's own prompt() does between admission and `_runAgentPrompt`, minus the user message — the
+ *  continuation must not skip any of it (pi-coding-agent agent-session.js prompt(), ~795-915):
+ *   - the model guard: no selected model means no request to make;
+ *   - the PRE-PROMPT compaction check `_checkCompaction(lastAssistant, false)`: a parked session that
+ *     crossed its threshold while it ran compacts BEFORE the continuation's first request, exactly as
+ *     before a new prompt; it goes through the factory-installed coordinator (compactionCheckCoordinator
+ *     wraps `_checkCompaction` on the session), so teardown observes it like every other native check;
+ *   - the system prompt reset to the session's base prompt: a rehydrated session may carry a fresh one,
+ *     and a stale per-turn extension override must not leak into the continued turn;
+ *   - the flush of messages queued for "the next turn" (`sendCustomMessage(…, { deliverAs: 'nextTurn' })`):
+ *     they ride into this run as its prompt batch — still no user message, and PI appends them behind
+ *     the tail (a custom message is a valid tail for the loop to continue from). */
+async function prepareContinuation(seam: ContinuationSeam): Promise<unknown[]> {
+  if ('model' in seam && !seam.model) throw new Error('no model selected for the continuation');
+  const lastAssistant = [...seam.messages].reverse().find((message) => message.role === 'assistant');
+  if (lastAssistant && typeof seam._checkCompaction === 'function') await seam._checkCompaction(lastAssistant, false);
+  if (seam.agent?.state && typeof seam._baseSystemPrompt === 'string') {
+    seam._systemPromptOverride = undefined;
+    seam.agent.state.systemPrompt = seam._baseSystemPrompt;
+  }
+  const batch = seam._pendingNextTurnMessages ?? [];
+  seam._pendingNextTurnMessages = [];
+  return batch;
+}
+
+/** The PI session members the continuation touches — every one of them the same member PI's own
+ *  prompt() uses, probed at runtime rather than typed, exactly like `_checkCompaction` elsewhere. */
+interface ContinuationSeam {
+  _runAgentPrompt?: (messages: unknown[]) => Promise<void>;
+  _checkCompaction?: (assistantMessage: { role?: string }, skipAbortedCheck?: boolean) => Promise<boolean>;
+  _baseSystemPrompt?: string;
+  _systemPromptOverride?: string;
+  _pendingNextTurnMessages?: unknown[];
+  model?: unknown;
+  messages: { role?: string }[];
+  agent?: { state?: { messages: { role?: string }[]; systemPrompt?: string } };
 }
 
 /** Whether a transcript tail can be continued at all (see {@link continueInterruptedTurn}). */

@@ -13,20 +13,27 @@ type Msg = { role?: string; content?: unknown; stopReason?: string; usage?: unkn
 
 /** A fake PI session exposing exactly the seam continueInterruptedTurn probes: `_runAgentPrompt` (records
  *  the batch, appends the next assistant) and the agent state setter PI's own retry uses. */
-function fakeSession(initial: Msg[], opts: { seam?: boolean } = {}) {
+function fakeSession(initial: Msg[], opts: { seam?: boolean; model?: unknown; compaction?: (last: Msg, skip?: boolean) => Promise<boolean> } = {}) {
   let messages = initial.slice();
   const batches: unknown[][] = [];
+  const order: string[] = [];
   const session = {
     get messages() { return messages; },
-    agent: { state: { get messages() { return messages; }, set messages(next: Msg[]) { messages = next.slice(); } } },
+    agent: { state: { get messages() { return messages; }, set messages(next: Msg[]) { messages = next.slice(); }, systemPrompt: 'stale override' } },
+    _baseSystemPrompt: 'the base prompt',
+    _systemPromptOverride: 'stale override' as string | undefined,
+    _pendingNextTurnMessages: [] as unknown[],
+    ...('model' in opts ? { model: opts.model } : {}),
+    ...(opts.compaction ? { _checkCompaction: vi.fn(async (last: Msg, skip?: boolean) => { order.push('compaction'); return opts.compaction!(last, skip); }) } : {}),
     ...(opts.seam === false ? {} : {
       _runAgentPrompt: vi.fn(async (batch: unknown[]) => {
+        order.push('run');
         batches.push(batch);
-        messages = [...messages, { role: 'assistant', content: [{ type: 'text', text: 'next step' }], stopReason: 'stop', usage }];
+        messages = [...messages, ...(batch as Msg[]), { role: 'assistant', content: [{ type: 'text', text: 'next step' }], stopReason: 'stop', usage }];
       }),
     }),
   };
-  return { session: session as unknown as AgentSession, batches, state: () => messages };
+  return { session: session as unknown as AgentSession, raw: session, batches, order, state: () => messages };
 }
 
 function storeWith(rows: { role: string; content: object }[], sessionId = 'brain-1'): { store: BrainStore; sessionId: string; db: ReturnType<typeof openDb> } {
@@ -143,5 +150,47 @@ describe('continueInterruptedTurn — the resume is a continuation, never a mess
       expect(settled.tail, shape.label).toBe(shape.continuableAfter ? 'continuable' : 'final');
       expect(continuable(store.getMessages(sessionId).map((row) => JSON.parse(row.content) as Msg)), shape.label).toBe(shape.continuableAfter);
     }
+  });
+
+  describe('does what PI\'s prompt() does before a run, minus the user message', () => {
+    const tail: Msg[] = [
+      { role: 'user', content: 'do the thing' },
+      { role: 'assistant', content: [{ type: 'toolCall', id: 't1', name: 'Bash', arguments: {} }], stopReason: 'toolUse', usage },
+      { role: 'toolResult', toolCallId: 't1', content: [{ type: 'text', text: '[interrupted] …' }] },
+    ];
+
+    it('runs the PRE-PROMPT compaction check on the last assistant BEFORE the first request, through the session seam', async () => {
+      // A parked session that crossed its threshold while it ran must compact before the continuation's
+      // first model call, exactly as it would before a new prompt (skipAbortedCheck=false is PI's
+      // pre-prompt mode, the one the coordinator treats as admission-gating).
+      const seen: [Msg, boolean | undefined][] = [];
+      const { session, order } = fakeSession(tail, { compaction: async (last, skip) => { seen.push([last, skip]); return true; } });
+      expect(await continueInterruptedTurn(session)).toBe('continued');
+      expect(order).toEqual(['compaction', 'run']);
+      expect(seen).toEqual([[tail[1], false]]);
+    });
+
+    it('resets the system prompt to the base prompt (a stale per-turn override never leaks into the continued turn)', async () => {
+      const { session, raw } = fakeSession(tail);
+      await continueInterruptedTurn(session);
+      expect(raw.agent.state.systemPrompt).toBe('the base prompt');
+      expect(raw._systemPromptOverride).toBeUndefined();
+    });
+
+    it('flushes messages queued for the next turn into the run — still no user message', async () => {
+      const { session, raw, batches, state } = fakeSession(tail);
+      const queued = { role: 'custom', customType: 'note', content: 'deliver next turn' };
+      raw._pendingNextTurnMessages = [queued];
+      expect(await continueInterruptedTurn(session)).toBe('continued');
+      expect(batches).toEqual([[queued]]);
+      expect(raw._pendingNextTurnMessages).toEqual([]);
+      expect(state().map((m) => m.role)).toEqual(['user', 'assistant', 'toolResult', 'custom', 'assistant']);
+    });
+
+    it('refuses to continue without a selected model, like prompt() does', async () => {
+      const { session, batches } = fakeSession(tail, { model: undefined });
+      await expect(continueInterruptedTurn(session)).rejects.toThrow(/no model selected/);
+      expect(batches).toEqual([]);
+    });
   });
 });

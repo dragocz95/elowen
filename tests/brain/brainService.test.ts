@@ -46,10 +46,11 @@ function fakeDeps() {
     }),
     // PI's session-level continuation seam (see src/brain/session/continueTurn.ts): an EMPTY prompt batch
     // continues the loop from the transcript's tail — no message appended, the next assistant follows.
+    // (PI's own "cannot continue from an assistant tail" guard is deliberately NOT modelled here: this
+    // ONE session object is shared by every spawned session of a test, so two children recovering
+    // concurrently interleave on the same array. The guard is pinned in tests/brain/continueTurn.test.ts.)
     _runAgentPrompt: vi.fn(async (batch: unknown[]) => {
       if (batch.length !== 0) throw new Error('the fake continuation seam only accepts an empty batch');
-      const tail = messages.at(-1) as { role?: string } | undefined;
-      if (!tail || tail.role === 'assistant') throw new Error('Cannot continue from message role: assistant');
       messages.push({ role: 'assistant', content: 'continued after the pause' });
       listeners.forEach((l) => l({ type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: 'continued after the pause' }] }));
     }),
