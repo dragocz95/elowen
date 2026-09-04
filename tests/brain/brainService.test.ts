@@ -260,6 +260,36 @@ describe('BrainService', () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
+  // A plugin WebSocket is driven by handler code the reload is about to replace, so it has to be hung up
+  // with the same generation as the bus subscriptions — otherwise a browser keeps streaming from a dead
+  // closure beside its replacement.
+  it('hangs up the old generation\'s plugin WebSockets when the plugin set reloads', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const closed: [number, string][] = [];
+    reg.liveWebSockets.add({ plugin: 'demo', close: (code, reason) => { closed.push([code, reason]); } });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+
+    expect(await svc.reloadPlugins()).toBe(true);
+    expect(closed).toEqual([[1001, 'plugin reloaded']]);
+  });
+
+  it('hangs up plugin WebSockets on the terminal shutdown drain', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const closed: [number, string][] = [];
+    reg.liveWebSockets.add({ plugin: 'demo', close: (code, reason) => { closed.push([code, reason]); } });
+    const provider = new PluginRegistryProvider(async () => reg);
+    await provider.get(); // peek() only answers once a generation has loaded
+    (d as unknown as { plugins: unknown }).plugins = provider;
+    const svc = new BrainService(d as never);
+
+    await svc.shutdownPluginServices();
+    expect(closed).toEqual([[1001, 'daemon shutting down']]);
+  });
+
   it('holds a hot plugin reload until plugin-owned work drains without resetting its runner', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();

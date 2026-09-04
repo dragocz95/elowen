@@ -550,6 +550,10 @@ export class BrainService {
   /** The turn drain has finished and process exit is now terminal. Stop browser/process-owning plugin
    * services before systemd tears down the remaining cgroup; unlike a hot reload this never rolls back. */
   async shutdownPluginServices(): Promise<void> {
+    // Before the early return below: a plugin WebSocket can exist without the service runtime ever having
+    // started (a route is served by the registry, not by a service), and a client owed a clean 1001 must
+    // not depend on that. `peek` rather than `get` — a shutdown must never trigger a plugin load.
+    this.d.plugins?.peek()?.closeWebSockets(1001, 'daemon shutting down');
     if (!this.pluginRuntimeStarted || !this.pluginServicesStarted) return;
     await this.pluginServices.shutdownAll();
   }
@@ -1957,6 +1961,10 @@ export class BrainService {
         if (this.pluginRuntimeStarted && this.pluginServicesStarted) await this.pluginServices.stopAll();
         if (this.pluginRuntimeStarted) this.platforms.stopAll();
         before?.disposeEventSubscriptions();
+        // Same reason as the bus subscriptions: a WebSocket accepted against the OLD generation is being
+        // driven by handler code that is about to be replaced. Hang them up with 1001 ("going away") so
+        // the browser reconnects onto the new generation instead of streaming from a dead closure.
+        before?.closeWebSockets(1001, 'plugin reloaded');
 
         this.d.plugins?.invalidate();
         for (const userId of this.sessions.activeUserIds()) await this.restart(userId);

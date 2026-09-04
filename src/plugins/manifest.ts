@@ -122,6 +122,9 @@ export interface PluginManifest {
   provides?: {
     tools?: string[]; skills?: string[]; platforms?: string[]; destinations?: string[];
     httpRoutes?: string[]; apiRoutes?: string[]; mcpTools?: string[];
+    /** WebSocket mounts, relative to `/ws/plugins/<plugin>/` (`ctx.registerWebSocketRoute`). Declared for
+     *  the same reason as `apiRoutes`: the manifest is the audit surface for what a plugin serves. */
+    wsRoutes?: string[];
     /** Control keys this plugin PUBLISHES for other plugins (`ctx.registerControl`). Declared so the
      *  daemon can answer "who would satisfy this dependency" from manifests alone, without loading a
      *  plugin or hardcoding a single name. */
@@ -310,6 +313,7 @@ const ManifestSchema = Type.Object({
     destinations: Type.Optional(Type.Array(Type.String())),
     httpRoutes: Type.Optional(Type.Array(Type.String())),
     apiRoutes: Type.Optional(Type.Array(Type.String())),
+    wsRoutes: Type.Optional(Type.Array(Type.String())),
     mcpTools: Type.Optional(Type.Array(Type.String())),
     controls: Type.Optional(Type.Array(Type.String())),
   })),
