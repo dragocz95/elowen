@@ -11,7 +11,7 @@
 // bound plus the time from boot to the first resumed model request — the two numbers the redesign is for.
 
 import Database from 'better-sqlite3';
-import { readdirSync, readFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnRealDaemon } from '../brain-e2e/spawn-daemon.mjs';
 import { MARKERS, startRecoveryModel } from './model.mjs';
@@ -530,13 +530,104 @@ async function scenarioNestedRecovery() {
   }
 }
 
+async function scenarioWorkflowRecovery() {
+  console.log('\n— 7: a workflow node interrupted mid-tool-call is continued after the restart; its dependent runs; the summary reaches the parent once —');
+  const model = await startRecoveryModel({
+    task: MARKERS.workflowTask,
+    result: MARKERS.workflowNodeTwoResult,
+    workflow: true,
+  });
+  let daemon = null;
+  try {
+    daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'recovery-workflow' }); currentDaemon = daemon;
+    const token = daemon.token;
+    await enableRunner(daemon, token);
+    const nodesFile = join(daemon.dataDir, 'recovery-workflow.json');
+    writeFileSync(nodesFile, JSON.stringify({
+      title: 'recovery chain',
+      nodes: [
+        { id: 'one', task: MARKERS.workflowNodeOneTask },
+        { id: 'two', task: MARKERS.workflowNodeTwoTask, deps: ['one'] },
+      ],
+    }));
+    const parentSessionId = await startParent(daemon.baseUrl, token);
+    const sent = await post(daemon.baseUrl, token, '/brain/send', {
+      text: `Start this recovery scenario: ${MARKERS.workflowTask} nodesFile=${nodesFile}`,
+      session: parentSessionId,
+      mode: 'build',
+    });
+    if (sent?.accepted === false) throw new Error('parent turn was not accepted');
+    const nodeState = (state, id) => JSON.parse(state).nodes.find((node) => node.id === id);
+    const wf = await waitFor('a durable running workflow row with node one running', () => {
+      const found = row(daemon.dataDir, 'SELECT workflow_id, tool_call_id, state FROM brain_workflows WHERE parent_session_id = ?', [parentSessionId]);
+      return found && nodeState(found.state, 'one')?.status === 'running' && nodeState(found.state, 'one')?.sessionId ? found : null;
+    });
+    const nodeOneSession = nodeState(wf.state, 'one').sessionId;
+    await model.initialChildArrived;
+    const pending = await waitFor('the persisted unanswered Bash call of node one', () => rows(daemon.dataDir,
+      'SELECT content FROM brain_messages WHERE session_id = ? AND pending = 1 ORDER BY rowid ASC', [nodeOneSession])
+      .find((entry) => String(entry.content).includes('call_recovery_') && String(entry.content).includes('Bash')) ?? null);
+    const nodeOneRequests = () => model.requests.filter((request) => JSON.stringify(request.body).includes(MARKERS.workflowNodeOneTask)
+      && JSON.stringify(request.body).includes('You are a focused sub-agent'));
+    check('node one is mid-tool-call with a persisted Bash call and no workflow run row of its own', !!pending && nodeOneRequests().length === 1
+      && !row(daemon.dataDir, 'SELECT 1 AS x FROM brain_subagent_runs WHERE child_session_id = ?', [nodeOneSession]));
+    const journalDir = join(daemon.dataDir, 'plugins-data', 'subagent', 'workflows', 'state');
+    check('the engine journaled node one\'s session for the resume', readdirSync(journalDir).some((name) => name.startsWith(wf.workflow_id))
+      && readFileSync(join(journalDir, `${wf.workflow_id}.json`), 'utf8').includes(nodeOneSession));
+
+    await daemon.restart();
+    const done = await waitFor('the workflow to finish with both nodes done', () => {
+      const found = row(daemon.dataDir, 'SELECT state FROM brain_workflows WHERE parent_session_id = ? AND tool_call_id = ?', [parentSessionId, wf.tool_call_id]);
+      const state = found ? JSON.parse(found.state) : null;
+      return state?.status === 'done' && state.nodes.every((node) => node.status === 'done') ? state : null;
+    });
+    const bootAt = daemon.lastRestart().bootAt;
+    const continued = nodeOneRequests().filter((request) => request.at > bootAt);
+    checkPause('workflow', daemon, continued[0]?.at);
+    checkSilentResume('workflow', daemon, model);
+    check('node one was CONTINUED exactly once, never re-prompted with its task', continued.length === 1 && nodeOneRequests().length === 2,
+      `after-restart node-one requests=${continued.length}`);
+    const lastOnWire = continued[0]?.body?.messages?.at(-1);
+    check('the continuation ends on the [interrupted] Bash result — the same silent resume a delegation gets', lastOnWire?.role === 'tool'
+      && String(lastOnWire?.content).includes('[interrupted]') && String(lastOnWire?.content).includes('Verify the current state before repeating'));
+    const userTurns = (continued[0]?.body?.messages ?? []).filter((m) => m.role === 'user');
+    check('no second user message was appended to node one (the task was not sent again)', userTurns.length === 1, `user messages=${userTurns.length}`);
+    const wire = wireOrderProblems(Array.isArray(continued[0]?.body?.messages) ? continued[0].body.messages : []);
+    check('the continuation payload is a valid provider wire order', wire.length === 0, wire.join('; '));
+    check('node one kept its session across the restart', done.nodes.find((node) => node.id === 'one')?.sessionId === nodeOneSession);
+    check('node two ran AFTER node one finished, with node one\'s result as its context',
+      model.requests.some((request) => request.at > bootAt && JSON.stringify(request.body).includes(MARKERS.workflowNodeTwoTask))
+      && !model.requests.some((request) => JSON.stringify(request.body).includes(`${MARKERS.workflowNodeTwoResult}-MISSING-DEP`)));
+    const summaryDeliveries = () => model.requests.filter((request) => JSON.stringify(request.body).includes('<workflow-result')
+      && JSON.stringify(request.body).includes(MARKERS.workflowNodeTwoResult));
+    await waitFor('the parent to receive the workflow summary', () => summaryDeliveries()[0] ?? null);
+    const inbox = await waitFor('the workflow result to be acknowledged in the inbox', () => {
+      const found = resultRows(daemon.dataDir, parentSessionId, wf.tool_call_id);
+      return found.length === 1 && found[0].delivery_state === 'acknowledged' ? found[0] : null;
+    });
+    // Let any stray second delivery show up before counting.
+    await pause(1_500);
+    check('the summary reached the parent exactly once, in this boot', summaryDeliveries().length === 1 && inbox.status === 'done',
+      `deliveries=${summaryDeliveries().length}`);
+    check('the recovery journal was dropped once the workflow finished', !readdirSync(journalDir).some((name) => name.startsWith(wf.workflow_id)));
+  } finally {
+    if (daemon) await daemon.stop();
+    await model.close();
+  }
+}
+
+/** `RECOVERY_E2E_ONLY=1,7` runs a subset while iterating on one scenario; the default is the whole suite. */
+const SCENARIOS = [
+  scenarioBackgroundRecovery, scenarioForegroundRecovery, scenarioInterruptedToolRecovery, scenarioLegacyMigration,
+  scenarioOwnerTurnPause, scenarioNestedRecovery, scenarioWorkflowRecovery,
+];
+const only = new Set((process.env.RECOVERY_E2E_ONLY ?? '').split(',').map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0));
+
 async function main() {
-  await scenarioBackgroundRecovery();
-  await scenarioForegroundRecovery();
-  await scenarioInterruptedToolRecovery();
-  await scenarioLegacyMigration();
-  await scenarioOwnerTurnPause();
-  await scenarioNestedRecovery();
+  for (const [index, scenario] of SCENARIOS.entries()) {
+    if (only.size && !only.has(index + 1)) continue;
+    await scenario();
+  }
   console.log(`\nrestart timings (ms), ${USE_RUNNER ? 'sub-agent RUNNER' : 'in-process'} variant: SIGTERM→exit | boot→healthy | boot→first resumed model request`);
   for (const t of timings) {
     console.log(`  ${t.label.padEnd(18)} stop=${String(t.stopMs).padStart(5)}${t.forced ? ' (SIGKILL!)' : ''}  boot=${String(t.bootMs).padStart(5)}  resume=${t.resumeMs === null ? '   n/a' : String(t.resumeMs).padStart(6)}`);

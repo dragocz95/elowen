@@ -109,7 +109,13 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
       // the platforms are up, since every recovery turn goes through the ordinary channel path, and after
       // announceBoot with its own catch, so a recovery failure neither blocks the boot announcement nor is
       // misreported as a startPlatforms error.
-      .then(() => recovery?.resumeAll().catch((e) => deps.log.error('boot recovery failed', e)))
+      // The `workflows` provider is the LAST thing a client's snapshot depends on that the boot changes
+      // quickly: the claim pass is done, the plugins are loaded (the liveness probe answers), and every
+      // claimed DAG has been handed back to its engine or terminalized. Delegation respawns run on for
+      // minutes and publish their own live events; nothing waits for them.
+      .then(() => recovery?.resumeAll({
+        onProviderResumed: (id) => { if (id === 'workflows') deps.brain?.publishResync('boot-recovered'); },
+      }).catch((e) => deps.log.error('boot recovery failed', e)))
       .catch((e) => deps.log.error('startPlatforms failed', e));
     // Registered only once the platforms are coming up, so a stop can actually announce itself. Skipped
     // under the in-memory test DB, where installing process-wide signal handlers would leak across tests.

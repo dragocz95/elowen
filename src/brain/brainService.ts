@@ -22,7 +22,7 @@ import { delegatedChannelSendOpts, type DelegatedTurnRequest } from './delegated
 import { SubagentDispatch } from '../subagent/dispatch.js';
 import { lastAssistantTextIn, type BrainMessageView } from './messageView.js';
 import { runCompaction, withDescendantUsage } from './events.js';
-import type { AskAnswer, BrainEvent, BrainInlineArtifact, BrainInlineArtifactClosed, CompactResult, PluginChatArtifact, PluginChatArtifactUpdate, WorkflowCompletion } from './events.js';
+import type { AskAnswer, BrainEvent, BrainInlineArtifact, BrainInlineArtifactClosed, CompactResult, PluginChatArtifact, PluginChatArtifactUpdate, WorkflowCompletion, WorkflowUpdate } from './events.js';
 import { InlineArtifactRegistry } from './inlineArtifacts.js';
 import { terminalizeWorkflow } from './workflowRuns.js';
 import { normalizeDelegatedExecutionScope, scopeExceedsCurrentAccess, type DelegatingTurnAccess } from './delegatedScope.js';
@@ -37,7 +37,7 @@ import { PermissionApprovalService } from './service/permissionApproval.js';
 import { GoalLoopService } from './service/goalLoop.js';
 import { LiveSessionSpawner } from './service/spawner.js';
 import { ConversationLifecycle } from './service/lifecycle.js';
-import { recordSessionEvent, scheduleReasoningMarker } from './service/sessionEvents.js';
+import { recordSessionEvent, recordWorkflowFinishMarker, scheduleReasoningMarker } from './service/sessionEvents.js';
 import { clientDir } from './service/workDir.js';
 import { BrainTurnRunner, subagentResultReminder } from './service/turnRunner.js';
 import type { BoundClientRequest, TurnRequest } from './service/turnRequest.js';
@@ -204,6 +204,9 @@ export class BrainService {
   private bootClaimedCalls = new Set<string>();
   /** The claim set itself, held between the `delegations-claim` and `delegations` providers' claims. */
   private bootClaimedRuns: RecoverableRun[] = [];
+  /** Workflows this boot claimed and has not yet handed back to the engine (or terminalized): the read
+   *  model shows them running meanwhile, whatever the engine's liveness probe says. */
+  private bootPendingWorkflows = new Set<string>();
   /** The destructive session lifecycle: turn interruption (Esc/Stop), the client-close stop, the idle
    *  reaper and conversation delete/purge — see SessionTeardownService. */
   private teardown: SessionTeardownService;
@@ -359,6 +362,7 @@ export class BrainService {
     });
     this.statusView = new BrainStatusService({
       store: d.store, sessions: this.sessions, attachments: this.attachments,
+      workflowResumePending: (workflowId) => this.bootPendingWorkflows.has(workflowId),
       elicitation: this.elicitation, cards: this.cards, artifacts: this.artifacts,
       lifecycle: this.lifecycle, permissions: this.permissionSvc,
       get config() { return d.config; },
@@ -700,6 +704,19 @@ export class BrainService {
     logger('brain').info(`platform room ${parentSessionId}: recovered result delivered as its continuation (${outcome})`);
   }
 
+  /** Tell every attached client to refetch its snapshot (see the `resync` BrainEvent). Published on every
+   *  live session's bus, owner conversations and channels alike: whoever attached in the boot window was
+   *  shown a read model that could not yet vouch for what this boot was recovering. */
+  publishResync(reason: 'boot-recovered'): void {
+    let told = 0;
+    for (const [, live] of [...this.sessions.liveEntries(), ...this.sessions.channelEntries()]) {
+      if (live.listeners.size === 0) continue;
+      live.replay.broadcast({ type: 'resync', reason });
+      told += 1;
+    }
+    if (told > 0) logger('brain').info(`boot recovery: told ${told} attached conversation(s) to resync (${reason})`);
+  }
+
   /** The safety net under a parent PAUSED on its delegation (resumeParkedConversation's durable wait): the
    *  recovered child's result did not un-park it — delivery failed, or the child terminalized with a
    *  notice the parent must see. Once no other child of this boot is still recovering, run the ordinary
@@ -795,7 +812,9 @@ export class BrainService {
 
   /** `workflows` provider, CLAIM: the workflow half of the reconcile {@link claimDelegationRecovery} ran. */
   claimWorkflowRecovery(): RecoverableWorkflow[] {
-    return this.delegated.takePendingWorkflowRecovery();
+    const claimed = this.delegated.takePendingWorkflowRecovery();
+    for (const wf of claimed) this.bootPendingWorkflows.add(wf.workflowId);
+    return claimed;
   }
 
   /** `workflows` provider, RESUME: hand ONE claimed DAG back to the engine, or terminalize it durably.
@@ -806,6 +825,27 @@ export class BrainService {
    *  conversation actually LEARNS the workflow died with the restart instead of discovering a silent
    *  `cancelled` badge later. */
   async resumeWorkflow(wf: RecoverableWorkflow): Promise<RecoveryOutcome> {
+    try { return await this.resumeClaimedWorkflow(wf); }
+    finally { this.bootPendingWorkflows.delete(wf.workflowId); }
+  }
+
+  /** Publish a resumed workflow's progress to whoever is attached to its origin conversation — exactly
+   *  what emitWorkflow does inside a live turn (turnContextBuilder / channels), which a boot resume has
+   *  none of. Without this the store learned every step and no client did: a CLI that reconnected in the
+   *  boot window kept the failed card it had been shown until its next reconnect. */
+  private publishWorkflowUpdate(parentSessionId: string, update: WorkflowUpdate): void {
+    const prevStatus = update.status === 'done' || update.status === 'error' || update.status === 'cancelled'
+      ? this.d.store.workflowStatus(parentSessionId, update.id)
+      : undefined;
+    if (!this.d.store.upsertWorkflowRun(parentSessionId, update)) return;
+    const live = this.sessions.get(parentSessionId)
+      ?? (isChannelSession(parentSessionId) ? this.sessions.channelGet(channelIdOf(parentSessionId)) : undefined);
+    if (!live) return;
+    live.replay.publish({ type: 'workflow', ...update });
+    recordWorkflowFinishMarker(this.d.store, parentSessionId, (event) => live.replay.publish(event), prevStatus, update);
+  }
+
+  private async resumeClaimedWorkflow(wf: RecoverableWorkflow): Promise<RecoveryOutcome> {
     const control = (await this.resolvePlugins())?.control('workflow');
     let reason = control ? 'the workflow engine declined to resume it' : 'the workflow engine is not available';
     try {
@@ -820,9 +860,10 @@ export class BrainService {
           ...(wf.state.workspaceRef ? { trustedWorkspaceRef: wf.state.workspaceRef } : {}),
           ...(Object.keys(trustedNodeWorkspaceRefs).length ? { trustedNodeWorkspaceRefs } : {}),
           hooks: {
-            emit: (update) => { this.d.store.upsertWorkflowRun(wf.parentSessionId, update); },
+            emit: (update) => { this.publishWorkflowUpdate(wf.parentSessionId, update); },
             complete: (completion) => { this.deliverWorkflowCompletion(wf.parentSessionId, completion); },
             stopChild: (childSessionId) => this.delegated.stopSubagent(wf.parentSessionId, childSessionId),
+            continueNode: (childSessionId, onEvent) => this.delegated.continueWorkflowNode(wf.parentSessionId, childSessionId, onEvent as ((e: BrainEvent) => void) | undefined),
             validateBoundary: (access) => this.journaledBoundaryCheck(wf.parentSessionId, access),
           },
         });
@@ -841,7 +882,7 @@ export class BrainService {
       reason = `resume failed: ${(e instanceof Error ? e.message : String(e)).slice(0, 2_000)}`;
     }
     logger('brain').warn(`boot recovery could not resume workflow ${wf.workflowId}: ${reason} — terminalizing`);
-    this.d.store.upsertWorkflowRun(wf.parentSessionId, terminalizeWorkflow(wf.state));
+    this.publishWorkflowUpdate(wf.parentSessionId, terminalizeWorkflow(wf.state));
     const done = wf.state.nodes.filter((n) => n.status === 'done').map((n) => n.id);
     this.deliverWorkflowCompletion(wf.parentSessionId, {
       id: wf.workflowId, toolCallId: wf.toolCallId,

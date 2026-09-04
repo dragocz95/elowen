@@ -1636,9 +1636,33 @@ describe('workflow recovery journal + boot resume', () => {
         emit: (u: unknown) => void;
         complete: (c: { id: string; toolCallId: string; status: string; result: string }) => void;
         stopChild: (sessionId: string) => Promise<{ stopped: boolean }>;
+        continueNode?: (sessionId: string, onEvent?: (e: { type: string; name?: string; sessionId?: string }) => void)
+          => Promise<{ outcome: 'answered' | 'continued'; reply: string } | { outcome: 'empty' }>;
         validateBoundary: (access: unknown) => { ok: boolean; reason?: string };
       };
     }): Promise<{ resumed: boolean; reason?: string }>;
+  };
+  /** Crash a two-node chain on node b (a done, b parked forever) and return what a reboot needs. */
+  const crashOnB = async () => {
+    const h1 = harness();
+    gate = { task: 'b', promise: new Promise<void>(() => { /* never released — the crash */ }) };
+    void h1.tools.get('WorkflowStart')!.execute('call-resume', {
+      nodesFile: workflowFile([{ id: 'a', task: 'a' }, { id: 'b', task: 'b', deps: ['a'] }, { id: 'c', task: 'c', deps: ['b'] }]),
+    });
+    await until(() => h1.runs.some((r) => r.task === 'b'));
+    return { wfId: h1.snapshots[0]!.id, crashedChannel: h1.runs.find((r) => r.task === 'b')!.channelId };
+  };
+  const rebootWith = async (wfId: string, continueNode: NonNullable<Parameters<ResumeControl['resumeInterrupted']>[0]['hooks']['continueNode']>) => {
+    const h2 = harness();
+    const completions: { id: string; toolCallId: string; status: string; result: string }[] = [];
+    const emits: { nodes: { id: string; status: string; sessionId: string }[] }[] = [];
+    const outcome = await resumeControlOf(h2).resumeInterrupted({
+      workflowId: wfId, parentSessionId: 'brain-parent', toolCallId: 'call-resume',
+      hooks: { emit: (u) => emits.push(u as typeof emits[number]), complete: (c) => completions.push(c), stopChild: async () => ({ stopped: true }), continueNode, validateBoundary: () => ({ ok: true }) },
+    });
+    expect(outcome).toEqual({ resumed: true });
+    await until(() => completions.length === 1);
+    return { h2, completion: completions[0]!, emits };
   };
   const resumeControlOf = (h: ReturnType<typeof harness>): ResumeControl =>
     h.controls.get('workflow') as unknown as ResumeControl;
@@ -1701,6 +1725,49 @@ describe('workflow recovery journal + boot resume', () => {
     expect(emits[emits.length - 1]!.status).toBe('done');
     // …and the finished resume disposed of its journal like any terminal workflow.
     await until(() => !existsSync(journalPathOf(wfId)));
+  });
+
+  it('boot resume CONTINUES a node that kept its session instead of prompting it with its task again', async () => {
+    // The production shape: the node's child was cut mid-turn by the pause. The host continues that turn
+    // silently (over `[interrupted]` tool results) and its answer is the node's result; the dependent
+    // then runs as usual, and the summary carries both. The node's task is never sent a second time.
+    const { wfId, crashedChannel } = await crashOnB();
+    const continued: { sessionId: string; events: string[] }[] = [];
+    const { h2, completion, emits } = await rebootWith(wfId, async (sessionId, onEvent) => {
+      const events: string[] = [];
+      continued.push({ sessionId, events });
+      onEvent?.({ type: 'session', sessionId });
+      onEvent?.({ type: 'tool', name: 'Bash' });
+      return { outcome: 'continued', reply: 'b finished after the restart' };
+    });
+    expect(continued.map((c) => c.sessionId)).toEqual(['s-b']); // the journaled child, once
+    expect(h2.launched).toEqual(['c']); // b was NOT re-prompted; only its dependent ran through the prompt path
+    expect(h2.runs.map((r) => r.task)).toEqual(['c']);
+    expect(completion.status).toBe('done');
+    expect(completion.result).toContain('b finished after the restart');
+    expect(completion.result).toContain('done:c');
+    // The continued node keeps its channel/session so status readers still find its conversation.
+    expect(emits.at(-1)!.nodes.find((n) => n.id === 'b')).toMatchObject({ status: 'done', sessionId: 's-b' });
+    expect(crashedChannel).toContain(wfId);
+  });
+
+  it('boot resume takes a node\'s answer straight from its transcript when the child had already answered', async () => {
+    const { wfId } = await crashOnB();
+    const { h2, completion } = await rebootWith(wfId, async () => ({ outcome: 'answered', reply: 'b had answered before the pause' }));
+    expect(h2.launched).toEqual(['c']);
+    expect(completion.result).toContain('b had answered before the pause');
+  });
+
+  it('boot resume falls back to the resume prompt when the child has nothing to continue, and after a failed continuation', async () => {
+    const { wfId, crashedChannel } = await crashOnB();
+    const { h2 } = await rebootWith(wfId, async () => ({ outcome: 'empty' }));
+    expect(h2.launched).toEqual(['b', 'c']);
+    expect(h2.runs[0]!.channelId).toBe(crashedChannel);
+    expect(h2.runs[0]!.fullTask).toContain('an earlier attempt at this node was interrupted');
+
+    const second = await crashOnB();
+    const { h2: h3 } = await rebootWith(second.wfId, async () => { throw new Error('child vanished'); });
+    expect(h3.launched).toEqual(['b', 'c']);
   });
 
   it('journals a PARALLEL node\'s terminal result, so resume does not redo it (no later session event covers it)', async () => {

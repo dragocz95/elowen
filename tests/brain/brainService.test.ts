@@ -12,6 +12,7 @@ import { NO_REPLY_NUDGE } from '../../src/brain/messageView.js';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
+import { setWorkflowLivenessProbe } from '../../src/brain/service/statusService.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 import { defineTool, formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
@@ -6640,6 +6641,282 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(hooks.validateBoundary({ ...held, owner: true }).ok).toBe(false);
     // Garbage is not a delegable scope at all.
     expect(hooks.validateBoundary({ widened: 'yes' }).ok).toBe(false);
+  });
+
+  it('a snapshot taken in the boot window shows a claimed workflow as RUNNING — never terminalized (the vanished card)', async () => {
+    // Production (4 Sep 18:53): the CLI reconnected between the HTTP boot and the engine's resume. The
+    // liveness probe answered "unknown" (plugin registry not loaded yet), the origin session was not live,
+    // and the read model terminalized the row for display: 12 nodes shown failed, the card "gone" — while
+    // the engine resumed the workflow two seconds later. The claim is this boot's own word: running.
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.appendMessage({
+      id: 'a-wf-boot', sessionId: 'brain-1', parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'call-wf-boot', name: 'WorkflowStart', arguments: {} }] },
+    });
+    d.store.appendMessage({ id: 'r-wf-boot', sessionId: 'brain-1', parentId: null, role: 'toolResult', content: { role: 'toolResult', toolCallId: 'call-wf-boot', toolName: 'WorkflowStart', content: [{ type: 'text', text: 'started' }] } });
+    d.store.upsertWorkflowRun('brain-1', {
+      id: 'wf-boot', toolCallId: 'call-wf-boot', status: 'running',
+      nodes: [{ id: 'api', task: 'build the api', status: 'running', deps: [] }],
+    });
+    setWorkflowLivenessProbe(() => undefined); // registry not loaded: "unknown"
+    try {
+      const restarted = new BrainService(d as never);
+      const recovery = bootRecovery(restarted);
+      recovery.claimAll(); // the claim pass ran; the resume wave has not reached this DAG yet
+      const wfOf = () => restarted.messagesOf(1, 'brain-1').flatMap((m) => m.segments ?? [])
+        .map((seg) => (seg.kind === 'tool' ? (seg as { wf?: { status: string; nodes: { status: string }[] } }).wf : undefined))
+        .find((wf) => !!wf);
+      expect(wfOf()?.status).toBe('running');
+      expect(wfOf()?.nodes.map((n) => n.status)).toEqual(['running']);
+      // Even a loaded engine that does not HOLD the DAG yet (claimed, resume wave pending) is not the last word.
+      setWorkflowLivenessProbe(() => false);
+      expect(wfOf()?.status).toBe('running');
+    } finally {
+      setWorkflowLivenessProbe(() => undefined);
+    }
+  });
+
+  it('a snapshot taken in the boot window shows a claimed delegation as running, and its completion reaches attached clients', async () => {
+    // The delegation twin of the vanished-workflow card: a claimed run row is this boot's word (the
+    // read model's `recoveringSubagentSessionIds`), so a reconnect in the boot window shows it running,
+    // never done or error — and once the recovery completes and the result is delivered, the attached
+    // client gets the terminal `subagent` event rather than waiting for its next reconnect.
+    const d = fakeDeps();
+    const sessionId = 'brain-1';
+    d.store.createSession({ id: sessionId, userId: 1, model: 'm' });
+    const child = 'brain-ch-subagent-window';
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId, delegatedAccess: { admin: true, owner: true, projectIds: [], permissionBoundary: null } });
+    seedChildTask(d, child);
+    d.store.upsertSubagentRun(sessionId, { id: 'call-window', sessionId: child, status: 'running', task: 'dig', tools: 1, seconds: 5, background: true, autoDeliver: true });
+    d.store.appendMessage({
+      id: 'a-window', sessionId, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'call-window', name: 'Delegate', arguments: {} }] },
+    });
+    d.store.appendMessage({ id: 'r-window', sessionId, parentId: null, role: 'toolResult', content: { role: 'toolResult', toolCallId: 'call-window', toolName: 'Delegate', content: [{ type: 'text', text: 'started in background' }] } });
+
+    const restarted = new BrainService(d as never);
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll(); // boot window: claimed, not yet respawned, nothing live
+    const subOf = () => restarted.messagesOf(1, sessionId).flatMap((m) => m.segments ?? [])
+      .map((seg) => (seg.kind === 'tool' ? seg.sub : undefined)).find((sub) => !!sub);
+    expect(subOf()?.status).toBe('running');
+
+    // A client attaches in that window …
+    await restarted.start(1, { session: sessionId });
+    const seen: { type?: string; status?: string; sessionId?: string }[] = [];
+    restarted.subscribe(1, (event) => { seen.push(event as typeof seen[number]); });
+    d.session.messages.push({ role: 'user', content: 'the interrupted task' } as never);
+    await recovery.resumeAll();
+
+    // … and learns the terminal state live, without reconnecting.
+    expect(seen.some((e) => e.type === 'subagent' && e.sessionId === child && e.status === 'done')).toBe(true);
+    expect(subOf()?.status).toBe('done');
+  });
+
+  it('publishResync reaches only the clients attached right now, and is not journaled into later snapshots', async () => {
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    const svc = new BrainService(d as never);
+    await svc.start(1, { session: 'brain-1' });
+    const seen: unknown[] = [];
+    svc.subscribe(1, (event) => { seen.push(event); });
+
+    svc.publishResync('boot-recovered');
+
+    expect(seen).toEqual([{ type: 'resync', reason: 'boot-recovered' }]);
+    // A later snapshot replay must not carry it: it is an instruction to whoever was attached, not data.
+    const snapshot = (await svc.tapSessionSnapshot(1, 'brain-1', () => {})).snapshot;
+    expect(snapshot.events.some((e) => e.type === 'resync')).toBe(false);
+  });
+
+  /** A claimed workflow whose engine asks the host to continue node children through `hooks.continueNode`. */
+  async function bootWithWorkflowNodeChild(d: ReturnType<typeof fakeDeps>, child: string, seed: () => void) {
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} });
+    const seen: { child: string; events: string[]; outcome: unknown }[] = [];
+    ctx.registerControl('workflow', {
+      cancelForSession: () => ({ cancelled: 0 }),
+      detachForeground: () => ({ detached: 0 }),
+      activeCount: () => 0,
+      isWorkflowLive: () => true,
+      addNodesFromSession: () => { throw new Error('unused'); },
+      resumeInterrupted: async ({ hooks }) => {
+        const events: string[] = [];
+        const outcome = await hooks.continueNode(child, (e) => { events.push(e.type); });
+        seen.push({ child, events, outcome });
+        return { resumed: true };
+      },
+    });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: 'brain-1', delegatedAccess: { admin: true, owner: true, projectIds: [], permissionBoundary: null } });
+    seedChildTask(d, child);
+    seed();
+    d.store.appendMessage({
+      id: 'a-wf-node', sessionId: 'brain-1', parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'call-wf-node', name: 'WorkflowStart', arguments: {} }] },
+    });
+    d.store.upsertWorkflowRun('brain-1', { id: 'wf-node', toolCallId: 'call-wf-node', status: 'running', nodes: [{ id: 'one', task: 'build', status: 'running', deps: [], sessionId: child }] });
+    const restarted = new BrainService(d as never);
+    await runBootRecovery(restarted);
+    return seen;
+  }
+
+  it('a workflow node child cut mid-tool-call is CONTINUED silently for the engine, its [interrupted] result in the transcript', async () => {
+    // The production shape behind "the node's DONE never arrives": workflow nodes have no run row, so the
+    // generic delegation sweep never touched their children — the engine re-prompted the node with its
+    // task. Now the engine asks the host, and the child gets exactly the continuation a delegation gets.
+    const d = fakeDeps();
+    const child = 'brain-ch-subagent-wf-wf-node-one-1';
+    d.session.messages.push({ role: 'user', content: 'the interrupted task' } as never);
+    const seen = await bootWithWorkflowNodeChild(d, child, () => {
+      d.store.appendMessage({
+        id: 'a-node-mut', sessionId: child, parentId: null, role: 'assistant',
+        content: { role: 'assistant', content: [{ type: 'toolCall', id: 'w1', name: 'Bash', arguments: { command: 'sleep' } }] },
+      });
+      d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-node-mut'").run();
+    });
+    expect(seen).toHaveLength(1);
+    expect(seen[0]!.outcome).toMatchObject({ outcome: 'continued' });
+    expect(seen[0]!.events).toContain('session'); // the engine's progress stream keeps working on a continuation
+    // One continuation, no prompt, no custom message of any kind into the node's child.
+    expect(d.session._runAgentPrompt).toHaveBeenCalledTimes(1);
+    expect(d.session.prompt).not.toHaveBeenCalled();
+    expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
+    const rows = d.store.getMessages(child);
+    const callIndex = rows.findIndex((m) => m.id === 'a-node-mut');
+    const answer = JSON.parse(rows[callIndex + 1]!.content) as { role: string; toolCallId: string; content: { text: string }[] };
+    expect(answer).toMatchObject({ role: 'toolResult', toolCallId: 'w1' });
+    expect(answer.content[0]!.text).toContain('[interrupted]');
+    expect(rows.every((m) => m.pending === 0)).toBe(true);
+  });
+
+  it('a workflow node child that had already answered before the pause is finished from its transcript, and an empty one is reported empty', async () => {
+    const d = fakeDeps();
+    const child = 'brain-ch-subagent-wf-wf-node-one-2';
+    const seen = await bootWithWorkflowNodeChild(d, child, () => {
+      d.store.appendMessage({
+        id: 'a-node-final', sessionId: child, parentId: null, role: 'assistant',
+        content: { role: 'assistant', content: [{ type: 'text', text: 'NODE DONE: 42' }], stopReason: 'stop', usage: { input: 10, output: 4, cacheRead: 0, cacheWrite: 0, totalTokens: 14 } },
+      });
+      d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-node-final'").run();
+    });
+    expect(seen[0]!.outcome).toEqual({ outcome: 'answered', reply: 'NODE DONE: 42' });
+    expect(d.session._runAgentPrompt).not.toHaveBeenCalled();
+    expect(d.store.getMessages(child).every((m) => m.pending === 0)).toBe(true);
+
+    const e = fakeDeps();
+    const emptyChild = 'brain-ch-subagent-wf-wf-node-one-3';
+    const seenEmpty = await bootWithWorkflowNodeChild(e, emptyChild, () => {
+      e.db.prepare('DELETE FROM brain_messages WHERE session_id = ?').run(emptyChild);
+    });
+    expect(seenEmpty[0]!.outcome).toEqual({ outcome: 'empty' });
+    expect(e.session._runAgentPrompt).not.toHaveBeenCalled();
+  });
+
+  it('continueNode refuses a child that does not belong to the workflow\'s origin conversation', async () => {
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-other', userId: 1, model: 'm' });
+    const foreign = 'brain-ch-subagent-foreign';
+    const seen = await bootWithWorkflowNodeChild(d, foreign, () => {
+      d.db.prepare("UPDATE brain_sessions SET parent_session_id = 'brain-other' WHERE id = ?").run(foreign);
+    }).catch((err: Error) => err);
+    // The engine's resume threw through the hook: core terminalizes the claim rather than continuing a
+    // stranger's child; the child itself was never touched.
+    expect(seen).toBeInstanceOf(Array);
+    expect(d.session._runAgentPrompt).not.toHaveBeenCalled();
+    const wfRow = d.db.prepare("SELECT state FROM brain_workflows WHERE tool_call_id = 'call-wf-node'").get() as { state: string };
+    expect(JSON.parse(wfRow.state).status).not.toBe('running');
+  });
+
+  it('a client attached in the boot window is told to resync once recovery handed the workflow back, and then sees it running', async () => {
+    // The whole production shape end to end: reconnect during the boot window → the snapshot already says
+    // running (the read model trusts the claim) → boot recovery finishes the workflows pass → `resync`
+    // reaches the attached client → its refetched snapshot shows the DAG the engine now holds.
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} });
+    let engineHolds = false;
+    ctx.registerControl('workflow', {
+      cancelForSession: () => ({ cancelled: 0 }),
+      detachForeground: () => ({ detached: 0 }),
+      activeCount: () => 0,
+      isWorkflowLive: () => engineHolds,
+      addNodesFromSession: () => { throw new Error('unused'); },
+      resumeInterrupted: async () => { engineHolds = true; return { resumed: true }; },
+    });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.appendMessage({
+      id: 'a-wf-win', sessionId: 'brain-1', parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'call-wf-win', name: 'WorkflowStart', arguments: {} }] },
+    });
+    d.store.appendMessage({ id: 'r-wf-win', sessionId: 'brain-1', parentId: null, role: 'toolResult', content: { role: 'toolResult', toolCallId: 'call-wf-win', toolName: 'WorkflowStart', content: [{ type: 'text', text: 'started' }] } });
+    d.store.upsertWorkflowRun('brain-1', {
+      id: 'wf-win', toolCallId: 'call-wf-win', status: 'running',
+      nodes: [{ id: 'api', task: 'build', status: 'running', deps: [] }],
+    });
+    setWorkflowLivenessProbe((id) => (id === 'wf-win' ? (engineHolds ? true : undefined) : undefined));
+    try {
+      const restarted = new BrainService(d as never);
+      const recovery = bootRecovery(restarted);
+      recovery.claimAll();
+      // The client attaches in the boot window and takes its first snapshot.
+      await restarted.start(1, { session: 'brain-1' });
+      const seen: { type?: string }[] = [];
+      restarted.subscribe(1, (event) => { seen.push(event as { type?: string }); });
+      const wfOf = () => restarted.messagesOf(1, 'brain-1').flatMap((m) => m.segments ?? [])
+        .map((seg) => (seg.kind === 'tool' ? (seg as { wf?: { status: string } }).wf : undefined)).find((wf) => !!wf);
+      expect(wfOf()?.status).toBe('running'); // never the 12✗ card
+
+      await recovery.resumeAll({ onProviderResumed: (id) => { if (id === 'workflows') restarted.publishResync('boot-recovered'); } });
+
+      expect(seen.some((e) => e.type === 'resync')).toBe(true);
+      expect(engineHolds).toBe(true);
+      expect(wfOf()?.status).toBe('running'); // the refetched snapshot: held by the engine now
+    } finally {
+      setWorkflowLivenessProbe(() => undefined);
+    }
+  });
+
+  it('a resumed workflow publishes its progress to clients attached to the origin conversation', async () => {
+    // The resume hook used to write every engine snapshot to the store and tell nobody: a client that had
+    // reconnected kept whatever it was last shown. It now rides the same live `workflow` event the
+    // in-turn emitWorkflow publishes.
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} });
+    let emit: ((update: unknown) => void) | undefined;
+    ctx.registerControl('workflow', {
+      cancelForSession: () => ({ cancelled: 0 }),
+      detachForeground: () => ({ detached: 0 }),
+      activeCount: () => 0,
+      isWorkflowLive: () => true,
+      addNodesFromSession: () => { throw new Error('unused'); },
+      resumeInterrupted: async (input: { hooks: { emit: (update: unknown) => void } }) => { emit = input.hooks.emit; return { resumed: true }; },
+    });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.upsertWorkflowRun('brain-1', {
+      id: 'wf-live', toolCallId: 'call-wf-live', status: 'running',
+      nodes: [{ id: 'api', task: 'build', status: 'running', deps: [] }],
+    });
+
+    const restarted = new BrainService(d as never);
+    await restarted.start(1, { session: 'brain-1' });
+    const seen: unknown[] = [];
+    restarted.subscribe(1, (event) => { seen.push(event); });
+    await runBootRecovery(restarted);
+    expect(emit).toBeDefined();
+
+    emit!({ id: 'wf-live', toolCallId: 'call-wf-live', status: 'running', nodes: [{ id: 'api', task: 'build', status: 'done', deps: [] }] });
+    emit!({ id: 'wf-live', toolCallId: 'call-wf-live', status: 'done', nodes: [{ id: 'api', task: 'build', status: 'done', deps: [] }] });
+
+    const workflowEvents = seen.filter((e) => (e as { type?: string }).type === 'workflow') as { status: string; nodes: { status: string }[] }[];
+    expect(workflowEvents.map((e) => e.status)).toEqual(['running', 'done']);
+    expect(workflowEvents[0]!.nodes[0]!.status).toBe('done');
+    expect(d.store.getWorkflowRuns('brain-1')[0]?.status).toBe('done'); // the store still learns it too
   });
 
   it('boot workflow resume supersedes generic recovery of a delegation nested inside a claimed node', async () => {

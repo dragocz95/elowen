@@ -295,6 +295,67 @@ export class DelegatedSessionService {
     catch (e) { logger('brain').warn(`recovered result delivery to ${run.parentSessionId} failed (durable, will retry): ${e instanceof Error ? e.message : String(e)}`); }
   }
 
+  /** Settle a child's interrupted tail the way every restart continuation needs it, whether the child is
+   *  a delegation with a run row or a workflow node without one.
+   *  - `answered`: the child's LAST word before the pause was a PROVABLY final answer (finishedAnswerOf:
+   *    stopReason stop, usage stamped, no tool call). Only its terminal bookkeeping was lost with the
+   *    process — no model call, the text IS the result. The tail is the pending rows when there are any,
+   *    else the last settled row.
+   *  - `continuable`: the tail was answered (settlePartialTurn): an unanswered LOCAL tool call gets an
+   *    `[interrupted … verify before repeating]` result — the model knows what the call was for, the
+   *    daemon does not; an unanswered DELEGATION call gets `[interrupted, resuming]`, or the grandchild's
+   *    recovered answer folded straight in when the deepest-first sweep already finished it. The child's
+   *    turn can now be CONTINUED from that tail — no instruction, no message: the explanation sits inside
+   *    the results the model reads next. The fold is durable the moment it is written, so the inbox rows
+   *    it consumed are acknowledged IN THE SAME transaction — a continuation that then fails must not let
+   *    the ordinary drain deliver the same answer a second time. Any other pending result (a background
+   *    child that finished before the pause, whose call was already answered) is left for the drain.
+   *  - `empty`: nothing to continue over (`tail` says what the transcript is). */
+  private settleInterruptedChild(childSessionId: string):
+    { kind: 'answered'; text: string } | { kind: 'continuable' } | { kind: 'empty'; tail: string } {
+    const pending = this.d.store.pendingMessages(childSessionId);
+    const tail = pending.length > 0 ? pending : this.d.store.getMessages(childSessionId).slice(-1);
+    const finished = finishedAnswerOf(tail.map((row) => row.content));
+    if (finished !== undefined) {
+      settlePartialTurn(this.d.store, childSessionId);
+      return { kind: 'answered', text: finished };
+    }
+    const outstanding = outstandingToolCalls(pending.map((row) => row.content));
+    const folded = new Set(outstanding.filter((o) => DELEGATION_WAIT_TOOLS.has(o.name)).map((o) => o.id));
+    const settled = this.d.store.atomically(() => {
+      const outcome = settlePartialTurn(this.d.store, childSessionId);
+      for (const r of this.d.store.pendingSubagentResults(childSessionId)) {
+        if (folded.has(r.toolCallId)) this.d.store.acknowledgeSubagentResult(childSessionId, r.id);
+      }
+      return outcome;
+    });
+    return settled.tail === 'continuable' ? { kind: 'continuable' } : { kind: 'empty', tail: settled.tail };
+  }
+
+  /** A workflow node's child, resumed from the engine's recovery journal at boot. Workflow nodes have no
+   *  run row (the DAG is the parent's durable unit), so the generic delegation sweep never sees them;
+   *  the engine asks for the SAME continuation a delegation gets instead of re-prompting the node with
+   *  its task: the transcript already ending on a final answer is that answer (`answered`), an interrupted
+   *  turn is continued silently over its `[interrupted]` results (`continued`, the reply being the
+   *  continuation's answer), and only an empty transcript sends the engine back to a fresh prompt
+   *  (`empty`). Ownership-guarded like stopSubagent: the child must belong to the workflow's origin. */
+  async continueWorkflowNode(
+    parentSessionId: string, childSessionId: string, onEvent?: (e: BrainEvent) => void,
+  ): Promise<{ outcome: 'answered' | 'continued'; reply: string } | { outcome: 'empty' }> {
+    const row = this.d.store.getSession(childSessionId);
+    if (!row || row.parent_session_id !== parentSessionId || !isSubagentSession(childSessionId)) {
+      throw new Error('unknown sub-agent for this workflow');
+    }
+    const settled = this.settleInterruptedChild(childSessionId);
+    if (settled.kind === 'answered') return { outcome: 'answered', reply: settled.text };
+    if (settled.kind === 'empty') return { outcome: 'empty' };
+    const reply = await this.sendDelegated(row.user_id, childSessionId, '', {
+      internalSystem: { customType: 'restart-continue', resultId: `restart-continue-${randomUUID()}`, continuation: true },
+      ...(onEvent ? { onEvent } : {}),
+    });
+    return { outcome: 'continued', reply };
+  }
+
   /** Recover ONE claimed delegation. Gives up as an error past the attempt cap; completes a child that had
    *  already answered straight from its transcript; otherwise answers the interrupted tail with
    *  `interrupted` results and respawns the child to finish, then completes the run atomically —
@@ -316,42 +377,12 @@ export class DelegatedSessionService {
       });
       return 'terminalized';
     }
-    // A child whose LAST word before the pause was a PROVABLY final answer (finishedAnswerOf: stopReason
-    // stop, usage stamped, no tool call) had in fact finished: only its terminal bookkeeping was lost with
-    // the process. Complete the run from the transcript — no model call, the parent gets the answer
-    // right away. The tail is the pending rows when there are any, else the last settled row (the
-    // agent_end had settled the turn and only the run's completion upsert was lost).
-    const pending = this.d.store.pendingMessages(childSessionId);
-    const tail = pending.length > 0 ? pending : this.d.store.getMessages(childSessionId).slice(-1);
-    const finished = finishedAnswerOf(tail.map((row) => row.content));
-    if (finished !== undefined) {
-      settlePartialTurn(this.d.store, childSessionId);
-      this.d.store.completeRecoveredRun(parentSessionId, toolCallId, { ...base, status: 'done', result: finished });
+    const settled = this.settleInterruptedChild(childSessionId);
+    if (settled.kind === 'answered') {
+      this.d.store.completeRecoveredRun(parentSessionId, toolCallId, { ...base, status: 'done', result: settled.text });
       logger('brain').info(`boot recovery completed ${childSessionId} from its transcript: it had already answered before the restart`);
       return 'resumed';
     }
-    // Answer the interrupted tail (settlePartialTurn): an unanswered LOCAL tool call gets an
-    // `[interrupted … verify before repeating]` result — the model knows what the call was for, the
-    // daemon does not; an unanswered DELEGATION call gets `[interrupted, resuming]`, or the grandchild's
-    // recovered answer folded straight in when the deepest-first sweep already finished it. Then the
-    // child's turn is CONTINUED from that tail — no instruction, no message: the explanation sits inside
-    // the results the model reads next. The child owns this session id, so sendDelegated resolves its scope.
-    const outstanding = outstandingToolCalls(pending.map((row) => row.content));
-    // The child's already-recovered delegated results: the deepest-first sweep finished its own children
-    // BEFORE this continuation, and settlePartialTurn folds each finished grandchild's answer into the
-    // `[interrupted, result recovered]` answer of the Delegate call that was waiting for it. The fold is
-    // durable the moment it is written, so the inbox rows it consumed are acknowledged IN THE SAME
-    // transaction — a continuation that then fails must not let the ordinary drain deliver the same
-    // answer a second time. Any other pending result (a background child that finished before the pause,
-    // whose call was already answered) is left for the drain.
-    const folded = new Set(outstanding.filter((o) => DELEGATION_WAIT_TOOLS.has(o.name)).map((o) => o.id));
-    const settled = this.d.store.atomically(() => {
-      const outcome = settlePartialTurn(this.d.store, childSessionId);
-      for (const r of this.d.store.pendingSubagentResults(childSessionId)) {
-        if (folded.has(r.toolCallId)) this.d.store.acknowledgeSubagentResult(childSessionId, r.id);
-      }
-      return outcome;
-    });
     const owner = this.d.store.getSession(childSessionId);
     if (!owner) {
       this.d.store.completeRecoveredRun(parentSessionId, toolCallId, {
@@ -359,7 +390,7 @@ export class DelegatedSessionService {
       });
       return 'terminalized';
     }
-    if (settled.tail !== 'continuable') {
+    if (settled.kind === 'empty') {
       // Nothing to continue — an EMPTY transcript: the pause hit between accepting the delegation and
       // persisting the child's task, so there is no work to pick up and nothing a continuation could run
       // over. Terminal, as an ordinary error result the parent reads (it re-delegates if it still wants

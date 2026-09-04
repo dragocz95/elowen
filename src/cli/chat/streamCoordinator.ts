@@ -154,6 +154,13 @@ export class StreamCoordinator implements StreamCoordinatorPort {
           return;
         }
         if (event.type === 'compacted') { if (!fromSnapshot) refetchHistory(); return; }
+        // Boot recovery finished under this attached stream: whatever this client was shown in the boot
+        // window (a workflow the read model could not yet vouch for, a sub-agent's claim) is refetched
+        // exactly as on a reconnect — status for the header and rail, history for the transcript.
+        if (event.type === 'resync') {
+          if (!fromSnapshot) { refetchHistory(); void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:resync'); }); }
+          return;
+        }
 
         // Binding is control state, not transcript state. Commit it before any hydration buffer can defer
         // or discard the visual reset; replay later applies only TranscriptModel's session semantics.
