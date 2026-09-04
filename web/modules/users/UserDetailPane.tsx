@@ -18,6 +18,7 @@ import { ModelIcon } from '../../components/ui/ModelIcon';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
 import { DetailBlock } from '../../components/ui/DetailBlock';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
+import { brainModelSelection } from '../../components/ui/brainModelSelection';
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
 import { useTranslation } from '../../lib/i18n';
 import { localDateTime } from '../../lib/format';
@@ -25,11 +26,11 @@ import { ToolPills } from './ToolPills';
 import { UserStatsInline } from './UserStatsInline';
 import { PluginUserPanels } from './PluginUserPanels';
 
-/** Small provider logo for the modal's group headers/filter chips. */
+/** Small provider logo for the modal's worker-provider group headers/filter chips. */
 function ProviderGroupIcon({ provider }: { provider: ProviderId }) {
   const meta = providerMeta(provider);
   if (!meta) return null;
-  return <ProviderIcon meta={meta} size={13} />;
+  return <ProviderIcon meta={meta} size={14} />;
 }
 
 /** Admin-only: assign a user to projects (the access boundary for non-admins). A compact summary
@@ -94,7 +95,8 @@ function ProjectChips({ userId, projects }: { userId: number; projects: Project[
 }
 
 /** Admin-only: restrict which models a user may run on tasks. Empty selection → no restriction.
- *  Summary shows the effective allowance; the manage modal groups the global allow-list by provider. */
+ *  Summary shows the effective allowance; the manage modal groups brain models by their catalog provider
+ *  (the shared picker grouping) and worker execs by their executor provider. */
 function ModelChips({ user, globalExecs, custom }: { user: ElowenUser; globalExecs: string[]; custom: { label: string; exec: string }[] }) {
   const { t } = useTranslation();
   const update = useUpdateUser();
@@ -123,31 +125,36 @@ function ModelChips({ user, globalExecs, custom }: { user: ElowenUser; globalExe
   // only as long as its provider does, so its rows come from the live catalog: deleting a provider leaves
   // its `provider/model` strings behind in `globalExecs`, and reading them from there is exactly why
   // `alibaba/…` stayed listed and selectable after that provider was removed.
-  const brainExecs = (brainModels.data ?? []).map(brainModelId);
-  const offeredExecs = [...globalExecs.filter((e) => execProvider(e) !== 'elowen'), ...brainExecs];
-  // Nothing left to grant — which now includes the case where every configured provider is gone. Rendering
-  // an empty picker would invite a save that clears the account's grants as a side effect of that outage.
-  if (offeredExecs.length === 0) return <p className="text-xs italic text-muted-foreground">—</p>;
+  const brainCatalog = brainModels.data ?? [];
+  const brainExecs = brainCatalog.map(brainModelId);
+  const cliExecs = globalExecs.filter((e) => execProvider(e) !== 'elowen');
+  if (cliExecs.length === 0 && brainExecs.length === 0) return <p className="text-xs italic text-muted-foreground">—</p>;
 
-  // Order execs by the settings' provider order so the modal groups follow the executor picker.
+  // Brain rows take the ONE shared picker grouping, so this modal and the Settings role pickers group by
+  // the same authoritative `provider`/`providerLabel` and cannot drift. Worker rows keep the executor
+  // grouping, under `cli:`-prefixed group keys so a worker provider id can never collide with a configured
+  // brain provider id (`providerMeta` would otherwise answer a brain provider literally named `codex`).
+  const cliGroup = (prov: ProviderId) => `cli:${prov}`;
   const providerOrder = (id: ProviderId) => {
     const i = PROVIDERS.findIndex((p) => p.id === id);
     return i === -1 ? PROVIDERS.length : i;
   };
-  const sortedExecs = [...offeredExecs].sort((a, b) => providerOrder(execProvider(a)) - providerOrder(execProvider(b)));
-  const items: ManageSelectionItem[] = sortedExecs.map((exec) => {
-    const prov = execProvider(exec);
-    return {
+  const cliGroups = [...new Set(cliExecs.map(execProvider))].sort((a, b) => providerOrder(a) - providerOrder(b));
+  const cliItems: ManageSelectionItem[] = cliGroups.flatMap((prov) => cliExecs
+    .filter((e) => execProvider(e) === prov)
+    .map((exec) => ({
       id: exec,
       label: labelOf(exec),
-      group: prov,
+      group: cliGroup(prov),
       groupLabel: providerMeta(prov)?.label ?? prov,
       icon: <ModelIcon name={iconNameOf(exec)} size={14} />,
-    };
-  });
-  const groupIcons = Object.fromEntries(
-    [...new Set(sortedExecs.map(execProvider))].map((prov) => [prov, <ProviderGroupIcon key={prov} provider={prov} />]),
-  );
+    })));
+  const { items: brainItems, groupIcons: brainGroupIcons } = brainModelSelection(brainCatalog, brainModelId);
+  const items: ManageSelectionItem[] = [...cliItems, ...brainItems];
+  const groupIcons = {
+    ...Object.fromEntries(cliGroups.map((prov) => [cliGroup(prov), <ProviderGroupIcon key={prov} provider={prov} />])),
+    ...brainGroupIcons,
+  };
 
   const selected = new Set(user.allowed_execs);
   // The summary counts the user's OWN grants, not their intersection with what is currently offered. A
@@ -156,12 +163,23 @@ function ModelChips({ user, globalExecs, custom }: { user: ElowenUser; globalExe
   // simply has no row to click; the PATCH filter drops it the next time the admin saves.
   const grants = user.allowed_execs;
   const restricted = grants.length > 0;
-  const summarySource = restricted ? grants : sortedExecs;
+  const summarySource = restricted ? grants : items.map((it) => it.id);
+  // {p} counts the DISTINCT provider groups behind the grants, resolved exactly the way the modal
+  // displays them — a brain grant through its catalog provider, a CLI grant through its executor
+  // provider — so two brain providers never collapse into the embedded brain's single bucket. A dead
+  // grant has no displayed group and contributes no provider, while still counting as a model below.
+  const groupKeyOf = (exec: string): string | null => {
+    const inCatalog = brainCatalog.find((m) => brainModelId(m) === exec);
+    if (inCatalog) return inCatalog.provider;
+    const prov = execProvider(exec);
+    return prov === 'elowen' ? null : cliGroup(prov);
+  };
+  const providerCount = new Set(grants.map(groupKeyOf).filter((key) => key !== null)).size;
   const countText = restricted
     ? t.managePicker.modelsCount
         .replace('{n}', String(grants.length))
-        .replace('{p}', String(new Set(grants.map(execProvider)).size))
-    : t.managePicker.allModelsCount.replace('{n}', String(sortedExecs.length));
+        .replace('{p}', String(providerCount))
+    : t.managePicker.allModelsCount.replace('{n}', String(items.length));
 
   const handleSave = async (next: Set<string>) => {
     try {

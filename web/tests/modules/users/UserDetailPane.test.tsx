@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
@@ -154,6 +154,78 @@ describe('UserDetailPane', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(patched.id).toBe('2'));
     expect((patched.body as { allowed_execs: string[] }).allowed_execs).toEqual(['sonnet']);
+  });
+
+  // The manage modal separates brain models under ONE HEADER PER REAL CATALOG PROVIDER — Anthropic,
+  // Z.ai, Účet ChatGPT each get their own brand-marked group, and the embedded brain must never become
+  // an "Elowen AI" umbrella over them — while worker execs keep their executor groups. A brain model
+  // whose MODEL id itself contains a slash (`openai/gpt-5.6-sol`) is the proof the grouping never
+  // splits the identifier: the first slash segment must not become a provider group, the row stays
+  // whole in its provider's section, and saving grants the full exec.
+  it('separates brain models under their own brand-iconed provider headers and keeps a slash model id whole', async () => {
+    const exec = 'chatgpt-account/openai/gpt-5.6-sol';
+    let patched: { body?: unknown } = {};
+    server.use(
+      http.get('*/api/users/2/projects', () => HttpResponse.json([])),
+      http.get('*/api/brain/models', () => HttpResponse.json([
+        { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus-5', exec: 'anthropic/claude-opus-5', legacyExec: 'elowen:anthropic/claude-opus-5', program: 'elowen', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+        { provider: 'zai', providerLabel: 'Z.ai', model: 'glm-5.2', exec: 'zai/glm-5.2', legacyExec: 'elowen:zai/glm-5.2', program: 'elowen', source: 'api-key', contextWindow: 200000, contextWindowSet: false },
+        { provider: 'chatgpt-account', providerLabel: 'Účet ChatGPT', model: 'openai/gpt-5.6-sol', exec, legacyExec: `elowen:${exec}`, program: 'elowen', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+      ])),
+      http.patch('*/api/users/:id', async ({ request }) => {
+        patched = { body: await request.json() };
+        return HttpResponse.json({ id: 2 });
+      }),
+    );
+    mount(user(), [], ['sonnet', exec]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage allowed models' }));
+
+    // One header per provider — the CLI worker group plus every real brain provider — each carrying a
+    // brand mark (the Claude Code header via ProviderIcon, the brain headers via the shared resolver).
+    const headerMark = (name: string) => screen.getByRole('heading', { name }).querySelector('[data-brand-mark]');
+    expect(screen.getByRole('heading', { name: 'Claude Code' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Anthropic' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Z.ai' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Účet ChatGPT' })).toBeTruthy();
+    for (const name of ['Claude Code', 'Anthropic', 'Z.ai', 'Účet ChatGPT']) {
+      expect(headerMark(name)).toBeTruthy();
+    }
+    expect(screen.getByRole('heading', { name: 'Claude Code' }).querySelector('img[data-brand-mark]')).toHaveAttribute('src', '/providers/anthropic.png');
+    // The group filter chips carry the same brand mark with the human label.
+    expect(within(screen.getByRole('tablist')).getByRole('tab', { name: 'Účet ChatGPT' }).querySelector('[data-brand-mark]')).toBeTruthy();
+
+    // No "Elowen AI" umbrella group over the brain rows, and the slash never became a provider boundary.
+    expect(screen.queryByRole('heading', { name: 'Elowen AI' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'chatgpt-account' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'openai' })).toBeNull();
+
+    // Exactly one row for the model, living in the Účet ChatGPT section — not split across two groups.
+    const rows = screen.getAllByRole('button', { name: 'openai/gpt-5.6-sol' });
+    expect(rows).toHaveLength(1);
+    const section = rows[0]!.closest('section')!;
+    expect(within(section).getByRole('heading', { name: 'Účet ChatGPT' })).toBeTruthy();
+    expect(within(section).queryByRole('button', { name: /Claude Sonnet 4\.5/ })).toBeNull();
+
+    // Saving grants the FULL exec — the identifier survives the round-trip unsplit.
+    fireEvent.click(rows[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(patched.body).toBeTruthy());
+    expect((patched.body as { allowed_execs: string[] }).allowed_execs).toEqual([exec]);
+  });
+
+  // The summary's provider count reads the same provider groups the modal displays: two brain providers
+  // behind the grants are TWO providers, not the embedded brain's single bucket.
+  it('counts the distinct provider groups behind the grants', async () => {
+    const exec = 'chatgpt-account/openai/gpt-5.6-sol';
+    server.use(
+      http.get('*/api/users/2/projects', () => HttpResponse.json([])),
+      http.get('*/api/brain/models', () => HttpResponse.json([
+        { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus-5', exec: 'anthropic/claude-opus-5', legacyExec: 'elowen:anthropic/claude-opus-5', program: 'elowen', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+        { provider: 'chatgpt-account', providerLabel: 'Účet ChatGPT', model: 'openai/gpt-5.6-sol', exec, legacyExec: `elowen:${exec}`, program: 'elowen', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+      ])),
+    );
+    mount(user({ allowed_execs: ['sonnet', 'anthropic/claude-opus-5', exec] }), [], ['sonnet', exec]);
+    expect(await screen.findByText('3 models · 3 providers')).toBeTruthy();
   });
 
   it('mounts a generic plugin panel with the selected User DTO', async () => {

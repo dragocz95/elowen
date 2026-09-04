@@ -99,6 +99,38 @@ describe('SettingsPage', () => {
     expect(screen.queryByRole('button', { name: 'Add model' })).toBeNull();
   });
 
+  // The catalog separates its listing under the provider's card: the card header carries the provider's
+  // brand logo beside its human label, and a model whose MODEL id itself contains a slash
+  // (`openai/gpt-5.6-sol`) stays one whole row inside that group — enabling it stores the full exec,
+  // never an identifier split at the slash.
+  it('groups the catalog under a brand-iconed provider header and keeps a slash model id whole', async () => {
+    server.use(http.get('*/api/brain/models', () => HttpResponse.json([
+      { provider: 'chatgpt-account', providerLabel: 'Účet ChatGPT', model: 'openai/gpt-5.6-sol', exec: 'elowen:chatgpt-account/openai/gpt-5.6-sol', program: 'elowen', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+    ])));
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Models' })).toBeInTheDocument();
+
+    // The provider card's header carries the provider's own brand mark beside the human label.
+    const heading = screen.getByRole('heading', { name: 'Elowen AI' });
+    const mark = heading.closest('.settings-group__heading')!.querySelector<HTMLElement>('[data-brand-mark]');
+    expect(mark).not.toBeNull();
+    expect(mark).toHaveAttribute('src', '/icon.png');
+
+    // The row lives inside that provider's card, whole: the toggle is named with the full model id.
+    const card = heading.closest<HTMLElement>('[data-settings-group]')!;
+    const row = within(card).getByLabelText('openai/gpt-5.6-sol');
+    expect(row).not.toBeChecked();
+    expect(screen.getAllByTestId('model-row')).toHaveLength(1);
+
+    // Enabling it persists the FULL exec — the identifier survives unsplit.
+    fireEvent.click(row);
+    await waitFor(() => expect(putBody).toBeTruthy());
+    const execs = (putBody as { allowedExecs: string[] }).allowedExecs;
+    expect(execs).toContain('elowen:chatgpt-account/openai/gpt-5.6-sol');
+    expect(execs).not.toContain('openai/gpt-5.6-sol');
+  });
+
   it('auto-saves an embedded model allowlist change', async () => {
     putBody = null;
     const { wrapper: Wrapper } = createWrapper();
