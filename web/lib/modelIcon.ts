@@ -20,6 +20,10 @@ const RULES: [RegExp, string][] = [
   [/grok/i, 'grok'],
   [/\bxai\b/i, 'xai'],
   [/xiaomi|mimo/i, 'xiaomimimo'],
+  // Z.ai — Zhipu's international brand — carries its OWN lobe mark, distinct from the GLM models Zhipu
+  // serves, and it is mono-only. Matched whole-word, so a label like `Z.ai` or an id `zai` brands while
+  // `myz.ai` or a model containing "zai" mid-word stays untouched.
+  [/\bz\.?ai\b/i, 'zai'],
   [/glm|chatglm|zhipu/i, 'zhipu'],
   [/llama|meta[\s_-]?ai|\bmeta\b/i, 'metaai'],
   [/ollama/i, 'ollama'],
