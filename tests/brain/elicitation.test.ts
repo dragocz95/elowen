@@ -60,6 +60,43 @@ describe('ElicitationRegistry — parked AskUserQuestion lifecycle', () => {
     await expect(p2).resolves.toEqual([{ header: 'Choice', selected: ['B'] }]);
   });
 
+  it.each([
+    ['wrong answer count', [], Q],
+    ['unknown selected label', [{ header: 'Choice', selected: ['C'] }], Q],
+    ['more than one pick for single-select', [{ header: 'Choice', selected: ['A', 'B'] }], Q],
+    ['custom text when custom input is disabled', [{ header: 'Choice', selected: ['A'], other: 'note' }], [{ ...Q[0]!, custom: false }]],
+    ['a mismatched header', [{ header: 'Other', selected: ['A'] }], Q],
+  ])('rejects %s without consuming the pending prompt', async (_name, answers, questions) => {
+    const reg = new ElicitationRegistry();
+    let id = '';
+    const pending = reg.ask('sess-1', questions as AskQuestion[], (e) => { if (e.type === 'ask') id = e.id; });
+    expect(reg.answer(id, answers as never)).toBe(false);
+    expect(reg.pendingForSession('sess-1')?.id).toBe(id);
+    expect(reg.answer(id, [{ header: 'Choice', selected: ['A'] }])).toBe(true);
+    await expect(pending).resolves.toEqual([{ header: 'Choice', selected: ['A'] }]);
+  });
+
+  it('accepts multiple distinct known labels only when the pending question is multi-select', async () => {
+    const reg = new ElicitationRegistry();
+    let id = '';
+    const questions: AskQuestion[] = [{ ...Q[0]!, multiSelect: true, custom: true }];
+    const pending = reg.ask('sess-1', questions, (e) => { if (e.type === 'ask') id = e.id; });
+    const answers = [{ header: 'Choice', selected: ['A', 'B'], other: 'note' }];
+    expect(reg.answer(id, answers)).toBe(true);
+    await expect(pending).resolves.toEqual(answers);
+  });
+
+  it('rejects duplicate multi-select labels and preserves the prompt for a corrected answer', async () => {
+    const reg = new ElicitationRegistry();
+    let id = '';
+    const questions: AskQuestion[] = [{ ...Q[0]!, multiSelect: true }];
+    const pending = reg.ask('sess-1', questions, (e) => { if (e.type === 'ask') id = e.id; });
+    expect(reg.answer(id, [{ header: 'Choice', selected: ['A', 'A'] }])).toBe(false);
+    expect(reg.pendingForSession('sess-1')?.id).toBe(id);
+    reg.answer(id, [{ header: 'Choice', selected: ['B'] }]);
+    await pending;
+  });
+
   it('serializes two back-to-back approvals in one session — neither cancels the other into a deny', async () => {
     const reg = new ElicitationRegistry();
     const events: { id: string }[] = [];
