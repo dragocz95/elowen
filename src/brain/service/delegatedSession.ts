@@ -12,7 +12,7 @@ import { extractText } from '../messageView.js';
 import type { BrainModelSelection } from '../providers.js';
 import type { LiveBrain } from '../session/liveBrain.js';
 import type { LiveSessionRegistry } from '../session/liveRegistry.js';
-import { channelIdOf, isSubagentSession, subagentSessionId } from '../sessionId.js';
+import { channelIdOf, isChannelSession, isSubagentSession, subagentSessionId } from '../sessionId.js';
 import type { DelegatedContinueResult, KnownControls, SubagentProgressEvent } from '../../plugins/api.js';
 import type { RecoveryOutcome } from '../recovery/types.js';
 import { logger } from '../../shared/logger.js';
@@ -122,6 +122,13 @@ interface DelegatedSessionDeps {
   /** Steer a parent's follow-up into a child turn RUNNING in the sub-agent runner — the cross-process
    *  half of continueSubagent's mid-turn delivery. Absent (no runner) ⇒ no remote turn can exist. */
   steerRemote?: (channelId: string, text: string) => Promise<{ outcome: 'delivered' | 'idle' | 'aborted' }>;
+  /** A boot-recovered run just reached its terminal row (result or error enqueued in the durable inbox).
+   *  Wired to the same delivery a background delegation uses in normal operation, so the parent receives
+   *  the answer NOW rather than at the next boot: the owner-conversations sweep no longer waits for the
+   *  delegation sweep (see recovery/providers.ts), so a result produced after the owner's wake has to
+   *  find its own way in. Owner and nested sub-agent parents only — a top-level platform room has no
+   *  inbox drain and reads its child through DelegateRead. */
+  onRecoveredRunCompleted?: (parentSessionId: string, ownerUserId: number) => Promise<void>;
 }
 
 /** The sub-agent delegation half of the brain facade: the durable boot reconcile of restart-zombie
@@ -198,6 +205,12 @@ export class DelegatedSessionService {
     });
   }
 
+  /** Every run claimed THIS boot, keyed by child session — the leaves-first dependency the concurrent
+   *  resume pass keeps: a claim whose child is itself a claimed parent waits for those deeper claims
+   *  (see recoverClaimedRun). Populated by the claim, settled as each recovery ends, never a leak: a
+   *  deferred that no recovery ever awaits is simply garbage after the pass. */
+  private recoveryOf = new Map<string, { parentSessionId: string; done: Promise<void>; settle: () => void }>();
+
   /** Hand the phase-1 workflow claims to phase 2 exactly once (the `workflows` provider's claim). */
   takePendingWorkflowRecovery(): RecoverableWorkflow[] {
     const claimed = this.pendingWorkflowRecovery;
@@ -210,6 +223,11 @@ export class DelegatedSessionService {
   takePendingRecovery(): RecoverableRun[] {
     const claimed = this.pendingRecovery;
     this.pendingRecovery = [];
+    this.recoveryOf = new Map(claimed.map((run) => {
+      let settle = (): void => { /* replaced below */ };
+      const done = new Promise<void>((resolve) => { settle = resolve; });
+      return [run.childSessionId, { parentSessionId: run.parentSessionId, done, settle }];
+    }));
     return claimed;
   }
 
@@ -237,6 +255,14 @@ export class DelegatedSessionService {
    *  notice when the recovery turn itself fails unexpectedly — otherwise a current-boot `recovering` claim
    *  would sit with no worker until another daemon restart happened to retry it. */
   async recoverClaimedRun(run: RecoverableRun): Promise<RecoveryOutcome> {
+    // Leaves first, kept under a CONCURRENT sweep: this child may itself be a parent whose own children
+    // were claimed too; their recovered answers must sit in its inbox before its respawn folds them in.
+    // Only claims of THIS boot are awaited (a cycle in a corrupt relation cannot form: a run never waits
+    // for a claim whose child is its own parent chain, because that chain is what makes it deeper).
+    const deeper = [...this.recoveryOf.entries()]
+      .filter(([, entry]) => entry.parentSessionId === run.childSessionId)
+      .map(([, entry]) => entry.done);
+    if (deeper.length > 0) await Promise.allSettled(deeper);
     try { return await this.recoverOne(run); }
     catch (e) {
       const message = (e instanceof Error ? e.message : String(e)).slice(0, 2_000);
@@ -258,7 +284,22 @@ export class DelegatedSessionService {
       // The claim was durably parked as recovery_required WITH a parent notice, so nothing retries it and
       // the parent has been told — a terminal give-up, not an outstanding failure.
       return 'terminalized';
+    } finally {
+      this.recoveryOf.get(run.childSessionId)?.settle();
+      await this.deliverRecoveredResult(run);
     }
+  }
+
+  /** Hand a just-terminalized recovery's inbox row to its parent right away (see onRecoveredRunCompleted).
+   *  Best-effort: the row is durable and the ordinary drains retry it; a delivery failure must never turn
+   *  a finished recovery into a failed one. */
+  private async deliverRecoveredResult(run: RecoverableRun): Promise<void> {
+    if (!this.d.onRecoveredRunCompleted) return;
+    if (isChannelSession(run.parentSessionId) && !isSubagentSession(run.parentSessionId)) return;
+    const owner = this.d.store.getSession(run.parentSessionId);
+    if (!owner) return;
+    try { await this.d.onRecoveredRunCompleted(run.parentSessionId, owner.user_id); }
+    catch (e) { logger('brain').warn(`recovered result delivery to ${run.parentSessionId} failed (durable, will retry): ${e instanceof Error ? e.message : String(e)}`); }
   }
 
   /** Recover ONE claimed delegation. Gives up as an error past the attempt cap; completes a child that had

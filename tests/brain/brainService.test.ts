@@ -5882,6 +5882,49 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);
   });
 
+  it('a PAUSED owner turn blocked on its own foreground Delegate waits durably: no resume turn, the recovered result is the continuation', async () => {
+    // The pause parks the owner turn wherever it stands — here mid-Delegate. Resuming it at boot would
+    // only make the model say "still waiting" (or answer prematurely); instead the child's recovered
+    // answer is delivered as the continuation and un-parks the conversation once consumed.
+    // Rows only, no live service before the "restart": the harness shares ONE fake PI session, and a
+    // pre-restart owner listener would receive the child's recovery events as its own.
+    const d = fakeDeps();
+    const sessionId = 'brain-1';
+    d.store.createSession({ id: sessionId, userId: 1, model: 'm' });
+    const child = 'brain-ch-subagent-paused-fg';
+    d.store.createSession({
+      id: child, userId: 1, model: 'm', parentSessionId: sessionId,
+      delegatedAccess: { admin: true, owner: true, projectIds: [], permissionBoundary: null },
+    });
+    d.store.upsertSubagentRun(sessionId, { id: 'call-fg', sessionId: child, status: 'running', task: 'dig', tools: 1, seconds: 5 });
+    // The owner's interrupted tail: a pending assistant whose Delegate call never returned.
+    d.store.appendMessage({
+      id: 'a-owner-fg', sessionId, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'call-fg', name: 'Delegate', arguments: {} }] },
+    });
+    d.db.prepare("UPDATE brain_messages SET pending = 1 WHERE id = 'a-owner-fg'").run();
+    d.store.markSessionParked(sessionId); // what pauseForRestart wrote
+
+    const restarted = new BrainService(d as never);
+    const recovery = bootRecovery(restarted);
+    recovery.claimAll();
+    await recovery.resumeAll();
+
+    // No generic restart continuation was injected into the owner …
+    const customs = d.session.sendCustomMessage.mock.calls.map((call) => (call[0] as { customType?: string }).customType);
+    expect(customs).not.toContain('restart-resume');
+    // … the child's recovered answer was, exactly once, and it un-parked the conversation.
+    expect(customs.filter((type) => type === 'subagent-result')).toHaveLength(1);
+    expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);
+    expect(d.store.getSession(sessionId)).toMatchObject({ parked_at: null, park_attempts: 0 });
+    // The owner transcript answers the interrupted Delegate call instead of hiding it, right behind it.
+    const rows = d.store.getMessages(sessionId);
+    const callIndex = rows.findIndex((row) => row.id === 'a-owner-fg');
+    expect(callIndex).toBeGreaterThanOrEqual(0);
+    expect(JSON.parse(rows[callIndex + 1]!.content)).toMatchObject({ role: 'toolResult', toolCallId: 'call-fg', isError: true });
+    expect(rows.every((row) => row.pending === 0)).toBe(true);
+  });
+
   it('uses recovered results as the continuation of a genuinely parked owner turn', async () => {
     const d = fakeDeps();
     d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });

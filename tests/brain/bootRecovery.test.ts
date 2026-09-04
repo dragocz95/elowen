@@ -211,14 +211,16 @@ describe('createBootRecovery', () => {
     // Asserted on the DECLARED graph, not on a trace: a trace would pass just as happily on a chain whose
     // providers merely happen to be registered in a working order.
     expect(createBootRecovery(stubHost([]), silentLog()).plan()).toEqual([
+      // Concurrent respawns: the deepest-first guarantee lives in the host (a run awaits its claimed
+      // descendants), so a fleet of independent trees no longer serializes on one another.
+      { id: 'delegations', dependsOn: [], parallel: true },
       // The workflow claim is taken by the delegation reconcile, and a delegation claimed under a claimed
       // workflow's node session is superseded by that workflow's resume.
-      { id: 'delegations', dependsOn: [], parallel: false },
       { id: 'workflows', dependsOn: ['delegations'], parallel: false },
-      // A parked owner turn may be waiting on a result the two sweeps above queue durably first.
-      { id: 'owner-conversations', dependsOn: ['delegations', 'workflows'], parallel: true },
-      // Parked platform channel turns wait on the same durably-queued results as owner conversations.
-      { id: 'platform-conversations', dependsOn: ['delegations', 'workflows'], parallel: true },
+      // Woken in the FIRST wave, alongside the delegation sweep: a result that is already durable reaches
+      // its owner at once, and a later one arrives through the recovery's completion hook.
+      { id: 'owner-conversations', dependsOn: [], parallel: true },
+      { id: 'platform-conversations', dependsOn: [], parallel: true },
     ]);
   });
 
@@ -230,12 +232,37 @@ describe('createBootRecovery', () => {
     // delegation one, because the delegation reconcile is what takes it.
     expect(trace).toEqual(['claim:delegations', 'claim:workflows', 'claim:conversations', 'claim:platform']);
     await coordinator.resumeAll();
-    expect(trace.slice(4)).toEqual([
-      'order:delegations', 'resume:delegations',
-      'resume:workflows',
-      'resume:conversations',
-      'resume:platform',
-    ]);
+    const resumed = trace.slice(4);
+    expect(resumed.sort()).toEqual(['order:delegations', 'resume:conversations', 'resume:delegations', 'resume:platform', 'resume:workflows']);
+    // The one ordering that is load-bearing: a workflow resumes only after the delegation sweep.
+    expect(trace.indexOf('resume:workflows')).toBeGreaterThan(trace.indexOf('resume:delegations'));
+  });
+
+  it('wakes owner and platform conversations WHILE the delegation sweep is still running', async () => {
+    // The 20-minutes-after-boot symptom: the owner wake used to queue behind every respawn's whole turn.
+    const trace: string[] = [];
+    let finishDelegation: () => void = () => {};
+    const host = {
+      ...stubHost(trace),
+      recoverDelegation: async () => {
+        trace.push('resume:delegations:start');
+        await new Promise<void>((resolve) => { finishDelegation = resolve; });
+        trace.push('resume:delegations:end');
+        return 'resumed' as const;
+      },
+    };
+    const coordinator = createBootRecovery(host, silentLog());
+    coordinator.claimAll(0);
+    const done = coordinator.resumeAll();
+    for (let i = 0; i < 50 && !trace.includes('resume:platform'); i += 1) await new Promise((r) => setTimeout(r, 1));
+    expect(trace).toContain('resume:delegations:start');
+    expect(trace).toContain('resume:conversations');
+    expect(trace).toContain('resume:platform');
+    expect(trace).not.toContain('resume:delegations:end');
+    expect(trace).not.toContain('resume:workflows'); // still gated on the sweep
+    finishDelegation();
+    await done;
+    expect(trace.indexOf('resume:workflows')).toBeGreaterThan(trace.indexOf('resume:delegations:end'));
   });
 
   it('still resumes workflows and conversations when the delegation sweep fails', async () => {

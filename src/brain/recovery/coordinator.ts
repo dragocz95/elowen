@@ -142,52 +142,69 @@ export class BootRecoveryCoordinator {
     );
   }
 
-  /** Boot phase 2 — ASYNCHRONOUS, after the platforms are up. Resume each provider's claimed items in the
-   *  same declared order, isolating one provider's failure from the rest (and from the boot announcement,
-   *  which is why this never rejects).
+  /** Boot phase 2 — ASYNCHRONOUS, after the platforms are up. Resume the providers in dependency WAVES:
+   *  every provider whose dependencies have all finished runs concurrently with the others in the same
+   *  position, so an owner conversation is woken while the delegation sweep is still respawning children
+   *  rather than after it. Measured before this: with a delegation in flight the owner wake came a median
+   *  of 20 minutes after boot, because it queued behind every respawn's whole turn. Within a provider the
+   *  declared `parallel` flag still decides serial vs concurrent items, and one provider's failure is
+   *  isolated from the rest (and from the boot announcement, which is why this never rejects).
    *
    *  Never softens a failure into success, never retries an item a provider refused, never clears a marker
    *  or writes a terminal state on a provider's behalf: an item that failed is left exactly as its own
    *  provider left it. */
   async resumeAll(): Promise<void> {
     if (!this.sequence) throw new Error('boot recovery resume pass ran before the claim pass');
-    for (const provider of this.sequence) {
-      // Taken, not read: the claims are handed to the resume pass exactly once, so a second resumeAll
-      // (a wiring mistake) cannot drive the same recovered work twice.
-      const items = this.claimed.get(provider.id) ?? [];
-      this.claimed.set(provider.id, []);
-      if (items.length === 0) continue;
-      // Present because claimAll created it for every sequenced provider, and only claimAll can populate
-      // `claimed` — so reaching here with items but no tally is impossible.
-      const tally = this.tallies.get(provider.id)!;
-      const count = (outcome: RecoveryOutcome): void => {
-        if (outcome === 'resumed') tally.resumed += 1;
-        else if (outcome === 'terminalized') tally.terminalized += 1;
-        else if (outcome === 'released') tally.released += 1;
-        else tally.failed += 1;
-      };
-      const blame = (error: unknown): void => {
-        tally.failed += 1;
-        tally.reason ??= reasonOf(error);
-      };
-      try {
-        const ordered = provider.order(items);
-        if (provider.parallel) {
-          const settled = await Promise.allSettled(ordered.map((item) => provider.resume(item)));
-          for (const outcome of settled) {
-            if (outcome.status === 'rejected') {
-              this.log.error(`boot recovery: '${provider.id}' item failed`, outcome.reason);
-              blame(outcome.reason);
-            } else count(outcome.value);
-          }
-        } else {
-          for (const item of ordered) count(await provider.resume(item));
-        }
-      } catch (e) {
-        this.log.error(`boot recovery: '${provider.id}' resume pass failed`, e);
-        blame(e);
+    const done = new Set<string>();
+    const remaining = [...this.sequence];
+    while (remaining.length > 0) {
+      const wave = remaining.filter((p) => p.dependsOn.every((dep) => done.has(dep)));
+      // Unreachable after sequenceProviders validated the graph, but a silent empty wave would spin forever.
+      if (wave.length === 0) throw new Error(`recovery providers cannot make progress: ${remaining.map((p) => p.id).join(', ')}`);
+      await Promise.all(wave.map((provider) => this.resumeProvider(provider)));
+      for (const provider of wave) {
+        done.add(provider.id);
+        remaining.splice(remaining.indexOf(provider), 1);
       }
-      this.summarize(provider.id);
     }
+  }
+
+  private async resumeProvider(provider: ErasedProvider): Promise<void> {
+    // Taken, not read: the claims are handed to the resume pass exactly once, so a second resumeAll
+    // (a wiring mistake) cannot drive the same recovered work twice.
+    const items = this.claimed.get(provider.id) ?? [];
+    this.claimed.set(provider.id, []);
+    if (items.length === 0) return;
+    // Present because claimAll created it for every sequenced provider, and only claimAll can populate
+    // `claimed` — so reaching here with items but no tally is impossible.
+    const tally = this.tallies.get(provider.id)!;
+    const count = (outcome: RecoveryOutcome): void => {
+      if (outcome === 'resumed') tally.resumed += 1;
+      else if (outcome === 'terminalized') tally.terminalized += 1;
+      else if (outcome === 'released') tally.released += 1;
+      else tally.failed += 1;
+    };
+    const blame = (error: unknown): void => {
+      tally.failed += 1;
+      tally.reason ??= reasonOf(error);
+    };
+    try {
+      const ordered = provider.order(items);
+      if (provider.parallel) {
+        const settled = await Promise.allSettled(ordered.map((item) => provider.resume(item)));
+        for (const outcome of settled) {
+          if (outcome.status === 'rejected') {
+            this.log.error(`boot recovery: '${provider.id}' item failed`, outcome.reason);
+            blame(outcome.reason);
+          } else count(outcome.value);
+        }
+      } else {
+        for (const item of ordered) count(await provider.resume(item));
+      }
+    } catch (e) {
+      this.log.error(`boot recovery: '${provider.id}' resume pass failed`, e);
+      blame(e);
+    }
+    this.summarize(provider.id);
   }
 }

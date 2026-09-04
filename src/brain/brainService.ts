@@ -29,7 +29,7 @@ import { normalizeDelegatedExecutionScope, scopeExceedsCurrentAccess, type Deleg
 import { buildPermissionRuleset, noninteractivePermissionBoundary } from './toolPermissions.js';
 import { isNonUserSession, isOwnedUserSession, isSubagentSession, isChannelSession, channelIdOf, defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId } from './sessionId.js';
 import { lastAssistantText } from './goal.js';
-import { projectUserTurn } from './persistence.js';
+import { DELEGATION_WAIT_TOOLS, outstandingToolCalls, projectUserTurn } from './persistence.js';
 import { ClientAttachments } from './service/attachments.js';
 import { DelegatedSessionService } from './service/delegatedSession.js';
 import { IdleSessionClock } from './service/liveSessionReaper.js';
@@ -91,8 +91,10 @@ const MAX_RESULT_WAKE_ATTEMPTS = 3;
  *  custom-message seam (`display:false`) so it never renders as a fake user bubble; it appends at the
  *  transcript's TAIL, after the fully-answered pending step the park left behind, so the cached prefix
  *  above it is untouched. The turn it triggers produces the answer the restart interrupted. */
-const PARKED_RESUME_NOTE = 'The daemon restarted and interrupted this conversation\'s active turn at a step boundary. '
-  + 'Every tool result above is complete, but the remaining work was not done and the final answer was never delivered. '
+const PARKED_RESUME_NOTE = 'The daemon restarted and interrupted this conversation\'s active turn. '
+  + 'The remaining work was not done and the final answer was never delivered. A tool result marked [interrupted] '
+  + 'belongs to a call the restart cut off: its effect is unknown, so check the current state before repeating it '
+  + 'and never assume it completed; every other tool result above is complete. '
   + 'Continue exactly where the transcript leaves off and finish the turn: complete any remaining work and give the user '
   + 'the answer they are still waiting for. Do not redo work whose results are already above, and do not dwell on the '
   + 'interruption. If the transcript shows the request was in fact fully answered, reply with a one-line confirmation only.';
@@ -188,6 +190,8 @@ export class BrainService {
   /** Top-level owner parents whose claimed children will enqueue a result during this boot. The owner
    * recovery provider claims them before that enqueue exists, then wakes them after delegation recovery. */
   private bootOwnerResultParents = new Set<string>();
+  /** `parent\0toolCallId` of every delegation this boot claimed — see parkedTurnAwaitsDelegations. */
+  private bootClaimedCalls = new Set<string>();
   /** The destructive session lifecycle: turn interruption (Esc/Stop), the client-close stop, the idle
    *  reaper and conversation delete/purge — see SessionTeardownService. */
   private teardown: SessionTeardownService;
@@ -406,6 +410,14 @@ export class BrainService {
       // A DelegateContinue targeting a child whose turn runs in the sub-agent runner steers THROUGH that
       // process — only the process holding the PI session can inject into its running turn.
       ...(d.subagentRunner ? { steerRemote: (channelId: string, text: string) => d.subagentRunner?.steer(channelId, text) ?? Promise.resolve({ outcome: 'idle' as const }) } : {}),
+      // The recovered child's answer takes the ordinary background-delivery path into its parent. A parent
+      // that was PAUSED on that very delegation (park marker, no resume of its own — see
+      // resumeParkedConversation) is un-parked once the answer has actually been consumed by a turn, so
+      // the next boot does not resume a conversation the result already finished.
+      onRecoveredRunCompleted: async (parentSessionId, ownerUserId) => {
+        const outcome = await this.turnRunner.drainPendingSubagentResults(ownerUserId, parentSessionId);
+        if (outcome.answered && !this.d.store.hasPendingDelivery(parentSessionId)) this.d.store.clearSessionPark(parentSessionId);
+      },
     });
     this.pluginServices = new PluginServiceRunner(() => this.resolvePlugins());
     this.platforms = new PlatformOrchestrator({
@@ -637,7 +649,16 @@ export class BrainService {
     this.bootOwnerResultParents = new Set(
       runs.map((run) => run.parentSessionId).filter((sessionId) => !isNonUserSession(sessionId))
     );
+    this.bootClaimedCalls = new Set(runs.map((run) => `${run.parentSessionId}\u0000${run.toolCallId}`));
     return runs;
+  }
+
+  /** Is this parked owner turn blocked ONLY on delegation calls this boot is recovering — read off its
+   *  still-pending tail, before any spawn settles it (see OwnerConversationRecovery.awaitsDelegations). */
+  private parkedTurnAwaitsDelegations(sessionId: string): boolean {
+    const outstanding = outstandingToolCalls(this.d.store.pendingMessages(sessionId).map((row) => row.content));
+    return outstanding.length > 0 && outstanding.every((call) =>
+      DELEGATION_WAIT_TOOLS.has(call.name) && this.bootClaimedCalls.has(`${sessionId}\u0000${call.id}`));
   }
 
   /** `delegations` provider, ORDER: deepest first — see DelegatedSessionService.orderForRecovery. */
@@ -724,7 +745,7 @@ export class BrainService {
     const claimed = new Map<string, OwnerConversationRecovery>();
     for (const row of this.d.store.parkedSessions()) {
       if (isNonUserSession(row.id)) continue;
-      claimed.set(row.id, { row, parked: true, resultsExpected: false });
+      claimed.set(row.id, { row, parked: true, resultsExpected: false, awaitsDelegations: this.parkedTurnAwaitsDelegations(row.id) });
     }
     const resultParents = new Set([
       ...this.d.store.pendingDeliveryParentSessionIds(),
@@ -875,6 +896,15 @@ export class BrainService {
       if (!item.parked) return 'released';
     }
 
+    // A turn the pause caught waiting on its own delegation(s) is not continued here: the recovered
+    // child's answer arrives through onRecoveredRunCompleted and IS the continuation (and clears the
+    // marker once consumed). Resuming now would only make the model say "still waiting" — a wasted turn
+    // that might even answer the user prematurely. The marker stays, so a delivery that never comes is
+    // retried by the next boot like any other park.
+    if (item.awaitsDelegations) {
+      log.info(`parked conversation ${row.id} waits durably for its recovering sub-agent(s); no resume turn`);
+      return 'released';
+    }
     // The durable claim: bump the attempt counter, but only while the marker still stands. Losing this
     // race means the user already spoke (admission cleared the marker) or aborted — their input is the
     // continuation, and injecting ours on top is exactly the double-continuation this guards against.

@@ -75,12 +75,15 @@ describe('daemon boot chain — claim before the platforms, resume after them', 
       for (let i = 0; i < 50 && !trace.includes('resume:platform'); i += 1) {
         await new Promise((r) => setTimeout(r, 5));
       }
-      expect(trace).toEqual([
+      expect(trace.slice(0, 8)).toEqual([
         'reconcileGoals',
         'claim:delegations', 'claim:workflows', 'claim:conversations', 'claim:platform',
         'pluginReconcile', 'startPlatforms', 'announceBoot',
-        'resume:delegations', 'resume:workflows', 'resume:conversations', 'resume:platform',
       ]);
+      // The resume pass runs in dependency waves: conversations wake alongside the delegation sweep, and
+      // only the workflow resume is ordered after it.
+      expect([...trace.slice(8)].sort()).toEqual(['resume:conversations', 'resume:delegations', 'resume:platform', 'resume:workflows']);
+      expect(trace.indexOf('resume:workflows')).toBeGreaterThan(trace.indexOf('resume:delegations'));
     } finally { stop(); }
   });
 });
