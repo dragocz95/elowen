@@ -584,8 +584,27 @@ export interface PluginProjectFiles {
   safe(root: string, rel: string, forWrite?: boolean): string;
 }
 
+export interface PluginPublicHttpResponse {
+  url: string;
+  status: number;
+  statusText: string;
+  headers: Record<string, string>;
+  body: AsyncIterable<Uint8Array>;
+  cancel(reason?: Error): void;
+}
+
+/** Host-owned outbound HTTP transport. It resolves and validates every destination, then pins the
+ * validated address into the socket lookup while preserving the URL host for HTTP and TLS. */
+export interface PluginPublicHttp {
+  validate(url: string): Promise<string>;
+  request(url: string, options?: {
+    headers?: Record<string, string>;
+    signal?: AbortSignal;
+  }): Promise<PluginPublicHttpResponse>;
+}
+
 /** Narrow core infrastructure exposed to plugins. Every accessor is deny-by-default behind its own
- *  `reads` grant, and throws (never degrades) — a subsystem built on these cannot half-work. */
+ *  grant, and throws (never degrades) — a subsystem built on these cannot half-work. */
 export interface PluginHost {
   // @platform-keep plugin-host-tmux :: tmux(): TmuxDriver
   /** Generic plugin platform retained for future github/sandblox consumers; zero in-repo callers is expected. */
@@ -606,6 +625,8 @@ export interface PluginHost {
    * turn the current session model is the safe fallback. Credentials remain in core. Gated by
    * `reads:['inference']`; null means neither route exists in the current context. */
   defaultInference(): InferenceClient | null;
+  /** Public-only request transport. Gated by `network:true`; DNS validation and socket pinning stay in core. */
+  publicHttp(): PluginPublicHttp;
   /** Read-only git helpers over a project checkout. Gated by `reads:['git']`. */
   git(): {
     /** Generic live checkout snapshot: sanitized remotes plus branch/head/upstream and worktree counts. */
