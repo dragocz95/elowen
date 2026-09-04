@@ -125,8 +125,8 @@ const shellCommandWords = (command) => {
   return commands;
 };
 
-/** Extract shell command substitutions that execute locally. Single-quoted and escaped syntax is inert;
- * substitutions inside double quotes still execute and are therefore inspected recursively. */
+/** Extract local command and process substitutions. Single-quoted and escaped syntax is inert; command
+ * substitutions inside double quotes still execute, while process-substitution-looking text there is literal. */
 const commandSubstitutions = (command) => {
   const substitutions = [];
   const input = String(command);
@@ -157,7 +157,9 @@ const commandSubstitutions = (command) => {
       }
       continue;
     }
-    if (char !== '$' || input[index + 1] !== '(') continue;
+    const substitution = (char === '$' || (quote === null && (char === '<' || char === '>')))
+      && input[index + 1] === '(';
+    if (!substitution) continue;
     const start = index + 2;
     let depth = 1;
     let nestedQuote = null;
@@ -189,6 +191,15 @@ const commandSubstitutions = (command) => {
 const allShellCommandWords = (command) => {
   const commands = shellCommandWords(command);
   for (const substitution of commandSubstitutions(command)) commands.push(...allShellCommandWords(substitution));
+  for (const words of [...commands]) {
+    const index = commandExecutableIndex(words);
+    const executable = executableName(words[index]);
+    if (!['bash', 'sh', 'dash', 'ksh', 'zsh'].includes(executable)) continue;
+    const args = words.slice(index + 1);
+    const commandFlag = args.findIndex((arg) => arg === '-c' || arg === '--command' || /^-[^-]*c[^-]*$/u.test(arg));
+    const payload = commandFlag >= 0 ? args[commandFlag + 1] : undefined;
+    if (payload) commands.push(...allShellCommandWords(payload));
+  }
   return commands;
 };
 
@@ -197,11 +208,7 @@ const ENV_ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/u;
 const SUDO_OPTIONS_WITH_VALUE = new Set(['-u', '--user', '-g', '--group', '-h', '--host', '-p', '--prompt', '-C', '--close-from', '-D', '--chdir', '-R', '--chroot', '-r', '--role', '-t', '--type']);
 const SYSTEMCTL_RESTART_ACTIONS = new Set(['restart', 'try-restart', 'reload-or-restart', 'reload-or-try-restart']);
 
-/** A blocking local restart of elowen-daemon can never complete from Bash: systemd SIGTERMs the daemon
- *  that owns this tool call, while the daemon's graceful drain waits for this very tool call to settle.
- *  On boot the interrupted deployment resumes and can issue the same restart again, creating a 10-minute
- *  loop. Transparent wrappers are unwrapped, but SSH payloads and systemctl remote-host calls stay allowed. */
-const isBlockingSelfRestart = (command) => allShellCommandWords(command).some((words) => {
+const commandExecutableIndex = (words) => {
   let index = 0;
   for (;;) {
     const executable = executableName(words[index]);
@@ -227,8 +234,16 @@ const isBlockingSelfRestart = (command) => allShellCommandWords(command).some((w
       }
       continue;
     }
-    break;
+    return index;
   }
+};
+
+/** A blocking local restart of elowen-daemon can never complete from Bash: systemd SIGTERMs the daemon
+ *  that owns this tool call, while the daemon's graceful drain waits for this very tool call to settle.
+ *  On boot the interrupted deployment resumes and can issue the same restart again, creating a 10-minute
+ *  loop. Transparent wrappers are unwrapped, but SSH payloads and systemctl remote-host calls stay allowed. */
+const isBlockingSelfRestart = (command) => allShellCommandWords(command).some((words) => {
+  const index = commandExecutableIndex(words);
   if (executableName(words[index]) !== 'systemctl') return false;
   const args = words.slice(index + 1);
   const restart = args.findIndex((arg) => SYSTEMCTL_RESTART_ACTIONS.has(arg));
@@ -635,7 +650,7 @@ function truncateBlock(content, maxBytes, describe) {
  *  is still far better than the previous behaviour, which reported the size of whatever survived and
  *  called it the size of the run. */
 function formatRunResult(command, cwd, out, exitCode, note, outputCap, dropped = 0) {
-  const exit = `[exit ${exitCode}]`;
+  const exit = typeof exitCode === 'number' ? `[exit ${exitCode}]` : '';
   const rawHeader = `$ ${command}\n(cwd: ${cwd})\n${note}`;
   // Reserve a useful output body before bounding pathological command/cwd text. Without this first cut, a
   // multibyte command whose echo alone exceeded the cap either blew the complete result budget or consumed
@@ -867,7 +882,7 @@ export function register(ctx) {
       backgroundMode: Type.Optional(Type.Union([Type.Literal('job'), Type.Literal('service')], {
         description: 'Elowen extension: job waits for collection; service is a long-lived server or watcher',
       })),
-    }),
+    }, { additionalProperties: false }),
     execute: async (_id, p, _signal, onUpdate) => {
       try {
         if (p.dangerouslyDisableSandbox === true) {

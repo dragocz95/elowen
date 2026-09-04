@@ -11,7 +11,7 @@ let importNonce = 0;
 interface ToolResult { content: { text: string }[]; details?: Record<string, unknown> }
 interface Tool {
   name: string;
-  parameters: { required?: string[]; properties?: Record<string, Record<string, unknown>> };
+  parameters: { required?: string[]; properties?: Record<string, Record<string, unknown>>; additionalProperties?: boolean };
   execute: (id: string, params: unknown, signal?: AbortSignal) => Promise<ToolResult>;
 }
 interface Captured { url: string; init: RequestInit & { headers: Record<string, string> } }
@@ -91,15 +91,17 @@ describe('web plugin Fable-compatible payloads', () => {
       allowed_domains: { type: 'array' },
       blocked_domains: { type: 'array' },
     });
+    expect(search.parameters.additionalProperties).toBe(false);
   });
 
   it('exposes required url and prompt inputs for WebFetch', async () => {
     const { fetchTool } = await mount({});
     expect(fetchTool.parameters.required).toEqual(['url', 'prompt']);
     expect(fetchTool.parameters.properties).toMatchObject({
-      url: { type: 'string', maxLength: 2000 },
+      url: { type: 'string', maxLength: 2000, format: 'uri' },
       prompt: { type: 'string', minLength: 1 },
     });
+    expect(fetchTool.parameters.additionalProperties).toBe(false);
   });
 });
 

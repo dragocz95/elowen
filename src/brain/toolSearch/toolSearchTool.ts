@@ -142,7 +142,44 @@ function nameParts(name: string): string[] {
     .filter(Boolean);
 }
 
-interface Candidate { name: string; description: string }
+interface Candidate { name: string; description: string; parameterNames?: string }
+
+const MAX_PARAMETER_NAMES = 128;
+const MAX_PARAMETER_DEPTH = 6;
+const MAX_PARAMETER_TEXT_CHARS = 2_048;
+
+/** Extract only schema property names, never values or defaults. The live registry has already applied the
+ * schema cap, but this traversal remains independently bounded because ToolSearch runs on the turn path and
+ * plugin schemas are untrusted input. */
+function schemaParameterNames(parameters: unknown): string {
+  const names: string[] = [];
+  const seen = new WeakSet<object>();
+  const visit = (value: unknown, depth: number): void => {
+    if (!value || typeof value !== 'object' || depth > MAX_PARAMETER_DEPTH || names.length >= MAX_PARAMETER_NAMES) return;
+    if (seen.has(value)) return;
+    seen.add(value);
+    const schema = value as Record<string, unknown>;
+    const properties = schema.properties;
+    if (properties && typeof properties === 'object' && !Array.isArray(properties)) {
+      for (const [name, child] of Object.entries(properties as Record<string, unknown>)) {
+        names.push(name, ...nameParts(name));
+        if (names.length >= MAX_PARAMETER_NAMES) break;
+        visit(child, depth + 1);
+      }
+    }
+    visit(schema.items, depth + 1);
+    for (const keyword of ['allOf', 'anyOf', 'oneOf']) {
+      const branches = schema[keyword];
+      if (Array.isArray(branches)) for (const branch of branches) visit(branch, depth + 1);
+    }
+  };
+  visit(parameters, 0);
+  return clampCodePoints(names.join(' '), MAX_PARAMETER_TEXT_CHARS);
+}
+
+function candidateText(cand: Candidate): string {
+  return `${cand.description} ${cand.parameterNames ?? ''}`.toLowerCase();
+}
 
 /** Pre-compile a word-boundary matcher (`\bterm\b`) per term, once per search. Word boundaries — not raw
  *  substring — for the DESCRIPTION channel: MCP descriptions are long prose, and a short query term as a
@@ -162,12 +199,12 @@ function compileTermPatterns(terms: readonly string[]): Map<string, RegExp> {
  *  we need (no MCP-vs-non weighting: deferred tools may come from any source; no searchHint: PI tools have none). */
 function scoreCandidate(cand: Candidate, terms: readonly string[], patterns: Map<string, RegExp>): number {
   const parts = nameParts(cand.name);
-  const desc = cand.description.toLowerCase();
+  const text = candidateText(cand);
   let score = 0;
   for (const term of terms) {
     if (parts.includes(term)) score += 10;
     else if (parts.some((p) => p.includes(term))) score += 5;
-    if (patterns.get(term)?.test(desc)) score += 2;
+    if (patterns.get(term)?.test(text)) score += 2;
   }
   return score;
 }
@@ -212,8 +249,8 @@ export function resolveToolSearch(
   const eligible = candidates.filter((c) => {
     if (required.length === 0) return true;
     const parts = nameParts(c.name);
-    const desc = c.description.toLowerCase();
-    return required.every((term) => parts.some((p) => p.includes(term)) || patterns.get(term)?.test(desc));
+    const text = candidateText(c);
+    return required.every((term) => parts.some((p) => p.includes(term)) || patterns.get(term)?.test(text));
   });
 
   return eligible
@@ -249,7 +286,7 @@ export function formatDeferredToolsBlock(
     '<available_tools_deferred>',
     'These tools exist in this session but are advertised by NAME ONLY to keep the prompt light — their full',
     'parameter schema is withheld until you fetch it. To call one, first run ToolSearch (e.g.',
-    'ToolSearch({"query":"select:<name>","max_results":5}) or a keyword query); it becomes callable in the',
+    'ToolSearch({"query":"select:tool_name","max_results":5}) or a keyword query); it becomes callable in the',
     'next model step of this user turn.',
     ...lines,
     '</available_tools_deferred>',
@@ -323,10 +360,33 @@ export function requestedExactNames(query: string): string[] {
 
 const ok = (text: string, details: Record<string, unknown> = {}) => ({ content: [{ type: 'text' as const, text }], details });
 
+function sanitizeXmlText(text: string): string {
+  return text.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/gu, '\uFFFD');
+}
+
 function escapeXmlText(text: string): string {
-  // This is element text, not an attribute: escaping only XML metacharacters keeps the embedded payload
-  // valid JSON while preventing authored strings or schema keys from closing the surrounding tags.
-  return text.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  // XML 1.0 rejects most C0 controls even when they came from otherwise valid JavaScript strings. Replace
+  // them before escaping metacharacters so every dynamic block remains parseable by a real XML parser.
+  return sanitizeXmlText(text).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function sanitizeXmlData(value: unknown, seen = new WeakMap<object, unknown>()): unknown {
+  if (typeof value === 'string') return sanitizeXmlText(value);
+  if (!value || typeof value !== 'object') return value;
+  const known = seen.get(value);
+  if (known) return known;
+  if (Array.isArray(value)) {
+    const out: unknown[] = [];
+    seen.set(value, out);
+    for (const item of value) out.push(sanitizeXmlData(item, seen));
+    return out;
+  }
+  const out: Record<string, unknown> = {};
+  seen.set(value, out);
+  for (const [key, item] of Object.entries(value as Record<string, unknown>)) {
+    out[sanitizeXmlText(key)] = sanitizeXmlData(item, seen);
+  }
+  return out;
 }
 
 /** Serialize the definitions PI can actually call, not the pre-transform plugin schemas. Escaping the
@@ -339,11 +399,11 @@ export function formatToolSearchFunctions(
   const lines = names
     .map((name) => byName.get(name))
     .filter((tool): tool is { name: string; description?: string; parameters?: unknown } => tool !== undefined)
-    .map((tool) => escapeXmlText(JSON.stringify({
+    .map((tool) => escapeXmlText(JSON.stringify(sanitizeXmlData({
       description: tool.description ?? '',
       name: tool.name,
       parameters: tool.parameters ?? { type: 'object', properties: {} },
-    })))
+    }))))
     .map((definition) => `<function>${definition}</function>`);
   return ['<functions>', ...lines, '</functions>'].join('\n');
 }
@@ -362,7 +422,7 @@ export function toolSearchTool(handle: ToolSearchHandle): ToolDefinition {
       'next model step of this same user turn. Query forms:',
       '"select:DiscordCreateChannel,mcp__github__create_issue" — fetch these exact tools by name (a bare exact',
       'name works too); "mcp__github" — every deferred tool under that bridged MCP server; "discord channel" —',
-      'keyword search over names and descriptions, best matches up to max_results; "+github create" — require',
+      'keyword search over names, descriptions and bounded nested parameter names, best matches up to max_results; "+github create" — require',
       '"github", rank by "create". If nothing is deferred this tool is a no-op.',
     ].join(' '),
     parameters: Type.Object({
@@ -391,7 +451,11 @@ export function toolSearchTool(handle: ToolSearchHandle): ToolDefinition {
       // Only deferred tools are searchable — an already-active tool needs no fetch.
       const candidates: Candidate[] = session.getAllTools()
         .filter((t) => handle.deferred.has(t.name) && !toolOwnedByOtherAccount(t.name, personal))
-        .map((t) => ({ name: t.name, description: t.description ?? '' }));
+        .map((t) => ({
+          name: t.name,
+          description: t.description ?? '',
+          parameterNames: schemaParameterNames(t.parameters),
+        }));
       const found = resolveToolSearch(p.query, candidates, max);
       // Defense in depth: only activate tools the ACTING sender is allowed to use. The execute-time gate
       // already refuses a forbidden call, and the per-turn visibility pass hides a forbidden tool again on

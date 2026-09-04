@@ -78,7 +78,7 @@ describe('terminal plugin', () => {
 
   it('exposes one canonical argument per Bash concept plus unique Elowen features', () => {
     const bash = reg.tools.find((tool) => tool.name === 'Bash') as unknown as {
-      parameters: { properties: Record<string, { description?: string; maximum?: number }> };
+      parameters: { properties: Record<string, { description?: string; maximum?: number }>; additionalProperties?: boolean };
     };
     expect(Object.keys(bash.parameters.properties).sort()).toEqual([
       'backgroundMode', 'command', 'cwd', 'dangerouslyDisableSandbox', 'description', 'run_in_background', 'timeout',
@@ -87,6 +87,7 @@ describe('terminal plugin', () => {
     expect(bash.parameters.properties).not.toHaveProperty('timeout_seconds');
     expect(bash.parameters.properties.timeout.maximum).toBe(600_000);
     expect(bash.parameters.properties.timeout.description).toMatch(/milliseconds/i);
+    expect(bash.parameters.additionalProperties).toBe(false);
   });
 
   it('maps a workspace guest cwd through the real workspace PathView contract', () => {
@@ -178,6 +179,7 @@ describe('terminal plugin', () => {
       command: 'cd nonpersistent-subdir; sleep 20', timeout: 100,
     }), scope);
     expect(timedOut.content[0].text).toContain('timed out after 100ms');
+    expect(timedOut.content[0].text).not.toContain('[exit null]');
     await expectDefaultCwd();
   }, 20_000);
 
@@ -268,6 +270,28 @@ describe('terminal plugin', () => {
     const fakeSystemctl = markerExecutable(dir, 'systemctl', reached);
     const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', {
       command: `printf '%s' "$(${fakeSystemctl} reload-or-restart elowen-daemon)"`,
+    }), { identity: owner });
+
+    expect(res.content[0].text).toMatch(/refused.*elowen restart all/i);
+    expect(existsSync(reached)).toBe(false);
+  });
+
+  it.each(['bash', 'sh'])('refuses a blocking self-restart hidden behind local %s -c', async (shell) => {
+    const reached = join(dir, `${shell}-c-restart-executed`);
+    const fakeSystemctl = markerExecutable(dir, 'systemctl', reached);
+    const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', {
+      command: `${shell} -c '${fakeSystemctl} restart elowen-daemon'`,
+    }), { identity: owner });
+
+    expect(res.content[0].text).toMatch(/refused.*elowen restart all/i);
+    expect(existsSync(reached)).toBe(false);
+  });
+
+  it('refuses a blocking self-restart inside local process substitution', async () => {
+    const reached = join(dir, 'process-substitution-restart-executed');
+    const fakeSystemctl = markerExecutable(dir, 'systemctl', reached);
+    const res = await runWithPolicy(adminPolicy, () => runTool(reg, 'Bash', {
+      command: `cat <(${fakeSystemctl} restart elowen-daemon)`,
     }), { identity: owner });
 
     expect(res.content[0].text).toMatch(/refused.*elowen restart all/i);
@@ -791,6 +815,7 @@ describe('terminal plugin — per-call Bash timeout', () => {
     const started = Date.now();
     const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'sleep 20', timeout: 100 }), { identity: owner });
     expect(res.content[0].text).toContain('[killed: timed out after 100ms]');
+    expect(res.content[0].text).not.toContain('[exit null]');
     expect(Date.now() - started).toBeLessThan(10_000);
   }, 20_000);
 
@@ -1040,6 +1065,7 @@ describe('terminal plugin — foreground kill (stop escalation)', () => {
     expect(control().killForeground({ sessionId: session, principal: 'elowen:1' })).toEqual({ killed: 1 });
     const res = await p;
     expect(res.content[0].text).toContain('[killed]');
+    expect(res.content[0].text).not.toContain('[exit null]');
     expect(res.details.exitCode).toBeUndefined(); // no structural exit code — the run was killed, not finished
     expect(processRegistry.listForSession(session)).toHaveLength(0); // same settle path as a normal finish
     expect(nudged).toBe(0); // a killed foreground command never wakes the conversation

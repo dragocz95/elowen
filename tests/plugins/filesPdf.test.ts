@@ -1,8 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, readFileSync, rmSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
 import type { Policy } from '../../src/plugins/policy.js';
@@ -13,10 +14,12 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const userPolicy = (roots: string[]): Policy => ({ allowedProjectIds: new Set([1]), allowedPaths: () => roots });
 
 interface ToolResult { content: { type: string; text?: string; mimeType?: string }[]; details?: Record<string, unknown> }
-const runTool = (reg: PluginRegistry, name: string, params: Record<string, unknown>) => {
+const runTool = (reg: PluginRegistry, name: string, params: Record<string, unknown>, executionContext?: unknown) => {
   const tool = reg.tools.find((t) => t.name === name);
   if (!tool) throw new Error(`tool ${name} not registered`);
-  return (tool as unknown as { execute: (id: string, p: unknown) => Promise<ToolResult> }).execute('t', params);
+  return (tool as unknown as {
+    execute: (id: string, p: unknown, signal?: AbortSignal, onUpdate?: unknown, context?: unknown) => Promise<ToolResult>;
+  }).execute('t', params, undefined, undefined, executionContext);
 };
 
 /** Build a real, valid PDF in pure JS — no fixture binary to keep in the repo and no external generator to
@@ -76,6 +79,18 @@ describe('parsePageSpec', () => {
     expect(mod.parsePageSpec('1-999999').error).toMatch(/more than 20 pages/);
     expect(mod.parsePageSpec('1-11,12-22').error).toMatch(/at most 20 pages/);
     expect(mod.parsePageSpec('1-20').pages).toHaveLength(20); // exactly at the cap is fine
+  });
+
+  it('rejects unsafe and non-finite page numbers before any range expansion', () => {
+    expect(mod.parsePageSpec('9007199254740993').error).toMatch(/safe integer/i);
+    expect(mod.parsePageSpec('1-9007199254740993').error).toMatch(/safe integer/i);
+
+    const entry = pathToFileURL(resolve(repoRoot, 'plugins/files/index.mjs')).href;
+    const huge = '9'.repeat(400);
+    const output = execFileSync(process.execPath, ['--input-type=module', '-e',
+      `import { parsePageSpec } from ${JSON.stringify(entry)}; process.stdout.write(JSON.stringify(parsePageSpec(${JSON.stringify(`1-${huge}`)})));`,
+    ], { encoding: 'utf8', timeout: 5_000 });
+    expect(JSON.parse(output).error).toMatch(/finite|safe integer/i);
   });
 });
 
@@ -143,6 +158,21 @@ describe('Read — PDF', () => {
     expect(image).toBeTruthy();
     expect(image!.mimeType).toMatch(/^image\/(png|jpeg|webp)$/);
     expect(res.details).toMatchObject({ renderedPages: 1 });
+  });
+
+  it('does not authorize Write when a scanned page is omitted for a text-only model', async () => {
+    const sessionId = 'brain-pdf-text-only';
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(
+      reg, 'Read', { file_path: scanned, pages: '1-2' }, { model: { input: ['text'] } },
+    ), { sessionId });
+    expect(res.details).toMatchObject({ ok: true, truncated: true, renderedPages: 0 });
+    expect(res.content).not.toContainEqual(expect.objectContaining({ type: 'image' }));
+
+    const write = await runWithPolicy(userPolicy([dir]), () => runTool(
+      reg, 'Write', { file_path: scanned, content: 'clobber' },
+    ), { sessionId });
+    expect(write.content[0].text).toMatch(/not been fully read|has not been read/i);
+    expect(readFileSync(scanned).subarray(0, 5).toString('ascii')).toBe('%PDF-');
   });
 
   it('skips pages the PDF does not have, and says which', async () => {
