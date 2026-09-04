@@ -14,10 +14,12 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const userPolicy = (roots: string[]): Policy => ({ allowedProjectIds: new Set([1]), allowedPaths: () => roots });
 
 interface ToolResult { content: { text?: string }[]; details?: Record<string, unknown> }
-const runTool = (reg: PluginRegistry, name: string, params: Record<string, unknown>) => {
+const runTool = (reg: PluginRegistry, name: string, params: Record<string, unknown>, executionContext?: unknown) => {
   const tool = reg.tools.find((t) => t.name === name);
   if (!tool) throw new Error(`tool ${name} not registered`);
-  return (tool as unknown as { execute: (id: string, p: unknown) => Promise<ToolResult> }).execute('t', params);
+  return (tool as unknown as {
+    execute: (id: string, p: unknown, signal?: AbortSignal, onUpdate?: unknown, context?: unknown) => Promise<ToolResult>;
+  }).execute('t', params, undefined, undefined, executionContext);
 };
 
 // Editing a file the conversation never read is how content silently disappears: the model writes from
@@ -170,6 +172,32 @@ describe('files plugin — read-before-modify guard', () => {
       expect(blind.content[0].text).toMatch(/has changed on disk since you last read it/);
       expect(readFileSync(path, 'utf-8')).toBe('const a = 1;\n');
     });
+  });
+
+  it('a text Read error does not count as having read the file', async () => {
+    const path = fixture('invalid-read.txt', 'precious\n');
+    const read = await inSession('Read', { file_path: path, offset: -1 });
+    expect(read.details).toMatchObject({ ok: false });
+
+    const write = await inSession('Write', { file_path: path, content: 'clobber' });
+    expect(write.content[0].text).toMatch(/has not been read in this conversation/);
+    expect(readFileSync(path, 'utf-8')).toBe('precious\n');
+  });
+
+  it('an image omitted from the model request does not count as having read the file', async () => {
+    const path = join(dir, `${n}-omitted.png`);
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAAC0lEQVR4nGNgYGAAAAAEAAH2FzhVAAAAAElFTkSuQmCC', 'base64');
+    writeFileSync(path, png);
+
+    const read = await runWithPolicy(userPolicy([dir]), () => runTool(
+      reg, 'Read', { file_path: path }, { model: { input: ['text'] } },
+    ), { sessionId: session });
+    expect(read.content[0].text).toContain('does not support images');
+    expect(read.content).not.toContainEqual(expect.objectContaining({ type: 'image' }));
+
+    const write = await inSession('Write', { file_path: path, content: 'clobber' });
+    expect(write.content[0].text).toMatch(/has not been read in this conversation/);
+    expect(readFileSync(path)).toEqual(png);
   });
 
   it('a PDF read that FAILED does not count as having read the file', async () => {
