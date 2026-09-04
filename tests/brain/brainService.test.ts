@@ -6714,6 +6714,72 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(subOf()?.status).toBe('done');
   });
 
+  it('publishResync reaches only the clients attached right now, and is not journaled into later snapshots', async () => {
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    const svc = new BrainService(d as never);
+    await svc.start(1, { session: 'brain-1' });
+    const seen: unknown[] = [];
+    svc.subscribe(1, (event) => { seen.push(event); });
+
+    svc.publishResync('boot-recovered');
+
+    expect(seen).toEqual([{ type: 'resync', reason: 'boot-recovered' }]);
+    // A later snapshot replay must not carry it: it is an instruction to whoever was attached, not data.
+    const snapshot = (await svc.tapSessionSnapshot(1, 'brain-1', () => {})).snapshot;
+    expect(snapshot.events.some((e) => e.type === 'resync')).toBe(false);
+  });
+
+  it('a client attached in the boot window is told to resync once recovery handed the workflow back, and then sees it running', async () => {
+    // The whole production shape end to end: reconnect during the boot window → the snapshot already says
+    // running (the read model trusts the claim) → boot recovery finishes the workflows pass → `resync`
+    // reaches the attached client → its refetched snapshot shows the DAG the engine now holds.
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('subagent', {}, { info() {}, warn() {}, error() {} });
+    let engineHolds = false;
+    ctx.registerControl('workflow', {
+      cancelForSession: () => ({ cancelled: 0 }),
+      detachForeground: () => ({ detached: 0 }),
+      activeCount: () => 0,
+      isWorkflowLive: () => engineHolds,
+      addNodesFromSession: () => { throw new Error('unused'); },
+      resumeInterrupted: async () => { engineHolds = true; return { resumed: true }; },
+    });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.appendMessage({
+      id: 'a-wf-win', sessionId: 'brain-1', parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'call-wf-win', name: 'WorkflowStart', arguments: {} }] },
+    });
+    d.store.appendMessage({ id: 'r-wf-win', sessionId: 'brain-1', parentId: null, role: 'toolResult', content: { role: 'toolResult', toolCallId: 'call-wf-win', toolName: 'WorkflowStart', content: [{ type: 'text', text: 'started' }] } });
+    d.store.upsertWorkflowRun('brain-1', {
+      id: 'wf-win', toolCallId: 'call-wf-win', status: 'running',
+      nodes: [{ id: 'api', task: 'build', status: 'running', deps: [] }],
+    });
+    setWorkflowLivenessProbe((id) => (id === 'wf-win' ? (engineHolds ? true : undefined) : undefined));
+    try {
+      const restarted = new BrainService(d as never);
+      const recovery = bootRecovery(restarted);
+      recovery.claimAll();
+      // The client attaches in the boot window and takes its first snapshot.
+      await restarted.start(1, { session: 'brain-1' });
+      const seen: { type?: string }[] = [];
+      restarted.subscribe(1, (event) => { seen.push(event as { type?: string }); });
+      const wfOf = () => restarted.messagesOf(1, 'brain-1').flatMap((m) => m.segments ?? [])
+        .map((seg) => (seg.kind === 'tool' ? (seg as { wf?: { status: string } }).wf : undefined)).find((wf) => !!wf);
+      expect(wfOf()?.status).toBe('running'); // never the 12✗ card
+
+      await recovery.resumeAll({ onProviderResumed: (id) => { if (id === 'workflows') restarted.publishResync('boot-recovered'); } });
+
+      expect(seen.some((e) => e.type === 'resync')).toBe(true);
+      expect(engineHolds).toBe(true);
+      expect(wfOf()?.status).toBe('running'); // the refetched snapshot: held by the engine now
+    } finally {
+      setWorkflowLivenessProbe(() => undefined);
+    }
+  });
+
   it('a resumed workflow publishes its progress to clients attached to the origin conversation', async () => {
     // The resume hook used to write every engine snapshot to the store and tell nobody: a client that had
     // reconnected kept whatever it was last shown. It now rides the same live `workflow` event the

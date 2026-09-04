@@ -247,6 +247,28 @@ describe('createBootRecovery', () => {
     // The load-bearing ordering is on the CLAIMS (above); every resume runs in the wave after them.
   });
 
+  it('reports each provider the moment ITS resume pass finished — the workflows hand-back before the long delegation sweep ends', async () => {
+    // The daemon's client-resync signal hangs on this: 'workflows' completing means the claim pass is
+    // done, the plugins are loaded and every claimed DAG is back with its engine, while delegation
+    // respawns may run on for minutes.
+    const trace: string[] = [];
+    let finishDelegation: () => void = () => {};
+    const host = {
+      ...stubHost(trace),
+      recoverDelegation: async () => { await new Promise<void>((resolve) => { finishDelegation = resolve; }); return 'resumed' as const; },
+    };
+    const coordinator = createBootRecovery(host, silentLog());
+    coordinator.claimAll(0);
+    const resumed: string[] = [];
+    const done = coordinator.resumeAll({ onProviderResumed: (id) => { resumed.push(id); } });
+    for (let i = 0; i < 50 && !resumed.includes('workflows'); i += 1) await new Promise((r) => setTimeout(r, 1));
+    expect(resumed).toContain('workflows');
+    expect(resumed).not.toContain('delegations'); // still running
+    finishDelegation();
+    await done;
+    expect(resumed).toContain('delegations');
+  });
+
   it('wakes owner and platform conversations WHILE the delegation sweep is still running', async () => {
     // The 20-minutes-after-boot symptom: the owner wake used to queue behind every respawn's whole turn.
     const trace: string[] = [];

@@ -153,7 +153,7 @@ export class BootRecoveryCoordinator {
    *  Never softens a failure into success, never retries an item a provider refused, never clears a marker
    *  or writes a terminal state on a provider's behalf: an item that failed is left exactly as its own
    *  provider left it. */
-  async resumeAll(): Promise<void> {
+  async resumeAll(hooks?: { onProviderResumed?: (id: string) => void }): Promise<void> {
     if (!this.sequence) throw new Error('boot recovery resume pass ran before the claim pass');
     const done = new Set<string>();
     const remaining = [...this.sequence];
@@ -161,7 +161,11 @@ export class BootRecoveryCoordinator {
       const wave = remaining.filter((p) => p.dependsOn.every((dep) => done.has(dep)));
       // Unreachable after sequenceProviders validated the graph, but a silent empty wave would spin forever.
       if (wave.length === 0) throw new Error(`recovery providers cannot make progress: ${remaining.map((p) => p.id).join(', ')}`);
-      await Promise.all(wave.map((provider) => this.resumeProvider(provider)));
+      await Promise.all(wave.map(async (provider) => {
+        await this.resumeProvider(provider);
+        try { hooks?.onProviderResumed?.(provider.id); }
+        catch (e) { this.log.error(`boot recovery: '${provider.id}' resumed hook failed`, e); }
+      }));
       for (const provider of wave) {
         done.add(provider.id);
         remaining.splice(remaining.indexOf(provider), 1);

@@ -704,6 +704,19 @@ export class BrainService {
     logger('brain').info(`platform room ${parentSessionId}: recovered result delivered as its continuation (${outcome})`);
   }
 
+  /** Tell every attached client to refetch its snapshot (see the `resync` BrainEvent). Published on every
+   *  live session's bus, owner conversations and channels alike: whoever attached in the boot window was
+   *  shown a read model that could not yet vouch for what this boot was recovering. */
+  publishResync(reason: 'boot-recovered'): void {
+    let told = 0;
+    for (const [, live] of [...this.sessions.liveEntries(), ...this.sessions.channelEntries()]) {
+      if (live.listeners.size === 0) continue;
+      live.replay.broadcast({ type: 'resync', reason });
+      told += 1;
+    }
+    if (told > 0) logger('brain').info(`boot recovery: told ${told} attached conversation(s) to resync (${reason})`);
+  }
+
   /** The safety net under a parent PAUSED on its delegation (resumeParkedConversation's durable wait): the
    *  recovered child's result did not un-park it — delivery failed, or the child terminalized with a
    *  notice the parent must see. Once no other child of this boot is still recovering, run the ordinary

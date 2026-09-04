@@ -223,6 +223,28 @@ describe('BrainChat snapshot hydration', () => {
     expect(screen.getByTestId('usage-tokens')).toHaveTextContent('70000');
   });
 
+  it('a `resync` frame refetches status and history like a reconnect (boot recovery finished under this tab)', async () => {
+    let statusCalls = 0;
+    server.use(http.get('*/api/brain/status', () => {
+      statusCalls += 1;
+      const tokens = statusCalls < 3 ? 80_000 : 70_000;
+      return HttpResponse.json({
+        running: false, sessionId: 'brain-1', model: 'm',
+        usage: { tokens, contextWindow: 1_000_000, percent: tokens / 10_000, totalTokens: tokens, cost: 1 },
+        statusline: null, cards: [], queued: [],
+      });
+    }));
+    const es = await renderChat();
+    es.emit('snapshot', { type: 'snapshot', sessionId: 'brain-1', hasMore: false, nextBefore: null, history: [], events: [] });
+    await waitFor(() => expect(statusCalls).toBeGreaterThanOrEqual(2));
+    const before = statusCalls;
+
+    es.emit('resync', { type: 'resync', reason: 'boot-recovered' });
+
+    await waitFor(() => expect(statusCalls).toBeGreaterThan(before));
+    await waitFor(() => expect(screen.getByTestId('usage-tokens')).toHaveTextContent('70000'));
+  });
+
   it('refetches durable history at idle when the frame reported a truncated journal', async () => {
     const es = await renderChat();
     es.emit('snapshot', {
