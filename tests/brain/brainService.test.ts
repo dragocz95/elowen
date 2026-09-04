@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BrainService } from '../../src/brain/brainService.js';
 import { createBootRecovery } from '../../src/brain/recovery/providers.js';
-import { StepDrainCoordinator } from '../../src/brain/stepDrain.js';
 import type { KnownControls, PluginSkill, SubagentProgressEvent } from '../../src/plugins/api.js';
 import { currentSubagentEmitter, currentToolPolicy, currentTurnModel, currentWorkDir } from '../../src/plugins/policyContext.js';
 import { personalityText } from '../../src/brain/personality.js';
@@ -6019,11 +6018,11 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     const recovery = bootRecovery(restarted);
     recovery.claimAll();
     // Observe the counter the moment the owner sweep records the wait, before the child's result lands.
-    const seen: number[] = [];
+    const seen: { id: string; attempts: number }[] = [];
     const original = d.store.claimParkResumeAttempt.bind(d.store);
-    d.store.claimParkResumeAttempt = (id: string) => { const ok = original(id); seen.push(d.store.getSession(id)!.park_attempts); return ok; };
+    d.store.claimParkResumeAttempt = (id: string) => { const ok = original(id); seen.push({ id, attempts: d.store.getSession(id)!.park_attempts }); return ok; };
     await recovery.resumeAll();
-    expect(seen[0]).toBe(1);
+    expect(seen[0]).toEqual({ id: sessionId, attempts: 1 });
   });
 
   it('a platform ROOM paused on its Delegate waits at boot and then gets the recovered result as its own continuation', async () => {
@@ -6449,29 +6448,6 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(d.session.sendCustomMessage.mock.calls[0]?.[1]).toMatchObject({ triggerTurn: false });
     expect(String(d.session.sendCustomMessage.mock.calls[0]?.[0]?.content)).toContain('DelegateContinue');
     expect(d.store.pendingSubagentResults(sessionId)).toHaveLength(1);
-  });
-
-  it('midStepWork joins the real coordinator to the registry\'s live turn identities', async () => {
-    // The identity JOIN is the silent-failure surface: the factory keys holds/tool batches by
-    // spec.sessionId while the drain asks unsafeCount(activeTurnSessionIds()) — if those ever diverged,
-    // every restart would quietly burn the full fallback budget with a green suite. Prove through the
-    // REAL send-lock path that an in-flight turn reads 1 and an idle daemon reads 0.
-    const d = fakeDeps();
-    (d as unknown as { stepDrain: StepDrainCoordinator }).stepDrain = new StepDrainCoordinator();
-    const svc = new BrainService(d as never);
-    await svc.start(1);
-    let release!: () => void;
-    d.session.prompt.mockImplementationOnce(() => new Promise<void>((r) => { release = r; }));
-
-    const turn = svc.send({ userId: 1, text: 'work' });
-    // Wait until prompt() is genuinely in flight — the turn then holds BOTH locks of the topology
-    // (send-<id> and the bare id), and the exact count pins that they collapse onto ONE conversation.
-    // Reporting raw lock keys would read 2 here, i.e. phantom turns that never park and burn the budget.
-    await vi.waitFor(() => expect(release).toBeDefined());
-    expect(await svc.midStepWork()).toBe(1);
-    release();
-    await turn;
-    await vi.waitFor(async () => expect(await svc.midStepWork()).toBe(0));
   });
 
   it('boot claims a running workflow and terminalizes it with a durable notice when resume is unavailable', async () => {

@@ -162,7 +162,7 @@ export class DelegatedSessionService {
   reconcileDelegationsOnBoot(): void {
     // Retire results addressed to a sub-agent that has already finished. Delivery needs a parent TURN to
     // acknowledge it, and a terminal sub-agent is never prompted again, so such a row stays pending for
-    // good — and the shutdown drain waits on that count globally, which is how one dead row from 18 Aug
+    // good — and the old shutdown drain waited on that count globally, which is how one dead row from 18 Aug
     // made every restart afterwards burn the full ten-minute budget. Swept BEFORE the claim below, so a
     // run about to be respawned still counts as live and keeps its results.
     const orphaned = this.d.store.discardOrphanedDeliveries();
@@ -231,7 +231,7 @@ export class DelegatedSessionService {
     return claimed;
   }
 
-  /** DEEPEST first. A parent that was blocked on its own delegation (the step-boundary drain exits in
+  /** DEEPEST first. A parent that was blocked on its own delegation (the pause leaves it in
    *  exactly that shape) must be respawned AFTER the child it was waiting on, so the child's recovered
    *  result is already in the parent's durable inbox and rides into the parent's recovery turn — in the
    *  other order the parent would re-delegate work whose answer was about to arrive. Depth is walked over

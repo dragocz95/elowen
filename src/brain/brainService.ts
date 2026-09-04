@@ -241,7 +241,7 @@ export class BrainService {
     d.store.setDelegationBootId(randomUUID());
     // Mid-turn messages are STEERED into the running turn via PI's native queue (session.steer); PI fans
     // its transient backlog as `queue_update`, mapped to the `queue` snapshot event in the spawner.
-    this.factory = new BrainSessionFactory({ store: d.store, chatImagesDir: d.chatImagesDir, onTurnSettled: d.onTurnSettled, createSession: d.createSession, resourceLoaderFactory: d.resourceLoaderFactory, stepDrain: d.stepDrain });
+    this.factory = new BrainSessionFactory({ store: d.store, chatImagesDir: d.chatImagesDir, onTurnSettled: d.onTurnSettled, createSession: d.createSession, resourceLoaderFactory: d.resourceLoaderFactory });
     this.identity = new IdentityResolver({ platformOwner: d.platformOwner, resolvePlatformUser: d.resolvePlatformUser, users: d.users });
     this.titler = new ConversationTitler({ store: d.store, inference: d.inference ?? (() => null), logger: logger('conversation-titler') });
     // Built before the channel service so it can share the SAME curator instance — channel and
@@ -560,43 +560,24 @@ export class BrainService {
     return { ...this.sessions.busy(), undelivered: this.d.store.countPendingDeliveries() };
   }
 
-  /** Latched true by the graceful-shutdown handler on the first SIGTERM. From then on a NEW turn is
-   *  refused (turnRunner.send / channelService.send) so {@link busy} can fall to zero and the drain can
-   *  exit — otherwise fresh input arriving through the drain window keeps it busy for the full budget.
-   *  One-way: a draining daemon is on its way out, never back to admitting. Delegation and result
-   *  delivery take other seams, so they keep running and the drain still waits for them.
-   *
-   *  Also latches the STEP-BOUNDARY drain: every live turn is parked at its next boundary (see
-   *  stepDrain.ts) here and in the runner pool, and parked questions are cancelled — an elicitation is a
-   *  tool execution that can wait on a human for minutes, and a daemon on its way out has no business
-   *  holding the exit for an answer it could not act on anyway (the cancel lets the turn reach its
-   *  boundary and park; the question is re-askable after the restart). */
+  /** Latched true by the pause on the first SIGTERM. From then on a NEW turn is refused
+   *  (turnRunner.send / channelService.send): the process is on its way out and fresh input must reach
+   *  the next boot as a durable row, not a half-run turn. One-way: never back to admitting. Parked
+   *  questions are cancelled — an elicitation is a tool execution that can wait on a human for minutes,
+   *  and a daemon on its way out cannot act on the answer anyway (the question is re-askable after the
+   *  restart). */
   beginDrain(): void {
     this.draining = true;
-    if (this.d.stepDrain) {
-      this.d.stepDrain.begin();
-      this.d.remoteStepDrain?.begin();
-      this.elicitation.cancelAll('daemon restarting');
-    }
+    this.elicitation.cancelAll('daemon restarting');
   }
 
-  /** How many live turns are still MID-STEP, across this process and the runner pool — what the
-   *  step-boundary shutdown drain actually waits on. Undefined when no coordinator is wired (minimal
-   *  test daemons), which tells the drain to fall back to whole-turn waiting. */
-  async midStepWork(): Promise<number | undefined> {
-    if (!this.d.stepDrain) return undefined;
-    const local = this.d.stepDrain.unsafeCount(this.sessions.activeTurnSessionIds());
-    const remote = await (this.d.remoteStepDrain?.midStepWork() ?? Promise.resolve(0));
-    return local + remote;
-  }
-
-  /** PAUSE for a restart — the default shutdown since the step-boundary drain was measured at a median of
-   *  four minutes (and the full ten-minute budget in a fifth of restarts) whenever a sub-agent was in
-   *  flight. Nothing is waited for: the durable checkpoint already exists, because every assistant and
+  /** PAUSE for a restart — the only shutdown. Its predecessor, a step-boundary drain, was measured at a
+   *  median of four minutes (and the full ten-minute budget in a fifth of restarts) whenever a sub-agent
+   *  was in flight. Nothing is waited for: the durable checkpoint already exists, because every assistant and
    *  tool-result message is mirrored into SQLite the moment PI finishes it (persistence.ts
    *  projectPendingMessage), so all this has to do is make the resume DETERMINISTIC:
-   *   - every live owner / platform turn gets its park marker NOW (the same marker a step-boundary park
-   *     writes), so the boot sweep continues it from its durable tail — where an unanswered tool call is
+   *   - every live owner / platform turn gets its park marker NOW (the marker the boot resume sweeps
+   *     read), so the boot sweep continues it from its durable tail — where an unanswered tool call is
    *     answered with an `interrupted` result (settlePartialTurn) instead of being replayed or lost;
    *   - every message still queued behind a running turn (PI's steer / follow-up queue is process memory)
    *     is written as a durable user row at the transcript tail, in delivery order, so it is read by the
@@ -620,7 +601,7 @@ export class BrainService {
         ?? (isChannelSession(sessionId) ? this.sessions.channelGet(channelIdOf(sessionId)) : undefined);
       if (live) queued += this.checkpointQueuedMessages(sessionId, live);
       if (isSubagentSession(sessionId)) continue; // resumed from its run row, never a park marker
-      if (this.d.stepDrain?.parkNow(sessionId)) parked.push(sessionId);
+      if (this.d.turnPark?.parkNow(sessionId)) parked.push(sessionId);
       else unparkable.push(sessionId);
     }
     return { turns: at.turns, children: at.children, parked, queued, unparkable };

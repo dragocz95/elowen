@@ -4,7 +4,7 @@
  *  captured before the turn's first model call, deleted when the turn settles, so a surviving row names
  *  exactly the turn a process death interrupted. This module owns the decisions built on top of it:
  *
- *  - PARK ELIGIBILITY ({@link platformTurnParkEligible}): whether the step-boundary shutdown drain may
+ *  - PARK ELIGIBILITY ({@link platformTurnParkEligible}): whether the pause-for-restart may
  *    park a live platform turn at all. A turn parks only where a faithful boot resume exists, so this is
  *    fail-closed on every fact the resume will need — a valid envelope, a verified account, an outbound
  *    delivery target, and never a scheduled/cron turn (their results have their own delivery contract and

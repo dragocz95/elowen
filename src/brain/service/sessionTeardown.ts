@@ -90,7 +90,7 @@ export class SessionTeardownService {
       }
       throw new Error('brain not started');
     }
-    // An explicit stop on a turn the shutdown drain parked (Esc during the drain window) is the user
+    // An explicit stop on a turn the pause parked (Esc before the resume ran) is the user
     // cancelling that work — releasing the hold lets the turn unwind as aborted, and the durable park
     // marker must go with it or the next boot would resume a turn the user just killed.
     this.store.clearSessionPark(b.sessionId);

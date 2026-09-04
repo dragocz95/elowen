@@ -47,23 +47,6 @@ describe('cli/commands.runLifecycle', () => {
     expect(calls).toContain(`restart:${target}`);
     expect(calls).toContain(`log:Restart queued: ${target}`);
   });
-  it('`--drain` drops the one-shot drain marker for the daemon before queueing the restart', async () => {
-    const { calls, deps } = fakeDeps();
-    const drains: string[] = [];
-    deps.requestDrain = () => { drains.push('marker'); calls.push('drain-marker'); };
-    expect(await runLifecycle('restart', {} as NodeJS.ProcessEnv, deps, ['daemon', '--drain'])).toBe(true);
-    expect(drains).toEqual(['marker']);
-    // The marker must be on disk BEFORE systemd sends SIGTERM, or the daemon reads a pause.
-    expect(calls.indexOf('drain-marker')).toBeLessThan(calls.indexOf('restart:daemon'));
-    expect(calls).toContain('log:Restart queued: daemon (draining running work first)');
-  });
-  it('`--drain` means nothing for the web service and drops no marker', async () => {
-    const { calls, deps } = fakeDeps();
-    deps.requestDrain = () => { calls.push('drain-marker'); };
-    expect(await runLifecycle('restart', {} as NodeJS.ProcessEnv, deps, ['--drain', 'web'])).toBe(true);
-    expect(calls).not.toContain('drain-marker');
-    expect(calls).toContain('restart:web');
-  });
   it.each([[], ['everything']])('refuses a missing or invalid restart target: %j', async (argv) => {
     const { calls, deps } = fakeDeps();
     await expect(runLifecycle('restart', {} as NodeJS.ProcessEnv, deps, argv)).rejects.toThrow(

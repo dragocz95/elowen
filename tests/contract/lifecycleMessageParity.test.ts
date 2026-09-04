@@ -3,7 +3,7 @@ import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { lifecycleNotice, LIFECYCLE_KEYS, type LifecycleKey } from '../../src/daemon/lifecycleNotices.js';
 
-// The daemon words its own lifecycle announcements (stopping, back online, restart) and sends them as
+// The daemon words its own lifecycle announcements (pausing, back online, restart) and sends them as
 // English text plus a descriptor naming which one it is. Adapters translate from the descriptor, using
 // the text as the fallback — so the English entry in the plugin table is a MIRROR of the daemon's
 // wording, not a second source of truth. Nothing links the two: the untyped `.mjs` plugin library cannot
@@ -25,8 +25,6 @@ const plugin = await import(pluginPath) as {
 
 /** Arguments per key, so both halves can be rendered and compared as finished strings. */
 const CASES: { key: LifecycleKey; args: (string | number)[] }[] = [
-  { key: 'stopping', args: [3, 2, 1] },
-  { key: 'stoppingIdle', args: [] },
   { key: 'pausing', args: [2, 1] },
   { key: 'backOnline', args: [] },
   { key: 'backOnlineVersion', args: ['0.27.80'] },
@@ -59,19 +57,22 @@ describe('lifecycle notice parity (daemon ↔ plugin adapters)', () => {
 
   // The counts are what the user reads to decide whether to wait, so a translation that drops one is
   // worse than no translation at all.
-  it.each(['en', 'cs', 'sk'])('%s keeps all three counts in the stopping notice', (lang) => {
-    const text = render(plugin.LIFECYCLE_MESSAGES[lang], 'stopping', [7, 5, 3]);
-    expect(text).toContain('7');
-    expect(text).toContain('5');
-    expect(text).toContain('3');
+  it.each(['en', 'cs', 'sk'])('%s keeps both counts in the pausing notice, and says so when nothing was in flight', (lang) => {
+    const busy = render(plugin.LIFECYCLE_MESSAGES[lang], 'pausing', [7, 5]);
+    expect(busy).toContain('7');
+    expect(busy).toContain('5');
+    const idle = render(plugin.LIFECYCLE_MESSAGES[lang], 'pausing', [0, 0]);
+    expect(idle).toBeTruthy();
+    expect(idle).not.toBe(busy);
+    expect(render(plugin.LIFECYCLE_MESSAGES.en, 'pausing', [0, 0])).toBe(lifecycleNotice('pausing', 0, 0).text);
   });
 });
 
 describe('lifecycleText', () => {
-  const notice = { key: 'stoppingIdle' as const };
+  const notice = { key: 'backOnline' as const };
 
   it('renders the configured language', () => {
-    expect(plugin.lifecycleText('cs', notice, 'FALLBACK')).toBe('🛑 **Zastavuji** — Elowen se vypíná.');
+    expect(plugin.lifecycleText('cs', notice, 'FALLBACK')).toBe('✅ **Zpět online** — Elowen se restartoval a je připravený.');
   });
 
   it('falls back to the supplied text for free-form notifications', () => {
@@ -87,9 +88,8 @@ describe('lifecycleText', () => {
   });
 
   it('interpolates the arguments in order', () => {
-    const text = plugin.lifecycleText('cs', { key: 'stopping', args: [9, 8, 7] }, 'FALLBACK');
+    const text = plugin.lifecycleText('cs', { key: 'pausing', args: [9, 8] }, 'FALLBACK');
     expect(text).toContain('9');
     expect(text).toContain('8');
-    expect(text).toContain('7');
   });
 });

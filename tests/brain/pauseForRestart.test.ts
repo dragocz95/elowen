@@ -1,7 +1,7 @@
 import { beforeAll, describe, it, expect, vi } from 'vitest';
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { BrainService } from '../../src/brain/brainService.js';
-import { StepDrainCoordinator } from '../../src/brain/stepDrain.js';
+import { TurnParkPolicy } from '../../src/brain/turnPark.js';
 import { settlePartialTurn } from '../../src/brain/persistence.js';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
@@ -72,11 +72,11 @@ function fakeDeps() {
   });
   const db = openDb(':memory:');
   const store = new BrainStore(db);
-  const stepDrain = new StepDrainCoordinator({
+  const turnPark = new TurnParkPolicy({
     onParked: (sessionId) => { store.markSessionParked(sessionId); },
   });
   return {
-    store, stepDrain,
+    store, turnPark,
     runtime: sharedRuntime,
     users: { ensureAdvisorToken: () => 'full-token', get: () => ({ name: 'Filip', username: 'filip' }) },
     config: { providers: [{ id: 'relay', label: 'Relay', type: 'openai' as const, baseUrl: 'http://x/v1', models: ['m'], apiKey: 'k' }] },

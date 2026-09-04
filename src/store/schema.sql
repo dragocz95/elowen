@@ -220,8 +220,8 @@ CREATE TABLE IF NOT EXISTS brain_sessions (
   -- with a per-row json_extract for every row of a listing. NULL where nobody identifiable has written
   -- yet (an unlinked sender, or a row that predates this column).
   last_writer_user_id INTEGER,
-  -- Shutdown park marker: when the step-boundary drain parked this conversation's live turn (see
-  -- stepDrain.ts). A parked turn's durable pending tail is fully answered, so the boot recovery providers
+  -- Shutdown park marker: when the pause-for-restart parked this conversation's live turn (see
+  -- turnPark.ts). The turn's durable pending tail is settled at resume (settlePartialTurn), so the boot recovery providers
   -- (`owner-conversations` for owner rows, `platform-conversations` for platform channel rows — the two
   -- partition the markers between them) can continue the turn from exactly there and deliver
   -- the answer the restart interrupted. NULL = nothing parked. Written synchronously at the park (before

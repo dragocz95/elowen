@@ -1,6 +1,6 @@
 {
   "name": "elowen-plugin-shared",
-  "version": "0.1.9",
+  "version": "0.2.0",
   "description": "Shared runtime helpers for Elowen chat-platform plugins: message formatting, live-message streaming, chat commands, access checks, display settings and atomic JSON state.",
   "license": "MIT",
   "type": "module",

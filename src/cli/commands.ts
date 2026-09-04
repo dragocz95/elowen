@@ -2,8 +2,6 @@ import { start as realStart, stop as realStop, status as realStatus, type RunSta
 import { update as realUpdate, type UpdateResult } from './update.js';
 import { callElowenApi } from '../shared/apiClient.js';
 import { restartServices, type RestartTarget } from './systemd.js';
-import { dbPath, shutdownDrainMarker } from '../shared/paths.js';
-import { writeFileSync } from 'node:fs';
 
 /** `elowen api <METHOD> <path> [jsonBody]` — generic authenticated REST passthrough. Reads
  *  ELOWEN_URL/ELOWEN_TOKEN from the env the daemon injects into every spawned agent, so an agent can
@@ -35,9 +33,6 @@ export interface LifecycleDeps {
   status: (env: NodeJS.ProcessEnv) => Promise<{ daemon: SvcStatus; web: SvcStatus }>;
   update: (env: NodeJS.ProcessEnv, deps: { current: string }) => Promise<UpdateResult>;
   restart: (target: RestartTarget) => Promise<void>;
-  /** Drop the one-shot marker the daemon's SIGTERM handler consumes to choose a step-boundary drain over
-   *  the default pause (see daemon/shutdown.ts). Injectable so dispatch stays unit-testable. */
-  requestDrain?: (env: NodeJS.ProcessEnv) => void;
 }
 
 export function defaultLifecycleDeps(version: string): LifecycleDeps {
@@ -52,7 +47,6 @@ export function defaultLifecycleDeps(version: string): LifecycleDeps {
       const result = await restartServices(target);
       if (result.code !== 0) throw new Error(`restart failed (code ${result.code})`);
     },
-    requestDrain: (env) => { writeFileSync(shutdownDrainMarker(dbPath(env)), String(Date.now())); },
   };
 }
 
@@ -102,17 +96,12 @@ export async function runLifecycle(
       return true;
     }
     case 'restart': {
-      // `--drain` asks the daemon to finish the current step of every running turn before exiting (up to
-      // ten minutes) instead of the default pause-and-resume; it only means something for the daemon.
-      const drain = argv.includes('--drain');
-      const rest = [...argv].filter((arg) => arg !== '--drain');
-      const target = rest[0];
-      if (rest.length !== 1 || (target !== 'daemon' && target !== 'web' && target !== 'all')) {
-        throw new Error('usage: elowen restart <daemon|web|all> [--drain]');
+      const target = argv[0];
+      if (argv.length !== 1 || (target !== 'daemon' && target !== 'web' && target !== 'all')) {
+        throw new Error('usage: elowen restart <daemon|web|all>');
       }
-      if (drain && target !== 'web') deps.requestDrain?.(env);
       await deps.restart(target);
-      deps.log(`Restart queued: ${target}${drain && target !== 'web' ? ' (draining running work first)' : ''}`);
+      deps.log(`Restart queued: ${target}`);
       return true;
     }
     default:

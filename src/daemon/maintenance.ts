@@ -14,8 +14,7 @@ import type { ProviderRequestStore } from '../store/providerRequestStore.js';
 import type { UsageOriginStore } from '../store/usageOriginStore.js';
 import type { UserStore } from '../store/userStore.js';
 import type { RuntimeLimits } from '../shared/wireContract.js';
-import { announceBoot, installGracefulShutdown, resolveShutdownMode, type ShutdownControl } from './shutdown.js';
-import { shutdownDrainMarker } from '../shared/paths.js';
+import { announceBoot, installGracefulShutdown, type ShutdownControl } from './shutdown.js';
 
 const MEMORY_EVICTION_BATCH_SIZE = 1_000;
 
@@ -114,13 +113,7 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
       .catch((e) => deps.log.error('startPlatforms failed', e));
     // Registered only once the platforms are coming up, so a stop can actually announce itself. Skipped
     // under the in-memory test DB, where installing process-wide signal handlers would leak across tests.
-    if (deps.dbPath !== ':memory:') {
-      // The one-shot drain marker lives in the state dir next to the database, where `elowen restart
-      // --drain` (a different process, same service user) can drop it.
-      deps.onShutdownInstalled(installGracefulShutdown(deps.brain, deps.log, {
-        mode: () => resolveShutdownMode(process.env, shutdownDrainMarker(deps.dbPath)),
-      }));
-    }
+    if (deps.dbPath !== ':memory:') deps.onShutdownInstalled(installGracefulShutdown(deps.brain, deps.log));
     // Purge expired auth tokens hourly so the table can't grow unbounded over a long-running daemon.
     const purgeTokens = () => deps.users?.purgeExpiredTokens(deps.config.get().security.tokenTtlDays);
     purgeTokens();

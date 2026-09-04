@@ -61,7 +61,7 @@ export interface BrainSessionRow {
    *  anchored on the operator because a room has no single author. NULL where nobody identifiable has
    *  written yet (an unlinked sender, or a row older than the column). */
   last_writer_user_id: number | null;
-  /** When the step-boundary shutdown drain parked this conversation's live turn (see schema.sql).
+  /** When the pause-for-restart parked this conversation's live turn (see schema.sql).
    *  NULL = nothing parked; the boot resume sweep continues every marked conversation. */
   parked_at: string | null;
   /** Boot resume attempts on the current park; bumped durably before each attempt, reset on clear. */
@@ -279,9 +279,9 @@ export class BrainStore {
     return this.db.prepare('SELECT * FROM brain_sessions WHERE id = ?').get(id) as BrainSessionRow | undefined;
   }
 
-  /** Stamp the shutdown park marker (see schema.sql): this conversation's live turn was parked at its
-   *  step boundary by a draining daemon and MUST be resumed at the next boot. Written synchronously the
-   *  moment the loop parks, so it is durable before the process exits. */
+  /** Stamp the shutdown park marker (see schema.sql): this conversation's live turn was parked the
+   *  moment the daemon was told to stop and MUST be resumed at the next boot. Written synchronously in
+   *  the pause, so it is durable before the process exits. */
   markSessionParked(id: string): void {
     this.db.prepare("UPDATE brain_sessions SET parked_at = datetime('now') WHERE id = ?").run(id);
   }
