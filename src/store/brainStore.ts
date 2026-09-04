@@ -31,6 +31,12 @@ import type { BrainDebugLegacyTranscriptPage } from '../shared/wireContract.js';
 export { syntheticRestartResultId } from './brainDelegationStore.js';
 export type { BrainWorkflowRun, RecoverableRun, RecoverableWorkflow } from './brainDelegationStore.js';
 
+/** One message of a pause checkpoint's queue — see brain_paused_queue. */
+export interface PausedQueueItem {
+  text: string;
+  images?: { data: string; mimeType: string }[];
+}
+
 export interface BrainSessionRow {
   id: string; user_id: number; title: string; model: string; provider: string; work_dir: string; parent_session_id: string | null;
   delegated_access: string | null;
@@ -292,6 +298,37 @@ export class BrainStore {
     return this.db.prepare(
       'UPDATE brain_sessions SET park_attempts = park_attempts + 1 WHERE id = ? AND parked_at IS NOT NULL',
     ).run(id).changes > 0;
+  }
+
+  /** Replace the pause checkpoint of this conversation's mid-turn queue (see brain_paused_queue). */
+  checkpointPausedQueue(sessionId: string, items: readonly PausedQueueItem[]): void {
+    withWriteLock(this.db, () => {
+      this.db.prepare('DELETE FROM brain_paused_queue WHERE session_id = ?').run(sessionId);
+      const insert = this.db.prepare('INSERT INTO brain_paused_queue (session_id, seq, text, images) VALUES (?, ?, ?, ?)');
+      items.forEach((item, seq) => {
+        insert.run(sessionId, seq, item.text, item.images?.length ? JSON.stringify(item.images) : null);
+      });
+    });
+  }
+
+  /** Take (and delete) the checkpointed queue of one conversation, in delivery order. Consumed exactly
+   *  once: a replay that fails mid-way loses the rest, which is the honest outcome — a second boot must
+   *  not deliver the same message again. */
+  takePausedQueue(sessionId: string): PausedQueueItem[] {
+    return withWriteLock(this.db, () => {
+      const rows = this.db.prepare('SELECT text, images FROM brain_paused_queue WHERE session_id = ? ORDER BY seq ASC').all(sessionId) as { text: string; images: string | null }[];
+      this.db.prepare('DELETE FROM brain_paused_queue WHERE session_id = ?').run(sessionId);
+      return rows.map((row) => {
+        let images: PausedQueueItem['images'];
+        if (row.images) { try { images = JSON.parse(row.images) as PausedQueueItem['images']; } catch { images = undefined; } }
+        return { text: row.text, ...(images?.length ? { images } : {}) };
+      });
+    });
+  }
+
+  /** Discard a checkpointed queue without replaying it — the user cancelled the parked turn. */
+  discardPausedQueue(sessionId: string): void {
+    this.db.prepare('DELETE FROM brain_paused_queue WHERE session_id = ?').run(sessionId);
   }
 
   /** Result-specific continuation CAS: unlike claimParkResumeAttempt this does not spend the generic park

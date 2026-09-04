@@ -6489,6 +6489,38 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(row.park_attempts).toBe(0);
   });
 
+  it('replays the messages queued behind the paused turn AFTER the resume continuation, in order', async () => {
+    // The pause checkpoints PI's transient queue into brain_paused_queue (never into the transcript, see
+    // the BLOCKER: a user row behind a pending tool call separates it from its synthetic answer). The
+    // resume continues the interrupted turn first, then delivers each queued message as its own turn.
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.markSessionParked('brain-1');
+    d.store.checkpointPausedQueue('brain-1', [
+      { text: 'also check the logs' },
+      { text: 'and then summarize', images: [{ data: 'AAAA', mimeType: 'image/png' }] },
+    ]);
+
+    const restarted = new BrainService(d as never);
+    await runBootRecovery(restarted);
+
+    expect(d.session.sendCustomMessage).toHaveBeenCalledTimes(1);
+    expect(d.session.sendCustomMessage.mock.calls[0]?.[0]).toMatchObject({ customType: 'restart-resume' });
+    const prompted = d.session.prompt.mock.calls.map((call) => String(call[0]));
+    expect(prompted.filter((text) => text.includes('also check the logs'))).toHaveLength(1);
+    expect(prompted.filter((text) => text.includes('and then summarize'))).toHaveLength(1);
+    expect(prompted.indexOf(prompted.find((t) => t.includes('also check the logs'))!))
+      .toBeLessThan(prompted.indexOf(prompted.find((t) => t.includes('and then summarize'))!));
+    // The resume note went out before either replayed turn was prompted.
+    expect(d.session.sendCustomMessage.mock.invocationCallOrder[0]!).toBeLessThan(d.session.prompt.mock.invocationCallOrder[0]!);
+    // Consumed: nothing replays the same words on the next boot.
+    expect(d.store.takePausedQueue('brain-1')).toEqual([]);
+    // The transcript holds the replayed messages as ordinary user rows, after the resume.
+    const users = d.store.getMessages('brain-1').filter((row) => row.role === 'user').map((row) => JSON.parse(row.content) as { content: string; images?: unknown[] });
+    expect(users.map((u) => u.content.split('\n')[0])).toEqual(['also check the logs', 'and then summarize']);
+    expect(users[1]!.content).toContain('image'); // the attachment survived the pause with its message
+  });
+
   it('a user message arriving before the sweep IS the continuation — no injected duplicate', async () => {
     const d = fakeDeps();
     d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });

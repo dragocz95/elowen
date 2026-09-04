@@ -528,6 +528,20 @@ CREATE TABLE IF NOT EXISTS brain_session_events (
   PRIMARY KEY (session_id, event_id)
 );
 CREATE INDEX IF NOT EXISTS idx_brain_session_events_session ON brain_session_events(session_id);
+-- The checkpoint of a conversation's mid-turn QUEUE at a pause-for-restart: messages the user typed while
+-- a turn ran live only in PI's process memory (steer / follow-up) until PI delivers them, so the pause
+-- copies them here in delivery order and the boot resume replays them as ordinary user turns AFTER the
+-- interrupted turn has been continued. Deliberately NOT brain_messages: a user row appended behind a
+-- pending tool call would sit between that call and its (synthetic) result, which every provider refuses.
+-- `images` is a JSON array of {data (base64), mimeType} or NULL. Rows are consumed by the replay.
+CREATE TABLE IF NOT EXISTS brain_paused_queue (
+  session_id TEXT NOT NULL,
+  seq INTEGER NOT NULL,
+  text TEXT NOT NULL,
+  images TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (session_id, seq)
+);
 -- Durable completion inbox for detached/background delegated work. A result is persisted before the
 -- parent is woken and remains pending until that triggered parent turn settles successfully.
 --

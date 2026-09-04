@@ -29,7 +29,7 @@ import { normalizeDelegatedExecutionScope, scopeExceedsCurrentAccess, type Deleg
 import { buildPermissionRuleset, noninteractivePermissionBoundary } from './toolPermissions.js';
 import { isNonUserSession, isOwnedUserSession, isSubagentSession, isChannelSession, channelIdOf, defaultUserSessionId, freshUserSessionId, channelSessionId, archivedChannelSessionId } from './sessionId.js';
 import { lastAssistantText } from './goal.js';
-import { DELEGATION_WAIT_TOOLS, outstandingToolCalls, projectUserTurn } from './persistence.js';
+import { DELEGATION_WAIT_TOOLS, outstandingToolCalls } from './persistence.js';
 import { ClientAttachments } from './service/attachments.js';
 import { DelegatedSessionService } from './service/delegatedSession.js';
 import { IdleSessionClock } from './service/liveSessionReaper.js';
@@ -59,6 +59,7 @@ import { resumePlatformTurn, type ParkedPlatformTurn } from './platformTurnRecov
 import type { OwnerConversationRecovery } from './recovery/providers.js';
 import type { RecoveryOutcome } from './recovery/types.js';
 import type { BrainDeps } from './brainDeps.js';
+import type { BrainSessionRow } from '../store/brainStore.js';
 import { processRegistry, type ProcessInfo } from './processRegistry.js';
 import type { BrainStreamSnapshot } from './session/liveEventReplay.js';
 import { DEFAULT_BRAIN_LIMITS } from '../store/configStore.js';
@@ -592,21 +593,47 @@ export class BrainService {
     return { turns: at.turns, children: at.children, parked, queued };
   }
 
-  /** Persist PI's transient mid-turn queue as user rows, steers first (PI delivers those before the
-   *  follow-ups). Text only: a queued image lives in process memory as raw bytes and has no durable form
-   *  here, so it is reported rather than silently dropped. */
+  /** Checkpoint PI's transient mid-turn queue (steers first — PI delivers those before the follow-ups)
+   *  into the side table brain_paused_queue, images included. NOT as transcript rows: a user row appended
+   *  behind a pending tool call sits between that call and its synthetic `interrupted` answer, and every
+   *  provider refuses such a context — durably, on every later turn. The boot resume replays the queue
+   *  as ordinary user turns once the interrupted turn has been continued (replayPausedQueue). Owner
+   *  conversations only: a platform room's queued messages belong to a room member whose turn envelope
+   *  is not this conversation's to replay (reported, not silently dropped). */
   private checkpointQueuedMessages(sessionId: string, live: LiveBrain): number {
-    let written = 0;
-    for (const message of this.queuedSnapshot(live)) {
-      const text = message.text.trim();
-      if (!text) continue;
-      projectUserTurn(this.d.store, sessionId, message.text);
-      written += 1;
-      if (message.images?.length) {
-        logger('brain').warn(`pause: queued message for ${sessionId} carried ${message.images.length} image(s) that could not be checkpointed — text kept`);
+    const items = this.queuedSnapshot(live)
+      .filter((message) => message.text.trim())
+      .map((message) => ({
+        text: message.text,
+        ...(message.images?.length ? { images: message.images.map((image) => ({ data: image.data, mimeType: image.mimeType })) } : {}),
+      }));
+    if (items.length === 0) return 0;
+    if (isNonUserSession(sessionId)) {
+      logger('brain').warn(`pause: ${items.length} queued message(s) in ${sessionId} cannot be checkpointed for a non-owner session — the sender must resend`);
+      return 0;
+    }
+    this.d.store.checkpointPausedQueue(sessionId, items);
+    return items.length;
+  }
+
+  /** Replay the pause checkpoint's queue as ordinary user turns, in delivery order, after the interrupted
+   *  turn was continued (or, for a turn waiting durably on its delegations, right away — the answer comes
+   *  later either way). `interruptResume` lets each turn through the admission gate of a daemon that is
+   *  still finishing its boot sweep. A failed replay is logged and the rest still goes: the messages
+   *  were the user's words and losing one silently is the one thing this exists to prevent. */
+  private async replayPausedQueue(row: BrainSessionRow): Promise<void> {
+    const items = this.d.store.takePausedQueue(row.id);
+    for (const item of items) {
+      try {
+        await this.turnRunner.send({
+          userId: row.user_id, text: item.text, session: row.id, interruptResume: true,
+          ...(item.images?.length ? { images: item.images } : {}),
+        });
+      } catch (e) {
+        logger('brain').error(`replay of a message queued before the pause failed for ${row.id}: ${e instanceof Error ? e.message : String(e)}`);
       }
     }
-    return written;
+    if (items.length > 0) logger('brain').info(`replayed ${items.length} message(s) queued before the pause into ${row.id}`);
   }
 
   /** The turn drain has finished and process exit is now terminal. Stop browser/process-owning plugin
@@ -946,6 +973,9 @@ export class BrainService {
     }
     } finally {
       if (item.resultsExpected) this.turnRunner.releaseSettledResultDelivery(row.id);
+      // Whatever the resume did, the messages the user typed behind the paused turn are theirs to have
+      // answered — replayed last, so they land AFTER the continued turn, in the order they were typed.
+      if (item.parked) await this.replayPausedQueue(row);
     }
   }
 

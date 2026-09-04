@@ -75,6 +75,34 @@ function daemonLog(daemon) {
   } catch { return ''; }
 }
 
+/** Problems with the ORDER of a provider payload (OpenAI chat shape): every `tool` message must directly
+ *  follow the assistant message that issued its call (or another tool message of the same batch), and a
+ *  tool_call_id may be answered once. A transcript that violates this is refused by every provider with a
+ *  400 — durably, on every later turn — which is exactly the failure a checkpoint must never produce. */
+function wireOrderProblems(messages) {
+  const problems = [];
+  const answered = new Set();
+  let openBatch = new Set();
+  for (const [index, message] of messages.entries()) {
+    if (message.role === 'assistant') {
+      openBatch = new Set((message.tool_calls ?? []).map((call) => call.id));
+      continue;
+    }
+    if (message.role === 'tool') {
+      const id = message.tool_call_id;
+      if (answered.has(id)) problems.push(`tool_call_id ${id} answered twice (message ${index})`);
+      if (!openBatch.has(id)) problems.push(`tool result ${id} at message ${index} does not follow its assistant call`);
+      answered.add(id);
+      continue;
+    }
+    if (openBatch.size > 0 && ![...openBatch].every((id) => answered.has(id))) {
+      problems.push(`message ${index} (${message.role}) interrupts an unanswered tool batch`);
+    }
+    openBatch = new Set();
+  }
+  return problems;
+}
+
 /** Assert the restart was a PAUSE (own exit, no SIGKILL, inside the bound) and record its numbers. */
 function checkPause(label, daemon, firstResumedAt) {
   const restart = daemon.lastRestart();
@@ -208,6 +236,8 @@ async function scenarioForegroundRecovery() {
     await waitFor('the parent to be un-parked after consuming the result', () =>
       row(daemon.dataDir, 'SELECT parked_at FROM brain_sessions WHERE id = ?', [run.parent_session_id])?.parked_at === null);
     check('the foreground parent got the result as its continuation', !!delivered);
+    const parentWire = wireOrderProblems(Array.isArray(delivered?.body?.messages) ? delivered.body.messages : []);
+    check('the parent continuation payload is a valid provider wire order', parentWire.length === 0, parentWire.join('; '));
     check('no generic restart continuation was injected into the parent', !model.requests.some((request) =>
       JSON.stringify(request.body).includes('The daemon restarted and interrupted this conversation')));
     const parentTail = rows(daemon.dataDir, 'SELECT content FROM brain_messages WHERE session_id = ? ORDER BY rowid ASC', [run.parent_session_id])
@@ -255,6 +285,8 @@ async function scenarioInterruptedToolRecovery() {
       `child requests=${model.childRequests().length}`);
     // What the model saw: its own Bash call, answered with an [interrupted] error — never a silently
     // trimmed transcript, never a parked run waiting for a human.
+    const respawnWire = wireOrderProblems(Array.isArray(respawn?.body?.messages) ? respawn.body.messages : []);
+    check('the respawn payload is a valid provider wire order', respawnWire.length === 0, respawnWire.join('; '));
     const respawnBody = JSON.stringify(respawn?.body ?? {});
     check('the respawn context carries the Bash call and its [interrupted] answer', respawnBody.includes('call_recovery_')
       && respawnBody.includes('[interrupted]') && respawnBody.includes('effect is unknown'));
@@ -304,18 +336,30 @@ async function scenarioOwnerTurnPause() {
     checkPause('owner-bash', daemon, resumed?.at);
 
     check('the pause parked the owner turn', parked);
+    const wire = wireOrderProblems(Array.isArray(resumed?.body?.messages) ? resumed.body.messages : []);
+    check('the resumed payload is a valid provider wire order (tool results behind their calls, no duplicate ids)', wire.length === 0, wire.join('; '));
     const body = JSON.stringify(resumed?.body ?? {});
     check('the resumed turn sees its Bash call answered [interrupted]', body.includes('[interrupted]') && body.includes('effect is unknown'));
-    check('the message queued behind the paused turn was checkpointed and is in the resumed context', body.includes(MARKERS.ownerSteer));
+    // The queued message is NOT in the resumed context (that would put a user row between the Bash call
+    // and its answer); it is replayed as its own turn AFTER the continuation, with a valid wire order.
+    check('the resumed continuation does not carry the queued message inside the interrupted step', !body.includes(MARKERS.ownerSteer));
+    const replayed = await waitFor('the queued message to be replayed as a turn of its own', () => model.requests.find((request) =>
+      request.at > resumed.at && JSON.stringify(request.body).includes(MARKERS.ownerSteer)));
+    const replayWire = wireOrderProblems(Array.isArray(replayed?.body?.messages) ? replayed.body.messages : []);
+    check('the replayed turn is a valid provider wire order', replayWire.length === 0, replayWire.join('; '));
     const userRows = rows(daemon.dataDir, `SELECT content FROM brain_messages WHERE session_id = ? AND role = 'user' ORDER BY rowid ASC`, [parentSessionId]);
-    check('the queued message is a durable user row', userRows.some((entry) => String(entry.content).includes(MARKERS.ownerSteer)));
+    check('the replayed message became a durable user row exactly once', userRows.filter((entry) => String(entry.content).includes(MARKERS.ownerSteer)).length === 1);
+    check('the pause checkpoint was consumed', rows(daemon.dataDir, 'SELECT seq FROM brain_paused_queue WHERE session_id = ?', [parentSessionId]).length === 0);
     await waitFor('the owner turn to finish and un-park', () =>
       row(daemon.dataDir, 'SELECT parked_at FROM brain_sessions WHERE id = ?', [parentSessionId])?.parked_at === null);
     const answer = await waitFor('the final owner answer to be stored', () => rows(daemon.dataDir,
       `SELECT content FROM brain_messages WHERE session_id = ? AND role = 'assistant' ORDER BY rowid DESC`, [parentSessionId])
       .find((entry) => String(entry.content).includes(MARKERS.ownerBashResult)) ?? null);
+    // Exactly one continuation turn: the note stays in the context of the replayed turn too, so count
+    // the requests that carry the note but not yet the replayed message.
     check('the owner got the answer the pause interrupted, exactly once', !!answer && model.requests.filter((request) =>
-      JSON.stringify(request.body).includes('The daemon restarted and interrupted this conversation')).length === 1);
+      JSON.stringify(request.body).includes('The daemon restarted and interrupted this conversation')
+      && !JSON.stringify(request.body).includes(MARKERS.ownerSteer)).length === 1);
   } finally {
     if (daemon) await daemon.stop();
     await model.close();

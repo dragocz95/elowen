@@ -2,6 +2,7 @@ import { beforeAll, describe, it, expect, vi } from 'vitest';
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { BrainService } from '../../src/brain/brainService.js';
 import { StepDrainCoordinator } from '../../src/brain/stepDrain.js';
+import { settlePartialTurn } from '../../src/brain/persistence.js';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { inMemoryModelRuntime } from '../../src/brain/providers.js';
@@ -119,25 +120,34 @@ describe('pauseForRestart — the durable checkpoint of a turn caught mid-step',
     expect(d.session.abort).not.toHaveBeenCalled();
   });
 
-  it('writes every message still queued behind the turn as a durable user row, steers before follow-ups', async () => {
+  it('checkpoints every message still queued behind the turn into the side table, steers first, NEVER into the transcript', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     const sessionId = await startHangingTurn(d, svc);
     // Two messages typed while the turn ran: PI holds them in process memory only, so without the
     // checkpoint they would vanish with the process.
-    await svc.send({ userId: 1, text: 'also check the logs' });
+    await svc.send({ userId: 1, text: 'also check the logs', images: [{ data: 'AAAA', mimeType: 'image/png' }] });
     await d.session.followUp('and then summarize');
     d.session.__emitQueue();
     expect(d.session.steer).toHaveBeenCalledTimes(1);
-    const before = d.store.getMessages(sessionId).filter((row) => row.role === 'user').length;
+    // The turn is mid tool call: a pending assistant row whose call has no result yet. A user row behind
+    // it would separate the call from its synthetic answer and every provider would refuse the context.
+    d.store.appendPendingMessage({ id: 'pend-a', sessionId, role: 'assistant', content: { role: 'assistant', content: [{ type: 'toolCall', id: 't1', name: 'Bash', arguments: {} }] } });
+    const before = d.store.getMessages(sessionId).map((row) => row.id);
 
     const summary = svc.pauseForRestart();
 
     expect(summary.queued).toBe(2);
-    const users = d.store.getMessages(sessionId).filter((row) => row.role === 'user');
-    expect(users.length).toBe(before + 2);
-    const texts = users.slice(-2).map((row) => (JSON.parse(row.content) as { content: string }).content);
-    expect(texts).toEqual(['also check the logs', 'and then summarize']);
+    expect(d.store.getMessages(sessionId).map((row) => row.id)).toEqual(before); // transcript untouched
+    const queue = d.store.takePausedQueue(sessionId);
+    expect(queue.map((item) => item.text)).toEqual(['also check the logs', 'and then summarize']);
+    expect(queue[0]!.images).toEqual([{ data: 'AAAA', mimeType: 'image/png' }]); // images ride along
+    expect(d.store.takePausedQueue(sessionId)).toEqual([]); // consumed exactly once
+    // And the settled transcript keeps the call directly followed by its interrupted answer.
+    settlePartialTurn(d.store, sessionId);
+    const tail = d.store.getMessages(sessionId).slice(-2).map((row) => JSON.parse(row.content) as { role: string; toolCallId?: string });
+    expect(tail.map((m) => m.role)).toEqual(['assistant', 'toolResult']);
+    expect(tail[1]!.toolCallId).toBe('t1');
   });
 
   it('reports an idle daemon as nothing to park and writes no marker', async () => {
