@@ -1,5 +1,6 @@
 import { installEventRecording } from './eventRecording.js';
 import { createServer } from '../api/server.js';
+import type { ServerDeps } from '../api/deps.js';
 import { ELOWEN_VERSION } from '../api/version.js';
 import { RealTmuxDriver } from '../tmux/driver.js';
 import { SystemClock } from '../shared/clock.js';
@@ -258,7 +259,11 @@ export async function buildApp(opts: BuildOpts) {
   // same systemd path the web/CLI command uses. Built here (needs the units + marker), wired now.
   if (brain && restartDaemon) brain.restartHandler = restartDaemon;
 
-  const app = createServer({
+  // Bound to a name rather than passed inline: the plugin WebSocket dispatcher hangs off the SAME Node
+  // http server as this app and needs the identical dependency set (stores for the ticket owner's
+  // identity, the plugin registry for the route), and a second, separately-assembled copy of it is
+  // exactly how the two surfaces would drift apart.
+  const serverDeps = {
     bus, events,
     project: homeProject, clock: new SystemClock(), config, users, projects, userProjects,
     pushSubscriptions, userPrompts, userSettings, pluginDirs, pluginDataRoot, brainOauth,
@@ -272,7 +277,8 @@ export async function buildApp(opts: BuildOpts) {
     embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes,
     killAccountProcesses: async (userId) => processRegistry.killAccount(userId) + (subagentRunner ? await subagentRunner.killAccountProcesses(userId) : 0),
     ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
-  });
+  } satisfies ServerDeps;
+  const app = createServer(serverDeps);
 
   const startLoops = createMaintenanceLoops({
     brain, brainStore, chatImagesDir, config, embedQueue, events,
@@ -280,5 +286,5 @@ export async function buildApp(opts: BuildOpts) {
     restartMarker, bootMarker, version: ELOWEN_VERSION, log,
     onShutdownInstalled: (control) => { shutdown = control; },
   });
-  return { app, startLoops };
+  return { app, startLoops, serverDeps };
 }
