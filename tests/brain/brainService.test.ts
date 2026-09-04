@@ -6104,6 +6104,30 @@ describe('sub-agent abort sparing + restart reconcile', () => {
     expect(d.store.platformTurnEnvelope(room)).toBeUndefined();
   });
 
+  it('/stop on a PARKED conversation with no live instance is a durable cancel: marker and queue gone, no error', async () => {
+    // MINOR 9: between the pause and its boot resume there is no live brain, and abort() used to throw
+    // "brain not started" — for a conversation that is plainly the user's and about to be resumed.
+    const d = fakeDeps();
+    d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    d.store.markSessionParked('brain-1');
+    d.store.checkpointPausedQueue('brain-1', [{ text: 'never mind' }]);
+    const svc = new BrainService(d as never);
+
+    await expect(svc.abort(1, 'brain-1')).resolves.toBeUndefined();
+
+    expect(d.store.getSession('brain-1')).toMatchObject({ parked_at: null, park_attempts: 0 });
+    expect(d.store.takePausedQueue('brain-1')).toEqual([]);
+    // And the sweep now has nothing to resume — the user's cancel wins.
+    const recovery = bootRecovery(svc);
+    recovery.claimAll();
+    await recovery.resumeAll();
+    expect(d.session.sendCustomMessage).not.toHaveBeenCalled();
+    expect(d.session.prompt).not.toHaveBeenCalled();
+    // A session that is neither live nor parked still reports the honest error.
+    d.store.createSession({ id: 'brain-2', userId: 1, model: 'm' });
+    await expect(svc.abort(1, 'brain-2')).rejects.toThrow('brain not started');
+  });
+
   it('uses recovered results as the continuation of a genuinely parked owner turn', async () => {
     const d = fakeDeps();
     d.store.createSession({ id: 'brain-1', userId: 1, model: 'm' });

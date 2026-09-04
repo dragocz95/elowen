@@ -77,7 +77,19 @@ export class SessionTeardownService {
    *  subscribed clients wind down on their own. */
   async abort(userId: number, session?: string): Promise<void> {
     const b = session ? this.sessions.get(this.lifecycle.ownedUserSession(userId, session)) : this.lifecycle.activeLive(userId);
-    if (!b) throw new Error('brain not started');
+    if (!b) {
+      // No live instance — but between a pause and its boot resume the conversation may still be PARKED
+      // (marker + checkpointed queue), and Esc/Stop on it is the user cancelling that work: a durable
+      // cancel, so the sweep does not resume a turn the user just killed, answered OK rather than
+      // "brain not started" for a session that is plainly theirs.
+      const parkedId = session ? this.lifecycle.ownedUserSession(userId, session) : this.lifecycle.activeSessionId(userId);
+      if (this.store.getSession(parkedId)?.parked_at) {
+        this.store.clearSessionPark(parkedId);
+        this.store.discardPausedQueue(parkedId);
+        return;
+      }
+      throw new Error('brain not started');
+    }
     // An explicit stop on a turn the shutdown drain parked (Esc during the drain window) is the user
     // cancelling that work — releasing the hold lets the turn unwind as aborted, and the durable park
     // marker must go with it or the next boot would resume a turn the user just killed.
