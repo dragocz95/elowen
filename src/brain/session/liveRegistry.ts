@@ -202,7 +202,7 @@ export class LiveSessionRegistry<T extends { sessionId: string; session: { dispo
     for (const key of this.locks.keys()) conversations.add(lockedConversation(key));
     return { turns: conversations.size, children };
   }
-  /** The conversations {@link busy} counts as turns, by IDENTITY — the step-boundary drain needs to ask
+  /** The conversations {@link busy} counts as turns, by IDENTITY — the pause needs to ask
    *  "is THIS turn parked" per session, which a count cannot answer. Same lock→conversation mapping as
    *  busy(), so the two can never disagree about what is in flight. */
   activeTurnSessionIds(): string[] {

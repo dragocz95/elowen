@@ -195,7 +195,8 @@ describe('createBootRecovery', () => {
    *  (delegations → workflows → owner and platform conversations) and the claim/resume phase split. */
   function stubHost(trace: string[]): BootRecoveryHost {
     return {
-      claimDelegationRecovery: () => { trace.push('claim:delegations'); return [{ childSessionId: 'run' } as never]; },
+      claimDelegationRecovery: () => { trace.push('claim:delegations'); },
+      takeClaimedDelegations: () => [{ childSessionId: 'run' } as never],
       orderDelegationRecovery: (runs) => { trace.push('order:delegations'); return runs; },
       recoverDelegation: async () => { trace.push('resume:delegations'); return 'resumed'; },
       claimWorkflowRecovery: () => { trace.push('claim:workflows'); return [{ workflowId: 'wf' } as never]; },
@@ -204,6 +205,8 @@ describe('createBootRecovery', () => {
       resumeParkedConversation: async () => { trace.push('resume:conversations'); return 'resumed'; },
       claimParkedPlatformTurns: () => { trace.push('claim:platform'); return [{ id: 'brain-ch-x' } as never]; },
       resumeParkedPlatformTurn: async () => { trace.push('resume:platform'); return 'resumed'; },
+      claimPauseInterruptions: () => [],
+      notifyPauseInterruption: async () => 'released',
     };
   }
 
@@ -211,14 +214,22 @@ describe('createBootRecovery', () => {
     // Asserted on the DECLARED graph, not on a trace: a trace would pass just as happily on a chain whose
     // providers merely happen to be registered in a working order.
     expect(createBootRecovery(stubHost([]), silentLog()).plan()).toEqual([
+      // The synchronous claim everything else reads: which runs this boot owns, and therefore which
+      // parked turns wait on a recovering child.
+      { id: 'delegations-claim', dependsOn: [], parallel: false },
+      // Concurrent respawns: the deepest-first guarantee lives in the host (a run awaits its claimed
+      // descendants), so a fleet of independent trees no longer serializes on one another.
+      { id: 'delegations', dependsOn: ['delegations-claim'], parallel: true },
       // The workflow claim is taken by the delegation reconcile, and a delegation claimed under a claimed
       // workflow's node session is superseded by that workflow's resume.
-      { id: 'delegations', dependsOn: [], parallel: false },
       { id: 'workflows', dependsOn: ['delegations'], parallel: false },
-      // A parked owner turn may be waiting on a result the two sweeps above queue durably first.
-      { id: 'owner-conversations', dependsOn: ['delegations', 'workflows'], parallel: true },
-      // Parked platform channel turns wait on the same durably-queued results as owner conversations.
-      { id: 'platform-conversations', dependsOn: ['delegations', 'workflows'], parallel: true },
+      // Woken alongside the delegation RUN (not after it): a result that is already durable reaches its
+      // owner at once, and a later one arrives through the recovery's completion hook. The dependency on
+      // the claim is what makes the wait-on-delegation decision independent of registration order.
+      { id: 'owner-conversations', dependsOn: ['delegations-claim'], parallel: true },
+      { id: 'platform-conversations', dependsOn: ['delegations-claim'], parallel: true },
+      // Turns the pause could not park: notices only, independent of everything above.
+      { id: 'interrupted-turns', dependsOn: [], parallel: true },
     ]);
   });
 
@@ -230,12 +241,71 @@ describe('createBootRecovery', () => {
     // delegation one, because the delegation reconcile is what takes it.
     expect(trace).toEqual(['claim:delegations', 'claim:workflows', 'claim:conversations', 'claim:platform']);
     await coordinator.resumeAll();
-    expect(trace.slice(4)).toEqual([
-      'order:delegations', 'resume:delegations',
-      'resume:workflows',
-      'resume:conversations',
-      'resume:platform',
-    ]);
+    const resumed = trace.slice(4);
+    expect(resumed.sort()).toEqual(['order:delegations', 'resume:conversations', 'resume:delegations', 'resume:platform', 'resume:workflows']);
+    // The one ordering that is load-bearing: a workflow resumes only after the delegation sweep.
+    expect(trace.indexOf('resume:workflows')).toBeGreaterThan(trace.indexOf('resume:delegations'));
+  });
+
+  it('wakes owner and platform conversations WHILE the delegation sweep is still running', async () => {
+    // The 20-minutes-after-boot symptom: the owner wake used to queue behind every respawn's whole turn.
+    const trace: string[] = [];
+    let finishDelegation: () => void = () => {};
+    const host = {
+      ...stubHost(trace),
+      recoverDelegation: async () => {
+        trace.push('resume:delegations:start');
+        await new Promise<void>((resolve) => { finishDelegation = resolve; });
+        trace.push('resume:delegations:end');
+        return 'resumed' as const;
+      },
+    };
+    const coordinator = createBootRecovery(host, silentLog());
+    coordinator.claimAll(0);
+    const done = coordinator.resumeAll();
+    for (let i = 0; i < 50 && !trace.includes('resume:platform'); i += 1) await new Promise((r) => setTimeout(r, 1));
+    expect(trace).toContain('resume:delegations:start');
+    expect(trace).toContain('resume:conversations');
+    expect(trace).toContain('resume:platform');
+    expect(trace).not.toContain('resume:delegations:end');
+    expect(trace).not.toContain('resume:workflows'); // still gated on the sweep
+    finishDelegation();
+    await done;
+    expect(trace.indexOf('resume:workflows')).toBeGreaterThan(trace.indexOf('resume:delegations:end'));
+  });
+
+  it('sequences the claims by dependency, not by registration order (the owner sweep reads the delegation claim)', async () => {
+    // Same providers, registered BACKWARDS through a bare coordinator: the owner and platform claims must
+    // still run after the delegation claim, or awaitsDelegations would read an empty claim set.
+    const trace: string[] = [];
+    const host = stubHost(trace);
+    const reference = createBootRecovery(host, silentLog()).plan();
+    const reversed = new BootRecoveryCoordinator(silentLog());
+    const resumeOf: Record<string, () => Promise<RecoveryOutcome>> = {
+      'delegations-claim': async () => 'released',
+      delegations: async () => host.recoverDelegation({} as never),
+      workflows: async () => host.resumeWorkflow({} as never),
+      'owner-conversations': async () => host.resumeParkedConversation({} as never),
+      'platform-conversations': async () => host.resumeParkedPlatformTurn({} as never),
+      'interrupted-turns': async () => host.notifyPauseInterruption({} as never),
+    };
+    const claimOf: Record<string, () => readonly unknown[]> = {
+      'delegations-claim': () => { host.claimDelegationRecovery(); return []; },
+      delegations: () => host.takeClaimedDelegations(),
+      workflows: () => host.claimWorkflowRecovery(),
+      'owner-conversations': () => host.claimParkedConversations(),
+      'platform-conversations': () => host.claimParkedPlatformTurns(),
+      'interrupted-turns': () => host.claimPauseInterruptions(),
+    };
+    for (const provider of [...reference].reverse()) {
+      reversed.register({ id: provider.id, dependsOn: provider.dependsOn, parallel: provider.parallel, claim: claimOf[provider.id]!, resume: resumeOf[provider.id]! });
+    }
+    reversed.claimAll(0);
+    expect(trace.indexOf('claim:delegations')).toBeLessThan(trace.indexOf('claim:conversations'));
+    expect(trace.indexOf('claim:delegations')).toBeLessThan(trace.indexOf('claim:platform'));
+    expect(trace.indexOf('claim:delegations')).toBeLessThan(trace.indexOf('claim:workflows'));
+    await reversed.resumeAll();
+    expect(trace.indexOf('resume:workflows')).toBeGreaterThan(trace.indexOf('resume:delegations'));
   });
 
   it('still resumes workflows and conversations when the delegation sweep fails', async () => {

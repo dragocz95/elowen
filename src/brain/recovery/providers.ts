@@ -1,4 +1,4 @@
-import type { BrainSessionRow, RecoverableRun, RecoverableWorkflow } from '../../store/brainStore.js';
+import type { BrainSessionRow, PauseInterruption, RecoverableRun, RecoverableWorkflow } from '../../store/brainStore.js';
 import type { ParkedPlatformTurn } from '../platformTurnRecovery.js';
 import { BootRecoveryCoordinator } from './coordinator.js';
 import type { RecoveryLog, RecoveryOutcome } from './types.js';
@@ -9,15 +9,22 @@ export interface OwnerConversationRecovery {
   row: BrainSessionRow;
   parked: boolean;
   resultsExpected: boolean;
+  /** The pause caught this turn blocked ONLY on delegation calls whose children this boot is recovering.
+   *  Such a turn is not continued at boot: its continuation IS the child's answer, which the recovery's
+   *  completion hook delivers as a turn of its own — a durable wait with no budget, in place of the
+   *  ten-minute drain that used to hold the whole restart for it. */
+  awaitsDelegations?: boolean;
 }
 
 /** What the four built-in providers need from the brain. Narrow on purpose: the coordinator drives
  *  claim/order/resume and nothing else, so this seam exposes exactly those verbs — BrainService satisfies
  *  it structurally, and a test can satisfy it with a stub instead of a whole brain. */
 export interface BootRecoveryHost {
-  /** Claims BOTH substrates in one synchronous pass and returns the generic delegation half — see the
+  /** Claims BOTH substrates in one synchronous pass and stashes the generic delegation half — see the
    *  `workflows` provider below for why the two cannot be claimed independently. */
-  claimDelegationRecovery(): readonly RecoverableRun[];
+  claimDelegationRecovery(): void;
+  /** The runs the claim above took, handed to the run provider exactly once. */
+  takeClaimedDelegations(): readonly RecoverableRun[];
   orderDelegationRecovery(runs: readonly RecoverableRun[]): readonly RecoverableRun[];
   recoverDelegation(run: RecoverableRun): Promise<RecoveryOutcome>;
   claimWorkflowRecovery(): readonly RecoverableWorkflow[];
@@ -26,6 +33,8 @@ export interface BootRecoveryHost {
   resumeParkedConversation(item: OwnerConversationRecovery): Promise<RecoveryOutcome>;
   claimParkedPlatformTurns(): readonly ParkedPlatformTurn[];
   resumeParkedPlatformTurn(row: ParkedPlatformTurn): Promise<RecoveryOutcome>;
+  claimPauseInterruptions(): readonly PauseInterruption[];
+  notifyPauseInterruption(item: PauseInterruption): Promise<RecoveryOutcome>;
 }
 
 /** The daemon's boot recovery chain. Built by the daemon's boot layer only — the sub-agent runner has no
@@ -35,17 +44,32 @@ export interface BootRecoveryHost {
 export function createBootRecovery(host: BootRecoveryHost, log: RecoveryLog): BootRecoveryCoordinator {
   const coordinator = new BootRecoveryCoordinator(log);
 
-  // Interrupted sub-agent delegations: durable run rows, claimed by compare-and-swap on the owning boot id.
+  // Interrupted sub-agent delegations, in two providers because two different things depend on them:
+  //  - the CLAIM (synchronous, cheap): the compare-and-swap on the owning boot id, which also decides
+  //    which owner turns are waiting on a recovering child. The owner and platform sweeps depend on THIS —
+  //    they read the claim set — and on nothing slower;
+  //  - the RUN (asynchronous, long): the respawns. Only the workflow resume is ordered after it.
+  // Registration order carries no meaning: the coordinator sequences both passes by these dependencies.
+  coordinator.register<never>({
+    id: 'delegations-claim',
+    claim: () => { host.claimDelegationRecovery(); return []; },
+    resume: () => Promise.resolve('released' as const),
+  });
   coordinator.register<RecoverableRun>({
     id: 'delegations',
-    claim: () => host.claimDelegationRecovery(),
+    dependsOn: ['delegations-claim'],
+    claim: () => host.takeClaimedDelegations(),
     // DEEPEST first — an item-level graph, which is why this hook exists at all. A parent blocked on its
     // own delegation must be respawned only AFTER the child whose result is about to land in its inbox,
     // and "deeper" is a property of the claim set itself (walked over the claims via a byChild map, with
     // a cycle guard), so no provider-level dependency could express it.
     order: (runs) => host.orderDelegationRecovery(runs),
-    // Serial: a fleet of interrupted delegations must not stampede a freshly booted daemon, and a
-    // deepest-first order only means something if the deeper item actually finishes first.
+    // Concurrent: the children were running concurrently before the restart, and a serial sweep made the
+    // last one wait for every other one's whole turn (median 4 minutes, up to 50, per boot). The
+    // deepest-first guarantee is kept INSIDE the host: a run whose child is itself a claimed parent waits
+    // for that parent's own claimed children first (recoverDelegation awaits them), so a tree still
+    // recovers leaves-first while independent trees run side by side.
+    parallel: true,
     resume: (run) => host.recoverDelegation(run),
   });
 
@@ -69,8 +93,12 @@ export function createBootRecovery(host: BootRecoveryHost, log: RecoveryLog): Bo
   // the tagged item keeps a result wake from being mistaken for a generic interrupted-turn continuation.
   coordinator.register<OwnerConversationRecovery>({
     id: 'owner-conversations',
-    // After BOTH sweeps: every recovered result expected by this worklist is durable before its owner wakes.
-    dependsOn: ['delegations', 'workflows'],
+    // On the delegation CLAIM (it needs the claim set to know which parked turns wait on a recovering
+    // child), deliberately NOT on the delegation RUN: the owner is woken in the same wave as the
+    // respawns, so a result that is already durable reaches its parent right after boot instead of after
+    // every respawn in the fleet has finished. A result a child produces later in this boot is delivered
+    // by the recovery's own completion hook (delegatedSession → drainPendingSubagentResults).
+    dependsOn: ['delegations-claim'],
     claim: () => host.claimParkedConversations(),
     // Concurrent: these are independent owner turns, exactly as they would be in normal operation.
     parallel: true,
@@ -84,13 +112,23 @@ export function createBootRecovery(host: BootRecoveryHost, log: RecoveryLog): Bo
   // managed to post, which are re-sent as text and never recomputed — see platformTurnRecovery.ts.
   coordinator.register<ParkedPlatformTurn>({
     id: 'platform-conversations',
-    // Same reasoning as owner conversations: a parked channel turn may be waiting on a delegation's or a
-    // workflow's result, which those sweeps queue durably first.
-    dependsOn: ['delegations', 'workflows'],
+    // Same reasoning as owner conversations: on the claim, not the run; a late delegated result reaches
+    // the room through the same completion hook.
+    dependsOn: ['delegations-claim'],
     claim: () => host.claimParkedPlatformTurns(),
     // Concurrent: independent rooms, exactly as their turns would run in normal operation.
     parallel: true,
     resume: (row) => host.resumeParkedPlatformTurn(row),
+  });
+
+  // Turns the last pause could NOT park and that outlived its bounded wait: nothing resumes them, and
+  // this is the sweep that makes sure nobody waits on them in silence (a notice into the room, or to the
+  // owner for a scheduled run). Independent of every other provider; concurrent, they are just posts.
+  coordinator.register<PauseInterruption>({
+    id: 'interrupted-turns',
+    claim: () => host.claimPauseInterruptions(),
+    parallel: true,
+    resume: (item) => host.notifyPauseInterruption(item),
   });
 
   return coordinator;

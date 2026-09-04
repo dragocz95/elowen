@@ -6,6 +6,9 @@ import {
   platformTurnParkEligible,
   resumeDeliveryTarget,
   resumePlatformTurn,
+  platformTurnInterruptionClass,
+  notifyInterruptedPlatformTurn,
+  INTERRUPTED_TURN_NOTICE,
   type PlatformTurnRecoveryDeps,
 } from '../../src/brain/platformTurnRecovery.js';
 import { channelSessionId } from '../../src/brain/sessionId.js';
@@ -180,6 +183,34 @@ describe('platformTurnParkEligible — a platform turn parks only where a faithf
     expect(platformTurnParkEligible(store, 'brain-1')).toBe(false);
   });
 
+  it('names WHY a turn cannot park, one class per refusal, so the pause can record it', () => {
+    const store = (raw?: string) => ({ platformTurnEnvelope: () => raw });
+    const id = channelSessionId('discord-ops');
+    expect(platformTurnInterruptionClass(store(JSON.stringify(envelopeFor())), id)).toBeNull();
+    expect(platformTurnInterruptionClass(store(JSON.stringify(envelopeFor())), channelSessionId('cron-daily'))).toBe('cron');
+    expect(platformTurnInterruptionClass(store(undefined), id)).toBe('no-envelope');
+    expect(platformTurnInterruptionClass(store('{not json'), id)).toBe('no-envelope');
+    expect(platformTurnInterruptionClass(store(JSON.stringify({ ...envelopeFor(), scheduled: true })), id)).toBe('scheduled');
+    expect(platformTurnInterruptionClass(store(JSON.stringify({ ...envelopeFor(), accountUserId: null })), id)).toBe('unlinked');
+    expect(platformTurnInterruptionClass(store(JSON.stringify({ ...envelopeFor(), imageCount: 2 })), id)).toBe('images');
+    expect(platformTurnInterruptionClass(store(JSON.stringify({ ...envelopeFor('discord-'), channelId: 'discord-' })), channelSessionId('discord-'))).toBe('undeliverable');
+    // The park gate and the classes are one rule: eligible ⇔ no class.
+    expect(platformTurnParkEligible(store(JSON.stringify(envelopeFor())), id)).toBe(true);
+    expect(platformTurnParkEligible(store(JSON.stringify({ ...envelopeFor(), accountUserId: null })), id)).toBe(false);
+  });
+
+  it('posts the interruption notice into the room of an un-parkable turn and consumes its envelope', async () => {
+    const { store, delivered, deps, sessionId } = setup();
+    store.createSession({ id: sessionId, userId: 1, model: 'kimi' });
+    store.savePlatformTurnEnvelope(sessionId, JSON.stringify({ ...envelopeFor(), accountUserId: null }));
+    expect(await notifyInterruptedPlatformTurn(deps, sessionId)).toBe('posted');
+    expect(delivered).toEqual([{ text: INTERRUPTED_TURN_NOTICE, target: 'destination:discord:ops' }]);
+    expect(store.platformTurnEnvelope(sessionId)).toBeUndefined();
+    // Nothing to tell without a target; still never throws.
+    expect(await notifyInterruptedPlatformTurn(deps, channelSessionId('work-job-9'))).toBe('no-target');
+    expect(delivered).toHaveLength(1);
+  });
+
   it('derives the shared-room delivery target from the registry key, and prefers a direct chat\'s own', () => {
     // `<platform>-<threadOrChannel>`: the tail is the platform's own send address for that room/thread.
     expect(resumeDeliveryTarget(envelopeFor('discord-1234-5678'))).toBe('destination:discord:1234-5678');
@@ -215,6 +246,38 @@ describe('resumePlatformTurn — the boot resume of a parked platform channel tu
     await resumePlatformTurn(deps, { id: sessionId, park_attempts: 0 });
     expect(delivered).toHaveLength(1);
     expect(brains).toHaveLength(1);
+  });
+
+  it('a room paused on its own delegation waits durably at boot: attempt counted, no model turn, marker kept', async () => {
+    const { store, brains, delivered, deps, park, sessionId } = setup();
+    const row = park(envelopeFor());
+
+    const outcome = await resumePlatformTurn(deps, { ...row, awaitsDelegations: true });
+
+    expect(outcome).toBe('released');
+    expect(brains).toHaveLength(0);
+    expect(delivered).toEqual([]);
+    expect(store.getSession(sessionId)!.parked_at).not.toBeNull();
+    expect(store.getSession(sessionId)!.park_attempts).toBe(1); // the same budget every park spends
+  });
+
+  it('delivers a recovered sub-agent result to the room as the continuation, and acknowledges only after the reply', async () => {
+    const { store, brains, delivered, deps, park, sessionId } = setup();
+    const row = park(envelopeFor());
+    const acknowledged: number[] = [];
+
+    const outcome = await resumePlatformTurn(deps, { ...row, awaitsDelegations: true }, {
+      note: '<system-reminder>\n<subagent-result id="r1" status="done">the child says 42</subagent-result>\n</system-reminder>',
+      acknowledge: () => { acknowledged.push(brains[0]!.customSends.length); },
+    });
+
+    expect(outcome).toBe('resumed');
+    expect(brains[0]!.customSends).toHaveLength(1);
+    expect(brains[0]!.customSends[0]!.customType).toBe('subagent-result-resume');
+    expect(brains[0]!.customSends[0]!.content).toContain('the child says 42');
+    expect(delivered).toEqual([{ text: 'resumed answer', target: 'destination:discord:ops' }]);
+    expect(acknowledged).toEqual([1]); // after the model answered, not before
+    expect(store.getSession(sessionId)!.parked_at).toBeNull();
   });
 
   it('re-derives authority from the account: a vanished account refuses, without a model turn', async () => {

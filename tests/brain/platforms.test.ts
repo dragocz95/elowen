@@ -1091,8 +1091,8 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       const orch = await orchestratorWith([
         { name: 'discord', notify: async (text, _channelId, notice) => { seen.push({ text, notice }); } },
       ]);
-      await orch.notify('🛑 **Stopping** — Elowen is shutting down.', undefined, { key: 'stoppingIdle' });
-      expect(seen).toEqual([{ text: '🛑 **Stopping** — Elowen is shutting down.', notice: { key: 'stoppingIdle' } }]);
+      await orch.notify('⏸️ **Pausing** — Elowen is restarting; nothing was in flight.', undefined, { key: 'pausing', args: [0, 0] });
+      expect(seen).toEqual([{ text: '⏸️ **Pausing** — Elowen is restarting; nothing was in flight.', notice: { key: 'pausing', args: [0, 0] } }]);
     });
 
     it('leaves free-form notifications without a descriptor', async () => {
