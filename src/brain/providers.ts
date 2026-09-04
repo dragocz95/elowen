@@ -82,10 +82,16 @@ function catalogDefinition(model: Model<Api>, configured?: Pick<Model<Api>, 'sam
   };
 }
 
+/** ChatGPT-account text models accepted by the OAuth endpoint but absent from the pinned PI catalog.
+ *  Inherit one native descriptor as a unit rather than guessing transport, limits, pricing or capabilities
+ *  field by field. PI's own descriptor wins automatically once it ships the exact id. */
+const OPENAI_CODEX_OAUTH_TEXT_MODELS = [
+  { id: 'gpt-6-astra', name: 'GPT-6 Astra', clonedFrom: 'gpt-5.6-sol' },
+] as const;
+
 /** Image models the ChatGPT/OpenAI OAuth account exposes for the GenerateImage tool but that the pinned PI
- *  release does not list in the openai-codex catalog. The account's text models now ship natively, so only
- *  these remain Elowen's to add — the copy-forward below keeps PI's descriptors for everything else. */
-const OPENAI_CODEX_OAUTH_MODELS = ['gpt-image-1.5', 'gpt-image-2'] as const;
+ *  release does not list in the openai-codex catalog. */
+const OPENAI_CODEX_OAUTH_IMAGE_MODELS = ['gpt-image-1.5', 'gpt-image-2'] as const;
 
 function extendOpenAiCodexCatalog(registry: ModelRegistry): void {
   const provider = 'openai-codex';
@@ -94,7 +100,14 @@ function extendOpenAiCodexCatalog(registry: ModelRegistry): void {
   if (!template) return; // PI dropped the provider — nothing to extend.
   const existing = new Set(builtins.map((model) => model.id));
   const models = builtins.map((model) => catalogDefinition(model));
-  for (const id of OPENAI_CODEX_OAUTH_MODELS) {
+  for (const addition of OPENAI_CODEX_OAUTH_TEXT_MODELS) {
+    if (existing.has(addition.id)) continue;
+    const inherited = builtins.find((model) => model.id === addition.clonedFrom);
+    if (!inherited) continue; // Nothing to clone from; no entry beats one guessed from scratch.
+    models.push({ ...catalogDefinition(inherited), id: addition.id, name: addition.name });
+    existing.add(addition.id);
+  }
+  for (const id of OPENAI_CODEX_OAUTH_IMAGE_MODELS) {
     if (existing.has(id)) continue;
     const capabilities = descriptorCapabilities(provider, id);
     models.push({

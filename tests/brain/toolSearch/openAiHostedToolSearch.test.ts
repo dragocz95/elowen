@@ -14,7 +14,7 @@ describe('OpenAI hosted tool search — GPT-5.4+ ChatGPT OAuth', () => {
     ['gpt-5.4', true],
     ['gpt-5.4-codex', true],
     ['gpt-5.6-luna', true],
-    ['gpt-6', true],
+    ['gpt-6-astra', true],
     ['gpt-5.3-codex-spark', false],
     ['gpt-4.9', false],
     ['gpt-image-2', false],
