@@ -331,7 +331,7 @@ export function register(ctx) {
 
   ctx.registerTool(defineTool({
     name: 'WebSearch', label: 'Web search',
-    description: 'Search the web. Returns result blocks with titles, URLs and snippets. Results are US-only where the selected provider supports a locale. allowed_domains and blocked_domains accept host names and filter subdomains; blocked domains take precedence. After answering from results, cite the URLs you used.',
+    description: 'Search the web. Returns result blocks with titles, URLs and snippets. Results are US-only where the selected provider supports a locale. allowed_domains and blocked_domains accept host names and filter subdomains; blocked domains take precedence. After answering from results, end with a Sources list containing the URLs you used as Markdown links.',
     parameters: Type.Object({
       query: Type.String({ minLength: 2, description: 'Search query, at least 2 characters.' }),
       allowed_domains: Type.Optional(Type.Array(Type.String(), { description: 'Only return these hosts and their subdomains. Host names only.' })),
