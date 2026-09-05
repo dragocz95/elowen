@@ -634,7 +634,6 @@ export const en = {
     cleanupConfirmTitle: 'Delete all data?',
     cleanupConfirmDesc: 'All tasks, missions and activity will be permanently removed and running sessions stopped. Projects, users and settings are kept.',
     cleanupDone: 'Cleaned up — removed {tasks} tasks and {missions} missions.',
-    sectionsNav: 'Settings sections',
     /** Labels for the deck hero's metric rail — the hairline strip of figures every settings section
      *  opens with. Each names a count the section itself already holds, so the rail never reports a
      *  number with no editor under it. */
@@ -992,7 +991,6 @@ export const en = {
     tabMemory: 'Memory',
     tabPersonality: 'Personality',
     personalPluginConfig: 'Personal plugin settings',
-    sectionsNav: 'Account sections',
     discordId: 'Discord ID',
     whatsappNumber: 'WhatsApp number',
     msteamsIdentity: 'Microsoft Teams identity',

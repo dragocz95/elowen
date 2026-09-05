@@ -26,8 +26,80 @@ describe('design tokens', () => {
 
   it('has one dark palette and no light-theme override', () => {
     expect(css).toContain('--color-background: #000000');
-    expect(css).toContain('--font-sans: var(--font-geist-sans)');
     expect(css).not.toContain("data-theme='light'");
+  });
+
+  // Inter Variable is the app's ONE sans face, headings included. `--font-geist-sans` survives only as a
+  // compatibility alias for plugin sheets compiled against an older kit: an undefined variable inside a
+  // font-family list invalidates the whole declaration, so dropping the name outright would leave those
+  // bundles in the browser default rather than falling back to Inter.
+  it('resolves the whole sans ramp, headings included, to Inter Variable', () => {
+    expect(css).toMatch(/--font-geist-sans:\s*"Inter Variable"/);
+    expect(css).toContain('--font-sans: var(--font-geist-sans)');
+    expect(css).toContain('--font-display: var(--font-sans)');
+    // The heading token must not name a second face ahead of the body one — that split IS the bug this
+    // replaced, where --font-display put Geist in front of Inter and headings alone changed face.
+    expect(css).not.toMatch(/--font-display:[^;]*geist/);
+  });
+
+  // The reference design runs -0.16px at 16px and -0.13px at 13px, which is one ratio stated twice.
+  it('tracks the UI face from a single ratio token', () => {
+    expect(css).toContain('--tracking-ui: -0.01em');
+  });
+
+  // Geometry the sidebar primitive and the skin BOTH read. `--sidebar-width-icon` in particular is the
+  // one upstream shadcn injects as an inline style; declared here it stays overridable by a skin.
+  //
+  // Every number is PINNED to the value measured off the reference dashboard, not merely asserted to
+  // exist: these are the column's proportions, and a token that still exists with a different value is
+  // exactly the change this file is here to catch. The rail is pinned for a second reason as well — both
+  // Studio skins used to restate 57px, and the value now lives here alone.
+  it('defines the sidebar geometry the navigation column is built on', () => {
+    for (const token of [
+      '--sidebar-width: 16.25rem',        // 260px, the expanded column
+      '--sidebar-width-icon: 3.5625rem',  // 57px, the folded rail
+      '--sidebar-width-mobile',
+      '--sidebar-row-height: 2.125rem',   // 34px
+      '--sidebar-row-radius: 0.5rem',     // 8px
+      '--sidebar-sub-indent: 1.75rem',    // 28px
+      '--sidebar-text: 0.8125rem',        // 13px
+      '--sidebar-header-height: 3.625rem', // 58px
+      '--sidebar-footer-height: 3rem',    // 48px
+      '--sidebar-search-height: 2rem',    // 32px
+      '--sidebar-caret-motion: 200ms',    // the disclosure's own duration, not --motion-base
+    ]) {
+      expect(css).toContain(token);
+    }
+  });
+
+  // The column grounds on the page's own canvas, so it draws no rule down its outer edge (owner
+  // decision, 5 Sep 2026: 1:1 with the reference dashboard). The rule is still DECLARED, painted from a
+  // token of its own, so a design that does step its column off the page gets the seam back by setting
+  // one value — and it must not be `--color-sidebar-border`, which is the internal hairline the header,
+  // the account separator and the footer are still drawn with.
+  it('draws no outer rule down the navigation column', () => {
+    expect(css).toContain('--color-sidebar-rule: transparent');
+    expect(components).toMatch(/\.sidebar-nav\[data-side='left'\]\s*\{\s*border-right:\s*1px solid var\(--color-sidebar-rule\)/);
+    expect(components).toMatch(/\.sidebar-nav\[data-side='right'\]\s*\{\s*border-left:\s*1px solid var\(--color-sidebar-rule\)/);
+  });
+
+  // Inside the column a group is introduced by its LABEL and by the air the label carries — 16px above,
+  // 8px below — and by nothing else. The reference draws exactly ONE hairline in the menu, the rule above
+  // the trailing account row; a seam under the landing block or between two labelled groups is a line it
+  // does not have (owner, 5 Sep 2026, checked against a fresh screenshot).
+  it('separates groups by their label alone, with a single hairline above the account', () => {
+    expect(components).not.toMatch(/\.sidebar-nav__group \+ \.sidebar-nav__group\s*\{[^}]*border-top/);
+    expect(components).toMatch(/\.sidebar-nav__group-label\s*\{[^}]*margin:\s*1rem 0 0\.5rem/);
+    expect(components).toMatch(/\.sidebar-nav__separator\s*\{[^}]*background:\s*var\(--color-sidebar-border\)/);
+  });
+
+  // The quick-search field is a white shape inside a light hairline at the row radius. Both halves are
+  // load-bearing: the fill must not be the canvas the column itself is grounded on, or the field is an
+  // outline around nothing, and the edge is the reference's own.
+  it('draws the quick-search field as a filled shape with a hairline edge', () => {
+    expect(components).toMatch(
+      /\.sidebar-nav__search-field\s*\{[^}]*border:\s*1px solid var\(--color-sidebar-border\);[^}]*background:\s*var\(--color-card\)/,
+    );
   });
 
   it('uses one account-dark token for shared document surfaces', () => {
@@ -49,10 +121,13 @@ describe('design tokens', () => {
   });
 
   it('uses component width for spatial deck layout changes', () => {
-    expect(components).toMatch(/@container workspace-shell \(width < 56\.25rem\)[\s\S]*\.spatial-section-rail__track/);
     // The deck's label/control record stacks on the SHELL's width, not the window's: the same form is
     // rendered inside a detail rail, where a viewport media query would keep it in three tracks.
     expect(components).toMatch(/@container workspace-shell \(width < 38\.75rem\)[\s\S]*\.settings-row\s*\{[^}]*grid-template-columns:\s*1fr/);
+    // The horizontal section rail that used to fold at 56.25rem is gone with the deck navigation itself:
+    // a deck's sections are rows of the sidebar's sub-menu, so the page has no second menu to make
+    // responsive, and a stylesheet still folding one would be describing a page nobody renders.
+    expect(components).not.toContain('spatial-section-rail');
   });
 
   it('carries no hand-rolled telemetry scroll box now that the rail scrolls on ScrollArea', () => {

@@ -13,7 +13,6 @@ import { createWrapper } from '../test-utils';
 // navigation already lists it), so the deck must not offer the same surface a second time — and the
 // ids that used to name a deck section survive in localStorage and in links, which is why they are
 // forwarded to that page instead of dropped.
-const CORE_RAIL = ['System', 'Elowen AI', 'Models', 'Plugins', 'Recap', 'Data'];
 
 const server = setupServer(
   http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], providers: { 'claude-code': { bin: 'claude', args: '' } }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } })),
@@ -41,14 +40,15 @@ const mountPage = () => {
 };
 
 describe('SettingsPage and plugin-contributed sections', () => {
-  it('keeps the rail core-only while a plugin declares a section', async () => {
+  it('never mounts a plugin\'s section in the core deck, whatever the plugin declares', async () => {
     mountPage();
     await screen.findByRole('heading', { level: 1, name: 'System' });
     // Give the listing a chance to arrive — the assertion is about what it does NOT add.
     await screen.findByText('System diagnostics');
-    const rail = screen.getByRole('radiogroup', { name: 'Settings sections' });
-    expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual(CORE_RAIL);
-    expect(screen.queryByRole('radio', { name: 'Demo plugin' })).toBeNull();
+    expect(screen.queryByText('Demo plugin')).toBeNull();
+    // Nor does the page grow a navigation of its own to put it in: the sections are menu rows now, and
+    // the menu lists a plugin's settings under the plugin's own world.
+    expect(screen.queryByRole('radiogroup')).toBeNull();
   });
 
   it('forwards a remembered section of a sole-section plugin to that plugin\'s page', async () => {

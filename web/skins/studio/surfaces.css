@@ -100,14 +100,12 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__eyebrow {
   display: none;
 }
-/* Working-page titles match the reference's restrained 24px regular step. Geist is bundled, so 400 has
-   stable metrics across platforms rather than depending on each operating system's font synthesis. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero h1 {
-  font-size: 1.5rem;
-  font-weight: 400;
-  letter-spacing: -0.15px;
-  line-height: 1.25;
-}
+/* There is no page-title rule here any more, and its absence is the decision. Studio restated the <h1>
+   as 24px/400 because the shared stylesheet sized it with a container clamp that ran up to 42px, and
+   this design wanted one restrained step instead of a title that changed size when a dock narrowed the
+   page. The shared rule IS one step now — the scale's `--text-page-title`, 30/36/600 off the reference —
+   so a second opinion here would be a fork of the app's type scale living inside a design, which is what
+   tokens.css exists to prevent. A design that wants another title size moves the token. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__count {
   color: var(--color-subtle-foreground);
   font-size: 0.875rem;
@@ -143,7 +141,7 @@
 
 /* The decorative panel belongs to the ember identity. It stays in the DOM — a page states its mascot as
    a prop and Studio does not fork pages — and simply does not paint, the same move shared.css makes for
-   `.ember-fall` and `.dash-beam`.
+   `.dash-beam`.
 
    Hiding it leaves the body's two-column grid with an empty first track, so the body is re-declared as
    a plain block: `:not(:has(.workspace-hero__mascot))` cannot help here, the element is still there. */
@@ -483,39 +481,14 @@
   border-radius: var(--radius);
   font-size: 0.8125rem;
 }
-/* Configuration decks use the reference's quiet left menu from tablet width upward. It sticks below the
-   Studio top bar, scrolls independently when a plugin contributes a long menu, and uses neutral ink/fill
-   for hover and selection instead of turning the active section into a primary-colour callout. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell[data-section-layout='sidebar'] > .workspace-shell__section-navigation {
-  top: calc(var(--studio-top-bar-height) + 1rem);
-  max-height: calc(100dvh - var(--studio-top-bar-height) - 2rem);
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented {
-  width: 100%;
-  gap: 0.25rem;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented__option {
-  border-radius: var(--radius);
-  color: var(--color-muted-foreground);
-  background: transparent;
-  font-size: 0.8125rem;
-  font-weight: 500;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented__option:hover {
-  color: var(--color-foreground);
-  background: var(--studio-fill-hover);
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented__option[aria-checked='true'] {
-  color: var(--color-foreground);
-  background: var(--studio-fill-active);
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented__count {
-  color: inherit;
-  opacity: 0.65;
-}
+/* There is no quiet left menu inside a configuration deck any more, and its rules are gone with it. A
+   deck's sections are ADDRESSES, so they are rows of the sidebar's own sub-menu — one menu, styled once,
+   in the place a reader already looks to find out where the app can go. This design retunes that column
+   through the `--sidebar-*` tokens rather than restating a second menu's ink, fill and sticky offset here.
 
-/* Registers and phone decks use the same plain line tabs. The wrapper never grows wider than the page;
-   the Segmented track fills it and owns horizontal scroll when the labels do not fit. */
+   Registers keep their plain line tabs below, which are not navigation: they switch between views of the
+   collection the page is already showing. The wrapper never grows wider than the page; the Segmented
+   track fills it and owns horizontal scroll when the labels do not fit. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='tabs'] {
   width: 100%;
   min-width: 0;
@@ -614,14 +587,10 @@
   padding: 1rem clamp(1rem, 1.6vw, 1.25rem);
   border-bottom-color: var(--studio-line);
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__heading h2 {
-  font-size: 0.9375rem;
-  font-weight: 600;
-}
+/* The section heading and the sentence under it take the scale's own steps from the shared stylesheet —
+   `--text-section-title` and `--text-meta` — so this design states only the rhythm between them. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__heading p {
   margin-top: 0.25rem;
-  font-size: 0.8125rem;
-  line-height: 1.5;
 }
 /* The section glyph reads as a mark on the neutral ink rather than as the accent: the accent in this
    design means state, and every section header carrying one made "important" the default. */
@@ -691,18 +660,16 @@
   border-color: var(--studio-line);
   box-shadow: none;
 }
+/* A record's name is the scale's card-title step, which the shared stylesheet already sets. What is left
+   here is the LAYOUT of the name and its help mark, which is Studio's and not the scale's. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__title {
   display: inline-flex;
   align-items: center;
   gap: 0.375rem;
-  font-size: 0.875rem;
-  font-weight: 500;
-  letter-spacing: normal;
 }
+/* The status line takes the scale's meta step from the shared stylesheet; the reading measure is Studio's. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__status {
   max-width: min(100%, 68ch);
-  font-size: 0.8125rem;
-  line-height: 1.5;
 }
 /* Narrow pages keep the same two-column table grammar: setting on the left, its current value and actions
    on the right. Only the ratio tightens; controls never fall underneath the record they describe. */
@@ -959,9 +926,10 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .dash-label {
   color: var(--color-foreground);
   font-family: var(--font-sans);
-  font-size: 0.9375rem;
-  font-weight: 600;
-  letter-spacing: -0.01em;
+  font-size: var(--text-section-title);
+  font-weight: var(--text-section-title--font-weight);
+  line-height: var(--text-section-title--line-height);
+  letter-spacing: var(--tracking-ui);
   text-shadow: none;
   text-transform: none;
 }

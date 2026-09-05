@@ -1,4 +1,4 @@
-/* Dashboard ambient layers and the shared cosmos-* keyframes: .dash-label, .dash-beam, .home-composer glow, .ember-fall, .logo-adaptive. The keyframes outlived the old hero cosmos — the workflow canvas still runs on them. */
+/* Dashboard ambient layers and the shared cosmos-* keyframes: .dash-label, .dash-beam, .home-composer glow, .logo-adaptive. The keyframes outlived the old hero cosmos — the workflow canvas still runs on them. */
 
 /* Keep the original flat Elowen assets on the single OLED palette. */
 .logo-adaptive { content: url('/elowen-logo.png'); }
@@ -7,14 +7,6 @@
 @keyframes cosmos-breathe { 50% { opacity: 0.78; filter: blur(5px); } }
 /* Driven by .wf-dag__edge--live (workflow canvas). */
 @keyframes cosmos-fil-flow { to { stroke-dashoffset: -37; } }
-
-/* ambient ember drizzle behind the navigation rail (rendered only in effects mode 'full') */
-/* Fills its host (the nav rail); no z-index — the rail's own items sit on z-10 above it. The explicit
-   100%/100% is load-bearing, NOT redundant with `inset: 0`: a canvas is a REPLACED element, so `width:
-   auto` resolves to its intrinsic (bitmap) size and `inset` alone leaves it at the default 300×150.
-   Sizing it in percentages makes the layout box depend on the host instead of on the bitmap the script
-   assigns — which is what stops that assignment from feeding back into layout. */
-.ember-fall { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 
 /* The dashboard composer's resting and focused glow. Here rather than on the element because both
    shadows compose color-mix(), and the commas inside it cannot survive a Tailwind arbitrary value. */

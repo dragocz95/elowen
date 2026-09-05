@@ -1,7 +1,6 @@
 'use client';
 import { Activity, useCallback, useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
-import { UserCog, Mail, Boxes, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, Brain, SquareTerminal, Settings2 } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, Brain } from 'lucide-react';
 import { ElowenApiError } from '../../lib/elowenClient';
 import type { PlatformLinkKey, ProfilePatch } from '../../lib/types';
 
@@ -41,18 +40,17 @@ import { CliSection } from './CliSection';
 import { TerminalSection } from './TerminalSection';
 import { AccountMemorySection } from './AccountMemorySection';
 import { PluginAccountSection } from './PluginAccountSection';
-import { parsePluginAccountSectionId, parsePluginUserConfigSectionId, pluginAccountSectionId, pluginUserConfigSectionId } from './pluginSections';
+import { parsePluginAccountSectionId, parsePluginUserConfigSectionId } from './pluginSections';
+import {
+  accountSections,
+  isAccountSection,
+  pluginAccountSectionEntries,
+  userPluginConfigSectionEntries,
+  type AccountSection,
+} from './sections';
 import { UserPluginConfigSection } from './UserPluginConfigSection';
-import { userPluginConfigDescription, userPluginConfigLabel } from './userPluginConfigStrings';
-import { pluginLucideIcon } from '../../lib/pluginIcons';
 import { rowAnchor } from '../../lib/rowAnchors';
 import { useRowAnchor } from '../../lib/useRowAnchor';
-
-const CORE_ACCOUNT_SECTIONS = ['profile', 'security', 'notifications', 'personality', 'cli', 'terminal', 'memory'] as const;
-type CoreAccountSection = typeof CORE_ACCOUNT_SECTIONS[number];
-type AccountSection = CoreAccountSection | `plugin-account:${string}` | `plugin-user-config:${string}`;
-const isAccountSection = (value: string): value is AccountSection =>
-  (CORE_ACCOUNT_SECTIONS as readonly string[]).includes(value) || parsePluginAccountSectionId(value) !== null || parsePluginUserConfigSectionId(value) !== null;
 
 /** Mount a section only after its first visit, then let React Activity retain its local form state.
  *  This avoids eagerly starting every section's queries while making section switches lossless. */
@@ -111,6 +109,25 @@ export function AccountView() {
     window.addEventListener('popstate', apply);
     return () => window.removeEventListener('popstate', apply);
   }, [setSection]);
+  // A bare `/account` names no section, and the menu outside this page can only mark the section the
+  // address names — so the page writes the one it opened on. It writes ONLY into that silence: an address
+  // that already names a section is the reader's, and the effect above is what follows it. `replaceState`
+  // because this is the same place by another spelling, not a step in the reader's history.
+  //
+  // It waits one commit, for the same reason as on /settings: the remembered section arrives from a mount
+  // effect, so writing the first render's fallback into the address would overwrite it with `profile` on
+  // every visit.
+  const [addressReady, setAddressReady] = useState(false);
+  useEffect(() => { setAddressReady(true); }, []);
+  useEffect(() => {
+    if (!addressReady) return;
+    const cat = new URLSearchParams(window.location.search).get('cat');
+    if (cat !== null && isAccountSection(cat)) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('cat', section);
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, [addressReady, section]);
   // …and `?row=<anchor>` beside it: the record the palette named is scrolled into view and blinked once
   // as soon as its section is on screen.
   useRowAnchor();
@@ -122,31 +139,15 @@ export function AccountView() {
   useEffect(() => {
     setVisitedSections((current) => current.has(section) ? current : new Set(current).add(section));
   }, [section]);
-  const pluginAccountSections = useMemo(() => (pluginUi.data ?? []).flatMap((entry) => (entry.account ?? []).map((account) => ({
-    id: pluginAccountSectionId(entry.name, account.id),
-    plugin: entry,
-    sectionId: account.id,
-    // Absent means 'section': a daemon too old to send the field, like every plugin that never asked for
-    // anything else, keeps its own entry in the rail.
-    placement: account.placement ?? 'section',
-    icon: pluginLucideIcon(account.icon),
-    label: account.label,
-    description: entry.strings?.accountHint ?? entry.label ?? account.label,
-  }))), [pluginUi.data]);
-  // A panel that declares itself an identity hangs in the Linked accounts drawer instead of the rail. The
-  // host splits on the manifest field alone and never on which plugin sent it.
+  const pluginAccountSections = useMemo(() => pluginAccountSectionEntries(pluginUi.data ?? []), [pluginUi.data]);
+  // A panel that declares itself an identity hangs in the Linked accounts drawer instead of claiming a
+  // section. The host splits on the manifest field alone and never on which plugin sent it.
   const deckPluginSections = useMemo(() => pluginAccountSections.filter((item) => item.placement !== 'linkedAccount'), [pluginAccountSections]);
   const connectorPluginSections = useMemo(() => pluginAccountSections.filter((item) => item.placement === 'linkedAccount'), [pluginAccountSections]);
-  // The rail gets the plugin's NAME and the hero its sentence — two different strings from the manifest,
-  // resolved through the plugin's own i18n. Feeding the description to both is what put a paragraph in the
-  // rail and left the hero repeating it.
-  const userConfigSections = useMemo(() => (userPluginConfigs.data ?? []).map((detail) => ({
-    id: pluginUserConfigSectionId(detail.name),
-    detail,
-    icon: Settings2,
-    label: userPluginConfigLabel(detail, locale),
-    description: userPluginConfigDescription(detail, locale) ?? t.account.personalPluginConfig,
-  })), [locale, t.account.personalPluginConfig, userPluginConfigs.data]);
+  const userConfigSections = useMemo(
+    () => userPluginConfigSectionEntries(userPluginConfigs.data ?? [], locale, t.account.personalPluginConfig),
+    [locale, t.account.personalPluginConfig, userPluginConfigs.data],
+  );
   useEffect(() => {
     const accountId = parsePluginAccountSectionId(section);
     if (accountId) {
@@ -316,19 +317,12 @@ export function AccountView() {
   };
   const canSubmitPassword = currentPassword.length > 0 && newPassword.length >= 8 && newPassword === confirmPassword;
 
-  // Ordered by settings importance: account basics first, then the Elowen AI runtime and what shapes it
-  // (memory, personality), then operational (notifications, security), with the cosmetic terminal last.
-  const spatialSections: { id: AccountSection; icon: LucideIcon; label: string; description: string }[] = [
-    { id: 'profile', icon: UserCog, label: t.account.tabProfile, description: t.account.profileHint },
+  // The same list, in the same order, that the sidebar draws its sub-items from — the menu is now the
+  // only way between sections, so a second copy here would offer a section this page cannot open.
+  const spatialSections = accountSections(t, [
     ...deckPluginSections.map(({ id, icon, label, description }) => ({ id, icon, label, description })),
     ...userConfigSections.map(({ id, icon, label, description }) => ({ id, icon, label, description })),
-    { id: 'cli', icon: Boxes, label: t.account.tabCli, description: t.cli.modelRolesHint },
-    { id: 'memory', icon: Brain, label: t.account.tabMemory, description: t.help.memoryRecall },
-    { id: 'personality', icon: Sparkles, label: t.account.tabPersonality, description: t.personality.intro },
-    { id: 'notifications', icon: Bell, label: t.account.tabNotifications, description: t.help.pushEnable },
-    { id: 'security', icon: KeyRound, label: t.account.tabSecurity, description: t.account.passwordHint },
-    { id: 'terminal', icon: SquareTerminal, label: t.account.tabTerminal, description: t.terminal.colorsHelp },
-  ];
+  ]);
   const profileFeedback = combineSaveFeedback(
     { status: profileSave.status, retry: profileSave.retry },
     { status: linksSave.status, retry: linksSave.retry },
@@ -361,16 +355,7 @@ export function AccountView() {
     <div className="flex w-full min-w-0 flex-col">
       <ModuleHeader title={t.account.title} icon={UserCog} />
 
-      <WorkspaceShell
-        variant="deck"
-        hero={deckHero}
-        navigation={{
-          sections: spatialSections,
-          value: activeSection.id,
-          onChange: (v) => setSection(v as typeof section),
-          ariaLabel: t.account.sectionsNav,
-        }}
-      >
+      <WorkspaceShell variant="deck" hero={deckHero}>
       {deckPluginSections.map((item) => (
         <AccountPanel key={item.id} id={item.id} active={section} visited={visitedSections}>
           <PluginAccountSection entry={item.plugin} sectionId={item.sectionId} onSaveState={reportSaveState} />

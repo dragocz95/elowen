@@ -53,20 +53,18 @@ afterEach(() => { server.resetHandlers(); localStorage.clear(); window.history.r
 afterAll(() => server.close());
 
 describe('SettingsPage', () => {
-  it('matches the reference section order and renders real System diagnostics', async () => {
+  it('carries no section navigation of its own and renders real System diagnostics', async () => {
     localStorage.setItem('elowen.settings.category', 'system');
     const { wrapper: Wrapper } = createWrapper();
     const { container } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
     expect(await screen.findByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
-    const rail = screen.getByRole('radiogroup', { name: 'Settings sections' });
-    expect(container.querySelector('.workspace-shell')).toHaveAttribute('data-section-layout', 'sidebar');
-    expect(rail).toHaveAttribute('data-variant', 'menu');
-    expect(rail).toHaveAttribute('aria-orientation', 'vertical');
-    expect(rail.querySelectorAll('.segmented__option > svg')).toHaveLength(6);
-    expect(screen.queryByRole('combobox', { name: 'Settings sections' })).toBeNull();
-    expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
-      'System', 'Elowen AI', 'Models', 'Plugins', 'Recap', 'Data',
-    ]);
+    // The six sections are rows of the sidebar's sub-menu now (tests/components/shell/deckSubMenus).
+    // Neither the desktop rail nor the phone tab strip is left behind in the page: one menu, one place.
+    expect(screen.queryByRole('radiogroup', { name: 'Settings sections' })).toBeNull();
+    expect(container.querySelector('.workspace-shell__section-navigation')).toBeNull();
+    expect(container.querySelector('.workspace-shell')).not.toHaveAttribute('data-section-layout');
+    // And the address names the section on screen, because that is the only thing the menu can mark.
+    await waitFor(() => expect(window.location.search).toBe('?cat=system'));
     expect(screen.getByText('System diagnostics')).toBeInTheDocument();
     // The dials are a lazy chunk, so the reading lands a tick after the section itself. Spaced before
     // the percent sign like every other figure in the app.
@@ -350,6 +348,9 @@ describe('SettingsPage', () => {
       ['plugins', 'Plugins'], ['dashboard', 'Recap'], ['data', 'Data'],
     ] as const) {
       localStorage.setItem('elowen.settings.category', cat);
+      // The page writes the section it opened on into the address, and an address that names a section
+      // wins over the remembered one — so each pass starts from a silent URL, the way a fresh visit does.
+      window.history.replaceState(null, '', '/settings');
       const { wrapper: Wrapper } = createWrapper();
       const { container, unmount } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
       await screen.findByRole('heading', { level: 1, name: heading });

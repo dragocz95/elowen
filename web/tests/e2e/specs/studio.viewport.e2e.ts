@@ -33,9 +33,10 @@ const REGISTER = '/memory';
  *  number because a test asserts against a measured box, not against the token. */
 const TOUCH_TARGET = 44;
 
-/** Studio's two desktop columns, from `skins/studio/shared.css`: 256px expanded and the measured 57px
- *  reference rail holding a 32px row. Restated because the browser test measures pixels. */
-const NAV_FULL = 256;
+/** The two desktop columns, from `app/styles/components/sidebar-nav.css` and the skins' own
+ *  `--sidebar-width-icon`: the reference's 260px expanded column and its 57px folded rail. Restated
+ *  because the browser test measures pixels. */
+const NAV_FULL = 260;
 const NAV_RAIL = 57;
 
 /** Put a context into a Studio skin.
@@ -89,10 +90,11 @@ test('Studio renders under its own stylesheet, not the operator default', async 
   // the spec would quietly measure Ember and stay green. This one fails loudly instead.
   await useSkin(app, seed, 'studio-light');
   await openStudio(app, REGISTER);
-  await expect(app.locator('[data-testid="studio-navigation"]')).toBeVisible();
+  await expect(app.locator('[data-testid="sidebar-navigation"]')).toBeVisible();
   // The canvas is the skin's, not the built-in black — proof the token block is actually applied.
   const canvas = await app.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--color-background').trim());
-  expect(canvas.replace(/^#([\da-f])([\da-f])([\da-f])$/i, '#$1$1$2$2$3$3').toLowerCase()).toBe('#ffffff');
+  // The near-white paper the reference sets its page on, oklch(0.9875 0 0). Cards stay white ON it.
+  expect(canvas.replace(/^#([\da-f])([\da-f])([\da-f])$/i, '#$1$1$2$2$3$3').toLowerCase()).toBe('#fbfbfb');
 });
 
 test('Studio centres working pages in the reference 1152px frame', async ({ app, seed }, testInfo) => {
@@ -121,10 +123,13 @@ test('Studio matches the reference typography, toolbar and settings density', as
     const style = getComputedStyle(heading);
     return { size: style.fontSize, weight: style.fontWeight, spacing: style.letterSpacing, family: style.fontFamily };
   });
-  expect(pageStyle.size).toBe('24px');
-  expect(pageStyle.weight).toBe('400');
-  expect(pageStyle.spacing).toBe('-0.15px');
-  expect(pageStyle.family).toContain('Geist');
+  // The page title is the type scale's `--text-page-title` step, measured off the reference dashboard:
+  // 30/36/600 at an absolute -0.16px of tracking, in Inter Variable. It was 24px/400 in Geist, set by a
+  // rule the Studio stylesheet kept of its own; the scale owns that step now and no design restates it.
+  expect(pageStyle.size).toBe('30px');
+  expect(pageStyle.weight).toBe('600');
+  expect(pageStyle.spacing).toBe('-0.16px');
+  expect(pageStyle.family).toContain('Inter');
 
   const toolbar = app.locator('.page-toolbar__row');
   await expect(toolbar).toBeVisible();
@@ -273,156 +278,104 @@ test('returning from Home opens the full chat at its newest turn', async ({ app,
   expect(bottomGap).toBeLessThanOrEqual(2);
 });
 
-/* THE SECTION NAVIGATION, in a real browser. Decks use a left menu from 768px upward; phone decks and
- * every register keep the same single-line track with its measured edge state and internal scrolling. */
-test('a roomy Studio deck uses the shared sticky sidebar beside toolbar and content', async ({ app, seed }, testInfo) => {
+/* THE SECTION NAVIGATION, in a real browser. A configuration deck has none of its own at any width: its
+ * sections are addresses, so they are rows of the sidebar's sub-menu. A register keeps its single-line
+ * track with its measured edge state and internal scrolling, because those tabs are views of ONE
+ * collection rather than places to go. */
+test('a Studio deck carries no menu of its own and is driven from the sidebar sub-menu', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   await useSkin(app, seed, 'studio-oled');
   await app.setViewportSize({ width: 1440, height: 800 });
   await openStudio(app, '/settings?cat=models');
 
   const shell = app.locator('.workspace-shell');
-  const nav = shell.locator(':scope > .workspace-shell__section-navigation');
-  const track = nav.getByRole('radiogroup', { name: 'Settings sections' });
-  await expect(nav).toHaveAttribute('data-layout', 'sidebar');
-  await expect(shell).toHaveAttribute('data-section-layout', 'sidebar');
-  await expect(track).toHaveAttribute('aria-orientation', 'vertical');
-  await expect(track).toHaveAttribute('data-variant', 'menu');
-  await expect(track).not.toHaveAttribute('data-nowrap');
-  await expect(nav.locator('[role="combobox"]')).toHaveCount(0);
-  await expect(nav.locator('.segmented__option > svg')).toHaveCount(6);
-  await expect(nav.getByRole('radio')).toHaveCount(6);
-
-  await nav.getByRole('radio', { name: 'Data' }).click();
-  await expect(app.getByRole('heading', { level: 1, name: 'Data' })).toBeVisible();
-  await expect(nav.getByRole('radio', { name: 'Data' })).toHaveAttribute('aria-checked', 'true');
-
-  await nav.getByRole('radio', { name: 'Models' }).click();
   await expect(app.getByRole('heading', { level: 1, name: 'Models' })).toBeVisible();
+  await expect(shell.locator(':scope > .workspace-shell__section-navigation')).toHaveCount(0);
+  await expect(shell).not.toHaveAttribute('data-section-layout');
   await expect(app.locator('.page-toolbar')).toBeVisible();
+
+  // The section the address names is the one row the menu marks, with its parent open around it.
+  const sidebar = app.locator('nav[data-shell="sidebar"]');
+  await expect(sidebar.getByRole('button', { name: 'Settings' })).toHaveAttribute('aria-expanded', 'true');
+  await expect(sidebar.locator('[aria-current="page"]')).toHaveAttribute('href', '/settings?cat=models');
+
+  // And a row navigates: the page follows it and the mark moves with the address.
+  await sidebar.getByRole('link', { name: 'Data', exact: true }).click();
+  await expect(app.getByRole('heading', { level: 1, name: 'Data' })).toBeVisible();
+  await expect(app).toHaveURL(/\/settings\?cat=data/);
+  await expect(sidebar.locator('[aria-current="page"]')).toHaveAttribute('href', '/settings?cat=data');
+
+  // The page is one column again: hero, toolbar and content span the same measure, with no track held
+  // beside them for a menu that is no longer there.
   const geometry = await app.evaluate(() => {
     const shellEl = document.querySelector<HTMLElement>('.workspace-shell')!;
     const hero = shellEl.querySelector<HTMLElement>(':scope > .workspace-hero')!.getBoundingClientRect();
-    const navEl = shellEl.querySelector<HTMLElement>(':scope > .workspace-shell__section-navigation')!;
-    const navRect = navEl.getBoundingClientRect();
     const toolbarEl = shellEl.querySelector<HTMLElement>(':scope > .page-toolbar')!;
     const toolbar = toolbarEl.getBoundingClientRect();
     const contentEl = shellEl.querySelector<HTMLElement>(':scope > .workspace-shell__content')!;
     const content = contentEl.getBoundingClientRect();
     const shellRect = shellEl.getBoundingClientRect();
-    const navStyle = getComputedStyle(navEl);
-    const toolbarStyle = getComputedStyle(toolbarEl);
-    const contentStyle = getComputedStyle(contentEl);
     const main = document.querySelector<HTMLElement>('main')!;
     return {
       heroLeft: hero.left, heroRight: hero.right,
       shellLeft: shellRect.left, shellRight: shellRect.right,
-      navRight: navRect.right, toolbarLeft: toolbar.left, contentLeft: content.left,
+      toolbarLeft: toolbar.left, contentLeft: content.left,
       toolbarRight: toolbar.right, contentRight: content.right,
-      navPosition: navStyle.position, navTop: navStyle.top, navMaxHeight: navStyle.maxHeight,
-      toolbarContainer: toolbarStyle.containerName, contentContainer: contentStyle.containerName,
+      shellDisplay: getComputedStyle(shellEl).display,
+      toolbarContainer: getComputedStyle(toolbarEl).containerName,
+      contentContainer: getComputedStyle(contentEl).containerName,
       pageOverflow: main.scrollWidth - main.clientWidth,
     };
   });
   expect(Math.abs(geometry.heroLeft - geometry.shellLeft)).toBeLessThanOrEqual(1);
   expect(Math.abs(geometry.heroRight - geometry.shellRight)).toBeLessThanOrEqual(1);
-  expect(geometry.navRight).toBeLessThanOrEqual(geometry.toolbarLeft + 1);
-  expect(geometry.navRight).toBeLessThanOrEqual(geometry.contentLeft + 1);
-  expect(Math.abs(geometry.toolbarLeft - geometry.contentLeft)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.toolbarLeft - geometry.shellLeft)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.contentLeft - geometry.shellLeft)).toBeLessThanOrEqual(1);
   expect(Math.abs(geometry.toolbarRight - geometry.contentRight)).toBeLessThanOrEqual(1);
-  expect(geometry.navPosition).toBe('sticky');
-  expect(geometry.navTop).toBe('66px');
-  expect(geometry.navMaxHeight).not.toBe('none');
+  expect(geometry.shellDisplay).not.toBe('grid');
   expect(geometry.toolbarContainer).toBe('workspace-shell');
   expect(geometry.contentContainer).toBe('workspace-shell');
   expect(geometry.pageOverflow).toBeLessThanOrEqual(1);
 });
 
-test('a 390px Studio deck scrolls its tabs internally and signals the hidden edge', async ({ browser, seed }, testInfo) => {
+test('a 390px Studio deck reaches its sections through the navigation sheet', async ({ browser, seed }, testInfo) => {
   authedOnly(testInfo);
   const { context, page } = await studioTouchPage(browser, seed, 'studio-oled', { width: 390, height: 844 });
   try {
     await openStudio(page, '/account');
 
-    const nav = page.locator('.workspace-shell > .workspace-shell__section-navigation');
-    const track = nav.getByRole('radiogroup', { name: 'Account sections' });
-    await expect(nav).toHaveAttribute('data-layout', 'tabs');
-    await expect(page.locator('.workspace-shell')).toHaveAttribute('data-section-layout', 'tabs');
-    await expect(track).toHaveAttribute('data-variant', 'line');
-    await expect(track).toHaveAttribute('data-nowrap', 'true');
-    await expect(nav.locator('[role="combobox"]')).toHaveCount(0);
-    await expect(nav.locator('.segmented__option > svg')).toHaveCount(0);
-    await expect(track).toHaveAttribute('data-overflow', 'true');
-    await expect(track).toHaveAttribute('data-overflow-left', 'false');
-    await expect(track).toHaveAttribute('data-overflow-right', 'true');
-
-    const initial = await page.evaluate(() => {
-      const navEl = document.querySelector<HTMLElement>('.workspace-shell > .workspace-shell__section-navigation')!;
-      const trackEl = navEl.querySelector<HTMLElement>('[role="radiogroup"]')!;
+    // No tab strip is left in the page, and none of the phone's width is spent on one.
+    await expect(page.locator('.workspace-shell > .workspace-shell__section-navigation')).toHaveCount(0);
+    const pageOverflow = await page.evaluate(() => {
       const main = document.querySelector<HTMLElement>('main')!;
-      const trackRect = trackEl.getBoundingClientRect();
-      const offscreen = [...trackEl.querySelectorAll<HTMLElement>('[role="radio"]')].find((item) => {
-        const rect = item.getBoundingClientRect();
-        return rect.right > trackRect.right + 1 || rect.left < trackRect.left - 1;
-      });
-      return {
-        navOverflow: navEl.scrollWidth - navEl.clientWidth,
-        trackOverflow: trackEl.scrollWidth - trackEl.clientWidth,
-        pageOverflow: main.scrollWidth - main.clientWidth,
-        offscreenName: offscreen?.getAttribute('aria-label') ?? '',
-        fadeLeft: getComputedStyle(trackEl).getPropertyValue('--segmented-edge-fade-left').trim(),
-        fadeRight: getComputedStyle(trackEl).getPropertyValue('--segmented-edge-fade-right').trim(),
-      };
+      return main.scrollWidth - main.clientWidth;
     });
-    expect(initial.navOverflow).toBeLessThanOrEqual(1);
-    expect(initial.trackOverflow).toBeGreaterThan(0);
-    expect(initial.pageOverflow).toBeLessThanOrEqual(1);
-    expect(initial.offscreenName).not.toBe('');
-    expect(initial.fadeLeft).toBe('0px');
-    expect(initial.fadeRight).not.toBe('0px');
+    expect(pageOverflow).toBeLessThanOrEqual(1);
 
-    const targets = await nav.getByRole('radio').evaluateAll((items) => items.map((item) => {
-      const rect = item.getBoundingClientRect();
-      return { width: rect.width, height: rect.height };
-    }));
-    for (const target of targets) {
-      expect(target.width).toBeGreaterThanOrEqual(TOUCH_TARGET);
-      expect(target.height).toBeGreaterThanOrEqual(TOUCH_TARGET);
-    }
+    await page.getByRole('button', { name: /toggle menu/i }).click();
+    const sheet = page.locator('.overlay-nav-drawer');
+    await expect.poll(async () => (await sheet.boundingBox())!.x).toBeGreaterThanOrEqual(0);
 
-    const offscreen = nav.getByRole('radio', { name: initial.offscreenName, exact: true });
-    await offscreen.evaluate((element) => element.click());
-    await expect(page.getByRole('heading', { level: 1, name: initial.offscreenName })).toBeVisible();
-    await expect(offscreen).toHaveAttribute('aria-checked', 'true');
-    const activeVisible = await track.evaluate((element) => {
-      const active = element.querySelector<HTMLElement>('[aria-checked="true"]')!;
-      const trackRect = element.getBoundingClientRect();
-      const activeRect = active.getBoundingClientRect();
-      return activeRect.left >= trackRect.left - 1 && activeRect.right <= trackRect.right + 1;
-    });
-    expect(activeVisible).toBe(true);
+    // The sheet carries the same sub-menus as the column, already open on the section in the address.
+    await expect(sheet.getByRole('button', { name: 'Account' })).toHaveAttribute('aria-expanded', 'true');
+
+    // Every row of an open sub-menu is a real touch target — the same floor the destinations above it
+    // meet, and it matters because this sheet is the phone's only way between sections now.
+    const targets = await sheet.locator('.sidebar-nav__sub-item').evaluateAll((items) => items.map((item) => ({
+      label: (item.textContent || '').trim(),
+      height: Math.round(item.getBoundingClientRect().height),
+    })));
+    expect(targets.length, 'the sheet discloses the account sections').toBeGreaterThan(1);
+    const short = targets.filter((target) => target.height < TOUCH_TARGET);
+    expect(short, `sub-menu rows under ${TOUCH_TARGET}px: ${JSON.stringify(short)}`).toEqual([]);
+
+    // And tapping one navigates rather than dismissing: the sheet is above its own scrim.
+    await sheet.getByRole('link', { name: 'Security', exact: true }).click();
+    await expect(page).toHaveURL(/\/account\?cat=security/);
+    await expect(page.getByRole('heading', { level: 1, name: 'Security' })).toBeVisible();
   } finally {
     await context.close();
   }
-});
-
-test('Studio deck navigation switches exactly at 767/768', async ({ app, seed }, testInfo) => {
-  authedOnly(testInfo);
-  await useSkin(app, seed, 'studio-light');
-
-  await app.setViewportSize({ width: 767, height: 800 });
-  await openStudio(app, '/account');
-  const shell = app.locator('.workspace-shell');
-  const nav = shell.locator(':scope > .workspace-shell__section-navigation');
-  await expect(shell).toHaveAttribute('data-section-layout', 'tabs');
-  await expect(nav).toHaveAttribute('data-layout', 'tabs');
-  await expect(nav.getByRole('radiogroup')).toHaveAttribute('aria-orientation', 'horizontal');
-
-  await app.setViewportSize({ width: 768, height: 800 });
-  await expect(shell).toHaveAttribute('data-section-layout', 'sidebar');
-  await expect(nav).toHaveAttribute('data-layout', 'sidebar');
-  await expect(nav.getByRole('radiogroup')).toHaveAttribute('aria-orientation', 'vertical');
-  await expect(nav.locator('[role="combobox"]')).toHaveCount(0);
 });
 
 test('a Studio register keeps its sections a horizontal tab row at every width', async ({ app, seed }, testInfo) => {
@@ -563,8 +516,9 @@ test('Studio pages share metrics, filters, title and actions in one calm order',
     expect(column.controlsRight).toBeLessThanOrEqual(column.rowRight + 1);
   }
 
-  // The phone uses the same Radix radio track; selecting an offscreen section scrolls it into view.
-  await app.getByRole('radio', { name: 'System' }).click();
+  // A section is an address, so a phone reaches it the same way anything else is reached — through the
+  // menu sheet, or directly. What is measured here is the page it lands on, not how it got there.
+  await openStudio(app, '/settings?cat=system');
   await expect(app.getByRole('heading', { level: 1, name: 'System' })).toBeVisible();
   await expect(app.locator('.page-toolbar__slot .settings-toolbar')).toHaveCount(0);
   await expect(app.locator('.workspace-hero__metrics')).toBeVisible();
@@ -620,7 +574,7 @@ test('nothing on a Studio page is laid out wider than the 320px it has', async (
     // observer over the content region, so between hydration and the first measurement the column is
     // still 256px wide and <main> is a 54px sliver — every box in the page overhangs it, and a
     // per-element assertion would report that transient state as an overflow on every route.
-    await expect(app.locator('[data-testid="studio-navigation"]')).toHaveAttribute('data-mode', 'drawer');
+    await expect(app.locator('[data-testid="sidebar-navigation"]')).toHaveAttribute('data-mode', 'drawer');
     // `documentElement.scrollWidth` on its own proves almost nothing here: base.css sets
     // `body { overflow: hidden }`, so the document never grows a horizontal scrollbar whatever happens
     // inside it. Overflow in this app shows up as CLIPPING instead, so the measurement is per element:
@@ -733,7 +687,7 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
     text: 'The assistant rail keeps its compact reading density.',
     segments: [{ kind: 'text', text: 'The assistant rail keeps its compact reading density.' }],
   }]);
-  const nav = app.locator('[data-testid="studio-navigation"]');
+  const nav = app.locator('[data-testid="sidebar-navigation"]');
 
   await app.setViewportSize({ width: 1440, height: 900 });
   await openStudio(app, REGISTER);
@@ -751,13 +705,12 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
   await expect(app.getByText('The assistant rail keeps its compact reading density.')).toBeVisible();
 
   const shellRhythm = await app.evaluate(() => {
-    const item = document.querySelector<HTMLElement>('.studio-nav__body .studio-nav__item')!;
+    const item = document.querySelector<HTMLElement>('.sidebar-nav__body .sidebar-nav__item')!;
     const itemIcon = item.querySelector<SVGElement>('svg')!;
-    const footerItem = document.querySelector<HTMLElement>('.studio-nav__footer > div:not(.studio-nav__user) .studio-nav__item')!;
-    const navElement = document.querySelector<HTMLElement>('.studio-nav')!;
-    const brandLockup = document.querySelector<HTMLElement>('.studio-nav__brand-lockup')!;
-    const brandMark = document.querySelector<HTMLElement>('.studio-nav__brand-mark')!;
-    const brandName = document.querySelector<HTMLElement>('.studio-nav__brand-name')!;
+    const navElement = document.querySelector<HTMLElement>('.sidebar-nav')!;
+    const brandLockup = document.querySelector<HTMLElement>('.sidebar-nav__lockup')!;
+    const brandMark = document.querySelector<HTMLElement>('.sidebar-nav__mark')!;
+    const brandName = document.querySelector<HTMLElement>('.sidebar-nav__brand')!;
     const search = document.querySelector<HTMLElement>('.top-bar__search')!;
     const searchIcon = search.querySelector<SVGElement>('svg')!;
     const skinButton = document.querySelector<HTMLElement>('.skin-switcher__button')!;
@@ -782,7 +735,6 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
     return {
       itemHeight: Math.round(item.getBoundingClientRect().height),
       itemIcon: { width: itemIcon.getAttribute('width'), stroke: itemIcon.getAttribute('stroke-width') },
-      footerItemHeight: Math.round(footerItem.getBoundingClientRect().height),
       navWidth: Math.round(navElement.getBoundingClientRect().width),
       navTransition: { duration: navStyle.transitionDuration, easing: navStyle.transitionTimingFunction },
       brandClipped: brandLockup.getBoundingClientRect().right > navElement.getBoundingClientRect().right,
@@ -844,7 +796,6 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
   expect({
     itemHeight: shellRhythm.itemHeight,
     itemIcon: shellRhythm.itemIcon,
-    footerItemHeight: shellRhythm.footerItemHeight,
     navWidth: shellRhythm.navWidth,
     navTransition: shellRhythm.navTransition,
     brandClipped: shellRhythm.brandClipped,
@@ -859,16 +810,15 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
     advisorText: shellRhythm.advisorText,
     topBarControlDuration: shellRhythm.topBarControlDuration,
   }).toEqual({
-    itemHeight: 32,
-    itemIcon: { width: '18', stroke: '1.5' },
-    footerItemHeight: 32,
+    itemHeight: 34,
+    itemIcon: { width: '16', stroke: '1.75' },
     navWidth: NAV_RAIL,
     navTransition: { duration: '0.15s', easing: 'cubic-bezier(0.4, 0, 0.2, 1)' },
     // Folded, the column is the mark and nothing else: the wordmark is out of the flow rather than sliced
     // by the rail's edge, so the lockup fits inside the column it belongs to.
     brandClipped: false,
-    brandMarkWidth: 30,
-    brandName: { display: 'none', size: '18px', family: shellRhythm.brandName.family },
+    brandMarkWidth: 24,
+    brandName: { display: 'none', size: '16px', family: shellRhythm.brandName.family },
     // Command search is one 32px glyph in the action cluster, not a field holding the middle of the bar.
     search: { width: 32, height: 32, border: '0px', inActions: true, icon: { width: '18', stroke: '1.5' } },
     skin: { width: 32, height: 32, border: '0px', radius: '6px', icon: { width: '18', stroke: '1.5' } },
@@ -899,25 +849,24 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
   expect(shellRhythm.workspace.shadow).not.toBe('none');
   expect(shellRhythm.bodyFont).toContain('Inter Variable');
   expect(shellRhythm.advisorText.family).toContain('BlinkMacSystemFont');
-  // The wordmark is the one thing set in the display face, so the menu's own name cannot silently become
-  // one more line of interface text.
-  expect(shellRhythm.brandName.family).toContain('Space Grotesk Variable');
+  // One face for the whole app, the wordmark included: --font-display now resolves to --font-sans.
+  expect(shellRhythm.brandName.family).toContain('Inter Variable');
 
-  await app.getByTestId('studio-nav-collapse').click();
+  await app.getByTestId('top-bar-nav-collapse').click();
   await expect(nav).toHaveAttribute('data-mode', 'full');
   await expect.poll(async () => Math.round((await nav.boundingBox())!.width)).toBe(NAV_FULL);
-  await app.getByTestId('studio-nav-collapse').click();
+  await app.getByTestId('top-bar-nav-collapse').click();
   await expect(nav).toHaveAttribute('data-mode', 'rail');
   await expect.poll(async () => Math.round((await nav.boundingBox())!.width)).toBe(NAV_RAIL);
 
   await app.locator('.advisor-panel').getByRole('button', { name: 'Dock position' }).click();
   await app.getByRole('button', { name: 'Dock left' }).click();
   await expect(nav).toHaveAttribute('data-side', 'right');
-  await expect(app.getByTestId('studio-nav-collapse')).toHaveAttribute('data-nav-side', 'right');
+  await expect(app.getByTestId('top-bar-nav-collapse')).toHaveAttribute('data-nav-side', 'right');
   await app.locator('.advisor-panel').getByRole('button', { name: 'Dock position' }).click();
   await app.getByRole('button', { name: 'Dock right' }).click();
   await expect(nav).toHaveAttribute('data-side', 'left');
-  await expect(app.getByTestId('studio-nav-collapse')).toHaveAttribute('data-nav-side', 'left');
+  await expect(app.getByTestId('top-bar-nav-collapse')).toHaveAttribute('data-nav-side', 'left');
 
   await app.locator('.advisor-panel').getByRole('button', { name: 'Close' }).click();
   await expect(app.locator('.advisor-panel')).toHaveAttribute('aria-hidden', 'true');
@@ -927,10 +876,10 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
 
   // Folding is still available on a roomy desktop and is persisted under Studio's own key, without
   // changing the spatial design's sidebar preference.
-  await app.getByTestId('studio-nav-collapse').click();
+  await app.getByTestId('top-bar-nav-collapse').click();
   await expect(nav).toHaveAttribute('data-mode', 'rail');
   await expect.poll(async () => Math.round((await nav.boundingBox())!.width), 'the folded column').toBe(NAV_RAIL);
-  await app.getByTestId('studio-nav-collapse').click();
+  await app.getByTestId('top-bar-nav-collapse').click();
   await expect(nav).toHaveAttribute('data-mode', 'full');
   await expect.poll(async () => Math.round((await nav.boundingBox())!.width), 'the expanded column').toBe(NAV_FULL);
 
@@ -945,7 +894,7 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
   await expect(nav).toHaveAttribute('data-mode', 'drawer');
   const closed = await nav.boundingBox();
   expect(closed!.x, 'a closed sheet is off-screen').toBeLessThan(0);
-  expect(Math.round(closed!.width), 'the mobile sheet spans the viewport').toBe(1023);
+  expect(Math.round(closed!.width), 'the off-canvas sheet').toBe(288);
 });
 
 test('the Studio chat is centred on its own frame and its bar pickers open out of it', async ({ app, seed }, testInfo) => {
@@ -1036,7 +985,7 @@ test('no page mounts a hero mascot, and every one still states its mascot prop',
 
 test('every Studio navigation row is a real touch target on a coarse pointer', async ({ browser, seed }, testInfo) => {
   authedOnly(testInfo);
-  // The defect: `.studio-nav__item` is drawn at a 32px rhythm — right for a mouse, 12px under the floor
+  // The defect: `.sidebar-nav__item` is drawn at a 34px rhythm — right for a mouse, well under the floor
   // for a finger — and at this width the sheet is the ONLY menu the phone has, so every destination in
   // the app was under the target at once. The stylesheet tree is unlayered, so a `pointer-coarse:` utility
   // on the element could never have fixed it; the skin has to state the floor itself.
@@ -1047,18 +996,15 @@ test('every Studio navigation row is a real touch target on a coarse pointer', a
     const drawer = page.locator('.overlay-nav-drawer');
     await expect(drawer).toHaveAttribute('role', 'dialog');
     await expect.poll(async () => (await drawer.boundingBox())!.x, 'the sheet slides in').toBeGreaterThanOrEqual(0);
-    expect(Math.round((await drawer.boundingBox())!.width), 'the sheet spans the phone').toBe(390);
+    expect(Math.round((await drawer.boundingBox())!.width), 'the off-canvas sheet').toBe(288);
 
-    const rows = await page.evaluate(() => [...document.querySelectorAll('.studio-nav__item')]
+    const rows = await page.evaluate(() => [...document.querySelectorAll('.sidebar-nav__item')]
       .map((el) => ({ label: (el.textContent || '').trim(), h: Math.round(el.getBoundingClientRect().height) })));
     expect(rows.length, 'the sheet lists destinations').toBeGreaterThan(3);
     const short = rows.filter((row) => row.h < TOUCH_TARGET);
     expect(short, `navigation rows under ${TOUCH_TARGET}px: ${JSON.stringify(short)}`).toEqual([]);
 
-    // The disclosure header is a control too, and it sits between the rows it opens.
-    const toggles = await page.evaluate(() => [...document.querySelectorAll('.studio-nav__group-toggle')]
-      .map((el) => Math.round(el.getBoundingClientRect().height)));
-    for (const h of toggles) expect(h, 'a group header is a touch target').toBeGreaterThanOrEqual(TOUCH_TARGET);
+    // A disclosure parent is a menu button like any other row, so it is already in the measurement above.
   } finally {
     await context.close();
   }
@@ -1231,7 +1177,7 @@ for (const size of [{ width: 390, height: 844 }, { width: 320, height: 700 }]) {
 
 test('a destination in the Studio nav sheet can actually be tapped', async ({ browser, seed }, testInfo) => {
   authedOnly(testInfo);
-  // The defect this stands for made the phone's entire menu inert. `.studio-nav` declared `z-index: 1`
+  // The defect this stands for made the phone's entire menu inert. `.studio-nav` used to declare `z-index: 1`
   // for every mode, and because the stylesheet tree is UNLAYERED that skin selector out-specified the
   // `.overlay-layer-nav-drawer` class the component carries — the class that assigns `--z-nav-drawer`
   // (80). The sheet therefore rendered BELOW its own scrim: the menu looked washed out, and a tap on a
@@ -1249,7 +1195,7 @@ test('a destination in the Studio nav sheet can actually be tapped', async ({ br
 
     // The sheet is above the scrim, so the row is what a tap at its centre reaches.
     const hit = await page.evaluate(() => {
-      const row = [...document.querySelectorAll('.studio-nav__item')].find((el) => el.getAttribute('href') === '/projects');
+      const row = [...document.querySelectorAll('.sidebar-nav__item')].find((el) => el.getAttribute('href') === '/projects');
       if (!row) return { found: false, reached: false };
       const box = row.getBoundingClientRect();
       const at = document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2);

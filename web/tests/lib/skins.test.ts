@@ -319,6 +319,43 @@ describe('the app has exactly two designs', () => {
   });
 });
 
+// A design owns its palette; it does not own the app's type scale. Studio used to restate the page title
+// as 24px/400 of its own, because the shared rule sized it with a container clamp this design did not
+// want — so the app's largest piece of type measured one thing in the component stylesheet and another in
+// the skin, and neither was the step the design system names. A design that wants a different title now
+// moves `--text-page-title`, which every reader of the scale follows at once.
+describe('a design repaints the type scale, it does not fork it', () => {
+  /** Every `font-size` a stylesheet gives the page title. Empty means it does not size it, which is a
+   *  different answer from "sizes it from the token" and must not be confused with one. */
+  const pageTitleSizes = (css: string): string[] => (
+    [...css.replace(/\/\*[\s\S]*?\*\//g, '').matchAll(/\.workspace-hero\s+h1[^{}]*\{([^}]*)\}/g)]
+      .flatMap(([, body]) => [...body!.matchAll(/font-size\s*:\s*([^;}]+)/g)].map(([, value]) => value!.trim()))
+  );
+
+  it('reads a literal size as a literal, and ignores one that is only talked about', () => {
+    // Without this the check below would compare two empty lists on a stylesheet that forks the step, and
+    // pass forever — the same reason every other scanner in this file self-tests before it scans.
+    expect(pageTitleSizes(":root[data-skin='studio-light'] .workspace-hero h1 { font-size: 1.5rem; }")).toEqual(['1.5rem']);
+    expect(pageTitleSizes('.workspace-hero h1 { font-size: var(--text-page-title); }')).toEqual(['var(--text-page-title)']);
+    expect(pageTitleSizes('/* .workspace-hero h1 { font-size: 1.5rem; } */')).toEqual([]);
+  });
+
+  it('lets no skin or shared stylesheet size the page title with anything but the token', () => {
+    const sheets = [
+      ...SKINS.map((skin) => ({ label: `${skin}/skin.css`, css: readFileSync(join(root, 'skins', skin, 'skin.css'), 'utf-8') })),
+      ...SKIN_FAMILY_SHEETS.flatMap(({ sharedStylesheets }) => sharedStylesheets.map((path) => (
+        { label: path, css: readFileSync(join(root, 'skins', path), 'utf-8') }
+      ))),
+    ];
+    expect(sheets.length, 'no stylesheet was scanned').toBeGreaterThan(2);
+    for (const { label, css } of sheets) {
+      for (const size of pageTitleSizes(css)) {
+        expect(size, `${label} forks the page-title step`).toBe('var(--text-page-title)');
+      }
+    }
+  });
+});
+
 describe('skin choice resolution', () => {
   const allowed = allowedSkinChoices(['studio-light', 'studio-oled']);
 

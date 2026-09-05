@@ -101,7 +101,7 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
           <button
             type="button"
             onClick={onNavToggle}
-            data-testid="studio-nav-collapse"
+            data-testid="top-bar-nav-collapse"
             data-nav-side={navSide}
             aria-label={navCollapsed ? t.common.expandNav : t.common.collapseNav}
             title={`${navCollapsed ? t.common.expandNav : t.common.collapseNav} · ${t.nav.collapseShortcut}`}

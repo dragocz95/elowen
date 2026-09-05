@@ -34,7 +34,8 @@ const env = vi.hoisted(() => ({
 }));
 
 vi.mock('../../app/globals.css', () => ({ default: '' }));
-vi.mock('geist/font/sans', () => ({ GeistSans: { variable: 'font-geist-sans' } }));
+// No `geist/font/sans` mock: the layout no longer loads Geist Sans at all. Inter Variable is the app's
+// sans face and arrives as a plain stylesheet import, so only the mono still needs standing in for.
 vi.mock('geist/font/mono', () => ({ GeistMono: { variable: 'font-geist-mono' } }));
 vi.mock('../../components/shell/Shell', () => ({ Shell: () => null }));
 vi.mock('../../lib/brandServer', () => ({

@@ -3,9 +3,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import { CircleUserRound } from 'lucide-react';
 import { NAVIGATION_WORLDS, SYSTEM_MODULES } from '../../modules/registry';
-import { useMe, useMyNavSettings, usePluginUi } from '../../lib/queries';
-import { useTranslation } from '../../lib/i18n';
+import { useMe, useMyNavSettings, usePluginUi, useUserPluginConfigs } from '../../lib/queries';
+import { interpolate, useTranslation } from '../../lib/i18n';
+import { useBrand } from '../../lib/brand';
 import { pluginNavEntries } from '../../lib/pluginNav';
+import { settingsSectionHref, settingsSections } from '../../modules/settings/categories';
+import {
+  accountSectionHref,
+  accountSections,
+  pluginAccountSectionEntries,
+  userPluginConfigSectionEntries,
+} from '../../modules/account/sections';
 import { EMPTY_NAV_LAYOUT, applyNavLayout, parseNavLayout } from '../../lib/navLayout';
 
 /** Where this browser remembers the last layout the server confirmed, so the menu never paints in the
@@ -29,10 +37,15 @@ import type { NavEntry } from './navEntry';
 export function useShellNavigation(): { worlds: NavEntry[]; allWorlds: NavEntry[]; layout: NavLayout; layoutReady: boolean } {
   const me = useMe();
   const { t, locale } = useTranslation();
+  const brand = useBrand();
   const isAdmin = me.data?.user?.is_admin ?? false;
   // Plugin worlds ride the same live query cache as the rest of the chrome: a plugin toggle
   // invalidates the listing and the sidebar updates without a reload.
   const pluginUi = usePluginUi(locale);
+  // The per-account plugin configurations, for the same reason: each is a section of the account page,
+  // and the menu is the only way to one now. It is a cached read shared with the account page itself, so
+  // the two surfaces cost one request between them rather than one each.
+  const userPluginConfigs = useUserPluginConfigs();
   const navSettings = useMyNavSettings();
   // The arrangement is the user's and the server owns it, but waiting a whole round trip for it means
   // the menu paints in registry order and visibly rearranges itself once the answer lands — on every
@@ -66,6 +79,28 @@ export function useShellNavigation(): { worlds: NavEntry[]; allWorlds: NavEntry[
   // animation until the order is final, so a late correction never plays out as sliding entries.
   const layoutReady = navSettings.data !== undefined || cachedLayout !== null || navSettings.isError;
 
+  // THE CONFIGURATION DECKS' OWN SECTIONS, as sub-menus.
+  //
+  // Settings and Account are not single pages: each is a set of sections addressed by `?cat=`. They used
+  // to carry a second navigation inside the page — a rail beside the content on a desktop, a tab strip on
+  // a phone — which meant the app had two menus, one of which only appeared once you were already there.
+  // The sections are pages of their world exactly like a plugin's are, so they are declared the same way
+  // and the sidebar draws them the same way. The deck pages read the same lists, so a row can never offer
+  // a section its page cannot open.
+  const settingsPages = useMemo(() => settingsSections(t, interpolate(t.settings.brain, { agentName: brand.agentName }))
+    .map((section) => ({ id: `settings-${section.id}`, href: settingsSectionHref(section.id), label: section.label, icon: section.icon })),
+  [t, brand.agentName]);
+  const accountPages = useMemo(() => {
+    // A connector panel hangs inside the profile's Linked accounts drawer rather than claiming a section,
+    // so it is not a place the menu can send anyone.
+    const contributed = [
+      ...pluginAccountSectionEntries(pluginUi.data ?? []).filter((item) => item.placement !== 'linkedAccount'),
+      ...userPluginConfigSectionEntries(userPluginConfigs.data ?? [], locale, t.account.personalPluginConfig),
+    ];
+    return accountSections(t, contributed)
+      .map((section) => ({ id: `account-${section.id}`, href: accountSectionHref(section.id), label: section.label, icon: section.icon }));
+  }, [t, locale, pluginUi.data, userPluginConfigs.data]);
+
   const allWorlds = useMemo<NavEntry[]>(() => [
     ...NAVIGATION_WORLDS.map<NavEntry>((world) => ({
       id: world.id,
@@ -83,14 +118,16 @@ export function useShellNavigation(): { worlds: NavEntry[]; allWorlds: NavEntry[
         : undefined,
     })),
     ...pluginNavEntries(pluginUi.data ?? []),
-    { id: 'account', href: '/account', label: t.nav.account, icon: CircleUserRound },
+    { id: 'account', href: '/account', label: t.nav.account, icon: CircleUserRound, subItems: accountPages },
     ...(isAdmin ? SYSTEM_MODULES.map<NavEntry>((module) => ({
       id: module.id,
       href: module.route,
       label: t.nav[module.id as keyof typeof t.nav] ?? module.label,
       icon: module.icon,
+      // Users is a directory of records, not a deck: it has one page and nothing to disclose.
+      subItems: module.id === 'settings' ? settingsPages : undefined,
     })) : []),
-  ], [t, pluginUi.data, isAdmin]);
+  ], [t, pluginUi.data, isAdmin, accountPages, settingsPages]);
 
   const worlds = useMemo<NavEntry[]>(() => applyNavLayout(allWorlds, layout), [allWorlds, layout]);
 

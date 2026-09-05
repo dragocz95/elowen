@@ -12,8 +12,7 @@ import { BrandProvider, BUILTIN_THEME, type ThemePayload } from '../../lib/brand
 import { ToastProvider, resolveToastDuration } from '../ui/Toast';
 import { useConfig } from '../../lib/queries';
 import { LoginGate } from '../auth/LoginGate';
-import { OrbitalNav } from './OrbitalNav';
-import { StudioNavigation } from './StudioNavigation';
+import { SidebarNav } from './SidebarNav';
 import { TopBar } from './TopBar';
 import { CommandPalette } from './CommandPalette';
 import { AdvisorPanel } from '../../modules/advisor/AdvisorPanel';
@@ -203,20 +202,16 @@ function ShellLayout({ children }: { children: ReactNode }) {
     onDrawerClose: () => setDrawerOpen(false),
     onToggleCollapse: toggleNav,
   };
-  // THE ONLY THING A SHELL PROFILE SWAPS. Everything else below — the brain-chat provider, the viewport
-  // box, <main> and its scroll position, the route content, the command palette, the advisor launcher —
-  // is owned by this one component and mounts exactly once, whatever design is on.
+  // ONE navigation at every width and under every design. It used to be swapped on the shell profile —
+  // a spatial rail beside a flat column — and both are gone: the app has a single sidebar now, and a
+  // skin restyles it by overriding the `--sidebar-*` tokens rather than by mounting a different tree.
   //
-  // Branching any higher up (`{studio ? <StudioLayout/> : <ShellLayout/>}`) would make React see two
-  // different component types and unmount that whole subtree on a skin switch. The cost is not cosmetic:
-  // BrainChatProvider exists to be ONE mount above the route content and every advisor panel, so its SSE
-  // stream, transcript and composer draft survive dock toggles and route changes — remounting it drops a
-  // live conversation, along with the scroll position, any open modal and every in-flight form on the
-  // page. The two navigations therefore take the same props from the same state, and the swapped subtree
-  // holds nothing but its own disposable presentation state.
-  const navigation = profile === 'command'
-    ? <StudioNavigation {...navProps} />
-    : <OrbitalNav {...navProps} />;
+  // Everything below — the brain-chat provider, the viewport box, <main> and its scroll position, the
+  // route content, the command palette, the advisor launcher — is owned by this one component and mounts
+  // exactly once. Branching any higher up (`{studio ? <StudioLayout/> : <ShellLayout/>}`) would make
+  // React see two different component types and unmount that whole subtree on a skin switch, which drops
+  // the live conversation BrainChatProvider exists to keep across dock toggles and route changes.
+  const navigation = <SidebarNav {...navProps} />;
   // The ruled Studio bar is never withheld on /chat, at any width: the conversation's own toolbar
   // portals into its page slot, so on a phone the bar is what carries those controls beside the
   // hamburger. The frameless masthead has no slot to receive them, so its /chat keeps the phone

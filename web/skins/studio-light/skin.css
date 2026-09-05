@@ -17,8 +17,15 @@
      rendering in the dark scheme the base document declares. */
   color-scheme: light;
 
-  /* The reference uses one clean white canvas; depth comes from quiet fills and hairlines. */
-  --color-background: #ffffff;
+  /* The canvas is a near-white PAPER and the cards on it are white. It used to be white on white, with
+     only a hairline saying where a card began — which is why every surface in this design had to argue
+     for its own edge. The reference sets the page at oklch(0.9875 0 0), written here as the #fbfbfb it
+     resolves to because tests/lib/designTokens.test.ts has to evaluate this token for contrast and cannot
+     resolve an oklch() literal. Measured on it: text 19.03:1, muted 7.49:1, subtle 5.18:1.
+     `--color-document` and `--color-card` stay white on purpose — that half-step IS the depth, and it is
+     what lets a card, a register and a settings section read as placed on the page rather than cut out
+     of it. The first frame in app/layout.tsx carries the same literal and is pinned to this one. */
+  --color-background: #fbfbfb;
   --color-document: #ffffff;
   --color-card: #ffffff;
   --color-muted: #f4f4f5;
@@ -26,12 +33,27 @@
   --color-border: #e4e4e7;
   --color-border-strong: #d4d4d8;
 
-  /* The navigation column, one step quieter than the canvas it insets from, with its own row fill and
-     its own rule. It is deliberately NOT --color-muted: that step belongs to the content cards and
-     moves with them, and a sidebar row taking the card fill made the menu read as a stack of cards.
-     Measured: subtle text 5.00:1 on the column, 4.54:1 on the row fill — both clear AA. */
-  --color-sidebar: #f7f7f8;
-  --color-sidebar-accent: #ececef;
+  /* The navigation column is the CANVAS ITSELF — the same #fbfbfb the page is grounded on, with no rule
+     down its outer edge (--color-sidebar-rule in tokens.css is transparent). Owner decision, 5 Sep 2026:
+     1:1 with the reference dashboard, where the column is not a panel laid on the page but a region of
+     it, and the only structure it carries is its own internal hairlines. The step this token used to
+     hold (#f7f7f8) was a panel the reference does not draw.
+     The row fill is the measured reference value: oklch(0.965 0 0), written as the hex it resolves to
+     because tests/lib/designTokens.test.ts has to evaluate this token to check contrast, and an oklch()
+     literal is a colour it cannot resolve.
+     Measured on the column ground: text 19.23:1, muted 7.47:1, subtle 5.17:1. On the row fill: text
+     17.93:1, muted 6.97:1, subtle 4.83:1 — all clear AA.
+     The ink ON a row is its own token rather than the page's: the reference sets it at oklch(0.205 0 0),
+     one step off black, so a menu of a dozen rows never reads as heavy as body copy (12.21:1 on the
+     column, 11.39:1 on the row fill). --color-sidebar-foreground is the column's QUIET ink, used by the
+     group labels, and it is a NEUTRAL grey rather than the bluish --color-subtle-foreground: the
+     reference's oklch(0.556 0 0), 4.58:1 on the column ground.
+     --color-sidebar-border stays the INTERNAL hairline — header, group seams, footer — and is unrelated
+     to the outer rule that is now gone. */
+  --color-sidebar: #fbfbfb;
+  --color-sidebar-accent: #f3f3f3;
+  --color-sidebar-accent-foreground: #333333;
+  --color-sidebar-foreground: #737373;
   --color-sidebar-border: #e6e6e9;
 
   /* Ink. --color-muted-foreground is #52525b rather than the lighter grey a light UI reaches for by
@@ -71,10 +93,10 @@
   --studio-chat-code: #f4f4f5;
   --studio-chat-composer-radius: 28px;
   --studio-chat-user-radius: 22px;
-  /* Inter is the reference UI face. Waldenburg is proprietary, so Geist remains the licensed display
-     substitute while preserving the same compact grotesk proportions. */
-  --font-sans: "Inter Variable", Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  --font-display: var(--font-geist-sans), "Inter Variable", Inter, ui-sans-serif, sans-serif;
+  /* No --font-sans or --font-display here any more. Inter Variable is the app-wide face in tokens.css,
+     headings included, so restating the stack would be a second copy of it — and the old --font-display
+     named Geist AHEAD of Inter, which is exactly the split between headings and body this design was
+     never meant to have. The skin inherits both tokens and overrides them only to change face. */
   --studio-chat-font: -apple-system-body, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
   /* The wordmark alone. Space Grotesk's shorter, squarer grotesk cut reads as a mark beside Inter's
      interface text without pretending to be another UI face — nothing else in the design uses it. */
@@ -127,9 +149,11 @@
   --studio-fill-active: color-mix(in srgb, var(--color-foreground) 7%, transparent);
 
   /* ---- Chrome rhythm -------------------------------------------------------------------------
-     The icon rail is the reference's measured 57px; toolbar fields, buttons and filters share a 40px
-     control height. Both are read by shared stylesheets rather than restated per rule. */
-  --studio-rail-width: 57px;
+     The folded navigation rail is NOT restated here. Its 57px is the reference's measurement and lives
+     once, on `--sidebar-width-icon` in app/styles/tokens.css, where the column and the shadcn primitive
+     both read it; a skin copy of the same number is a second source of truth that drifts silently.
+     Toolbar fields, buttons and filters share a 40px control height, read by shared stylesheets rather
+     than restated per rule. */
   --studio-control-height: 2.5rem;
   --studio-ask-ground: #f4f4f5;
   --studio-ask-shadow: 0 0 0 1px rgb(9 9 11 / 0.075), 0 4px 6px -2px rgb(16 24 40 / 0.03), 0 12px 16px -4px rgb(16 24 40 / 0.08);

@@ -65,7 +65,9 @@ describe('identity server prefetch', () => {
   it('renders the admin destinations on the FIRST paint, before any client fetch could have resolved', async () => {
     server.use(hangingMe);
     render(<Shell meSeed={ADMIN} pluginUiSeed={null}><span>page-body</span></Shell>);
-    expect(await screen.findByRole('link', { name: 'Settings' })).toBeInTheDocument();
+    // Settings is a disclosure over its own sections, so the row is a button; Users has one page and
+    // stays a link. What is asserted either way is that the destination is THERE on the first paint.
+    expect(await screen.findByRole('button', { name: 'Settings' })).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Users' })).toBeInTheDocument();
     // Fresh within useMe's staleTime, so the client does not even ASK for what the server rendered.
     expect(meRequests).toBe(0);
@@ -74,8 +76,8 @@ describe('identity server prefetch', () => {
   it('shows a non-admin only their own destinations — the seed decides, and it must not over-grant', async () => {
     server.use(hangingMe);
     render(<Shell meSeed={{ user: asUser({ id: 2, username: 'bob' }) }} pluginUiSeed={null}><span>page-body</span></Shell>);
-    expect(await screen.findByRole('link', { name: 'Account' })).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Account' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument();
     expect(screen.queryByRole('link', { name: 'Users' })).not.toBeInTheDocument();
   });
 
@@ -86,8 +88,8 @@ describe('identity server prefetch', () => {
     // the seed, and this suite would stop proving anything.
     server.use(http.get('*/api/auth/me', () => HttpResponse.json(ADMIN)));
     render(<Shell meSeed={null} pluginUiSeed={null}><span>page-body</span></Shell>);
-    expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
-    expect(await screen.findByRole('link', { name: 'Settings' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Settings' })).toBeInTheDocument();
   });
 });
 
@@ -99,8 +101,8 @@ describe('locale server prefetch', () => {
     // whole interface changed words in front of them.
     localStorage.setItem('elowen-locale', 'cs');
     render(<Shell initialLocale="cs" meSeed={ADMIN_SEED} pluginUiSeed={null}><span>page-body</span></Shell>);
-    expect(screen.getByRole('link', { name: 'Nastavení' })).toBeInTheDocument();
-    expect(screen.queryByRole('link', { name: 'Settings' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Nastavení' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Settings' })).not.toBeInTheDocument();
   });
 
   it('still honours a stored choice the server never saw, and writes the cookie so the next load is right', async () => {
@@ -108,7 +110,7 @@ describe('locale server prefetch', () => {
     // before — and must leave the cookie behind so the NEXT document is server-rendered correctly.
     localStorage.setItem('elowen-locale', 'cs');
     render(<Shell initialLocale="en" meSeed={ADMIN_SEED} pluginUiSeed={null}><span>page-body</span></Shell>);
-    expect(await screen.findByRole('link', { name: 'Nastavení' })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: 'Nastavení' })).toBeInTheDocument();
     await waitFor(() => expect(document.cookie).toContain('elowen-locale=cs'));
   });
 });

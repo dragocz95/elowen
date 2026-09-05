@@ -1,13 +1,12 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { Bot, Server, Wrench } from 'lucide-react';
 import { LanguageProvider } from '../../lib/i18n';
 import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
 import { WorkspaceMetric } from '../../components/ui/WorkspaceHero';
 import { CompactWorkspaceHeader, SpatialWorkspaceLayout } from '../../components/ui/WorkspacePrimitives';
-import { SpatialControlDeck } from '../../components/ui/SpatialControlDeck';
 import { PHONE_MAX_WIDTH } from '../../lib/breakpoints';
 import { watchMounts } from '../test-utils';
 
@@ -171,20 +170,15 @@ describe('WorkspaceShell', () => {
   });
 });
 
-/** The public navigation model stays unchanged. WorkspaceShell alone decides whether a deck gets its
- *  vertical menu or phone tabs; registers never participate in that responsive branch. */
-describe('responsive section navigation', () => {
-  const renderDeck = (count = false) => render(
+/** A register's tabs switch between views of one collection and stay in the page. A configuration deck's
+ *  sections are ADDRESSES, so they left the page for the sidebar's sub-menu; the shell no longer branches
+ *  on viewport width for either, and mounts no second navigation of any kind. */
+describe('section navigation', () => {
+  const renderDeck = () => render(
     <LanguageProvider>
-      <SpatialControlDeck
-        eyebrow="Settings"
-        ariaLabel="Settings sections"
-        sections={count ? [{ ...sections[0]!, count: 3 }, sections[1]!] : sections}
-        value="system"
-        onChange={vi.fn()}
-      >
+      <WorkspaceShell variant="deck" hero={{ eyebrow: 'Settings', title: 'System' }}>
         <div>Section</div>
-      </SpatialControlDeck>
+      </WorkspaceShell>
     </LanguageProvider>,
   );
 
@@ -201,66 +195,65 @@ describe('responsive section navigation', () => {
     expect(nav?.querySelectorAll('.segmented__option > svg')).toHaveLength(0);
   };
 
-  it('renders a deck as a vertical menu on tablet and desktop, preserving icons and counts', async () => {
-    setViewportWidth(PHONE_MAX_WIDTH + 1);
-    const { container } = renderDeck(true);
-
-    await waitFor(() => expect(container.querySelector('.workspace-shell')).toHaveAttribute('data-section-layout', 'sidebar'));
-    const nav = container.querySelector('.workspace-shell__section-navigation');
-    expect(nav).toHaveAttribute('data-layout', 'sidebar');
-    const group = screen.getByRole('radiogroup', { name: 'Settings sections' });
-    expect(group).toHaveAttribute('data-variant', 'menu');
-    expect(group).not.toHaveAttribute('data-nowrap');
-    expect(group).toHaveAttribute('aria-orientation', 'vertical');
-    expect(nav?.querySelectorAll('.segmented__option > svg')).toHaveLength(2);
-    expect(screen.getByRole('radio', { name: 'System 3' })).toHaveTextContent('System3');
-    expect(screen.queryByRole('combobox')).toBeNull();
-  });
-
-  it('renders a phone deck as line tabs and never mounts the desktop menu first', async () => {
-    setViewportWidth(PHONE_MAX_WIDTH);
-    const sawSidebar = watchMounts(".workspace-shell__section-navigation[data-layout='sidebar']");
-    const { container } = renderDeck();
-
-    await waitFor(() => assertTabs(container, 'Settings sections'));
-    expect(sawSidebar()).toBe(false);
-  });
-
-  it('switches exactly at the 767/768 boundary', async () => {
-    setViewportWidth(PHONE_MAX_WIDTH);
-    const phone = renderDeck();
-    await waitFor(() => expect(phone.container.querySelector('.workspace-shell')).toHaveAttribute('data-section-layout', 'tabs'));
-    phone.unmount();
-    vi.restoreAllMocks();
-
-    setViewportWidth(PHONE_MAX_WIDTH + 1);
-    const tablet = renderDeck();
-    await waitFor(() => expect(tablet.container.querySelector('.workspace-shell')).toHaveAttribute('data-section-layout', 'sidebar'));
+  it('gives a deck no navigation of its own at any width', async () => {
+    for (const width of [PHONE_MAX_WIDTH, PHONE_MAX_WIDTH + 1]) {
+      setViewportWidth(width);
+      const sawNavigation = watchMounts('.workspace-shell__section-navigation');
+      const deck = renderDeck();
+      // Awaited rather than asserted straight away: the rail used to appear one commit after mount, from
+      // a viewport measurement, so a synchronous check would have passed against it too.
+      await screen.findByText('Section');
+      expect(deck.container.querySelector('.workspace-shell')).not.toHaveAttribute('data-section-layout');
+      expect(screen.queryByRole('radiogroup')).toBeNull();
+      expect(sawNavigation(), `a deck mounted a second navigation at ${width}px`).toBe(false);
+      deck.unmount();
+      vi.restoreAllMocks();
+    }
   });
 
   it('keeps a register on horizontal tabs at every width', () => {
-    setViewportWidth(PHONE_MAX_WIDTH + 1);
+    for (const width of [PHONE_MAX_WIDTH, PHONE_MAX_WIDTH + 1]) {
+      setViewportWidth(width);
+      const register = render(
+        <WorkspaceShell
+          variant="register"
+          hero={{ title: 'Memory', metrics: <WorkspaceMetric label="Active" value={4} /> }}
+          navigation={{ sections, value: 'system', onChange: vi.fn(), ariaLabel: 'Sections' }}
+        >
+          <div>Register</div>
+        </WorkspaceShell>,
+      );
+
+      assertTabs(register.container, 'Sections');
+      register.unmount();
+      vi.restoreAllMocks();
+    }
+  });
+
+  it('keeps the register DOM flow hero, tabs, toolbar, content', () => {
     const { container } = render(
       <WorkspaceShell
         variant="register"
-        hero={{ title: 'Memory', metrics: <WorkspaceMetric label="Active" value={4} /> }}
+        hero={{ title: 'Memory' }}
         navigation={{ sections, value: 'system', onChange: vi.fn(), ariaLabel: 'Sections' }}
       >
         <div>Register</div>
       </WorkspaceShell>,
     );
 
-    assertTabs(container, 'Sections');
-  });
-
-  it('keeps mobile DOM flow hero, tabs, toolbar, content', async () => {
-    setViewportWidth(PHONE_MAX_WIDTH);
-    const { container } = renderDeck();
-    await screen.findByRole('radiogroup', { name: 'Settings sections' });
-
     expect(anatomy(container.querySelector('.workspace-shell'))).toEqual([
       'workspace-hero',
       'workspace-shell__section-navigation',
+      'page-toolbar',
+      'workspace-shell__content',
+    ]);
+  });
+
+  it('keeps the deck DOM flow hero, toolbar, content', () => {
+    const { container } = renderDeck();
+
+    expect(anatomy(container.querySelector('.workspace-shell'))).toEqual([
+      'workspace-hero',
       'page-toolbar',
       'workspace-shell__content',
     ]);
@@ -282,40 +275,6 @@ describe('the pre-unification names are aliases onto the same shell', () => {
     // The alias's default mascot state survived the move; it now reaches the DOM as state, not artwork.
     expect(container.querySelector('.workspace-hero')).toHaveAttribute('data-mascot', 'idle');
     expect(screen.getByTestId('spatial-workspace-layout')).toContainElement(screen.getByText('Rows'));
-  });
-
-  it('SpatialControlDeck renders the deck variant, with the compact title block when no hero is given', () => {
-    const { container } = render(
-      <LanguageProvider>
-        <SpatialControlDeck eyebrow="Settings" ariaLabel="Settings sections" sections={sections} value="system" onChange={vi.fn()}>
-          <div>Section</div>
-        </SpatialControlDeck>
-      </LanguageProvider>,
-    );
-
-    expect(container.querySelector('.workspace-shell')).toHaveAttribute('data-variant', 'deck');
-    expect(screen.getByRole('heading', { level: 1, name: 'System' })).toBeInTheDocument();
-    expect(container.querySelector('.workspace-hero__metrics')).toBeNull();
-    expect(screen.getByTestId('spatial-content-surface')).toContainElement(screen.getByText('Section'));
-  });
-
-  it('SpatialControlDeck opens the metric rail when a hero is supplied', () => {
-    render(
-      <LanguageProvider>
-        <SpatialControlDeck
-          eyebrow="Settings"
-          ariaLabel="Settings sections"
-          sections={sections}
-          value="system"
-          onChange={vi.fn()}
-          hero={{ metrics: <WorkspaceMetric label="Uptime" value="4 d" /> }}
-        >
-          <div>Section</div>
-        </SpatialControlDeck>
-      </LanguageProvider>,
-    );
-
-    expect(screen.getByTestId('workspace-hero-metrics')).toContainElement(screen.getByText('Uptime'));
   });
 
   it('CompactWorkspaceHeader is the title block and nothing else', () => {
@@ -440,18 +399,17 @@ describe('the shell stylesheets carry one authority per decision', () => {
     expect(at('page-toolbar')).toBeGreaterThan(at('spatial-deck'));
   });
 
-  it('restores the sidebar grid, sticky scroll port and right-column containers', () => {
+  it('keeps a single-column page and no grid for a second menu beside the content', () => {
     const shellCss = css('workspace-shell');
-    expect(shellCss).toMatch(/\[data-section-layout='sidebar'\]\s*\{[^}]*grid-template-columns:\s*minmax\(12rem, 14rem\) minmax\(0, 1fr\)[^}]*'hero hero'[^}]*'navigation toolbar'[^}]*'navigation content'/);
-    // A hidden toolbar must remove its track altogether. Otherwise the spanning sidebar contributes half
-    // its height to that empty auto row and vertically centres every short account/settings section.
-    expect(shellCss).toMatch(/\[data-section-layout='sidebar'\]:not\(:has\(> \.page-toolbar \.page-toolbar__row > :not\(\.page-toolbar__slot:empty\)\)\)\s*\{[^}]*'hero hero'[^}]*'navigation content'/);
-    expect(shellCss).toMatch(/\[data-section-layout='sidebar'\] > \.workspace-hero\s*\{[^}]*grid-area:\s*hero/);
-    expect(shellCss).toMatch(/\[data-section-layout='sidebar'\] > \.workspace-shell__section-navigation\s*\{[^}]*position:\s*sticky[^}]*grid-area:\s*navigation[^}]*max-height:[^}]*overflow-y:\s*auto/);
-    expect(shellCss).toMatch(/\[data-section-layout='sidebar'\] > \.page-toolbar\s*\{[^}]*container:\s*workspace-shell \/ inline-size[^}]*grid-area:\s*toolbar/);
-    expect(shellCss).toMatch(/\.workspace-shell__content\s*\{[^}]*container:\s*workspace-shell \/ inline-size/);
-    expect(shellCss).toMatch(/\[data-section-layout='sidebar'\] > \.workspace-shell__content\s*\{[^}]*grid-area:\s*content/);
+    // The deck's two-column grid is gone with the menu it parked in the left column. A stylesheet that
+    // still describes it is a page waiting to lay itself out around an element nobody renders.
+    expect(shellCss).not.toContain("data-section-layout='sidebar'");
+    expect(shellCss).not.toContain("data-layout='sidebar'");
     expect(shellCss).not.toContain("data-section-layout='select'");
+    expect(shellCss).not.toMatch(/grid-area:\s*navigation/);
+    // The content column is still the nearest workspace container, which is what the records inside it
+    // fold against.
+    expect(shellCss).toMatch(/\.workspace-shell__content\s*\{[^}]*container:\s*workspace-shell \/ inline-size/);
   });
 
   it('clips tab wrappers while the inner segmented track owns horizontal scrolling and edge fades', () => {
@@ -470,12 +428,13 @@ describe('the shell stylesheets carry one authority per decision', () => {
     expect(coarse).toMatch(/\[data-layout='tabs'\] \.segmented__option\s*\{[^}]*min-height:\s*var\(--touch-target\)/);
   });
 
-  it('gives Studio a top-bar-aware neutral sidebar and keeps line tabs for phone/register', () => {
+  it('leaves Studio with line tabs only, and no second menu to style', () => {
     const studio = readFileSync(resolve(process.cwd(), 'skins', 'studio', 'surfaces.css'), 'utf-8');
-    expect(studio).toMatch(/\[data-section-layout='sidebar'\] > \.workspace-shell__section-navigation\s*\{[^}]*top:\s*calc\(var\(--studio-top-bar-height\) \+ 1rem\)[^}]*max-height:/);
-    expect(studio).toContain(".workspace-shell__section-navigation[data-layout='sidebar'] .segmented__option");
-    expect(studio).toMatch(/\[data-layout='sidebar'\] \.segmented__option\[aria-checked='true'\]\s*\{[^}]*color:\s*var\(--color-foreground\)[^}]*background:\s*var\(--studio-fill-active\)/);
-    expect(studio).not.toContain(".workspace-shell__section-navigation[data-layout='select']");
+    // The deck's left menu is gone from the markup, so a design still painting one is describing a page
+    // nobody renders — and would be a second navigation vocabulary beside the sidebar's own tokens.
+    expect(studio).not.toContain("data-section-layout='sidebar'");
+    expect(studio).not.toContain("data-layout='sidebar'");
+    expect(studio).not.toContain("data-layout='select'");
     const tabBlock = studio.slice(studio.indexOf(".workspace-shell__section-navigation[data-layout='tabs']"));
     expect(tabBlock).toMatch(/\.segmented\s*\{[^}]*width:\s*100%/);
   });

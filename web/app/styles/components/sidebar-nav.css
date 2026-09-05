@@ -1,0 +1,499 @@
+/* The primary navigation column (components/shell/SidebarNav.tsx).
+ *
+ * The component paints NOTHING: it states what each part is (`sidebar-nav__*`) and what state it is in
+ * (`data-mode`, `data-open`, `data-active`, `data-state`, `data-ready`). Every dimension, hairline and
+ * state colour is here, and every number is a `--sidebar-*` token from tokens.css — measured off the
+ * reference dashboard in plans/cloudflare-sidebar-spec.md. That split is what lets a skin retune the
+ * column by overriding tokens instead of out-specifying utility classes, and it is why this file lives
+ * in the app's own stylesheet rather than in a skin: there is ONE navigation now, so its structure is
+ * the app's, and a skin contributes colour.
+ *
+ * Anatomy, top to bottom: a 58px header holding the instance switcher, the command palette's 32px field,
+ * the scrolling groups with their inline sub-menus, a rule with the account under it, and a 48px footer
+ * holding the fold. */
+
+.sidebar-nav {
+  /* The inset the menu keeps from both edges. The reference runs its 231px row inside a 260px column,
+     which is this inset on each side; the row's own 12px padding then puts the icon at 26px. */
+  --sidebar-body-inset: 0.875rem;
+  position: relative;
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  width: var(--sidebar-width);
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--color-sidebar);
+  color: var(--color-sidebar-foreground);
+  font-size: var(--sidebar-text);
+  letter-spacing: var(--tracking-ui);
+  transition: width var(--motion-base) var(--ease-out);
+}
+/* As a COLUMN the navigation sits one step above the content it insets from, so its hairline and its
+   active row are never clipped by a neighbouring surface. The sheet is excluded: it belongs to the app's
+   overlay layer and already carries `.overlay-layer-nav-drawer`, which assigns `--z-nav-drawer`. */
+.sidebar-nav:not([data-mode='drawer']) { z-index: 1; }
+/* NO rule down the column's outer edge, because the column and the page are the same ground: the
+   reference draws none, and this design now grounds both alike (owner decision, 5 Sep 2026 — 1:1 with
+   the reference dashboard). The declaration stays, painted from `--color-sidebar-rule`, which is
+   transparent in tokens.css: a design that does ground its column differently gives that token a colour
+   and gets the seam back without a stylesheet edit. It is NOT `--color-sidebar-border` — that one is the
+   column's internal hairline (the header rule, the account separator, the footer rule, the search
+   field's edge) and is still drawn. */
+.sidebar-nav[data-side='left'] { border-right: 1px solid var(--color-sidebar-rule); }
+.sidebar-nav[data-side='right'] { border-left: 1px solid var(--color-sidebar-rule); }
+.sidebar-nav[data-mode='rail'] { width: var(--sidebar-width-icon); }
+
+/* The phone presentation is the primitive's own off-canvas sheet: a column of its own width slid over
+   the page, not a full-screen takeover. */
+.sidebar-nav[data-mode='drawer'] {
+  position: fixed;
+  inset-block: 0;
+  width: min(var(--sidebar-width-mobile), 100vw);
+  height: auto;
+  box-shadow: var(--shadow-raised);
+  transition: transform var(--motion-slow) var(--ease-out);
+}
+.sidebar-nav[data-mode='drawer'][data-side='left'] { left: 0; transform: translateX(-100%); }
+.sidebar-nav[data-mode='drawer'][data-side='right'] { right: 0; transform: translateX(100%); }
+.sidebar-nav[data-mode='drawer'][data-open] { transform: none; }
+/* SSR and the first hydrated commit do not know the measured workspace width yet. Only that explicit
+   state gets the phone fail-safe; once ResizeObserver answers, `data-mode` is the sole layout owner. The
+   1023px ceiling is the exact complement of COMMAND_NAV_COLUMN_MIN_WIDTH (1024px). */
+@media (max-width: 1023px) {
+  .sidebar-nav[data-measured='false']:not([data-mode='drawer']) {
+    position: fixed;
+    inset-block: 0;
+    width: min(var(--sidebar-width-mobile), 100vw);
+    height: auto;
+    box-shadow: var(--shadow-raised);
+  }
+  .sidebar-nav[data-measured='false']:not([data-mode='drawer'])[data-side='left'] { left: 0; transform: translateX(-100%); }
+  .sidebar-nav[data-measured='false']:not([data-mode='drawer'])[data-side='right'] { right: 0; transform: translateX(100%); }
+}
+
+.sidebar-nav__scrim {
+  position: fixed;
+  inset: 0;
+  background: var(--color-scrim);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity var(--motion-base) var(--ease-out);
+}
+.sidebar-nav__scrim[data-open] { opacity: 1; pointer-events: auto; }
+
+.sidebar-nav__close {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.25rem;
+  z-index: 2;
+  display: grid;
+  place-items: center;
+  border-radius: var(--sidebar-row-radius);
+  color: var(--color-subtle-foreground);
+  transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
+}
+.sidebar-nav__close:hover { background: var(--color-sidebar-accent); color: var(--color-foreground); }
+
+/* ── Header ──────────────────────────────────────────────────────────────────────────────────────── */
+
+.sidebar-nav__header {
+  display: flex;
+  flex: none;
+  align-items: center;
+  height: var(--sidebar-header-height);
+  padding-inline: var(--sidebar-row-inset);
+  border-bottom: 1px solid var(--color-sidebar-border);
+}
+/* The sheet's close control is absolutely positioned into this corner at 44px, so the header gives way
+   rather than the control moving. */
+.sidebar-nav[data-mode='drawer'] .sidebar-nav__header { padding-inline-end: 3rem; }
+
+.sidebar-nav__switcher {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+  height: 2.25rem;
+  padding-inline: 0.375rem;
+  border-radius: var(--sidebar-row-radius);
+  white-space: nowrap;
+  text-align: left;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+.sidebar-nav__switcher:hover { background: var(--color-sidebar-accent); }
+.sidebar-nav__switcher-caret {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--color-subtle-foreground);
+  opacity: 0.4;
+  transition: opacity var(--motion-fast) var(--ease-out);
+}
+.sidebar-nav__switcher:is(:hover, :focus-visible, [data-state='open']) .sidebar-nav__switcher-caret { opacity: 1; }
+.sidebar-nav__switcher-title { display: flex; align-items: baseline; gap: 0.5rem; }
+.sidebar-nav__lockup {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 0.5rem;
+  white-space: nowrap;
+}
+.sidebar-nav__mark { flex: none; width: 1.5rem; height: 1.5rem; object-fit: contain; }
+.sidebar-nav__brand {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--color-foreground);
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 600;
+  letter-spacing: var(--tracking-ui);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The build, beside the name it belongs to. It is metadata, so it is the one string in this column that
+   stays monospaced — a version is data. */
+.sidebar-nav__version {
+  flex: none;
+  color: var(--color-subtle-foreground);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+}
+
+/* ── Quick search ────────────────────────────────────────────────────────────────────────────────── */
+
+.sidebar-nav__search { flex: none; padding: 0.5rem var(--sidebar-body-inset) 0.25rem; }
+.sidebar-nav__search-field {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 0.5rem;
+  height: var(--sidebar-search-height);
+  padding-inline: var(--sidebar-row-inset);
+  border-radius: var(--sidebar-row-radius);
+  /* White fill inside a light hairline, at the row radius — the reference's own field, re-checked against
+     a screenshot on 5 Sep 2026. The fill is `--color-card` and NOT `--color-background`: the column now
+     grounds on the canvas, so a field painted with the canvas colour would be an outline around nothing.
+     The edge is the column's internal hairline and never a shadow; the focus ring is the only thing that
+     ever lands on top of it. */
+  border: 1px solid var(--color-sidebar-border);
+  background: var(--color-card);
+  color: var(--color-subtle-foreground);
+  font-size: var(--sidebar-text);
+  transition: border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
+}
+.sidebar-nav__search-field > svg { flex: none; opacity: 0.5; }
+.sidebar-nav__search-field:hover { border-color: var(--color-border-strong); color: var(--color-foreground); }
+.sidebar-nav__search-field:focus-visible { outline: none; box-shadow: var(--glow-accent); }
+.sidebar-nav__search-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.sidebar-nav__kbd {
+  flex: none;
+  margin-inline-start: auto;
+  color: var(--color-subtle-foreground);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+}
+
+/* ── Body, groups and rows ───────────────────────────────────────────────────────────────────────── */
+
+.sidebar-nav__body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  flex-direction: column;
+  gap: 0;
+  padding-block: 0.25rem 0.5rem;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  /* Until the arrangement is known the menu would paint in registry order and visibly re-sort itself on
+     every page load. It stays in the DOM throughout — a keyboard and a screen reader get the menu either
+     way — and only the paint waits. */
+  opacity: 0;
+  transition: opacity var(--motion-base) var(--ease-out);
+}
+.sidebar-nav[data-ready] .sidebar-nav__body { opacity: 1; }
+
+/* NO rule between groups. A group is introduced by its LABEL and by the air the label carries — 16px
+   above it, 8px under it — and that is the entire separation the reference draws (owner, 5 Sep 2026,
+   checked against a fresh screenshot of the dashboard). The landing block has neither a label nor a rule
+   beneath it, exactly as the reference's own first block does. */
+.sidebar-nav__group { padding-inline: var(--sidebar-body-inset); }
+/* The ONE hairline in the whole column. It is a real separator element rather than a group seam because
+   what it divides is not two groups: it is every destination from the row that leaves them. */
+.sidebar-nav__separator {
+  flex: none;
+  height: 1px;
+  margin: 0.75rem var(--sidebar-body-inset) 0;
+  background: var(--color-sidebar-border);
+}
+.sidebar-nav__separator + .sidebar-nav__group { padding-top: 0.5rem; }
+
+/* A group's name. 13px/500 and quiet, never uppercase: it names a REGION and must not compete with the
+   destinations under it. The ink is the column's OWN quiet step, `--color-sidebar-foreground`, and not
+   the page's `--color-subtle-foreground`: that one carries a blue cast in the light design, and a
+   navigation label reading faintly blue beside neutral rows is a colour nobody chose. The reference's
+   value is a flat grey, oklch(0.556 0 0), which is what the skins now set the sidebar token to. */
+.sidebar-nav__group-label {
+  margin: 1rem 0 0.5rem;
+  padding-inline: var(--sidebar-row-inset);
+  color: var(--color-sidebar-foreground);
+  font-size: var(--sidebar-text);
+  font-weight: 500;
+  letter-spacing: var(--tracking-ui);
+  transition: opacity var(--motion-base) var(--ease-out);
+}
+/* A group with no label of its own still needs the air a label would have carried, or it opens straight
+   against the last row of the block above with nothing saying a new one began. */
+.sidebar-nav__group + .sidebar-nav__group:not(:has(> .sidebar-nav__group-label)) { padding-top: 0.5rem; }
+
+.sidebar-nav__menu { display: flex; flex-direction: column; gap: 1px; list-style: none; }
+.sidebar-nav__entry { position: relative; transition: transform var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out); }
+@media (pointer: fine) {
+  .sidebar-nav:not([data-mode='drawer']) .sidebar-nav__entry { cursor: grab; }
+}
+.sidebar-nav__entry[data-dragging] {
+  z-index: 2;
+  cursor: grabbing;
+  opacity: 0.86;
+  transition: none;
+  will-change: transform;
+}
+.sidebar-nav__entry[data-dragging] .sidebar-nav__item {
+  background: var(--color-sidebar-accent);
+  color: var(--color-foreground);
+  box-shadow: var(--shadow-card);
+}
+
+/* THE ROW. 34px, 12px of inset, a 10px gap, an 8px radius and 13px/500 — the reference's own numbers.
+   Active is a change of GROUND and nothing else: no bar down the leading edge, no coloured text, no
+   underline. A fill needs no alignment correction at any nesting depth, which is exactly why the
+   reference uses one. */
+.sidebar-nav__item {
+  position: relative;
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 0.625rem;
+  min-height: var(--sidebar-row-height);
+  padding-inline: var(--sidebar-row-inset);
+  border-radius: var(--sidebar-row-radius);
+  color: var(--color-sidebar-accent-foreground);
+  font-size: var(--sidebar-text);
+  font-weight: 500;
+  letter-spacing: var(--tracking-ui);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  transition: background-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out);
+}
+.sidebar-nav__item:hover,
+.sidebar-nav__item:focus-visible,
+.sidebar-nav__item[data-active] {
+  background: var(--color-sidebar-accent);
+  color: var(--color-sidebar-accent-foreground);
+}
+.sidebar-nav__item:focus-visible { outline: none; }
+.sidebar-nav__icon {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 1rem;
+  height: 1rem;
+  /* Held at .5 in every state, hover and active included. The reference never brightens a leading glyph:
+     the row's own fill is what answers the pointer, and a second thing changing at the same time reads
+     as the icon doing something rather than the row being reachable. */
+  opacity: 0.5;
+}
+.sidebar-nav__label {
+  min-width: 0;
+  overflow: hidden;
+  opacity: 1;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transition: opacity var(--motion-base) var(--ease-out);
+}
+/* The caret turns in its own time — `--sidebar-caret-motion`, 200ms, the reference's number. It is not
+   `--motion-base`, which the Studio skins retune to 150ms for navigation: this rotation is the one motion
+   in the column the eye follows all the way to its end, so it keeps the duration it was measured at. */
+.sidebar-nav__caret {
+  flex: none;
+  margin-inline-start: auto;
+  opacity: 0.4;
+  transition: transform var(--sidebar-caret-motion) var(--ease-out), opacity var(--sidebar-caret-motion) var(--ease-out);
+}
+.sidebar-nav__item:hover .sidebar-nav__caret { opacity: 1; }
+.sidebar-nav__disclosure[data-state='open'] > .sidebar-nav__item .sidebar-nav__caret { transform: rotate(90deg); }
+
+/* A count riding on its row. Metadata, so it is monospaced and tabular like every other number in the
+   app; `data-live` is the one that is currently true of the instance and takes the accent. */
+.sidebar-nav__badge {
+  flex: none;
+  margin-inline-start: auto;
+  min-width: 1.25rem;
+  padding-inline: 0.3125rem;
+  border-radius: 999px;
+  background: var(--color-accent);
+  color: var(--color-subtle-foreground);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  line-height: 1.25rem;
+  text-align: center;
+}
+.sidebar-nav__badge[data-live] {
+  background: color-mix(in srgb, var(--color-primary) 18%, transparent);
+  color: var(--color-primary);
+}
+
+/* ── Inline sub-menus ────────────────────────────────────────────────────────────────────────────── */
+
+/* The pages open INLINE below their parent, indented by one step and with no rule down their edge — the
+   indent is what says they belong to the row above. Several may be open at once. */
+.sidebar-nav__sub {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  padding-block: 1px;
+  padding-inline-start: var(--sidebar-sub-indent);
+  list-style: none;
+}
+.sidebar-nav__sub-item {
+  display: flex;
+  width: 100%;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+  min-height: var(--sidebar-row-height);
+  padding-inline: var(--sidebar-row-inset);
+  border-radius: var(--sidebar-row-radius);
+  color: var(--color-sidebar-accent-foreground);
+  font-size: var(--sidebar-text);
+  font-weight: 500;
+  letter-spacing: var(--tracking-ui);
+  text-decoration: none;
+  transition: background-color var(--motion-fast) var(--ease-out);
+}
+.sidebar-nav__sub-item:hover,
+.sidebar-nav__sub-item:focus-visible,
+.sidebar-nav__sub-item[data-active] { background: var(--color-sidebar-accent); }
+.sidebar-nav__sub-item:focus-visible { outline: none; }
+
+/* Radix unmounts a closed disclosure, so the fold is animated open from the height it publishes on the
+   content element rather than transitioned in both directions. */
+@keyframes sidebar-nav-unfold {
+  from { height: 0; opacity: 0; }
+  to { height: var(--radix-collapsible-content-height); opacity: 1; }
+}
+.sidebar-nav__disclosure > [data-slot='collapsible-content'] { overflow: hidden; }
+.sidebar-nav__disclosure > [data-slot='collapsible-content'][data-state='open'] {
+  animation: sidebar-nav-unfold var(--motion-fast) var(--ease-out);
+}
+
+/* ── The icon rail ───────────────────────────────────────────────────────────────────────────────── */
+
+/* Folded, the column is the marks and nothing else. A sliced word is not a treatment, so every label,
+   hint and caret is withheld rather than clipped, and the row centres on its glyph. A tooltip beside the
+   row is what names it under the pointer (`SidebarMenuButton`'s `tooltip`, rendered only while the column
+   is collapsed); `aria-label` names it to a screen reader. */
+.sidebar-nav[data-mode='rail'] :is(.sidebar-nav__label, .sidebar-nav__search-label, .sidebar-nav__kbd, .sidebar-nav__lockup, .sidebar-nav__switcher-caret, .sidebar-nav__group-label) {
+  display: none;
+}
+.sidebar-nav[data-mode='rail'] :is(.sidebar-nav__group, .sidebar-nav__search) { padding-inline: 0.5rem; }
+.sidebar-nav[data-mode='rail'] :is(.sidebar-nav__item, .sidebar-nav__search-field, .sidebar-nav__switcher) {
+  justify-content: center;
+  gap: 0;
+  padding-inline: 0;
+}
+/* Two 28px controls, a gap and the footer's own inset do not fit across a 57px rail, and `overflow:
+   hidden` on the column silently clipped the fold off its left edge. Stacked they are both square,
+   centred and whole, and the footer gives up its fixed height rather than either control moving. */
+.sidebar-nav[data-mode='rail'] .sidebar-nav__footer {
+  flex-direction: column;
+  justify-content: center;
+  height: auto;
+  padding-block: 0.375rem;
+  padding-inline: 0.5rem;
+}
+.sidebar-nav[data-mode='rail'] .sidebar-nav__more { margin-inline-start: 0; }
+/* Folded there is no room beside a 16px glyph, so the count becomes a dot on the row's corner: the
+   statement "something is running here" survives, the exact number waits for the column to open. */
+.sidebar-nav[data-mode='rail'] .sidebar-nav__badge {
+  position: absolute;
+  top: 0.125rem;
+  right: 0.125rem;
+  min-width: 0;
+  width: 0.375rem;
+  height: 0.375rem;
+  padding: 0;
+  overflow: hidden;
+  text-indent: 100%;
+  white-space: nowrap;
+}
+
+/* ── Footer ──────────────────────────────────────────────────────────────────────────────────────── */
+
+.sidebar-nav__footer {
+  display: flex;
+  flex: none;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.25rem;
+  height: var(--sidebar-footer-height);
+  padding-inline: 1rem;
+  border-top: 1px solid var(--color-sidebar-border);
+}
+.sidebar-nav__collapse,
+.sidebar-nav__more {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 1.75rem;
+  height: 1.75rem;
+  border-radius: var(--sidebar-row-radius);
+  color: var(--color-subtle-foreground);
+  transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
+}
+.sidebar-nav__more { margin-inline-start: auto; }
+.sidebar-nav__collapse:hover,
+.sidebar-nav__more:hover { background: var(--color-sidebar-accent); color: var(--color-foreground); }
+/* The fold's edge target. Invisible until the pointer is on it: the column draws no outer rule at all
+   now, and a line that appeared there permanently would put one back. */
+.sidebar-nav__rail::after { background: transparent; transition: background-color var(--motion-fast) var(--ease-out); }
+.sidebar-nav__rail:hover::after { background: var(--color-primary); }
+
+/* ── Focus and touch ─────────────────────────────────────────────────────────────────────────────── */
+
+/* Focus stays visible on every control the column owns — the rows are custom-painted, so the browser's
+   own outline is the only thing saying where the keyboard is. */
+.sidebar-nav__item:focus-visible,
+.sidebar-nav__sub-item:focus-visible,
+.sidebar-nav__switcher:focus-visible,
+.sidebar-nav__collapse:focus-visible,
+.sidebar-nav__more:focus-visible,
+.sidebar-nav__close:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: -1px;
+}
+
+/* A pointer that is a finger needs a target it can actually hit. The rows are drawn at 34px — right for
+   a mouse, well under the floor `--touch-target` declares — and as a sheet this column IS the phone's
+   only menu, so every destination in it would be under the floor at once. Gated on the POINTER and never
+   on the width, like every other touch rule in the app: a narrow window on a laptop still has a mouse
+   and keeps the compact rhythm. */
+@media (pointer: coarse) {
+  .sidebar-nav__item,
+  .sidebar-nav__sub-item { min-height: var(--touch-target); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-nav,
+  .sidebar-nav__body,
+  .sidebar-nav__item,
+  .sidebar-nav__sub-item,
+  .sidebar-nav__caret,
+  .sidebar-nav__entry { transition: none; }
+  .sidebar-nav__disclosure > [data-slot='collapsible-content'][data-state='open'] { animation: none; }
+}
