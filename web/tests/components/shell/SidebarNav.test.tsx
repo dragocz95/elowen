@@ -100,15 +100,43 @@ describe('SidebarNav destinations', () => {
 
   it('names a destination in the icon rail, where the label is not on screen', () => {
     const expanded = mount();
+    // Expanded the native hint is what keeps a TRUNCATED label readable, and that is all it is for.
     expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('title', 'Home');
     expect(screen.getByRole('link', { name: 'Home' })).not.toHaveAttribute('aria-label');
     expanded.unmount();
 
     mount({ compact: true });
-    // The folded column drops the label text, so the accessible name has to come from the attribute —
-    // and the tooltip has to stay: an unlabelled 16px glyph with nothing on hover is a guess.
+    // The folded column drops the label text, so the accessible name has to come from the attribute.
     expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('aria-label', 'Home');
-    expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('title', 'Home');
+    // And the hint is no longer the browser's own bubble: a 16px glyph with nothing on hover is a guess,
+    // and an OS tooltip after half a second is not the affordance the reference has.
+    expect(screen.getByRole('link', { name: 'Home' })).not.toHaveAttribute('title');
+  });
+
+  it('names the folded rail with a real tooltip, and only while it is folded', async () => {
+    const expanded = mount();
+    fireEvent.mouseEnter(screen.getByRole('link', { name: 'Home' }));
+    // Nothing to explain while the label is right there — a tip over an already-labelled row is noise.
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    expanded.unmount();
+
+    mount({ compact: true });
+    fireEvent.mouseEnter(screen.getByRole('link', { name: 'Home' }));
+    const tip = await screen.findByRole('tooltip');
+    expect(tip).toHaveTextContent('Home');
+
+    fireEvent.mouseLeave(screen.getByRole('link', { name: 'Home' }));
+    await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+  });
+
+  it('names the palette shortcut with the modifier this machine actually has', () => {
+    // jsdom reports a non-Apple platform, so the hint is the Control one. `aria-keyshortcuts` still names
+    // both, because the binding really does accept both — only the VISIBLE hint has to pick.
+    mount();
+    const palette = screen.getByRole('button', { name: 'Open command palette' });
+    expect(palette).toHaveAttribute('aria-keyshortcuts', 'Control+K Meta+K');
+    expect(palette).toHaveTextContent('Ctrl K');
+    expect(palette).not.toHaveTextContent('⌘K');
   });
 
   it('offers the palette and the instance menu from the column itself', () => {

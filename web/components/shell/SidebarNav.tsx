@@ -85,6 +85,19 @@ function isCollapseShortcut(event: KeyboardEvent): boolean {
   return event.code === 'Backslash' || event.key === '\\';
 }
 
+/** Which half of `aria-keyshortcuts="Control+K Meta+K"` this machine actually uses.
+ *
+ *  The binding accepts both modifiers everywhere, so the ARIA value names both; the VISIBLE hint may only
+ *  name one, and naming the wrong one is a hint that teaches the reader a shortcut their keyboard does
+ *  not have. `⌘K` on Apple hardware, `Ctrl K` on everything else. */
+function isApplePlatform(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const platform = (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform
+    ?? navigator.platform
+    ?? '';
+  return /mac|iphone|ipad|ipod/i.test(platform);
+}
+
 /** The drawer mounts on open so the shared return-focus helper captures the actual hamburger. Radix owns
  *  modality, background aria isolation, Escape and the focus trap; this wrapper only supplies the opener
  *  because the shell has no `Dialog.Trigger` for Radix to remember. */
@@ -308,6 +321,11 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
     [workingConversations, t.nav.workingConversations],
   );
 
+  // Resolved AFTER mount, never during render: the server has no navigator, so deriving this inline
+  // would make the first client render disagree with the markup it is hydrating.
+  const [paletteHint, setPaletteHint] = useState('Ctrl K');
+  useEffect(() => { if (isApplePlatform()) setPaletteHint('⌘K'); }, []);
+
   const entryMenu = (entry: NavEntry) => (entry.id
     ? (event: React.MouseEvent) => customization.onEntryContextMenu(event, entry)
     : customization.onSurfaceContextMenu);
@@ -347,22 +365,26 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
   /** A destination row at the top level.
    *
    *  The label stays mounted so the collapse transition can finish, but is `aria-hidden` in the icon
-   *  column; `aria-label` names the row exactly where the text is not presented. `title` is on both:
-   *  expanded it keeps a truncated label readable, folded it explains the otherwise unlabelled glyph —
-   *  and it is the tooltip the folded rail is required to have. */
+   *  column; `aria-label` names the row exactly where the text is not presented.
+   *
+   *  The two hover hints do not overlap. EXPANDED the row carries the native `title`, which is there to
+   *  keep a truncated label readable and is exactly the right affordance for it. FOLDED the label is not
+   *  on screen at all, so the primitive's `tooltip` names the glyph in a real, styled tip beside the rail
+   *  — a native `title` there is a 500ms delay and an OS bubble the design has no say over. */
   const destination = (entry: NavEntry, onContextMenu?: (event: React.MouseEvent) => void) => {
     const active = entryIsActive(entry, pathname);
     const currentPage = active && entry.href !== undefined && route.currentHref === entry.href;
     const Icon = entry.icon;
     const badge = entry.id ? counters[entry.id] : undefined;
+    const hint = badge ? `${entry.label} · ${badge.title}` : entry.label;
     return (
-      <SidebarMenuButton asChild isActive={active} className="sidebar-nav__item">
+      <SidebarMenuButton asChild isActive={active} className="sidebar-nav__item" tooltip={hint}>
         <Link
           href={entry.href ?? '#'}
           draggable={false}
           aria-current={currentPage ? 'page' : undefined}
           aria-label={compact ? entry.label : undefined}
-          title={badge ? `${entry.label} · ${badge.title}` : entry.label}
+          title={compact ? undefined : hint}
           onContextMenu={onContextMenu}
         >
           <span className="sidebar-nav__icon" aria-hidden><Icon size={16} strokeWidth={1.75} /></span>
@@ -387,7 +409,7 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
     return (
       <Collapsible open={open} onOpenChange={() => subMenus.toggle(key)} className="sidebar-nav__disclosure">
         <CollapsibleTrigger asChild>
-          <SidebarMenuButton isActive={active} className="sidebar-nav__item" title={entry.label} onContextMenu={onContextMenu}>
+          <SidebarMenuButton isActive={active} className="sidebar-nav__item" title={entry.label} tooltip={entry.label} onContextMenu={onContextMenu}>
             <span className="sidebar-nav__icon" aria-hidden><Icon size={16} strokeWidth={1.75} /></span>
             <span className="sidebar-nav__label">{entry.label}</span>
             <ChevronRight className="sidebar-nav__caret" size={12} strokeWidth={1.75} aria-hidden />
@@ -530,12 +552,12 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
             className="sidebar-nav__search-field"
             onClick={() => window.dispatchEvent(new Event(COMMAND_PALETTE_OPEN_EVENT))}
             aria-label={t.common.openCommandPalette}
-            title={`${t.common.openCommandPalette} · ⌘K`}
+            title={`${t.common.openCommandPalette} · ${paletteHint}`}
             aria-keyshortcuts="Control+K Meta+K"
           >
             <Search size={16} strokeWidth={1.75} aria-hidden />
             <span className="sidebar-nav__search-label" aria-hidden={compact || undefined}>{t.common.searchSite}</span>
-            <kbd className="sidebar-nav__kbd" aria-hidden>⌘K</kbd>
+            <kbd className="sidebar-nav__kbd" aria-hidden>{paletteHint}</kbd>
           </button>
         </div>
 

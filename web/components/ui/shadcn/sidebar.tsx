@@ -8,6 +8,7 @@ import { cn } from '../../../lib/utils';
 import { useMobile } from '../../../lib/useMobile';
 import { Separator } from './separator';
 import { Skeleton } from './skeleton';
+import { Tooltip, TooltipAnchor, TooltipContent } from './tooltip';
 
 /** The shadcn/ui Sidebar primitive, adopted with two deliberate deviations from upstream. Both exist
  *  because this app already owns the two things upstream's `Sidebar` wrapper tries to own:
@@ -25,6 +26,11 @@ import { Skeleton } from './skeleton';
  *     owns every dimension of it, so the wrapper would be a second, disagreeing layout owner. With
  *     `asChild` the caller hands it the element it already has and keeps the state contract — the
  *     `data-state` / `data-collapsible` / `data-side` attributes every part below reads.
+ *
+ *  3. `SidebarMenuButton`'s `tooltip` is upstream's prop and upstream's behaviour — a name beside a row
+ *     that only exists while the column is folded — built on `./tooltip.tsx`. That primitive sits on
+ *     Radix's POPOVER rather than its Tooltip (see its own header for why), which has no hover trigger,
+ *     so the open state and the hover/focus gestures are held here instead of by a Provider at the root.
  *
  *  Everything else is upstream: the same part names, the same `data-slot`/`data-sidebar` attributes,
  *  the same CVA axes on the menu button, so a component copied from the shadcn docs drops in. */
@@ -193,8 +199,8 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<'li'>) {
 }
 
 /** The row. The CVA axes are upstream's, and they are what a caller copied from the shadcn docs sets;
- *  in the Studio skin the painted result comes from the skin's own `.studio-nav__item` rule, which
- *  out-specifies a utility class by construction (the skin tree is unlayered). */
+ *  in this app the painted result comes from `app/styles/components/sidebar-nav.css`, whose
+ *  `.sidebar-nav__item` rule the caller passes as `className` and which out-specifies a utility class. */
 const sidebarMenuButtonVariants = cva(
   'peer/menu-button flex w-full items-center gap-2 overflow-hidden text-left outline-hidden transition-[width,height,padding] disabled:pointer-events-none disabled:opacity-50 [&>svg]:shrink-0 data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground',
   {
@@ -219,13 +225,27 @@ function SidebarMenuButton({
   variant,
   size,
   className,
+  tooltip,
+  onMouseEnter,
+  onMouseLeave,
+  onFocus,
+  onBlur,
   ...props
 }: React.ComponentProps<'button'> & {
   asChild?: boolean;
   isActive?: boolean;
+  tooltip?: React.ReactNode;
 } & VariantProps<typeof sidebarMenuButtonVariants>) {
+  const sidebar = useSidebar();
+  const collapsed = sidebar?.state === 'collapsed';
+  const [tipOpen, setTipOpen] = React.useState(false);
+  // Expanding the column unmounts the tip, but not the state behind it — without this the next fold
+  // would open a tooltip nobody pointed at.
+  React.useEffect(() => { if (!collapsed) setTipOpen(false); }, [collapsed]);
+
   const Comp = asChild ? Slot : 'button';
-  return (
+  const tipped = !!tooltip && collapsed;
+  const button = (
     <Comp
       data-slot="sidebar-menu-button"
       data-sidebar="menu-button"
@@ -234,8 +254,24 @@ function SidebarMenuButton({
       // (`[data-active]`), which `data-active="false"` would satisfy — every row would paint active.
       data-active={isActive || undefined}
       className={cn(sidebarMenuButtonVariants({ variant, size }), className)}
+      onMouseEnter={(event: React.MouseEvent<HTMLButtonElement>) => { onMouseEnter?.(event); if (tipped) setTipOpen(true); }}
+      onMouseLeave={(event: React.MouseEvent<HTMLButtonElement>) => { onMouseLeave?.(event); if (tipped) setTipOpen(false); }}
+      onFocus={(event: React.FocusEvent<HTMLButtonElement>) => { onFocus?.(event); if (tipped) setTipOpen(true); }}
+      onBlur={(event: React.FocusEvent<HTMLButtonElement>) => { onBlur?.(event); if (tipped) setTipOpen(false); }}
       {...props}
     />
+  );
+  if (!tipped) return button;
+  return (
+    <Tooltip open={tipOpen} onOpenChange={setTipOpen}>
+      <TooltipAnchor asChild>{button}</TooltipAnchor>
+      {/* Beside the rail, not under it: a folded column is 57px wide and a tip below the row would cover
+          the next one. The body is sized to its label rather than to the help-text width the primitive
+          defaults to — this is a name, not an explanation. */}
+      <TooltipContent side="right" align="center" sideOffset={6} className="w-auto max-w-56 px-2.5 py-1.5">
+        {tooltip}
+      </TooltipContent>
+    </Tooltip>
   );
 }
 

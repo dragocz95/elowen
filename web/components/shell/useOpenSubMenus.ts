@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 /** Which inline sub-menus the reader has open.
  *
@@ -34,9 +34,18 @@ export interface OpenSubMenus {
  *  and a fold that springs back open under the pointer is a control that does not work. */
 export function useOpenSubMenus(userId: number | null, routeOpenId?: string): OpenSubMenus {
   const [open, setOpen] = useState<readonly string[]>([]);
+  // The route's fold, kept where the identity effect can read it WITHOUT depending on it. The account
+  // arrives from a request and the route does not, so on a normal page load the route effect below has
+  // already opened the section the reader is standing in by the time `me` resolves — and an identity
+  // effect that simply assigned the stored list would close it again, on the one page where it matters.
+  const routeOpenRef = useRef(routeOpenId);
+  routeOpenRef.current = routeOpenId;
 
   useEffect(() => {
-    setOpen(userId === null ? [] : readStored(userId));
+    if (userId === null) { setOpen([]); return; }
+    const stored = readStored(userId);
+    const forced = routeOpenRef.current;
+    setOpen(forced === undefined || stored.includes(forced) ? stored : [...stored, forced]);
   }, [userId]);
 
   useEffect(() => {
