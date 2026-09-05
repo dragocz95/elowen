@@ -38,7 +38,7 @@ import { GoalLoopService } from './service/goalLoop.js';
 import { LiveSessionSpawner } from './service/spawner.js';
 import { ConversationLifecycle } from './service/lifecycle.js';
 import { recordSessionEvent, recordWorkflowFinishMarker, scheduleReasoningMarker } from './service/sessionEvents.js';
-import { clientDir } from './service/workDir.js';
+import { clientDir, releaseWorkspacesForMove } from './service/workDir.js';
 import { BrainTurnRunner, subagentResultReminder } from './service/turnRunner.js';
 import type { BoundClientRequest, TurnRequest } from './service/turnRequest.js';
 import { BrainStatusService } from './service/statusService.js';
@@ -1531,12 +1531,27 @@ export class BrainService {
    *  respawns it. The marker closes exactly that gap, the same way a model or reasoning switch does.
    *
    *  Policy-checked, not merely recorded: an unreachable directory is the caller's mistake and the agent
-   *  must not be told the work moved somewhere it cannot go. */
+   *  must not be told the work moved somewhere it cannot go.
+   *
+   *  It is also the LATEST EXPLICIT statement of where this conversation works, so it wins over an earlier
+   *  Sandbox switch: the bindings that do not belong to the project being entered are released through the
+   *  plugin's own operation (see releaseWorkspacesForMove, which owns the rule and the inference). A
+   *  refusal — a process is still running in the bound workspace — refuses the MOVE, because reporting a
+   *  move whose next turn would run somewhere else is exactly the contradiction this closes. */
   noteWorkDir(userId: number, dir: string, session?: string): { workDir: string } {
     const b = session ? this.sessions.get(this.lifecycle.ownedUserSession(userId, session)) : this.lifecycle.activeLive(userId);
     if (!b) throw new Error('brain not started');
     const resolved = clientDir(b.policy, dir);
     if (!resolved) throw new Error('directory is not readable or not allowed');
+    const sandbox = this.d.plugins?.peek()?.control('sandbox');
+    releaseWorkspacesForMove({
+      policy: b.policy,
+      accountUserId: b.contributionUserId ?? userId,
+      sessionId: b.sessionId,
+      workDir: resolved,
+      ...(this.d.projects ? { projects: this.d.projects } : {}),
+      ...(sandbox ? { sandbox } : {}),
+    });
     // Assigning is what makes the comparison mean "has it moved since we last said so". `workDir` is
     // otherwise written once at spawn and only carried across respawns, so without this the guard forever
     // compares against the launch directory: it would re-announce every /cd to a directory that is not the

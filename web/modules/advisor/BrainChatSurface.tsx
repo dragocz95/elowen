@@ -28,6 +28,7 @@ import { StatsModal } from './StatsModal';
 import { ReasoningModal } from './ReasoningModal';
 import { SkillsModal } from './SkillsModal';
 import { TasksModal } from './TasksModal';
+import { pluginPickerComponent } from './pluginPickers';
 import { HelpModal } from './HelpModal';
 import { ModelModal } from './ModelModal';
 import { PlanDecisionModal } from './PlanDecisionModal';
@@ -1311,13 +1312,18 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   const c = useBrainChat();
   const {
     turns, busy, ready, notice, ask, cards, artifacts, narration, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
-    reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, helpOpen, setHelpOpen, modelOpen, setModelOpen, queued, readOnly,
+    reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, pluginPicker, closePluginPicker,
+    helpOpen, setHelpOpen, modelOpen, setModelOpen, queued, readOnly,
     usage, goal, lineCfg, currentModel, provider, providerLabel, subagents, attachments, removeAttachment, switchSession,
     openReadOnly, exitReadOnly, onQueueRemove, onAnswer, sessions, activeSessionId, focusNonce,
     ensureAttached, loadOlder, hasMoreHistory, showThoughts,
     planDecision, implementPlan, dismissPlan, planSubmitting, renameOpen, closeRename, renameSession,
     registerSurface,
   } = c;
+
+  // Whichever plugin picker the controller currently has open, resolved through the surface's own
+  // renderer registry. Null while none is open, and null for a name this build cannot draw.
+  const PluginPicker = pluginPickerComponent(pluginPicker);
 
   // Tell the provider a chat is on screen. It sits above every route, so the reconnect overlay it owns
   // must only cover the app while there is actually a conversation to protect — not while the reader is
@@ -2095,6 +2101,12 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
         ) : null}
         {tasksOpen ? (
           <TasksModal onClose={() => setTasksOpen(false)} />
+        ) : null}
+        {/* The picker a plugin declared and this surface draws (see pluginPickers.tsx). One mount for
+            every such command: the controller says which name is open, the registry says what draws it,
+            and neither of them knows what any particular plugin's chooser does. */}
+        {PluginPicker ? (
+          <PluginPicker onClose={closePluginPicker} />
         ) : null}
         {helpOpen ? (
           <HelpModal onClose={() => setHelpOpen(false)} />

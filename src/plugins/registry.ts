@@ -12,7 +12,7 @@ import type { ElowenEvent } from '../api/sse.js';
 import { isEmbeddingConfigured } from '../embeddings/embeddingService.js';
 import type { EmbeddingConfig } from '../embeddings/embeddingService.js';
 import type { PluginSecretBag } from '../shared/pluginSecrets.js';
-import { commandsWithPlugins, isReservedCommandName, type PluginSlashCommand } from '../brain/slashCommands.js';
+import { commandsWithPlugins, isReservedCommandName, type PluginSlashCommand, type SlashSurface } from '../brain/slashCommands.js';
 import type { PluginManifest } from './manifest.js';
 import { assertPathAllowed, allowedRoots, defaultCwd, displayPath, isAllAccess, currentAccess, pathStateKey, sanitizePathOutput } from './pathGuard.js';
 import { currentIdentity, currentContributionUserId, currentDeliveryTarget, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentSessionId } from './policyContext.js';
@@ -129,6 +129,16 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   ],
   skillCatalog: ['visibleSkills', 'canonicalBaseDir'],
 };
+
+/** The surfaces a plugin-declared PICKER may be published to.
+ *
+ *  A picker has no prompt and no server-side execution: the surface that runs it is expected to DRAW a
+ *  chooser of its own, and only the CLI TUI and the web dock have renderer registries to draw one with. A
+ *  chat adapter would register the name into its platform's native command menu and then have nothing to
+ *  answer the invocation with, so a picker is clamped to these two — an explicitly declared platform
+ *  surface is dropped rather than honoured. Prompt macros are unaffected: a macro expands to a model turn,
+ *  which every surface can run. */
+const PICKER_SURFACES: readonly SlashSurface[] = ['cli', 'web'];
 
 /** Controls that carry credentials or process-launch authority are NOT discoverable merely by declaring
  * `reads:['controls']`. The caller name is assigned by the loader, not by request data, so an installed
@@ -289,7 +299,7 @@ export class PluginRegistry {
    *  Resolution consults it live, so a control whose domain has no owner is unreachable rather than
    *  half-working. Travels with its control through `merge`. */
   readonly controlRequires = new Map<string, string>();
-  /** Plugin-contributed chat slash commands (prompt macros), keyed by command name (unique). */
+  /** Plugin-contributed chat slash commands (prompt macros and pickers), keyed by command name (unique). */
   readonly commands = new Map<string, PluginCommand>();
   readonly commandOwner = new Map<string, string>();
   // Per-contribution ownership for the flat lists above — index-aligned with their sibling array, so
@@ -1041,8 +1051,24 @@ export class PluginRegistry {
         // 1–32 chars, kebab-case. (The collision with another plugin's command is enforced at merge().)
         if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(clean)) { scoped.warn(`registerCommand refused: "${command.name}" is not kebab-case (a-z, 0-9, dashes)`); return; }
         if (isReservedCommandName(clean)) { scoped.warn(`registerCommand refused: "${clean}" shadows a built-in or reserved command`); return; }
-        if (typeof command.prompt !== 'string' || !command.prompt.trim()) { scoped.warn(`registerCommand refused: "${clean}" has an empty prompt`); return; }
-        this.commands.set(clean, { name: clean, description: command.description ?? '', prompt: command.prompt, surfaces: command.surfaces });
+        // Kind-aware prompt validation. A macro is nothing without its prompt; a picker has no model turn
+        // to expand one into, so a prompt there would be a declaration nothing can ever run.
+        const kind = command.kind === 'picker' ? 'picker' : 'prompt';
+        if (kind === 'prompt' && (typeof command.prompt !== 'string' || !command.prompt.trim())) { scoped.warn(`registerCommand refused: "${clean}" has an empty prompt`); return; }
+        if (kind === 'picker' && command.prompt !== undefined) { scoped.warn(`registerCommand refused: picker "${clean}" must not carry a prompt (a picker has no model turn to expand it into)`); return; }
+        // A picker is only ever answered by a surface that can DRAW it (see PICKER_SURFACES). Defaulting
+        // and then clamping here — rather than trusting the declaration — is what stops a chat adapter
+        // from claiming a command it has no renderer for and would publish into its native menu.
+        let surfaces = command.surfaces;
+        if (kind === 'picker') {
+          const requested = command.surfaces ?? [...PICKER_SURFACES];
+          const drawable = requested.filter((surface) => PICKER_SURFACES.includes(surface));
+          const dropped = requested.filter((surface) => !PICKER_SURFACES.includes(surface));
+          if (dropped.length > 0) scoped.warn(`registerCommand: picker "${clean}" dropped the surfaces ${dropped.join(', ')} — a picker is drawn by the surface, and only ${PICKER_SURFACES.join('/')} can draw one`);
+          if (drawable.length === 0) { scoped.warn(`registerCommand refused: picker "${clean}" declares no surface that can draw it`); return; }
+          surfaces = drawable;
+        }
+        this.commands.set(clean, { name: clean, description: command.description ?? '', kind, prompt: command.prompt, surfaces });
         this.commandOwner.set(clean, name);
       },
       // The SINGLE source for a chat surface's command menu: built-ins (surface-scoped, admin included so

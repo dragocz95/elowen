@@ -6,7 +6,7 @@ import {
   brainEventReplayCursor,
   type BrainStreamSnapshot,
 } from '../../brain/session/liveEventReplay.js';
-import { parseCommand } from './commands.js';
+import { parseCommand, type BuiltinCommand } from './commands.js';
 import { resolveToken } from './token.js';
 
 /** Parsed `elowen run` / `elowen -p` invocation. A pure result so the parser is unit-testable. */
@@ -378,7 +378,12 @@ export async function runHeadless(
   if (o.json) io.stdout(`${JSON.stringify({ type: 'session', id: sessionId })}\n`);
 
   const slash = o.prompt?.trim().startsWith('/') ? o.prompt.trim() : undefined;
-  const parsed = slash ? parseCommand(slash) : null;
+  // Headless passes no published catalog, so parseCommand can only answer with a built-in here: a
+  // plugin-declared picker is a chooser this mode cannot draw, and an unrecognized slash already rides to
+  // the daemon raw as a prompt macro. The narrowing states that rather than leaving `plugin-picker` to
+  // fall into the generic `POST /brain/command` dispatch below, which has no such action to run.
+  const recognized = slash ? parseCommand(slash) : null;
+  const parsed: BuiltinCommand | null = recognized && recognized.cmd !== 'plugin-picker' ? recognized : null;
   // A goal run comes from --goal or a `/goal <text>` slash (but NOT the action words pause/resume/clear).
   const goalArg = parsed?.cmd === 'goal' ? (parsed.arg ?? '').trim() : '';
   const goalText = o.goal ?? (goalArg && !['pause', 'resume', 'clear', 'status', 'show'].includes(goalArg) ? goalArg : undefined);
@@ -520,7 +525,7 @@ export async function runHeadless(
     );
   };
 
-  async function dispatchSlash(p: NonNullable<ReturnType<typeof parseCommand>>): Promise<void> {
+  async function dispatchSlash(p: BuiltinCommand): Promise<void> {
     const arg = (p.arg ?? '').trim();
     switch (p.cmd) {
       case 'plan': case 'build': case 'workflow': // a mode-tagged turn; streams like a normal turn and settles on idle

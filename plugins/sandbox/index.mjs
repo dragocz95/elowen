@@ -88,6 +88,40 @@ export async function register(ctx) {
         baseRef: workspace.baseRef,
       } : null;
     },
+    // The project-free form of the lookup above, for the ONE caller that cannot name a project: the turn
+    // resolver, whose only clue is a cwd. A switch may bind a project that cwd sits nowhere near, so the
+    // answer is the conversation's most recent binding among the projects the caller says are accessible.
+    // The account is still ambient and the project ceiling still comes from the caller, so this widens
+    // nothing: it only stops a legitimate switch from being invisible.
+    activeSessionWorkspace: ({ sessionId, projectIds }) => {
+      const accountUserId = accountId();
+      if (accountUserId === null) return null;
+      const workspace = workspaces.activeSessionWorkspace({ accountUserId, sessionId, projectIds });
+      return workspace ? {
+        workspaceId: workspace.id,
+        projectId: workspace.projectId,
+        path: workspace.path,
+        label: workspace.label,
+        branch: workspace.branch,
+        baseRef: workspace.baseRef,
+      } : null;
+    },
+    // The inverse of a switch, for the one caller that has to undo one: the daemon, when a conversation is
+    // explicitly MOVED to a Project. `projectIds` is the caller's own accessibility ceiling and the account
+    // stays ambient, exactly as in `activeSessionWorkspace` — a daemon-side caller has a Policy but no
+    // plugin turn scope, so the ambient access read would answer "no projects" and release nothing.
+    releaseSessionWorkspaces: ({ sessionId, projectIds, keepProjectId }) => {
+      const accountUserId = accountId();
+      if (accountUserId === null) throw new Error('a linked Elowen account is required');
+      return workspaces.releaseSessionWorkspaces(
+        { sessionId, ...(keepProjectId === undefined ? {} : { keepProjectId }) },
+        {
+          userId: accountUserId,
+          accessibleProjects: [...(projectIds ?? [])],
+          verifySessionOwner: workspaces.verifySessionOwner,
+        },
+      );
+    },
     // Two callers, neither with an ambient turn to read, and they are NOT the same caller.
     //
     // An explicit `workspace` is a DELEGATED turn pinned to one worktree: the account comes from the
@@ -232,6 +266,16 @@ export async function register(ctx) {
       } catch (error) { return fail(error); }
     },
   }));
+
+  // The plugin declares the command; each surface owns the chooser it draws for it. A picker carries no
+  // prompt — there is no model turn behind it — and because the declaration lives here, switching the
+  // plugin off removes `/sandbox` from every published menu with nothing for core to withhold.
+  ctx.registerCommand({
+    name: 'sandbox',
+    description: 'Inspect and manage Sandbox workspaces',
+    kind: 'picker',
+    surfaces: ['cli', 'web'],
+  });
 
   registerSandboxApi({ ctx, db, dataDir, workspaces, execution, migrationState });
 

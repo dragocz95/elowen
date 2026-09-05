@@ -104,6 +104,25 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
     return row ? rowWorkspace(row) : null;
   };
 
+  // The same question asked WITHOUT a project: which workspace is this conversation currently working in,
+  // anywhere the account may reach? A chooser offers every accessible project, so the binding a switch
+  // writes may name a project the caller's cwd says nothing about. The most recently bound project wins,
+  // which is exactly what the last switch chose. Bindings are written only by useWorkspace, so the
+  // ordering column is the switch time itself.
+  const activeSessionWorkspace = ({ accountUserId, sessionId, projectIds }) => {
+    const session = String(sessionId ?? '').trim();
+    if (!Number.isSafeInteger(accountUserId) || !session || !Array.isArray(projectIds)) return null;
+    const ids = [...new Set(projectIds.map(Number))].filter((id) => Number.isSafeInteger(id));
+    if (ids.length === 0) return null;
+    const row = db.prepare(`SELECT w.* FROM p_sandbox_session_bindings b
+      JOIN p_sandbox_workspaces w ON w.id = b.workspace_id
+      WHERE b.session_id = ? AND b.user_id = ? AND w.lifecycle = 'active'
+        AND b.project_id IN (${ids.map(() => '?').join(',')})
+      ORDER BY b.updated_at DESC, b.rowid DESC LIMIT 1`)
+      .get(session, accountUserId, ...ids);
+    return row ? rowWorkspace(row) : null;
+  };
+
   const resolveWorkspace = ({ accountUserId, workspace, accessibleProjectIds }) => {
     const userId = requireAccount(accountUserId);
     const row = workspaceById(String(workspace?.workspaceId ?? ''));
@@ -186,6 +205,11 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
     const userId = requireAccount(options.userId);
     const projectId = Number(input.projectId);
     const project = assertProjectAccess(ctx, projectId, options.accessibleProjects);
+    // The binding written at the end of this call names a CALLER-SUPPLIED conversation, so ownership is
+    // verified HERE — before a worktree exists on disk and before any row is written. A refused
+    // cross-account create must leave no side effect behind to clean up.
+    const sessionId = String(input.sessionId ?? '').trim();
+    if (sessionId && options.verifySessionOwner) options.verifySessionOwner(sessionId, userId);
     const label = String(input.label ?? '').trim();
     if (!label || label.length > 80) throw coded('workspace label must be 1-80 characters', 'invalid_label');
     const baseRef = String(input.baseRef ?? '').trim();
@@ -226,7 +250,7 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
         db.prepare(`INSERT INTO p_sandbox_workspaces
           (id, user_id, project_id, label, path, branch, base_ref) VALUES (?, ?, ?, ?, ?, ?, ?)`)
           .run(id, userId, projectId, label, path, branch, baseRef);
-        if (input.sessionId) useWorkspace({ workspaceId: id, sessionId: input.sessionId, projectId }, options);
+        if (sessionId) useWorkspace({ workspaceId: id, sessionId, projectId }, options);
       } catch (error) {
         await safeGit(project.path, ['-C', project.path, 'worktree', 'remove', '--force', path], roots, { accountUserId: userId, allowFailure: true });
         rmSync(path, { recursive: true, force: true });
@@ -246,13 +270,63 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
     assertProjectAccess(ctx, workspace.projectId, options.accessibleProjects);
     if (Number(input.projectId ?? workspace.projectId) !== workspace.projectId) throw coded('workspace project mismatch', 'project_mismatch', 409);
     if (options.verifySessionOwner) options.verifySessionOwner(sessionId, userId);
-    db.prepare(`INSERT INTO p_sandbox_session_bindings (session_id, user_id, project_id, workspace_id)
-      VALUES (?, ?, ?, ?)
+    // This column ORDERS one conversation's bindings against each other — it is how "the workspace this
+    // conversation last switched to" is answered across projects — so it must be strictly increasing per
+    // write, not merely current. CURRENT_TIMESTAMP resolves to whole seconds and even milliseconds tie for
+    // two switches in the same tick, which would let an OLDER binding win. Each write therefore takes the
+    // later of now and one millisecond past this conversation's newest binding. The format stays
+    // lexicographically comparable with the whole-second values older rows carry.
+    db.prepare(`INSERT INTO p_sandbox_session_bindings (session_id, user_id, project_id, workspace_id, updated_at)
+      VALUES (?, ?, ?, ?, max(
+        strftime('%Y-%m-%d %H:%M:%f', 'now'),
+        COALESCE((SELECT strftime('%Y-%m-%d %H:%M:%f', max(updated_at), '+0.001 seconds')
+          FROM p_sandbox_session_bindings WHERE session_id = ? AND user_id = ?), '0')))
       ON CONFLICT(session_id, user_id, project_id) DO UPDATE SET
-        workspace_id = excluded.workspace_id, updated_at = CURRENT_TIMESTAMP`)
-      .run(sessionId, userId, workspace.projectId, workspace.id);
+        workspace_id = excluded.workspace_id, updated_at = excluded.updated_at`)
+      .run(sessionId, userId, workspace.projectId, workspace.id, sessionId, userId);
     db.prepare("UPDATE p_sandbox_workspaces SET last_used_at = CURRENT_TIMESTAMP, updated_at = CURRENT_TIMESTAMP WHERE id = ?").run(workspace.id);
     return workspace;
+  };
+
+  // Give a conversation its Project directory back. This is the only way a binding is undone without
+  // destroying something: `useWorkspace` is the sole writer of these rows, and until now the sole way to
+  // clear one was to delete the workspace, orphan its Project or delete the account. Every workspace
+  // resource is PRESERVED — no workspace row, no branch, no directory is touched, so the worktree can be
+  // switched back into at any time and only the binding rows go.
+  //
+  // `keepProjectId` releases every binding EXCEPT that Project's. That is what an explicit move into a
+  // Project means: the latest explicit intent wins, while a workspace belonging to the Project being
+  // entered keeps working. It is one narrow option rather than a second function because the guards,
+  // the transaction and the refusal are identical either way.
+  const releaseSessionWorkspaces = (input, options = {}) => {
+    const userId = requireAccount(options.userId);
+    const sessionId = String(input.sessionId ?? '').trim();
+    if (!sessionId) throw coded('a conversation is required', 'session_required');
+    if (options.verifySessionOwner) options.verifySessionOwner(sessionId, userId);
+    const keep = input.keepProjectId === undefined || input.keepProjectId === null ? null : Number(input.keepProjectId);
+    if (keep !== null && !Number.isSafeInteger(keep)) throw coded('a valid Project id is required', 'invalid_project');
+    // A Project this account can no longer reach keeps its binding untouched: a caller who has lost the
+    // grant has no business editing rows for it, exactly as it may not read or switch them.
+    const scope = accessibleProjectIds(ctx, options.accessibleProjects)
+      .map(Number).filter((projectId) => Number.isSafeInteger(projectId) && projectId !== keep);
+    if (scope.length === 0) return { released: 0, workspaceIds: [] };
+    const placeholders = scope.map(() => '?').join(',');
+    return db.transaction(() => {
+      const rows = db.prepare(`SELECT project_id, workspace_id FROM p_sandbox_session_bindings
+        WHERE session_id = ? AND user_id = ? AND project_id IN (${placeholders})`).all(sessionId, userId, ...scope);
+      if (rows.length === 0) return { released: 0, workspaceIds: [] };
+      // The busy-turn rejection, and the same hazard removal refuses for: a lease means a process is live
+      // in that worktree right now, and moving the conversation out from under it would leave the running
+      // command writing into a directory the conversation has already left.
+      for (const row of rows) {
+        if (activeExecutionLeases(db, { workspaceId: String(row.workspace_id) }).length > 0) {
+          throw coded('workspace is in use by an active process', 'workspace_in_use', 409);
+        }
+      }
+      db.prepare(`DELETE FROM p_sandbox_session_bindings
+        WHERE session_id = ? AND user_id = ? AND project_id IN (${placeholders})`).run(sessionId, userId, ...scope);
+      return { released: rows.length, workspaceIds: rows.map((row) => String(row.workspace_id)) };
+    });
   };
 
   const commitWorkspace = async (input, options = {}) => {
@@ -378,8 +452,9 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
   };
 
   return {
-    listWorkspaces, workspaceById, resolveWorkspace, workspaceRoots, workspacesFor, activeWorkspace, statusFor,
-    createWorkspace, useWorkspace, commitWorkspace, removalPreview, removeWorkspace,
+    listWorkspaces, workspaceById, resolveWorkspace, workspaceRoots, workspacesFor, activeWorkspace,
+    activeSessionWorkspace, statusFor,
+    createWorkspace, useWorkspace, releaseSessionWorkspaces, commitWorkspace, removalPreview, removeWorkspace,
     markProjectOrphaned, reconcile, removeAccount, sessionListForUser, verifySessionOwner,
   };
 }

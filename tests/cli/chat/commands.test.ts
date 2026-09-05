@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { compactNotice, parseCommand, resolveThinkingLevel, wireSubmit } from '../../../src/cli/chat/commands.js';
+import { compactNotice, parseCommand, pluginPickerRenderer, resolveThinkingLevel, wireSubmit } from '../../../src/cli/chat/commands.js';
 import { loadPrefs } from '../../../src/cli/chat/prefs.js';
 import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
 import { ChatState } from '../../../src/cli/chat/chatState.js';
@@ -19,6 +19,21 @@ function deferred<T>(): { promise: Promise<T>; resolve(value: T): void; reject(e
 // so their runtime fixture must publish the same names instead of an impossible empty catalog.
 const TEST_COMMAND_DEFS = ['maskot', 'goal', 'paste', 'reasoning', 'editor'].map((name) => ({ name })) as never;
 const testAttachmentChips = () => ({ set: vi.fn() });
+
+/** A plugin-declared picker exactly as `GET /brain/commands` publishes it: `kind: 'picker'`,
+ *  `execution: 'surface-local'` and an owning plugin. Core carries neither name. */
+const PLUGIN_PICKER_DEFS = [
+  { name: 'sandbox', description: 'Inspect and manage Sandbox workspaces', kind: 'picker', execution: 'surface-local', plugin: 'sandbox' },
+  { name: 'deployer', description: 'Pick a deployment target', kind: 'picker', execution: 'surface-local', plugin: 'deploy' },
+  { name: 'tasks', description: 'Tasks', kind: 'picker', execution: 'surface-local' },
+] as never;
+
+/** The same `/sandbox` NAME, published by a plugin that owns none of the sandbox routes. Nothing stops a
+ *  second plugin from registering that name, and the terminal's sandbox renderer drives the sandbox
+ *  plugin's own endpoints — so this is the shape the CLI has to refuse to draw. */
+const IMPOSTOR_PICKER_DEFS = [
+  { name: 'sandbox', description: 'Pick a build sandbox', kind: 'picker', execution: 'surface-local', plugin: 'ci-runner' },
+] as never;
 
 describe('resolveThinkingLevel', () => {
   it('accepts canonical ids and provider-facing labels without leaking the label to PI', () => {
@@ -58,6 +73,78 @@ describe('parseCommand — /stats', () => {
 describe('parseCommand — /tasks', () => {
   it('recognises a bare /tasks with no argument', () => {
     expect(parseCommand('/tasks')).toEqual({ cmd: 'tasks' });
+  });
+});
+
+/** The parser must resolve a plugin-declared picker from the PUBLISHED catalog alone — no plugin name is
+ *  written into it, so a plugin that is switched off simply stops publishing and the command stops
+ *  resolving. */
+describe('parseCommand — plugin-declared picker commands', () => {
+  it('resolves any published surface-local picker owned by a plugin generically, carrying its owner', () => {
+    expect(parseCommand('/sandbox', PLUGIN_PICKER_DEFS)).toEqual({ cmd: 'plugin-picker', name: 'sandbox', plugin: 'sandbox' });
+    expect(parseCommand('/deployer', PLUGIN_PICKER_DEFS)).toEqual({ cmd: 'plugin-picker', name: 'deployer', plugin: 'deploy' });
+  });
+
+  it('returns null for a name the catalog does not publish', () => {
+    expect(parseCommand('/sandbox', TEST_COMMAND_DEFS)).toBeNull();
+    expect(parseCommand('/nosuchcommand', PLUGIN_PICKER_DEFS)).toBeNull();
+  });
+
+  it('never turns a built-in into a plugin picker, even when the published entry looks like one', () => {
+    expect(parseCommand('/tasks', PLUGIN_PICKER_DEFS)).toEqual({ cmd: 'tasks' });
+  });
+});
+
+describe('wireSubmit — plugin picker dispatch', () => {
+  const submitWith = (text: string, pickers: Record<string, unknown>, defs: unknown = PLUGIN_PICKER_DEFS): ChatState => {
+    let onSubmit: ((value: string) => void) | undefined;
+    const editor = {
+      addToHistory: vi.fn(), setText: vi.fn(),
+      set onSubmit(fn: (value: string) => void) { onSubmit = fn; },
+    };
+    const state = new ChatState({ transcript: new TranscriptModel() });
+    wireSubmit(
+      state,
+      {
+        client: {}, editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(),
+        commandDefs: defs, tui: {}, lifetime: new ChatApplicationLifetime<'metadata'>(),
+      } as never,
+      { render: vi.fn() } as never,
+      { stream: {}, pickers } as never,
+    );
+    onSubmit?.(text);
+    return state;
+  };
+
+  it('opens the renderer the CLI registered for that published name', () => {
+    const openSandboxModal = vi.fn();
+    submitWith('/sandbox', { openSandboxModal });
+    expect(openSandboxModal).toHaveBeenCalledOnce();
+  });
+
+  it('reports a published picker this terminal has no renderer for instead of opening an empty chooser', () => {
+    const openSandboxModal = vi.fn();
+    const state = submitWith('/deployer', { openSandboxModal });
+    expect(openSandboxModal).not.toHaveBeenCalled();
+    expect(state.notice).toContain('/deployer');
+  });
+
+  /** The renderer registry is keyed by the published name AND the plugin that owns it. Keyed by name
+   *  alone, any plugin that registered `/sandbox` would have its command answered by the sandbox
+   *  renderer — which posts to the SANDBOX plugin's own workspace routes, creating and removing Git
+   *  worktrees on behalf of a command that plugin never declared. */
+  it('refuses to draw the sandbox chooser for a /sandbox published by a different plugin', () => {
+    const openSandboxModal = vi.fn();
+    const state = submitWith('/sandbox', { openSandboxModal }, IMPOSTOR_PICKER_DEFS);
+    expect(openSandboxModal).not.toHaveBeenCalled();
+    expect(state.notice).toContain('/sandbox');
+    expect(state.notice).toContain('ci-runner');
+  });
+
+  it('resolves the renderer only for the name AND owner it was registered for', () => {
+    expect(pluginPickerRenderer('sandbox', 'sandbox')).toBeTypeOf('function');
+    expect(pluginPickerRenderer('sandbox', 'ci-runner')).toBeNull();
+    expect(pluginPickerRenderer('deployer', 'deploy')).toBeNull();
   });
 });
 

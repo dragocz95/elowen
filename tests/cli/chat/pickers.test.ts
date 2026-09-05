@@ -6,6 +6,7 @@ import { initTheme } from '@earendil-works/pi-coding-agent';
 import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
 import { ChatState } from '../../../src/cli/chat/chatState.js';
 import { createPickers } from '../../../src/cli/chat/pickers.js';
+import { SandboxRouteError } from '../../../src/cli/chat/brainClient.js';
 import { setChatTheme } from '../../../src/cli/chat/theme.js';
 import { ChatApplicationLifetime } from '../../../src/cli/chat/applicationLifetime.js';
 
@@ -169,6 +170,290 @@ describe('picker application lifetime', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(tui.showOverlay).not.toHaveBeenCalled();
     expect(state.notice).toContain('task #404 no longer exists');
+    await lifetime.stop();
+  });
+
+  /** The `/sandbox` overlay drives the sandbox plugin's own routes and always takes the SAFE removal path
+   *  (no `discard`, no `force`). When the plugin refuses, the reason has to reach the user in words and
+   *  the workspace has to stay exactly as it was — a silent "deleted" here would be a lie about a worktree
+   *  that still holds the user's work. */
+  it('reports a refused workspace removal by its coded reason and removes nothing', async () => {
+    initTheme();
+    const lifetime = new ChatApplicationLifetime<'metadata'>();
+    let modal: { handleInput(data: string): void; render(width: number): string[] } | null = null;
+    const tui = {
+      terminal: { columns: 120, rows: 40 },
+      showOverlay: vi.fn((component: typeof modal) => {
+        modal = component;
+        return { hide: vi.fn(), setHidden: vi.fn(), isHidden: () => false, focus: vi.fn(), unfocus: vi.fn(), isFocused: () => true };
+      }),
+      setFocus: vi.fn(), requestRender: vi.fn(),
+    };
+    const workspace = {
+      id: 'ws_1', userId: 1, projectId: 1, label: 'Feature Alpha', path: '/data/ws/feature-alpha',
+      branch: 'elowen/u1/feature-alpha', baseRef: 'main', lifecycle: 'active', orphanReason: null,
+      accessible: true,
+      status: { head: 'abc', branch: 'elowen/u1/feature-alpha', upstream: '', ahead: 0, behind: 0, dirty: 2, untracked: 1, clean: false },
+      files: [], uniqueCommits: 0, activeProcesses: 0, bindings: [],
+    };
+    const sandboxOverview = vi.fn(async () => ({
+      projects: [{ id: 1, slug: 'demo', path: '/var/www/demo' }],
+      sessions: [],
+      workspaces: [workspace],
+    }));
+    const sandboxRemovalPreview = vi.fn(async () => ({
+      workspaceId: 'ws_1', head: 'abc', dirty: 2, untracked: 1, uniqueCommits: 0, activeProcesses: 0,
+      files: [], previewHash: 'hash', phrase: 'discard Feature Alpha',
+    }));
+    const sandboxRemoveWorkspace = vi.fn(async () => {
+      throw new SandboxRouteError('workspace_not_clean', 'workspace removal requires a clean tree with no unpushed commits');
+    });
+    const state = new ChatState({ transcript: new TranscriptModel() });
+    const pickers = createPickers(
+      state,
+      {
+        client: { boundSession: 'brain-1', sandboxOverview, sandboxRemovalPreview, sandboxRemoveWorkspace },
+        tui, editor: {}, termSettings: null, cwdLabel: '', branchLabel: '', commandDefs: [], lifetime,
+      } as never,
+      { render: vi.fn(), refreshMeta: async () => {} },
+      {} as never,
+      { reshowPanel: vi.fn(), reloadKeymap: vi.fn() },
+    );
+    const plain = (): string => modal!.render(100).join('\n').replace(/\x1b\[[0-9;]*m/g, '');
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    pickers.openSandboxModal();
+    await settle();
+    expect(plain()).toContain('Feature Alpha');
+    expect(plain()).toContain('elowen/u1/feature-alpha');
+
+    modal!.handleInput('\x1b[B'); // + New workspace → Refresh
+    modal!.handleInput('\x1b[B'); // → the workspace row
+    modal!.handleInput('\r');
+    await settle();
+    expect(plain()).toContain('Workspace Feature Alpha');
+
+    modal!.handleInput('\x1b[B'); // Back → Use in this conversation
+    modal!.handleInput('\x1b[B'); // → Delete
+    modal!.handleInput('\r');
+    await settle();
+    expect(sandboxRemovalPreview).toHaveBeenCalledWith('ws_1');
+    expect(plain()).toContain('Delete workspace "Feature Alpha"?');
+
+    modal!.handleInput('\x1b[B'); // Cancel → Delete
+    modal!.handleInput('\r');
+    await settle();
+
+    expect(sandboxRemoveWorkspace).toHaveBeenCalledWith('ws_1'); // safe path only — no discard, no force
+    expect(state.notice).toContain('workspace kept');
+    expect(state.notice).toContain('uncommitted changes');
+    await lifetime.stop();
+  });
+
+  /** Creating a workspace CREATES it, on both surfaces. The CLI used to bind the conversation to the new
+   *  worktree whenever one was open while the web drawer did not, so the same button moved the working
+   *  directory in one place and not in the other. The switch is now the separate `workspaces/use` step
+   *  everywhere, and the create payload is the proof: exactly the project, the name and the base ref.
+   *
+   *  The web half of this parity is asserted in web/tests/modules/advisor/SandboxModal.test.tsx
+   *  ("creates a workspace without binding this conversation"), which pins the identical payload. */
+  it('creates a workspace without binding this conversation, matching the web drawer', async () => {
+    initTheme();
+    const lifetime = new ChatApplicationLifetime<'metadata'>();
+    let modal: { handleInput(data: string): void; render(width: number): string[] } | null = null;
+    const tui = {
+      terminal: { columns: 120, rows: 40 },
+      showOverlay: vi.fn((component: typeof modal) => {
+        modal = component;
+        return { hide: vi.fn(), setHidden: vi.fn(), isHidden: () => false, focus: vi.fn(), unfocus: vi.fn(), isFocused: () => true };
+      }),
+      setFocus: vi.fn(), requestRender: vi.fn(),
+    };
+    const sandboxCreateWorkspace = vi.fn(async () => ({
+      id: 'ws_9', label: 'Refunds', path: '/data/ws/refunds', branch: 'elowen/u1/refunds', baseRef: 'develop',
+    }));
+    const state = new ChatState({ transcript: new TranscriptModel() });
+    const pickers = createPickers(
+      state,
+      {
+        client: {
+          // A conversation IS open — the case in which the CLI used to bind on create.
+          boundSession: 'brain-1',
+          sandboxOverview: async () => ({
+            projects: [{ id: 4, slug: 'demo', path: '/var/www/demo', defaultRef: 'develop' }],
+            sessions: [], workspaces: [],
+          }),
+          sandboxCreateWorkspace,
+        },
+        tui, editor: {}, termSettings: null, cwdLabel: '', branchLabel: '', commandDefs: [], lifetime,
+      } as never,
+      { render: vi.fn(), refreshMeta: async () => {} },
+      {} as never,
+      { reshowPanel: vi.fn(), reloadKeymap: vi.fn() },
+    );
+    const plain = (): string => modal!.render(100).join('\n').replace(/\x1b\[[0-9;]*m/g, '');
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    pickers.openSandboxModal();
+    await settle();
+    // The list says up front that creating does not move the conversation.
+    expect(plain()).toContain('this conversation stays where it is');
+
+    modal!.handleInput('\r'); // + New workspace
+    await settle();
+    modal!.handleInput('\r'); // the only project
+    await settle();
+    for (const ch of 'Refunds') modal!.handleInput(ch);
+    modal!.handleInput('\r');
+    await settle();
+
+    // The base ref is offered as the project's OWN default branch, never a guessed one.
+    expect(plain()).toContain('develop');
+    modal!.handleInput('\r');
+    await settle();
+
+    expect(sandboxCreateWorkspace).toHaveBeenCalledTimes(1);
+    expect(sandboxCreateWorkspace.mock.calls[0]![0]).toEqual({ projectId: 4, label: 'Refunds', baseRef: 'develop' });
+    // …and the confirmation states what did NOT happen, so nobody assumes the conversation moved.
+    expect(state.notice).toContain('this conversation still works where it did');
+    expect(state.notice).toContain('Use in this conversation');
+    await lifetime.stop();
+  });
+
+  /** With no authoritative default branch the field stays EMPTY and the ref is asked for. The old
+   *  fallback typed `main` into it, which silently branched from a name that need not exist. */
+  it('leaves the base ref empty and creates nothing when the project states no default branch', async () => {
+    initTheme();
+    const lifetime = new ChatApplicationLifetime<'metadata'>();
+    let modal: { handleInput(data: string): void; render(width: number): string[] } | null = null;
+    const tui = {
+      terminal: { columns: 120, rows: 40 },
+      showOverlay: vi.fn((component: typeof modal) => {
+        modal = component;
+        return { hide: vi.fn(), setHidden: vi.fn(), isHidden: () => false, focus: vi.fn(), unfocus: vi.fn(), isFocused: () => true };
+      }),
+      setFocus: vi.fn(), requestRender: vi.fn(),
+    };
+    const sandboxCreateWorkspace = vi.fn(async () => ({ id: 'ws_x', label: 'x', path: '/x' }));
+    const state = new ChatState({ transcript: new TranscriptModel() });
+    const pickers = createPickers(
+      state,
+      {
+        client: {
+          boundSession: 'brain-1',
+          sandboxOverview: async () => ({
+            projects: [{ id: 7, slug: 'bare', path: '/var/www/bare', defaultRef: null }],
+            sessions: [], workspaces: [],
+          }),
+          sandboxCreateWorkspace,
+        },
+        tui, editor: {}, termSettings: null, cwdLabel: '', branchLabel: '', commandDefs: [], lifetime,
+      } as never,
+      { render: vi.fn(), refreshMeta: async () => {} },
+      {} as never,
+      { reshowPanel: vi.fn(), reloadKeymap: vi.fn() },
+    );
+    const plain = (): string => modal!.render(100).join('\n').replace(/\x1b\[[0-9;]*m/g, '');
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    pickers.openSandboxModal();
+    await settle();
+    modal!.handleInput('\r'); // + New workspace
+    await settle();
+    modal!.handleInput('\r'); // the only project
+    await settle();
+    for (const ch of 'Spike') modal!.handleInput(ch);
+    modal!.handleInput('\r');
+    await settle();
+
+    // Empty field, and the title says why it is empty.
+    expect(plain()).toContain('(empty)');
+    expect(plain()).toContain('states no default branch');
+
+    modal!.handleInput('\r'); // submitting nothing must not invent a ref
+    await settle();
+    expect(sandboxCreateWorkspace).not.toHaveBeenCalled();
+    expect(state.notice).toContain('a base ref is required');
+    await lifetime.stop();
+  });
+
+  /** "Return to project" is the inverse of a switch and it must undo one WITHOUT destroying anything: the
+   *  overlay calls the plugin's release route, which drops the conversation's binding rows only. The
+   *  workspace is still listed afterwards, and a refusal — a process is running in it — has to reach the
+   *  user in words, because "returned" over a conversation that is still in the worktree is a lie.
+   *
+   *  The web half of this parity is asserted in web/tests/modules/advisor/SandboxModal.test.tsx
+   *  ("returns this conversation to its project directory through the conversation id"), which pins the
+   *  identical payload — the conversation id and nothing else. */
+  it('returns this conversation to its project directory and reports a refusal, matching the web drawer', async () => {
+    initTheme();
+    const lifetime = new ChatApplicationLifetime<'metadata'>();
+    let modal: { handleInput(data: string): void; render(width: number): string[] } | null = null;
+    const tui = {
+      terminal: { columns: 120, rows: 40 },
+      showOverlay: vi.fn((component: typeof modal) => {
+        modal = component;
+        return { hide: vi.fn(), setHidden: vi.fn(), isHidden: () => false, focus: vi.fn(), unfocus: vi.fn(), isFocused: () => true };
+      }),
+      setFocus: vi.fn(), requestRender: vi.fn(),
+    };
+    const bound = {
+      id: 'ws_1', userId: 1, projectId: 1, label: 'Feature Alpha', path: '/data/ws/feature-alpha',
+      branch: 'elowen/u1/feature-alpha', baseRef: 'main', lifecycle: 'active', orphanReason: null,
+      accessible: true,
+      status: { head: 'abc', branch: 'elowen/u1/feature-alpha', upstream: '', ahead: 0, behind: 0, dirty: 0, untracked: 0, clean: true },
+      files: [], uniqueCommits: 0, activeProcesses: 0,
+      bindings: [{ sessionId: 'brain-1', updatedAt: '2026-09-01' }],
+    };
+    const sandboxReleaseWorkspaces = vi.fn(async () => ({ released: 1 }));
+    const state = new ChatState({ transcript: new TranscriptModel() });
+    const pickers = createPickers(
+      state,
+      {
+        client: {
+          boundSession: 'brain-1',
+          sandboxOverview: async () => ({
+            projects: [{ id: 1, slug: 'demo', path: '/var/www/demo', defaultRef: 'main' }],
+            sessions: [], workspaces: [bound],
+          }),
+          sandboxReleaseWorkspaces,
+        },
+        tui, editor: {}, termSettings: null, cwdLabel: '', branchLabel: '', commandDefs: [], lifetime,
+      } as never,
+      { render: vi.fn(), refreshMeta: async () => {} },
+      {} as never,
+      { reshowPanel: vi.fn(), reloadKeymap: vi.fn() },
+    );
+    const plain = (): string => modal!.render(100).join('\n').replace(/\x1b\[[0-9;]*m/g, '');
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    pickers.openSandboxModal();
+    await settle();
+    // Offered because this conversation IS working in one of these worktrees, and it states what survives.
+    expect(plain()).toContain('Return to project');
+    expect(plain()).toContain('the workspace is kept');
+
+    modal!.handleInput('\x1b[B'); // + New workspace → Refresh
+    modal!.handleInput('\x1b[B'); // → Return to project
+    modal!.handleInput('\r');
+    await settle();
+
+    // The conversation id is the whole payload: no workspace is named, so nothing can be destroyed.
+    expect(sandboxReleaseWorkspaces).toHaveBeenCalledTimes(1);
+    expect(sandboxReleaseWorkspaces.mock.calls[0]![0]).toBe('brain-1');
+    expect(state.notice).toContain('project directory again');
+    expect(state.notice).toContain('the workspace is kept');
+
+    // A refusal leaves the conversation where it was and says why, in words rather than as a code.
+    sandboxReleaseWorkspaces.mockRejectedValueOnce(
+      new SandboxRouteError('workspace_in_use', 'workspace is in use by an active process'),
+    );
+    modal!.handleInput('\x1b[B');
+    modal!.handleInput('\x1b[B');
+    modal!.handleInput('\r');
+    await settle();
+    expect(state.notice).toContain('still working in the workspace');
+    expect(state.notice).toContain('a process is still running in it');
     await lifetime.stop();
   });
 

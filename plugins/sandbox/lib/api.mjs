@@ -42,10 +42,23 @@ export function registerSandboxApi({ ctx, db, dataDir, workspaces, execution, mi
     },
   });
 
+  // What a chooser should offer as the base ref for a NEW workspace in this Project: the branch the
+  // repository is actually on, or its exact commit when HEAD is detached. Null when the Project is not a
+  // repository or has no commit yet — a picker must then make the caller name a ref, because a guessed
+  // "main" is a create that fails at `rev-parse` on every repository whose trunk is called anything else.
+  const defaultRefFor = async (path) => {
+    const snapshot = await ctx.host.git().projectSnapshot(path);
+    if (!snapshot.isRepo || !snapshot.status || !snapshot.status.head) return null;
+    const branch = String(snapshot.status.branch || '');
+    return branch && branch !== '(detached)' && branch !== 'HEAD' ? branch : snapshot.status.head;
+  };
+
   register('overview', 'GET', async (req) => {
     const userId = requireUser(req);
     const allowed = accessibleProjects(req, stores);
-    const projects = stores.projects.list().filter((project) => allowed.includes(project.id));
+    const projects = await Promise.all(stores.projects.list()
+      .filter((project) => allowed.includes(project.id))
+      .map(async (project) => ({ ...project, defaultRef: await defaultRefFor(project.path) })));
     const sessions = workspaces.sessionListForUser(userId);
     const rows = workspaces.listWorkspaces({ userId }).filter((workspace) => allowed.includes(workspace.projectId));
     const items = await Promise.all(rows.map(async (workspace) => {
@@ -69,7 +82,11 @@ export function registerSandboxApi({ ctx, db, dataDir, workspaces, execution, mi
   register('workspaces/create', 'POST', async (req) => {
     const userId = requireUser(req);
     const input = await body(req);
-    const workspace = await workspaces.createWorkspace(input, { userId, accessibleProjects: accessibleProjects(req, stores) });
+    const workspace = await workspaces.createWorkspace(input, {
+      userId,
+      accessibleProjects: accessibleProjects(req, stores),
+      verifySessionOwner: workspaces.verifySessionOwner,
+    });
     return json({ workspace }, 201);
   });
 
@@ -82,6 +99,20 @@ export function registerSandboxApi({ ctx, db, dataDir, workspaces, execution, mi
       verifySessionOwner: workspaces.verifySessionOwner,
     });
     return json({ workspace });
+  });
+
+  // Give the caller's conversation its Project directory back. Ownership is verified through the very same
+  // seam `workspaces/use` passes, because releasing a binding is exactly as much a conversation decision as
+  // writing one. Nothing is destroyed: the workspace row, its branch and its directory all survive.
+  register('workspaces/release', 'POST', async (req) => {
+    const userId = requireUser(req);
+    const input = await body(req);
+    const result = workspaces.releaseSessionWorkspaces(input, {
+      userId,
+      accessibleProjects: accessibleProjects(req, stores),
+      verifySessionOwner: workspaces.verifySessionOwner,
+    });
+    return json(result);
   });
 
   register('workspaces/commit', 'POST', async (req) => {
