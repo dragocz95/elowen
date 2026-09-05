@@ -40,7 +40,13 @@ export function createWorkflowHostRpc(resolvePlugins: () => Promise<PluginRegist
     if (!caller.isActive()) throw new Error('the host RPC caller turn is no longer active');
     return workflow.addNodesFromSession({
       callerSessionId: caller.sessionId,
-      callerAccess: caller.access,
+      // A delegated turn's ACCOUNT is its inherited contribution owner — its identity deliberately carries
+      // none — so name it here rather than leave the engine to re-derive it from a scope shape. Without it
+      // a remote node that adds nodes of its own cannot name the workspace the whole workflow runs in.
+      callerAccess: {
+        ...caller.access,
+        ...(caller.access.contributionUserId != null ? { accountUserId: caller.access.contributionUserId } : {}),
+      },
       ...(caller.model ? { callerModel: caller.model } : {}),
       workflowId: request.workflowId,
       nodes: request.nodes,

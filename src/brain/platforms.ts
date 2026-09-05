@@ -237,7 +237,7 @@ export class PlatformOrchestrator {
               {
                 admin: src.access.admin === true,
                 projectIds: src.access.projectIds ?? [],
-                contributionUserId: src.access.contributionUserId,
+                accountUserId: src.access.accountUserId,
                 workspaceRef: src.access.workspaceRef,
               },
               src.access.workspaceId,

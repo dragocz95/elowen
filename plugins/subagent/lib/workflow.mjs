@@ -158,6 +158,9 @@ const delegableAccess = (access) => ({
   permissionBoundary: access.permissionBoundary,
   ...(access.readOnly ? { readOnly: true } : {}),
   ...(access.contributionUserId != null ? { contributionUserId: access.contributionUserId } : {}),
+  // The ACCOUNT the child acts as, kept beside the narrower contribution owner. Dropping it left a node
+  // that adds nodes of its own unable to name the workspace its whole workflow already runs in.
+  ...(access.accountUserId != null ? { accountUserId: access.accountUserId } : {}),
   ...(access.workspaceRef ? { workspaceRef: { ...access.workspaceRef } } : {}),
 });
 // Some models (seen: Qwen max preview) double-escape non-ASCII in tool-call JSON, so the parsed title
@@ -235,25 +238,18 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     if (inherited && requested !== inherited.workspaceId) {
       throw new Error('a workspace-scoped workflow node cannot switch to a sibling workspace');
     }
-    const sandbox = ctx.control?.('sandbox');
-    // The host's one account resolver, not the contribution owner alone: a turn with a verified identity
-    // and no contribution scope creates workspaces through Sandbox and must be able to name them here.
-    const accountUserId = access.accountUserId;
-    if (!sandbox || !Number.isSafeInteger(accountUserId) || accountUserId <= 0) {
-      throw new Error('Sandbox workspace scope is unavailable for this workflow');
-    }
-    const candidates = sandbox.workspacesFor({
-      userId: accountUserId,
-      ...(access.admin ? {} : { projectIds: access.projectIds }),
-    });
-    const candidate = candidates.find((workspace) => workspace.workspaceId === requested);
-    if (!candidate) throw new Error('workspace not found in the current project scope');
-    const binding = sandbox.resolveWorkspace({
-      accountUserId,
-      workspace: { workspaceId: candidate.workspaceId, projectId: candidate.projectId },
-      accessibleProjectIds: access.admin ? 'all' : access.projectIds,
-    });
-    const resolved = { workspaceId: binding.workspaceId, projectId: binding.projectId };
+    // The HOST's resolver, not a copy of it here. Resolving a workspace needs the Sandbox control, which is
+    // restricted to the plugins that own process launch — so the local version this replaces resolved to
+    // nothing for every real workflow while a mocked control kept its tests green, and a turn that had just
+    // created a workspace was refused it by WorkflowStart. The account and the project ceiling travel in the
+    // host-stamped boundary; the sibling-switch rule stays here because it is the workflow's own.
+    const resolved = ctx.resolveWorkspaceScope({
+      admin: access.admin,
+      projectIds: access.projectIds,
+      accountUserId: access.accountUserId,
+      ...(inherited ? { workspaceRef: inherited } : {}),
+    }, requested);
+    if (!resolved) throw new Error('workspace not found in the current project scope');
     if (inherited && !sameWorkspaceRef(inherited, resolved)) {
       throw new Error('a workspace-scoped workflow node cannot switch to a sibling workspace');
     }

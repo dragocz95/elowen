@@ -4,10 +4,14 @@ import type {
   SandboxWorkspaceRef,
 } from '../plugins/api.js';
 
+/** The ceiling one workspace resolution is measured against. `accountUserId` is the host's ONE account
+ *  resolver (`pathGuard.currentAccess().accountUserId`): the contribution owner when the turn has one,
+ *  else the verified identity. Reading only the contribution owner here is what made a turn able to
+ *  CREATE a workspace through Sandbox and then be refused that same workspace by delegation. */
 export interface WorkspaceAccessCeiling {
   admin: boolean;
   projectIds: readonly number[];
-  contributionUserId?: number | null;
+  accountUserId?: number | null;
   workspaceRef?: SandboxWorkspaceRef;
 }
 
@@ -23,9 +27,9 @@ export function resolveDelegatedWorkspace(
   const requested = typeof requestedWorkspaceId === 'string' ? requestedWorkspaceId.trim() : '';
   if (!requested && !inherited) return undefined;
   if (!sandbox) throw new Error('Sandbox workspace scope is unavailable because the Sandbox plugin is disabled');
-  const accountUserId = access.contributionUserId;
+  const accountUserId = access.accountUserId;
   if (!Number.isSafeInteger(accountUserId) || accountUserId! <= 0) {
-    throw new Error('Sandbox workspace scope requires a linked contribution account');
+    throw new Error('Sandbox workspace scope requires a linked Elowen account');
   }
   const workspace = inherited
     ? { ...inherited, ...(requested && requested !== inherited.workspaceId ? { workspaceId: requested } : {}) }

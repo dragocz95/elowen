@@ -241,8 +241,13 @@ export interface DelegatingTurnAccess {
   principal?: string;
   /** Account whose personal settings compose this turn. */
   settingsUserId?: number | null;
-  /** Account whose owner-scoped contributions and Sandbox state this turn carries. */
+  /** Account whose owner-scoped contributions this turn carries. */
   contributionUserId?: number | null;
+  /** The ACCOUNT this turn acts as: the contribution owner when it has one, else the verified identity.
+   *  Declared HERE, not only on the concrete `currentAccess()` return, because this is the interface a
+   *  workspace resolution is measured against (see WorkspaceAccessCeiling). Leaving it out let a caller
+   *  typed to this interface compile while silently resolving no workspace at all. */
+  accountUserId?: number | null;
   /** Present only inside a child already narrowed to an explicitly assigned Sandbox workspace. */
   workspaceRef?: SandboxWorkspaceRef;
 }

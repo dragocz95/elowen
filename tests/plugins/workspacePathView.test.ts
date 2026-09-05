@@ -60,7 +60,7 @@ describe('workspace PathView', () => {
       workspacesFor: () => [],
     } as any;
     const access = {
-      admin: true, projectIds: [], contributionUserId: 7,
+      admin: true, projectIds: [], accountUserId: 7,
       workspaceRef: { workspaceId: 'ws_parent', projectId: 3 },
     };
     expect(resolveDelegatedWorkspace(sandbox, access)?.workspaceId).toBe('ws_parent');
