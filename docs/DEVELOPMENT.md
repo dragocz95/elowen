@@ -28,6 +28,21 @@ When a Sandbox workspace is active, relative file operations and shell commands 
 
 Sandbox commits accept explicit workspace-relative paths and never stage unrelated files. Keep unrelated changes, including other agents' worktrees, out of the change. GitHub publication consumes an active, committed Sandbox workspace; GitHub does not create or remove worktrees.
 
+### The workspace container contract
+
+Binding a workspace to a conversation (`SandboxCreateWorkspace` creates and binds in one step; `SandboxUseWorkspace` binds an existing one) changes how that conversation's shell commands run, for the instance operator's own conversation as much as for anyone else's. Every `Bash` command whose working directory lies inside an active workspace of the acting account runs in a bubblewrap container built by `plugins/sandbox/lib/execution.mjs`:
+
+- The worktree is bind-mounted at `/workspace` and is the working directory; its host path never appears inside. `.git` is replaced by a read-only stub gitfile (`gitdir: /run/elowen-git-unavailable`), so `git` reports no repository. Commits go through `SandboxCommit` (explicit workspace-relative paths, message up to 500 characters).
+- The account HOME is mounted at `/home/elowen` and persists between commands (`npm`, `pip`, tool caches). `/tmp` is a fresh tmpfs per command: nothing written there survives the command.
+- `/usr` is read-only (with the usual `/bin`, `/lib`, `/lib64`, `/sbin` symlinks); `/etc` is an allow-list of read-only files (resolver, hosts, name switch, `passwd`/`group`, TLS certificates, locale and timezone, `gitconfig`, `npmrc`, `terminfo`); `/proc` and `/dev` are fresh. No `/var/www`, no other project, no systemd, no `sudo`, no `elowen` CLI and no control-plane token exist inside; the environment carries only `PATH`, `LANG`/`LC_*`, `TERM`, `TZ` and `HOME`, plus a connected GitHub credential for that one launch.
+- Network stays shared by default (package installation, Git remotes, development servers); a site runtime may ask for an isolated network namespace.
+
+Files tools (`Read`, `Write`, `Edit`, `Search`, `ListDir`, `Grep`, `Glob`, `FileInfo`) keep running on the host with the path guard, addressing the worktree by its host path, so a file the model writes and a command it runs see the same tree from two different mounts.
+
+A sub-agent (`Delegate`) or workflow node spawned from a bound conversation inherits the binding: it starts in the worktree and its shell commands run in the same container without passing `workspaceId`. Passing `workspaceId` additionally pins the child's logical filesystem view to that worktree (workspace-relative paths, no wider host access). A `read_only` child has no `Write` tool and no scratch directory beyond the per-command `/tmp`, so a plan or document it produces must be returned as the delegation RESULT for the parent to save; it cannot leave a file behind.
+
+To leave the container, release the binding rather than removing the workspace: `SandboxReleaseWorkspace` (the model tool; `projectId` narrows it to one Project), the `/sandbox` picker in the CLI and web, or `POST /plugins/sandbox/api/workspaces/release`. The next turn runs in the Project directory again; the workspace, its branch and its directory are preserved and can be re-activated. A release is refused with `workspace_in_use` while a process still runs in the worktree — wait for it or kill it first. The chat surfaces show a `Sandbox · <label>` badge (web telemetry foot) or a `[S] <label>` marker (CLI project line) while a conversation is bound.
+
 ## Commands
 
 Run commands from the repository root unless a command explicitly uses `--prefix web`.

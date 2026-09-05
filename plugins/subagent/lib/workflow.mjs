@@ -944,7 +944,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       title: Type.Optional(Type.String({ description: 'Override the file\'s title. Human label shown in the CLI panel: AT MOST 4 WORDS, in the user\'s language, no trailing punctuation (the UI appends an ellipsis).' })),
       context: Type.Optional(Type.String({ description: 'Override the file\'s context. Background shared by ALL nodes (added to each node\'s cache-friendly system prefix).' })),
       background: Type.Optional(Type.Boolean({ description: 'Override the file\'s background setting. True starts asynchronously and delivers the summary in a NEW turn; false blocks until completion.' })),
-      workspaceId: Type.Optional(Type.String({ minLength: 1, description: 'Default explicit Sandbox workspace for workflow nodes. Omit for legacy project-scope behavior; active workspace bindings are not inherited implicitly.' })),
+      workspaceId: Type.Optional(Type.String({ minLength: 1, description: 'Default explicit Sandbox workspace for workflow nodes. Omit for legacy project-scope behavior; an active workspace binding is not inherited as the logical root, but nodes spawned from a bound conversation still start in that worktree and run their shell commands in the workspace container, and a read_only node has no Write tool and no scratch directory there, so it must return its plan or document as its node result.' })),
     }),
     execute: async (toolCallId, p) => {
       if (!getRun()) return ok('Error: workflows are not wired up on this server.');
