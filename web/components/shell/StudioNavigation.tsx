@@ -422,6 +422,10 @@ export function StudioNavigation({ compact = false, measured = true, side = 'lef
       <nav
         className={`studio-nav${drawer ? ' overlay-layer-nav-drawer overlay-nav-drawer' : ''}`}
         data-testid="studio-navigation"
+        // The stable hook a SKIN targets this column by. `data-testid` is a test handle and `studio-nav`
+        // is one design's own class, so neither is something a third-party skin should select on; this
+        // attribute names the ROLE the element plays in the shell and survives a restyle of either.
+        data-shell="sidebar"
         data-mode={mode}
         data-measured={measured}
         data-side={side}
