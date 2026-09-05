@@ -9,9 +9,8 @@ import { BrainChatSurface } from '../../../modules/advisor/BrainChatSurface';
 import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
 import { PageHeaderProvider, PageTopBarHost } from '../../../lib/pageHeader';
 
-// The conversation bar carries different controls on a phone (model picker and work-mode pill fold into
-// the ⋯ popover) than on desktop (everything inline). Which set is chosen must wait for the viewport
-// measurement. The reasoning button is the exception — it stays inline at every width.
+// Model and project pickers fold into the phone overflow. Reasoning and telemetry stay directly
+// accessible in the top bar, while the work-mode switch stays beside the composer.
 // Placement is not width-dependent: wherever the shell publishes a top-bar host, the whole bar rides in
 // it — a phone included, which is what keeps the controls inside the one sticky bar a phone has.
 
@@ -86,26 +85,23 @@ describe('conversation bar controls', () => {
     expect(sawDesktopControls()).toBe(false);
   });
 
-  it('folds reasoning, telemetry and new chat into the ⋯ popover on a phone', async () => {
-    // The phone bar is the conversation name and ⋯: three icon buttons beside the name truncated it to
-    // a letter. The actions are still one menu away, as icon rows, and nowhere else on the bar.
+  it('opens reasoning directly from the phone bar and keeps only secondary actions in overflow', async () => {
     setViewport(true);
     renderSurface();
     await screen.findByRole('button', { name: 'More options' });
-    expect(screen.queryByTestId('chat-thoughts-toggle')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'New chat' })).toBeNull();
+    const reasoning = screen.getByRole('button', { name: 'Reasoning' });
+    expect(document.querySelector('[data-chat-popover]')).toBeNull();
+    fireEvent.click(reasoning);
+    expect(await screen.findByRole('dialog', { name: 'Reasoning' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Close' }));
     fireEvent.click(screen.getByRole('button', { name: 'More options' }));
-
-    const popover = await waitFor(() => {
-      const el = document.querySelector('[data-chat-popover]');
-      expect(el).not.toBeNull();
-      return el as HTMLElement;
-    });
-    expect(popover).toContainElement(screen.getByTestId('chat-thoughts-toggle'));
+    const popover = document.querySelector('[data-chat-popover]');
+    expect(popover).not.toContainElement(reasoning);
+    expect(screen.getAllByRole('button', { name: 'Reasoning' })).toHaveLength(1);
     expect(popover).toContainElement(screen.getByRole('button', { name: 'New chat' }));
   });
 
-  it('positions the top overflow with the shared collision-aware popover and opens telemetry', async () => {
+  it('opens telemetry directly from the mobile top bar without a duplicate overflow entry', async () => {
     setViewport(true);
     const openTelemetry = vi.fn();
     const { wrapper: Wrapper } = createWrapper();
@@ -114,13 +110,16 @@ describe('conversation bar controls', () => {
       <BrainChatSurface variant="full" onOpenTelemetry={openTelemetry} />
     </BrainChatProvider></PageHeaderProvider></ToastProvider></Wrapper>);
     const trigger = await screen.findByRole('button', { name: 'More options' });
+    const telemetry = screen.getByRole('button', { name: 'Show telemetry' });
+    expect(screen.getByTestId('page-top-bar-host')).toContainElement(telemetry);
+    expect(document.querySelector('[data-chat-popover]')).toBeNull();
+    fireEvent.click(telemetry);
+    expect(openTelemetry).toHaveBeenCalledOnce();
     fireEvent.click(trigger);
     const popover = document.querySelector('[data-chat-popover]');
     expect(popover).toHaveAttribute('data-slot', 'popover-content');
-    fireEvent.click(screen.getByRole('button', { name: 'Show telemetry' }));
-    expect(openTelemetry).toHaveBeenCalledOnce();
-    await waitFor(() => expect(document.querySelector('[data-chat-popover]')).toBeNull());
-    expect(trigger).toHaveFocus();
+    expect(popover).not.toContainElement(telemetry);
+    expect(screen.getAllByRole('button', { name: 'Show telemetry' })).toHaveLength(1);
   });
 
   it('opens the same Tasks modal as `/tasks` from the phone overflow', async () => {

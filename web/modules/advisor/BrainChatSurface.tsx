@@ -1,5 +1,5 @@
 'use client';
-import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, ExternalLink, Compass, Hammer, Workflow, type LucideIcon } from 'lucide-react';
@@ -35,7 +35,7 @@ import { GoalStatusInline } from './GoalStatus';
 import { ChatHistoryRail } from './ChatHistoryRail';
 import { ModelPicker } from './ModelPicker';
 import { ProjectPicker } from './ProjectPicker';
-import { useBrainChat } from './BrainChatProvider';
+import { useBrainChat, useBrainChatInput } from './BrainChatProvider';
 import { formatBytes, formatTokens, formatCost, formatDuration, localDateTime } from '../../lib/format';
 import { Spinner } from '../../components/ui/states';
 import { brainModelLabel, brainModelQualifiedLabel } from '../../lib/modelProvider';
@@ -962,13 +962,10 @@ function WorkModeSwitch({ variant }: { variant: 'full' | 'compact' }) {
  *  live here any more — the composer's WorkModeSwitch shows (and changes) the mode on every surface, so a
  *  second, read-only mention would be noise. Phone actions lead the shared collision-aware popover;
  *  pickers follow them. Narrow desktops retain the picker fallback without duplicating inline actions. */
-function BarOverflowMenu({ folded, onOpenTasks, onOpenReasoning, onOpenTelemetry, onNewChat }: {
-  /** A phone: the bar keeps only the conversation name and this menu, so the per-conversation actions
-   *  (reasoning, telemetry, new chat) fold in here as icon rows. Desktop keeps them inline. */
+function BarOverflowMenu({ folded, onOpenTasks, onNewChat }: {
+  /** New chat folds here on phones; reasoning and telemetry remain directly on the bar. */
   folded: boolean;
   onOpenTasks: () => void;
-  onOpenReasoning: () => void;
-  onOpenTelemetry?: () => void;
   onNewChat: () => void;
 }) {
   const { t } = useTranslation();
@@ -1007,22 +1004,10 @@ function BarOverflowMenu({ folded, onOpenTasks, onOpenReasoning, onOpenTelemetry
         }}>
           {/* Frequently used phone actions precede the wider composite pickers. */}
           {folded ? (
-            <>
-              <button type="button" data-testid="chat-thoughts-toggle" onClick={pick(onOpenReasoning)} className={rowClass}>
-                <Brain size={16} className="text-muted-foreground" aria-hidden />
-                <span>{t.reasoning.modalTitle}</span>
-              </button>
-              {onOpenTelemetry ? (
-                <button type="button" onClick={pick(onOpenTelemetry)} className={rowClass}>
-                  <Activity size={16} className="text-muted-foreground" aria-hidden />
-                  <span>{t.telemetry.open}</span>
-                </button>
-              ) : null}
-              <button type="button" onClick={pick(onNewChat)} className={rowClass}>
-                <Plus size={16} className="text-muted-foreground" aria-hidden />
-                <span>{t.brainChat.newChat}</span>
-              </button>
-            </>
+            <button type="button" onClick={pick(onNewChat)} className={rowClass}>
+              <Plus size={16} className="text-muted-foreground" aria-hidden />
+              <span>{t.brainChat.newChat}</span>
+            </button>
           ) : null}
           {/* The mobile entry opens the same task manager as `/tasks`; there is one modal and one data path. */}
           <button type="button" onClick={pick(onOpenTasks)} className={rowClass}>
@@ -1143,6 +1128,175 @@ const wrapTarget = (transcript: HTMLElement): HTMLElement | null => {
   return prose[prose.length - 1] ?? null;
 };
 
+/** Only this editor subscribes to draft changes. The shared controller still owns the draft and send
+ *  actions, but a keystroke does not render the transcript, top bar, cards or telemetry. */
+function ChatComposer({ variant, composerRef, pinToNewest }: {
+  variant: 'full' | 'compact';
+  composerRef: RefObject<HTMLTextAreaElement | null>;
+  pinToNewest: () => void;
+}) {
+  const { t } = useTranslation();
+  const { setInput, attachments, addFiles, submit, commands, runSlash, queued, onQueueRemove, busy, abort } = useBrainChat();
+  const input = useBrainChatInput();
+  const [slashIdx, setSlashIdx] = useState(0);
+  const fileRef = useRef<HTMLInputElement>(null);
+  const slashQuery = input.startsWith('/') && !/\s/.test(input) ? input.slice(1).toLowerCase() : null;
+  const slashItems = (slashQuery !== null ? commands.filter((command) => command.name.startsWith(slashQuery)) : [])
+    .map((command) => ({ key: command.name, label: `/${command.name}`, desc: command.description, run: () => runSlash(command) }));
+  const slashOpen = slashItems.length > 0;
+  const slashSel = Math.min(slashIdx, slashItems.length - 1);
+
+  const previousInput = useRef<string | null>(null);
+  // Appending cannot make this plain-text field shorter. Keep its current height while measuring normal
+  // typing; resetting it to auto on every key invalidates the layout of the entire long conversation.
+  // Deletions, replacements and restored drafts still reset the height so the editor can shrink.
+  useLayoutEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    const before = el.offsetHeight;
+    if (previousInput.current === null || !input.startsWith(previousInput.current)) el.style.height = 'auto';
+    const height = `${el.scrollHeight}px`;
+    if (el.style.height !== height) el.style.height = height;
+    previousInput.current = input;
+    // Only a changed reading area asks the surface to follow. The shared writer still respects a reader
+    // scrolled into history, and CSS keeps the field capped when it needs its own scrollbar.
+    if (el.offsetHeight !== before) pinToNewest();
+  }, [input, composerRef, pinToNewest]);
+
+  return (
+      <form
+        className={variant === 'full'
+          ? 'chat-composer relative flex items-end gap-1 rounded-2xl border border-border bg-card p-1.5 transition-colors focus-within:border-border-strong'
+          : 'relative flex items-end gap-2 p-2'}
+        onSubmit={(e) => {
+          e.preventDefault();
+          const invocation = parseSlashInvocation(input, commands);
+          // Prompt macros and unknown slash-prefixed prose are real chat turns. A published daemon command
+          // with arguments is executed through the same catalog path as a menu pick; local pickers keep their
+          // previous argument-bearing text behaviour unless the menu invoked them bare.
+          if (invocation && invocation.command.kind !== 'prompt'
+            && (!invocation.argument || invocation.command.execution === 'session-control')) {
+            runSlash(invocation.command, invocation.argument);
+            return;
+          }
+          void submit();
+        }}
+      >
+        {slashOpen && (
+          <div data-testid="chat-slash-menu" className={`absolute bottom-full w-full max-w-md overflow-hidden rounded-lg border border-border bg-muted shadow-lg ${variant === 'full' ? 'left-0 mb-2' : 'left-2 mb-1'}`}>
+            <div className="max-h-60 overflow-y-auto py-1">
+              {slashItems.map((it, i) => (
+                <button
+                  key={it.key}
+                  type="button"
+                  onMouseDown={(e) => { e.preventDefault(); it.run(); }}
+                  onMouseEnter={() => setSlashIdx(i)}
+                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm ${i === slashSel ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
+                >
+                  <span className="shrink-0 font-mono">{it.label}</span>
+                  {it.desc && <span className="truncate text-tiny opacity-60">{it.desc}</span>}
+                </button>
+              ))}
+            </div>
+          </div>
+        )}
+        <input
+          ref={fileRef}
+          type="file"
+          multiple
+          accept="image/*,.txt,.md,.log,.json,.yaml,.yml,.csv,.ts,.tsx,.js,.py,.php,.sql,.sh,.env.example"
+          className="hidden"
+          onChange={(e) => { if (e.target.files) void addFiles(e.target.files); e.target.value = ''; }}
+        />
+        <button
+          type="button"
+          onClick={() => fileRef.current?.click()}
+          aria-label={t.brainChat.attach}
+          title={t.brainChat.attach}
+          className={`flex h-9 w-9 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground ${
+            variant === 'full' ? 'rounded-xl' : 'rounded-lg border border-border'
+          }`}
+        >
+          <Paperclip size={16} aria-hidden />
+        </button>
+        <textarea
+          ref={composerRef}
+          data-testid="chat-composer"
+          value={input}
+          onChange={(e) => { setInput(e.target.value); setSlashIdx(0); }}
+          onKeyDown={(e) => {
+            if (slashOpen) {
+              if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIdx((i) => (Math.min(i, slashItems.length - 1) + 1) % slashItems.length); return; }
+              if (e.key === 'ArrowUp') { e.preventDefault(); setSlashIdx((i) => (Math.min(i, slashItems.length - 1) - 1 + slashItems.length) % slashItems.length); return; }
+              if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); slashItems[slashSel]?.run(); return; }
+              if (e.key === 'Escape') { e.preventDefault(); setInput(''); return; }
+            }
+            // ↑ with empty input + queued message → recall into composer
+            if (e.key === 'ArrowUp' && input === '' && queued.length > 0) {
+              e.preventDefault();
+              const last = queued[queued.length - 1];
+              onQueueRemove(last.id);
+              setInput(last.text);
+              return;
+            }
+            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void submit(); }
+          }}
+          onPaste={(e) => {
+            const files = [...e.clipboardData.files].filter((f) => f.type.startsWith('image/'));
+            if (files.length) { e.preventDefault(); void addFiles(files); }
+          }}
+          rows={1}
+          placeholder={t.brainChat.placeholder}
+          // How tall the composer may grow is a share of the SCREEN, not a fixed desktop figure. The flat
+          // 10rem this used to carry is a comfortable third of a desktop composer and most of a landscape
+          // phone, which is how the dock came to take half the reading height at 740x360. dvh, never vh:
+          // a collapsing mobile toolbar makes vh taller than the screen really is.
+          className={`max-h-[min(10rem,22dvh)] flex-1 resize-none text-sm text-foreground placeholder:text-muted-foreground ${
+            variant === 'full'
+              ? 'bg-transparent px-2 py-2 focus:outline-none'
+              : 'rounded-lg border border-border bg-background px-3 py-2 focus:border-primary'
+          }`}
+        />
+        {/* The work-mode switch sits immediately left of send/stop, at the same 36px height, on every
+            surface — the mode the NEXT send is stamped with belongs beside the control that stamps it. */}
+        <WorkModeSwitch variant={variant === 'full' ? 'full' : 'compact'} />
+        {busy ? (
+          <button
+            type="button"
+            data-testid="chat-stop"
+            onClick={abort}
+            aria-label={t.brainChat.stop}
+            /* `animate-stop-pulse` must stay a literal class in TSX: it is a plain CSS class defined once
+               in app/styles/animations.css, so Tailwind's content purge keeps it only because it sees the
+               string here. While a turn runs the button breathes a slow primary halo (see stop-pulse);
+               hover/focus stay readable on top of it, and quiet-effects/reduced-motion silence it. */
+            className={`animate-stop-pulse flex h-9 w-9 shrink-0 items-center justify-center transition-colors ${
+              variant === 'full'
+                ? 'rounded-xl bg-primary text-foreground hover:bg-primary-hot'
+                : 'rounded-lg border border-primary bg-primary/15 text-primary hover:bg-primary/25'
+            }`}
+          >
+            <Square size={14} fill="currentColor" aria-hidden />
+          </button>
+        ) : (
+          <button
+            type="submit"
+            data-testid="chat-send"
+            disabled={!input.trim() && attachments.length === 0}
+            aria-label={t.brainChat.send}
+            className={`flex h-9 w-9 shrink-0 items-center justify-center transition-colors disabled:opacity-40 ${
+              variant === 'full'
+                ? 'rounded-xl bg-primary text-foreground hover:bg-primary-hot'
+                : 'rounded-lg border border-primary bg-primary/15 text-primary hover:bg-primary/25'
+            }`}
+          >
+            <Send size={16} aria-hidden />
+          </button>
+        )}
+      </form>
+  );
+}
+
 /** The presentational brain chat surface, driven entirely by the shared controller (BrainChatProvider)
  *  read from context. It owns NO network or session state: only pure view affordances (the picker-open
  *  toggle, the slash keyboard cursor, DOM refs + autoscroll) live here, so unmounting it (Chat↔Terminál
@@ -1158,9 +1312,9 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   const {
     turns, busy, ready, notice, ask, cards, artifacts, narration, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
     reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, helpOpen, setHelpOpen, modelOpen, setModelOpen, queued, readOnly,
-    usage, goal, lineCfg, currentModel, provider, providerLabel, subagents, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
-    openReadOnly, exitReadOnly, onQueueRemove, onAnswer, commands, runSlash, slash, sessions, activeSessionId, focusNonce,
-    ensureAttached, abort, loadOlder, hasMoreHistory, showThoughts,
+    usage, goal, lineCfg, currentModel, provider, providerLabel, subagents, attachments, removeAttachment, switchSession,
+    openReadOnly, exitReadOnly, onQueueRemove, onAnswer, sessions, activeSessionId, focusNonce,
+    ensureAttached, loadOlder, hasMoreHistory, showThoughts,
     planDecision, implementPlan, dismissPlan, planSubmitting, renameOpen, closeRename, renameSession,
     registerSurface,
   } = c;
@@ -1191,7 +1345,6 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   } : null), [ask, t.brainChat.askWaiting]);
 
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [slashIdx, setSlashIdx] = useState(0);
   // Whether the statusline row (model / context / tokens / cost) is shown is a per-device display choice —
   // it belongs to the screen you are on, not the user record. Collapsing it in-chat (a small chevron) is
   // the quick alternative to the statusline plugin's settings toggles.
@@ -1242,7 +1395,6 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
     if (railShowsTasks && cd.id === TODO_CARD_ID && items.length > 0 && !cd.body) return false;
     return items.length === 0 ? true : !items.every((i) => i.status === 'completed');
   });
-  const fileRef = useRef<HTMLInputElement>(null);
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const surfaceRootRef = useRef<HTMLDivElement>(null);
@@ -1326,9 +1478,6 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
   // used to key the tail stably across a lazy-load prepend (see the transcript map below).
   const firstLiveTurn = turns.findIndex((turn) => !turn.id);
 
-  const slashItems = slash.items;
-  const slashOpen = slash.open;
-  const slashSel = Math.min(slashIdx, slashItems.length - 1);
 
   // First mount of ANY chat surface (dock opened in chat mode) lazily boots the controller. Idempotent —
   // a second mount (or the BRAIN_* window events) never re-runs brainStart, so a one-shot mount call is
@@ -1494,23 +1643,6 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
     requestAnimationFrame(() => composerRef.current?.focus());
   }, [focusNonce]);
 
-  // Grow the composer with its content up to the CSS cap, then let it scroll. `rows` used to be derived
-  // from newline count, which ignores WRAPPING — a long message typed without pressing Enter stayed one
-  // line tall and hid everything above the caret. Height has to be reset before reading scrollHeight, or
-  // the box can only ever grow. This runs on `input` rather than on keystrokes so text placed by another
-  // path (a recalled queue item, a restored draft, a `/`-prefilled macro) is measured too.
-  useLayoutEffect(() => {
-    const el = composerRef.current;
-    if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight}px`;
-    // The full-page composer participates in the document height even though it is sticky, and it sits
-    // OUTSIDE the observed transcript, so its growth is the one real layout change the ResizeObserver
-    // above cannot see. Re-pin in the same layout phase, before paint, so wrapped lines do not visibly
-    // shove the whole conversation upward one row at a time. A reader scrolled into history is left
-    // untouched — `pinToNewest` self-gates on the same flag as every other writer.
-    pinToNewest();
-  }, [input, pinToNewest]);
 
   // Mobile keyboards have two viewport policies. Chromium honours `interactive-widget=resizes-content`,
   // so the layout viewport itself shrinks; iOS keeps the layout viewport tall and shrinks only
@@ -1816,7 +1948,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
               aria-label={t.chat.openHistory}
               title={t.chat.openHistory}
               data-testid="chat-conversation-switcher"
-              className="flex h-8 min-w-0 max-w-[18rem] shrink items-center gap-1 rounded-md px-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-accent"
+              className="chat-conversation-switcher flex h-8 min-w-0 max-w-[18rem] shrink items-center gap-1 rounded-md px-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-accent"
             >
               <span className="truncate">{active?.title || t.brainChat.newChat}</span>
               <ChevronDown size={14} className="shrink-0 text-muted-foreground" aria-hidden />
@@ -1831,13 +1963,9 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
               <ModelPicker variant="full" />
             </div>
           ) : null}
-          {/* On a phone the bar is the conversation name and ⋯, nothing else: three icon buttons beside
-              the name left it truncated to a letter, and the name is what the bar is for. Reasoning,
-              telemetry and new chat fold into the ⋯ menu there; desktop keeps them inline. */}
-          {mobile !== true ? (
+          {/* Reasoning and telemetry are one-tap actions at every width, beside the overflow. */}
           <ReasoningButton full onOpen={() => setReasoningOpen(true)} />
-          ) : null}
-          {onOpenTelemetry && mobile !== true ? (
+          {onOpenTelemetry ? (
             <button
               type="button"
               onClick={onOpenTelemetry}
@@ -1869,8 +1997,6 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
               <BarOverflowMenu
                 folded={mobile}
                 onOpenTasks={() => setTasksOpen(true)}
-                onOpenReasoning={() => setReasoningOpen(true)}
-                onOpenTelemetry={onOpenTelemetry}
                 onNewChat={newChat}
               />
             </div>
@@ -2130,136 +2256,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
       <div className={variant === 'full' ? 'chat-gutter chat-composer-slot' : ''}>
       {/* In the full page the whole composer is ONE quiet rounded field (attach + textarea + send inside
           it, Claude-style); the dock keeps its original three-control row. */}
-      <form
-        className={variant === 'full'
-          ? 'chat-composer relative flex items-end gap-1 rounded-2xl border border-border bg-card p-1.5 transition-colors focus-within:border-border-strong'
-          : 'relative flex items-end gap-2 p-2'}
-        onSubmit={(e) => {
-          e.preventDefault();
-          const invocation = parseSlashInvocation(input, commands);
-          // Prompt macros and unknown slash-prefixed prose are real chat turns. A published daemon command
-          // with arguments is executed through the same catalog path as a menu pick; local pickers keep their
-          // previous argument-bearing text behaviour unless the menu invoked them bare.
-          if (invocation && invocation.command.kind !== 'prompt'
-            && (!invocation.argument || invocation.command.execution === 'session-control')) {
-            runSlash(invocation.command, invocation.argument);
-            return;
-          }
-          void submit();
-        }}
-      >
-        {slashOpen && (
-          <div data-testid="chat-slash-menu" className={`absolute bottom-full w-full max-w-md overflow-hidden rounded-lg border border-border bg-muted shadow-lg ${variant === 'full' ? 'left-0 mb-2' : 'left-2 mb-1'}`}>
-            <div className="max-h-60 overflow-y-auto py-1">
-              {slashItems.map((it, i) => (
-                <button
-                  key={it.key}
-                  type="button"
-                  onMouseDown={(e) => { e.preventDefault(); it.run(); }}
-                  onMouseEnter={() => setSlashIdx(i)}
-                  className={`flex w-full items-center gap-2 px-3 py-1.5 text-left text-sm ${i === slashSel ? 'bg-primary/15 text-foreground' : 'text-muted-foreground'}`}
-                >
-                  <span className="shrink-0 font-mono">{it.label}</span>
-                  {it.desc && <span className="truncate text-tiny opacity-60">{it.desc}</span>}
-                </button>
-              ))}
-            </div>
-          </div>
-        )}
-        <input
-          ref={fileRef}
-          type="file"
-          multiple
-          accept="image/*,.txt,.md,.log,.json,.yaml,.yml,.csv,.ts,.tsx,.js,.py,.php,.sql,.sh,.env.example"
-          className="hidden"
-          onChange={(e) => { if (e.target.files) void addFiles(e.target.files); e.target.value = ''; }}
-        />
-        <button
-          type="button"
-          onClick={() => fileRef.current?.click()}
-          aria-label={t.brainChat.attach}
-          title={t.brainChat.attach}
-          className={`flex h-9 w-9 shrink-0 items-center justify-center text-muted-foreground transition-colors hover:bg-accent hover:text-foreground ${
-            variant === 'full' ? 'rounded-xl' : 'rounded-lg border border-border'
-          }`}
-        >
-          <Paperclip size={16} aria-hidden />
-        </button>
-        <textarea
-          ref={composerRef}
-          data-testid="chat-composer"
-          value={input}
-          onChange={(e) => { setInput(e.target.value); setSlashIdx(0); }}
-          onKeyDown={(e) => {
-            if (slashOpen) {
-              if (e.key === 'ArrowDown') { e.preventDefault(); setSlashIdx((i) => (Math.min(i, slashItems.length - 1) + 1) % slashItems.length); return; }
-              if (e.key === 'ArrowUp') { e.preventDefault(); setSlashIdx((i) => (Math.min(i, slashItems.length - 1) - 1 + slashItems.length) % slashItems.length); return; }
-              if (e.key === 'Enter' || e.key === 'Tab') { e.preventDefault(); slashItems[slashSel]?.run(); return; }
-              if (e.key === 'Escape') { e.preventDefault(); setInput(''); return; }
-            }
-            // ↑ with empty input + queued message → recall into composer
-            if (e.key === 'ArrowUp' && input === '' && queued.length > 0) {
-              e.preventDefault();
-              const last = queued[queued.length - 1];
-              onQueueRemove(last.id);
-              setInput(last.text);
-              return;
-            }
-            if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); void submit(); }
-          }}
-          onPaste={(e) => {
-            const files = [...e.clipboardData.files].filter((f) => f.type.startsWith('image/'));
-            if (files.length) { e.preventDefault(); void addFiles(files); }
-          }}
-          rows={1}
-          placeholder={t.brainChat.placeholder}
-          // How tall the composer may grow is a share of the SCREEN, not a fixed desktop figure. The flat
-          // 10rem this used to carry is a comfortable third of a desktop composer and most of a landscape
-          // phone, which is how the dock came to take half the reading height at 740x360. dvh, never vh:
-          // a collapsing mobile toolbar makes vh taller than the screen really is.
-          className={`max-h-[min(10rem,22dvh)] flex-1 resize-none text-sm text-foreground placeholder:text-muted-foreground ${
-            variant === 'full'
-              ? 'bg-transparent px-2 py-2 focus:outline-none'
-              : 'rounded-lg border border-border bg-background px-3 py-2 focus:border-primary'
-          }`}
-        />
-        {/* The work-mode switch sits immediately left of send/stop, at the same 36px height, on every
-            surface — the mode the NEXT send is stamped with belongs beside the control that stamps it. */}
-        <WorkModeSwitch variant={variant === 'full' ? 'full' : 'compact'} />
-        {busy ? (
-          <button
-            type="button"
-            data-testid="chat-stop"
-            onClick={abort}
-            aria-label={t.brainChat.stop}
-            /* `animate-stop-pulse` must stay a literal class in TSX: it is a plain CSS class defined once
-               in app/styles/animations.css, so Tailwind's content purge keeps it only because it sees the
-               string here. While a turn runs the button breathes a slow primary halo (see stop-pulse);
-               hover/focus stay readable on top of it, and quiet-effects/reduced-motion silence it. */
-            className={`animate-stop-pulse flex h-9 w-9 shrink-0 items-center justify-center transition-colors ${
-              variant === 'full'
-                ? 'rounded-xl bg-primary text-foreground hover:bg-primary-hot'
-                : 'rounded-lg border border-primary bg-primary/15 text-primary hover:bg-primary/25'
-            }`}
-          >
-            <Square size={14} fill="currentColor" aria-hidden />
-          </button>
-        ) : (
-          <button
-            type="submit"
-            data-testid="chat-send"
-            disabled={!input.trim() && attachments.length === 0}
-            aria-label={t.brainChat.send}
-            className={`flex h-9 w-9 shrink-0 items-center justify-center transition-colors disabled:opacity-40 ${
-              variant === 'full'
-                ? 'rounded-xl bg-primary text-foreground hover:bg-primary-hot'
-                : 'rounded-lg border border-primary bg-primary/15 text-primary hover:bg-primary/25'
-            }`}
-          >
-            <Send size={16} aria-hidden />
-          </button>
-        )}
-      </form>
+      <ChatComposer variant={variant} composerRef={composerRef} pinToNewest={pinToNewest} />
       </div>
       )}
       </div>

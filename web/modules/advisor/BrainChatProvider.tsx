@@ -1,5 +1,5 @@
 'use client';
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from 'react';
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
@@ -76,7 +76,26 @@ function isPlanDecisionsRecord(raw: string): boolean {
 }
 
 type Ask = { id: string; questions: AskQuestion[]; kind?: 'approval' };
-type SlashItem = { key: string; label: string; desc?: string; run: () => void };
+/** One provider-owned draft, shared by every composer and command. Only editors subscribe to keystrokes;
+ *  the network controller reads the current snapshot on submit without broadcasting it to the chat. */
+function createComposerDraft() {
+  let input = '';
+  const listeners = new Set<() => void>();
+  return {
+    getSnapshot: () => input,
+    getServerSnapshot: () => '',
+    subscribe: (listener: () => void) => {
+      listeners.add(listener);
+      return () => { listeners.delete(listener); };
+    },
+    setInput: (update: React.SetStateAction<string>) => {
+      const next = typeof update === 'function' ? update(input) : update;
+      if (next === input) return;
+      input = next;
+      for (const listener of listeners) listener();
+    },
+  };
+}
 
 /** The non-numeric half of the daemon's status poll — everything the telemetry panel shows beside the
  *  usage numbers. A null section is one the daemon does not report (no directory, MCP off or hidden from
@@ -192,7 +211,7 @@ export interface BrainChatValue {
   /** The workflows (DAGs) of this transcript, latest state per workflow id. */
   workflows: WorkflowState[];
   lineCfg: StatuslineConfig | null;
-  input: string;
+  draft: ReturnType<typeof createComposerDraft>;
   setInput: React.Dispatch<React.SetStateAction<string>>;
   attachments: Attachment[];
   addFiles: (files: Iterable<File>) => Promise<void>;
@@ -274,10 +293,6 @@ export interface BrainChatValue {
   /** Execute a catalog command exactly as the composer's slash menu does. Exposed so a second entry point
    *  (the telemetry mascot's command field) dispatches through THIS path instead of a parallel copy. */
   runSlash: (cmd: SlashCommandDef, argument?: string) => void;
-  slash: {
-    items: SlashItem[];
-    open: boolean;
-  };
   sessions: ReturnType<typeof useBrainSessions>;
 }
 
@@ -289,6 +304,12 @@ export function useBrainChat(): BrainChatValue {
   const v = useContext(BrainChatContext);
   if (!v) throw new Error('useBrainChat must be used within <BrainChatProvider>');
   return v;
+}
+
+/** Subscribe only where the draft is displayed, never in the transcript or telemetry consumers. */
+export function useBrainChatInput(): string {
+  const { draft } = useBrainChat();
+  return useSyncExternalStore(draft.subscribe, draft.getSnapshot, draft.getServerSnapshot);
 }
 
 /** The controller: owns the whole network + transcript lifecycle for the tab's single chat. Mirrors the
@@ -324,7 +345,8 @@ function useBrainChatController(): BrainChatValue {
     getSession: () => boundSessionRef.current,
     setView,
   });
-  const [input, setInput] = useState('');
+  const [draft] = useState(createComposerDraft);
+  const { setInput } = draft;
   const [ready, setReady] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   // How many chat surfaces are mounted right now. The dock and /chat can both hold one, so this is a count
@@ -837,6 +859,7 @@ function useBrainChatController(): BrainChatValue {
   };
 
   const submit = async (): Promise<void> => {
+    const input = draft.getSnapshot();
     const typed = input.trim();
     // A message sent mid-turn is STEERED into the running turn via PI's steering queue — the composer
     // stays live. The DAEMON renders every user turn authoritatively (the `user` stream event), so there
@@ -1012,9 +1035,6 @@ function useBrainChatController(): BrainChatValue {
   // surfaces (dock + /chat on a phone) are mounted on this one provider.
   const narration = useMemo(() => liveNarration(turns), [turns]);
 
-  // --- Slash menu (mirrors the CLI palette; single source of truth = GET /brain/commands). ---
-  const slashQuery = input.startsWith('/') && !/\s/.test(input) ? input.slice(1).toLowerCase() : null;
-  const slashMatches = slashQuery !== null ? commands.filter((c) => c.name.startsWith(slashQuery)) : [];
   // Fetch the model catalog once for either entry point (header picker / `/model` slash). Never throws:
   // an empty catalog is the RBAC "no allowed model" state, a rejection is the provider-error state.
   const loadModels = async (): Promise<void> => {
@@ -1163,9 +1183,6 @@ function useBrainChatController(): BrainChatValue {
       toast(`/${cmd.name}`, 'ok');
     } catch (e) { toast((e as Error).message ?? String(e), 'error'); }
   };
-  const slashItems: SlashItem[] = slashMatches.map(
-    (c) => ({ key: c.name, label: `/${c.name}`, desc: c.description, run: () => void runSlash(c) }),
-  );
 
   // --- Lazy attach + the cross-mount bridge (session/composer requests + live BRAIN_* events). ---
   const ensureAttached = (): boolean => {
@@ -1300,7 +1317,7 @@ function useBrainChatController(): BrainChatValue {
     turns, busy, ready, reconnecting, registerSurface, hasSurface: surfaces > 0, notice, ask, cards, artifacts, narration, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
     reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, syncSessionTasks, helpOpen, setHelpOpen, modelOpen, setModelOpen, loadSkill,
     queued: visibleQueue, readOnly, activeSessionId,
-    usage, telemetry, goal, subagents, workflows, lineCfg, input, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
+    usage, telemetry, goal, subagents, workflows, lineCfg, draft, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
     openReadOnly, exitReadOnly, deleteSession, onQueueRemove, onAnswer, abort, ensureAttached, loadOlder, hasMoreHistory, focusNonce,
     models, currentModel, provider, providerLabel, usageProvider, setModel: (m) => runModel(m), loadModels: () => void loadModels(), modelsLoading, modelsError, modelStatus, retryModel,
     showThoughts: thoughts === 'show',
@@ -1308,7 +1325,6 @@ function useBrainChatController(): BrainChatValue {
     workMode, setWorkMode: runMode, planDecision, implementPlan, dismissPlan, planSubmitting,
     renameOpen, closeRename: () => setRenameOpen(false), renameSession,
     commands, runSlash: (cmd, argument) => void runSlash(cmd, argument),
-    slash: { items: slashItems, open: slashItems.length > 0 },
     sessions,
   };
 }

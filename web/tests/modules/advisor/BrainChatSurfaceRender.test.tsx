@@ -7,9 +7,9 @@ import { createWrapper } from '../../test-utils';
 import { en } from '../../../lib/i18n/dictionaries/en';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { BrainChat } from '../../../modules/advisor/BrainChat';
-import { Message } from '../../../modules/advisor/BrainChatSurface';
+import { BrainChatSurface, Message } from '../../../modules/advisor/BrainChatSurface';
 import type { BrainInlineArtifact } from '../../../lib/types';
-import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
+import { BrainChatProvider, useBrainChat } from '../../../modules/advisor/BrainChatProvider';
 import * as transcript from '../../../lib/transcript';
 import { useState } from 'react';
 
@@ -84,6 +84,57 @@ describe('BrainChatSurface renders the daemon-parity rows without crashing', () 
       fireEvent.click(screen.getByRole('button', { name: 'Update artifact' }));
       expect(group.mock.calls.length).toBe(0);
     } finally { group.mockRestore(); }
+  });
+
+  it('shares the draft across surfaces, retains it across remounts and submits the latest text', async () => {
+    const sent = vi.fn();
+    server.use(http.post('*/api/brain/send', async ({ request }) => {
+      sent(await request.json());
+      return HttpResponse.json({ ok: true, accepted: true }, { status: 202 });
+    }));
+    function Surfaces() {
+      const [full, setFull] = useState(true);
+      return <><button onClick={() => setFull((value) => !value)}>Toggle surface</button>
+        {full ? <BrainChatSurface variant="full" /> : null}<BrainChatSurface /></>;
+    }
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><BrainChatProvider><Surfaces /></BrainChatProvider></ToastProvider></Wrapper>);
+    await waitFor(() => expect(FakeES.instances.length).toBe(1));
+    const editors = screen.getAllByTestId('chat-composer');
+    fireEvent.change(editors[0]!, { target: { value: 'shared draft' } });
+    expect(editors[1]).toHaveValue('shared draft');
+    fireEvent.click(screen.getByText('Toggle surface'));
+    fireEvent.change(screen.getByTestId('chat-composer'), { target: { value: 'latest draft' } });
+    fireEvent.click(screen.getByText('Toggle surface'));
+    for (const editor of screen.getAllByTestId('chat-composer')) expect(editor).toHaveValue('latest draft');
+    fireEvent.keyDown(screen.getAllByTestId('chat-composer')[0]!, { key: 'Enter' });
+    await waitFor(() => expect(sent).toHaveBeenCalledWith(expect.objectContaining({ text: 'latest draft' })));
+    for (const editor of screen.getAllByTestId('chat-composer')) expect(editor).toHaveValue('');
+  });
+
+  it('does not rewrite unchanged composer height on appended characters', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><BrainChatProvider><BrainChat /></BrainChatProvider></ToastProvider></Wrapper>);
+    await waitFor(() => expect(FakeES.instances.length).toBe(1));
+    const composer = screen.getByTestId('chat-composer');
+    const observer = new MutationObserver(() => {});
+    observer.observe(composer, { attributes: true, attributeFilter: ['style'] });
+    try {
+      fireEvent.change(composer, { target: { value: 'a' } });
+      expect(observer.takeRecords()).toHaveLength(0);
+    } finally { observer.disconnect(); }
+  });
+
+  it('does not broadcast typing to non-editor chat consumers', async () => {
+    const rendered = vi.fn();
+    function Observer() { useBrainChat(); rendered(); return null; }
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><BrainChatProvider><Observer /><BrainChat /></BrainChatProvider></ToastProvider></Wrapper>);
+    await waitFor(() => expect(FakeES.instances.length).toBe(1));
+    rendered.mockClear();
+    fireEvent.change(screen.getByTestId('chat-composer'), { target: { value: 'unsent text' } });
+    expect(screen.getByTestId('chat-composer')).toHaveValue('unsent text');
+    expect(rendered.mock.calls.length).toBe(0);
   });
 
   it('does not regroup settled tool history on live text updates', async () => {
