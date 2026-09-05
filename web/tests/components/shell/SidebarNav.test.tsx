@@ -86,7 +86,9 @@ describe('SidebarNav destinations', () => {
     expect(groups[1]!.querySelector('[data-sidebar="group-label"]')!.textContent).toBe('Work');
     expect(groups[2]!.querySelector('[data-sidebar="group-label"]')!.textContent).toBe('Instance');
     expect(container.querySelector('[data-sidebar="separator"]')).not.toBeNull();
-    expect(groups[3]!.contains(screen.getByRole('link', { name: 'Account' }))).toBe(true);
+    // A disclosure, not a link: the account page is a deck, so its own sections hang under this row like
+    // any other world's pages.
+    expect(groups[3]!.contains(screen.getByRole('button', { name: 'Account' }))).toBe(true);
   });
 
   it('marks the current route with aria-current, through the world it belongs to', () => {
@@ -194,10 +196,12 @@ describe('SidebarNav keyboard operation', () => {
   it('reaches every destination through the tab order, sub-menu pages included', () => {
     const { container } = mount();
     fireEvent.click(screen.getByRole('button', { name: 'Work' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Account' }));
     const stops = Array.from(container.querySelectorAll<HTMLElement>('a[href], button'))
       .filter((node) => node.getAttribute('tabindex') !== '-1');
     expect(stops).toContain(screen.getByRole('link', { name: 'Board' }));
-    expect(stops).toContain(screen.getByRole('link', { name: 'Account' }));
+    // A deck's sections are keyboard-reachable rows of the menu, which is the only route to them now.
+    expect(stops).toContain(screen.getByRole('link', { name: 'Security' }));
   });
 
   it('folds the column from Ctrl/Cmd + backslash, and leaves the palette shortcut alone', () => {

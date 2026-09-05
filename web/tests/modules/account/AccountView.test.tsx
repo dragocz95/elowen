@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
@@ -35,8 +35,20 @@ afterAll(() => server.close());
 
 const meUser = (over: Record<string, unknown> = {}) => ({ id: 2, username: 'bob', name: '', email: '', avatar: '', default_exec: '', is_admin: false, allowed_execs: ['sonnet'], created_at: '2026-01-01', ...over });
 
+/** Move to a section the way the reader now does: from the menu, which is outside this view. A menu row
+ *  is a link to `?cat=<id>`, and this page follows the address — on arrival and on every `popstate`. So a
+ *  test changes the address and announces it, exactly as a same-page section switch does. */
+const openSection = (id: string) => {
+  act(() => {
+    window.history.replaceState(null, '', `/account?cat=${encodeURIComponent(id)}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  });
+};
+
+afterEach(() => { window.history.replaceState(null, '', '/account'); });
+
 describe('AccountView', () => {
-  it('uses the compact control deck with the approved Account section order under a mascot hero', async () => {
+  it('carries no navigation of its own: the sections are rows of the menu outside it', async () => {
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
       http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
@@ -47,10 +59,13 @@ describe('AccountView', () => {
     render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
 
     expect(await screen.findByRole('heading', { level: 1, name: 'Account' })).toBeInTheDocument();
-    const rail = screen.getByRole('radiogroup', { name: 'Account sections' });
-    expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
-      'Account', 'Models', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
-    ]);
+    // The section rail and the phone tab strip are both gone. What used to be two menus — one in the
+    // chrome and one that only appeared once you had arrived — is one menu.
+    expect(screen.queryByRole('radiogroup')).toBeNull();
+    expect(document.querySelector('.workspace-shell__section-navigation')).toBeNull();
+    expect(document.querySelector('.workspace-shell')).not.toHaveAttribute('data-section-layout');
+    // Landing with no section named, the page writes the one it opened on, so the menu has a row to mark.
+    await waitFor(() => expect(window.location.search).toBe('?cat=profile'));
     // The deck carries the hero's metric rail, with the account's own facts on it. Every one of them
     // comes from /auth/me and the model list the sections already load, so the rail renders for a plain
     // member too — it never touches the admin-only stats route.
@@ -60,7 +75,11 @@ describe('AccountView', () => {
     expect(screen.getByTestId('spatial-content-surface')).toContainElement(screen.getByText('@bob'));
   });
 
-  it('adds grant-filtered plugin account sections beside the profile', async () => {
+  // A plugin's account panel is a section of this page like any other, reached by its own address. The
+  // menu lists it (see the sidebar's deck sub-menu tests); what has to hold HERE is that the page mounts
+  // it when that address names it.
+  it('mounts a plugin account section when the address names it', async () => {
+    loadPluginUi.mockResolvedValue({ requiresApiVersion: 3, account: { connection: () => <div>GitHub device flow</div> } });
     server.use(
       http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'github', url: '/plugins/github/web/hash.js', apiVersion: 3, nav: [], account: [{ id: 'connection', label: 'GitHub', icon: 'Github' }], settings: [], strings: { accountHint: 'Your GitHub identity.' } }])),
       http.get('*/api/auth/me', () => HttpResponse.json({ user: meUser({ name: 'Bob' }) })),
@@ -71,16 +90,17 @@ describe('AccountView', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
 
-    const rail = await screen.findByRole('radiogroup', { name: 'Account sections' });
-    expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
-      'Account', 'GitHub', 'Models', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
-    ]);
+    await screen.findByText('@bob');
+    openSection('plugin-account:github:connection');
+    expect(await screen.findByText('GitHub device flow')).toBeInTheDocument();
+    // The hero names the section the reader arrived at, and carries the plugin's own sentence.
+    await waitFor(() => expect(document.querySelector('.workspace-hero__description')).toHaveTextContent('Your GitHub identity.'));
   });
 
-  // A per-account plugin config contributes a rail entry too, and the rail has room for a NAME. Before the
-  // manifest carried one, the entry was titled with the plugin's description — a full English sentence that
-  // widened the rail and truncated mid-word, while the hero repeated the very same sentence.
-  it('titles a per-account plugin config entry with its short label and keeps the sentence in the hero', async () => {
+  // A per-account plugin config contributes a section too. Its NAME belongs to the menu row and its
+  // SENTENCE to the panel it opens — two different manifest strings. Feeding the description to both is
+  // what once put a full English sentence in the menu and repeated it in the hero underneath.
+  it('keeps a per-account plugin config\'s sentence in the hero of the section it opens', async () => {
     server.use(
       http.get('*/api/plugins/user-config', () => HttpResponse.json([{
         name: 'github',
@@ -97,26 +117,18 @@ describe('AccountView', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
 
-    const rail = await screen.findByRole('radiogroup', { name: 'Account sections' });
-    await waitFor(() => expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
-      'Account', 'GitHub', 'Models', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
-    ]));
-    // Whatever the rail clips stays readable: the label carries its own tooltip and full accessible name.
-    const entry = screen.getByRole('radio', { name: 'GitHub' });
-    expect(entry.querySelector('[title="GitHub"]')).not.toBeNull();
+    await screen.findByText('@bob');
+    openSection('plugin-user-config:github');
 
-    // The sentence belongs to the selected panel/hero, where it can wrap — never to the rail.
-    fireEvent.click(entry);
     const sentence = 'Account-scoped GitHub CLI device authentication for this user.';
     await waitFor(() => expect(screen.getByRole('heading', { level: 2, name: 'GitHub' })).toBeInTheDocument());
     expect(document.querySelector('.workspace-hero__description')).toHaveTextContent(sentence);
-    expect(rail).not.toHaveTextContent(sentence);
   });
 
-  // An account panel that IS an identity belongs beside the other identities, not as a top-level menu of
-  // its own next to the drawer that holds them. The host must place it on the manifest field alone — it
-  // never learns the name of a plugin — and the panel has to survive the trip: mounting it in the rail and
-  // in the drawer are different call sites, and only one of them is behind a click.
+  // An account panel that IS an identity belongs beside the other identities, not as a section of its own
+  // next to the drawer that holds them. The host must place it on the manifest field alone — it never
+  // learns the name of a plugin — and the panel has to survive the trip: mounting it as a section and
+  // mounting it in the drawer are different call sites, and only one of them is behind a click.
   it('mounts an account panel declaring placement linkedAccount inside the Linked accounts drawer', async () => {
     loadPluginUi.mockResolvedValue({
       requiresApiVersion: 3,
@@ -132,10 +144,7 @@ describe('AccountView', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
 
-    const rail = await screen.findByRole('radiogroup', { name: 'Account sections' });
-    expect(Array.from(rail.querySelectorAll('[role="radio"]')).map((node) => node.textContent)).toEqual([
-      'Account', 'Models', 'Memory', 'Personality', 'Notifications', 'Security', 'Terminal',
-    ]);
+    await screen.findByText('@bob');
     // Nothing of the panel exists until the drawer is opened — one click, one overlay, no second window.
     // This bundle registers no chip, which is also the guarantee that the closed summary stays clean: the
     // host asks for a chip on every connector, and one that has none must contribute NOTHING rather than
@@ -349,7 +358,7 @@ describe('AccountView', () => {
     render(<Wrapper><EffectsProvider><UiScaleProvider><ToastProvider><AccountView /></ToastProvider></UiScaleProvider></EffectsProvider></Wrapper>);
 
     await screen.findByText('@bob');
-    fireEvent.click(screen.getByRole('radio', { name: 'Personality' }));
+    openSection('personality');
     // PROTOTYPE(constellation): the style is a drawer-picked choice — wait for the seeded 'Concise'
     // chip, then open the picker and switch to Friendly.
     await waitFor(() => expect(screen.getByText('Concise')).toBeInTheDocument());
@@ -360,9 +369,9 @@ describe('AccountView', () => {
 
     // Navigate away: the panel is kept mounted but hidden (React <Activity>), so the chip is no
     // longer visible.
-    fireEvent.click(screen.getByRole('radio', { name: 'Account' }));
+    openSection('profile');
     await waitFor(() => expect(screen.getByText('Friendly')).not.toBeVisible());
-    fireEvent.click(screen.getByRole('radio', { name: 'Personality' }));
+    openSection('personality');
     // The visited panel stayed mounted, so the local pick survives navigating away and back. The reveal
     // from <Activity> hidden→visible is deferred, so wait for it rather than asserting synchronously.
     await waitFor(() => expect(screen.getByText('Friendly')).toBeVisible());

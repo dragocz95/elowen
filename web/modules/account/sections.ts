@@ -17,8 +17,10 @@ import { pluginLucideIcon } from '../../lib/pluginIcons';
 import { parsePluginAccountSectionId, parsePluginUserConfigSectionId, pluginAccountSectionId, pluginUserConfigSectionId } from './pluginSections';
 import { userPluginConfigDescription, userPluginConfigLabel } from './userPluginConfigStrings';
 
-export const CORE_ACCOUNT_SECTIONS = ['profile', 'security', 'notifications', 'personality', 'cli', 'terminal', 'memory'] as const;
-export type CoreAccountSection = typeof CORE_ACCOUNT_SECTIONS[number];
+/** The ids this page answers for. Not exported: what a caller needs is `isAccountSection` to validate one
+ *  and `accountSections` to draw them, and a second list of the same names is a second thing to update. */
+const CORE_ACCOUNT_SECTIONS = ['profile', 'security', 'notifications', 'personality', 'cli', 'terminal', 'memory'] as const;
+type CoreAccountSection = typeof CORE_ACCOUNT_SECTIONS[number];
 export type AccountSection = CoreAccountSection | `plugin-account:${string}` | `plugin-user-config:${string}`;
 
 /** Whether a stored or linked id names a section at all. Shape only — whether the plugin behind a
@@ -36,8 +38,12 @@ export interface AccountSectionDescriptor {
 }
 
 /** Where a section of the account page is addressed. The one rule, so a menu row and a cross-link cannot
- *  disagree about the query parameter or spell the route two ways. */
-export const accountSectionHref = (id: string): string => `/account?cat=${id}`;
+ *  disagree about the query parameter or spell the route two ways.
+ *
+ *  Encoded because a plugin-contributed id carries colons, and the page writes the same address back with
+ *  `URLSearchParams`, which encodes them. Both spellings decode to the same section, but two spellings of
+ *  one address in the bar is a difference someone eventually reads as a difference. */
+export const accountSectionHref = (id: string): string => `/account?cat=${encodeURIComponent(id)}`;
 
 /** Every section, in draw order: who you are, then whatever the installed plugins contribute, then the
  *  rest of the personal settings — the runtime and what shapes it, the operational pair, and the

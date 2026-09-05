@@ -88,36 +88,42 @@ export function resolveSidebarRoute(
   return route;
 }
 
-/** The live query string and fragment, from the two sources that each see half the truth.
+/** The live query string and fragment, from three readings that each answer part of the question.
  *
- *  `useSearchParams` is the ROUTER's answer. It is immediate on a client navigation — which is what a
- *  sub-item click is — but it reads empty on a statically optimized route until that first navigation,
- *  and it never learns about a section a deck page switches to itself: those rewrite the address with
- *  `history.replaceState` and announce it with a synthetic `popstate`, which the router does not observe.
+ *  `useSearchParams` is the ROUTER's answer and the one that updates when a sub-item is clicked. It reads
+ *  EMPTY on a statically optimized route until that first client navigation, which is why the document's
+ *  own URL is read on arrival as well — the same pair `lib/useRowAnchor.ts` reads, for the same reason.
+ *  That arrival reading is a FALLBACK only: it is used while the router has nothing to say, so it can
+ *  never pin the column to the address the tab was opened at.
  *
- *  The ADDRESS BAR is the other source. It is read on mount, on every arrival, and on every `popstate`,
- *  and while it holds an answer it wins — it is the document's actual URL. The router's answer takes over
- *  again the moment it changes, so a stale reading can never pin the column to an address the reader has
- *  already left. This is the same pair `lib/useRowAnchor.ts` reads, for the same reason. */
+ *  The third reading is the one a deck page ANNOUNCES. Switching section from inside the page (a
+ *  cross-link between two settings sections) rewrites the address with `history.replaceState` and fires a
+ *  synthetic `popstate`, because the router never learns about a history entry it did not write. While
+ *  such an announcement stands it wins outright — it is the document's actual URL and nothing else knows
+ *  about it — and it is retired the moment the router moves, so it cannot outlive the section it named. */
 function useLocation(): { search: string; hash: string } {
   const searchParams = useSearchParams();
   const routerSearch = searchParams.toString();
   const pathname = usePathname();
-  // The reading carries the route it was taken on. An effect cannot run before the render that follows a
-  // navigation, so without that stamp the column would paint one frame of the previous section every time
-  // a sub-item is clicked; with it, a reading the router has already overtaken is simply not used.
-  const route = `${pathname}?${routerSearch}`;
-  const [address, setAddress] = useState<{ search: string; hash: string; route: string } | null>(null);
+  const [arrival, setArrival] = useState<{ search: string; hash: string }>({ search: '', hash: '' });
   useEffect(() => {
-    const read = () => setAddress({ search: window.location.search.replace(/^\?/, ''), hash: window.location.hash, route });
-    read();
+    setArrival({ search: window.location.search.replace(/^\?/, ''), hash: window.location.hash });
+  }, [pathname]);
+
+  // The announcement carries the route it was made on, so a router navigation retires it without needing
+  // a second effect to clear it.
+  const route = `${pathname}?${routerSearch}`;
+  const [announced, setAnnounced] = useState<{ search: string; hash: string; route: string } | null>(null);
+  useEffect(() => {
+    const read = () => setAnnounced({ search: window.location.search.replace(/^\?/, ''), hash: window.location.hash, route });
     window.addEventListener('popstate', read);
     return () => window.removeEventListener('popstate', read);
   }, [route]);
-  const current = address !== null && address.route === route ? address : null;
+  const live = announced !== null && announced.route === route ? announced : null;
+
   return {
-    search: current?.search ?? routerSearch,
-    hash: current?.hash ?? '',
+    search: live ? live.search : routerSearch === '' ? arrival.search : routerSearch,
+    hash: live ? live.hash : arrival.hash,
   };
 }
 

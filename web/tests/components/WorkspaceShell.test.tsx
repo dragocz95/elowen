@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import { Bot, Server, Wrench } from 'lucide-react';
 import { LanguageProvider } from '../../lib/i18n';
 import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
@@ -428,12 +428,13 @@ describe('the shell stylesheets carry one authority per decision', () => {
     expect(coarse).toMatch(/\[data-layout='tabs'\] \.segmented__option\s*\{[^}]*min-height:\s*var\(--touch-target\)/);
   });
 
-  it('gives Studio a top-bar-aware neutral sidebar and keeps line tabs for phone/register', () => {
+  it('leaves Studio with line tabs only, and no second menu to style', () => {
     const studio = readFileSync(resolve(process.cwd(), 'skins', 'studio', 'surfaces.css'), 'utf-8');
-    expect(studio).toMatch(/\[data-section-layout='sidebar'\] > \.workspace-shell__section-navigation\s*\{[^}]*top:\s*calc\(var\(--studio-top-bar-height\) \+ 1rem\)[^}]*max-height:/);
-    expect(studio).toContain(".workspace-shell__section-navigation[data-layout='sidebar'] .segmented__option");
-    expect(studio).toMatch(/\[data-layout='sidebar'\] \.segmented__option\[aria-checked='true'\]\s*\{[^}]*color:\s*var\(--color-foreground\)[^}]*background:\s*var\(--studio-fill-active\)/);
-    expect(studio).not.toContain(".workspace-shell__section-navigation[data-layout='select']");
+    // The deck's left menu is gone from the markup, so a design still painting one is describing a page
+    // nobody renders — and would be a second navigation vocabulary beside the sidebar's own tokens.
+    expect(studio).not.toContain("data-section-layout='sidebar'");
+    expect(studio).not.toContain("data-layout='sidebar'");
+    expect(studio).not.toContain("data-layout='select'");
     const tabBlock = studio.slice(studio.indexOf(".workspace-shell__section-navigation[data-layout='tabs']"));
     expect(tabBlock).toMatch(/\.segmented\s*\{[^}]*width:\s*100%/);
   });

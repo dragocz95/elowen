@@ -278,156 +278,104 @@ test('returning from Home opens the full chat at its newest turn', async ({ app,
   expect(bottomGap).toBeLessThanOrEqual(2);
 });
 
-/* THE SECTION NAVIGATION, in a real browser. Decks use a left menu from 768px upward; phone decks and
- * every register keep the same single-line track with its measured edge state and internal scrolling. */
-test('a roomy Studio deck uses the shared sticky sidebar beside toolbar and content', async ({ app, seed }, testInfo) => {
+/* THE SECTION NAVIGATION, in a real browser. A configuration deck has none of its own at any width: its
+ * sections are addresses, so they are rows of the sidebar's sub-menu. A register keeps its single-line
+ * track with its measured edge state and internal scrolling, because those tabs are views of ONE
+ * collection rather than places to go. */
+test('a Studio deck carries no menu of its own and is driven from the sidebar sub-menu', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   await useSkin(app, seed, 'studio-oled');
   await app.setViewportSize({ width: 1440, height: 800 });
   await openStudio(app, '/settings?cat=models');
 
   const shell = app.locator('.workspace-shell');
-  const nav = shell.locator(':scope > .workspace-shell__section-navigation');
-  const track = nav.getByRole('radiogroup', { name: 'Settings sections' });
-  await expect(nav).toHaveAttribute('data-layout', 'sidebar');
-  await expect(shell).toHaveAttribute('data-section-layout', 'sidebar');
-  await expect(track).toHaveAttribute('aria-orientation', 'vertical');
-  await expect(track).toHaveAttribute('data-variant', 'menu');
-  await expect(track).not.toHaveAttribute('data-nowrap');
-  await expect(nav.locator('[role="combobox"]')).toHaveCount(0);
-  await expect(nav.locator('.segmented__option > svg')).toHaveCount(6);
-  await expect(nav.getByRole('radio')).toHaveCount(6);
-
-  await nav.getByRole('radio', { name: 'Data' }).click();
-  await expect(app.getByRole('heading', { level: 1, name: 'Data' })).toBeVisible();
-  await expect(nav.getByRole('radio', { name: 'Data' })).toHaveAttribute('aria-checked', 'true');
-
-  await nav.getByRole('radio', { name: 'Models' }).click();
   await expect(app.getByRole('heading', { level: 1, name: 'Models' })).toBeVisible();
+  await expect(shell.locator(':scope > .workspace-shell__section-navigation')).toHaveCount(0);
+  await expect(shell).not.toHaveAttribute('data-section-layout');
   await expect(app.locator('.page-toolbar')).toBeVisible();
+
+  // The section the address names is the one row the menu marks, with its parent open around it.
+  const sidebar = app.locator('nav[data-shell="sidebar"]');
+  await expect(sidebar.getByRole('button', { name: 'Settings' })).toHaveAttribute('aria-expanded', 'true');
+  await expect(sidebar.locator('[aria-current="page"]')).toHaveAttribute('href', '/settings?cat=models');
+
+  // And a row navigates: the page follows it and the mark moves with the address.
+  await sidebar.getByRole('link', { name: 'Data', exact: true }).click();
+  await expect(app.getByRole('heading', { level: 1, name: 'Data' })).toBeVisible();
+  await expect(app).toHaveURL(/\/settings\?cat=data/);
+  await expect(sidebar.locator('[aria-current="page"]')).toHaveAttribute('href', '/settings?cat=data');
+
+  // The page is one column again: hero, toolbar and content span the same measure, with no track held
+  // beside them for a menu that is no longer there.
   const geometry = await app.evaluate(() => {
     const shellEl = document.querySelector<HTMLElement>('.workspace-shell')!;
     const hero = shellEl.querySelector<HTMLElement>(':scope > .workspace-hero')!.getBoundingClientRect();
-    const navEl = shellEl.querySelector<HTMLElement>(':scope > .workspace-shell__section-navigation')!;
-    const navRect = navEl.getBoundingClientRect();
     const toolbarEl = shellEl.querySelector<HTMLElement>(':scope > .page-toolbar')!;
     const toolbar = toolbarEl.getBoundingClientRect();
     const contentEl = shellEl.querySelector<HTMLElement>(':scope > .workspace-shell__content')!;
     const content = contentEl.getBoundingClientRect();
     const shellRect = shellEl.getBoundingClientRect();
-    const navStyle = getComputedStyle(navEl);
-    const toolbarStyle = getComputedStyle(toolbarEl);
-    const contentStyle = getComputedStyle(contentEl);
     const main = document.querySelector<HTMLElement>('main')!;
     return {
       heroLeft: hero.left, heroRight: hero.right,
       shellLeft: shellRect.left, shellRight: shellRect.right,
-      navRight: navRect.right, toolbarLeft: toolbar.left, contentLeft: content.left,
+      toolbarLeft: toolbar.left, contentLeft: content.left,
       toolbarRight: toolbar.right, contentRight: content.right,
-      navPosition: navStyle.position, navTop: navStyle.top, navMaxHeight: navStyle.maxHeight,
-      toolbarContainer: toolbarStyle.containerName, contentContainer: contentStyle.containerName,
+      shellDisplay: getComputedStyle(shellEl).display,
+      toolbarContainer: getComputedStyle(toolbarEl).containerName,
+      contentContainer: getComputedStyle(contentEl).containerName,
       pageOverflow: main.scrollWidth - main.clientWidth,
     };
   });
   expect(Math.abs(geometry.heroLeft - geometry.shellLeft)).toBeLessThanOrEqual(1);
   expect(Math.abs(geometry.heroRight - geometry.shellRight)).toBeLessThanOrEqual(1);
-  expect(geometry.navRight).toBeLessThanOrEqual(geometry.toolbarLeft + 1);
-  expect(geometry.navRight).toBeLessThanOrEqual(geometry.contentLeft + 1);
-  expect(Math.abs(geometry.toolbarLeft - geometry.contentLeft)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.toolbarLeft - geometry.shellLeft)).toBeLessThanOrEqual(1);
+  expect(Math.abs(geometry.contentLeft - geometry.shellLeft)).toBeLessThanOrEqual(1);
   expect(Math.abs(geometry.toolbarRight - geometry.contentRight)).toBeLessThanOrEqual(1);
-  expect(geometry.navPosition).toBe('sticky');
-  expect(geometry.navTop).toBe('66px');
-  expect(geometry.navMaxHeight).not.toBe('none');
+  expect(geometry.shellDisplay).not.toBe('grid');
   expect(geometry.toolbarContainer).toBe('workspace-shell');
   expect(geometry.contentContainer).toBe('workspace-shell');
   expect(geometry.pageOverflow).toBeLessThanOrEqual(1);
 });
 
-test('a 390px Studio deck scrolls its tabs internally and signals the hidden edge', async ({ browser, seed }, testInfo) => {
+test('a 390px Studio deck reaches its sections through the navigation sheet', async ({ browser, seed }, testInfo) => {
   authedOnly(testInfo);
   const { context, page } = await studioTouchPage(browser, seed, 'studio-oled', { width: 390, height: 844 });
   try {
     await openStudio(page, '/account');
 
-    const nav = page.locator('.workspace-shell > .workspace-shell__section-navigation');
-    const track = nav.getByRole('radiogroup', { name: 'Account sections' });
-    await expect(nav).toHaveAttribute('data-layout', 'tabs');
-    await expect(page.locator('.workspace-shell')).toHaveAttribute('data-section-layout', 'tabs');
-    await expect(track).toHaveAttribute('data-variant', 'line');
-    await expect(track).toHaveAttribute('data-nowrap', 'true');
-    await expect(nav.locator('[role="combobox"]')).toHaveCount(0);
-    await expect(nav.locator('.segmented__option > svg')).toHaveCount(0);
-    await expect(track).toHaveAttribute('data-overflow', 'true');
-    await expect(track).toHaveAttribute('data-overflow-left', 'false');
-    await expect(track).toHaveAttribute('data-overflow-right', 'true');
-
-    const initial = await page.evaluate(() => {
-      const navEl = document.querySelector<HTMLElement>('.workspace-shell > .workspace-shell__section-navigation')!;
-      const trackEl = navEl.querySelector<HTMLElement>('[role="radiogroup"]')!;
+    // No tab strip is left in the page, and none of the phone's width is spent on one.
+    await expect(page.locator('.workspace-shell > .workspace-shell__section-navigation')).toHaveCount(0);
+    const pageOverflow = await page.evaluate(() => {
       const main = document.querySelector<HTMLElement>('main')!;
-      const trackRect = trackEl.getBoundingClientRect();
-      const offscreen = [...trackEl.querySelectorAll<HTMLElement>('[role="radio"]')].find((item) => {
-        const rect = item.getBoundingClientRect();
-        return rect.right > trackRect.right + 1 || rect.left < trackRect.left - 1;
-      });
-      return {
-        navOverflow: navEl.scrollWidth - navEl.clientWidth,
-        trackOverflow: trackEl.scrollWidth - trackEl.clientWidth,
-        pageOverflow: main.scrollWidth - main.clientWidth,
-        offscreenName: offscreen?.getAttribute('aria-label') ?? '',
-        fadeLeft: getComputedStyle(trackEl).getPropertyValue('--segmented-edge-fade-left').trim(),
-        fadeRight: getComputedStyle(trackEl).getPropertyValue('--segmented-edge-fade-right').trim(),
-      };
+      return main.scrollWidth - main.clientWidth;
     });
-    expect(initial.navOverflow).toBeLessThanOrEqual(1);
-    expect(initial.trackOverflow).toBeGreaterThan(0);
-    expect(initial.pageOverflow).toBeLessThanOrEqual(1);
-    expect(initial.offscreenName).not.toBe('');
-    expect(initial.fadeLeft).toBe('0px');
-    expect(initial.fadeRight).not.toBe('0px');
+    expect(pageOverflow).toBeLessThanOrEqual(1);
 
-    const targets = await nav.getByRole('radio').evaluateAll((items) => items.map((item) => {
-      const rect = item.getBoundingClientRect();
-      return { width: rect.width, height: rect.height };
-    }));
-    for (const target of targets) {
-      expect(target.width).toBeGreaterThanOrEqual(TOUCH_TARGET);
-      expect(target.height).toBeGreaterThanOrEqual(TOUCH_TARGET);
-    }
+    await page.getByRole('button', { name: /toggle menu/i }).click();
+    const sheet = page.locator('.overlay-nav-drawer');
+    await expect.poll(async () => (await sheet.boundingBox())!.x).toBeGreaterThanOrEqual(0);
 
-    const offscreen = nav.getByRole('radio', { name: initial.offscreenName, exact: true });
-    await offscreen.evaluate((element) => element.click());
-    await expect(page.getByRole('heading', { level: 1, name: initial.offscreenName })).toBeVisible();
-    await expect(offscreen).toHaveAttribute('aria-checked', 'true');
-    const activeVisible = await track.evaluate((element) => {
-      const active = element.querySelector<HTMLElement>('[aria-checked="true"]')!;
-      const trackRect = element.getBoundingClientRect();
-      const activeRect = active.getBoundingClientRect();
-      return activeRect.left >= trackRect.left - 1 && activeRect.right <= trackRect.right + 1;
-    });
-    expect(activeVisible).toBe(true);
+    // The sheet carries the same sub-menus as the column, already open on the section in the address.
+    await expect(sheet.getByRole('button', { name: 'Account' })).toHaveAttribute('aria-expanded', 'true');
+
+    // Every row of an open sub-menu is a real touch target — the same floor the destinations above it
+    // meet, and it matters because this sheet is the phone's only way between sections now.
+    const targets = await sheet.locator('.sidebar-nav__sub-item').evaluateAll((items) => items.map((item) => ({
+      label: (item.textContent || '').trim(),
+      height: Math.round(item.getBoundingClientRect().height),
+    })));
+    expect(targets.length, 'the sheet discloses the account sections').toBeGreaterThan(1);
+    const short = targets.filter((target) => target.height < TOUCH_TARGET);
+    expect(short, `sub-menu rows under ${TOUCH_TARGET}px: ${JSON.stringify(short)}`).toEqual([]);
+
+    // And tapping one navigates rather than dismissing: the sheet is above its own scrim.
+    await sheet.getByRole('link', { name: 'Security', exact: true }).click();
+    await expect(page).toHaveURL(/\/account\?cat=security/);
+    await expect(page.getByRole('heading', { level: 1, name: 'Security' })).toBeVisible();
   } finally {
     await context.close();
   }
-});
-
-test('Studio deck navigation switches exactly at 767/768', async ({ app, seed }, testInfo) => {
-  authedOnly(testInfo);
-  await useSkin(app, seed, 'studio-light');
-
-  await app.setViewportSize({ width: 767, height: 800 });
-  await openStudio(app, '/account');
-  const shell = app.locator('.workspace-shell');
-  const nav = shell.locator(':scope > .workspace-shell__section-navigation');
-  await expect(shell).toHaveAttribute('data-section-layout', 'tabs');
-  await expect(nav).toHaveAttribute('data-layout', 'tabs');
-  await expect(nav.getByRole('radiogroup')).toHaveAttribute('aria-orientation', 'horizontal');
-
-  await app.setViewportSize({ width: 768, height: 800 });
-  await expect(shell).toHaveAttribute('data-section-layout', 'sidebar');
-  await expect(nav).toHaveAttribute('data-layout', 'sidebar');
-  await expect(nav.getByRole('radiogroup')).toHaveAttribute('aria-orientation', 'vertical');
-  await expect(nav.locator('[role="combobox"]')).toHaveCount(0);
 });
 
 test('a Studio register keeps its sections a horizontal tab row at every width', async ({ app, seed }, testInfo) => {
@@ -568,8 +516,9 @@ test('Studio pages share metrics, filters, title and actions in one calm order',
     expect(column.controlsRight).toBeLessThanOrEqual(column.rowRight + 1);
   }
 
-  // The phone uses the same Radix radio track; selecting an offscreen section scrolls it into view.
-  await app.getByRole('radio', { name: 'System' }).click();
+  // A section is an address, so a phone reaches it the same way anything else is reached — through the
+  // menu sheet, or directly. What is measured here is the page it lands on, not how it got there.
+  await openStudio(app, '/settings?cat=system');
   await expect(app.getByRole('heading', { level: 1, name: 'System' })).toBeVisible();
   await expect(app.locator('.page-toolbar__slot .settings-toolbar')).toHaveCount(0);
   await expect(app.locator('.workspace-hero__metrics')).toBeVisible();

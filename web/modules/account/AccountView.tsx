@@ -109,17 +109,25 @@ export function AccountView() {
     window.addEventListener('popstate', apply);
     return () => window.removeEventListener('popstate', apply);
   }, [setSection]);
-  // The address always names the section on screen. Arriving at a bare `/account` used to leave the URL
-  // silent about which section was open; the page's own rail made up for it, and the menu outside the
-  // page — which is that rail now — can only mark the section the address names. `replaceState` because
-  // this is the same place by another spelling, not a step in the reader's history.
+  // A bare `/account` names no section, and the menu outside this page can only mark the section the
+  // address names — so the page writes the one it opened on. It writes ONLY into that silence: an address
+  // that already names a section is the reader's, and the effect above is what follows it. `replaceState`
+  // because this is the same place by another spelling, not a step in the reader's history.
+  //
+  // It waits one commit, for the same reason as on /settings: the remembered section arrives from a mount
+  // effect, so writing the first render's fallback into the address would overwrite it with `profile` on
+  // every visit.
+  const [addressReady, setAddressReady] = useState(false);
+  useEffect(() => { setAddressReady(true); }, []);
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get('cat') === section) return;
+    if (!addressReady) return;
+    const cat = new URLSearchParams(window.location.search).get('cat');
+    if (cat !== null && isAccountSection(cat)) return;
     const url = new URL(window.location.href);
     url.searchParams.set('cat', section);
     window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
     window.dispatchEvent(new PopStateEvent('popstate'));
-  }, [section]);
+  }, [addressReady, section]);
   // …and `?row=<anchor>` beside it: the record the palette named is scrolled into view and blinked once
   // as soon as its section is on screen.
   useRowAnchor();

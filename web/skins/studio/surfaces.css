@@ -481,39 +481,14 @@
   border-radius: var(--radius);
   font-size: 0.8125rem;
 }
-/* Configuration decks use the reference's quiet left menu from tablet width upward. It sticks below the
-   Studio top bar, scrolls independently when a plugin contributes a long menu, and uses neutral ink/fill
-   for hover and selection instead of turning the active section into a primary-colour callout. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell[data-section-layout='sidebar'] > .workspace-shell__section-navigation {
-  top: calc(var(--studio-top-bar-height) + 1rem);
-  max-height: calc(100dvh - var(--studio-top-bar-height) - 2rem);
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented {
-  width: 100%;
-  gap: 0.25rem;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented__option {
-  border-radius: var(--radius);
-  color: var(--color-muted-foreground);
-  background: transparent;
-  font-size: 0.8125rem;
-  font-weight: 500;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented__option:hover {
-  color: var(--color-foreground);
-  background: var(--studio-fill-hover);
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented__option[aria-checked='true'] {
-  color: var(--color-foreground);
-  background: var(--studio-fill-active);
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='sidebar'] .segmented__count {
-  color: inherit;
-  opacity: 0.65;
-}
+/* There is no quiet left menu inside a configuration deck any more, and its rules are gone with it. A
+   deck's sections are ADDRESSES, so they are rows of the sidebar's own sub-menu — one menu, styled once,
+   in the place a reader already looks to find out where the app can go. This design retunes that column
+   through the `--sidebar-*` tokens rather than restating a second menu's ink, fill and sticky offset here.
 
-/* Registers and phone decks use the same plain line tabs. The wrapper never grows wider than the page;
-   the Segmented track fills it and owns horizontal scroll when the labels do not fit. */
+   Registers keep their plain line tabs below, which are not navigation: they switch between views of the
+   collection the page is already showing. The wrapper never grows wider than the page; the Segmented
+   track fills it and owns horizontal scroll when the labels do not fit. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-shell__section-navigation[data-layout='tabs'] {
   width: 100%;
   min-width: 0;

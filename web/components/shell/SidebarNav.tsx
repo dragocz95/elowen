@@ -415,14 +415,18 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
     );
   };
 
-  /** One row, whichever kind it turns out to be. The icon column has no room for a disclosure, so a
-   *  sub-menu there collapses to its parent destination and every page stays one click away through it. */
-  const row = (entry: NavEntry, region: DragRegion, slot: number) => {
+  /** What a row IS: a destination, or a disclosure over the pages of one. The icon column has no room for
+   *  a disclosure, so a sub-menu there collapses to its parent destination and every page stays one click
+   *  away through it. */
+  const rowBody = (entry: NavEntry) => {
     const pages = subMenuPages(entry);
     const onMenu = entryMenu(entry);
-    const body = pages && !compact ? subMenu(entry, pages, onMenu) : destination(entry, onMenu);
-    return <Fragment key={entry.id ?? entry.label}>{entryShell(entry, region, slot, body)}</Fragment>;
+    return pages && !compact ? subMenu(entry, pages, onMenu) : destination(entry, onMenu);
   };
+
+  const row = (entry: NavEntry, region: DragRegion, slot: number) => (
+    <Fragment key={entry.id ?? entry.label}>{entryShell(entry, region, slot, rowBody(entry))}</Fragment>
+  );
 
   const groupLabel = (id: SidebarGroupId): string | null => {
     if (id === 'work') return t.nav.sectionWork;
@@ -551,7 +555,10 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
           })}
           {/* The account sits alone at the end, under a rule of its own — the reference's "Manage
               account". It is still an ordinary entry: the same context menu hides, restores and reorders
-              it, only the region it is drawn in is fixed. */}
+              it, and it discloses its own sections exactly like every other row. Only the region it is
+              drawn in is fixed, which is why it is built from `rowBody` rather than from a link: the
+              account page is a deck, and drawing it as a plain destination is what would leave its
+              sections with no way in at all. */}
           {account ? (
             <>
               <SidebarSeparator className="sidebar-nav__separator" />
@@ -559,7 +566,7 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
                 <SidebarGroupContent>
                   <SidebarMenu className="sidebar-nav__menu">
                     <SidebarMenuItem className="sidebar-nav__entry" data-nav-entry-id={account.id}>
-                      {destination(account, entryMenu(account))}
+                      {rowBody(account)}
                     </SidebarMenuItem>
                   </SidebarMenu>
                 </SidebarGroupContent>

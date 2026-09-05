@@ -614,7 +614,6 @@ export const cs = {
     cleanupConfirmTitle: 'Smazat všechna data?',
     cleanupConfirmDesc: 'Nenávratně se odstraní všechny úkoly, mise a aktivita a ukončí se běžící relace. Projekty, uživatelé a nastavení zůstanou zachované.',
     cleanupDone: 'Vyčištěno — {tasks} úkolů a {missions} misí odstraněno.',
-    sectionsNav: 'Sekce nastavení',
     metric: {
       catalog: 'V katalogu',
       enabled: 'Povolené',
@@ -973,7 +972,6 @@ export const cs = {
     tabMemory: 'Paměť',
     tabPersonality: 'Osobnost',
     personalPluginConfig: 'Osobní nastavení pluginu',
-    sectionsNav: 'Sekce účtu',
     discordId: 'Discord ID',
     whatsappNumber: 'WhatsApp číslo',
     msteamsIdentity: 'Identita Microsoft Teams',

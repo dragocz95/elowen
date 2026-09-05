@@ -74,10 +74,13 @@ describe('design tokens', () => {
   });
 
   it('uses component width for spatial deck layout changes', () => {
-    expect(components).toMatch(/@container workspace-shell \(width < 56\.25rem\)[\s\S]*\.spatial-section-rail__track/);
     // The deck's label/control record stacks on the SHELL's width, not the window's: the same form is
     // rendered inside a detail rail, where a viewport media query would keep it in three tracks.
     expect(components).toMatch(/@container workspace-shell \(width < 38\.75rem\)[\s\S]*\.settings-row\s*\{[^}]*grid-template-columns:\s*1fr/);
+    // The horizontal section rail that used to fold at 56.25rem is gone with the deck navigation itself:
+    // a deck's sections are rows of the sidebar's sub-menu, so the page has no second menu to make
+    // responsive, and a stylesheet still folding one would be describing a page nobody renders.
+    expect(components).not.toContain('spatial-section-rail');
   });
 
   it('carries no hand-rolled telemetry scroll box now that the rail scrolls on ScrollArea', () => {

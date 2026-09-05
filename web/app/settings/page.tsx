@@ -184,18 +184,25 @@ export default function SettingsPage() {
     window.addEventListener('popstate', apply);
     return () => window.removeEventListener('popstate', apply);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  // The address always names the section on screen. Arriving at a bare `/settings` — from the instance
-  // menu, a bookmark, a redirect — used to leave the URL silent about which of six sections was actually
-  // open, which the deck's own rail made up for by highlighting it. The menu outside the page is that
-  // rail now, and it can only mark the section the address names. `replaceState` because this is the same
-  // place by another spelling, not a step in the reader's history.
+  // A bare `/settings` — from the instance menu, a bookmark, a redirect — names none of the six sections,
+  // and the menu outside this page can only mark the section the address names. So the page writes the one
+  // it opened on, and ONLY into that silence: an address that already names a section is the reader's, and
+  // the effect above is what follows it. `replaceState` because this is the same place by another
+  // spelling, not a step in the reader's history.
+  //
+  // It waits one commit. Both of this page's own sources — the remembered category and the URL — arrive
+  // from mount effects, so on the first render `category` is still the bare fallback; writing THAT into
+  // the address and announcing it is how a remembered section would be overwritten by System on every
+  // single visit. The flag costs one render and makes the write happen after the page has read itself.
+  const [addressReady, setAddressReady] = useState(false);
+  useEffect(() => { setAddressReady(true); }, []);
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get('cat') === category) return;
+    if (!addressReady || isValidCat(new URLSearchParams(window.location.search).get('cat'))) return;
     const url = new URL(window.location.href);
     url.searchParams.set('cat', category);
     window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
     window.dispatchEvent(new PopStateEvent('popstate'));
-  }, [category]);
+  }, [addressReady, category]); // eslint-disable-line react-hooks/exhaustive-deps
   // …and the row within it, when the link named one: `?row=<anchor>` scrolls that record into view and
   // blinks it once. It reads the same three sources this section state does and consumes the parameter.
   useRowAnchor();
