@@ -716,7 +716,10 @@ export function register(ctx) {
   const sessionCwds = new Map();
   const cwdStateKey = () => {
     const sessionId = currentSessionId();
-    return sessionId ? `${currentAccountUserId() ?? 'accountless'}\0${sessionId}` : null;
+    // A remembered shell cd belongs to this effective root, not every later binding of the conversation.
+    // Capture this key before launch so a finishing old turn cannot overwrite the new root's cwd.
+    const workspaceId = ctx.currentAccess().workspaceRef?.workspaceId ?? '';
+    return sessionId ? `${currentAccountUserId() ?? 'accountless'}\0${sessionId}\0${workspaceId}\0${ctx.defaultCwd()}` : null;
   };
   const rememberCwd = (key, cwd) => {
     if (!key) return;
