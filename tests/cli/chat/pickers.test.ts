@@ -377,6 +377,86 @@ describe('picker application lifetime', () => {
     await lifetime.stop();
   });
 
+  /** "Return to project" is the inverse of a switch and it must undo one WITHOUT destroying anything: the
+   *  overlay calls the plugin's release route, which drops the conversation's binding rows only. The
+   *  workspace is still listed afterwards, and a refusal — a process is running in it — has to reach the
+   *  user in words, because "returned" over a conversation that is still in the worktree is a lie.
+   *
+   *  The web half of this parity is asserted in web/tests/modules/advisor/SandboxModal.test.tsx
+   *  ("returns this conversation to its project directory through the conversation id"), which pins the
+   *  identical payload — the conversation id and nothing else. */
+  it('returns this conversation to its project directory and reports a refusal, matching the web drawer', async () => {
+    initTheme();
+    const lifetime = new ChatApplicationLifetime<'metadata'>();
+    let modal: { handleInput(data: string): void; render(width: number): string[] } | null = null;
+    const tui = {
+      terminal: { columns: 120, rows: 40 },
+      showOverlay: vi.fn((component: typeof modal) => {
+        modal = component;
+        return { hide: vi.fn(), setHidden: vi.fn(), isHidden: () => false, focus: vi.fn(), unfocus: vi.fn(), isFocused: () => true };
+      }),
+      setFocus: vi.fn(), requestRender: vi.fn(),
+    };
+    const bound = {
+      id: 'ws_1', userId: 1, projectId: 1, label: 'Feature Alpha', path: '/data/ws/feature-alpha',
+      branch: 'elowen/u1/feature-alpha', baseRef: 'main', lifecycle: 'active', orphanReason: null,
+      accessible: true,
+      status: { head: 'abc', branch: 'elowen/u1/feature-alpha', upstream: '', ahead: 0, behind: 0, dirty: 0, untracked: 0, clean: true },
+      files: [], uniqueCommits: 0, activeProcesses: 0,
+      bindings: [{ sessionId: 'brain-1', updatedAt: '2026-09-01' }],
+    };
+    const sandboxReleaseWorkspaces = vi.fn(async () => ({ released: 1 }));
+    const state = new ChatState({ transcript: new TranscriptModel() });
+    const pickers = createPickers(
+      state,
+      {
+        client: {
+          boundSession: 'brain-1',
+          sandboxOverview: async () => ({
+            projects: [{ id: 1, slug: 'demo', path: '/var/www/demo', defaultRef: 'main' }],
+            sessions: [], workspaces: [bound],
+          }),
+          sandboxReleaseWorkspaces,
+        },
+        tui, editor: {}, termSettings: null, cwdLabel: '', branchLabel: '', commandDefs: [], lifetime,
+      } as never,
+      { render: vi.fn(), refreshMeta: async () => {} },
+      {} as never,
+      { reshowPanel: vi.fn(), reloadKeymap: vi.fn() },
+    );
+    const plain = (): string => modal!.render(100).join('\n').replace(/\x1b\[[0-9;]*m/g, '');
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    pickers.openSandboxModal();
+    await settle();
+    // Offered because this conversation IS working in one of these worktrees, and it states what survives.
+    expect(plain()).toContain('Return to project');
+    expect(plain()).toContain('the workspace is kept');
+
+    modal!.handleInput('\x1b[B'); // + New workspace → Refresh
+    modal!.handleInput('\x1b[B'); // → Return to project
+    modal!.handleInput('\r');
+    await settle();
+
+    // The conversation id is the whole payload: no workspace is named, so nothing can be destroyed.
+    expect(sandboxReleaseWorkspaces).toHaveBeenCalledTimes(1);
+    expect(sandboxReleaseWorkspaces.mock.calls[0]![0]).toBe('brain-1');
+    expect(state.notice).toContain('project directory again');
+    expect(state.notice).toContain('the workspace is kept');
+
+    // A refusal leaves the conversation where it was and says why, in words rather than as a code.
+    sandboxReleaseWorkspaces.mockRejectedValueOnce(
+      new SandboxRouteError('workspace_in_use', 'workspace is in use by an active process'),
+    );
+    modal!.handleInput('\x1b[B');
+    modal!.handleInput('\x1b[B');
+    modal!.handleInput('\r');
+    await settle();
+    expect(state.notice).toContain('still working in the workspace');
+    expect(state.notice).toContain('a process is still running in it');
+    await lifetime.stop();
+  });
+
   it('does not publish a model response after the chat has stopped', async () => {
     const models = deferred<never[]>();
     const lifetime = new ChatApplicationLifetime<'metadata'>();

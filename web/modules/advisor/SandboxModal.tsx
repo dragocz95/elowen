@@ -1,11 +1,12 @@
 'use client';
 
 import { useMemo, useState } from 'react';
-import { Boxes, FolderGit2, MoreHorizontal, Plus, RefreshCw, Trash2 } from 'lucide-react';
+import { Boxes, FolderGit2, MoreHorizontal, Plus, RefreshCw, Trash2, Undo2 } from 'lucide-react';
 import { useBrainChat } from './BrainChatProvider';
 import { useSandboxOverview } from '../../lib/queries';
 import {
   useCreateSandboxWorkspace,
+  useReleaseSandboxWorkspaces,
   useRemoveSandboxWorkspace,
   useSandboxRemovalPreview,
   useUseSandboxWorkspace,
@@ -116,6 +117,7 @@ export function SandboxModal({ onClose }: { onClose: () => void }) {
   const switchWorkspace = useUseSandboxWorkspace();
   const removalPreview = useSandboxRemovalPreview();
   const removeWorkspace = useRemoveSandboxWorkspace();
+  const releaseWorkspaces = useReleaseSandboxWorkspaces();
 
   const [draft, setDraft] = useState<CreateDraft | null>(null);
   /** The workspace a removal has been started for, together with the preview that says what it holds.
@@ -155,7 +157,12 @@ export function SandboxModal({ onClose }: { onClose: () => void }) {
   const isActiveHere = (workspace: SandboxWorkspace): boolean =>
     !!activeSessionId && workspace.bindings.some((binding) => binding.sessionId === activeSessionId);
 
-  const mutating = createWorkspace.isPending || switchWorkspace.isPending || removalPreview.isPending || removeWorkspace.isPending;
+  const mutating = createWorkspace.isPending || switchWorkspace.isPending || removalPreview.isPending
+    || removeWorkspace.isPending || releaseWorkspaces.isPending;
+
+  /** Whether this conversation is working in any workspace at all — the only condition under which
+   *  returning it to the project directory means anything, so the action appears exactly then. */
+  const boundHere = workspaces.some(isActiveHere);
 
   /** The reference a new workspace is cut from, as the OVERVIEW states it for that project. The daemon
    *  reads the repository's real default branch and answers null when there is none, so a null leaves the
@@ -191,6 +198,20 @@ export function SandboxModal({ onClose }: { onClose: () => void }) {
     switchWorkspace.mutate({ workspaceId: workspace.id, sessionId: activeSessionId }, {
       onSuccess: () => toast(interpolate(t.sandboxModal.switched, { label: workspace.label }), 'ok'),
       onError: (error: Error) => toast(apiErrorMessage(error), 'error'),
+    });
+  };
+
+  /** Send this conversation back to its project directory. The route deletes the plugin's binding rows
+   *  and nothing else, so no workspace is lost — a refusal means a process is still running in one, and
+   *  the conversation is simply left where it was. */
+  const runRelease = (): void => {
+    if (!activeSessionId) { toast(t.sandboxModal.useNoSession, 'error'); return; }
+    releaseWorkspaces.mutate({ sessionId: activeSessionId }, {
+      onSuccess: (result) => toast(result.released > 0 ? t.sandboxModal.returned : t.sandboxModal.returnNothing, 'ok'),
+      onError: (error: Error) => toast(
+        apiErrorMessage(error) === 'workspace_in_use' ? t.sandboxModal.returnBlockedInUse : t.sandboxModal.returnFailed,
+        'error',
+      ),
     });
   };
 
@@ -260,6 +281,26 @@ export function SandboxModal({ onClose }: { onClose: () => void }) {
         }
       >
         <ModalBody gap={4}>
+          {/* Offered only while the conversation actually works in a workspace — the one state in which
+              returning it changes anything. The sentence says plainly what is kept, because "return" on
+              its own reads like it might throw the worktree away. */}
+          {boundHere ? (
+            <div className="flex flex-col gap-2 rounded-md border border-border bg-card p-3">
+              <p className="text-xs text-muted-foreground">{t.sandboxModal.returnDescription}</p>
+              <div className="flex justify-end">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  icon={Undo2}
+                  disabled={mutating || !activeSessionId}
+                  onClick={runRelease}
+                >
+                  {releaseWorkspaces.isPending ? t.sandboxModal.returnPending : t.sandboxModal.returnToProject}
+                </Button>
+              </div>
+            </div>
+          ) : null}
+
           {draft ? (
             <div className="flex flex-col gap-3 rounded-md border border-border bg-card p-3">
               {/* Create makes a worktree and nothing else: the conversation stays where it is until the

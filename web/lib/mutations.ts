@@ -354,6 +354,18 @@ export function useUseSandboxWorkspace() {
   });
 }
 
+/** Give THIS conversation its project directory back. The inverse of the switch above and equally
+ *  server-side: the plugin drops the conversation's binding rows and keeps every workspace, so the only
+ *  client-side consequence is the same one a switch has — the overview carries the active mark, and this
+ *  write has just cleared it. */
+export function useReleaseSandboxWorkspaces() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { sessionId: string }) => elowenClient.releaseSandboxWorkspaces(v.sessionId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.sandboxOverview }),
+  });
+}
+
 /** Ask what removing a workspace would take with it. A read, expressed as a mutation because it is a POST
  *  the reader triggers deliberately rather than something worth holding in the cache. */
 export function useSandboxRemovalPreview() {

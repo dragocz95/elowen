@@ -201,6 +201,12 @@ export const elowenClient = {
    *  nothing about a working directory is ever written client-side. */
   useSandboxWorkspace: (input: { workspaceId: string; sessionId: string }) =>
     req<{ workspace: SandboxWorkspace }>('/plugins/sandbox/api/workspaces/use', json(input)),
+  /** Release this conversation's workspace bindings so its next turn runs in the project directory again.
+   *  The inverse of the switch above, and it destroys nothing: the plugin deletes its binding rows only, so
+   *  the worktree, its branch and its files survive and can be switched back into. Refused with
+   *  `workspace_in_use` while a process is still running in a bound workspace. */
+  releaseSandboxWorkspaces: (sessionId: string) =>
+    req<{ released: number }>('/plugins/sandbox/api/workspaces/release', json({ sessionId })),
   sandboxRemovalPreview: (workspaceId: string) =>
     req<SandboxRemovalPreview>('/plugins/sandbox/api/workspaces/remove-preview', json({ workspaceId })),
   /** The SAFE removal, and the only one this client can ask for: the body carries the workspace id and

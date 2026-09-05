@@ -101,6 +101,20 @@ export function registerSandboxApi({ ctx, db, dataDir, workspaces, execution, mi
     return json({ workspace });
   });
 
+  // Give the caller's conversation its Project directory back. Ownership is verified through the very same
+  // seam `workspaces/use` passes, because releasing a binding is exactly as much a conversation decision as
+  // writing one. Nothing is destroyed: the workspace row, its branch and its directory all survive.
+  register('workspaces/release', 'POST', async (req) => {
+    const userId = requireUser(req);
+    const input = await body(req);
+    const result = workspaces.releaseSessionWorkspaces(input, {
+      userId,
+      accessibleProjects: accessibleProjects(req, stores),
+      verifySessionOwner: workspaces.verifySessionOwner,
+    });
+    return json(result);
+  });
+
   register('workspaces/commit', 'POST', async (req) => {
     const userId = requireUser(req);
     const input = await body(req);

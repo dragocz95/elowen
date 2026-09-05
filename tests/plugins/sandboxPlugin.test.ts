@@ -11,7 +11,7 @@ import { RealGitReader } from '../../src/git/gitReader.js';
 import { realPathWithin } from '../../src/plugins/pathGuard.js';
 import { runWithContributionUser, runWithPolicy, type TurnIdentity } from '../../src/plugins/policyContext.js';
 import { resolvePolicy, type Policy } from '../../src/plugins/policy.js';
-import { effectiveTurnWorkDir } from '../../src/brain/service/workDir.js';
+import { effectiveTurnWorkDir, releaseWorkspacesForMove } from '../../src/brain/service/workDir.js';
 import { processRegistry } from '../../src/brain/processRegistry.js';
 import { bubblewrapProbe, migrateLegacyHomes, runPrepared } from '../../plugins/sandbox/lib/execution.mjs';
 import { processIdentity, reconcileStaleLeases, withRepoLease } from '../../plugins/sandbox/lib/db.mjs';
@@ -941,6 +941,206 @@ describe('sandbox workspace selection follows the conversation, not the cwd', ()
 
     // …and takes effect on the NEXT turn, which resolves again.
     expect(resolveTurn(turnPolicy, projects[0]!.path, session).workDir).toBe(later.path);
+  });
+});
+
+/** Releasing is the inverse of a switch and the ONLY way to undo one without destroying something: until
+ *  it existed, a binding could be cleared only by deleting the workspace, orphaning its Project or deleting
+ *  the account, so a conversation bound once resolved into that workspace forever. These tests drive the
+ *  real resolver and assert the directory the NEXT turn would use, and — because the whole point is that
+ *  nothing is destroyed — that the workspace row, its branch and its directory are all still there. */
+describe('sandbox releases a conversation back to its project', () => {
+  const asAmy = { userId: 1, admin: false, tokenScope: 'user' as const, accessibleProjects: [1, 2] };
+  const asBob = { userId: 2, admin: false, tokenScope: 'user' as const, accessibleProjects: [1, 2] };
+
+  /** Two accessible Projects, a real conversation row per account, and the same turn resolver the daemon
+   *  runs — so an assertion about "where the next turn goes" is the resolver's answer, not a binding row. */
+  const bound = async (enabled = ['sandbox']) => {
+    const { registry, db, projects } = await setup(enabled, false, ['main']);
+    db.prepare("INSERT INTO brain_sessions (id, user_id) VALUES ('brain-amy-release', 1)").run();
+    db.prepare("INSERT INTO brain_sessions (id, user_id) VALUES ('brain-bob-private', 2)").run();
+    const control = registry.control('sandbox')!;
+    const turnPolicy = resolvePolicy({
+      userProjects: { forUser: () => projects.map((project) => project.id), isAdmin: () => false },
+      projects: { get: (id: number) => projects.find((project) => project.id === id) ?? null },
+      supplementalPaths: (userId, projectIds) => runWithContributionUser(userId, () => control.workspaceRoots({ projectIds })),
+    }, 1);
+    const act = (workDir: string, session: string, name: string, input: Record<string, unknown>) =>
+      runWithPolicy(turnPolicy, () => tool(registry, name).execute('t', input), {
+        identity: nonOperator(1), contributionUserId: 1, sessionId: session, workDir,
+      });
+    const resolveTurn = (baseWorkDir: string, sessionId: string) => effectiveTurnWorkDir({
+      policy: turnPolicy, baseWorkDir, accountUserId: 1, sessionId,
+      projects: { list: () => projects }, sandbox: control,
+    });
+    const release = (body: Record<string, unknown>, auth = asAmy) =>
+      registry.apiRoute('sandbox', 'workspaces/release', 'POST')!.handler(pluginRequest('POST', {}, body, auth));
+    const bindings = () => db.prepare('SELECT session_id, user_id, project_id FROM p_sandbox_session_bindings ORDER BY project_id').all();
+    return { registry, db, projects, control, turnPolicy, act, resolveTurn, release, bindings };
+  };
+
+  it('clears the bindings and the next turn falls back to the project directory', async () => {
+    const { projects, act, resolveTurn, release, bindings } = await bound();
+    const session = 'brain-amy-release';
+    const workspace = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Released', baseRef: 'main' })).details.workspace;
+    expect(resolveTurn(projects[0]!.path, session).workDir).toBe(workspace.path);
+
+    const response = await release({ sessionId: session });
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({ released: 1, workspaceIds: [workspace.id] });
+    expect(bindings()).toEqual([]);
+
+    // The resolver has nothing left to prefer, so the turn runs where the Project is.
+    const effective = resolveTurn(projects[0]!.path, session);
+    expect(effective.workDir).toBe(projects[0]!.path);
+    expect(effective.workspace).toBeNull();
+
+    // Releasing again is a no-op that says so rather than an error.
+    expect((await release({ sessionId: session })).body).toEqual({ released: 0, workspaceIds: [] });
+  });
+
+  it('preserves the workspace itself: its row, its branch and its directory all survive', async () => {
+    const { projects, act, release, db, registry } = await bound();
+    const session = 'brain-amy-release';
+    const workspace = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Kept', baseRef: 'main' })).details.workspace;
+    writeFileSync(join(workspace.path, 'work-in-progress.txt'), 'still here\n');
+
+    expect((await release({ sessionId: session })).status).toBe(200);
+
+    expect(db.prepare('SELECT id FROM p_sandbox_workspaces').all()).toEqual([{ id: workspace.id }]);
+    expect(existsSync(workspace.path)).toBe(true);
+    expect(readFileSync(join(workspace.path, 'work-in-progress.txt'), 'utf8')).toBe('still here\n');
+    expect(git(projects[0]!.path, 'branch', '--list', workspace.branch)).toContain(workspace.branch);
+    expect(git(projects[0]!.path, 'worktree', 'list')).toContain(workspace.path);
+    // …and it can be switched back into, which is the whole difference from a removal.
+    await act(projects[0]!.path, session, 'SandboxUseWorkspace', { workspaceId: workspace.id });
+    expect(registry.control('sandbox')!.workspacesFor({ userId: 1 }).map((entry) => entry.path)).toEqual([workspace.path]);
+  });
+
+  it('refuses a release naming another account’s conversation and touches no binding', async () => {
+    const { projects, act, resolveTurn, release, bindings } = await bound();
+    const session = 'brain-amy-release';
+    const workspace = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Foreign', baseRef: 'main' })).details.workspace;
+
+    // Bob naming Amy's conversation, and Amy naming Bob's: neither owns the other's, so both fail closed.
+    for (const [body, auth] of [
+      [{ sessionId: session }, asBob],
+      [{ sessionId: 'brain-bob-private' }, asAmy],
+    ] as const) {
+      const refused = await release(body, auth);
+      expect(refused.status).toBe(403);
+      expect((refused.body as { error: string }).error).toBe('session_forbidden');
+    }
+
+    expect(bindings()).toEqual([{ session_id: session, user_id: 1, project_id: 1 }]);
+    expect(resolveTurn(projects[0]!.path, session).workDir).toBe(workspace.path);
+  });
+
+  it('refuses while a process holds the workspace, and the binding survives', async () => {
+    const { registry, db, projects, act, resolveTurn, release, bindings } = await bound();
+    const { registry: leased } = { registry };
+    const session = 'brain-amy-release';
+    const workspace = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Busy', baseRef: 'main' })).details.workspace;
+    // A real execution lease, minted the way a delegated turn mints one — the same row the removal guard
+    // reads, so this is the plugin's own notion of "a process is using it".
+    const lease = leased.control('sandbox')!.acquireDelegationLease({
+      accountUserId: 1, workspace: { workspaceId: workspace.id, projectId: 1 },
+    });
+
+    const refused = await release({ sessionId: session });
+    expect(refused.status).toBe(409);
+    expect((refused.body as { error: string }).error).toBe('workspace_in_use');
+    expect(bindings()).toEqual([{ session_id: session, user_id: 1, project_id: 1 }]);
+    expect(resolveTurn(projects[0]!.path, session).workDir).toBe(workspace.path);
+    expect(db.prepare('SELECT id FROM p_sandbox_workspaces').all()).toEqual([{ id: workspace.id }]);
+
+    // Once the process is gone the same call succeeds — the guard is the lease, not a permanent lock.
+    await lease.release();
+    expect((await release({ sessionId: session })).status).toBe(200);
+    expect(resolveTurn(projects[0]!.path, session).workDir).toBe(projects[0]!.path);
+  });
+
+  /** A release lands on the NEXT turn, exactly like a switch: the turn scope installs one workDir at turn
+   *  start and every tool in that turn reads it from ALS. Asserted on the cwd a running turn's shell
+   *  actually reports, not on the resolver's return value alone. */
+  it('takes effect on the next turn and does not retarget a turn already in flight', async () => {
+    const { registry, projects, turnPolicy, act, resolveTurn, release } = await bound(['sandbox', 'terminal']);
+    const session = 'brain-amy-release';
+    const workspace = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Inflight', baseRef: 'main' })).details.workspace;
+    writeFileSync(join(workspace.path, 'marker.txt'), 'workspace\n');
+    writeFileSync(join(projects[0]!.path, 'marker.txt'), 'project\n');
+
+    const turn = resolveTurn(projects[0]!.path, session);
+    expect(turn.workDir).toBe(workspace.path);
+
+    await runWithPolicy(turnPolicy, async () => {
+      expect((await release({ sessionId: session })).status).toBe(200);
+      const marker = await tool(registry, 'Bash').execute('t', { command: 'cat marker.txt' });
+      expect(marker.content[0]!.text).toContain('workspace');
+      expect(marker.content[0]!.text).not.toContain('project');
+    }, { identity: nonOperator(1), contributionUserId: 1, sessionId: session, workDir: turn.workDir });
+
+    expect(resolveTurn(projects[0]!.path, session).workDir).toBe(projects[0]!.path);
+  });
+
+  /** An explicit project move and an explicit workspace switch are two statements about where the same
+   *  conversation works. The most-recent-binding rule ignored the cwd entirely, so choosing Project B left
+   *  the next turn running in Project A's workspace while the picker's label read B. The latest explicit
+   *  intent now wins — through the plugin's own release, with the Project being entered kept. */
+  it('an explicit move to another project releases the old binding, and a move into the workspace’s own project keeps it', async () => {
+    const { projects, control, turnPolicy, act, resolveTurn, bindings } = await bound();
+    const session = 'brain-amy-release';
+    const workspace = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Moved', baseRef: 'main' })).details.workspace;
+    const move = (workDir: string) => releaseWorkspacesForMove({
+      policy: turnPolicy, accountUserId: 1, sessionId: session, workDir,
+      projects: { list: () => projects }, sandbox: control,
+    });
+
+    // Moving INTO the workspace's own project changes nothing: that is where it belongs.
+    expect(move(projects[0]!.path)).toEqual({ released: 0, workspaceIds: [] });
+    expect(resolveTurn(projects[0]!.path, session).workDir).toBe(workspace.path);
+    // The same holds for a move into the worktree itself — it is that project's directory too.
+    expect(move(workspace.path)).toEqual({ released: 0, workspaceIds: [] });
+    expect(resolveTurn(projects[0]!.path, session).workDir).toBe(workspace.path);
+
+    // Moving to project 2 is a NEWER explicit statement, so project 1's binding goes and the next turn
+    // runs where the picker's own label says it does.
+    expect(move(projects[1]!.path)).toEqual({ released: 1, workspaceIds: [workspace.id] });
+    expect(bindings()).toEqual([]);
+    expect(resolveTurn(projects[1]!.path, session).workDir).toBe(projects[1]!.path);
+    // Nothing was destroyed on the way: the worktree is intact and can be switched back into.
+    expect(existsSync(workspace.path)).toBe(true);
+    await act(projects[0]!.path, session, 'SandboxUseWorkspace', { workspaceId: workspace.id });
+    expect(resolveTurn(projects[0]!.path, session).workDir).toBe(workspace.path);
+  });
+
+  it('refuses the move rather than trapping the conversation, and degrades safely without the control', async () => {
+    const { registry, projects, control, turnPolicy, act, resolveTurn } = await bound();
+    const session = 'brain-amy-release';
+    const workspace = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Pinned', baseRef: 'main' })).details.workspace;
+    const lease = registry.control('sandbox')!.acquireDelegationLease({
+      accountUserId: 1, workspace: { workspaceId: workspace.id, projectId: 1 },
+    });
+    const move = (sandbox: typeof control | undefined) => releaseWorkspacesForMove({
+      policy: turnPolicy, accountUserId: 1, sessionId: session, workDir: projects[1]!.path,
+      projects: { list: () => projects }, ...(sandbox ? { sandbox } : {}),
+    });
+
+    // Refusing the move is the honest answer: reporting a move whose next turn would still run in the old
+    // workspace is the very contradiction this closes.
+    expect(() => move(control)).toThrowError(/in use by an active process/);
+    expect(resolveTurn(projects[1]!.path, session).workDir).toBe(workspace.path);
+
+    // A build with no Sandbox control at all releases nothing and must not break the move.
+    expect(move(undefined)).toEqual({ released: 0 });
+    // …and neither must one whose Sandbox is too old to answer the operation.
+    expect(releaseWorkspacesForMove({
+      policy: turnPolicy, accountUserId: 1, sessionId: session, workDir: projects[1]!.path,
+      projects: { list: () => projects },
+      sandbox: { ...control, releaseSessionWorkspaces: undefined } as never,
+    })).toEqual({ released: 0 });
+
+    await lease.release();
   });
 });
 

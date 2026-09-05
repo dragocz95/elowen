@@ -16,6 +16,7 @@
       "overview",
       "workspaces/create",
       "workspaces/use",
+      "workspaces/release",
       "workspaces/commit",
       "workspaces/diff",
       "workspaces/remove-preview",

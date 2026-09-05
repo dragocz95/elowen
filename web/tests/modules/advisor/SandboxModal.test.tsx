@@ -6,6 +6,7 @@ const createMutate = vi.fn();
 const useMutate = vi.fn();
 const previewMutate = vi.fn();
 const removeMutate = vi.fn();
+const releaseMutate = vi.fn();
 const refetch = vi.fn();
 const toast = vi.fn();
 
@@ -61,6 +62,7 @@ vi.mock('../../../lib/mutations', () => ({
   useUseSandboxWorkspace: () => ({ mutate: useMutate, isPending: false }),
   useSandboxRemovalPreview: () => ({ mutate: previewMutate, isPending: false }),
   useRemoveSandboxWorkspace: () => ({ mutate: removeMutate, isPending: false }),
+  useReleaseSandboxWorkspaces: () => ({ mutate: releaseMutate, isPending: false }),
 }));
 vi.mock('../../../components/ui/Toast', () => ({ useToast: () => ({ toast }) }));
 // `apiErrorMessage` reads the daemon's coded error off an ElowenApiError. The modal maps exactly those
@@ -86,6 +88,12 @@ vi.mock('../../../lib/i18n', () => ({
         ahead: 'Ahead: {n}', behind: 'Behind: {n}',
         uniqueCommits: 'Commits present nowhere else: {n}', processes: 'Running processes: {n}',
         use: 'Use here', useNoSession: 'Open a conversation first.',
+        returnToProject: 'Return to project', returnPending: 'Returning',
+        returnDescription: 'Only this conversation goes back to the project directory. The workspace is kept.',
+        returned: 'Back in the project directory. The workspace has been kept.',
+        returnNothing: 'Already in the project directory.',
+        returnBlockedInUse: 'A running process is using the workspace; nothing has been changed.',
+        returnFailed: 'Could not return to the project directory.',
         switched: 'Now working in {label}.', created: 'Created {label}.', removed: 'Removed {label}.',
         workspaceActions: 'Workspace actions', remove: 'Remove',
         removeTitle: 'Remove this workspace?', removePending: 'Removing',
@@ -215,6 +223,42 @@ describe('SandboxModal', () => {
 
     expect(useMutate).toHaveBeenCalledTimes(1);
     expect(useMutate.mock.calls[0]![0]).toEqual({ workspaceId: 'ws_1', sessionId: 'brain-7-a' });
+  });
+
+  /** The inverse of the switch, and the only way to undo one without destroying a worktree. The payload is
+   *  the conversation id and nothing else — no workspace is named, so nothing here can remove one.
+   *
+   *  The CLI half of this parity is asserted in tests/cli/chat/pickers.test.ts ("returns this conversation
+   *  to its project directory and reports a refusal"), which pins the identical payload. */
+  it('returns this conversation to its project directory through the conversation id, matching the CLI', async () => {
+    renderModal();
+
+    // The sentence is read BEFORE the press, because "return" alone reads like it might throw work away.
+    expect(screen.getByText('Only this conversation goes back to the project directory. The workspace is kept.')).toBeInTheDocument();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Return to project' })); });
+
+    expect(releaseMutate).toHaveBeenCalledTimes(1);
+    expect(releaseMutate.mock.calls[0]![0]).toEqual({ sessionId: 'brain-7-a' });
+    // No workspace was named and no removal was attempted on the side.
+    expect(removeMutate).not.toHaveBeenCalled();
+
+    const { onSuccess } = releaseMutate.mock.calls[0]![1] as { onSuccess: (r: { released: number }) => void };
+    await act(async () => { onSuccess({ released: 1 }); });
+    expect(toast).toHaveBeenCalledWith('Back in the project directory. The workspace has been kept.', 'ok');
+  });
+
+  it('reports a return refused by a running process and leaves every workspace in the list', async () => {
+    renderModal();
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Return to project' })); });
+
+    const { onError } = releaseMutate.mock.calls[0]![1] as { onError: (e: unknown) => void };
+    await act(async () => { onError({ code: 'workspace_in_use' }); });
+
+    expect(toast).toHaveBeenCalledWith('A running process is using the workspace; nothing has been changed.', 'error');
+    // A refusal changes nothing: every worktree is still listed, and the conversation is still in one.
+    expect(screen.getAllByTestId('sandbox-workspace-row')).toHaveLength(3);
+    expect(screen.getByText('Active in this conversation')).toBeInTheDocument();
+    expect(releaseMutate).toHaveBeenCalledTimes(1);
   });
 
   it('asks what removal would take with it before removing anything', async () => {

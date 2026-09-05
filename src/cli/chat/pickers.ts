@@ -639,6 +639,24 @@ export function createPickers(
     }, sandboxFail);
   };
 
+  // "Return to project": the inverse of a switch, and the only way to undo one without destroying
+  // anything. The route deletes this conversation's binding rows and nothing else — the worktree, its
+  // branch and its files all stay exactly where they are, and it can be switched back into afterwards.
+  const releaseSandboxWorkspaces = (): void => {
+    const sessionId = client.boundSession;
+    if (!sessionId) { rt.notice = color.error('no active conversation to return to its project'); render(); return; }
+    runSession(() => client.sandboxReleaseWorkspaces(sessionId), (result) => {
+      rt.notice = result.released > 0
+        ? color.success('this conversation works in its project directory again — the workspace is kept')
+        : color.dim('this conversation already works in its project directory');
+      openSandboxModal();
+      render();
+    }, (e) => {
+      rt.notice = color.error(`still working in the workspace — ${sandboxReason(e) ?? e.message}`);
+      render();
+    });
+  };
+
   const confirmDeleteSandboxWorkspace = (workspace: SandboxWorkspaceView): void => {
     runSession(() => client.sandboxRemovalPreview(workspace.id), (preview) => {
       const carried = [
@@ -746,6 +764,9 @@ export function createPickers(
         items: [
           { value: '__create', label: '+ New workspace', description: 'create a Git worktree — this conversation stays where it is until you switch it' },
           { value: '__refresh', label: 'Refresh', description: 'read the workspace list again' },
+          ...(overview.workspaces.some(activeHere)
+            ? [{ value: '__release', label: 'Return to project', description: 'work in the project directory again — the workspace is kept' }]
+            : []),
           ...overview.workspaces.map((workspace) => ({
             value: workspace.id,
             label: `${activeHere(workspace) ? '▸ ' : ''}${workspace.label}`,
@@ -756,6 +777,7 @@ export function createPickers(
         onPick: (value) => {
           if (value === '__refresh') { openSandboxModal(); return; }
           if (value === '__create') { createSandboxWorkspace(overview); return; }
+          if (value === '__release') { releaseSandboxWorkspaces(); return; }
           const workspace = overview.workspaces.find((entry) => entry.id === value);
           if (workspace) openSandboxActions(workspace, activeHere(workspace));
         },

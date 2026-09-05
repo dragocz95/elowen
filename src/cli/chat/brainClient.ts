@@ -685,6 +685,14 @@ export class BrainClient {
     return (await this.sandboxRequest<{ workspace: SandboxWorkspaceView }>('workspaces/use', input)).workspace;
   }
 
+  /** Give this conversation its Project directory back. The route deletes ONLY the plugin's binding rows —
+   *  the worktree, its branch and its directory are all preserved, so the workspace can be switched back
+   *  into afterwards. Refused with `workspace_in_use` while a process is still running in a bound workspace.
+   *  Answers how many bindings actually went, so a surface can say "there was nothing to release". */
+  async sandboxReleaseWorkspaces(sessionId: string): Promise<{ released: number }> {
+    return this.sandboxRequest<{ released: number }>('workspaces/release', { sessionId });
+  }
+
   /** What a removal would act on: dirty and untracked counts, commits beyond the base ref, live processes. */
   async sandboxRemovalPreview(workspaceId: string): Promise<SandboxRemovalPreview> {
     return this.sandboxRequest<SandboxRemovalPreview>('workspaces/remove-preview', { workspaceId });

@@ -106,6 +106,22 @@ export async function register(ctx) {
         baseRef: workspace.baseRef,
       } : null;
     },
+    // The inverse of a switch, for the one caller that has to undo one: the daemon, when a conversation is
+    // explicitly MOVED to a Project. `projectIds` is the caller's own accessibility ceiling and the account
+    // stays ambient, exactly as in `activeSessionWorkspace` — a daemon-side caller has a Policy but no
+    // plugin turn scope, so the ambient access read would answer "no projects" and release nothing.
+    releaseSessionWorkspaces: ({ sessionId, projectIds, keepProjectId }) => {
+      const accountUserId = accountId();
+      if (accountUserId === null) throw new Error('a linked Elowen account is required');
+      return workspaces.releaseSessionWorkspaces(
+        { sessionId, ...(keepProjectId === undefined ? {} : { keepProjectId }) },
+        {
+          userId: accountUserId,
+          accessibleProjects: [...(projectIds ?? [])],
+          verifySessionOwner: workspaces.verifySessionOwner,
+        },
+      );
+    },
     // Two callers, neither with an ambient turn to read, and they are NOT the same caller.
     //
     // An explicit `workspace` is a DELEGATED turn pinned to one worktree: the account comes from the

@@ -6,7 +6,8 @@
 // WHAT IT MODELS, and why each piece is there:
 //   - two projects with a workspace each, so the drawer's per-project grouping has something to group;
 //   - one CLEAN workspace bound to the default conversation (the "active here" marker) and one DIRTY one
-//     with untracked files and ahead/behind counts (the badge row);
+//     with untracked files, ahead/behind counts and a live process (the badge row, and the state the
+//     release refusal is derived from);
 //   - `workspaces/remove` refusing an unclean tree with the plugin's own coded error
 //     `{ error: 'workspace_not_clean' }`, which is the refusal the drawer maps to its blocked sentence.
 //     The refusal is derived from the fixture's state rather than armed by a flag, exactly as the real
@@ -89,7 +90,9 @@ function seedWorkspaces(): SandboxWorkspace[] {
         { path: 'src/catalog/notes.md', code: '??', untracked: true },
       ],
       uniqueCommits: 2,
-      activeProcesses: 0,
+      // A live process in this one, so a conversation that switches INTO it has something the release
+      // route must refuse — the same lease guard removal already answers with.
+      activeProcesses: 1,
       bindings: [],
     },
   ];
@@ -102,6 +105,7 @@ let workspaces: SandboxWorkspace[] = seedWorkspaces();
 export type SandboxCall =
   | { kind: 'create'; projectId?: number; label?: string; baseRef?: string; at: number }
   | { kind: 'use'; workspaceId?: string; sessionId?: string; at: number }
+  | { kind: 'release'; sessionId?: string; at: number }
   | { kind: 'remove-preview'; workspaceId?: string; at: number }
   | { kind: 'remove'; workspaceId?: string; at: number };
 
@@ -176,6 +180,20 @@ export function registerSandboxRoutes(app: Hono): void {
         : { ...w, bindings };
     });
     return c.json({ workspace: workspaces.find((w) => w.id === workspaceId) });
+  });
+
+  // The inverse of `use`: drop this conversation's bindings and KEEP every workspace, which is what makes
+  // the "active here" marker disappear while both rows stay in the list. A workspace with a live process
+  // is refused with the plugin's own coded error, the same shape the removal refusal takes.
+  app.post('/plugins/sandbox/api/workspaces/release', async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as Record<string, unknown>;
+    const sessionId = str(body.sessionId);
+    calls.push({ kind: 'release', ...(sessionId ? { sessionId } : {}), at: Date.now() });
+    if (!sessionId) return c.json({ error: 'session_required' }, 400);
+    const bound = workspaces.filter((w) => w.bindings.some((b) => b.sessionId === sessionId));
+    if (bound.some((w) => w.activeProcesses > 0)) return c.json({ error: 'workspace_in_use' }, 409);
+    workspaces = workspaces.map((w) => ({ ...w, bindings: w.bindings.filter((b) => b.sessionId !== sessionId) }));
+    return c.json({ released: bound.length });
   });
 
   app.post('/plugins/sandbox/api/workspaces/remove-preview', async (c) => {

@@ -288,6 +288,47 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
     return workspace;
   };
 
+  // Give a conversation its Project directory back. This is the only way a binding is undone without
+  // destroying something: `useWorkspace` is the sole writer of these rows, and until now the sole way to
+  // clear one was to delete the workspace, orphan its Project or delete the account. Every workspace
+  // resource is PRESERVED — no workspace row, no branch, no directory is touched, so the worktree can be
+  // switched back into at any time and only the binding rows go.
+  //
+  // `keepProjectId` releases every binding EXCEPT that Project's. That is what an explicit move into a
+  // Project means: the latest explicit intent wins, while a workspace belonging to the Project being
+  // entered keeps working. It is one narrow option rather than a second function because the guards,
+  // the transaction and the refusal are identical either way.
+  const releaseSessionWorkspaces = (input, options = {}) => {
+    const userId = requireAccount(options.userId);
+    const sessionId = String(input.sessionId ?? '').trim();
+    if (!sessionId) throw coded('a conversation is required', 'session_required');
+    if (options.verifySessionOwner) options.verifySessionOwner(sessionId, userId);
+    const keep = input.keepProjectId === undefined || input.keepProjectId === null ? null : Number(input.keepProjectId);
+    if (keep !== null && !Number.isSafeInteger(keep)) throw coded('a valid Project id is required', 'invalid_project');
+    // A Project this account can no longer reach keeps its binding untouched: a caller who has lost the
+    // grant has no business editing rows for it, exactly as it may not read or switch them.
+    const scope = accessibleProjectIds(ctx, options.accessibleProjects)
+      .map(Number).filter((projectId) => Number.isSafeInteger(projectId) && projectId !== keep);
+    if (scope.length === 0) return { released: 0, workspaceIds: [] };
+    const placeholders = scope.map(() => '?').join(',');
+    return db.transaction(() => {
+      const rows = db.prepare(`SELECT project_id, workspace_id FROM p_sandbox_session_bindings
+        WHERE session_id = ? AND user_id = ? AND project_id IN (${placeholders})`).all(sessionId, userId, ...scope);
+      if (rows.length === 0) return { released: 0, workspaceIds: [] };
+      // The busy-turn rejection, and the same hazard removal refuses for: a lease means a process is live
+      // in that worktree right now, and moving the conversation out from under it would leave the running
+      // command writing into a directory the conversation has already left.
+      for (const row of rows) {
+        if (activeExecutionLeases(db, { workspaceId: String(row.workspace_id) }).length > 0) {
+          throw coded('workspace is in use by an active process', 'workspace_in_use', 409);
+        }
+      }
+      db.prepare(`DELETE FROM p_sandbox_session_bindings
+        WHERE session_id = ? AND user_id = ? AND project_id IN (${placeholders})`).run(sessionId, userId, ...scope);
+      return { released: rows.length, workspaceIds: rows.map((row) => String(row.workspace_id)) };
+    });
+  };
+
   const commitWorkspace = async (input, options = {}) => {
     const userId = requireAccount(options.userId);
     const workspace = workspaceById(String(input.workspaceId));
@@ -413,7 +454,7 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
   return {
     listWorkspaces, workspaceById, resolveWorkspace, workspaceRoots, workspacesFor, activeWorkspace,
     activeSessionWorkspace, statusFor,
-    createWorkspace, useWorkspace, commitWorkspace, removalPreview, removeWorkspace,
+    createWorkspace, useWorkspace, releaseSessionWorkspaces, commitWorkspace, removalPreview, removeWorkspace,
     markProjectOrphaned, reconcile, removeAccount, sessionListForUser, verifySessionOwner,
   };
 }

@@ -115,3 +115,51 @@ export function effectiveTurnWorkDir(input: {
   const allowed = clientDir(input.policy, workspace.path);
   return allowed ? { baseWorkDir: input.baseWorkDir, workDir: allowed, workspace } : fallback;
 }
+
+/** Apply an EXPLICIT move of one conversation to a directory, on the Sandbox side.
+ *
+ * Selection above prefers the conversation's own binding over the cwd, which is right for a switch and
+ * wrong for a move: choosing Project B in the picker would leave the next turn running in Project A's
+ * workspace while the picker's own label read B. Two explicit user intents, silently disagreeing.
+ *
+ * So the latest one wins. Moving into a directory releases every binding that does NOT belong to the
+ * project that directory sits in, and keeps the one that does — moving into the project a workspace was
+ * cut from therefore keeps working in that workspace. The project is inferred exactly as above: a
+ * registered project path first, then a workspace root, so a move into a worktree is a move into its own
+ * project rather than out of it.
+ *
+ * Refusals PROPAGATE, and `workspace_in_use` is the one that matters: a process is running in the bound
+ * worktree right now, and leaving the conversation trapped in a workspace whose label says otherwise is
+ * worse than refusing the move and saying why. The control is optional, so a build without it releases
+ * nothing and the move proceeds unchanged. */
+export function releaseWorkspacesForMove(input: {
+  policy: Policy;
+  accountUserId: number | null;
+  sessionId: string;
+  /** The already validated destination directory. */
+  workDir: string;
+  projects?: { list(): ProjectView[] };
+  sandbox?: KnownControls['sandbox'];
+}): { released: number } {
+  if (input.accountUserId === null || !input.projects || !input.sandbox?.releaseSessionWorkspaces) return { released: 0 };
+  const projectIds = input.policy.allowedProjectIds === 'all'
+    ? input.projects.list().map((project) => project.id)
+    : [...input.policy.allowedProjectIds];
+  if (projectIds.length === 0) return { released: 0 };
+
+  const projects = input.projects.list().filter((project) => projectIds.includes(project.id));
+  let keepProjectId = projects.find((project) => realPathWithin(input.workDir, [project.path]) !== null)?.id;
+  if (keepProjectId === undefined) {
+    let roots: ReturnType<KnownControls['sandbox']['workspaceRoots']> = [];
+    try {
+      roots = runWithContributionUser(input.accountUserId, () => input.sandbox!.workspaceRoots({ projectIds }));
+    } catch { roots = []; /* no workspace roots to infer from — the move simply keeps no project */ }
+    keepProjectId = roots.find((root) => realPathWithin(input.workDir, [root.path]) !== null)?.projectId;
+  }
+
+  return runWithContributionUser(input.accountUserId, () => input.sandbox!.releaseSessionWorkspaces!({
+    sessionId: input.sessionId,
+    projectIds,
+    ...(keepProjectId === undefined ? {} : { keepProjectId }),
+  }));
+}

@@ -22,6 +22,10 @@ export const SANDBOX_TEXT = {
   project: 'Project',
   createHint: 'Creating a workspace does not move this conversation into it. Choose “Use here” on its row when you want to work there.',
   baseRefUnknown: 'This project states no default branch, so enter the reference to branch from.',
+  returnToProject: 'Return to project',
+  returnDescription: 'This conversation is working in a workspace. Returning it sends only this conversation back to the project directory. The workspace is kept, with its branch and its files, and can be selected again at any time.',
+  returned: 'This conversation is working in the project directory again. The workspace has been kept.',
+  returnBlockedInUse: 'A running process is using the workspace, so this conversation still works in it. Nothing has been changed.',
   removeTitle: 'Remove this workspace?',
   remove: 'Remove',
   blockedNotClean: 'The workspace contains uncommitted changes or commits that exist nowhere else, so it was not removed.',
@@ -67,6 +71,18 @@ export class SandboxDrawer {
   async startRemoval(label: string): Promise<void> {
     await this.actionsTrigger(label).click();
     await this.page.getByRole('menuitem', { name: SANDBOX_TEXT.remove }).click();
+  }
+
+  /** One of the app's toasts, scoped to the notification region — the page also carries Radix's own empty
+   *  live region, which a bare `getByRole('status')` matches as well. */
+  toast(tone: 'status' | 'alert'): Locator {
+    return this.page.getByRole('region', { name: 'Notifications (F8)' }).getByRole(tone);
+  }
+
+  /** The action that sends this conversation back to its project directory. Offered only while the
+   *  conversation actually works in a workspace, so its absence is itself an assertion. */
+  returnButton(): Locator {
+    return this.root.getByRole('button', { name: SANDBOX_TEXT.returnToProject });
   }
 
   /** The footer button that opens the create form. */

@@ -111,6 +111,52 @@ test('switching the conversation posts workspaces/use and moves the active marke
   await expect(drawer.useButton(CLEAN_LABEL)).toBeEnabled();
 });
 
+test('returning to the project posts workspaces/release, clears the marker and keeps every workspace', async ({ app, seed }, testInfo) => {
+  authedOnly(testInfo);
+  const chat = await chatWithSandbox(app, seed);
+  const drawer = new SandboxDrawer(app);
+  await runSandboxCommand(chat);
+  await expect(drawer.root).toBeVisible();
+
+  // Offered because the conversation IS working in a worktree, and it states what survives BEFORE the press.
+  await expect(drawer.root).toContainText(SANDBOX_TEXT.returnDescription);
+  await drawer.returnButton().click();
+
+  // The conversation id is the whole payload — no workspace is named, so nothing here can remove one.
+  await expect.poll(async () => (await drawer.calls()).filter((call) => call.kind === 'release'))
+    .toEqual([expect.objectContaining({ kind: 'release', sessionId: DEFAULT_SESSION_ID })]);
+  await expect(drawer.toast('status')).toContainText(SANDBOX_TEXT.returned);
+
+  // The marker is gone and the worktree is not: both rows are still listed and switchable again.
+  await expect(drawer.row(CLEAN_LABEL)).not.toHaveAttribute('aria-current', 'true');
+  await expect(drawer.row(CLEAN_LABEL)).not.toContainText(SANDBOX_TEXT.activeHere);
+  await expect(drawer.rows()).toHaveCount(2);
+  await expect(drawer.useButton(CLEAN_LABEL)).toBeEnabled();
+  // With nothing bound there is nothing to return from, so the action withdraws itself.
+  await expect(drawer.returnButton()).toBeHidden();
+  expect((await drawer.calls()).filter((call) => call.kind === 'remove')).toEqual([]);
+});
+
+test('a return refused while a process holds the workspace is reported and the conversation stays put', async ({ app, seed }, testInfo) => {
+  authedOnly(testInfo);
+  const chat = await chatWithSandbox(app, seed);
+  const drawer = new SandboxDrawer(app);
+  await runSandboxCommand(chat);
+  await expect(drawer.root).toBeVisible();
+
+  // Move into the worktree that has a live process in it — the state the daemon refuses to release.
+  await drawer.useButton(DIRTY_LABEL).click();
+  await expect(drawer.row(DIRTY_LABEL)).toHaveAttribute('aria-current', 'true');
+
+  await drawer.returnButton().click();
+  await expect(drawer.toast('alert')).toContainText(SANDBOX_TEXT.returnBlockedInUse);
+
+  // Nothing moved: the conversation still works in that workspace and both rows are still there.
+  await expect(drawer.row(DIRTY_LABEL)).toHaveAttribute('aria-current', 'true');
+  await expect(drawer.row(DIRTY_LABEL)).toContainText(SANDBOX_TEXT.activeHere);
+  await expect(drawer.rows()).toHaveCount(2);
+});
+
 test('a removal refused with workspace_not_clean is reported and the row survives', async ({ app, seed }, testInfo) => {
   authedOnly(testInfo);
   const chat = await chatWithSandbox(app, seed);

@@ -1163,6 +1163,23 @@ export interface SandboxControl {
     sessionId: string;
     projectIds: readonly number[];
   }): SandboxWorkspace | null;
+  /** Release a conversation's workspace bindings, so its next turn runs in its Project directory again.
+   *  The inverse of a switch, and it PRESERVES every workspace: only the binding rows go, so the worktree,
+   *  its branch and its directory all survive and can be switched back into at any time.
+   *
+   *  `keepProjectId` releases every binding EXCEPT that Project's — what an explicit move INTO a Project
+   *  means, since the latest explicit intent wins while a workspace belonging to the Project being entered
+   *  keeps working. `projectIds` is the caller's own accessibility ceiling, exactly as above.
+   *
+   *  Throws with code `workspace_in_use` (status 409) while a process holds an execution lease on a bound
+   *  workspace: moving a conversation out from under a running command is the same hazard removal refuses
+   *  for. Optional on the same precedent as `activeSessionWorkspace` — an older Sandbox build cannot do it,
+   *  and a caller must degrade rather than fail. */
+  releaseSessionWorkspaces?(input: {
+    sessionId: string;
+    projectIds: readonly number[];
+    keepProjectId?: number;
+  }): { released: number; workspaceIds: string[] };
   prepareExecution(
     input: {
       command: SandboxExecutionCommand;
