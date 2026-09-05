@@ -82,15 +82,9 @@ function catalogDefinition(model: Model<Api>, configured?: Pick<Model<Api>, 'sam
   };
 }
 
-/** ChatGPT-account text models accepted by the OAuth endpoint but absent from the pinned PI catalog.
- *  Inherit one native descriptor as a unit rather than guessing transport, limits, pricing or capabilities
- *  field by field. PI's own descriptor wins automatically once it ships the exact id. */
-const OPENAI_CODEX_OAUTH_TEXT_MODELS = [
-  { id: 'gpt-6-astra', name: 'GPT-6 Astra', clonedFrom: 'gpt-5.6-sol' },
-] as const;
-
-/** Image models the ChatGPT/OpenAI OAuth account exposes for the GenerateImage tool but that the pinned PI
- *  release does not list in the openai-codex catalog. */
+/** Image models the ChatGPT/OpenAI OAuth account exposes for the GenerateImage tool but that PI does not
+ *  list in the openai-codex catalog (it catalogs `gpt-image-1`/`gpt-image-2` for image APIs only). PI's own
+ *  descriptor wins automatically once it ships the exact id here. */
 const OPENAI_CODEX_OAUTH_IMAGE_MODELS = ['gpt-image-1.5', 'gpt-image-2'] as const;
 
 function extendOpenAiCodexCatalog(registry: ModelRegistry): void {
@@ -100,13 +94,6 @@ function extendOpenAiCodexCatalog(registry: ModelRegistry): void {
   if (!template) return; // PI dropped the provider — nothing to extend.
   const existing = new Set(builtins.map((model) => model.id));
   const models = builtins.map((model) => catalogDefinition(model));
-  for (const addition of OPENAI_CODEX_OAUTH_TEXT_MODELS) {
-    if (existing.has(addition.id)) continue;
-    const inherited = builtins.find((model) => model.id === addition.clonedFrom);
-    if (!inherited) continue; // Nothing to clone from; no entry beats one guessed from scratch.
-    models.push({ ...catalogDefinition(inherited), id: addition.id, name: addition.name });
-    existing.add(addition.id);
-  }
   for (const id of OPENAI_CODEX_OAUTH_IMAGE_MODELS) {
     if (existing.has(id)) continue;
     const capabilities = descriptorCapabilities(provider, id);
@@ -135,46 +122,6 @@ function extendOpenAiCodexCatalog(registry: ModelRegistry): void {
     baseUrl: 'https://chatgpt.com/backend-api',
     models,
   });
-}
-
-/** Claude-account models verified live but absent from the pinned PI catalog. Metadata is inherited from
- *  the immediate same-tier predecessor so context, output limit, pricing, vision, reasoning and compatibility
- *  remain one tested descriptor rather than a second hand-maintained copy. PI's native entry wins once it
- *  ships the id. */
-const ANTHROPIC_OAUTH_MODELS = [
-  { id: 'claude-opus-5', name: 'Claude Opus 5', clonedFrom: 'claude-opus-4-8', headers: undefined },
-  // A 2026-09-01 OAuth probe accepted this exact id, but rejected PI's claude-cli/2.1.75 identity with an
-  // authoritative minimum of 2.1.251. The adapter merges model headers after its default, so the override is
-  // scoped to this account model rather than changing Anthropic API-key providers or unrelated Claude tiers.
-  {
-    id: 'claude-fable-5-1', name: 'Claude Fable 5.1', clonedFrom: 'claude-fable-5',
-    headers: { 'user-agent': 'claude-cli/2.1.251' },
-  },
-] as const;
-
-function extendAnthropicCatalog(registry: ModelRegistry): void {
-  const provider = 'anthropic';
-  const builtins = registry.getAll().filter((model) => model.provider === provider);
-  const existing = new Set(builtins.map((model) => model.id));
-  const models = builtins.map((model) => catalogDefinition(model));
-  for (const addition of ANTHROPIC_OAUTH_MODELS) {
-    // Already listed — either PI ships it now and its own descriptor wins, or this runtime was extended by an
-    // earlier build. Both want the same thing: leave that model alone.
-    if (existing.has(addition.id)) continue;
-    const template = builtins.find((model) => model.id === addition.clonedFrom);
-    if (!template) continue; // Nothing to clone from; no entry beats one guessed from scratch.
-    models.push({
-      ...catalogDefinition(template),
-      id: addition.id,
-      name: addition.name,
-      ...(addition.headers ? { headers: { ...template.headers, ...addition.headers } } : {}),
-    });
-    existing.add(addition.id);
-  }
-  if (models.length === builtins.length) return;
-  // Sorted so the catalog stays alphabetical, which is what PREFERRED_DEFAULT's fallback assumes. Provider
-  // name/API/baseUrl/OAuth are omitted: composition falls back to the built-in for each instead of copying.
-  registry.registerProvider(provider, { models: models.sort((a, b) => a.id.localeCompare(b.id)) });
 }
 
 /** pi-ai's openai-completions client appends `/chat/completions` to the model's baseUrl, so the base
@@ -279,7 +226,6 @@ export function buildBrainRegistry(cfg: BrainRuntimeConfig, runtime: ModelRuntim
     if (id.startsWith(BRAIN_REGISTRY_PROVIDER_PREFIX) && !wanted.has(id)) registry.unregisterProvider(id);
   }
   extendOpenAiCodexCatalog(registry);
-  extendAnthropicCatalog(registry);
   for (const p of cfg.providers) {
     if (p.type === 'openai') {
       const api = openAiApiFor(p);

@@ -244,46 +244,45 @@ describe('brain providers', () => {
     });
   });
 
-  it('adds Fable 5.1 only to Claude OAuth by inheriting the Fable 5 descriptor', () => {
+  // Opus 5, Fable 5.1 and GPT-6 Astra used to be Elowen-side catalog clones of the previous tier; PI ships
+  // all three natively since 0.85.1, so the clones are gone. What remains Elowen's own responsibility is the
+  // ROUTING around them, which these two tests pin: an OAuth account resolves them on PI's built-in provider,
+  // a manually configured API entry keeps its own `elowen-*` namespace, and no other provider gains the id.
+  it('routes the native Claude catalog models per provider namespace', () => {
     const fable51 = 'claude-fable-5-1';
     const providers: BrainRuntimeConfig = {
       providers: [
         { id: 'claude', label: 'Claude', type: 'oauth-anthropic', baseUrl: '', models: [fable51], apiKey: null },
         { id: 'api', label: 'Anthropic API', type: 'anthropic', baseUrl: 'https://api.anthropic.com', models: [fable51], apiKey: 'k' },
       ],
-      // Applying any OAuth pin re-registers the whole built-in provider, so the Fable-specific request
-      // header must survive that copy-forward path too.
+      // Applying any OAuth pin re-registers the whole built-in provider, so the catalog descriptor must
+      // survive that copy-forward path too.
       contextWindows: { 'claude/claude-opus-5': 900_000 },
     };
     const registry = buildBrainRegistry(providers, runtime);
-    const inherited = registry.find('anthropic', 'claude-fable-5');
     const added = registry.find('anthropic', fable51);
-    expect(inherited).toBeDefined();
     expect(added).toBeDefined();
-    expect(added).toMatchObject({
-      api: inherited!.api,
-      provider: inherited!.provider,
-      baseUrl: inherited!.baseUrl,
-      reasoning: inherited!.reasoning,
-      thinkingLevelMap: inherited!.thinkingLevelMap,
-      input: inherited!.input,
-      cost: inherited!.cost,
-      contextWindow: inherited!.contextWindow,
-      maxTokens: inherited!.maxTokens,
-      samplingParams: inherited!.samplingParams,
-      compat: inherited!.compat,
-    });
-    expect(modelCapabilities(added!).levels).toEqual(modelCapabilities(inherited!).levels);
+    expect(modelCapabilities(added!).levels.length).toBeGreaterThan(0);
     expect(added!.input).toEqual(['text', 'image']);
-    const registered = registry.getRegisteredProviderConfig('anthropic')?.models?.find((model) => model.id === fable51);
-    expect(registered?.headers).toEqual({ 'user-agent': 'claude-cli/2.1.251' });
+    expect(registry.find('anthropic', 'claude-opus-5')).toBeDefined();
+
+    // The Claude OAuth endpoint rejects a stale claude-cli identity (a 2026-09-01 probe named 2.1.251 as the
+    // minimum). Elowen used to pin that header per model; PI's transport now stamps it, so the requirement is
+    // asserted where it actually lives — a downgrade there would fail every Claude-account request.
+    const transport = readFileSync(
+      fileURLToPath(new URL('../../node_modules/@earendil-works/pi-ai/dist/api/anthropic-messages.js', import.meta.url)),
+      'utf8',
+    );
+    const version = /claudeCodeVersion = "(\d+)\.(\d+)\.(\d+)"/.exec(transport);
+    expect(version).not.toBeNull();
+    const [major, minor, patch] = version!.slice(1).map(Number) as [number, number, number];
+    expect(major * 1_000_000 + minor * 1_000 + patch).toBeGreaterThanOrEqual(2 * 1_000_000 + 1 * 1_000 + 251);
 
     const oauthRoute = resolveBrainModelRoute(registry, providers, { provider: 'claude', model: fable51 });
     expect(oauthRoute.providerId).toBe('claude');
     expect(oauthRoute.model).toMatchObject({ id: fable51, provider: 'anthropic', api: 'anthropic-messages' });
 
-    // The overlay is the verified Claude-account catalog only. A manually configured API model keeps its
-    // own provider namespace and receives none of the OAuth client-identity workaround.
+    // A manually configured API model keeps its own provider namespace and none of the account descriptor.
     const apiRoute = resolveBrainModelRoute(registry, providers, { provider: 'api', model: fable51 });
     expect(apiRoute.model.provider).toBe('elowen-api');
     expect(apiRoute.model.headers).toBeUndefined();
@@ -291,31 +290,16 @@ describe('brain providers', () => {
     expect(registry.find('openai-codex', fable51)).toBeUndefined();
   });
 
-  it('adds GPT-6 Astra only to ChatGPT OAuth by inheriting the Sol descriptor', () => {
+  it('routes GPT-6 Astra on ChatGPT OAuth without leaking it to other providers', () => {
     const astra = 'gpt-6-astra';
     const providers: BrainRuntimeConfig = { providers: [
       { id: 'codex', label: 'ChatGPT', type: 'oauth-openai-codex', baseUrl: '', models: ['gpt-5.5', astra], apiKey: null },
       { id: 'api', label: 'OpenAI API', type: 'openai', baseUrl: 'https://api.openai.com/v1', models: [astra], apiKey: 'k' },
     ] };
     const registry = buildBrainRegistry(providers, runtime);
-    const inherited = registry.find('openai-codex', 'gpt-5.6-sol');
     const added = registry.find('openai-codex', astra);
-    expect(inherited).toBeDefined();
     expect(added).toBeDefined();
-    expect(added).toMatchObject({
-      api: inherited!.api,
-      provider: inherited!.provider,
-      baseUrl: inherited!.baseUrl,
-      reasoning: inherited!.reasoning,
-      thinkingLevelMap: inherited!.thinkingLevelMap,
-      input: inherited!.input,
-      cost: inherited!.cost,
-      contextWindow: inherited!.contextWindow,
-      maxTokens: inherited!.maxTokens,
-      samplingParams: inherited!.samplingParams,
-      compat: inherited!.compat,
-    });
-    expect(modelCapabilities(added!).levels).toEqual(modelCapabilities(inherited!).levels);
+    expect(modelCapabilities(added!).levels.length).toBeGreaterThan(0);
 
     const oauthRoute = resolveBrainModelRoute(registry, providers, { provider: 'codex', model: astra });
     expect(oauthRoute.providerId).toBe('codex');
@@ -327,8 +311,9 @@ describe('brain providers', () => {
     expect(apiRoute.model.cost).not.toEqual(added!.cost);
     expect(apiRoute.model.compat).toBeUndefined();
     expect(resolveFastModeRoute(providers.providers[0]!, oauthRoute.model)).toBeUndefined();
+    // Not on providers whose own catalog has no such model. GitHub Copilot is deliberately absent from this
+    // list: PI serves Astra there too, under that provider's own descriptor and credential.
     expect(registry.find('anthropic', astra)).toBeUndefined();
-    expect(registry.find('github-copilot', astra)).toBeUndefined();
     expect(registry.find('kimi-coding', astra)).toBeUndefined();
   });
 
