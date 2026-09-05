@@ -57,6 +57,13 @@ export class LiveSessionRegistry<T extends { sessionId: string; session: { dispo
   /** Parent aborts fence new delegated sends before the abort snapshots its child set. A counter keeps a
    * concurrent/nested abort from reopening the parent between another abort's snapshot and cleanup. */
   private abortingParents = new Map<string, number>();
+  /** Fired when a parent gains its FIRST live delegated child or loses its LAST one, never on the claims
+   *  in between — those change nothing an observer of "is this conversation busy" can see. The registry
+   *  stays a pure container: it reports the transition and holds no opinion about who cares. Its owner
+   *  (BrainService) routes it into the conversation-activity notifier, so a read model that counts a
+   *  delegating parent as busy is invalidated when a BACKGROUND child starts or finishes, instead of
+   *  going stale until that conversation happens to run another turn. */
+  onChildrenChanged?: (parentSessionId: string) => void;
 
   /** Serialize on `key`: chains fn behind whatever holds the lock (failures don't poison the chain). */
   withLock<K>(key: string, fn: () => Promise<K>): Promise<K> {
@@ -114,10 +121,12 @@ export class LiveSessionRegistry<T extends { sessionId: string; session: { dispo
   setChildRunning(parentSessionId: string, childSessionId: string, running: boolean, source: ChildClaimSource = 'call'): void {
     if (running) {
       let claims = this.children.get(parentSessionId);
+      const first = !claims;
       if (!claims) { claims = new Map(); this.children.set(parentSessionId, claims); }
       let sources = claims.get(childSessionId);
       if (!sources) { sources = new Set(); claims.set(childSessionId, sources); }
       sources.add(source);
+      if (first) this.onChildrenChanged?.(parentSessionId);
       return;
     }
     const claims = this.children.get(parentSessionId);
@@ -128,6 +137,7 @@ export class LiveSessionRegistry<T extends { sessionId: string; session: { dispo
     if (claims.size === 0) {
       this.children.delete(parentSessionId);
       this.resolveChildIdleWaiters(parentSessionId);
+      this.onChildrenChanged?.(parentSessionId);
     }
   }
   childrenOf(parentSessionId: string): string[] { return [...(this.children.get(parentSessionId)?.keys() ?? [])]; }
@@ -163,8 +173,9 @@ export class LiveSessionRegistry<T extends { sessionId: string; session: { dispo
     });
   }
   clearChildren(parentSessionId: string): void {
-    this.children.delete(parentSessionId);
+    const had = this.children.delete(parentSessionId);
     this.resolveChildIdleWaiters(parentSessionId);
+    if (had) this.onChildrenChanged?.(parentSessionId);
   }
   private resolveChildIdleWaiters(parentSessionId: string): void {
     const waiters = this.childIdleWaiters.get(parentSessionId);

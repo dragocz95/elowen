@@ -102,3 +102,59 @@ describe('LiveSessionRegistry — delegated-child liveness claims', () => {
     await expect(wait).resolves.toBe('idle');
   });
 });
+
+// A conversation with a live delegated child is busy even after its own turn settled, and that liveness
+// exists ONLY here. Without an edge to publish, a background delegation starting or finishing was invisible
+// to every read model — the owner's conversation list, and the Chat count on it, went stale until that
+// conversation happened to run another turn.
+describe('LiveSessionRegistry — busy-edge notification', () => {
+  it('reports only the 0↔n edges, never the claims in between', () => {
+    const seen: string[] = [];
+    const r = registry();
+    r.onChildrenChanged = (id) => seen.push(id);
+
+    r.setChildRunning('parent', 'a', true);              // 0 → 1: the parent became busy
+    r.setChildRunning('parent', 'a', true, 'progress');  // second source on the same child
+    r.setChildRunning('parent', 'b', true);              // a second child under a busy parent
+    expect(seen).toEqual(['parent']);
+
+    r.setChildRunning('parent', 'a', false, 'progress');
+    r.setChildRunning('parent', 'a', false);             // one child left, still busy
+    expect(seen).toEqual(['parent']);
+
+    r.setChildRunning('parent', 'b', false);             // n → 0: the parent is idle again
+    expect(seen).toEqual(['parent', 'parent']);
+  });
+
+  it('reports each parent independently', () => {
+    const seen: string[] = [];
+    const r = registry();
+    r.onChildrenChanged = (id) => seen.push(id);
+    r.setChildRunning('parent-a', 'child', true);
+    r.setChildRunning('parent-b', 'child', true);
+    expect(seen).toEqual(['parent-a', 'parent-b']);
+  });
+
+  it('reports the abort tree\'s full teardown, and stays silent for a parent that had nothing', () => {
+    const seen: string[] = [];
+    const r = registry();
+    r.onChildrenChanged = (id) => seen.push(id);
+    r.setChildRunning('parent', 'a', true);
+    seen.length = 0;
+
+    r.clearChildren('parent');
+    expect(seen).toEqual(['parent']);
+
+    r.clearChildren('parent');            // already empty
+    r.clearChildren('never-delegated');
+    expect(seen).toEqual(['parent']);
+  });
+
+  it('releasing an unknown claim reports nothing', () => {
+    const seen: string[] = [];
+    const r = registry();
+    r.onChildrenChanged = (id) => seen.push(id);
+    r.setChildRunning('parent', 'child', false);
+    expect(seen).toEqual([]);
+  });
+});

@@ -235,6 +235,11 @@ export class BrainService {
     // completion only for the boot that owns the run. Generated here because BrainService is a per-daemon
     // singleton, so its construction coincides with the boot.
     d.store.setDelegationBootId(randomUUID());
+    // A conversation whose delegated child is still running is busy even after its own turn settled (see
+    // SessionListItem.working). That liveness lives only in the registry, so its 0↔n edges are routed into
+    // the same owner-scoped invalidation the durable activity transitions publish — otherwise a BACKGROUND
+    // delegation starting or finishing would be invisible to every read model until the next turn.
+    this.sessions.onChildrenChanged = (sessionId) => d.onConversationActivityChanged?.(sessionId);
     // Mid-turn messages are STEERED into the running turn via PI's native queue (session.steer); PI fans
     // its transient backlog as `queue_update`, mapped to the `queue` snapshot event in the spawner.
     this.factory = new BrainSessionFactory({ store: d.store, chatImagesDir: d.chatImagesDir, onTurnSettled: d.onTurnSettled, createSession: d.createSession, resourceLoaderFactory: d.resourceLoaderFactory });

@@ -32,6 +32,15 @@ export interface SessionListItem {
   id: string; title: string; provider: string; model: string; updated_at: string;
   running: boolean; active: boolean; attached: number;
   activity: { state: 'idle' | 'working' | 'done' | 'failed'; seq: number; at: string | null; detail: string; unread: boolean };
+  /** Whether this conversation is BUSY — which neither `running` nor `activity.state` answers alone.
+   *  `running` only says a live session object exists, and one outlives its last turn by design; the
+   *  durable activity claim is authoritative for a turn but is settled the moment a turn returns.
+   *
+   *  Busy is the durable `working` claim OR a delegated child still claimed live under this conversation.
+   *  The child term is the same rule `presence()` and the chat surface's `streaming` already apply — a
+   *  turn that handed its work to a sub-agent is still that person working — and it is what keeps a
+   *  BACKGROUND delegation, whose own turn settled while its agent kept running, from reading as idle. */
+  working: boolean;
 }
 
 /** Opt-in slice for the session listings. Both fields are already clamped to non-negative ints by the
@@ -508,6 +517,7 @@ export class BrainStatusService {
         id: s.id, title: s.title, provider: s.provider, model: s.model, updated_at: s.updated_at,
         running: this.d.sessions.has(s.id), active: s.id === activeId, attached: this.d.attachments.attachedCount(s.id),
         activity: activityOf(s),
+        working: s.activity_state === 'working' || this.d.sessions.hasActiveChildren(s.id),
       }));
   }
 
