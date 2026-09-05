@@ -55,15 +55,24 @@
   --color-sidebar-accent-foreground: var(--color-foreground);
   --color-sidebar-border: var(--color-border);
   --color-sidebar-ring: var(--color-ring);
+  /* NOT a shadcn token, and deliberately separate from --color-sidebar-border, which is the column's
+     INTERNAL hairline (the header rule, the group seams, the footer rule). This one is the rule down the
+     column's OUTER edge, and it is transparent by construction: the navigation grounds on the same canvas
+     the page does, so there is no seam to draw there. Owner decision, 5 Sep 2026 — 1:1 with the reference
+     dashboard, where the column is a region of the page rather than a panel laid on it. A design that
+     grounds its column on a different surface gives this token a colour and gets its edge back. */
+  --color-sidebar-rule: transparent;
 
   /* The column's GEOMETRY, as measured off the Cloudflare dashboard (plans/cloudflare-sidebar-spec.md).
      Separate tokens from the colours above because they are a different kind of decision: a skin
      repaints the sidebar constantly and moves these almost never, and the primitive's collapsed rail
      has to agree with the shell's flex basis or the fold animates to the wrong width.
      `--sidebar-width-icon` is read by `components/ui/shadcn/sidebar.tsx`, which upstream injects as an
-     inline style — it is declared here so a skin can still override it. */
+     inline style — it is declared here so a skin can still override it. Its value is the reference's
+     measured 57px and it is stated ONCE, here: both Studio skins used to restate the same number, which
+     is two sources of truth for one measurement and a drift nothing would have caught. */
   --sidebar-width: 16.25rem;        /* 260px, the expanded column */
-  --sidebar-width-icon: 3rem;       /* the collapsed rail */
+  --sidebar-width-icon: 3.5625rem;  /* 57px, the collapsed rail */
   --sidebar-width-mobile: 18rem;    /* the off-canvas presentation, wider than the desktop column */
   --sidebar-row-height: 2.125rem;   /* 34px, `min-h-8.5` in the reference */
   --sidebar-row-radius: 0.5rem;     /* 8px, `rounded-lg` in the reference's own scale */
@@ -71,8 +80,19 @@
   --sidebar-sub-indent: 1.75rem;    /* 28px, `pl-7` per nesting level */
   --sidebar-text: 0.8125rem;        /* 13px, every row and group label */
   --sidebar-header-height: 3.625rem; /* 58px, the switcher row above the header hairline */
+  --sidebar-switcher-height: 2.5rem; /* 40px, the switcher itself, centred inside that header */
+  /* The page's top bar is the SAME height as the sidebar header, because the hairline under each is ONE
+     line across the whole window: the column's header and the page's bar are two halves of one frame,
+     and 58px beside a 50px bar is what left a visible step where the two met. Stated as an ALIAS rather
+     than as a second 58px — they are one measurement, so a design that retunes the frame moves both by
+     moving the sidebar header. */
+  --topbar-height: var(--sidebar-header-height);
   --sidebar-footer-height: 3rem;    /* 48px, the fold's row below the footer hairline */
   --sidebar-search-height: 2rem;    /* 32px, the command palette's field under the header */
+  /* The disclosure caret's own duration. Not `--motion-base`: the Studio skins retune that to 150ms for
+     navigation, and the reference turns this caret in 200ms regardless of how fast the rest of the
+     column moves. A rotation is the one motion in the menu the eye follows to its end. */
+  --sidebar-caret-motion: 200ms;
 
   --color-border: #242424;
   /* NOT a shadcn token: the heavier rule, for a scrollbar thumb and a focused edge. */
