@@ -233,6 +233,16 @@ export async function register(ctx) {
     },
   }));
 
+  // The plugin declares the command; each surface owns the chooser it draws for it. A picker carries no
+  // prompt — there is no model turn behind it — and because the declaration lives here, switching the
+  // plugin off removes `/sandbox` from every published menu with nothing for core to withhold.
+  ctx.registerCommand({
+    name: 'sandbox',
+    description: 'Inspect and manage Sandbox workspaces',
+    kind: 'picker',
+    surfaces: ['cli', 'web'],
+  });
+
   registerSandboxApi({ ctx, db, dataDir, workspaces, execution, migrationState });
 
   ctx.registerReadinessCheck(() => {

@@ -6,6 +6,7 @@ import { initTheme } from '@earendil-works/pi-coding-agent';
 import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
 import { ChatState } from '../../../src/cli/chat/chatState.js';
 import { createPickers } from '../../../src/cli/chat/pickers.js';
+import { SandboxRouteError } from '../../../src/cli/chat/brainClient.js';
 import { setChatTheme } from '../../../src/cli/chat/theme.js';
 import { ChatApplicationLifetime } from '../../../src/cli/chat/applicationLifetime.js';
 
@@ -169,6 +170,83 @@ describe('picker application lifetime', () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(tui.showOverlay).not.toHaveBeenCalled();
     expect(state.notice).toContain('task #404 no longer exists');
+    await lifetime.stop();
+  });
+
+  /** The `/sandbox` overlay drives the sandbox plugin's own routes and always takes the SAFE removal path
+   *  (no `discard`, no `force`). When the plugin refuses, the reason has to reach the user in words and
+   *  the workspace has to stay exactly as it was — a silent "deleted" here would be a lie about a worktree
+   *  that still holds the user's work. */
+  it('reports a refused workspace removal by its coded reason and removes nothing', async () => {
+    initTheme();
+    const lifetime = new ChatApplicationLifetime<'metadata'>();
+    let modal: { handleInput(data: string): void; render(width: number): string[] } | null = null;
+    const tui = {
+      terminal: { columns: 120, rows: 40 },
+      showOverlay: vi.fn((component: typeof modal) => {
+        modal = component;
+        return { hide: vi.fn(), setHidden: vi.fn(), isHidden: () => false, focus: vi.fn(), unfocus: vi.fn(), isFocused: () => true };
+      }),
+      setFocus: vi.fn(), requestRender: vi.fn(),
+    };
+    const workspace = {
+      id: 'ws_1', userId: 1, projectId: 1, label: 'Feature Alpha', path: '/data/ws/feature-alpha',
+      branch: 'elowen/u1/feature-alpha', baseRef: 'main', lifecycle: 'active', orphanReason: null,
+      accessible: true,
+      status: { head: 'abc', branch: 'elowen/u1/feature-alpha', upstream: '', ahead: 0, behind: 0, dirty: 2, untracked: 1, clean: false },
+      files: [], uniqueCommits: 0, activeProcesses: 0, bindings: [],
+    };
+    const sandboxOverview = vi.fn(async () => ({
+      projects: [{ id: 1, slug: 'demo', path: '/var/www/demo' }],
+      sessions: [],
+      workspaces: [workspace],
+    }));
+    const sandboxRemovalPreview = vi.fn(async () => ({
+      workspaceId: 'ws_1', head: 'abc', dirty: 2, untracked: 1, uniqueCommits: 0, activeProcesses: 0,
+      files: [], previewHash: 'hash', phrase: 'discard Feature Alpha',
+    }));
+    const sandboxRemoveWorkspace = vi.fn(async () => {
+      throw new SandboxRouteError('workspace_not_clean', 'workspace removal requires a clean tree with no unpushed commits');
+    });
+    const state = new ChatState({ transcript: new TranscriptModel() });
+    const pickers = createPickers(
+      state,
+      {
+        client: { boundSession: 'brain-1', sandboxOverview, sandboxRemovalPreview, sandboxRemoveWorkspace },
+        tui, editor: {}, termSettings: null, cwdLabel: '', branchLabel: '', commandDefs: [], lifetime,
+      } as never,
+      { render: vi.fn(), refreshMeta: async () => {} },
+      {} as never,
+      { reshowPanel: vi.fn(), reloadKeymap: vi.fn() },
+    );
+    const plain = (): string => modal!.render(100).join('\n').replace(/\x1b\[[0-9;]*m/g, '');
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    pickers.openSandboxModal();
+    await settle();
+    expect(plain()).toContain('Feature Alpha');
+    expect(plain()).toContain('elowen/u1/feature-alpha');
+
+    modal!.handleInput('\x1b[B'); // + New workspace → Refresh
+    modal!.handleInput('\x1b[B'); // → the workspace row
+    modal!.handleInput('\r');
+    await settle();
+    expect(plain()).toContain('Workspace Feature Alpha');
+
+    modal!.handleInput('\x1b[B'); // Back → Use in this conversation
+    modal!.handleInput('\x1b[B'); // → Delete
+    modal!.handleInput('\r');
+    await settle();
+    expect(sandboxRemovalPreview).toHaveBeenCalledWith('ws_1');
+    expect(plain()).toContain('Delete workspace "Feature Alpha"?');
+
+    modal!.handleInput('\x1b[B'); // Cancel → Delete
+    modal!.handleInput('\r');
+    await settle();
+
+    expect(sandboxRemoveWorkspace).toHaveBeenCalledWith('ws_1'); // safe path only — no discard, no force
+    expect(state.notice).toContain('workspace kept');
+    expect(state.notice).toContain('uncommitted changes');
     await lifetime.stop();
   });
 

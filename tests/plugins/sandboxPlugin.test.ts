@@ -15,6 +15,7 @@ import { processRegistry } from '../../src/brain/processRegistry.js';
 import { bubblewrapProbe, migrateLegacyHomes, runPrepared } from '../../plugins/sandbox/lib/execution.mjs';
 import { processIdentity, reconcileStaleLeases, withRepoLease } from '../../plugins/sandbox/lib/db.mjs';
 import { createWorkspacePathView } from '../../src/plugins/pathView.js';
+import { commandsWithPlugins } from '../../src/brain/slashCommands.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const log = { info() {}, warn() {}, error() {} };
@@ -742,6 +743,33 @@ describe('sandbox HOME migration', () => {
     const retained = migrateLegacyHomes(sandboxData);
     expect(retained.retainedSessions).toContain(legacySession);
     expect(existsSync(legacySession)).toBe(true);
+  });
+});
+
+/** The PLUGIN declares `/sandbox`, not core. That is what makes disabling the plugin remove the command
+ *  from every surface menu: there is no sandbox name in the core catalog left to withhold. */
+describe('sandbox slash command declaration', () => {
+  const publishedFor = (registry: Awaited<ReturnType<typeof setup>>['registry']) => commandsWithPlugins(
+    'cli', true,
+    [...registry.commands.values()].map((cmd) => ({ ...cmd, plugin: registry.commandOwner.get(cmd.name) })),
+    registry.loadedNames,
+  );
+
+  it('registers /sandbox as a picker carrying no prompt', async () => {
+    const { registry } = await setup();
+    const declared = registry.commands.get('sandbox');
+    expect(declared).toMatchObject({ name: 'sandbox', kind: 'picker', surfaces: ['cli', 'web'] });
+    expect(declared?.prompt).toBeUndefined();
+    expect(registry.commandOwner.get('sandbox')).toBe('sandbox');
+    expect(publishedFor(registry).find((cmd) => cmd.name === 'sandbox'))
+      .toMatchObject({ kind: 'picker', execution: 'surface-local', plugin: 'sandbox' });
+  });
+
+  it('publishes no /sandbox at all when the plugin is not loaded', async () => {
+    const { registry } = await setup([]);
+    expect(registry.loadedNames.has('sandbox')).toBe(false);
+    expect(registry.commands.has('sandbox')).toBe(false);
+    expect(publishedFor(registry).some((cmd) => cmd.name === 'sandbox')).toBe(false);
   });
 });
 

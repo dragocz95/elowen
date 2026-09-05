@@ -19,9 +19,14 @@ export function resolveThinkingLevel(value: string, levels: string[], labels: Re
   return levels.find((level) => level.toLowerCase() === wanted || (labels[level] ?? '').toLowerCase() === wanted) ?? null;
 }
 
+/** A slash command this TUI recognized: one of its own built-ins, or a plugin-declared picker resolved
+ *  generically from the published catalog (`plugin-picker`, which carries only the published name). */
+export type BuiltinCommand = { cmd: 'quit' | 'new' | 'clear' | 'stop' | 'stats' | 'context' | 'restart' | 'sessions' | 'resume' | 'rename' | 'delete' | 'model' | 'reasoning' | 'fast' | 'theme' | 'maskot' | 'cd' | 'editor' | 'keybinds' | 'statusline' | 'lsp' | 'mcp' | 'skills' | 'tasks' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'workflow' | 'yolo' | 'paste' | 'export' | 'help'; arg?: string };
+export type ParsedCommand = BuiltinCommand | { cmd: 'plugin-picker'; name: string };
+
 /** Local slash-command routing: returns the recognized command (with its argument) or null for a
  *  regular chat message. Pure, so the command surface is unit-testable without a TTY. */
-export function parseCommand(text: string, available?: readonly SlashCommandDef[]): { cmd: 'quit' | 'new' | 'clear' | 'stop' | 'stats' | 'context' | 'restart' | 'sessions' | 'resume' | 'rename' | 'delete' | 'model' | 'reasoning' | 'fast' | 'theme' | 'maskot' | 'cd' | 'editor' | 'keybinds' | 'statusline' | 'lsp' | 'mcp' | 'skills' | 'tasks' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'workflow' | 'yolo' | 'paste' | 'export' | 'help'; arg?: string } | null {
+export function parseCommand(text: string, available?: readonly SlashCommandDef[]): ParsedCommand | null {
   const m = /^\/(\w+)(?:\s+(.+))?$/.exec(text.trim());
   if (!m) return null;
   const name = m[1]!;
@@ -64,9 +69,27 @@ export function parseCommand(text: string, available?: readonly SlashCommandDef[
     case 'paste': return { cmd: 'paste' };
     case 'export': return { cmd: 'export', arg: m[2] };
     case 'help': return { cmd: 'help' };
-    default: return null;
+    // Not a built-in. A plugin may still have DECLARED a command this surface draws itself, so resolve it
+    // from the published projection rather than from any name written into the CLI: `kind: 'picker'` says
+    // the surface renders it, `execution: 'surface-local'` says nothing server-side runs it, and `plugin`
+    // says a plugin owns it. Switch that plugin off and the entry stops being published, so this stops
+    // resolving — which is the whole point of keeping the name out of core.
+    default: {
+      const def = available?.find((command) => command.name === name);
+      return def?.kind === 'picker' && def.execution === 'surface-local' && def.plugin
+        ? { cmd: 'plugin-picker', name }
+        : null;
+    }
   }
 }
+
+/** Which local overlay draws each plugin-declared picker. This is presentation wiring, not plugin
+ *  behaviour: a plugin can ship an HTTP surface but not a TUI modal, so the terminal states which of its
+ *  own renderers answers a published name. A name with no entry gets a notice instead of an empty
+ *  chooser — the daemon may publish a picker this build has never drawn. */
+const PLUGIN_PICKER_RENDERERS: Record<string, (pickers: Pickers) => void> = {
+  sandbox: (pickers) => { pickers.openSandboxModal(); },
+};
 
 /** True while the input text can still be a slash-command name being typed ("/", "/mo", "/model").
  *  A space (arguments), a second '/' (a path like /var/www/x) or a wiped leading '/' means it's ordinary
@@ -298,6 +321,16 @@ export function wireSubmit(
     if (command) {
       switch (command.cmd) {
         case 'quit': quit(); return;
+        case 'plugin-picker': {
+          const renderer = PLUGIN_PICKER_RENDERERS[command.name];
+          if (!renderer) {
+            rt.notice = color.dim(`/${command.name} has no chooser in this terminal — use it from the web dock`);
+            render();
+            return;
+          }
+          renderer(pickers);
+          return;
+        }
         case 'help': pickers.openHelpModal(); return;
         case 'new':
           runApplication(() => stream.switchTo({ fresh: true }), () => {}, fail);

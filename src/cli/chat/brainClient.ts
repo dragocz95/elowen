@@ -125,6 +125,47 @@ export interface SessionTaskPatch {
   subject?: string;
   owner?: string | null;
 }
+/** One workspace as `GET /plugins/sandbox/api/overview` reports it: the stored row plus the live Git,
+ *  lease and binding state the plugin computes alongside it. A WIRE contract this client owns as that
+ *  endpoint's consumer, like {@link McpServerView} — not a type reaching across the core→plugin boundary. */
+export interface SandboxWorkspaceView {
+  id: string; userId: number; projectId: number; label: string; path: string; branch: string; baseRef: string;
+  lifecycle: 'active' | 'orphaned'; orphanReason: string | null;
+  createdAt: string; updatedAt: string; lastUsedAt: string;
+  accessible: boolean;
+  /** Null when the path is gone or is not a Git repository — the plugin reports that instead of failing. */
+  status: { branch: string; head: string; upstream: string; ahead: number; behind: number; dirty: number; untracked: number; clean: boolean } | null;
+  files: { path: string; code: string; untracked: boolean }[];
+  uniqueCommits: number;
+  activeProcesses: number;
+  /** Conversations bound to this workspace. The plugin's binding table is the sole authority on which
+   *  conversation works where, so this is what tells a surface whether a workspace is active for it. */
+  bindings: { sessionId: string; updatedAt: string }[];
+}
+/** A Project row as the overview carries it. `defaultBranch` stays optional because the Project store does
+ *  not always know one — the caller falls back to `main` rather than inventing a ref. */
+export interface SandboxProjectView { id: number; slug: string; path: string; defaultBranch?: string }
+export interface SandboxOverview {
+  projects: SandboxProjectView[];
+  sessions: { id: string; title: string; updatedAt: string }[];
+  workspaces: SandboxWorkspaceView[];
+}
+/** What `workspaces/remove-preview` answers: the state a removal would act on. `previewHash` and `phrase`
+ *  belong to the plugin's DESTRUCTIVE path, which this client never takes. */
+export interface SandboxRemovalPreview {
+  workspaceId: string; head: string; dirty: number; untracked: number; uniqueCommits: number;
+  activeProcesses: number; files: string[]; previewHash: string; phrase: string;
+}
+/** A refusal from a sandbox plugin route. All of them answer `{ error, detail }` where `error` is the
+ *  plugin's own code (`workspace_in_use`, `workspace_not_clean`, `workspace_changed`, …), so carrying the
+ *  code lets a surface explain WHY an operation was refused instead of echoing a status number. */
+export class SandboxRouteError extends Error {
+  constructor(readonly code: string, message: string) {
+    super(message);
+    this.name = 'SandboxRouteError';
+  }
+}
+
 export type GoalView = BrainGoalState;
 export interface RuntimeToolView { name: string; plugin: string; description?: string; schema?: string }
 /** One configured brain provider from the public config (API key stripped to `apiKeySet`). */
@@ -605,6 +646,53 @@ export class BrainClient {
     if (res.status === 401) throw new Unauthorized();
     if (!res.ok) throw new Error(`elowen ${res.status} on /plugins/todo/api/task`);
     return ((await res.json()) as { tasks: SessionTaskView[] }).tasks;
+  }
+
+  /** One request against the sandbox plugin's route namespace. A GET when no body is given, a POST when
+   *  one is — mirroring how the plugin registers them. A refusal keeps its code as a
+   *  {@link SandboxRouteError}, because the whole reason a caller asks is to be told what blocked it. */
+  private async sandboxRequest<T>(path: string, body?: unknown): Promise<T> {
+    const route = `/plugins/sandbox/api/${path}`;
+    const res = body === undefined
+      ? await this.f(`${this.o.base}${route}`, { headers: this.headers() })
+      : await this.f(`${this.o.base}${route}`, { method: 'POST', headers: this.headers(true), body: JSON.stringify(body) });
+    if (res.status === 401) throw new Unauthorized();
+    if (!res.ok) {
+      const failure = (await res.json().catch(() => null)) as { error?: string; detail?: string } | null;
+      throw new SandboxRouteError(failure?.error || 'sandbox_error', failure?.detail || `elowen plugins ${res.status} on ${route}`);
+    }
+    return (await res.json()) as T;
+  }
+
+  /** Everything the `/sandbox` chooser lists: the accessible Projects, the account's conversations and its
+   *  workspaces with their live status, process count and conversation bindings. */
+  async sandboxOverview(): Promise<SandboxOverview> {
+    const body = await this.sandboxRequest<Partial<SandboxOverview>>('overview');
+    return { projects: body.projects ?? [], sessions: body.sessions ?? [], workspaces: body.workspaces ?? [] };
+  }
+
+  /** Create a real Git worktree for one accessible Project. The route reads `projectId`, `label` and
+   *  `baseRef`, and binds the new workspace to `sessionId` when one is given. */
+  async sandboxCreateWorkspace(input: { projectId: number; label: string; baseRef: string; sessionId?: string }): Promise<SandboxWorkspaceView> {
+    return (await this.sandboxRequest<{ workspace: SandboxWorkspaceView }>('workspaces/create', input)).workspace;
+  }
+
+  /** Bind a conversation to a workspace. This route is the ONLY writer of the plugin's session bindings,
+   *  and the daemon derives the turn's working directory from them, so no surface sets that state itself. */
+  async sandboxUseWorkspace(input: { workspaceId: string; sessionId: string; projectId: number }): Promise<SandboxWorkspaceView> {
+    return (await this.sandboxRequest<{ workspace: SandboxWorkspaceView }>('workspaces/use', input)).workspace;
+  }
+
+  /** What a removal would act on: dirty and untracked counts, commits beyond the base ref, live processes. */
+  async sandboxRemovalPreview(workspaceId: string): Promise<SandboxRemovalPreview> {
+    return this.sandboxRequest<SandboxRemovalPreview>('workspaces/remove-preview', { workspaceId });
+  }
+
+  /** Remove a workspace on the SAFE path only. Deliberately no `discard`: the plugin then refuses a dirty
+   *  tree, untracked files, commits beyond the base ref or an active process lease, and the worktree is
+   *  left exactly as it was. This client has no way to ask for the destructive path. */
+  async sandboxRemoveWorkspace(workspaceId: string): Promise<{ removed: string }> {
+    return this.sandboxRequest<{ removed: string }>('workspaces/remove', { workspaceId });
   }
 
   async status(): Promise<BrainStatus> {

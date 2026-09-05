@@ -12,7 +12,10 @@ import { API_KEY_PROVIDERS } from '../setup/constants.js';
 import { trimTrailingSlash } from '../../shared/url.js';
 import { todoCard } from '../../shared/todoCard.js';
 import { TODO_CARD_ID } from '../../shared/chatPresentation.js';
-import { WORK_MODE_LABEL, type BrainProviderView, type SessionTaskView } from './brainClient.js';
+import {
+  SandboxRouteError, WORK_MODE_LABEL,
+  type BrainProviderView, type SandboxOverview, type SandboxWorkspaceView, type SessionTaskView,
+} from './brainClient.js';
 import type { ChatState } from './chatState.js';
 import type { ChatApplicationActions, ChatApplicationResources, ChatTaskScope } from './chatCapabilities.js';
 import type { StreamCoordinatorPort } from './streamCoordinator.js';
@@ -35,10 +38,45 @@ export interface Pickers {
   openTasksModal(): void;
   /** The per-task action sheet on its own — what a click on a Todo card row opens, without the list. */
   openTaskActions(taskId: string): void;
+  /** `/sandbox` — the terminal's chooser for the workspace commands the sandbox plugin declares. */
+  openSandboxModal(): void;
   openLspModal(): void;
   openToolsModal(): void;
   openKeybindsModal(): void;
   openStatuslineModal(): void;
+}
+
+/** Readable English for the codes the sandbox plugin refuses a workspace operation with. Nothing here
+ *  decides anything — the plugin already made the call and left the workspace untouched; this only says
+ *  why, because a bare code in a notice tells the user nothing about their own work. */
+const SANDBOX_REFUSALS: Record<string, string> = {
+  workspace_in_use: 'a process is still running in it',
+  workspace_not_clean: 'it holds uncommitted changes, untracked files or commits beyond its base ref',
+  workspace_changed: 'it changed after the removal preview was taken',
+  workspace_not_found: 'it no longer exists',
+  workspace_orphaned: 'its source Project is gone, so the workspace is preserved on disk',
+  project_forbidden: 'its Project is no longer accessible to this account',
+  session_forbidden: 'the conversation does not belong to this account',
+  account_required: 'a linked Elowen account is required',
+};
+
+function sandboxReason(error: Error): string | null {
+  return error instanceof SandboxRouteError ? SANDBOX_REFUSALS[error.code] ?? null : null;
+}
+
+/** One glanceable line of workspace state for a list row. */
+function sandboxStateSummary(workspace: SandboxWorkspaceView): string {
+  const status = workspace.status;
+  if (!status) return 'no Git status';
+  const bits = [
+    status.dirty > 0 ? `${status.dirty} changed` : null,
+    status.untracked > 0 ? `${status.untracked} untracked` : null,
+    workspace.uniqueCommits > 0 ? `${workspace.uniqueCommits} own commit${workspace.uniqueCommits === 1 ? '' : 's'}` : null,
+    status.ahead > 0 ? `${status.ahead} ahead` : null,
+    status.behind > 0 ? `${status.behind} behind` : null,
+    workspace.activeProcesses > 0 ? `${workspace.activeProcesses} running` : null,
+  ].filter(Boolean);
+  return bits.length > 0 ? bits.join(' · ') : 'clean';
 }
 
 /** Everything the picker/modal surface of the chat offers: model + provider management, reasoning
@@ -583,6 +621,144 @@ export function createPickers(
     }, fail);
   };
 
+  // `/sandbox` — the terminal's chooser over the sandbox plugin's own routes. Every operation here IS one
+  // of those routes: the plugin owns workspace creation, the conversation binding and the removal guards,
+  // so this file only lists, asks and reports. In particular it never writes a binding or a working
+  // directory of its own — `workspaces/use` is the single writer, and the daemon derives the turn's cwd
+  // from what that route stored.
+  const sandboxFail = (e: Error): void => { rt.notice = color.error(`error: ${sandboxReason(e) ?? e.message}`); render(); };
+
+  const useSandboxWorkspace = (workspace: SandboxWorkspaceView): void => {
+    const sessionId = client.boundSession;
+    if (!sessionId) { rt.notice = color.error('no active conversation to bind a workspace to'); render(); return; }
+    runSession(() => client.sandboxUseWorkspace({ workspaceId: workspace.id, sessionId, projectId: workspace.projectId }), (bound) => {
+      // The route just wrote the binding the daemon reads to place the turn, so the path it answers with
+      // IS the new working directory. Report it rather than asserting anything locally.
+      rt.notice = color.success(`working directory: ${bound.path}`);
+      render();
+    }, sandboxFail);
+  };
+
+  const confirmDeleteSandboxWorkspace = (workspace: SandboxWorkspaceView): void => {
+    runSession(() => client.sandboxRemovalPreview(workspace.id), (preview) => {
+      const carried = [
+        preview.dirty > 0 ? `${preview.dirty} changed` : null,
+        preview.untracked > 0 ? `${preview.untracked} untracked` : null,
+        preview.uniqueCommits > 0 ? `${preview.uniqueCommits} own commit${preview.uniqueCommits === 1 ? '' : 's'}` : null,
+        preview.activeProcesses > 0 ? `${preview.activeProcesses} running` : null,
+      ].filter(Boolean).join(' · ');
+      openPicker({
+        tui, editor, title: `Delete workspace "${workspace.label}"?`,
+        items: [
+          { value: 'no', label: 'Cancel', description: 'keep the workspace' },
+          {
+            value: 'yes',
+            label: 'Delete',
+            description: carried ? `refused while it holds ${carried}` : 'removes the worktree and its branch',
+          },
+        ],
+        onPick: (value) => {
+          if (value !== 'yes') { openSandboxModal(); return; }
+          // The safe path, always: no discard and no force, so the plugin refuses rather than destroying
+          // work, and a refusal leaves the worktree exactly as it was.
+          runSession(() => client.sandboxRemoveWorkspace(workspace.id), () => {
+            rt.notice = color.dim(`workspace ${workspace.label} removed`);
+            openSandboxModal();
+            render();
+          }, (e) => {
+            rt.notice = color.error(`workspace kept — ${sandboxReason(e) ?? e.message}`);
+            render();
+          });
+        },
+      });
+    }, sandboxFail);
+  };
+
+  const openSandboxActions = (workspace: SandboxWorkspaceView, active: boolean): void => {
+    openPicker({
+      tui, editor, title: `Workspace ${workspace.label}`,
+      items: [
+        { value: '__back', label: 'Back', description: workspace.path },
+        {
+          value: '__use',
+          label: 'Use in this conversation',
+          description: active ? 'already the active workspace here' : `work in ${workspace.branch} from now on`,
+        },
+        { value: '__delete', label: 'Delete', description: 'clean workspaces only — never discards work' },
+      ],
+      onPick: (value) => {
+        if (value === '__back') openSandboxModal();
+        else if (value === '__use') useSandboxWorkspace(workspace);
+        else confirmDeleteSandboxWorkspace(workspace);
+      },
+    });
+  };
+
+  const createSandboxWorkspace = (overview: SandboxOverview): void => {
+    if (overview.projects.length === 0) { rt.notice = color.dim('no accessible projects to create a workspace in'); render(); return; }
+    openPicker({
+      tui, editor, title: 'New workspace · project',
+      items: overview.projects.map((project) => ({ value: String(project.id), label: project.slug, description: project.path })),
+      footer: 'enter pick · type filter · esc close',
+      onPick: (picked) => {
+        const project = overview.projects.find((entry) => String(entry.id) === picked);
+        if (!project) return;
+        openTextInput({
+          tui, editor, title: `New workspace in ${project.slug} · name`,
+          onSubmit: (rawLabel) => {
+            const label = rawLabel.trim();
+            if (!label) { rt.notice = color.dim('cancelled — a workspace name is required'); render(); return; }
+            openTextInput({
+              // The overview only sometimes knows a Project's default branch; `main` is the fallback rather
+              // than a guess at the repository's own naming.
+              tui, editor, title: `${label} · base ref`, initial: project.defaultBranch ?? 'main',
+              onSubmit: (rawRef) => {
+                const baseRef = rawRef.trim();
+                if (!baseRef) { rt.notice = color.dim('cancelled — a base ref is required'); render(); return; }
+                runSession(() => client.sandboxCreateWorkspace({
+                  projectId: project.id, label, baseRef,
+                  // Creating with a conversation binds it there through the same `useWorkspace` writer.
+                  ...(client.boundSession ? { sessionId: client.boundSession } : {}),
+                }), (workspace) => {
+                  rt.notice = color.success(`workspace ${workspace.label} ready at ${workspace.path}`);
+                  openSandboxModal();
+                  render();
+                }, sandboxFail);
+              },
+            });
+          },
+        });
+      },
+    });
+  };
+
+  const openSandboxModal = (): void => {
+    runSession(() => client.sandboxOverview(), (overview) => {
+      const projectName = (id: number): string => overview.projects.find((project) => project.id === id)?.slug ?? `project ${id}`;
+      const activeHere = (workspace: SandboxWorkspaceView): boolean =>
+        !!client.boundSession && workspace.bindings.some((binding) => binding.sessionId === client.boundSession);
+      openPicker({
+        tui, editor, title: 'Sandbox workspaces',
+        items: [
+          { value: '__create', label: '+ New workspace', description: 'create a Git worktree for a project' },
+          { value: '__refresh', label: 'Refresh', description: 'read the workspace list again' },
+          ...overview.workspaces.map((workspace) => ({
+            value: workspace.id,
+            label: `${activeHere(workspace) ? '▸ ' : ''}${workspace.label}`,
+            description: `${projectName(workspace.projectId)} · ${workspace.branch} · ${sandboxStateSummary(workspace)}`,
+          })),
+        ],
+        footer: 'enter manage · type filter · esc close',
+        onPick: (value) => {
+          if (value === '__refresh') { openSandboxModal(); return; }
+          if (value === '__create') { createSandboxWorkspace(overview); return; }
+          const workspace = overview.workspaces.find((entry) => entry.id === value);
+          if (workspace) openSandboxActions(workspace, activeHere(workspace));
+        },
+      });
+    }, sandboxFail);
+  };
+
   // /lsp as a status modal (mirrors /mcp): whether diagnostics are enabled and running, one row per
   // language server (● running · ○ installed · ✗ missing), and the on/off toggle as the first row —
   // replaces the old blind flip, so the operator SEES the state before (and after) changing it.
@@ -719,6 +895,6 @@ export function createPickers(
   return {
     openThinkingPicker, cycleThinkingLevel, openModelPicker, applyModelArg, changeDirectory, applyTheme, openThemePicker,
     openHelpModal, openStatsModal, openSessionsModal, openMcpModal, openSkillsModal, openTasksModal,
-    openTaskActions, openLspModal, openToolsModal, openKeybindsModal, openStatuslineModal,
+    openTaskActions, openSandboxModal, openLspModal, openToolsModal, openKeybindsModal, openStatuslineModal,
   };
 }
