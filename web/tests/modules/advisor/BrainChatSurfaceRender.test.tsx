@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { render, screen, waitFor, act, fireEvent } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
@@ -7,7 +7,11 @@ import { createWrapper } from '../../test-utils';
 import { en } from '../../../lib/i18n/dictionaries/en';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { BrainChat } from '../../../modules/advisor/BrainChat';
+import { Message } from '../../../modules/advisor/BrainChatSurface';
+import type { BrainInlineArtifact } from '../../../lib/types';
 import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
+import * as transcript from '../../../lib/transcript';
+import { useState } from 'react';
 
 /** Guards the two render paths added when the web transcript reached parity with the daemon wire contract:
  *  a session-change EVENT row and a tool-output NOTES suffix. Both are new branches in BrainChatSurface's
@@ -61,6 +65,56 @@ afterAll(() => server.close());
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
 describe('BrainChatSurface renders the daemon-parity rows without crashing', () => {
+  it('does not invalidate a message when another turn receives an artifact', () => {
+    const turn: transcript.ChatTurn = { id: 'settled', role: 'elowen', streaming: false,
+      segments: [{ kind: 'tools', items: [{ id: 'old-call', name: 'Read' }] }] };
+    const artifact: BrainInlineArtifact = { id: 'view', plugin: 'test', sessionId: 'brain-1',
+      toolCallId: 'other-call', view: 'test', fallback: 'Artifact', status: 'open',
+      expiresAt: '', createdAt: '', updatedAt: '' };
+    function Harness() {
+      const [artifacts, setArtifacts] = useState<BrainInlineArtifact[]>([]);
+      return <><button onClick={() => setArtifacts([artifact])}>Update artifact</button>
+        <Message turn={turn} artifacts={artifacts} narration={artifacts.length ? 'new narration' : undefined} showThoughts /></>;
+    }
+    const group = vi.spyOn(transcript, 'groupToolItems');
+    try {
+      const { wrapper } = createWrapper();
+      render(<Harness />, { wrapper });
+      group.mockClear();
+      fireEvent.click(screen.getByRole('button', { name: 'Update artifact' }));
+      expect(group.mock.calls.length).toBe(0);
+    } finally { group.mockRestore(); }
+  });
+
+  it('does not regroup settled tool history on live text updates', async () => {
+    const history = Array.from({ length: 300 }, (_, i) => ({
+      id: `history-${i}`, role: 'assistant', text: '',
+      segments: [{ kind: 'tool', name: 'Read', id: `call-${i}`, detail: `file-${i}.ts` }],
+    }));
+    const group = vi.spyOn(transcript, 'groupToolItems');
+    try {
+      const { wrapper: Wrapper } = createWrapper();
+      render(<Wrapper><ToastProvider><BrainChatProvider><BrainChat /></BrainChatProvider></ToastProvider></Wrapper>);
+      await waitFor(() => expect(FakeES.instances.length).toBe(1));
+      const stream = FakeES.instances[0]!;
+      stream.emit('snapshot', { history, events: [], hasMore: false, nextBefore: null });
+      expect(screen.getAllByTestId('chat-tool-pill')).toHaveLength(300);
+      group.mockClear();
+      const start = performance.now();
+      for (let i = 0; i < 20; i++) stream.emit('text', { delta: ' live' });
+      console.info(`history stream: ${group.mock.calls.length} regroupings, ${(performance.now() - start).toFixed(1)}ms`);
+      expect(screen.getAllByTestId('chat-tool-pill')).toHaveLength(300);
+      expect(group.mock.calls.length).toBe(0);
+      stream.emit('tool', { name: 'Bash', id: 'live-tool' });
+      group.mockClear();
+      for (let i = 0; i < 5; i++) stream.emit('tool_progress', { id: 'live-tool', text: `progress ${i}` });
+      expect(group.mock.calls.every(([items]) => items.every((item) => item.id === 'live-tool'))).toBe(true);
+      expect(screen.getByText('progress 4')).toBeInTheDocument();
+      group.mockClear();
+      fireEvent.change(screen.getByTestId('chat-composer'), { target: { value: 'next question' } });
+      expect(group.mock.calls.length).toBe(0);
+    } finally { group.mockRestore(); }
+  });
   it('shows a session-change event marker and a tool-output notes suffix from seeded history', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><BrainChatProvider><BrainChat /></BrainChatProvider></ToastProvider></Wrapper>);
