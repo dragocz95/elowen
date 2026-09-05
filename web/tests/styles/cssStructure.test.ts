@@ -79,7 +79,9 @@ describe('globals.css import order', () => {
  *  entry is a claim that something outside the stylesheets sets the value; without the record, the
  *  check below can only be silenced by deleting it. */
 const EXTERNALLY_SET: Record<string, string> = {
-  '--font-geist-sans': 'next/font, app/layout.tsx',
+  // `--font-geist-sans` is deliberately NOT recorded here any more: Geist Sans is no longer loaded, and
+  // the name survives in tokens.css as a compatibility alias onto Inter for plugin sheets that still
+  // spell it. It resolves as an ordinary token now, not as something set from outside the stylesheets.
   '--font-geist-mono': 'next/font, app/layout.tsx',
   '--ui-scale': 'lib/useUiScale.tsx sets it on the document root',
   '--data-table-columns': 'components/ui/DataTable.tsx, inline style per table',

@@ -26,8 +26,33 @@ describe('design tokens', () => {
 
   it('has one dark palette and no light-theme override', () => {
     expect(css).toContain('--color-background: #000000');
-    expect(css).toContain('--font-sans: var(--font-geist-sans)');
     expect(css).not.toContain("data-theme='light'");
+  });
+
+  // Inter Variable is the app's ONE sans face, headings included. `--font-geist-sans` survives only as a
+  // compatibility alias for plugin sheets compiled against an older kit: an undefined variable inside a
+  // font-family list invalidates the whole declaration, so dropping the name outright would leave those
+  // bundles in the browser default rather than falling back to Inter.
+  it('resolves the whole sans ramp, headings included, to Inter Variable', () => {
+    expect(css).toMatch(/--font-geist-sans:\s*"Inter Variable"/);
+    expect(css).toContain('--font-sans: var(--font-geist-sans)');
+    expect(css).toContain('--font-display: var(--font-sans)');
+    // The heading token must not name a second face ahead of the body one — that split IS the bug this
+    // replaced, where --font-display put Geist in front of Inter and headings alone changed face.
+    expect(css).not.toMatch(/--font-display:[^;]*geist/);
+  });
+
+  // The reference design runs -0.16px at 16px and -0.13px at 13px, which is one ratio stated twice.
+  it('tracks the UI face from a single ratio token', () => {
+    expect(css).toContain('--tracking-ui: -0.01em');
+  });
+
+  // Geometry the sidebar primitive and the skin BOTH read. `--sidebar-width-icon` in particular is the
+  // one upstream shadcn injects as an inline style; declared here it stays overridable by a skin.
+  it('defines the sidebar geometry the navigation column is built on', () => {
+    for (const token of ['--sidebar-width: 16.25rem', '--sidebar-width-icon', '--sidebar-width-mobile', '--sidebar-row-height', '--sidebar-row-radius', '--sidebar-sub-indent']) {
+      expect(css).toContain(token);
+    }
   });
 
   it('uses one account-dark token for shared document surfaces', () => {

@@ -1,4 +1,8 @@
 import './globals.css';
+// The app's UI face, headings included. Self-hosted rather than fetched from Google, so the first paint
+// owns its typography and no third party sees a request. `--font-sans` in app/styles/tokens.css names
+// it; Geist Sans is no longer loaded at all, and the `--font-geist-sans` alias declared beside that
+// token keeps plugin bundles which still spell the old name resolving to Inter rather than to nothing.
 import '@fontsource-variable/inter';
 // The wordmark's face. Declared globally because @font-face is inert until a rule asks for the family —
 // only a design that names it (`--studio-brand-font`) makes a browser fetch the file — and self-hosted
@@ -6,7 +10,6 @@ import '@fontsource-variable/inter';
 // no wordmark at all.
 import '@fontsource-variable/space-grotesk';
 import { GeistMono } from 'geist/font/mono';
-import { GeistSans } from 'geist/font/sans';
 import type { ReactNode } from 'react';
 
 import { Shell } from '../components/shell/Shell';
@@ -153,7 +156,7 @@ export default async function RootLayout({ children }: { children: ReactNode }) 
   return (
     <html
       lang={locale}
-      className={`${GeistSans.variable} ${GeistMono.variable}`}
+      className={GeistMono.variable}
       data-theme="dark"
       data-skin={skin}
       data-effects-mode="auto"
