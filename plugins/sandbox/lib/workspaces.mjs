@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, lstatSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
-import { dirname, join, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, resolve, sep } from 'node:path';
 import { activeExecutionLeases, waitForExecutionLeases, withRepoLease } from './db.mjs';
 import { assertRelativePath, runPrepared, userWorkspacesRoot } from './execution.mjs';
 
@@ -180,6 +180,54 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
       }));
   };
 
+  // An explicit `projectPath` must match EXACTLY one existing, currently accessible Project root,
+  // canonicalized byte-for-byte — a trailing space is part of a real name. A descendant never matches,
+  // an unknown and an inaccessible path answer identically so nothing is disclosed, and two disagreeing
+  // selectors are a caller error rather than a silent choice between them.
+  const resolveProjectSelector = (input, options) => {
+    const hasPath = input.projectPath !== undefined && input.projectPath !== null;
+    const hasId = input.projectId !== undefined && input.projectId !== null;
+    if (!hasPath && !hasId) {
+      throw coded('name the Project explicitly: provide projectId or projectPath', 'invalid_project');
+    }
+    let idFromPath = null;
+    if (hasPath) {
+      const raw = typeof input.projectPath === 'string' ? input.projectPath : '';
+      // Whitespace-only is emptiness, not a name; anything else reaches realpath untouched.
+      if (!raw.trim() || !isAbsolute(raw)) {
+        throw coded('projectPath must be an absolute path to an existing Project root', 'invalid_project_path');
+      }
+      let canonical;
+      try {
+        canonical = realpathSync(raw);
+      } catch {
+        // The inaccessible answer verbatim: a failed lookup reveals nothing about foreign Projects.
+        throw coded('no accessible Project matches this path', 'project_not_found', 404);
+      }
+      const matches = [];
+      for (const projectId of accessibleProjectIds(ctx, options.accessibleProjects)) {
+        const project = ctx.host.stores().projects.get(projectId);
+        if (!project) continue;
+        try {
+          if (realpathSync(project.path) === canonical) matches.push(project);
+        } catch { /* a Project whose own root has vanished matches nothing */ }
+      }
+      if (matches.length > 1) {
+        throw coded('several accessible Projects share this path; name the Project by id', 'project_ambiguous', 409);
+      }
+      if (matches.length === 0) throw coded('no accessible Project matches this path', 'project_not_found', 404);
+      idFromPath = matches[0].id;
+    }
+    if (!hasId) return assertProjectAccess(ctx, idFromPath, options.accessibleProjects);
+    const projectId = Number(input.projectId);
+    if (!Number.isSafeInteger(projectId) || projectId < 1) throw coded('a valid Project id is required', 'invalid_project');
+    const project = assertProjectAccess(ctx, projectId, options.accessibleProjects);
+    if (hasPath && project.id !== idFromPath) {
+      throw coded('projectId and projectPath name different Projects', 'project_conflict', 409);
+    }
+    return project;
+  };
+
   const statusFor = async (workspace, options = {}) => {
     if (!existsSync(workspace.path)) return { isRepo: false, status: null, files: [], diff: '', uniqueCommits: 0 };
     const snapshot = await ctx.host.git().projectSnapshot(workspace.path);
@@ -203,8 +251,9 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
 
   const createWorkspace = async (input, options = {}) => {
     const userId = requireAccount(options.userId);
-    const projectId = Number(input.projectId);
-    const project = assertProjectAccess(ctx, projectId, options.accessibleProjects);
+    // Resolution and access checks run before anything touches disk or database.
+    const project = resolveProjectSelector(input, options);
+    const projectId = project.id;
     // The binding written at the end of this call names a CALLER-SUPPLIED conversation, so ownership is
     // verified HERE — before a worktree exists on disk and before any row is written. A refused
     // cross-account create must leave no side effect behind to clean up.

@@ -1,6 +1,6 @@
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -837,6 +837,136 @@ describe('sandbox conversation ownership on create', () => {
     expect(existsSync(created.path)).toBe(true);
     expect(db.prepare('SELECT session_id, user_id FROM p_sandbox_session_bindings').all())
       .toEqual([{ session_id: 'brain-amy-own', user_id: 1 }]);
+  });
+});
+
+/** An explicit `projectPath` names the Project the way a caller standing in it already can: the absolute
+ *  path is canonicalized and must match EXACTLY one existing, currently accessible Project root. Nothing
+ *  is inferred from a cwd, a descendant directory never matches, and an unknown and an inaccessible path
+ *  are indistinguishable — the outward error must not disclose which Projects exist. */
+describe('sandbox create by project path', () => {
+  const create = async (
+    registry: Awaited<ReturnType<typeof loadPlugins>>,
+    projectPath: string,
+    userId: number,
+    sessionId: string,
+    input: Record<string, unknown>,
+  ) => runAs(registry, projectPath, userId, sessionId, 'SandboxCreateWorkspace', { label: 'By path', baseRef: 'main', ...input });
+
+  it('creates a workspace by absolute project path', async () => {
+    const { registry, projectPath } = await setup();
+    const created = await create(registry, projectPath, 1, 'brain-path', { projectPath });
+    const workspace = created.details.workspace;
+    expect(workspace.projectId).toBe(1);
+    expect(workspace.branch).toBe('elowen/u1/by-path');
+    expect(existsSync(workspace.path)).toBe(true);
+  });
+
+  it('matches a symlinked and a normalized project path canonically', async () => {
+    const { registry, projectPath } = await setup();
+    const link = join(temp('link'), 'alias');
+    symlinkSync(projectPath, link);
+    for (const variant of [link, `${projectPath}/./`]) {
+      const created = await create(registry, projectPath, 1, 'brain-canonical', { projectPath: variant });
+      expect(created.details.workspace.projectId).toBe(1);
+    }
+  });
+
+  it('matches a project root ending in a space byte-for-byte and never its plain sibling', async () => {
+    const { registry, projects } = await setup();
+    const spaced = `${createRepository()} `;
+    renameSync(spaced.slice(0, -1), spaced);
+    const plain = createRepository();
+    projects.push({ id: 2, slug: 'spaced-root', path: spaced, notes: '', icon: '' });
+    projects.push({ id: 3, slug: 'plain-root', path: plain, notes: '', icon: '' });
+    const create = (path: string) => runWithPolicy(adminPolicy, () => tool(registry, 'SandboxCreateWorkspace').execute('t', {
+      projectPath: path, label: 'Spaced', baseRef: 'main',
+    }), { identity: operator(3), contributionUserId: 3, sessionId: 'brain-admin', workDir: spaced });
+    expect((await create(spaced)).details.workspace.projectId).toBe(2);
+    expect((await create(plain)).details.workspace.projectId).toBe(3);
+  });
+
+  it('refuses relative and empty paths before any side effect', async () => {
+    const { registry, projectPath, dataRoot, db } = await setup();
+    for (const bad of ['relative/path', '']) {
+      const refused = await create(registry, projectPath, 1, 'brain-relative', { projectPath: bad });
+      expect(refused.content[0]!.text).toMatch(/absolute path/i);
+    }
+    expect(git(projectPath, 'worktree', 'list')).not.toContain('by-path');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_workspaces').get()).toEqual({ n: 0 });
+    expect(existsSync(join(dataRoot, 'sandbox', 'users', '1', 'workspaces'))).toBe(false);
+  });
+
+  it('is indistinguishable for unknown and inaccessible paths and discloses no path', async () => {
+    const { registry, projectPath, dataRoot, db, projects } = await setup(['sandbox'], false, ['main']);
+    const second = projects[1]!.path;
+    const unknown = temp('unknown');
+    const asUser1 = (path: string) => create(registry, projectPath, 1, 'brain-hidden', { projectPath: path });
+    const inaccessible = await asUser1(second);
+    const missing = await asUser1(unknown);
+    expect(inaccessible.content[0]!.text).toMatch(/no accessible Project matches this path/);
+    expect(missing.content[0]!.text).toBe(inaccessible.content[0]!.text);
+    expect(inaccessible.details.error.code).toBe('project_not_found');
+    expect(missing.details.error.code).toBe('project_not_found');
+    expect(git(projectPath, 'worktree', 'list')).not.toContain('by-path');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_workspaces').get()).toEqual({ n: 0 });
+    expect(existsSync(join(dataRoot, 'sandbox', 'users', '1', 'workspaces'))).toBe(false);
+  });
+
+  it('does not match a descendant of an accessible Project', async () => {
+    const { registry, projectPath } = await setup();
+    mkdirSync(join(projectPath, 'subdir'));
+    const refused = await create(registry, projectPath, 1, 'brain-descendant', { projectPath: join(projectPath, 'subdir') });
+    expect(refused.content[0]!.text).toMatch(/no accessible Project matches this path/);
+    expect(refused.details.error.code).toBe('project_not_found');
+  });
+
+  it('fails ambiguous when two accessible Projects share the canonical root', async () => {
+    const { registry, projectPath, projects } = await setup();
+    projects.push({ id: 2, slug: 'alias', path: projectPath, notes: '', icon: '' });
+    const refused = await runWithPolicy(adminPolicy, () => tool(registry, 'SandboxCreateWorkspace').execute('t', {
+      projectPath, label: 'Ambiguous', baseRef: 'main',
+    }), { identity: operator(3), contributionUserId: 3, sessionId: 'brain-admin', workDir: projectPath });
+    expect(refused.content[0]!.text).toMatch(/share this path/i);
+    expect(refused.details.error.code).toBe('project_ambiguous');
+  });
+
+  it('accepts agreeing selectors and rejects disagreement and malformed ones', async () => {
+    const { registry, projectPath, projects } = await setup(['sandbox'], false, ['main']);
+    const second = projects[1]!.path;
+    const both = await create(registry, projectPath, 1, 'brain-both', { projectId: 1, projectPath });
+    expect(both.details.workspace.projectId).toBe(1);
+    const conflict = await runWithPolicy(adminPolicy, () => tool(registry, 'SandboxCreateWorkspace').execute('t', {
+      projectId: 1, projectPath: second, label: 'Conflict', baseRef: 'main',
+    }), { identity: operator(3), contributionUserId: 3, sessionId: 'brain-admin', workDir: projectPath });
+    expect(conflict.content[0]!.text).toMatch(/different Projects/i);
+    expect(conflict.details.error.code).toBe('project_conflict');
+    const malformedId = await create(registry, projectPath, 1, 'brain-malformed', { projectId: 'nope', projectPath });
+    expect(malformedId.content[0]!.text).toMatch(/project id/i);
+    expect(malformedId.details.error.code).toBe('invalid_project');
+  });
+
+  it('demands an explicit selector when neither is given, on the tool and the HTTP route', async () => {
+    const { registry, projectPath } = await setup();
+    const toolRefusal = await create(registry, projectPath, 1, 'brain-none', {});
+    expect(toolRefusal.content[0]!.text).toMatch(/projectId or projectPath/i);
+    const route = registry.apiRoute('sandbox', 'workspaces/create', 'POST')!;
+    const httpRefusal = await route.handler(pluginRequest('POST', {}, { label: 'None', baseRef: 'main' }, { userId: 1, admin: false, tokenScope: 'user', accessibleProjects: [1] }));
+    expect(httpRefusal.status).toBe(400);
+  });
+
+  it('creates through the shared HTTP route by project path', async () => {
+    const { registry, projectPath, db } = await setup();
+    db.prepare("INSERT INTO brain_sessions (id, user_id) VALUES ('brain-http-path', 1)").run();
+    const route = registry.apiRoute('sandbox', 'workspaces/create', 'POST')!;
+    const created = await route.handler(pluginRequest('POST', {}, {
+      projectPath, label: 'Http path', baseRef: 'main', sessionId: 'brain-http-path',
+    }, { userId: 1, admin: false, tokenScope: 'user', accessibleProjects: [1] }));
+    expect(created.status).toBe(201);
+    const workspace = (created.body as { workspace: { projectId: number; path: string } }).workspace;
+    expect(workspace.projectId).toBe(1);
+    expect(db.prepare('SELECT session_id, user_id FROM p_sandbox_session_bindings').all())
+      .toEqual([{ session_id: 'brain-http-path', user_id: 1 }]);
   });
 });
 
