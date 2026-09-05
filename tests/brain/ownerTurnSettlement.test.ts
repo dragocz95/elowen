@@ -24,11 +24,32 @@ beforeAll(async () => { sharedRuntime = await inMemoryModelRuntime(); });
  *  three settlement wirings the daemon supplies: the origin rollup, the activity feed and the billing. */
 function fakeDeps() {
   const listeners: ((e: unknown) => void)[] = [];
-  const messages: { role: string; content: string }[] = [];
+  const messages: { role: string; content: string; stopReason?: string; errorMessage?: string }[] = [];
+  let failNextPrompt = false;
+  /** How the REAL PI ends a provider error or an abort: `prompt()` RESOLVES, and the outcome is legible
+   *  only from the settled assistant's `stopReason`. Nothing is thrown, so a settlement keying off the
+   *  catch alone never learns the turn went wrong — which is what the two tests below pin. */
+  let settleNextPromptAs: 'error' | 'aborted' | null = null;
   const session = {
     sessionId: 'sess-1',
     prompt: vi.fn(async (t: string, options?: { preflightResult?: (success: boolean) => void }) => {
       options?.preflightResult?.(true);
+      if (settleNextPromptAs) {
+        const stopReason = settleNextPromptAs;
+        settleNextPromptAs = null;
+        const assistant = {
+          role: 'assistant', content: '', stopReason,
+          ...(stopReason === 'error' ? { errorMessage: 'relay/m: upstream returned 503' } : {}),
+        };
+        messages.push({ role: 'user', content: t }, assistant);
+        listeners.forEach((l) => l({ type: 'agent_end', willRetry: false, messages: [assistant] }));
+        return;
+      }
+      if (failNextPrompt) {
+        failNextPrompt = false;
+        messages.push({ role: 'user', content: t }, { role: 'assistant', content: '', stopReason: 'error' });
+        throw new Error('provider failed');
+      }
       messages.push({ role: 'user', content: t }, { role: 'assistant', content: `echo:${t}` });
       listeners.forEach((l) => l({ type: 'agent_end', willRetry: false, messages: [{ role: 'assistant', content: `echo:${t}` }] }));
     }),
@@ -39,7 +60,10 @@ function fakeDeps() {
     // rolled-over session answers, and every turn after a rollover would settle twice.
     dispose: vi.fn(() => { listeners.length = 0; }),
     abort: vi.fn(async () => {}),
-    sendCustomMessage: vi.fn(async () => {}),
+    sendCustomMessage: vi.fn(async (message: Record<string, unknown>, options?: { triggerTurn?: boolean }) => {
+      messages.push({ role: 'custom', content: JSON.stringify(message) });
+      if (options?.triggerTurn) messages.push({ role: 'assistant', content: 'processed', stopReason: 'stop' });
+    }),
     abortCompaction: vi.fn(), abortBranchSummary: vi.fn(), messages, isStreaming: false,
     _checkCompaction: vi.fn(async () => false),
     __queue: [] as string[],
@@ -94,6 +118,8 @@ function fakeDeps() {
       billSettledTurn(usageOrigins, (id) => store.getSession(id)?.user_id, sessionId, usage, AT);
     },
     activity,
+    failNextPrompt: () => { failNextPrompt = true; },
+    settleNextPromptAs: (stopReason: 'error' | 'aborted') => { settleNextPromptAs = stopReason; },
     /** The rollup as the admin view reads it: [account, address, turns]. */
     billed: () => usageOrigins.topOrigins({ group: 'pair' }).map((r) => [r.userId, r.origin, r.turns]),
   };
@@ -118,8 +144,181 @@ describe('an owner turn that changes conversation mid-flight is still attributed
 
     await svc.send({ userId: 1, text: 'after a long lunch', origin: WEB, surface: 'web' });
 
-    expect(svc.status(1).sessionId, 'the rollover must actually have happened').not.toBe(before);
+    const after = svc.status(1).sessionId!;
+    expect(after, 'the rollover must actually have happened').not.toBe(before);
+    expect(d.store.getSessionActivity(before!)).toMatchObject({ state: 'done', turnId: null });
+    expect(d.store.getSessionActivity(after)).toMatchObject({ state: 'done', turnId: null });
     expect(d.billed()).toEqual([[1, WEB.value, 2]]);
+  });
+});
+
+describe('durable owner activity follows accepted turn ownership', () => {
+  it('settles web work as done and keeps CLI-only work out of web unread state', async () => {
+    const web = fakeDeps();
+    const webSvc = new BrainService(web as never);
+    await webSvc.start(1);
+    await webSvc.send({ userId: 1, text: 'web turn', surface: 'web' });
+    const webActivity = web.store.getSessionActivity(webSvc.status(1).sessionId!);
+    expect(webActivity).toMatchObject({ state: 'done', unread: true });
+
+    const cli = fakeDeps();
+    const cliSvc = new BrainService(cli as never);
+    await cliSvc.start(1);
+    await cliSvc.send({ userId: 1, text: 'cli turn', surface: 'cli' });
+    const cliActivity = cli.store.getSessionActivity(cliSvc.status(1).sessionId!);
+    expect(cliActivity).toMatchObject({ state: 'done', unread: false, webParticipatedAt: null });
+  });
+
+  it('settles a provider failure as failed activity', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    d.failNextPrompt();
+
+    await expect(svc.send({ userId: 1, text: 'failed', surface: 'web' })).rejects.toThrow('provider failed');
+
+    expect(d.store.getSessionActivity(svc.status(1).sessionId!)).toMatchObject({ state: 'failed', unread: true });
+  });
+
+  // The failure mode this pins is the ordinary one, not the exotic one: PI does not THROW on a provider
+  // error, it settles the assistant with `stopReason: 'error'` and empty content and resolves. A
+  // settlement that only inspects the catch therefore sees a turn that "returned" and files an outage the
+  // user watched happen as `done` — a green check in the rail, no reason offered anywhere.
+  it('settles a provider error that PI resolves rather than throws as failed, with its reason', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    d.settleNextPromptAs('error');
+
+    await svc.send({ userId: 1, text: 'this one hits an outage', surface: 'web' });
+
+    expect(d.store.getSessionActivity(svc.status(1).sessionId!)).toMatchObject({
+      state: 'failed', unread: true, turnId: null, detail: 'relay/m: upstream returned 503',
+    });
+  });
+
+  // The mirror case, and the reason the check cannot simply be "did it end normally": a stop is the user's
+  // own decision. Reporting their Esc back at them as a red failed row would be worse than saying nothing.
+  it('settles a turn the user stopped as idle, never as failed', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    d.settleNextPromptAs('aborted');
+
+    await svc.send({ userId: 1, text: 'never mind', surface: 'web' });
+
+    expect(d.store.getSessionActivity(svc.status(1).sessionId!)).toMatchObject({ state: 'idle', turnId: null, detail: '' });
+  });
+
+  it('does not settle the existing activity when a user message is steered', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    await svc.send({ userId: 1, text: 'first', surface: 'web' });
+    const sessionId = svc.status(1).sessionId!;
+    const before = d.store.getSessionActivity(sessionId)!;
+    d.session.isStreaming = true;
+
+    await svc.send({ userId: 1, text: 'steer', surface: 'web' });
+
+    expect(d.store.getSessionActivity(sessionId)).toMatchObject({ state: 'done', seq: before.seq });
+  });
+
+  it('tracks both concurrently accepted idle sends as serialized working and done turns', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const sessionId = svc.status(1).sessionId!;
+
+    await Promise.all([
+      svc.send({ userId: 1, text: 'first concurrent turn', surface: 'web' }),
+      svc.send({ userId: 1, text: 'second concurrent turn', surface: 'web' }),
+    ]);
+
+    expect(d.store.getSessionActivity(sessionId)).toMatchObject({ state: 'done', turnId: null, seq: 4 });
+    expect(d.store.getMessages(sessionId).filter((row) => row.role === 'user').map((row) => JSON.parse(row.content) as unknown)).toEqual([
+      { role: 'user', content: 'first concurrent turn' },
+      { role: 'user', content: 'second concurrent turn' },
+    ]);
+  });
+
+  it('tracks an idle internal completion wake as a new owner turn', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const sessionId = svc.status(1).sessionId!;
+
+    await svc.send({ userId: 1, text: 'background result', internal: { kind: 'systemNudge' } } as never);
+
+    expect(d.store.getSessionActivity(sessionId)).toMatchObject({ state: 'done', turnId: null });
+  });
+
+  it('settles an idle delegate completion wake as done', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const sessionId = svc.status(1).sessionId!;
+    const child = 'brain-ch-subagent-activity-delegate';
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId });
+    d.store.upsertSubagentRun(sessionId, { id: 'call-activity-delegate', sessionId: child, status: 'done', task: 'inspect', tools: 1, seconds: 1 });
+    const runner = (svc as unknown as { turnRunner: { acceptSubagentCompletion: (parent: string, userId: number, result: unknown) => void } }).turnRunner;
+
+    runner.acceptSubagentCompletion(sessionId, 1, {
+      id: 'result-activity-delegate', toolCallId: 'call-activity-delegate', sessionId: child,
+      status: 'done', task: 'inspect', result: 'done', tools: 1, seconds: 1,
+    });
+    await vi.waitFor(() => expect(d.store.pendingSubagentResults(sessionId)).toEqual([]));
+
+    expect(d.store.getSessionActivity(sessionId)).toMatchObject({ state: 'done', seq: 2, turnId: null });
+  });
+
+  it('settles an idle delegate completion wake as failed when its model turn fails', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const sessionId = svc.status(1).sessionId!;
+    const child = 'brain-ch-subagent-activity-delegate-failed';
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId });
+    d.store.upsertSubagentRun(sessionId, { id: 'call-activity-delegate-failed', sessionId: child, status: 'done', task: 'inspect', tools: 1, seconds: 1 });
+    d.session.sendCustomMessage.mockRejectedValueOnce(new Error('provider unavailable'));
+    const runner = (svc as unknown as { turnRunner: { acceptSubagentCompletion: (parent: string, userId: number, result: unknown) => void } }).turnRunner;
+
+    runner.acceptSubagentCompletion(sessionId, 1, {
+      id: 'result-activity-delegate-failed', toolCallId: 'call-activity-delegate-failed', sessionId: child,
+      status: 'done', task: 'inspect', result: 'done', tools: 1, seconds: 1,
+    });
+    await vi.waitFor(() => expect(d.store.getSessionActivity(sessionId)?.state).toBe('failed'));
+  });
+
+  it('settles an idle workflow completion wake as done', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const sessionId = svc.status(1).sessionId!;
+    d.store.upsertWorkflowRun(sessionId, { id: 'wf-activity', toolCallId: 'call-wf-activity', status: 'running', nodes: [] });
+    const runner = (svc as unknown as { turnRunner: { acceptWorkflowCompletion: (parent: string, userId: number, result: unknown) => void } }).turnRunner;
+
+    runner.acceptWorkflowCompletion(sessionId, 1, {
+      id: 'wf-activity', toolCallId: 'call-wf-activity', status: 'done', result: 'done',
+    });
+    await vi.waitFor(() => expect(d.store.pendingSubagentResults(sessionId)).toEqual([]));
+
+    expect(d.store.getSessionActivity(sessionId)).toMatchObject({ state: 'done', seq: 2, turnId: null });
+  });
+
+  it('settles an idle workflow completion wake as failed when its model turn fails', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const sessionId = svc.status(1).sessionId!;
+    d.store.upsertWorkflowRun(sessionId, { id: 'wf-activity-failed', toolCallId: 'call-wf-activity-failed', status: 'running', nodes: [] });
+    d.session.sendCustomMessage.mockRejectedValueOnce(new Error('provider unavailable'));
+    const runner = (svc as unknown as { turnRunner: { acceptWorkflowCompletion: (parent: string, userId: number, result: unknown) => void } }).turnRunner;
+
+    runner.acceptWorkflowCompletion(sessionId, 1, {
+      id: 'wf-activity-failed', toolCallId: 'call-wf-activity-failed', status: 'error', result: 'failed',
+    });
+    await vi.waitFor(() => expect(d.store.getSessionActivity(sessionId)?.state).toBe('failed'));
   });
 });
 

@@ -52,6 +52,8 @@ export interface BrainStreamSnapshot extends LiveEventSnapshot {
   cards?: BrainCard[];
   /** Persisted open inline artifacts. Optional for rolling compatibility with an older daemon. */
   artifacts?: BrainInlineArtifact[];
+  /** Durable owner-activity sequence captured with this snapshot. */
+  activitySeq?: number;
   /** See {@link BrainStreamControl}. Optional only for rolling compatibility with an older daemon. */
   control?: BrainStreamControl;
   run?: number;

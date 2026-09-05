@@ -1,11 +1,14 @@
 import type { BrainEvent } from '../events.js';
 
 type ClientListener = (e: BrainEvent) => void;
+export type AttachmentSurface = 'web' | 'cli';
 
 interface StableClientBinding {
   userId: number;
   sessionId: string;
   generation: number;
+  /** Explicit owner surface. Missing means a legacy CLI binding for safe protocol compatibility. */
+  surface?: AttachmentSurface;
   /** Monotonic generation supplied by one CLI process's start requests. Prevents network-reordered
    *  older starts from reclaiming the stable identity after a newer selection already won. */
   requestGeneration?: number;
@@ -166,7 +169,9 @@ export class ClientAttachments {
   hasLiveStableClient(sessionId: string): boolean {
     this.pruneDetached();
     for (const binding of this.stableClients.values()) {
-      if (binding.sessionId === sessionId && binding.listener) return true;
+      // New protocol clients identify their surface explicitly. Missing surface keeps the old CLI meaning so
+      // older terminals retain rollover semantics, while an explicit web binding never pins a CLI rollover.
+      if (binding.sessionId === sessionId && binding.listener && (binding.surface === undefined || binding.surface === 'cli')) return true;
     }
     return false;
   }
@@ -229,7 +234,7 @@ export class ClientAttachments {
 
   /** Register one live SSE transport. A reconnect with the same authenticated client id replaces only
    *  that client's old listener; unrelated clients attached to the same conversation are untouched. */
-  attach(userId: number, sessionId: string, listener: ClientListener, detach: () => void, clientId?: string, requestGeneration?: number): boolean {
+  attach(userId: number, sessionId: string, listener: ClientListener, detach: () => void, clientId?: string, requestGeneration?: number, surface?: AttachmentSurface): boolean {
     this.pruneDetached();
     if (!clientId) {
       this.clientStreams.set(listener, sessionId);
@@ -257,6 +262,10 @@ export class ClientAttachments {
     this.stableClients.set(key, {
       userId, sessionId, listener, detach,
       generation: previous?.sessionId === sessionId ? previous.generation : ++this.nextGeneration,
+      ...(surface !== undefined
+        ? { surface }
+        : previous?.sessionId === sessionId && previous.surface !== undefined
+          ? { surface: previous.surface } : {}),
       ...(requestGeneration !== undefined
         ? { requestGeneration }
         : previous?.sessionId === sessionId && previous.requestGeneration !== undefined
@@ -271,7 +280,7 @@ export class ClientAttachments {
    *  replacement SSE. Deliberate session switches therefore outrank the previous stream binding during
    *  the history/meta loading gap. The old transport for this identity is detached immediately, while
    *  unrelated clients on that old conversation remain attached. */
-  claim(userId: number, clientId: string, sessionId: string, requestGeneration?: number): ClientClaim {
+  claim(userId: number, clientId: string, sessionId: string, requestGeneration?: number, surface?: AttachmentSurface): ClientClaim {
     this.pruneDetached();
     const key = this.stableKey(userId, clientId);
     const previous = this.stableClients.get(key);
@@ -295,6 +304,9 @@ export class ClientAttachments {
     this.stableClients.delete(key);
     this.stableClients.set(key, {
       userId, sessionId, generation, detachedAt: this.now(),
+      ...(surface !== undefined
+        ? { surface }
+        : previous?.surface !== undefined ? { surface: previous.surface } : {}),
       ...(requestGeneration !== undefined ? { requestGeneration } : {}),
       pendingStart: true,
     });

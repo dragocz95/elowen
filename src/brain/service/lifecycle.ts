@@ -18,6 +18,7 @@ import { clientDir, gitProjectRoot } from './workDir.js';
 import { recordSessionEvent } from './sessionEvents.js';
 import { sessionHasWorkInFlight } from './sessionQuiescence.js';
 import { hasActiveNativeCompactionCheck } from '../session/compactionCheckCoordinator.js';
+import { resetConversationActivity } from '../session/conversationActivity.js';
 
 /** Prompt state that survives an IN-PLACE respawn — switchModel, restart and the vision hop all rehydrate
  *  the SAME conversation from SQLite.
@@ -72,6 +73,8 @@ interface LifecycleDeps {
   /** PermissionApprovalService.selectionAllowed — a saved model the user may no longer run falls back
    *  to the server default instead of blocking the brain. */
   selectionAllowed(userId: number, sel?: { provider?: string; model?: string }): boolean;
+  /** Notify user-scoped conversation-list subscribers after durable activity changes. */
+  onConversationActivityChanged?: (sessionId: string) => void;
 }
 
 /** Conversation lifecycle: session addressing (the active pointer + explicit bound ids), start/resume
@@ -195,18 +198,20 @@ export class ConversationLifecycle {
    *  `resolveStartSession` (cwd match, never a conversation another client holds); a bare start without
    *  one (the web dock) keeps following the active pointer. Either way it becomes the user's active
    *  conversation. Idempotent when the target is already live. */
-  async start(userId: number, opts?: { provider?: string; model?: string; session?: string; fresh?: boolean; cwd?: string; clientId?: string; clientGeneration?: number }): Promise<{ sessionId: string }> {
+  async start(userId: number, opts?: { provider?: string; model?: string; session?: string; fresh?: boolean; cwd?: string; clientId?: string; clientGeneration?: number; surface?: 'web' | 'cli' }): Promise<{ sessionId: string }> {
     let sessionId: string;
     if (opts?.fresh) sessionId = freshUserSessionId(userId);
     else if (opts?.session) sessionId = this.ownedUserSession(userId, opts.session);
-    else if (opts?.cwd) sessionId = this.resolveStartSession(userId, opts.cwd);
+    // `cwd` historically identified the CLI. An explicit web surface now wins when a caller reports a cwd,
+    // while an omitted surface preserves the old behavior for older clients.
+    else if (opts?.cwd && opts.surface !== 'web') sessionId = this.resolveStartSession(userId, opts.cwd);
     else sessionId = this.activeSessionId(userId);
     const prevActive = this.d.sessions.activeIdFor(userId);
     // Claim synchronously, before ensureLive's first async boundary. Besides making Ctrl+C during start
     // target this requested conversation, claim() detaches only THIS client's old stream; the guard below
     // consequently sees any genuinely remaining terminal/web attachment and preserves its old driver.
     const claim = opts?.clientId
-      ? this.d.attachments.claim(userId, opts.clientId, sessionId, opts.clientGeneration)
+      ? this.d.attachments.claim(userId, opts.clientId, sessionId, opts.clientGeneration, opts.surface)
       : undefined;
     // A newer request from this same CLI identity already selected another target. This older network-
     // reordered request must not mutate the active pointer, old-driver cleanup, or spawn state at all.
@@ -275,6 +280,9 @@ export class ConversationLifecycle {
     // A teardown in flight is the one case where the record is registered but doomed — it still has to
     // take the lock and respawn behind the dispose. Synchronous (no await), so no teardown can start
     // between the two reads.
+    // A live session can survive a daemon restart only as an in-memory shell; clear any stale durable
+    // working claim before a new caller can resume it. Current-boot work is protected by the store CAS.
+    this.d.store.reapSessionActivity?.(sessionId);
     const healthy = this.d.sessions.get(sessionId);
     if (healthy && !this.d.sessions.isDisposing(sessionId)) {
       if (o.explicitResume) healthy.interactedAt = Date.now();
@@ -515,6 +523,7 @@ export class ConversationLifecycle {
       const clearedCardIds = this.d.cards.forSession(sessionId).map((c) => c.id);
       this.d.artifacts?.closeSession(sessionId);
       this.d.store.clearSessionHistory(sessionId);
+      resetConversationActivity(this.d.store, sessionId, undefined, this.d.onConversationActivityChanged);
       this.d.cards.clearSession(sessionId); // evict the write-through cache over the rows just deleted
       const storedModel = this.d.store.getSession(sessionId)?.model ?? '';
       if (!previous) return { sessionId, model: storedModel }; // cold conversation: nothing live to reset
@@ -676,7 +685,7 @@ export class ConversationLifecycle {
     return fresh;
   }
 
-  subscribe(userId: number, listener: (e: BrainEvent) => void, clientId?: string, clientGeneration?: number): () => void {
+  subscribe(userId: number, listener: (e: BrainEvent) => void, clientId?: string, clientGeneration?: number, surface?: 'web' | 'cli'): () => void {
     const b = this.activeLive(userId);
     if (!b) throw new Error('brain not started for user');
     let detached = false;
@@ -693,7 +702,7 @@ export class ConversationLifecycle {
       // its captured set prevents the carry step from resurrecting a transport stopped mid-spawn.
       b.listeners.delete(listener);
     };
-    if (!this.d.attachments.attach(userId, b.sessionId, listener, off, clientId, clientGeneration)) {
+    if (!this.d.attachments.attach(userId, b.sessionId, listener, off, clientId, clientGeneration, surface)) {
       throw new Error('stale client stream');
     }
     b.listeners.add(listener);
@@ -704,7 +713,7 @@ export class ConversationLifecycle {
    *  stream and the sub-agent drill-in stream. Unlike subscribe() (which follows the active
    *  conversation), a tap targets a fixed session and keeps delivering across respawns. Throws on an
    *  unknown/foreign session. */
-  tapSession(userId: number, sessionId: string, listener: (e: BrainEvent) => void, clientId?: string, clientGeneration?: number): () => void {
+  tapSession(userId: number, sessionId: string, listener: (e: BrainEvent) => void, clientId?: string, clientGeneration?: number, surface?: 'web' | 'cli'): () => void {
     const targetSessionId = this.resolveStreamSession(userId, sessionId, clientId, clientGeneration);
     const row = this.d.store.getSession(targetSessionId);
     if (!row || row.user_id !== userId) throw new Error('unknown session');
@@ -722,7 +731,7 @@ export class ConversationLifecycle {
       this.liveFor(targetSessionId)?.listeners.delete(listener);
       initialLive?.listeners.delete(listener);
     };
-    if (!this.d.attachments.attach(userId, targetSessionId, listener, off, clientId, clientGeneration)) {
+    if (!this.d.attachments.attach(userId, targetSessionId, listener, off, clientId, clientGeneration, surface)) {
       throw new Error('stale client stream');
     }
     initialLive?.listeners.add(listener); // the session may already be running — attach now

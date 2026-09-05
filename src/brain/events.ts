@@ -191,7 +191,7 @@ export type BrainEvent =
    *  the titler finishes on its own clock, often after the first turn settled. Carries the title so a
    *  client may apply it without a fetch. Safe to ignore (the next metadata refresh shows it). */
   | { type: 'title'; title: string }
-  | { type: 'idle'; usage?: BrainUsage; model?: string; durationMs?: number; completedAt?: string }
+  | { type: 'idle'; usage?: BrainUsage; model?: string; durationMs?: number; completedAt?: string; activitySeq?: number }
   | { type: 'error'; message: string };
 
 /** The payload a delegating plugin pushes through `ctx.subagentEmitter()` — everything of the

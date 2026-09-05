@@ -14,6 +14,15 @@ export const brainStartSchema = z.object({
   client: z.string().min(1).max(200).optional(),
   /** Monotonic per-process start generation; rejects network-reordered older selections server-side. */
   generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  /** Explicit owner surface for stable attachment behavior. Missing keeps legacy CLI semantics. */
+  surface: z.enum(['web', 'cli']).optional(),
+});
+
+/** Mark an owned conversation activity sequence as read. CLI acknowledgements advance an existing web
+ * baseline but never establish participation, so a CLI-only conversation can never become web-unread. */
+export const brainActivityReadSchema = z.object({
+  through: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+  surface: z.enum(['web', 'cli']),
 });
 
 /** A client reporting whether its window is on screen, so a finished turn can tell "nobody is reading

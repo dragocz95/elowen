@@ -150,6 +150,60 @@ describe('pauseForRestart — the durable checkpoint of a turn caught mid-step',
     expect(tail[1]!.toolCallId).toBe('t1');
   });
 
+  it('resets parked activity when aborting after the live brain disappeared', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const sessionId = await startHangingTurn(d, svc);
+    const summary = svc.pauseForRestart();
+    expect(summary.parked).toEqual([sessionId]);
+    expect(d.store.getSessionActivity(sessionId)).toMatchObject({ state: 'working' });
+
+    const registry = (svc as unknown as { sessions: { dispose(id: string): void } }).sessions;
+    registry.dispose(sessionId);
+    await svc.abort(1);
+
+    expect(d.store.getSessionActivity(sessionId)).toMatchObject({ state: 'idle', turnId: null, unread: false });
+    expect(d.store.getSession(sessionId)!.parked_at).toBeNull();
+  });
+
+  /** The park marker and the activity fence are two halves of one claim, and this is the path that used to
+   *  separate them. Boot restamps a PARKED conversation's fence onto itself so the resume stays live, which
+   *  leaves the row reading `working` under the PREVIOUS turn's id. If the user speaks before the resume
+   *  sweep reaches that conversation the marker is stood down — and the fence used to be left behind where
+   *  no later compare-and-set could reach it: `begin` refuses (the row still reads `working`), `settle`
+   *  refuses (a different turn id), and the sweep's own release never runs because its claim-check now
+   *  fails. The conversation then pulsed "working" for the life of the process and lost its unread state
+   *  for good, self-healing only at the next restart. */
+  it('releases the stale park fence when the user speaks before the resume sweep reaches it', async () => {
+    const first = fakeDeps();
+    const paused = new BrainService(first as never);
+    const sessionId = await startHangingTurn(first, paused);
+    paused.pauseForRestart();
+    const parkedTurnId = first.store.getSessionActivity(sessionId)!.turnId;
+    expect(first.store.getSessionActivity(sessionId)).toMatchObject({ state: 'working' });
+    expect(parkedTurnId).not.toBeNull();
+    expect(first.store.getSession(sessionId)!.parked_at).not.toBeNull();
+
+    // The next boot, over the same durable store. Its constructor mints this boot's id, and the reconcile
+    // restamps the parked row onto it — deliberately keeping the turn `working` so the resume stays live.
+    const next = { ...fakeDeps(), store: first.store };
+    next.session.prompt = vi.fn(async (_t: string, options?: { preflightResult?: (success: boolean) => void }) => {
+      options?.preflightResult?.(true);
+    });
+    const resumed = new BrainService(next as never);
+    first.store.reconcileSessionActivityOnBoot();
+    expect(first.store.getSessionActivity(sessionId)).toMatchObject({ state: 'working', turnId: parkedTurnId });
+
+    // The user speaks first. Their message IS the continuation, so the sweep stands down — and the fence
+    // has to stand down with it.
+    await resumed.send({ userId: 1, text: 'actually, do this instead', session: sessionId, surface: 'web' });
+
+    expect(first.store.getSession(sessionId)!.parked_at).toBeNull();
+    const after = first.store.getSessionActivity(sessionId)!;
+    expect(after.state, 'the conversation must not be left pulsing "working" forever').not.toBe('working');
+    expect(after).toMatchObject({ state: 'done', turnId: null });
+  });
+
   it('reports an idle daemon as nothing to park and writes no marker', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);

@@ -17,7 +17,7 @@ import type { GoalLoopService } from './goalLoop.js';
 import type { ConversationLifecycle } from './lifecycle.js';
 import type { IdleSessionClock } from './liveSessionReaper.js';
 import { sessionHasWorkInFlight, sparedChildSessionIds } from './sessionQuiescence.js';
-
+import { resetConversationActivity } from '../session/conversationActivity.js';
 
 interface SessionTeardownDeps {
   store: BrainStore;
@@ -34,6 +34,7 @@ interface SessionTeardownDeps {
   resolvePlugins: () => Promise<PluginRegistry | undefined>;
   /** The chat-terminal teardown is attached to BrainService AFTER construction, so it is read through a
    *  getter each time — capturing it by value here would freeze in the unwired `undefined`. */
+  onConversationActivityChanged?: (sessionId: string) => void;
 }
 
 /** The destructive session lifecycle, split out of BrainService: interrupting a running turn (Esc/Stop),
@@ -54,6 +55,7 @@ export class SessionTeardownService {
   private readonly lifecycle: ConversationLifecycle;
   private readonly idleClock: IdleSessionClock;
   private readonly resolvePlugins: () => Promise<PluginRegistry | undefined>;
+  private readonly onConversationActivityChanged?: (sessionId: string) => void;
   constructor(deps: SessionTeardownDeps) {
     this.store = deps.store;
     this.sessions = deps.sessions;
@@ -66,6 +68,7 @@ export class SessionTeardownService {
     this.lifecycle = deps.lifecycle;
     this.idleClock = deps.idleClock;
     this.resolvePlugins = deps.resolvePlugins;
+    this.onConversationActivityChanged = deps.onConversationActivityChanged;
   }
 
   private serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -86,6 +89,7 @@ export class SessionTeardownService {
       if (this.store.getSession(parkedId)?.parked_at) {
         this.store.clearSessionPark(parkedId);
         this.store.discardPausedQueue(parkedId);
+        resetConversationActivity(this.store, parkedId, undefined, this.onConversationActivityChanged);
         return;
       }
       throw new Error('brain not started');

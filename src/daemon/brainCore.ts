@@ -789,6 +789,13 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         // An owner turn finished with the device it was sent from off screen → push it to the user's phone.
         // No subscription registered ⇒ sendToUsers is a no-op, so this needs no separate enable flag.
         notifyTurnComplete: opts.notifyTurnComplete,
+        // Owner activity is a transient, content-free read-model event. The route scopes it by user and the
+        // event recorder deliberately ignores this event type, so it cannot enter the persisted team feed.
+        onConversationActivityChanged: (sessionId) => {
+          const row = brainStore.getSession(sessionId);
+          const activity = brainStore.getSessionActivity(sessionId);
+          if (row && activity) bus.publish({ type: 'conversation', userId: row.user_id, sessionId, ...activity });
+        },
         // Platform turns reach the team feed through the same bus every other event uses, so they are
         // persisted (and folded into the current bucket) and streamed live by one mechanism.
         recordActivity: (e) => bus.publish({

@@ -51,7 +51,7 @@ describe('BrainClient', () => {
     const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f, clientId: 'cli-a' });
     expect((await c.start()).sessionId).toBe('brain-1');
     expect(f).toHaveBeenCalledWith('http://x/brain/start', expect.objectContaining({
-      method: 'POST', body: JSON.stringify({ cwd: process.cwd(), client: 'cli-a', generation: 1 }),
+      method: 'POST', body: JSON.stringify({ cwd: process.cwd(), client: 'cli-a', generation: 1, surface: 'cli' }),
     }));
   });
 
@@ -191,9 +191,23 @@ describe('BrainClient', () => {
     }));
   });
 
+  it('acknowledges the latest rendered CLI activity without changing its surface', async () => {
+    const f = vi.fn(async (url: string) => {
+      if (url.endsWith('/brain/start')) return j(201, { sessionId: 'brain-1' });
+      if (url.endsWith('/brain/sessions')) return j(200, [{ id: 'brain-1', title: 'T', provider: 'p', model: 'm', updated_at: '', active: true, attached: 1, activity: { state: 'done', seq: 4, at: null, detail: 'finished', unread: false } }]);
+      return j(200, { state: 'done', seq: 4, readSeq: 4, unread: false });
+    }) as unknown as typeof fetch;
+    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f, clientId: 'cli-a' });
+    await c.start();
+    await c.acknowledgeActivity();
+    expect(f).toHaveBeenLastCalledWith('http://x/brain/sessions/brain-1/read', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ through: 4, surface: 'cli' }),
+    }));
+  });
+
   it('history GETs /brain/messages', async () => {
-    const f = vi.fn(async () => j(200, [{ role: 'user', text: 'hi' }])) as unknown as typeof fetch;
-    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f });
+    const f = vi.fn(async () => j(200, [{ role: 'user', text: 'hi' }]));
+    const c = new BrainClient({ base: 'http://x', token: 't', fetchImpl: f as unknown as typeof fetch });
     expect(await c.history()).toEqual([{ role: 'user', text: 'hi' }]);
   });
 
@@ -261,7 +275,7 @@ describe('BrainClient', () => {
     const stream = c.stream(() => {}, streamAc.signal, 5, () => streamAc.abort());
     await stream;
     expect(f).toHaveBeenCalledWith(
-      'http://x/brain/stream?session=brain-7&client=cli-a&generation=1',
+      'http://x/brain/stream?surface=cli&session=brain-7&client=cli-a&generation=1',
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(streamSignal).not.toBe(streamAc.signal);
@@ -424,7 +438,7 @@ describe('BrainClient', () => {
     const seen: unknown[] = [];
     await c.stream((event) => { seen.push(event); ac.abort(); }, ac.signal, 5, undefined, 'brain-ch-subagent-a', true);
     expect(f).toHaveBeenCalledWith(
-      'http://x/brain/stream?session=brain-ch-subagent-a&snapshot=1',
+      'http://x/brain/stream?surface=cli&session=brain-ch-subagent-a&snapshot=1',
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(streamSignal).not.toBe(ac.signal);
@@ -461,8 +475,8 @@ describe('BrainClient', () => {
       .map(([url]) => url)
       .filter((url) => url.includes('/brain/stream'));
     expect(urls).toEqual([
-      'http://x/brain/stream?session=brain-7&client=cli-a&generation=1&snapshot=1',
-      'http://x/brain/stream?session=brain-7&client=cli-a&generation=1&snapshot=1',
+      'http://x/brain/stream?surface=cli&session=brain-7&client=cli-a&generation=1&snapshot=1',
+      'http://x/brain/stream?surface=cli&session=brain-7&client=cli-a&generation=1&snapshot=1',
     ]);
     expect(seen).toEqual([{ type: 'snapshot', cursor: 2, history: [], events: [] }]);
   });
@@ -494,9 +508,9 @@ describe('BrainClient', () => {
       .map(([url]) => url)
       .filter((url) => url.includes('/brain/stream'));
     expect(urls).toEqual([
-      'http://x/brain/stream?session=brain-old&client=cli-a&generation=1&snapshot=1',
-      'http://x/brain/stream?session=brain-old&client=cli-a&generation=1&snapshot=1',
-      'http://x/brain/stream?session=brain-fresh&client=cli-a&generation=1&snapshot=1',
+      'http://x/brain/stream?surface=cli&session=brain-old&client=cli-a&generation=1&snapshot=1',
+      'http://x/brain/stream?surface=cli&session=brain-old&client=cli-a&generation=1&snapshot=1',
+      'http://x/brain/stream?surface=cli&session=brain-fresh&client=cli-a&generation=1&snapshot=1',
     ]);
     expect(c.boundSession).toBe('brain-fresh');
   });

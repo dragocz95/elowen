@@ -246,6 +246,17 @@ function applyAdditiveMigrations(db: Db): void {
   // exactly nothing to do on an upgraded database.
   addColumn(db, 'brain_sessions', 'parked_at', 'TEXT');
   addColumn(db, 'brain_sessions', 'park_attempts', 'INTEGER NOT NULL DEFAULT 0');
+  // Owner-facing conversation activity is additive and neutral on every existing row. In particular,
+  // activity_seq/read_seq both start at zero and web_participated_at stays NULL: migration never scans or
+  // infers history from brain_messages.
+  addColumn(db, 'brain_sessions', 'activity_state', "TEXT NOT NULL DEFAULT 'idle' CHECK (activity_state IN ('idle', 'working', 'done', 'failed'))");
+  addColumn(db, 'brain_sessions', 'activity_seq', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(db, 'brain_sessions', 'activity_read_seq', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(db, 'brain_sessions', 'activity_turn_id', 'TEXT');
+  addColumn(db, 'brain_sessions', 'activity_boot_id', 'TEXT');
+  addColumn(db, 'brain_sessions', 'activity_detail', "TEXT NOT NULL DEFAULT ''");
+  addColumn(db, 'brain_sessions', 'activity_at', 'TEXT');
+  addColumn(db, 'brain_sessions', 'web_participated_at', 'TEXT');
   // The delegated-result inbox now serves two producers (see brain_subagent_results in schema.sql):
   // `kind` discriminates them and `workflow_id` links a workflow row to its brain_workflows DAG. Old
   // rows are all sub-agent completions, so the 'subagent' default reads the whole back catalogue right.

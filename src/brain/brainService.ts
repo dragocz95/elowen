@@ -5,7 +5,7 @@ import { PluginServiceRunner } from '../plugins/serviceRunner.js';
 import type { DelegatedChildrenSettlement, DelegatedContinueResult, PluginChatArtifactRef, ServiceNotice, SubagentProgressEvent } from '../plugins/api.js';
 import { ElicitationRegistry } from './elicitation.js';
 import { CardRegistry } from './cards.js';
-import type { BrainSearchHit, BrainGoalRow, RecoverableRun, RecoverableWorkflow } from '../store/brainStore.js';
+import type { BrainStore, BrainSearchHit, BrainGoalRow, RecoverableRun, RecoverableWorkflow } from '../store/brainStore.js';
 import { MemoryCurator } from './memoryCurator.js';
 import { ConversationTitler } from './conversationTitler.js';
 import { logger } from '../shared/logger.js';
@@ -60,6 +60,7 @@ import type { OwnerConversationRecovery } from './recovery/providers.js';
 import type { RecoveryOutcome } from './recovery/types.js';
 import type { BrainDeps } from './brainDeps.js';
 import type { BrainSessionRow, PauseInterruption } from '../store/brainStore.js';
+import type { ConversationActivitySurface } from './session/conversationActivity.js';
 import { processRegistry, type ProcessInfo } from './processRegistry.js';
 import type { BrainStreamSnapshot } from './session/liveEventReplay.js';
 import { DEFAULT_BRAIN_LIMITS } from '../store/configStore.js';
@@ -316,6 +317,7 @@ export class BrainService {
       get projectModelPreference() { return d.projectModelPreference; },
       get setProjectModelPreference() { return d.setProjectModelPreference; },
       selectionAllowed: (userId, sel) => this.permissionSvc.selectionAllowed(userId, sel),
+      get onConversationActivityChanged() { return d.onConversationActivityChanged; },
     });
     this.turnRunner = new BrainTurnRunner({
       store: d.store, sessions: this.sessions,
@@ -340,6 +342,7 @@ export class BrainService {
       },
       get usageOrigins() { return d.usageOrigins; },
       get recordActivity() { return d.recordActivity; },
+      get onConversationActivityChanged() { return d.onConversationActivityChanged; },
       drainPluginReload: () => { this.drainDeferredPluginReload(); },
       notifyTurnComplete: (userId, sessionId, userInitiated, senderClientId) => {
         // A turn a person asked for just finished and the surface they typed on is not showing it — tell
@@ -507,6 +510,7 @@ export class BrainService {
       elicitation: this.elicitation, goals: this.goals, cards: this.cards, artifacts: this.artifacts,
       channelService: this.channelService, lifecycle: this.lifecycle, idleClock: this.idleClock,
       resolvePlugins: () => this.resolvePlugins(),
+      onConversationActivityChanged: d.onConversationActivityChanged,
     });
     this.processSvc = new SessionProcessService({ store: d.store, attachments: this.attachments, identity: this.identity });
     this.queue = new SessionQueueService({ sessions: this.sessions, lifecycle: this.lifecycle });
@@ -746,6 +750,14 @@ export class BrainService {
     this.goals.reconcileGoalsOnBoot();
   }
 
+  /** Reconcile durable owner activity before boot recovery becomes visible to clients. */
+  reconcileConversationActivity(): void {
+    const result = this.d.store.reconcileSessionActivityOnBoot();
+    if (result.reaped > 0 || result.restamped > 0) {
+      logger('brain').info(`boot activity recovery: reaped=${result.reaped} restamped=${result.restamped}`);
+    }
+  }
+
   // --- Boot recovery, seen from the brain. Each substrate exposes the same three steps the recovery
   // coordinator drives (claim → order → resume; see src/brain/recovery) and NOTHING ELSE: there is no
   // per-substrate whole-sweep entry point, because only the coordinator can order the four substrates
@@ -893,6 +905,21 @@ export class BrainService {
     return [...claimed.values()];
   }
 
+  /** A parked turn owns the durable working fence across a restart. Terminal recovery must settle that
+   * fence before clearing its marker, or the next accepted turn can never win its compare-and-set. */
+  private failParkedConversationActivity(sessionId: string, detail: string): void {
+    const activity = this.d.store.getSessionActivity(sessionId);
+    if (!activity || activity.state !== 'working' || !activity.turnId) return;
+    const changed = this.d.store.settleSessionActivity(
+      sessionId,
+      activity.turnId,
+      activity.webParticipatedAt != null ? 'web' : 'cli',
+      'failed',
+      detail,
+    );
+    if (changed) this.d.onConversationActivityChanged?.(sessionId);
+  }
+
   /** `owner-conversations` provider, RESUME: wake one top-level owner conversation after boot.
    *
    *  A pending-result item runs the existing durable outbox drain; the result itself is the continuation,
@@ -913,13 +940,17 @@ export class BrainService {
     }
     if (!this.d.users.get(row.user_id)) {
       log.warn(`owner recovery item ${row.id}: owner account ${row.user_id} no longer exists; clearing park without resume`);
-      if (item.parked) this.d.store.clearSessionPark(row.id);
+      if (item.parked) {
+        this.failParkedConversationActivity(row.id, 'owner account no longer exists for automatic restart recovery');
+        this.d.store.clearSessionPark(row.id);
+      }
       return 'released';
     }
 
     // The generic parked-turn budget must win even when a poison result row is also present. Otherwise the
     // result branch can starve this visible give-up forever.
     if (item.parked && row.park_attempts >= MAX_PARK_RESUME_ATTEMPTS) {
+      this.failParkedConversationActivity(row.id, 'automatic restart recovery gave up after repeated failures');
       this.d.store.abandonPendingDeliveries(row.id);
       this.d.store.clearSessionPark(row.id);
       log.error(`parked conversation ${row.id} exhausted ${MAX_PARK_RESUME_ATTEMPTS} boot resume attempts — giving up; the user must re-send`);
@@ -955,7 +986,10 @@ export class BrainService {
           const delivery = await this.turnRunner.drainPendingSubagentResults(row.user_id, row.id, true);
           let answered = delivery.answered;
           if (delivery.requiresUserAction) {
-            if (item.parked) this.d.store.clearSessionPark(row.id);
+            if (item.parked) {
+              this.failParkedConversationActivity(row.id, 'automatic recovery requires the user to continue');
+              this.d.store.clearSessionPark(row.id);
+            }
             log.info(`boot stored unsafe-recovery notice(s) for owner conversation ${row.id}; waiting for the user's next turn`);
             return 'released';
           }
@@ -1008,7 +1042,10 @@ export class BrainService {
       }
       const completed = this.turnRunner.consumeSettledResultOutcome(row.id);
       if (!resultWakeFailed && completed?.requiresUserAction) {
-        if (item.parked) this.d.store.clearSessionPark(row.id);
+        if (item.parked) {
+          this.failParkedConversationActivity(row.id, 'automatic recovery requires the user to continue');
+          this.d.store.clearSessionPark(row.id);
+        }
         log.info(`boot observed unsafe-recovery notice(s) already stored for owner conversation ${row.id}; waiting for the user's next turn`);
         return 'released';
       }
@@ -1568,6 +1605,19 @@ export class BrainService {
     return this.goals.subgoal(userId, action, value, session);
   }
 
+  /** Mark one owned conversation's activity sequence as read. CLI acknowledgements advance an existing web
+   * baseline but never create participation, so CLI-only work can never become web-unread by terminal use. */
+  readSessionActivity(userId: number, sessionId: string, through: number, surface: ConversationActivitySurface): NonNullable<ReturnType<BrainStore['getSessionActivity']>> {
+    const row = this.d.store.getSession(sessionId);
+    if (!row || row.user_id !== userId || isNonUserSession(sessionId)) throw new Error('unknown session');
+    if (this.d.store.ackSessionActivity(sessionId, through, surface)) {
+      this.d.onConversationActivityChanged?.(sessionId);
+    }
+    const activity = this.d.store.getSessionActivity(sessionId);
+    if (!activity) throw new Error('unknown session');
+    return activity;
+  }
+
   /** The user's conversations with live/active/attached flags — see BrainStatusService.listSessions.
    *  Pagination is opt-in: no `opts` → the historical bare array; with `opts` → a paged window. */
   listSessions(userId: number): SessionListItem[];
@@ -1721,7 +1771,7 @@ export class BrainService {
   }
 
   /** Start (or resume) a conversation — see ConversationLifecycle.start. */
-  async start(userId: number, opts?: { provider?: string; model?: string; session?: string; fresh?: boolean; cwd?: string; clientId?: string; clientGeneration?: number }): Promise<{ sessionId: string }> {
+  async start(userId: number, opts?: { provider?: string; model?: string; session?: string; fresh?: boolean; cwd?: string; clientId?: string; clientGeneration?: number; surface?: ConversationActivitySurface }): Promise<{ sessionId: string }> {
     const started = await this.lifecycle.start(userId, opts);
     // Drain only — never sweep. Opening a conversation says nothing about whether its still-'running'
     // delegation rows are orphans (see reconcileDelegationsOnBoot); the inbox may hold a background child's
@@ -1731,13 +1781,13 @@ export class BrainService {
   }
 
   /** Follow the user's ACTIVE conversation live — see ConversationLifecycle.subscribe. */
-  subscribe(userId: number, listener: (e: BrainEvent) => void, clientId?: string, clientGeneration?: number): () => void {
-    return this.lifecycle.subscribe(userId, listener, clientId, clientGeneration);
+  subscribe(userId: number, listener: (e: BrainEvent) => void, clientId?: string, clientGeneration?: number, surface?: ConversationActivitySurface): () => void {
+    return this.lifecycle.subscribe(userId, listener, clientId, clientGeneration, surface);
   }
 
   /** Follow one of the CALLER'S OWN sessions live, by explicit id — see ConversationLifecycle.tapSession. */
-  tapSession(userId: number, sessionId: string, listener: (e: BrainEvent) => void, clientId?: string, clientGeneration?: number): () => void {
-    return this.lifecycle.tapSession(userId, sessionId, listener, clientId, clientGeneration);
+  tapSession(userId: number, sessionId: string, listener: (e: BrainEvent) => void, clientId?: string, clientGeneration?: number, surface?: ConversationActivitySurface): () => void {
+    return this.lifecycle.tapSession(userId, sessionId, listener, clientId, clientGeneration, surface);
   }
 
   /** Install a fixed-session tap and capture its durable+live snapshot atomically. A delegated child may
@@ -1752,6 +1802,7 @@ export class BrainService {
     clientGeneration?: number,
     history?: MessagePageOpts,
     opts: { anyOwner?: boolean } = {},
+    surface?: ConversationActivitySurface,
   ): Promise<{ off: () => void; snapshot: BrainStreamSnapshot }> {
     // ADMIN OVERSIGHT: reading a conversation belonging to somebody else (the cross-account register).
     // It returns the durable history and NOTHING ELSE -- no live tap. A tap would call attachments
@@ -1770,7 +1821,7 @@ export class BrainService {
       const remote = await this.d.subagentRunner?.tapSessionSnapshot?.(userId, targetSessionId, listener, history);
       if (remote) return remote;
     }
-    const off = this.lifecycle.tapSession(userId, targetSessionId, listener, clientId, clientGeneration);
+    const off = this.lifecycle.tapSession(userId, targetSessionId, listener, clientId, clientGeneration, surface);
     try { return { off, snapshot: this.statusView.streamSnapshot(userId, targetSessionId, history) }; }
     catch (error) { off(); throw error; }
   }

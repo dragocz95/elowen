@@ -214,6 +214,8 @@ describe('createBootRecovery', () => {
     // Asserted on the DECLARED graph, not on a trace: a trace would pass just as happily on a chain whose
     // providers merely happen to be registered in a working order.
     expect(createBootRecovery(stubHost([]), silentLog()).plan()).toEqual([
+      // Activity is reconciled synchronously before any recovery work becomes observable.
+      { id: 'conversation-activity', dependsOn: [], parallel: false },
       // The synchronous claim everything else reads: which runs this boot owns, and therefore which
       // parked turns wait on a recovering child.
       { id: 'delegations-claim', dependsOn: [], parallel: false },
@@ -226,8 +228,8 @@ describe('createBootRecovery', () => {
       // Woken alongside the delegation RUN (not after it): a result that is already durable reaches its
       // owner at once, and a later one arrives through the recovery's completion hook. The dependency on
       // the claim is what makes the wait-on-delegation decision independent of registration order.
-      { id: 'owner-conversations', dependsOn: ['delegations-claim'], parallel: true },
-      { id: 'platform-conversations', dependsOn: ['delegations-claim'], parallel: true },
+      { id: 'owner-conversations', dependsOn: ['delegations-claim', 'conversation-activity'], parallel: true },
+      { id: 'platform-conversations', dependsOn: ['delegations-claim', 'conversation-activity'], parallel: true },
       // Turns the pause could not park: notices only, independent of everything above.
       { id: 'interrupted-turns', dependsOn: [], parallel: true },
     ]);
@@ -282,6 +284,7 @@ describe('createBootRecovery', () => {
     const reference = createBootRecovery(host, silentLog()).plan();
     const reversed = new BootRecoveryCoordinator(silentLog());
     const resumeOf: Record<string, () => Promise<RecoveryOutcome>> = {
+      'conversation-activity': async () => 'released',
       'delegations-claim': async () => 'released',
       delegations: async () => host.recoverDelegation({} as never),
       workflows: async () => host.resumeWorkflow({} as never),
@@ -290,6 +293,7 @@ describe('createBootRecovery', () => {
       'interrupted-turns': async () => host.notifyPauseInterruption({} as never),
     };
     const claimOf: Record<string, () => readonly unknown[]> = {
+      'conversation-activity': () => { host.reconcileConversationActivity?.(); return []; },
       'delegations-claim': () => { host.claimDelegationRecovery(); return []; },
       delegations: () => host.takeClaimedDelegations(),
       workflows: () => host.claimWorkflowRecovery(),

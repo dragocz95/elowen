@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -56,6 +56,18 @@ function harness(policy?: (userId: number) => Policy) {
 }
 
 describe('status() project section', () => {
+  it('projects activity from the session listing row without per-session reads', () => {
+    const { store, status } = harness();
+    store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    store.appendMessage({ id: 'm1', sessionId: 'brain-1', parentId: null, role: 'user', content: { role: 'user', content: 'hello' } });
+    store.setDelegationBootId('boot-1');
+    store.beginSessionActivity('brain-1', 'turn-1', 'web');
+    const activityRead = vi.spyOn(store, 'getSessionActivity');
+
+    expect(status.listSessions(1)[0]?.activity).toMatchObject({ state: 'working', seq: 1, unread: true });
+    expect(activityRead).not.toHaveBeenCalled();
+  });
+
   it('reports the conversation\'s stored work dir and its git branch', () => {
     const { store, status } = harness();
     const root = repo('telemetry');

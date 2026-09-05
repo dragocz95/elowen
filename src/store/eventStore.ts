@@ -37,6 +37,8 @@ const AGGREGATION_WINDOW_MINUTES = 10;
  *  additional plugin-owned event shape registered through the generic bus. */
 function coreToRow(e: ElowenEvent): EventPersistenceRow | null {
   switch (e.type) {
+    // Conversation activity is an owner-scoped transient read-model update, not team-feed history.
+    case 'conversation': return null;
     // transient "your memory counters moved" nudge — memory_events is the durable record for memories
     case 'memory': return null;
     // The target stays the external identity, because that is what an audit trail has to pin down. The
@@ -67,6 +69,9 @@ export class EventStore {
     return null;
   }
   record(e: ElowenEvent, projectId?: number | null): void {
+    // Owner conversation activity is transient by contract. Skip plugin row resolvers too, otherwise a
+    // resolver could accidentally turn this user-scoped read-model event into persisted feed history.
+    if (e.type === 'conversation') return;
     // The team feed has its own write path because it AGGREGATES: an identical event inside the window
     // bumps a counter instead of adding a row. It also carries an actor, which no other event shape has.
     if (e.type === 'activity') { this.recordActivity(e, projectId ?? null); return; }

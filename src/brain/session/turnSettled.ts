@@ -3,6 +3,7 @@ import type { BrainStore } from '../../store/brainStore.js';
 import type { ConversationTitler } from '../conversationTitler.js';
 import type { MemoryCurator } from '../memoryCurator.js';
 import type { PinToken } from '../../store/usageOriginStore.js';
+import { resetConversationActivity, type ConversationActivityChanged, type ConversationActivityStore, type ConversationActivitySurface } from './conversationActivity.js';
 
 /** The ONE place that decides what a turn does BESIDES answering — the settlement side of the same
  *  discipline `composeTurnPrompt` applies to the prompt side.
@@ -61,18 +62,31 @@ export interface TurnOpening {
    *  turn finishes reports history rather than activity. `target` is the feed's own subject — the channel
    *  key for a room, the conversation id for an owner turn — so it is stated rather than derived. */
   activity?: { record: TurnActivityFeed; actorUserId: number | null; surface: string; target: string };
+  /** Durable owner-chat activity. Platform rooms deliberately omit this argument: their live presence is
+   *  represented by the existing channel/session state, not by the owner conversation indicator. */
+  conversationActivity?: {
+    store: ConversationActivityStore;
+    turnId: string;
+    surface: ConversationActivitySurface;
+    detail?: string;
+    onChanged?: ConversationActivityChanged;
+    /** Defer the durable working projection until the caller has acquired its conversation admission lock. */
+    defer?: boolean;
+  };
 }
 
 /** The opened turn's handle. A surface takes one from {@link openTurn} and MUST close it on every exit
  *  of the turn it opened, success or throw — which is why it is returned rather than optional. */
 export interface OpenedTurn {
+  /** Begin a deferred owner activity projection after the caller has acquired its admission lock. */
+  begin(): void;
   /** The turn moved to another conversation mid-flight (owner-chat idle rollover archives the transcript
    *  and mints a fresh session id), so the pin follows it. Without this the turn settles under an id no
    *  pin was ever written for and records as `internal` against the row owner. */
   movedTo(sessionId: string): void;
   /** The turn is over. Releases a pin nothing consumed — a turn refused at shutdown, aborted before its
    *  first provider request, or rejected by any other pre-prompt guard. A pin that a settled turn already
-   *  consumed, and a message steered into somebody else's turn, both release nothing (the pin is
+   *  consumed, and a message steered into somebody else's running turn, both release nothing (the pin is
    *  token-keyed), so this is safe to call unconditionally and idempotent. */
   close(): void;
 }
@@ -84,6 +98,16 @@ export function openTurn(parts: TurnOpening): OpenedTurn {
   const pin = parts.origin;
   let sessionId = parts.sessionId;
   let token = pin ? pin.pin.recordRequest(sessionId, pin.userId, pin.origin, pin.atMs) : null;
+  const conversationActivity = parts.conversationActivity;
+  let activitySessionId = sessionId;
+  let activityStarted = false;
+  const begin = (): void => {
+    if (!conversationActivity || activityStarted) return;
+    activityStarted = conversationActivity.store.beginSessionActivity(
+      activitySessionId, conversationActivity.turnId, conversationActivity.surface, conversationActivity.detail);
+    if (activityStarted) conversationActivity.onChanged?.(activitySessionId);
+  };
+  if (conversationActivity && !conversationActivity.defer) begin();
   if (parts.activity) {
     parts.activity.record({
       actorUserId: parts.activity.actorUserId,
@@ -92,10 +116,20 @@ export function openTurn(parts: TurnOpening): OpenedTurn {
     });
   }
   return {
+    begin,
     movedTo(next: string): void {
-      if (!pin || token == null) return;
-      pin.pin.repointPin(sessionId, token, next);
+      const previousSessionId = sessionId;
+      if (pin && token != null) pin.pin.repointPin(sessionId, token, next);
       sessionId = next;
+      if (!conversationActivity || activitySessionId === next) return;
+      activitySessionId = next;
+      if (!activityStarted) return;
+      // Rollover creates a new row, so move the projection as two CAS-protected transitions: clear the
+      // predecessor only when this turn still owns it, then begin on the replacement row.
+      resetConversationActivity(conversationActivity.store, previousSessionId, conversationActivity.turnId, conversationActivity.onChanged);
+      activityStarted = conversationActivity.store.beginSessionActivity(
+        activitySessionId, conversationActivity.turnId, conversationActivity.surface, conversationActivity.detail);
+      if (activityStarted) conversationActivity.onChanged?.(activitySessionId);
     },
     close(): void {
       if (!pin || token == null) return;
@@ -157,6 +191,16 @@ export interface TurnSettlement {
   /** Owner-only, and expressed as an absent argument rather than a surface check: a room already
    *  received the answer where it was asked, so there is nothing to push to a phone. */
   notify?: () => void;
+  /** Durable owner activity is settled here, alongside the other turn-owned effects. `idle` is reserved
+   *  for an explicit user abort or interruption; it must not become an unread terminal failure. */
+  conversationActivity?: {
+    store: ConversationActivityStore;
+    turnId: string;
+    surface: ConversationActivitySurface;
+    state: 'done' | 'failed' | 'idle';
+    detail?: string;
+    onChanged?: ConversationActivityChanged;
+  };
 }
 
 /** Everything that happens once a turn has settled.
@@ -165,6 +209,16 @@ export interface TurnSettlement {
  *  here whose loss is not recoverable from anywhere else. The plugin reload goes LAST because it can
  *  dispose and respawn the very session the steps above read and write. */
 export function settleTurn(parts: TurnSettlement): void {
+  if (parts.conversationActivity) {
+    const activity = parts.conversationActivity;
+    if (activity.state === 'idle') {
+      resetConversationActivity(activity.store, parts.sessionId, activity.turnId, activity.onChanged);
+    } else {
+      const changed = activity.store.settleSessionActivity(
+        parts.sessionId, activity.turnId, activity.surface, activity.state, activity.detail);
+      if (changed) activity.onChanged?.(parts.sessionId);
+    }
+  }
   if (parts.lastWriter) parts.lastWriter.store.setLastWriter(parts.sessionId, parts.lastWriter.userId);
   if (parts.curate) {
     // Never awaited and never allowed to fail a turn that has already produced its answer.

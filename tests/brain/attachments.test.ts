@@ -158,9 +158,8 @@ describe('ClientAttachments stable client grace cache', () => {
   });
 });
 
-// The idle rollover consults this to leave a conversation a terminal still has OPEN alone. The CLI is the
-// only surface that sends a stable client id (the web dock subscribes anonymously), so "has a live stable
-// client" IS "a terminal is sitting in this conversation".
+// The idle rollover consults this to leave a conversation a CLI still has OPEN alone. Explicit web bindings
+// may use stable client ids for attachment identity, but they never pin the CLI rollover policy.
 describe('ClientAttachments.hasLiveStableClient', () => {
   it('is true only while an identified client\'s transport is actually attached', () => {
     const attachments = new ClientAttachments();
@@ -182,6 +181,18 @@ describe('ClientAttachments.hasLiveStableClient', () => {
     attachments.attach(1, 'brain-A', listener, vi.fn()); // no clientId — the web's /brain/stream
     expect(attachments.attachedCount('brain-A')).toBe(1); // it IS attached…
     expect(attachments.hasLiveStableClient('brain-A')).toBe(false); // …but it is not a terminal
+  });
+
+  it('keeps explicit web and CLI stable bindings on opposite rollover semantics', () => {
+    const web = new ClientAttachments();
+    const webListener = () => {};
+    web.attach(1, 'brain-web', webListener, vi.fn(), 'web-1', 1, 'web');
+    expect(web.hasLiveStableClient('brain-web')).toBe(false);
+
+    const cli = new ClientAttachments();
+    const cliListener = () => {};
+    cli.attach(1, 'brain-cli', cliListener, vi.fn(), 'cli-1', 1, 'cli');
+    expect(cli.hasLiveStableClient('brain-cli')).toBe(true);
   });
 
   it('follows a rolled-over conversation onto its replacement session', () => {

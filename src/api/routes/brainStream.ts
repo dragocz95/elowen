@@ -5,8 +5,60 @@ import { SerializedEventBuffer } from '../../brain/session/serializedEventBuffer
 import type { ElowenApp } from '../context.js';
 import { messagePageOpts, type BrainRouteContext } from './brainRouteContext.js';
 
+export function waitForSseHeartbeat(ms: number, signal: AbortSignal): Promise<boolean> {
+  if (signal.aborted) return Promise.resolve(false);
+  return new Promise((resolve) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const finish = (alive: boolean): void => {
+      if (timer !== undefined) clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      resolve(alive);
+    };
+    const onAbort = (): void => finish(false);
+    timer = setTimeout(() => finish(true), ms);
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
 export function registerBrainStreamRoutes(app: ElowenApp, route: BrainRouteContext): void {
   const { d } = route;
+
+  /** Content-free owner activity invalidations. Several durable transitions can happen in one event-loop
+   * turn, so collapse them into one frame containing the latest update for each conversation. */
+  app.get('/brain/conversations', c => {
+    if (!d.brain) return c.json({ error: 'brain unavailable' }, 503);
+    const userId = c.get('user').id;
+    return streamSSE(c, async stream => {
+      let scheduled = false;
+      const pending = new Map<string, Extract<import('../sse.js').ElowenEvent, { type: 'conversation' }>>();
+      let write = Promise.resolve();
+      const flush = (): void => {
+        if (scheduled) return;
+        scheduled = true;
+        queueMicrotask(() => {
+          scheduled = false;
+          if (c.req.raw.signal.aborted || pending.size === 0) return;
+          const updates = [...pending.values()].map(({ userId: _userId, ...update }) => update);
+          pending.clear();
+          write = write.then(() => stream.writeSSE({ event: 'conversations', data: JSON.stringify({ updates }) })).catch(() => undefined);
+        });
+      };
+      const off = d.bus.subscribe(e => {
+        if (e.type !== 'conversation' || e.userId !== userId) return;
+        pending.set(e.sessionId, e);
+        flush();
+      });
+      c.req.raw.signal.addEventListener('abort', off, { once: true });
+      try {
+        await stream.write(': connected\n\n');
+        while (!c.req.raw.signal.aborted) {
+          await waitForSseHeartbeat(30000, c.req.raw.signal);
+          if (!c.req.raw.signal.aborted) await stream.write(': ping\n\n');
+        }
+      } finally { off(); }
+    });
+  });
+
   // Live events of the ACTIVE conversation by default, or of one explicitly owned session when
   // `?session=<id>` is given (the sub-agent drill-in stream — survives that session's respawns).
   app.get('/brain/stream', c => {
@@ -21,6 +73,11 @@ export function registerBrainStreamRoutes(app: ElowenApp, route: BrainRouteConte
     // Authentication is already complete at this point; lifecycle scopes the opaque client id by this
     // userId, so another account can never detach or stop this caller's attachment.
     const clientId = rawClientId;
+    const rawSurface = c.req.query('surface');
+    if (rawSurface !== undefined && rawSurface !== 'web' && rawSurface !== 'cli') {
+      return c.json({ error: 'invalid surface' }, 400);
+    }
+    const surface = rawSurface as 'web' | 'cli' | undefined;
     const rawClientGeneration = c.req.query('generation');
     const clientGeneration = rawClientGeneration === undefined ? undefined : Number(rawClientGeneration);
     if (clientGeneration !== undefined
@@ -81,12 +138,12 @@ export function registerBrainStreamRoutes(app: ElowenApp, route: BrainRouteConte
           // The write paths are untouched: /brain/send keeps its own ownership check, so this can only
           // ever show history, never post into someone else's conversation.
           const anyOwner = !!c.get('user')?.is_admin;
-          const attached = await brain.tapSessionSnapshot(userId, session, deliver, clientId, clientGeneration, historyWindow, { anyOwner });
+          const attached = await brain.tapSessionSnapshot(userId, session, deliver, clientId, clientGeneration, historyWindow, { anyOwner }, surface);
           off = attached.off;
           snapshot = attached.snapshot;
         } else off = session
-          ? brain.tapSession(userId, session, deliver, clientId, clientGeneration)
-          : brain.subscribe(userId, deliver, clientId, clientGeneration);
+          ? brain.tapSession(userId, session, deliver, clientId, clientGeneration, surface)
+          : brain.subscribe(userId, deliver, clientId, clientGeneration, surface);
       }
       catch { await stream.writeSSE({ data: JSON.stringify({ type: 'error', message: session ? 'unknown session' : 'brain not started' }), event: 'error' }); return; }
       // Remote runner taps attach asynchronously. The client may disconnect before that IPC round-trip
@@ -118,7 +175,7 @@ export function registerBrainStreamRoutes(app: ElowenApp, route: BrainRouteConte
       // events are only ever BrainEvent types.
       const namedHeartbeat = c.req.query('heartbeat') === '1';
       while (!c.req.raw.signal.aborted) {
-        await stream.sleep(30000);
+        await waitForSseHeartbeat(30000, c.req.raw.signal);
         if (c.req.raw.signal.aborted) break;
         if (!namedHeartbeat) { await stream.write(': ping\n\n'); continue; }
         writes = writes.then(() => stream.writeSSE({ data: '{}', event: 'heartbeat' })).catch(() => undefined);

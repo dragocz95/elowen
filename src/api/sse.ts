@@ -1,5 +1,6 @@
 import { logger } from '../shared/logger.js';
 import { PLATFORM_SURFACES } from '../shared/platformIdentity.js';
+import type { ConversationActivityState } from '../brain/session/conversationActivity.js';
 
 const log = logger('sse');
 
@@ -22,6 +23,9 @@ export const ACTIVITY_KINDS = ['turn'] as const;
 export type ActivityKind = (typeof ACTIVITY_KINDS)[number];
 
 export type ElowenEvent =
+  // A content-free, owner-scoped conversation activity invalidation. It is transient and never enters the
+  // persisted team feed; the user id is routing metadata and the activity slice is the read model itself.
+  | { type: 'conversation'; userId: number; sessionId: string; state: ConversationActivityState; seq: number; at: string | null; detail: string; unread: boolean }
   // The team activity feed ("Dění"). Carries the actor as an ID ONLY: the display name is resolved by
   // JOIN at read time, so a later rename is reflected throughout the history.
   | { type: 'activity'; kind: ActivityKind; actorUserId: number | null; surface: ActivitySurface; target: string }

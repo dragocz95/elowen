@@ -34,6 +34,8 @@ import { isNonUserSession } from '../sessionId.js';
 import { xmlEscape } from '../../shared/xml.js';
 import { logger } from '../../shared/logger.js';
 import { steerCustomMessage } from '../session/steerCustomMessage.js';
+import { conversationActivitySurface, resetConversationActivity } from '../session/conversationActivity.js';
+import type { ConversationActivitySurface } from '../session/conversationActivity.js';
 
 
 /** A durable sub-agent result is retried at most this many times before the drain gives up (leaves the
@@ -123,6 +125,8 @@ interface TurnRunnerDeps {
   usageOrigins?: TurnOriginPin;
   /** The team activity feed. Absent on a minimal wiring, which then simply has no feed. */
   recordActivity?: TurnActivityFeed;
+  /** Notify user-scoped conversation-list subscribers after durable activity changes. */
+  onConversationActivityChanged?: (sessionId: string) => void;
 }
 
 /** The owner-chat turn pipeline: mid-run steering, idle rollover + vision hop (delegated to the
@@ -253,34 +257,70 @@ export class BrainTurnRunner {
       // a fresh answer in THIS delivery, which matters to a genuinely parked owner turn.
       if (resultId && resultInContext(live.session.messages as CustomResultMessage[], resultId)) return 'landed-unanswered';
       const before = lastAssistant(live.session.messages as { role?: string }[]);
-      const context = this.contextBuilder.buildScope(userId, live);
-      await context.run(() => live.session.sendCustomMessage(message, { triggerTurn, deliverAs: 'followUp' }));
-      if (!triggerTurn) return 'landed-unanswered';
-      const settled = lastAssistant(live.session.messages as { role?: string; stopReason?: string; errorMessage?: string }[]);
-      // A turn that did not settle normally is NOT automatically a failure to deliver: PI appends the
-      // custom message to the transcript before running the turn, so the result may already be in the
-      // parent's context, and re-delivering it would put it there twice. Don't assume from the turn's
-      // shape — look for the message.
-      const landed = resultInContext(live.session.messages as CustomResultMessage[], resultId);
-      // No new assistant at all. Usually a genuine non-delivery — but PI strips the errored assistant out
-      // of live state BEFORE its retry backoff, so a retry the user cancels mid-sleep settles with the
-      // pre-delivery assistant still last, having already put the result in context.
-      if (!settled || settled === before) {
-        if (!landed) throw new Error('sub-agent result was not processed by the parent model');
-        logger('brain-subagent').info(`sub-agent result for ${target} entered the context of a cancelled parent retry; acknowledging without retry`);
-        return 'landed-unanswered';
+      const ownerActivity = triggerTurn && !isNonUserSession(target);
+      const currentActivity = ownerActivity ? this.d.store.getSessionActivity(target) : undefined;
+      const existingActivityTurnId = currentActivity?.state === 'working' ? currentActivity.turnId : null;
+      const activityTurnId = existingActivityTurnId ?? randomUUID();
+      const activitySurface = conversationActivitySurface(
+        undefined, currentActivity?.webParticipatedAt != null ? 'web' : 'cli');
+      const activityStarted = ownerActivity && existingActivityTurnId === null;
+      const opened = openTurn({
+        sessionId: target,
+        ...(activityStarted
+          ? { conversationActivity: { store: this.d.store, turnId: activityTurnId, surface: activitySurface, onChanged: this.d.onConversationActivityChanged } }
+          : {}),
+      });
+      let activityState: 'done' | 'failed' = 'failed';
+      let activityDetail: string | undefined;
+      try {
+        const context = this.contextBuilder.buildScope(userId, live);
+        await context.run(() => live.session.sendCustomMessage(message, { triggerTurn, deliverAs: 'followUp' }));
+        if (!triggerTurn) return 'landed-unanswered';
+        const settled = lastAssistant(live.session.messages as { role?: string; stopReason?: string; errorMessage?: string }[]);
+        // A turn that did not settle normally is NOT automatically a failure to deliver: PI appends the
+        // custom message to the transcript before running the turn, so the result may already be in the
+        // parent's context, and re-delivering it would put it there twice. Don't assume from the turn's
+        // shape — look for the message.
+        const landed = resultInContext(live.session.messages as CustomResultMessage[], resultId);
+        // No new assistant at all. Usually a genuine non-delivery — but PI strips the errored assistant out
+        // of live state BEFORE its retry backoff, so a retry the user cancels mid-sleep settles with the
+        // pre-delivery assistant still last, having already put the result in context.
+        if (!settled || settled === before) {
+          if (!landed) throw new Error('sub-agent result was not processed by the parent model');
+          logger('brain-subagent').info(`sub-agent result for ${target} entered the context of a cancelled parent retry; acknowledging without retry`);
+          return 'landed-unanswered';
+        }
+        // Two ways to get here. The user aborted the turn mid-flight (Esc / stop). Or the parent's own model
+        // turn errored — which says nothing about the CHILD's result: the delivery budget exists for a
+        // transport that could not carry it, and spending it on the parent's provider outage is what burns
+        // all five attempts in half a minute and strands a perfectly good result.
+        if (settled.stopReason === 'aborted' || settled.stopReason === 'error') {
+          const why = settled.stopReason === 'aborted' ? 'aborted' : 'errored';
+          if (!landed) throw new Error(settled.errorMessage?.trim() || `parent turn ${why} before the sub-agent result reached its context`);
+          logger('brain-subagent').info(`sub-agent result for ${target} entered the context of an ${why} parent turn; acknowledging without retry`);
+          return 'landed-unanswered';
+        }
+        activityState = 'done';
+        return 'landed';
+      } catch (error) {
+        activityDetail = error instanceof Error ? error.message : String(error);
+        throw error;
+      } finally {
+        if (ownerActivity) {
+          settleTurn({
+            sessionId: target,
+            conversationActivity: {
+              store: this.d.store,
+              turnId: activityTurnId,
+              surface: activitySurface,
+              state: activityState,
+              ...(activityDetail ? { detail: activityDetail } : {}),
+              onChanged: this.d.onConversationActivityChanged,
+            },
+          });
+        }
+        opened.close();
       }
-      // Two ways to get here. The user aborted the turn mid-flight (Esc / stop). Or the parent's own model
-      // turn errored — which says nothing about the CHILD's result: the delivery budget exists for a
-      // transport that could not carry it, and spending it on the parent's provider outage is what burns
-      // all five attempts in half a minute and strands a perfectly good result.
-      if (settled.stopReason === 'aborted' || settled.stopReason === 'error') {
-        const why = settled.stopReason === 'aborted' ? 'aborted' : 'errored';
-        if (!landed) throw new Error(settled.errorMessage?.trim() || `parent turn ${why} before the sub-agent result reached its context`);
-        logger('brain-subagent').info(`sub-agent result for ${target} entered the context of an ${why} parent turn; acknowledging without retry`);
-        return 'landed-unanswered';
-      }
-      return 'landed';
     }));
   }
 
@@ -540,7 +580,20 @@ export class BrainTurnRunner {
     // while the sweep is still walking its worklist deterministically wins its claim-check
     // (claimParkResumeAttempt bumps only while the marker stands). Internal turns (goal kickoff, system
     // nudges) are machine work, not the user speaking, and leave the marker alone.
-    if (!internal) this.d.store.clearSessionPark(targetId);
+    if (!internal) {
+      // The park marker and the activity fence are two halves of the same claim, so they must be stood
+      // down together. Boot restamps a PARKED conversation's fence to this boot to keep its resume live
+      // (reconcileSessionActivityOnBoot), which leaves the row reading `working` under the PREVIOUS turn's
+      // id. If the user speaks before the sweep gets there, clearing only the marker strands that fence
+      // where no later compare-and-set can reach it: begin refuses (still `working`), settle refuses
+      // (different turn id), and the sweep's own release path is never taken because its claim-check now
+      // fails. The conversation would then pulse "working" for the life of the process and lose its unread
+      // state for good. Releasing it here is the same neutral idle transition the sweep's give-up paths
+      // take — never a `failed`, because nothing failed.
+      const parked = this.d.store.getSession(targetId)?.parked_at != null;
+      this.d.store.clearSessionPark(targetId);
+      if (parked) resetConversationActivity(this.d.store, targetId, undefined, this.d.onConversationActivityChanged);
+    }
     // Esc/stop fences the conversation before it snapshots children and clears PI's queue. Never admit a
     // message into that teardown window: the cancelled compaction/run will not drain it, so it would
     // otherwise survive as a phantom chip and execute on a later prompt.
@@ -584,6 +637,15 @@ export class BrainTurnRunner {
     // Opening it EARLIER, before the guards, is what made the feed report work that never happens: a nudge
     // dropped because the session is busy and a message rejected into an aborting session both streamed a
     // live "is working" row to every attached browser, one per drop.
+    // Internal result wakes have no originating HTTP surface. Preserve CLI-only conversations as CLI;
+    // once web has participated, the same owner conversation remains eligible for web unread state.
+    const activitySurface: ConversationActivitySurface = conversationActivitySurface(
+      request.surface,
+      this.d.store.getSessionActivity(active.sessionId)?.webParticipatedAt != null ? 'web' : 'cli');
+    const activityTurnId = randomUUID();
+    const ownsConversationActivity = !turnBusy;
+    let activityState: 'done' | 'failed' | 'idle' = 'failed';
+    let activityDetail: string | undefined;
     const opened = openTurn({
       sessionId: active.sessionId,
       ...(request.origin && this.d.usageOrigins
@@ -597,6 +659,9 @@ export class BrainTurnRunner {
             surface: internal ? 'internal' : (request.surface ?? 'unknown'),
             target: active.sessionId,
           } }
+        : {}),
+      ...(ownsConversationActivity
+        ? { conversationActivity: { store: this.d.store, turnId: activityTurnId, surface: activitySurface, onChanged: this.d.onConversationActivityChanged, defer: true } }
         : {}),
     });
     try {
@@ -793,8 +858,38 @@ export class BrainTurnRunner {
         // left on the pre-lock id was found by nobody and the first turn after every rollover recorded as
         // `internal` against the row owner instead of the surface the person was sitting at.
         opened.movedTo(b.sessionId);
+        // The activity projection opens only after the conversation admission lock is held. This makes two
+        // concurrent idle sends serialize as two real turns instead of one replacing the other's working CAS.
+        opened.begin();
         await runTurn(b, text, images, mode, !internal, display);
+        // A turn that RETURNS is not a turn that succeeded. PI resolves `prompt()` on a provider error and
+        // on an abort alike — it settles the assistant with `stopReason: 'error'` and empty content rather
+        // than throwing (channels.ts makes the same allowance where it explains it) — so neither reaches
+        // the catch below. Reading the settled assistant is exactly what the delegated delivery path above
+        // already does, for this reason. Without it a provider outage the user watched fail is filed as
+        // `done`, and the rail answers with a green check and no reason.
+        const outcome = lastAssistant(
+          (this.d.sessions.get(completedSessionId)?.session.messages ?? []) as { role?: string; stopReason?: string; errorMessage?: string }[],
+        );
+        if (outcome?.stopReason === 'aborted') {
+          // A stop is the user's own decision. Reporting their own Esc back at them as a failure would be
+          // the same mistake the catch below already declines to make for a thrown abort.
+          activityState = 'idle';
+        } else if (outcome?.stopReason === 'error') {
+          activityState = 'failed';
+          activityDetail = outcome.errorMessage?.trim() || undefined;
+        } else {
+          activityState = 'done';
+        }
       });
+    } catch (error) {
+      const live = this.d.sessions.get(completedSessionId);
+      const latest = live ? lastAssistant(live.session.messages as { role?: string; stopReason?: string }[]) : undefined;
+      const message = error instanceof Error ? error.message : String(error);
+      const aborted = latest?.stopReason === 'aborted' || /\babort(?:ed|ing)?\b|session work stopped/i.test(message);
+      activityState = aborted ? 'idle' : 'failed';
+      activityDetail = aborted ? undefined : message;
+      throw error;
     } finally {
       // Safety net: if the turn threw before it started (rollover/preflight rejection), its pending
       // compaction chip is still up — drop it so a rejected send never leaves a phantom waiting chip.
@@ -839,7 +934,22 @@ export class BrainTurnRunner {
         ...(this.d.notifyTurnComplete
           ? { notify: () => this.d.notifyTurnComplete!(userId, completedSessionId, !internal, client?.id) }
           : {}),
+        ...(ownsConversationActivity
+          ? { conversationActivity: {
+              store: this.d.store,
+              turnId: activityTurnId,
+              surface: activitySurface,
+              state: activityState,
+              onChanged: this.d.onConversationActivityChanged,
+              ...(activityDetail ? { detail: activityDetail } : {}),
+            } }
+          : {}),
       });
+      if (ownsConversationActivity) {
+        const activity = this.d.store.getSessionActivity(completedSessionId);
+        const live = this.d.sessions.get(completedSessionId);
+        if (activity && live) live.replay.publish({ type: 'idle', activitySeq: activity.seq });
+      }
     }
     if (internal?.kind !== 'systemNudge') this.d.goals.afterTurnGoalJudge(userId, completedSessionId, internal);
     } finally {

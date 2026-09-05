@@ -36,7 +36,8 @@ function fakeBrain() {
   const detachCommandCalls: { id: number; session?: string; client?: { id: string; generation: number } }[] = [];
   const killCommandCalls: { id: number; session?: string; client?: { id: string; generation: number } }[] = [];
   const detachWorkflowCalls: { id: number; session?: string; client?: { id: string; generation: number } }[] = [];
-  const startCalls: { id: number; opts?: { fresh?: boolean; clientId?: string; clientGeneration?: number } }[] = [];
+  const startCalls: { id: number; opts?: { fresh?: boolean; clientId?: string; clientGeneration?: number; surface?: 'web' | 'cli' } }[] = [];
+  const readActivityCalls: { id: number; session: string; through: number; surface: 'web' | 'cli' }[] = [];
   const tapSnapshotCalls: { id: number; session: string; history?: { limit: number; before?: number } }[] = [];
   const subagentSends: { id: number; session: string; text: string }[] = [];
   const acceptedSendFailures: { session: string; message: string }[] = [];
@@ -87,6 +88,7 @@ function fakeBrain() {
     killCommandCalls,
     detachWorkflowCalls,
     startCalls,
+    readActivityCalls,
     tapSnapshotCalls,
     subagentSends,
     acceptedSendFailures,
@@ -142,10 +144,15 @@ function fakeBrain() {
         project: { cwd: `/work/user-${id}`, branch: `branch-${id}` },
       };
     },
-    start: async (id: number, opts?: { fresh?: boolean; clientId?: string; clientGeneration?: number }) => {
+    start: async (id: number, opts?: { fresh?: boolean; clientId?: string; clientGeneration?: number; surface?: 'web' | 'cli' }) => {
       startCalls.push({ id, opts });
       started.add(id);
       return { sessionId: `brain-${id}` };
+    },
+    readSessionActivity: (id: number, session: string, through: number, surface: 'web' | 'cli') => {
+      if (session !== `brain-${id}`) throw new Error('unknown session');
+      readActivityCalls.push({ id, session, through, surface });
+      return { state: 'done', seq: through, readSeq: through, turnId: null, bootId: null, detail: 'finished', at: '2026-01-01T00:00:00.000Z', webParticipatedAt: '2026-01-01T00:00:00.000Z', unread: false };
     },
     preflightSend: (id: number) => {
       if (!started.has(id)) throw new Error('brain not started for user');
@@ -857,6 +864,26 @@ describe('brain routes', () => {
     ac.abort();
   });
 
+  it('streams coalesced owner activity updates without exposing transcript content', async () => {
+    const { app, amyTok, bus } = setup();
+    const ac = new AbortController();
+    const res = await app.request('/brain/conversations', { headers: { authorization: `Bearer ${amyTok}` }, signal: ac.signal });
+    expect(res.status).toBe(200);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    await reader.read();
+    bus.publish({ type: 'conversation', userId: 1, sessionId: 'brain-1', state: 'done', seq: 3, at: null, detail: 'secret transcript', unread: true });
+    bus.publish({ type: 'conversation', userId: 2, sessionId: 'brain-2', state: 'working', seq: 4, at: null, detail: 'working', unread: false });
+    const chunk = await reader.read();
+    ac.abort();
+    await reader.cancel().catch(() => {});
+    const body = decoder.decode(chunk.value);
+    expect(body).toContain('event: conversations');
+    expect(body).toContain('brain-2');
+    expect(body).not.toContain('brain-1');
+    expect(body).not.toContain('secret transcript');
+  });
+
   it('send before start returns 409', async () => {
     const { app, amyTok } = setup();
     expect((await app.request('/brain/send', post(amyTok, { text: 'hi' }))).status).toBe(409);
@@ -1162,6 +1189,23 @@ describe('brain routes', () => {
     expect(hits).toEqual([{ sessionId: 's-2', sessionTitle: 'T', role: 'user', snippet: 'daemon', ts: '2026-01-01 00:00:00' }]);
     expect(await (await app.request('/brain/search?q=d', auth(amyTok))).json()).toEqual([]);
     expect(await (await app.request('/brain/search', auth(amyTok))).json()).toEqual([]);
+  });
+
+  it('passes explicit surfaces through start while preserving the legacy omitted shape', async () => {
+    const { app, amyTok, brain } = setup();
+    await app.request('/brain/start', post(amyTok, { client: 'web-a', generation: 1, surface: 'web' }));
+    expect(brain.startCalls.at(-1)?.opts).toMatchObject({ clientId: 'web-a', clientGeneration: 1, surface: 'web' });
+  });
+
+  it('POST /brain/sessions/:id/read validates and forwards ownership-scoped activity acknowledgements', async () => {
+    const { app, amyTok, brain } = setup();
+    const response = await app.request('/brain/sessions/brain-2/read', post(amyTok, { through: 7, surface: 'web' }));
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ state: 'done', seq: 7, readSeq: 7, unread: false });
+    expect(brain.readActivityCalls).toEqual([{ id: 2, session: 'brain-2', through: 7, surface: 'web' }]);
+    expect((await app.request('/brain/sessions/brain-2/read', post(amyTok, { through: -1, surface: 'web' }))).status).toBe(400);
+    expect((await app.request('/brain/sessions/brain-2/read', post(amyTok, { through: 7, surface: 'desktop' }))).status).toBe(400);
+    expect((await app.request('/brain/sessions/brain-1/read', post(amyTok, { through: 7, surface: 'web' }))).status).toBe(404);
   });
 
   it('GET /brain/sessions returns a bare array by default and a paged window with ?limit&offset', async () => {

@@ -7,6 +7,13 @@ import { dbTsToIso } from '../shared/time.js';
 import { planFilePath, toolResultSpillDir } from '../shared/paths.js';
 import { logger } from '../shared/logger.js';
 import { CHANNEL_PREFIX, SUBAGENT_PREFIX, CRON_PREFIX, isArchivedChannelSession } from '../brain/sessionId.js';
+import {
+  boundedConversationActivityDetail,
+  conversationActivityUnread,
+  type ConversationActivitySnapshot,
+  type ConversationActivitySurface,
+  type ConversationActivityState,
+} from '../brain/session/conversationActivity.js';
 import { collectImageFiles, isPersistedImageBlock } from '../brain/chatImages.js';
 import { collectChatFiles, type StoredChatFile } from '../brain/chatFiles.js';
 import { rollupActivatedTools } from '../brain/continuity/activatedTools.js';
@@ -66,6 +73,14 @@ export interface BrainSessionRow {
   parked_at: string | null;
   /** Boot resume attempts on the current park; bumped durably before each attempt, reset on clear. */
   park_attempts: number;
+  activity_state: ConversationActivityState;
+  activity_seq: number;
+  activity_read_seq: number;
+  activity_turn_id: string | null;
+  activity_boot_id: string | null;
+  activity_detail: string;
+  activity_at: string | null;
+  web_participated_at: string | null;
   created_at: string; updated_at: string;
 }
 /** A boot-resumed platform turn's answer that is computed but not yet posted (see
@@ -277,6 +292,118 @@ export class BrainStore {
 
   getSession(id: string): BrainSessionRow | undefined {
     return this.db.prepare('SELECT * FROM brain_sessions WHERE id = ?').get(id) as BrainSessionRow | undefined;
+  }
+
+  /** Read the durable owner-facing activity slice without touching brain_messages. */
+  getSessionActivity(sessionId: string): (ConversationActivitySnapshot & { unread: boolean }) | undefined {
+    const row = this.db.prepare(
+      `SELECT activity_state, activity_seq, activity_read_seq, activity_turn_id, activity_boot_id,
+              activity_detail, activity_at, web_participated_at
+         FROM brain_sessions WHERE id = ?`,
+    ).get(sessionId) as {
+      activity_state: ConversationActivityState; activity_seq: number; activity_read_seq: number;
+      activity_turn_id: string | null; activity_boot_id: string | null; activity_detail: string;
+      activity_at: string | null; web_participated_at: string | null;
+    } | undefined;
+    if (!row) return undefined;
+    const activity: ConversationActivitySnapshot = {
+      state: row.activity_state, seq: row.activity_seq, readSeq: row.activity_read_seq,
+      turnId: row.activity_turn_id, bootId: row.activity_boot_id, detail: row.activity_detail,
+      at: row.activity_at, webParticipatedAt: row.web_participated_at,
+    };
+    return { ...activity, unread: conversationActivityUnread(activity) };
+  }
+
+  /** Begin one accepted owner turn. The active turn id is a compare-and-set fence: a late or concurrent
+   *  admission cannot replace a still-working turn. */
+  beginSessionActivity(sessionId: string, turnId: string, surface: ConversationActivitySurface, detail?: string): boolean {
+    if (!sessionId || !turnId || (surface !== 'web' && surface !== 'cli')) return false;
+    const bootId = this.delegation.currentBootId() || null;
+    return this.db.prepare(
+      `UPDATE brain_sessions
+          SET activity_state = 'working', activity_seq = activity_seq + 1,
+              activity_turn_id = ?, activity_boot_id = ?, activity_detail = ?, activity_at = datetime('now'),
+              web_participated_at = CASE WHEN ? = 'web' THEN COALESCE(web_participated_at, datetime('now')) ELSE web_participated_at END
+        WHERE id = ? AND (activity_state != 'working' OR activity_turn_id IS NULL OR activity_turn_id = ?)`,
+    ).run(turnId, bootId, boundedConversationActivityDetail(detail), surface, sessionId, turnId).changes > 0;
+  }
+
+  /** Settle the current turn exactly once. Clearing the turn and boot ids makes any later duplicate or stale
+   *  settlement a no-op, while the terminal state and sequence remain durable until the next accepted turn. */
+  settleSessionActivity(sessionId: string, turnId: string, surface: ConversationActivitySurface, state: 'done' | 'failed', detail?: string): boolean {
+    if (!sessionId || !turnId || (surface !== 'web' && surface !== 'cli') || (state !== 'done' && state !== 'failed')) return false;
+    return this.db.prepare(
+      `UPDATE brain_sessions
+          SET activity_state = ?, activity_seq = activity_seq + 1,
+              activity_turn_id = NULL, activity_boot_id = NULL, activity_detail = ?, activity_at = datetime('now'),
+              web_participated_at = CASE WHEN ? = 'web' THEN COALESCE(web_participated_at, datetime('now')) ELSE web_participated_at END
+        WHERE id = ? AND activity_state = 'working' AND activity_turn_id = ?`,
+    ).run(state, boundedConversationActivityDetail(detail), surface, sessionId, turnId).changes > 0;
+  }
+
+  /** Acknowledge a rendered activity sequence. CLI reads advance an existing web baseline but never create
+   * participation; web reads also establish the baseline on first use. */
+  ackSessionActivity(sessionId: string, readSeq?: number, surface: ConversationActivitySurface = 'web'): boolean {
+    if (!sessionId || (surface !== 'web' && surface !== 'cli')) return false;
+    const requested = Number.isFinite(readSeq) ? Math.max(0, Math.floor(readSeq!)) : null;
+    const row = this.db.prepare(
+      'SELECT activity_seq, activity_read_seq, web_participated_at FROM brain_sessions WHERE id = ?',
+    ).get(sessionId) as { activity_seq: number; activity_read_seq: number; web_participated_at: string | null } | undefined;
+    if (!row) return false;
+    const nextReadSeq = row.web_participated_at === null
+      ? surface === 'web' ? row.activity_seq : row.activity_read_seq
+      : Math.max(row.activity_read_seq, Math.min(row.activity_seq, requested ?? row.activity_seq));
+    const participates = surface === 'web' && row.web_participated_at === null;
+    if (nextReadSeq === row.activity_read_seq && !participates) return false;
+    return this.db.prepare(
+      `UPDATE brain_sessions
+          SET activity_read_seq = ?,
+              web_participated_at = CASE WHEN ? = 'web' THEN COALESCE(web_participated_at, datetime('now')) ELSE web_participated_at END
+        WHERE id = ? AND activity_read_seq = ? AND web_participated_at IS ?`,
+    ).run(nextReadSeq, surface, sessionId, row.activity_read_seq, row.web_participated_at).changes > 0;
+  }
+
+  /** Reset non-working activity, or a specific working turn when its caller still owns the CAS token. */
+  resetSessionActivity(sessionId: string, turnId?: string): boolean {
+    return this.db.prepare(
+      `UPDATE brain_sessions
+          SET activity_state = 'idle', activity_seq = activity_seq + 1,
+              activity_turn_id = NULL, activity_boot_id = NULL, activity_detail = '', activity_at = datetime('now')
+        WHERE id = ? AND (? IS NOT NULL AND activity_turn_id = ? OR ? IS NULL AND activity_state != 'working')`,
+    ).run(sessionId, turnId ?? null, turnId ?? null, turnId ?? null).changes > 0;
+  }
+
+  /** Reap a working activity owned by another boot. Reaping is a neutral idle transition, not a failed turn. */
+  reapSessionActivity(sessionId: string, currentBootId = this.delegation.currentBootId()): boolean {
+    if (!sessionId) return false;
+    return this.db.prepare(
+      `UPDATE brain_sessions
+          SET activity_state = 'idle', activity_seq = activity_seq + 1,
+              activity_turn_id = NULL, activity_boot_id = NULL, activity_detail = '', activity_at = datetime('now')
+        WHERE id = ? AND activity_state = 'working'
+          AND (activity_boot_id IS NULL OR activity_boot_id != ?)`,
+    ).run(sessionId, currentBootId).changes > 0;
+  }
+
+  /** Reconcile owner activity before boot recovery becomes observable. Foreign working claims are neutralized
+   *  synchronously, while shutdown-parked turns are restamped to this boot so their recovery remains live. */
+  reconcileSessionActivityOnBoot(currentBootId = this.delegation.currentBootId()): { reaped: number; restamped: number } {
+    if (!currentBootId) return { reaped: 0, restamped: 0 };
+    return withWriteLock(this.db, () => {
+      const restamped = this.db.prepare(
+        `UPDATE brain_sessions
+            SET activity_boot_id = ?
+          WHERE parked_at IS NOT NULL AND activity_state = 'working'`,
+      ).run(currentBootId).changes;
+      const reaped = this.db.prepare(
+        `UPDATE brain_sessions
+            SET activity_state = 'idle', activity_seq = activity_seq + 1,
+                activity_turn_id = NULL, activity_boot_id = NULL, activity_detail = '', activity_at = datetime('now')
+          WHERE parked_at IS NULL AND activity_state = 'working'
+            AND activity_boot_id IS NOT NULL AND activity_boot_id != ?`,
+      ).run(currentBootId).changes;
+      return { reaped, restamped };
+    });
   }
 
   /** Stamp the shutdown park marker (see schema.sql): this conversation's live turn was parked the

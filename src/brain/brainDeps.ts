@@ -167,6 +167,8 @@ export interface BrainDeps {
   /** Report a platform turn to the team activity feed. Optional: a minimal wiring simply has no feed.
    *  Deliberately a plain callback — the brain layer owns no event bus, and the daemon supplies one. */
   recordActivity?: (e: { actorUserId: number | null; surface: string; target: string }) => void;
+  /** Notify the user-scoped conversation list after durable activity changes. */
+  onConversationActivityChanged?: (sessionId: string) => void;
   /** The pause-for-restart's park decision (see turnPark.ts). Owned by buildBrainCore; absent (minimal
    *  test wiring) → a pause parks nothing and records every live turn as interrupted. */
   turnPark?: TurnParkPolicy;

@@ -232,6 +232,16 @@ CREATE TABLE IF NOT EXISTS brain_sessions (
   -- a boot that dies mid-resume still counts it; past the cap the sweep gives up visibly instead of
   -- stacking resume turns forever. Reset whenever the marker clears.
   park_attempts INTEGER NOT NULL DEFAULT 0,
+  -- Durable owner-facing activity projection. It is intentionally a column slice on the session row: the
+  -- conversation list can read it without scanning brain_messages or adding another table/index.
+  activity_state TEXT NOT NULL DEFAULT 'idle' CHECK (activity_state IN ('idle', 'working', 'done', 'failed')),
+  activity_seq INTEGER NOT NULL DEFAULT 0,
+  activity_read_seq INTEGER NOT NULL DEFAULT 0,
+  activity_turn_id TEXT,
+  activity_boot_id TEXT,
+  activity_detail TEXT NOT NULL DEFAULT '',
+  activity_at TEXT,
+  web_participated_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

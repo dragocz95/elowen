@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { parseBody } from '../validation.js';
-import { brainStartSchema, brainRenameSchema } from '../schemas/brain.js';
+import { brainStartSchema, brainRenameSchema, brainActivityReadSchema } from '../schemas/brain.js';
 import { readChatImage, isStoredChatImageName } from '../../brain/chatImages.js';
 import { chatFileDisposition, chatFilesDir, isStoredChatFileName, readChatFile } from '../../brain/chatFiles.js';
 import { logger } from '../../shared/logger.js';
@@ -111,9 +111,9 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   });
 
   app.post('/brain/start', withBrain(async (c, brain) => {
-    const { provider, session, fresh, cwd, client, generation } = await parseBody(c, brainStartSchema);
+    const { provider, session, fresh, cwd, client, generation, surface } = await parseBody(c, brainStartSchema);
     try {
-      const started = await brain.start(c.get('user').id, { provider, session, fresh, cwd, clientId: client, clientGeneration: generation });
+      const started = await brain.start(c.get('user').id, { provider, session, fresh, cwd, clientId: client, clientGeneration: generation, ...(surface ? { surface } : {}) });
       // Opening a conversation does not itself burn tokens, but it establishes where this client is
       // talking from — an advisor autostart or a first turn that follows finds the pin already set.
       pinOrigin(c, started.sessionId);
@@ -135,6 +135,12 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     const opts = sessionPageOpts(c.req.query('limit'), c.req.query('offset'));
     return c.json(opts ? d.brain.listSessions(c.get('user').id, opts) : d.brain.listSessions(c.get('user').id));
   });
+
+  app.post('/brain/sessions/:id/read', withBrain(async (c, brain) => {
+    const { through, surface } = await parseBody(c, brainActivityReadSchema);
+    try { return c.json(brain.readSessionActivity(c.get('user').id, c.req.param('id')!, through, surface)); }
+    catch { return c.json({ error: 'unknown session' }, 404); }
+  }));
 
   // Admin session-management panel: EVERY brain session the operator anchors — their own conversations
   // PLUS the platform channel (Discord) and task-worker sessions. Distinct base path from `/brain/sessions`

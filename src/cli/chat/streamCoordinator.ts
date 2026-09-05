@@ -128,6 +128,10 @@ export class StreamCoordinator implements StreamCoordinatorPort {
       lease = hydrator.openLane('parent', ac.signal, { onOverflow: reconnectForSnapshot });
 
       let refetchHistory = (): void => {};
+      const acknowledgeRenderedActivity = (sessionId: string | undefined): void => {
+        if (!sessionId) return;
+        void client.acknowledgeActivity('cli', sessionId).catch(() => { /* activity is best-effort */ });
+      };
       const onEvent = (
         event: BrainEvent,
         fromSnapshot = false,
@@ -213,6 +217,9 @@ export class StreamCoordinator implements StreamCoordinatorPort {
         rt.transcript.apply(event);
         if (event.type === 'session') pendingSessionReset = null;
         render(`stream:${event.type}`);
+        if (!fromSnapshot && (event.type === 'idle' || event.type === 'error')) {
+          acknowledgeRenderedActivity(client.boundSession);
+        }
         if (repairTruncatedAtIdle) {
           truncatedSnapshotPending = false;
           refetchHistory();
@@ -282,6 +289,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
           // even when the journal was cleared at beginRun()/settleRun(). Absence means an older daemon.
           if (Object.prototype.hasOwnProperty.call(snapshot, 'goal')) rt.setGoal(snapshot.goal ?? null);
           render('stream:snapshot');
+          acknowledgeRenderedActivity(client.boundSession);
         });
       };
       const onFrame = (frame: BrainStreamFrame): void => {

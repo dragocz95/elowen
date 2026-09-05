@@ -27,6 +27,11 @@ describe('EventStore', () => {
     ]);
   });
 
+  it('never persists owner conversation activity in the team feed', () => {
+    events.record({ type: 'conversation', userId: 1, sessionId: 'brain-1', state: 'working', seq: 1, at: null, detail: 'working', unread: false });
+    expect(events.list()).toEqual([]);
+  });
+
   it('skips a throwing resolver and continues to the next one', () => {
     const store = new EventStore(db, () => [() => { throw new Error('boom'); }, memoryResolver]);
     store.record({ type: 'memory', userId: 9 });

@@ -449,6 +449,9 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     // gate below already streams everything, so a memory nudge is not scoped either.
     const subscriber = c.get('user');
     const visible = (e: ElowenEvent): boolean => {
+      // Conversation activity has its own user-scoped stream. Never widen it through the instance-wide
+      // event stream, even for an admin, because the payload carries another user's session state.
+      if (e.type === 'conversation') return false;
       // A memory nudge belongs to exactly one user, and memories are private per user — so it is scoped by
       // owner rather than by project, and an admin does not get another user's. Checked before the project
       // gate, which would withhold it from every tenant (a memory event resolves to no project).

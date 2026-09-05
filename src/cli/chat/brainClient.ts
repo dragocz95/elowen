@@ -81,6 +81,7 @@ export interface BrainRateLimits {
  *  pi provider that keys GET /brain/rate-limits/all and is not an identity to show. Both new fields are
  *  optional for rolling compatibility with an older daemon during a local upgrade. */
 export interface BrainStatus { running: boolean; sessionId: string | null; title?: string; model: string; provider: string; providerLabel?: string; usageProvider?: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; thinkingLevelLabels?: Record<string, string>; fast?: boolean; fastAvailable?: boolean; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards?: BrainCard[]; artifacts?: BrainInlineArtifact[]; queued?: { id: string; text: string }[]; lspEnabled?: boolean; yolo?: boolean }
+export interface BrainActivityView { state: 'idle' | 'working' | 'done' | 'failed'; seq: number; at: string | null; detail: string; unread: boolean }
 /**
  * The subscription-rail key for a status or snapshot frame.
  *
@@ -238,7 +239,7 @@ export class BrainClient {
     // aborts the old SSE before loading the new history/status; Ctrl+C in that gap must stop `sessionId`,
     // not whichever conversation the old transport had previously bound to this client id.
     const generation = ++this.startGeneration;
-    const res = await this.post('/brain/start', { ...opts, cwd: process.cwd(), client: this.clientId, generation });
+    const res = await this.post('/brain/start', { ...opts, cwd: process.cwd(), client: this.clientId, generation, surface: 'cli' });
     const body = (await res.json()) as { sessionId: string };
     // Concurrent A/B switches may resolve out of order. Only the latest request is allowed to commit the
     // shared bound session; StreamCoordinator independently guards its view/history/stream side effects.
@@ -251,11 +252,27 @@ export class BrainClient {
 
   /** The caller's stored conversations, most recent first (drives /sessions in the TUI). `attached` =
    *  live client streams currently holding the conversation (another terminal / the web dock). */
-  async sessions(): Promise<{ id: string; title: string; provider: string; model: string; updated_at: string; active: boolean; attached: number }[]> {
+  async sessions(): Promise<{ id: string; title: string; provider: string; model: string; updated_at: string; active: boolean; attached: number; activity?: BrainActivityView }[]> {
     const res = await this.f(`${this.o.base}/brain/sessions`, { headers: this.headers() });
     if (res.status === 401) throw new Unauthorized();
     if (!res.ok) throw new Error(`elowen brain ${res.status} on /brain/sessions`);
-    return (await res.json()) as { id: string; title: string; provider: string; model: string; updated_at: string; active: boolean; attached: number }[];
+    return (await res.json()) as { id: string; title: string; provider: string; model: string; updated_at: string; active: boolean; attached: number; activity?: BrainActivityView }[];
+  }
+
+  /** Acknowledge one rendered activity sequence. CLI reads advance an existing web baseline but never
+   * establish participation; the daemon accepts the same endpoint for both surfaces. */
+  async readActivity(sessionId: string, through: number, surface: 'web' | 'cli' = 'cli'): Promise<BrainActivityView> {
+    const res = await this.post(`/brain/sessions/${encodeURIComponent(sessionId)}/read`, { through, surface });
+    return (await res.json()) as BrainActivityView;
+  }
+
+  /** Read the currently bound conversation's latest known activity sequence after the caller rendered it.
+   * Missing activity is an older daemon, so it is a harmless no-op for the terminal consumer. */
+  async acknowledgeActivity(surface: 'web' | 'cli' = 'cli', sessionId = this.bound): Promise<BrainActivityView | null> {
+    if (!sessionId) return null;
+    const row = (await this.sessions()).find((item) => item.id === sessionId);
+    if (!row?.activity) return null;
+    return this.readActivity(sessionId, row.activity.seq, surface);
   }
 
   async send(text: string, mode?: BrainWorkMode, images?: { data: string; mimeType: string }[], display?: string): Promise<void> {
@@ -811,6 +828,7 @@ export class BrainClient {
       // tap the replacement conversation, not the dead one it originally opened on.
       const sid = session ?? this.bound;
       const params = new URLSearchParams();
+      params.set('surface', 'cli');
       if (sid) params.set('session', sid);
       // Only the parent/bound stream owns this CLI process's attachment identity. Explicit streams are
       // sub-agent drill-ins and must not replace (or later release) the parent attachment.

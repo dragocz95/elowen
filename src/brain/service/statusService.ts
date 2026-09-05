@@ -1,5 +1,5 @@
 import { createAgentSession, SessionManager, DefaultResourceLoader } from '@earendil-works/pi-coding-agent';
-import type { BrainStore, BrainSearchHit, BrainMessageRow, BrainWorkflowRun } from '../../store/brainStore.js';
+import type { BrainStore, BrainSearchHit, BrainMessageRow, BrainWorkflowRun, BrainSessionRow } from '../../store/brainStore.js';
 import type { BrainRuntimeConfig } from '../providers.js';
 import { buildBrainRegistry, resolveBrainModel } from '../providers.js';
 import { extractText, isSubagentToolName, shapeBrainMessages, withSubagentAnchors, withWorkflowAnchors, lastAssistant, pendingSubmittedPlan } from '../messageView.js';
@@ -27,7 +27,11 @@ import { clientDir } from './workDir.js';
 import { recoverablePartialTurnRows } from '../persistence.js';
 
 /** One row in the caller's conversation list (the pickers' "attached" marker rides `attached`). */
-export interface SessionListItem { id: string; title: string; provider: string; model: string; updated_at: string; running: boolean; active: boolean; attached: number }
+export interface SessionListItem {
+  id: string; title: string; provider: string; model: string; updated_at: string;
+  running: boolean; active: boolean; attached: number;
+  activity: { state: 'idle' | 'working' | 'done' | 'failed'; seq: number; at: string | null; detail: string; unread: boolean };
+}
 
 /** Opt-in slice for the session listings. Both fields are already clamped to non-negative ints by the
  *  route; absent → the full unpaginated list (the historical bare-array response). */
@@ -42,6 +46,13 @@ function paginate<T>(all: T[], opts?: SessionPageOpts): SessionPage<T> {
   const offset = opts?.offset ?? 0;
   const items = opts?.limit === undefined ? all.slice(offset) : all.slice(offset, offset + opts.limit);
   return { items, total: all.length, hasMore: offset + items.length < all.length };
+}
+
+function activityOf(row: BrainSessionRow): SessionListItem['activity'] {
+  return {
+    state: row.activity_state, seq: row.activity_seq, at: row.activity_at,
+    detail: row.activity_detail, unread: row.web_participated_at !== null && row.activity_read_seq < row.activity_seq,
+  };
 }
 
 /** A backwards window over a conversation's history: the newest `limit` display turns, then older ones as
@@ -464,7 +475,11 @@ export class BrainStatusService {
     const unspoken = this.d.store.unspokenSessionIds(userId);
     return this.d.store.listSessions(userId)
       .filter((s) => !isNonUserSession(s.id) && !unspoken.has(s.id))
-      .map((s) => ({ id: s.id, title: s.title, provider: s.provider, model: s.model, updated_at: s.updated_at, running: this.d.sessions.has(s.id), active: s.id === activeId, attached: this.d.attachments.attachedCount(s.id) }));
+      .map((s) => ({
+        id: s.id, title: s.title, provider: s.provider, model: s.model, updated_at: s.updated_at,
+        running: this.d.sessions.has(s.id), active: s.id === activeId, attached: this.d.attachments.attachedCount(s.id),
+        activity: activityOf(s),
+      }));
   }
 
   /** The user's conversations, most recent first (pickers show an "attached" marker so the user sees
@@ -606,6 +621,7 @@ export class BrainStatusService {
       cards: this.d.cards.forSession(sessionId),
       artifacts: this.d.artifacts?.forSession(sessionId) ?? [],
       goal: this.d.store.getGoal(sessionId) ?? null,
+      activitySeq: this.d.store.getSessionActivity(sessionId)?.seq ?? 0,
       history: anchoredViews,
       control: {
         streaming: !!live && (live.session.isStreaming || this.d.sessions.hasActiveChildren(live.sessionId)),

@@ -20,6 +20,8 @@ export interface OwnerConversationRecovery {
  *  claim/order/resume and nothing else, so this seam exposes exactly those verbs — BrainService satisfies
  *  it structurally, and a test can satisfy it with a stub instead of a whole brain. */
 export interface BootRecoveryHost {
+  /** Reaps foreign working activity synchronously and restamps shutdown-parked turns for this boot. */
+  reconcileConversationActivity?(): void;
   /** Claims BOTH substrates in one synchronous pass and stashes the generic delegation half — see the
    *  `workflows` provider below for why the two cannot be claimed independently. */
   claimDelegationRecovery(): void;
@@ -43,6 +45,14 @@ export interface BootRecoveryHost {
  *  children. That is a wiring property, not a flag: nothing in the runner constructs this. */
 export function createBootRecovery(host: BootRecoveryHost, log: RecoveryLog): BootRecoveryCoordinator {
   const coordinator = new BootRecoveryCoordinator(log);
+
+  // Conversation activity is reconciled before any recovery claim becomes observable. Parked turns keep
+  // their live working projection under this boot; every other foreign working claim becomes neutral idle.
+  coordinator.register<never>({
+    id: 'conversation-activity',
+    claim: () => { host.reconcileConversationActivity?.(); return []; },
+    resume: () => Promise.resolve('released' as const),
+  });
 
   // Interrupted sub-agent delegations, in two providers because two different things depend on them:
   //  - the CLAIM (synchronous, cheap): the compare-and-swap on the owning boot id, which also decides
@@ -98,7 +108,7 @@ export function createBootRecovery(host: BootRecoveryHost, log: RecoveryLog): Bo
     // respawns, so a result that is already durable reaches its parent right after boot instead of after
     // every respawn in the fleet has finished. A result a child produces later in this boot is delivered
     // by the recovery's own completion hook (delegatedSession → drainPendingSubagentResults).
-    dependsOn: ['delegations-claim'],
+    dependsOn: ['delegations-claim', 'conversation-activity'],
     claim: () => host.claimParkedConversations(),
     // Concurrent: these are independent owner turns, exactly as they would be in normal operation.
     parallel: true,
@@ -114,7 +124,7 @@ export function createBootRecovery(host: BootRecoveryHost, log: RecoveryLog): Bo
     id: 'platform-conversations',
     // Same reasoning as owner conversations: on the claim, not the run; a late delegated result reaches
     // the room through the same completion hook.
-    dependsOn: ['delegations-claim'],
+    dependsOn: ['delegations-claim', 'conversation-activity'],
     claim: () => host.claimParkedPlatformTurns(),
     // Concurrent: independent rooms, exactly as their turns would run in normal operation.
     parallel: true,

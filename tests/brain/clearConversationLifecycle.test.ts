@@ -68,6 +68,13 @@ function makeLifecycle(sessions: LiveSessionRegistry<LiveBrain>, spawn: (opts: S
     row = { ...row, cleared_at: '2026-08-18 20:00:00' };
   });
   const cards = new CardRegistry(() => ({ upsertCard: vi.fn(), deleteCard: vi.fn(), getCards: () => cardRows }));
+  // Clearing also stands the conversation's durable activity down: a wiped transcript must not go on
+  // answering "finished, unread result" about output that no longer exists. The double makes the same
+  // three moves the real store does, so the reset is exercised here rather than merely tolerated.
+  let activity = {
+    state: 'done', seq: 3, readSeq: 0, turnId: null as string | null, bootId: null as string | null,
+    detail: 'finished', at: '2026-08-18 10:00:00', webParticipatedAt: '2026-08-18 09:00:00',
+  };
   const store = {
     getSession: () => row,
     listSessions: () => [row],
@@ -78,6 +85,13 @@ function makeLifecycle(sessions: LiveSessionRegistry<LiveBrain>, spawn: (opts: S
     getWorkflowRuns: () => [],
     getGoal: () => undefined,
     pendingSubagentResults: () => [],
+    getSessionActivity: () => activity,
+    resetSessionActivity: vi.fn(() => {
+      activity = { ...activity, state: 'idle', seq: activity.seq + 1, turnId: null, bootId: null, detail: '' };
+      return true;
+    }),
+    // Neutral, not a new unread event: an established web baseline is carried forward with the reset.
+    ackSessionActivity: vi.fn(() => { activity = { ...activity, readSeq: activity.seq }; return true; }),
     ...storeOverrides,
   };
   const lifecycle = new ConversationLifecycle({
@@ -97,6 +111,7 @@ function makeLifecycle(sessions: LiveSessionRegistry<LiveBrain>, spawn: (opts: S
     /** Let a test drive the two states the real store distinguishes. */
     __setRow: (patch: Record<string, unknown>) => { row = { ...row, ...patch }; },
     __setMessageCount: (n: number) => { messages = n; },
+    __activity: () => activity,
   };
 }
 
@@ -150,6 +165,24 @@ describe('ConversationLifecycle.clearConversation', () => {
     // Never a raw `session` event: the id did not change, and the surfaces read that as an idle rollover.
     expect(published.some((e) => (e as { type: string }).type === 'session')).toBe(false);
     expect(cards.forSession(SESSION)).toEqual([]); // the write-through cache was evicted with the rows
+  });
+
+  /** The rail reads the activity slice, not the transcript, so a wipe that left it alone would keep a
+   *  green "finished" check and an unread badge pointing at messages that no longer exist — and the badge
+   *  could never be cleared, because opening the conversation shows nothing to read. */
+  it('stands the conversation activity down with the history it describes', async () => {
+    const sessions = new LiveSessionRegistry<LiveBrain>();
+    sessions.set(SESSION, live());
+    const harness = makeLifecycle(sessions, async () => live({ fresh: true }));
+    expect(harness.__activity()).toMatchObject({ state: 'done', detail: 'finished' });
+
+    await harness.lifecycle.clearConversation(1, SESSION);
+
+    const after = harness.__activity();
+    expect(after).toMatchObject({ state: 'idle', turnId: null, detail: '' });
+    // Neutral, not a new unread event: the reset bumps the sequence, and the acknowledgement follows it
+    // so a conversation the user just emptied does not come back bolded.
+    expect(after.readSeq).toBe(after.seq);
   });
 
   it('clears a conversation with no live session (durable half only)', async () => {
