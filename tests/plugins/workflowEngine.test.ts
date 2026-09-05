@@ -119,13 +119,19 @@ function harness(opts: {
       const n = (attempts.get(task) ?? 0) + 1;
       attempts.set(task, n);
       if (n === 1) return 'Error: boom (will succeed on retry)';
-    } else if (task.includes('FAIL')) return 'Error: boom';
+    // The task text rides along so a test can drive a REALISTIC failure body (a provider's 400 payload,
+    // newlines and all) through the same in-band `Error:` convention the host uses.
+    } else if (task.includes('FAIL')) return `Error: boom ${task}`;
     // A node's own task is capped at 4 000 chars, so a report bigger than that cannot be echoed back from
     // it — `BULK:<n>` asks for a result of n chars instead, the way a real node returns far more than it
     // was asked. It ends in `:CONCLUSION`, so a test can tell whether the END of a report survived.
     // `WITH_HANDOVER` makes the node end its answer with the handover section the engine asks dependent
     // nodes' dependencies for — the difference between a handover a node WROTE and one the engine derived.
-    const handover = task.includes('WITH_HANDOVER') ? `\n\n## Handover\nhandover-of:${task}` : '';
+    // `FENCED_HANDOVER` writes the real section first and then quotes the format in an example fence, the
+    // way a node that was just shown the instruction verbatim tends to.
+    const handover = task.includes('FENCED_HANDOVER')
+      ? `\n\n**Handover:**\nhandover-of:${task}\n\nFor reference the format is:\n\n\`\`\`md\n## Handover\nquoted-example-not-the-handover\n\`\`\``
+      : (task.includes('WITH_HANDOVER') ? `\n\n## Handover\nhandover-of:${task}` : '');
     const bulk = /BULK:(\d+)/.exec(task);
     return bulk
       ? `done:${task}:${'x'.repeat(Number(bulk[1]))}:CONCLUSION${handover}`
@@ -453,6 +459,26 @@ describe('workflow engine', () => {
     expect(write.length).toBeLessThan(2_000);
   });
 
+  // The instruction quotes the heading verbatim, so a node that also SHOWS the format in a fenced example
+  // writes the heading twice. Taking the last match blindly would hand the dependent the example instead of
+  // the real section — and the bolded "Handover:" shape a model reaches for must be recognised at all.
+  it('reads the real handover, not a quoted example inside a fence', async () => {
+    const { tools, contextOf } = harness();
+    await tools.get('WorkflowStart')!.execute('t-fenced', {
+      nodesFile: workflowFile([
+        { id: 'gather', task: 'gather FENCED_HANDOVER' },
+        { id: 'write', task: 'write', deps: ['gather'] },
+      ]),
+    });
+    const write = contextOf('write');
+    // The section starts at the node's OWN heading, not at the one inside the example, so the block opens
+    // with what the node actually wrote rather than with the quoted sample.
+    const block = write.split('## Handover from node "gather"\n')[1] ?? '';
+    expect(block.trimStart().startsWith('handover-of:gather FENCED_HANDOVER')).toBe(true);
+    expect(write).not.toContain('wrote no handover'); // it wrote one — it must not be read as derived
+    expect(write).not.toContain('done:gather'); // …and the result body still did not travel
+  });
+
   // A node that wrote no section still has to hand something down, or its dependent starts blind. The
   // engine derives the END of its result — where a report's conclusion sits — and SAYS that it did, so the
   // dependent does not read a cut-off tail as a written summary.
@@ -713,7 +739,7 @@ describe('workflow engine', () => {
     expect(good.result).toMatch(/^done:gx/);
     expect(good.result!.length).toBeLessThan(560); // 500-char preview + truncation marker, not the full body
     expect(good.result).toMatch(/\[truncated\]$/);
-    expect(bad.error).toBe('boom');
+    expect(bad.error).toContain('boom');
   });
 
   // Every snapshot names the origin's WorkflowStart call: it is the durable anchor that binds the DAG
@@ -1918,6 +1944,48 @@ describe('workflow recovery journal + boot resume', () => {
     await until(() => completions.length === 1);
     expect(h2.launched).toEqual(['b-par']); // a-par's journaled result survived; only the hung node re-ran
     expect(completions[0]!.result).toContain('done:a-par');
+  });
+
+  // A journal written before handovers existed carries a done node's result and no handover. The dependent
+  // that resumes on top of it must not start with an EMPTY dependency block — that is worse than the tail it
+  // would have had, because the node then silently re-derives or invents what its dependency established.
+  it('derives a handover for a done node journaled without one', async () => {
+    const h1 = harness();
+    gate = { task: 'b-old', promise: new Promise<void>(() => { /* never released — the crash */ }) };
+    void h1.tools.get('WorkflowStart')!.execute('call-old-journal', {
+      nodesFile: workflowFile([
+        { id: 'a', task: 'a-old' },
+        { id: 'b', task: 'b-old' },
+        // Depends on the hung node too, so it is still unrun when the crash freezes the journal.
+        { id: 'c', task: 'c-old', deps: ['a', 'b'] },
+      ]),
+    });
+    await until(() => h1.snapshots.some((s) => s.nodes.find((n) => n.id === 'a')?.status === 'done'));
+    const wfId = h1.snapshots[0]!.id;
+
+    // Rewrite the journal into the older shape: the done node keeps its result and loses its handover.
+    const path = journalPathOf(wfId);
+    const journal = JSON.parse(readFileSync(path, 'utf8')) as { state: [string, Record<string, unknown>][] };
+    const doneEntry = journal.state.find(([id]) => id === 'a')!;
+    expect(doneEntry[1].handover).toBeDefined();
+    delete doneEntry[1].handover;
+    writeFileSync(path, JSON.stringify(journal));
+
+    const h2 = harness();
+    const completions: { status: string }[] = [];
+    const outcome = await resumeControlOf(h2).resumeInterrupted({
+      workflowId: wfId, parentSessionId: 'brain-parent', toolCallId: 'call-old-journal',
+      hooks: {
+        emit: () => {}, complete: (c) => completions.push(c),
+        stopChild: async () => ({ stopped: true }), validateBoundary: () => ({ ok: true }),
+      },
+    });
+    expect(outcome).toEqual({ resumed: true });
+    await until(() => completions.length === 1);
+    const dependent = h2.contextOf('c-old');
+    expect(dependent).toContain('## Handover from node "a"');
+    expect(dependent).toContain('done:a-old'); // the journaled result, derived into a bounded handover
+    expect(dependent).toContain('wrote no handover');
   });
 
   it('treats the durable workflow snapshot as the workspace authority and rejects a tampered journal', async () => {

@@ -74,22 +74,55 @@ const depIntro = (derivedIds, truncatedIds) =>
     : '');
 
 /** The heading a node ends its final message with when it has successors. Matched case-insensitively, with
- *  or without markdown heading marks, bold or a trailing colon, because that is the range of shapes models
- *  produce for one instructed heading. */
-const HANDOVER_HEADING = /^[ \t]{0,3}(?:#{1,6}[ \t]*)?(?:\*\*)?handover(?:\*\*)?[ \t]*:?[ \t]*$/gim;
+ *  or without markdown heading marks, bold, a colon or a few trailing words ("## Handover for node x"),
+ *  because that is the range of shapes models produce for one instructed heading. */
+const HANDOVER_HEADING = new RegExp(
+  '^[ \\t]{0,3}(?:'
+  // "## Handover", "### Handover for node \"x\"" — a heading marker licenses trailing words.
+  + '#{1,6}[ \\t]*(?:\\*\\*)?handover\\b[^\\n]{0,40}?(?:\\*\\*)?'
+  // "**Handover:**" — bold does the same job as the marker.
+  + '|\\*\\*handover\\b[^\\n]{0,40}?\\*\\*'
+  // A bare line, which must then be the word alone: "handover-of:x" in a body is not a heading.
+  + '|handover'
+  + ')[ \\t]*:?[ \\t]*$',
+  'gim',
+);
+/** A fenced block opener or closer. The instruction quotes the heading verbatim, so a node that shows the
+ *  format in an example fence would otherwise hand its dependents that EXAMPLE — the last match wins. */
+const FENCE_LINE = /^[ \t]{0,3}(?:```|~~~)/;
+
+/** Character offsets of the fenced regions of a message, so a heading inside one can be ignored. */
+const fencedRanges = (text) => {
+  const ranges = [];
+  let open;
+  let offset = 0;
+  for (const line of text.split('\n')) {
+    if (FENCE_LINE.test(line)) {
+      if (open === undefined) open = offset;
+      else { ranges.push([open, offset + line.length]); open = undefined; }
+    }
+    offset += line.length + 1;
+  }
+  // An unterminated fence swallows the rest of the message, exactly as a renderer would read it.
+  if (open !== undefined) ranges.push([open, text.length]);
+  return ranges;
+};
 
 /** What a finished node hands down its edges: the text after the LAST handover heading in its final message,
  *  or — when it wrote none — the END of its result, which is where a report's conclusion sits. Bounded either
  *  way, and marked `derived` so the dependent is told which of the two it is reading. */
 const handoverOf = (reply) => {
   HANDOVER_HEADING.lastIndex = 0;
+  const fences = fencedRanges(reply);
   let heading;
-  for (let match = HANDOVER_HEADING.exec(reply); match; match = HANDOVER_HEADING.exec(reply)) heading = match;
+  for (let match = HANDOVER_HEADING.exec(reply); match; match = HANDOVER_HEADING.exec(reply)) {
+    if (!fences.some(([from, to]) => match.index >= from && match.index < to)) heading = match;
+  }
   const explicit = heading ? reply.slice(heading.index + heading[0].length).trim() : '';
-  // MAX_HANDOVER_CHARS is a real ceiling on what travels, so the derived tail pays for its own marker
-  // rather than adding to the bound the dependent's budget arithmetic was sized against.
+  // MAX_HANDOVER_CHARS is a real ceiling on what travels, so both branches pay for their own marker rather
+  // than adding to the bound the dependent's budget arithmetic was sized against.
   return explicit
-    ? { text: clip(explicit, MAX_HANDOVER_CHARS), derived: false }
+    ? { text: clip(explicit, MAX_HANDOVER_CHARS - TRUNCATION_MARKER.length), derived: false }
     : { text: clipDep(reply.trim(), MAX_HANDOVER_CHARS - DEP_TRUNCATION_PREFIX.length), derived: true };
 };
 
@@ -460,9 +493,11 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     //
     // DIRECT dependencies only, and only their handovers. A transitive chain used to arrive in full: the
     // fourth node of a pipeline read three complete reports, most of them about work it was not doing.
+    // A handover can arrive from the recovery journal, which is an agent-writable file: take it only when it
+    // still has the shape the blocks below slice, never on truthiness alone.
     const depResults = (node.deps ?? [])
       .map((id) => ({ id, handover: wf.state.get(id)?.handover }))
-      .filter((d) => d.handover?.text)
+      .filter((d) => typeof d.handover?.text === 'string' && d.handover.text.length > 0)
       .map((d) => ({ id: d.id, result: d.handover.text, derived: d.handover.derived === true }));
     if (depResults.length) {
       // Each dependency gets its OWN prompt chunk (several share one only when the DAG is wider than the
@@ -900,7 +935,15 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       const prev = journaled.get(n.id);
       if (prev?.sessionId && typeof prev.sessionId === 'string') wf.childSessions.add(prev.sessionId);
       if (prev?.status === 'done') {
-        wf.state.set(n.id, { ...freshNodeState(), ...prev });
+        const restored = { ...freshNodeState(), ...prev };
+        // A journal written before handovers existed — or by a node whose handover did not survive the
+        // write — carries a result and nothing else. Deriving it here is what keeps a dependent from
+        // resuming with an EMPTY dependency block, which is worse than the tail it would have had: the
+        // node would silently re-derive or invent what its dependency already established.
+        if (!isRecord(restored.handover) && typeof restored.result === 'string') {
+          restored.handover = handoverOf(restored.result);
+        }
+        wf.state.set(n.id, restored);
         done += 1;
         continue;
       }
@@ -1281,7 +1324,9 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
           // A bare "error" is unactionable: the caller cannot tell a bad task from a provider refusal, and
           // the reason (a 400 body, a rejected model, a cancelled spawn) is already stored. One bounded
           // single line of it — this is still a STATUS view, not the node's output.
-          + `${s.status === 'error' && s.error ? ` · ${clip(s.error.replace(/\s+/g, ' ').trim(), STATUS_ERROR_PREVIEW)}` : ''}`);
+          // Collapsed AFTER the clip: TRUNCATION_MARKER itself starts with a newline, which would split the
+          // entry across two lines of the joined listing.
+          + `${s.status === 'error' && s.error ? ` · ${clip(s.error, STATUS_ERROR_PREVIEW).replace(/\s+/g, ' ').trim()}` : ''}`);
       }
       return ok(lines.join('\n'), { workflowId: wf.id, status: wf.status });
     },

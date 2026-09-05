@@ -67,6 +67,10 @@ describe('Anthropic signed-thinking prefix mismatch', () => {
   const opus5 = async (): Promise<Model<Api>> => {
     const cfg: BrainRuntimeConfig = {
       providers: [{ id: 'claude', label: 'Claude', type: 'oauth-anthropic', baseUrl: '', models: ['claude-opus-5'], apiKey: null }],
+      // An operator pin re-registers the whole built-in provider through catalogDefinition, which is the
+      // only thing carrying compat.supportsMidConvoEffort forward — and that flag is what makes pi send the
+      // binding at all. A pin that dropped it would revive the production 400 with nothing else changed.
+      contextWindows: { 'claude/claude-opus-5': 900_000 },
     };
     const model = buildBrainRegistry(cfg, await inMemoryModelRuntime()).find('anthropic', 'claude-opus-5');
     expect(model).toBeDefined();
