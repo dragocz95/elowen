@@ -27,6 +27,7 @@ import { HEARTBEAT_INTERVAL_MS, LAG_WINDOW_MS } from './sizing.js';
 import { buildBrainCore } from '../daemon/brainCore.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { BrainService } from '../brain/brainService.js';
+import { DelegationAbortedError } from '../brain/session/liveRegistry.js';
 import { processRegistry } from '../brain/processRegistry.js';
 import { parseDelegatedTurnRequest, toDelegatedProgress } from '../brain/delegatedTurn.js';
 import { SUBAGENT_PLATFORM, channelSessionId } from '../brain/sessionId.js';
@@ -240,7 +241,7 @@ process.on('message', (raw: unknown) => {
     case 'abort':
       // The daemon has already fenced the delegation in its own registry; this is the half only the
       // process holding the PI session can do.
-      void brain?.abortChannel(msg.channelId).catch((e: unknown) => log.warn(`abort failed: ${errorText(e)}`));
+      void brain?.abortChannel(msg.channelId, msg.abort).catch((e: unknown) => log.warn(`abort failed: ${errorText(e)}`));
       return;
     case 'steer': {
       // A DelegateContinue on a child running HERE: inject the parent's follow-up into the live turn.
@@ -256,7 +257,7 @@ process.on('message', (raw: unknown) => {
         } catch (e) {
           // The abort fences reject with exactly this message; anything else is a failure to steer, and
           // for the daemon "could not inject here" and "no turn here" oblige the same fallback.
-          const aborted = e instanceof Error && e.message === 'delegation aborted';
+          const aborted = e instanceof DelegationAbortedError || (e instanceof Error && e.message === 'delegation aborted');
           if (!aborted) log.warn(`steer failed: ${errorText(e)}`);
           send({ type: 'steered', steerId: msg.steerId, outcome: aborted ? 'aborted' : 'idle' });
         }
@@ -340,7 +341,7 @@ const leave = (reason: string): void => {
   liveTaps.clear();
   const channels = [...runningChannels];
   runningChannels.clear();
-  void Promise.allSettled(channels.map((channelId) => brain?.abortChannel(channelId)))
+  void Promise.allSettled(channels.map((channelId) => brain?.abortChannel(channelId, { origin: 'parent_teardown', reason })))
     .finally(() => process.exit(0));
   // A wedged abort must not keep the orphan alive either.
   setTimeout(() => process.exit(0), 5_000).unref();

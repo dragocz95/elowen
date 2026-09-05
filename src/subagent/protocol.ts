@@ -1,3 +1,4 @@
+import type { PendingAbort } from '../brain/session/liveRegistry.js';
 import { statSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { ELOWEN_VERSION } from '../api/version.js';
@@ -61,7 +62,7 @@ export type DaemonToRunner =
   /** Execute ONE delegated turn. `turnId` correlates the reply; `request` is re-validated on arrival. */
   | { type: 'turn'; turnId: string; request: DelegatedTurnRequest; text: string }
   /** Abort verb (the abort tree stays authoritative in the daemon — see LiveSessionRegistry). */
-  | { type: 'abort'; channelId: string }
+  | { type: 'abort'; channelId: string; abort?: PendingAbort }
   /** Steer a parent's follow-up into a child turn RUNNING here (a DelegateContinue on a mid-turn child).
    *  The daemon has already authorized the caller against the child's ownership and scope; this process
    *  only carries the injection out and answers with the matching `steered` frame. */
@@ -155,7 +156,18 @@ export function parseDaemonMessage(raw: unknown): DaemonToRunner | undefined {
   }
   if (v.type === 'abort') {
     const channelId = str(v.channelId);
-    return channelId ? { type: 'abort', channelId } : undefined;
+    if (!channelId) return undefined;
+    let abort: PendingAbort | undefined;
+    if (v.abort !== undefined) {
+      if (!v.abort || typeof v.abort !== 'object' || Array.isArray(v.abort)) return undefined;
+      const payload = v.abort as Record<string, unknown>;
+      const origin = payload.origin;
+      const reason = str(payload.reason);
+      if ((origin !== 'user_stop' && origin !== 'parent_teardown' && origin !== 'tree_abort' && origin !== 'recovery')
+        || reason === undefined) return undefined;
+      abort = { origin, reason };
+    }
+    return { type: 'abort', channelId, ...(abort ? { abort } : {}) };
   }
   if (v.type === 'steer') {
     const steerId = str(v.steerId);

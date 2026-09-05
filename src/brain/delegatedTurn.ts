@@ -1,3 +1,4 @@
+import type { PendingAbort } from './session/liveRegistry.js';
 import type { Policy } from '../plugins/policy.js';
 import type { TurnIdentity } from '../plugins/policyContext.js';
 import type { ChannelSendOpts } from './channels.js';
@@ -101,7 +102,7 @@ export interface DelegatedTurnRunner {
   run(request: DelegatedTurnRequest, text: string, onEvent?: (e: BrainEvent) => void): Promise<string>;
   /** Abort the runner's live session for a channel. The abort TREE stays in the daemon; this only reaches
    *  the process that actually holds the PI session. */
-  abort(channelId: string): void;
+  abort(channelId: string, abort?: PendingAbort): void;
   /** Steer a parent's follow-up into a child turn RUNNING in the runner (the daemon has already authorized
    *  it). `delivered` = the message provably entered the child's context over there; `idle` = the runner
    *  holds no streaming turn for that channel (or its turn ended first, with the stale queue copy removed),

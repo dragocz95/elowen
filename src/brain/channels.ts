@@ -47,6 +47,7 @@ import type { MemoryCurator } from './memoryCurator.js';
 import type { ConversationTitler } from './conversationTitler.js';
 import { DelegationAbortedError, type LiveSessionRegistry, type PendingAbort } from './session/liveRegistry.js';
 import { syntheticRestartResultId } from '../store/brainStore.js';
+import { logger } from '../shared/logger.js';
 import type { LiveBrain, QueuedUserEcho, SpawnOpts } from './session/liveBrain.js';
 import { clearDeliveredUserEchoes, echoDeliveredId, enqueueMirrored } from './session/queueMirror.js';
 import { abortSessionWork } from './session/abortSessionWork.js';
@@ -1497,17 +1498,27 @@ export class ChannelSessionService {
     // after this snapshot and then get erased by clearChildren() without being aborted.
     this.d.registry.beginParentAbort(sessionId, abort);
     try {
+      const previousAbort = this.d.registry.pendingAbort(sessionId);
       if (this.d.registry.isActiveChild(sessionId)) this.d.registry.requestPendingAbort(sessionId, abort);
+      const pendingAbort = this.d.registry.pendingAbort(sessionId);
+      let cancellationRecorded = pendingAbort !== undefined
+        && (pendingAbort.origin !== previousAbort?.origin || pendingAbort.reason !== previousAbort?.reason);
       // Stop is a durable cancellation, including a boot claim not yet registered as a live child.
       // Reuse the claim-guarded terminal transition; later recovery cannot overwrite this error.
       const parent = this.d.store.getSession(sessionId)?.parent_session_id;
       if (abort.origin === 'user_stop' && parent) {
         for (const run of this.d.store.getSubagentRuns(parent).filter((run) => run.sessionId === sessionId)) {
-          this.d.store.completeRecoveredRun(parent, run.toolCallId, {
+          const completed = this.d.store.completeRecoveredRun(parent, run.toolCallId, {
             ...run, id: syntheticRestartResultId(parent, run.toolCallId),
             status: 'error', error: new DelegationAbortedError(abort).message,
           });
+          cancellationRecorded ||= completed;
         }
+      }
+      // Log the actual state transition, not an idle/repeated abort request or a later recovery catch.
+      if (cancellationRecorded) {
+        const cause = pendingAbort ?? abort;
+        logger('brain').info(new DelegationAbortedError(cause).message, { sessionId, origin: cause.origin, reason: cause.reason });
       }
       // Before tearing children down: a workflow ORIGINATING here (including a node's self-expansion)
       // must stop launching nodes, or it respawns fresh children the moment an aborted one settles.

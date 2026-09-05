@@ -33,6 +33,7 @@
  *      streaks); reaping reads idleness (turn counts + a monotonic clock). Spawning does not make any
  *      existing runner look idle, and reaping does not make any survivor look saturated — the pool's own
  *      action can never be the evidence for its opposite. */
+import type { PendingAbort } from '../brain/session/liveRegistry.js';
 import { logger } from '../shared/logger.js';
 import type { BrainEvent } from '../brain/events.js';
 import type { BrainStreamSnapshot } from '../brain/session/liveEventReplay.js';
@@ -450,10 +451,10 @@ export class SubagentRunnerPool implements DelegatedTurnRunner {
     }
   }
 
-  abort(channelId: string): void {
+  abort(channelId: string, abort?: PendingAbort): void {
     // Only the process holding the session can interrupt its model call; every other runner has nothing
     // to abort, so broadcasting would be noise. No route ⇒ nothing of ours is running it.
-    this.routes.get(channelId)?.host.abort(channelId);
+    this.routes.get(channelId)?.host.abort(channelId, abort);
   }
 
   async steer(channelId: string, text: string): Promise<{ outcome: 'delivered' | 'idle' | 'aborted' }> {

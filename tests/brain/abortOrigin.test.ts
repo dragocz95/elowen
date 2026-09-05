@@ -4,6 +4,7 @@ import { ChannelSessionService } from '../../src/brain/channels.js';
 import { DelegatedSessionService } from '../../src/brain/service/delegatedSession.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { openDb } from '../../src/store/db.js';
+import { setLogSink } from '../../src/shared/logger.js';
 
 function setup() {
   const db = openDb(':memory:');
@@ -31,6 +32,21 @@ describe('delegated abort origins', () => {
     registry.requestPendingAbort('child', { origin: 'recovery', reason: 'restart cleanup' });
     expect(registry.consumePendingAbort('child')).toEqual({ origin: 'user_stop', reason: 'Stop button' });
     expect(registry.hasPendingAbort('child')).toBe(false);
+  });
+
+  it.each([false, true])('logs actual Stop once with structured fields, active=%s', async (active) => {
+    const { db, parent, child, registry, channel } = setup();
+    const messages: string[] = [];
+    setLogSink({ push: (entry) => { messages.push(entry.message); } });
+    try {
+      if (active) registry.setChildRunning(parent, child, true);
+      await channel.abort('subagent-child');
+      await channel.abort('subagent-child');
+      await channel.abort('absent-child');
+      const aborts = messages.filter((message) => message.startsWith('delegation aborted ('));
+      expect(aborts).toHaveLength(1);
+      expect(aborts[0]).toBe(`delegation aborted (user_stop) ${JSON.stringify({ sessionId: child, origin: 'user_stop', reason: 'aborted' })}`);
+    } finally { setLogSink(undefined); db.close(); }
   });
 
   it('reports the actual origin after remote execution unwinds', async () => {
