@@ -71,4 +71,5 @@ export { Seed } from './Seed.ts';
 export { Calls } from './Calls.ts';
 export { ShellPage } from '../pages/ShellPage.ts';
 export { ChatPage } from '../pages/ChatPage.ts';
+export { SandboxDrawer, SANDBOX_TEXT } from '../pages/SandboxDrawer.ts';
 export type { StreamTarget } from './SseScript.ts';
