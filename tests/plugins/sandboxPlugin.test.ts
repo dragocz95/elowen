@@ -504,25 +504,44 @@ describe('sandbox execution HOME and leases', () => {
     await service.lease.release();
   });
 
-  it('never gives a direct process a daemon or account GitHub credential', async () => {
+  it.each([operator, nonOperator])('never gives a direct process a daemon or account GitHub credential (%#)', async (identity) => {
     const { registry, projectPath } = await setup();
     connectGitHub(registry, () => ({ token: GITHUB_TOKEN, login: 'octocat' }));
-    const previousGh = process.env.GH_TOKEN;
-    const previousGithub = process.env.GITHUB_TOKEN;
-    process.env.GH_TOKEN = 'daemon-gh-token';
-    process.env.GITHUB_TOKEN = 'daemon-github-token';
+    const inherited = {
+      GH_TOKEN: 'daemon-gh-token',
+      GITHUB_TOKEN: 'daemon-github-token',
+      GIT_CONFIG_COUNT: '1',
+      GIT_CONFIG_KEY_0: 'http.https://github.com/.extraheader',
+      GIT_CONFIG_VALUE_0: 'Authorization: Bearer daemon-header-token',
+      GIT_CONFIG_PARAMETERS: "'credential.helper=daemon-helper'",
+      GIT_CONFIG: '/daemon/gitconfig',
+      GIT_CONFIG_GLOBAL: '/daemon/global-gitconfig',
+      GIT_CONFIG_SYSTEM: '/daemon/system-gitconfig',
+      GIT_CONFIG_NOSYSTEM: '1',
+    };
+    const previous = Object.fromEntries(Object.keys(inherited).map((key) => [key, process.env[key]]));
+    Object.assign(process.env, inherited);
     try {
-      const prepared = await runWithPolicy(adminPolicy, () => registry.control('sandbox')!.prepareExecution({
-        command: { type: 'shell', command: 'true' }, cwd: projectPath, leaseKind: 'terminal',
-      }), { identity: operator(1), contributionUserId: 1, sessionId: 'brain-github-direct', workDir: projectPath });
-      expect(prepared.mode).toBe('direct');
-      expect(prepared.launch.env).not.toHaveProperty('GH_TOKEN');
-      expect(prepared.launch.env).not.toHaveProperty('GITHUB_TOKEN');
-      expect(prepared.launch.env).not.toHaveProperty('GIT_CONFIG_COUNT');
-      await prepared.lease.release();
+      const prepared = await runWithPolicy(policy(projectPath), () => registry.control('sandbox')!.prepareExecution({
+        command: { type: 'argv', file: process.execPath, args: ['-e',
+          'console.log(JSON.stringify(Object.keys(process.env).filter(key => key.startsWith("GIT_CONFIG") || key === "GH_TOKEN" || key === "GITHUB_TOKEN")))',
+        ] }, cwd: projectPath, leaseKind: 'terminal',
+      }), { identity: identity(1), contributionUserId: 1, sessionId: 'brain-github-direct', workDir: projectPath });
+      try {
+        expect(prepared.mode).toBe('direct');
+        for (const key of Object.keys(inherited)) {
+          if (key === 'GIT_CONFIG_NOSYSTEM') expect(prepared.launch.env[key]).toBe('1');
+          else expect(prepared.launch.env).not.toHaveProperty(key);
+        }
+        const ran = await runPrepared(prepared);
+        expect(JSON.parse(ran.output)).toEqual(['GIT_CONFIG_NOSYSTEM']);
+      } finally {
+        await prepared.lease.release();
+      }
     } finally {
-      if (previousGh === undefined) delete process.env.GH_TOKEN; else process.env.GH_TOKEN = previousGh;
-      if (previousGithub === undefined) delete process.env.GITHUB_TOKEN; else process.env.GITHUB_TOKEN = previousGithub;
+      for (const [key, value] of Object.entries(previous)) {
+        if (value === undefined) delete process.env[key]; else process.env[key] = value;
+      }
     }
   });
 

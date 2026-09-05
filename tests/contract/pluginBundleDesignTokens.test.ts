@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { pluginBundleFiles } from './pluginBundleFiles.js';
 import { resolve, dirname, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -14,11 +15,7 @@ import { fileURLToPath } from 'node:url';
 // (which a theme can then move) instead of hard-coding the shade where no theme can reach it.
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 
-/** Plugins whose manifest declares a browser bundle. The scan below has to reach every one of them, and
- *  deriving that from the manifests is the only self-check that stays honest as the set changes: a file
- *  count was a magic number the day `work` left (agents, work and editor took their web-src/ to the
- *  plugin registry, leaving `subagent` as the only bundled plugin with one), while this fails the day a
- *  DECLARED bundle stops being scanned — a renamed folder, a broken walk, a plugin whose sources moved. */
+/** Every declared bundle must be scanned, whether its sources live here or the registry ships its JS. */
 function pluginsDeclaringABundle(): string[] {
   const pluginsDir = resolve(repoRoot, 'plugins');
   return readdirSync(pluginsDir).filter((name) => {
@@ -29,26 +26,9 @@ function pluginsDeclaringABundle(): string[] {
   }).sort();
 }
 
-/** Every `plugins/<name>/web-src/**` source, minus tests — a new plugin is covered the day it lands. */
 function bundleSources(): string[] {
-  const out: string[] = [];
-  const walk = (dir: string) => {
-    let entries: string[];
-    try { entries = readdirSync(dir); } catch { return; }
-    for (const entry of entries) {
-      const full = resolve(dir, entry);
-      if (statSync(full).isDirectory()) { walk(full); continue; }
-      if (!/\.tsx?$/.test(entry) || /\.test\.tsx?$/.test(entry)) continue;
-      out.push(full);
-    }
-  };
   const pluginsDir = resolve(repoRoot, 'plugins');
-  for (const name of readdirSync(pluginsDir)) {
-    const webSrc = resolve(pluginsDir, name, 'web-src');
-    try { if (!statSync(webSrc).isDirectory()) continue; } catch { continue; }
-    walk(webSrc);
-  }
-  return out.sort();
+  return readdirSync(pluginsDir).flatMap((name) => pluginBundleFiles(pluginsDir, name));
 }
 
 const HEX = /#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{6})\b/g;
@@ -61,7 +41,7 @@ describe('plugin bundles paint from the host tokens, not from literals', () => {
     const declaring = pluginsDeclaringABundle();
     expect(declaring.length).toBeGreaterThan(0);
     const files = bundleSources();
-    const unscanned = declaring.filter((name) => !files.some((f) => f.startsWith(resolve(repoRoot, 'plugins', name, 'web-src') + '/')));
+    const unscanned = declaring.filter((name) => !files.some((f) => f.startsWith(resolve(repoRoot, 'plugins', name) + '/')));
     expect(unscanned).toEqual([]);
   });
 

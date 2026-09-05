@@ -140,7 +140,7 @@
     "@types/web-push": "^3.6.4",
     "@types/ws": "^8.18.1",
     "dependency-cruiser": "^17.4.3",
-    "elowen-plugin-ui-kit": "0.7.0",
+    "elowen-plugin-ui-kit": "0.10.0",
     "eslint": "^10.8.0",
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-unused-imports": "^4.4.1",

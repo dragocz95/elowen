@@ -57,13 +57,16 @@ function renderSurface() {
 }
 
 describe('chat header provider identity', () => {
-  // Mutation: pass `provider` instead of `providerLabel || provider` into the qualified label and the
-  // header reads `ollama/kimi-k2.7-code`, failing the first assertion.
+  // The compact statusline shows only the model; its title retains the public provider identity.
+  // Passing `provider` instead of `providerLabel || provider` loses the operator label.
   it('names the provider by the operator label, never by the internal registry name', async () => {
     renderSurface();
     const statusline = await screen.findByTestId('chat-statusline');
-    expect(statusline).toHaveTextContent('Ollama/kimi-k2.7-code');
-    expect(statusline).not.toHaveTextContent('elowen-ollama');
+    const model = statusline.querySelector('[data-stat="model"]');
+    expect(model).toHaveTextContent('kimi-k2.7-code');
+    expect(model).toHaveAttribute('title', 'Ollama/kimi-k2.7-code');
+    expect(statusline).not.toHaveTextContent('Ollama/');
+    expect(statusline.innerHTML).not.toContain('elowen-ollama');
   });
 
   // A provider removed in Settings leaves its id behind on the conversation and no label. The id is
@@ -72,6 +75,9 @@ describe('chat header provider identity', () => {
     status = { ...STATUS, providerLabel: '' };
     renderSurface();
     const statusline = await screen.findByTestId('chat-statusline');
-    expect(statusline).toHaveTextContent('ollama/kimi-k2.7-code');
+    const model = statusline.querySelector('[data-stat="model"]');
+    expect(model).toHaveTextContent('kimi-k2.7-code');
+    expect(model).toHaveAttribute('title', 'ollama/kimi-k2.7-code');
+    expect(statusline).not.toHaveTextContent('ollama/');
   });
 });

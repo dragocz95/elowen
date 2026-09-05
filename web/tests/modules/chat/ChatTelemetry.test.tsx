@@ -257,8 +257,7 @@ describe('chat telemetry panel', () => {
     expect(screen.queryByTestId('telemetry-column')).toBeNull();
     expect(screen.queryByTestId('telemetry-drawer')).toBeNull();
 
-    // On a phone the opener is a row of the ⋯ menu.
-    fireEvent.click(screen.getByRole('button', { name: /More options|Další možnosti/i }));
+    // The telemetry opener remains directly on the phone toolbar.
     fireEvent.click(screen.getByRole('button', { name: /Show telemetry|Zobrazit telemetrii/i }));
     const drawer = await screen.findByTestId('telemetry-drawer');
     expect(drawer).toBeInTheDocument();
@@ -276,10 +275,7 @@ describe('chat telemetry panel', () => {
     setViewport(true);
     renderChat(<ChatPage />);
     await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
-    // The row that opens the drawer lives in the ⋯ menu and leaves with it, so the control focus comes
-    // back to is the ⋯ trigger — the one that is still there when the drawer closes.
-    const more = screen.getByRole('button', { name: /More options|Další možnosti/i });
-    fireEvent.click(more);
+    // The toolbar opener stays mounted and receives focus when the drawer closes.
     const opener = screen.getByRole('button', { name: /Show telemetry|Zobrazit telemetrii/i });
     opener.focus();
     fireEvent.click(opener);
@@ -290,7 +286,7 @@ describe('chat telemetry panel', () => {
     fireEvent.keyDown(drawer, { key: 'Escape' });
     await waitFor(() => expect(screen.queryByTestId('telemetry-drawer')).toBeNull());
     // Radix's focus scope releases a tick after the surface is gone.
-    await waitFor(() => expect(more).toHaveFocus());
+    await waitFor(() => expect(opener).toHaveFocus());
   });
 
   it('never mounts the desktop column on mobile — not even for the pre-effect first commit', async () => {

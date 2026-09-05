@@ -1,4 +1,7 @@
 import { describe, it, expect } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { chdirFailure, prettyCwd, resolveCdTarget } from '../../../src/cli/chat/projectDir.js';
 
 describe('resolveCdTarget', () => {
@@ -42,8 +45,15 @@ describe('chdirFailure', () => {
 
   it('keeps the reason for each distinct failure and drops the paths', () => {
     // Three different problems needing three different answers from the user — they must not read alike.
-    expect(failureOf('/tmp/definitely-missing-elowen-xyz')).toBe('ENOENT: no such file or directory');
-    expect(failureOf('/etc/hostname')).toBe('ENOTDIR: not a directory');
+    const root = mkdtempSync(join(tmpdir(), 'elowen-project-dir-'));
+    try {
+      const file = join(root, 'regular-file');
+      writeFileSync(file, 'not a directory');
+      expect(failureOf(join(root, 'missing'))).toBe('ENOENT: no such file or directory');
+      expect(failureOf(file)).toBe('ENOTDIR: not a directory');
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
     expect(chdirFailure(new Error("EACCES: permission denied, chdir '/tmp' -> '/root'"))).toBe('EACCES: permission denied');
   });
 

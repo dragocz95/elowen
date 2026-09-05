@@ -2,7 +2,6 @@
 
 import { useMemo, useState } from 'react';
 import { Boxes, FolderGit2, MoreHorizontal, Plus, RefreshCw, Trash2, Undo2 } from 'lucide-react';
-import { useBrainChat } from './BrainChatProvider';
 import { useSandboxOverview } from '../../lib/queries';
 import {
   useCreateSandboxWorkspace,
@@ -108,10 +107,9 @@ function WorkspaceRow({ workspace, projectName, activeHere, busy, canSwitch, onU
   );
 }
 
-export function SandboxModal({ onClose }: { onClose: () => void }) {
+export function SandboxModal({ onClose, activeSessionId }: { onClose: () => void; activeSessionId: string | null }) {
   const { t } = useTranslation();
   const { toast } = useToast();
-  const { activeSessionId } = useBrainChat();
   const overview = useSandboxOverview();
   const createWorkspace = useCreateSandboxWorkspace();
   const switchWorkspace = useUseSandboxWorkspace();

@@ -156,6 +156,12 @@ function cleanHostEnv(home) {
   // unconnected account in as whoever started the daemon.
   delete env.GH_TOKEN;
   delete env.GITHUB_TOKEN;
+  // Git config overrides can carry authorization headers or point at the daemon's credential helpers.
+  // Keep NOSYSTEM: removing that opt-out could reactivate system-wide credentials. All other overrides,
+  // including orphaned numbered entries, must be dropped before any account-scoped injection.
+  for (const key of Object.keys(env)) {
+    if (key !== 'GIT_CONFIG_NOSYSTEM' && (key === 'GIT_CONFIG' || key.startsWith('GIT_CONFIG_'))) delete env[key];
+  }
   if (home) env.HOME = home;
   return env;
 }

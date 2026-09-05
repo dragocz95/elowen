@@ -211,7 +211,13 @@ export async function startRecoveryModel({ task, result, background = false, uns
     // The owner speaks while boot recovery is still running. Stop exactly the child they named through
     // the real tool boundary; the following request acknowledges the stop rather than re-delegating.
     if (!isChild && allText.includes(MARKERS.stopRecoveredChild)) {
-      if (awaitingTool || allText.includes(SUBAGENT_RESULT_TAG)) {
+      // The interrupted Delegate result mentions <subagent-result> as delivery instructions, not
+      // evidence of a stop. Acknowledge only an actual answer to this owner's DelegateStop call.
+      const stopCalls = new Set(messages.flatMap((message) => message.role === 'assistant'
+        ? (message.tool_calls ?? []).filter((call) => call.function?.name === 'DelegateStop').map((call) => call.id)
+        : []));
+      const stopped = messages.some((message) => message.role === 'tool' && stopCalls.has(message.tool_call_id));
+      if (stopped) {
         say(MARKERS.stopRecoveredAnswer);
       } else {
         const child = /stopChild=(brain-ch-subagent-\S+)/.exec(allText)?.[1];

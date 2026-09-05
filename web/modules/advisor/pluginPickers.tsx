@@ -21,7 +21,7 @@ import { SandboxModal } from './SandboxModal';
  *  is used. These components are not generic choosers: `SandboxModal` posts to the sandbox plugin's own
  *  workspace routes, so drawing it for a `/sandbox` published by a DIFFERENT plugin would point that
  *  plugin's command at another plugin's endpoints. */
-const PLUGIN_PICKERS: Record<string, { plugin: string; component: ComponentType<{ onClose: () => void }> }> = {
+const PLUGIN_PICKERS: Record<string, { plugin: string; component: ComponentType<{ onClose: () => void; activeSessionId: string | null }> }> = {
   sandbox: { plugin: 'sandbox', component: SandboxModal },
 };
 
@@ -31,11 +31,11 @@ export interface PluginPickerRef { name: string; plugin: string }
 
 /** Whether this build can draw the picker `name` published by `plugin`. A name registered here but owned
  *  by another plugin is deliberately NOT renderable. */
-export const hasPluginPicker = (name: string, plugin: string | undefined): boolean =>
+const hasPluginPicker = (name: string, plugin: string | undefined): boolean =>
   !!plugin && PLUGIN_PICKERS[name]?.plugin === plugin;
 
 /** The component that draws an open plugin picker, or null when this build has none for that pair. */
-export const pluginPickerComponent = (picker: PluginPickerRef | null): ComponentType<{ onClose: () => void }> | null =>
+export const pluginPickerComponent = (picker: PluginPickerRef | null): ComponentType<{ onClose: () => void; activeSessionId: string | null }> | null =>
   (picker !== null && hasPluginPicker(picker.name, picker.plugin) ? PLUGIN_PICKERS[picker.name]!.component : null);
 
 /** Whether a catalog entry is a plugin-contributed picker this surface should render itself.

@@ -51,9 +51,6 @@ const overview = {
   ],
 };
 
-vi.mock('../../../modules/advisor/BrainChatProvider', () => ({
-  useBrainChat: () => ({ activeSessionId: 'brain-7-a' }),
-}));
 vi.mock('../../../lib/queries', () => ({
   useSandboxOverview: () => ({ data: overview, isLoading: false, isError: false, isFetching: false, refetch }),
 }));
@@ -109,7 +106,7 @@ vi.mock('../../../lib/i18n', () => ({
   }),
 }));
 
-const renderModal = () => render(<SandboxModal onClose={vi.fn()} />);
+const renderModal = () => render(<SandboxModal onClose={vi.fn()} activeSessionId="brain-7-a" />);
 
 /** Open the ⋯ menu of one row and choose Remove, then answer the preview the drawer asks for. */
 async function startRemoval(label: string, preview: Partial<Record<string, number>> = {}) {
@@ -306,6 +303,17 @@ describe('SandboxModal', () => {
     expect(rows.some((row) => row.textContent?.includes('Checkout'))).toBe(true);
     // The drawer does not escalate a refusal into a discard: exactly one removal was ever attempted.
     expect(removeMutate).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses the host session identity and disables switching when no session is attached', async () => {
+    const onClose = vi.fn();
+    const { rerender } = render(<SandboxModal onClose={onClose} activeSessionId={null} />);
+    expect(screen.getByRole('button', { name: 'Use here: Payments' })).toBeDisabled();
+    expect(screen.queryByRole('button', { name: 'Return to project' })).not.toBeInTheDocument();
+
+    rerender(<SandboxModal onClose={onClose} activeSessionId="brain-other" />);
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Use here: Payments' })); });
+    expect(useMutate.mock.calls[0]![0]).toEqual({ workspaceId: 'ws_1', sessionId: 'brain-other' });
   });
 
   it('refreshes the list on demand', async () => {

@@ -14,6 +14,7 @@ function fakeDeps(persistedYolo: boolean) {
   const session = {
     prompt: vi.fn(async () => {}), subscribe: () => () => {}, dispose: vi.fn(), abort: vi.fn(async () => {}),
     messages: [], isStreaming: false, getContextUsage: () => undefined,
+    agent: {},
     // A real PI session always exposes its RENDERED prompt; the compaction threshold measures the
     // never-shrinking prefill off it, so a fake without one is simply incomplete.
     systemPrompt: '',

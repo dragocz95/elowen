@@ -2106,7 +2106,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
             every such command: the controller says which name is open, the registry says what draws it,
             and neither of them knows what any particular plugin's chooser does. */}
         {PluginPicker ? (
-          <PluginPicker onClose={closePluginPicker} />
+          <PluginPicker onClose={closePluginPicker} activeSessionId={activeSessionId} />
         ) : null}
         {helpOpen ? (
           <HelpModal onClose={() => setHelpOpen(false)} />

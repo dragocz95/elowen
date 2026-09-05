@@ -18,8 +18,6 @@
 import type { Hono } from 'hono';
 import type {
   SandboxOverview,
-  SandboxProject,
-  SandboxSession,
   SandboxWorkspace,
 } from '../../../../lib/types.ts';
 import { DEFAULT_SESSION_ID } from '../../seed/fixtures.ts';
@@ -31,12 +29,12 @@ export const DIRTY_WORKSPACE_ID = 'ws-kolin-catalog';
 
 // `defaultRef` is the repository's real default branch as the daemon read it. The second project has
 // none, which is the case the create form must not paper over with a guessed branch name.
-const projects: SandboxProject[] = [
+const projects: SandboxOverview['projects'] = [
   { id: 1, slug: 'atlas', path: '/srv/atlas', defaultRef: 'main' },
   { id: 2, slug: 'kolin', path: '/srv/kolin', defaultRef: null },
 ];
 
-const sessions: SandboxSession[] = [
+const sessions: SandboxOverview['sessions'] = [
   { id: DEFAULT_SESSION_ID, title: 'First conversation', updatedAt: '2026-07-15T10:00:00.000Z' },
   { id: 'brain-2', title: 'Second conversation', updatedAt: '2026-07-14T09:00:00.000Z' },
 ];

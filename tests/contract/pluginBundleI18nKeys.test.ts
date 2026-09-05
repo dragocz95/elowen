@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { readdirSync, readFileSync, statSync } from 'node:fs';
+import { readdirSync, readFileSync } from 'node:fs';
+import { pluginBundleFiles } from './pluginBundleFiles.js';
 import { join } from 'node:path';
 import { en } from '../../web/lib/i18n/dictionaries/en.js';
 
@@ -23,10 +24,7 @@ const BUNDLES = join(process.cwd(), 'plugins');
 const NAMESPACES = new Set(Object.keys(en));
 const REF = /\bt\.([A-Za-z_$][\w$]*)\.([A-Za-z_$][\w$]*)(?:\.([A-Za-z_$][\w$]*))?/g;
 
-/** Plugins whose manifest declares a browser bundle — the scan has to reach every one of them. Derived
- *  from the manifests rather than counted: `subagent` is the only bundled plugin with a web-src/ left
- *  (agents, work and editor took theirs to the plugin registry), so a file-count floor would be a magic
- *  number, while this fails the day a DECLARED bundle stops being scanned. */
+/** Derive coverage from manifests so moving sources to the registry cannot silently drop a bundle. */
 function pluginsDeclaringABundle(): string[] {
   return readdirSync(BUNDLES).filter((name) => {
     try {
@@ -37,19 +35,7 @@ function pluginsDeclaringABundle(): string[] {
 }
 
 function bundleFiles(): string[] {
-  const out: string[] = [];
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir)) {
-      const p = join(dir, entry);
-      if (statSync(p).isDirectory()) walk(p);
-      else if (/\.tsx?$/.test(entry)) out.push(p);
-    }
-  };
-  for (const plugin of readdirSync(BUNDLES)) {
-    const webSrc = join(BUNDLES, plugin, 'web-src');
-    try { if (statSync(webSrc).isDirectory()) walk(webSrc); } catch { /* plugin ships no bundle */ }
-  }
-  return out;
+  return readdirSync(BUNDLES).flatMap((plugin) => pluginBundleFiles(BUNDLES, plugin));
 }
 
 describe('plugin web bundles against the host translation catalog', () => {
@@ -58,7 +44,7 @@ describe('plugin web bundles against the host translation catalog', () => {
     // The scan really found the bundles: every plugin that declares one contributes a source.
     const declaring = pluginsDeclaringABundle();
     expect(declaring.length).toBeGreaterThan(0);
-    expect(declaring.filter((name) => !files.some((f) => f.startsWith(join(BUNDLES, name, 'web-src') + '/')))).toEqual([]);
+    expect(declaring.filter((name) => !files.some((f) => f.startsWith(join(BUNDLES, name) + '/')))).toEqual([]);
 
     const missing: string[] = [];
     let checked = 0;

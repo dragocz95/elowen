@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { pluginBundleFiles } from './pluginBundleFiles.js';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -32,22 +33,7 @@ const COMPUTED_READS: { file: string; keys: string[] }[] = [];
 
 interface Manifest { web?: { strings?: Record<string, string> } }
 
-function bundleFiles(pluginsDir: string, plugin: string): string[] {
-  const out: string[] = [];
-  const walk = (dir: string): void => {
-    for (const entry of readdirSync(dir)) {
-      const path = join(dir, entry);
-      if (statSync(path).isDirectory()) walk(path);
-      else if (/\.tsx?$/.test(entry)) out.push(path);
-    }
-  };
-  try { walk(join(pluginsDir, plugin, 'web-src')); } catch { /* plugin ships no bundle */ }
-  return out;
-}
-
-/** Plugins whose manifest declares its own `web.strings` — every one of them must show up in the scan.
- *  Derived from the manifests because the count is now one (`subagent`; agents, work and editor took
- *  their bundles to the plugin registry), and a hard-coded number over a single subject says nothing. */
+/** Every plugin declaring its own strings must contribute reads from local sources or shipped JS. */
 function pluginsDeclaringStrings(): string[] {
   return readdirSync(PLUGINS).filter((name) => {
     try { return Object.keys((JSON.parse(readFileSync(join(PLUGINS, name, 'elowen-plugin.json'), 'utf-8')) as Manifest).web?.strings ?? {}).length > 0; } catch { return false; }
@@ -93,7 +79,7 @@ function stripLineComment(line: string): string {
 
 /** The binding a file gave `usePluginStrings(<plugin>)`, e.g. `const s = hooks.usePluginStrings('work')`.
  *  A file may hold one per plugin; the binding name is what the reads below are matched against. */
-const BINDING = /(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:[\w$.]+\.)?usePluginStrings\(\s*'([^']+)'\s*\)/g;
+const BINDING = /(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:[\w$.]+\.)?usePluginStrings\(\s*['"]([^'"]+)['"]\s*\)/g;
 
 interface Read { plugin: string; key: string; where: string }
 
@@ -113,7 +99,7 @@ function collect(pluginsDir: string = PLUGINS): { statik: Read[]; computed: { pl
   const shadowed: string[] = [];
   let sites = 0;
   for (const plugin of readdirSync(pluginsDir)) {
-    for (const file of bundleFiles(pluginsDir, plugin)) {
+    for (const file of pluginBundleFiles(pluginsDir, plugin)) {
       const source = stripComments(readFileSync(file, 'utf-8'));
       const bindings = new Map<string, string>(); // variable → plugin it reads
       for (const [, name, owner] of source.matchAll(BINDING)) bindings.set(name!, owner!);
@@ -197,10 +183,10 @@ describe('the scan itself still sees what it is looking for', () => {
     return collect(dir);
   };
 
-  it('resolves a static read, and ignores prose naming a key', () => {
+  it.each(["'", '"'])('resolves a %s-quoted static read, and ignores prose naming a key', (quote) => {
     const found = scan({
       'Panel.tsx': [
-        "const s = hooks.usePluginStrings('ledger');",
+        `const s = hooks.usePluginStrings(${quote}ledger${quote});`,
         'export const Panel = () => <h1>{s.title}</h1>;',
         '// s.commentedOut is prose, not a call site',
       ].join('\n'),

@@ -207,6 +207,8 @@ describe('ChatView (/chat page)', () => {
     const main = container.querySelector('main')!;
     Object.defineProperty(main, 'scrollHeight', { configurable: true, value: 1600 });
     Object.defineProperty(composer, 'scrollHeight', { configurable: true, value: 120 });
+    // jsdom does not lay out the textarea when its inline height changes.
+    Object.defineProperty(composer, 'offsetHeight', { configurable: true, get: () => parseFloat(composer.style.height) || 0 });
     scrollTo.mockClear();
 
     fireEvent.change(composer, { target: { value: 'A long wrapped message that grows the composer.' } });
@@ -254,20 +256,20 @@ describe('ChatView (/chat page)', () => {
     }
   });
 
-  /** A phone's toolbar is the conversation name and ⋯. Reasoning, telemetry and new chat are still one
-   *  tap away — inside the menu, as icon rows — instead of squeezing the name down to a letter. */
-  it('folds reasoning, telemetry and new chat into the ⋯ menu on a phone', async () => {
+  /** Reasoning and telemetry stay directly reachable on a phone; only new chat folds into overflow. */
+  it('keeps reasoning and telemetry on the phone toolbar and folds new chat into the menu', async () => {
     const original = window.matchMedia;
     window.matchMedia = (query: string) => ({ ...original(query), matches: /max-width/.test(query) });
     try {
       renderChat(<ChatView />);
       await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
-      expect(screen.queryByRole('button', { name: /^Reasoning$|^Uvažování$/ })).toBeNull();
-      expect(screen.queryByRole('button', { name: /^New chat$|^Nový chat$/ })).toBeNull();
-      fireEvent.click(screen.getByRole('button', { name: /More options|Další možnosti/i }));
       expect(screen.getByRole('button', { name: /^Reasoning$|^Uvažování$/ })).toBeInTheDocument();
       expect(screen.getByRole('button', { name: /Show telemetry|Zobrazit telemetrii/i })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /^New chat$|^Nový chat$/ })).toBeNull();
+      const more = screen.getByRole('button', { name: /More options|Další možnosti/i });
+      fireEvent.click(more);
       expect(screen.getByRole('button', { name: /^New chat$|^Nový chat$/ })).toBeInTheDocument();
+      fireEvent.click(more);
       fireEvent.click(screen.getByRole('button', { name: /^Reasoning$|^Uvažování$/ }));
       expect(await screen.findByRole('dialog', { name: /Reasoning|Uvažování/ })).toBeInTheDocument();
     } finally {

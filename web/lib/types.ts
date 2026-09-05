@@ -744,11 +744,11 @@ export interface SessionTask {
  *  and the chat dock is one more reader of the same routes. Only the fields the dock renders are declared.
  *  `defaultRef` is the repository's REAL default branch as the daemon read it, and null when there is
  *  none — the create form leaves its base reference empty in that case rather than guessing a name. */
-export interface SandboxProject { id: number; slug: string; path: string; defaultRef: string | null }
+interface SandboxProject { id: number; slug: string; path: string; defaultRef: string | null }
 /** One porcelain entry of a workspace's tree: the two-letter status code and the path it applies to. */
-export interface SandboxWorkspaceFile { path: string; code: string; untracked: boolean }
+interface SandboxWorkspaceFile { path: string; code: string; untracked: boolean }
 /** The worktree's Git state. Null when its path is gone or is no longer a repository. */
-export interface SandboxWorkspaceStatus {
+interface SandboxWorkspaceStatus {
   branch: string;
   head: string;
   upstream: string | null;
@@ -760,7 +760,7 @@ export interface SandboxWorkspaceStatus {
 }
 /** One conversation bound to a workspace. The binding is what the daemon derives a turn's working
  *  directory from, which is why the dock MARKS the active one and never stores a cwd of its own. */
-export interface SandboxBinding { sessionId: string; updatedAt: string }
+interface SandboxBinding { sessionId: string; updatedAt: string }
 export interface SandboxWorkspace {
   id: string;
   userId: number;
@@ -781,7 +781,7 @@ export interface SandboxWorkspace {
   activeProcesses: number;
   bindings: SandboxBinding[];
 }
-export interface SandboxSession { id: string; title: string; updatedAt: string }
+interface SandboxSession { id: string; title: string; updatedAt: string }
 export interface SandboxOverview {
   projects: SandboxProject[];
   sessions: SandboxSession[];
