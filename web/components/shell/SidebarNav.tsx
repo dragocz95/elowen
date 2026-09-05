@@ -36,7 +36,6 @@ import {
   SidebarMenuSubItem,
   SidebarProvider,
   SidebarRail,
-  SidebarSeparator,
   SidebarTrigger,
 } from '../ui/shadcn/sidebar';
 import { useReturnFocus } from '../ui/overlayStack';
@@ -45,8 +44,8 @@ import { useReturnFocus } from '../ui/overlayStack';
  *  the reference dashboard measured in `plans/cloudflare-sidebar-spec.md`.
  *
  *  Top to bottom: a header naming the instance and opening its menu, the command palette's own row, the
- *  destinations in labelled groups with inline accordion sub-menus, a separator with the account beneath
- *  it, and a footer holding the fold.
+ *  destinations in labelled groups with inline accordion sub-menus, the account alone at the end with air
+ *  above it rather than a rule, and a footer holding the fold.
  *
  *  This component paints NOTHING. It states what each part IS (`sidebar-nav__*`) and what state it is in
  *  (`data-mode`, `data-open`, `data-active`, `data-ready`); every dimension, hairline and state colour
@@ -519,7 +518,7 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button type="button" className="sidebar-nav__switcher" aria-label={t.nav.instanceMenu}>
-                <img className="sidebar-nav__mark" src={iconSrc} alt="" width={20} height={20} />
+                <img className="sidebar-nav__mark" src={iconSrc} alt="" width={28} height={28} />
                 <span className="sidebar-nav__lockup" aria-hidden={compact || undefined}>
                   <span className="sidebar-nav__brand">{appName}</span>
                   {health.data?.version ? <span className="sidebar-nav__version">{`v${health.data.version}`}</span> : null}
@@ -575,25 +574,22 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
               </SidebarGroup>
             );
           })}
-          {/* The account sits alone at the end, under a rule of its own — the reference's "Manage
-              account". It is still an ordinary entry: the same context menu hides, restores and reorders
-              it, and it discloses its own sections exactly like every other row. Only the region it is
-              drawn in is fixed, which is why it is built from `rowBody` rather than from a link: the
-              account page is a deck, and drawing it as a plain destination is what would leave its
-              sections with no way in at all. */}
+          {/* The account sits alone at the end, set apart by AIR and by nothing else — the reference's
+              "Manage account", and no hairline above it (owner decision, 5 Sep 2026). It is still an
+              ordinary entry: the same context menu hides, restores and reorders it, and it discloses its
+              own sections exactly like every other row. Only the region it is drawn in is fixed, which is
+              why it is built from `rowBody` rather than from a link: the account page is a deck, and
+              drawing it as a plain destination is what would leave its sections with no way in at all. */}
           {account ? (
-            <>
-              <SidebarSeparator className="sidebar-nav__separator" />
-              <SidebarGroup className="sidebar-nav__group" data-group="account">
-                <SidebarGroupContent>
-                  <SidebarMenu className="sidebar-nav__menu">
-                    <SidebarMenuItem className="sidebar-nav__entry" data-nav-entry-id={account.id}>
-                      {rowBody(account)}
-                    </SidebarMenuItem>
-                  </SidebarMenu>
-                </SidebarGroupContent>
-              </SidebarGroup>
-            </>
+            <SidebarGroup className="sidebar-nav__group" data-group="account">
+              <SidebarGroupContent>
+                <SidebarMenu className="sidebar-nav__menu">
+                  <SidebarMenuItem className="sidebar-nav__entry" data-nav-entry-id={account.id}>
+                    {rowBody(account)}
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
           ) : null}
         </SidebarContent>
 

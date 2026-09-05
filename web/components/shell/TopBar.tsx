@@ -18,8 +18,12 @@ import { COMMAND_PALETTE_OPEN_EVENT } from './CommandPalette';
  *  `floating` is the built-in design's: no bar at all, a frameless masthead with the location set large
  *  and the universal actions gathered into a blurred pill floating over the canvas.
  *  `bar` is the dashboard reading: a compact sticky rule across the top of the scroller, the current page's
- *  own controls on the left and the universal actions on the right as plain ghost controls. Its 48px base
- *  height may be retuned by the command skin together with the sticky table-header offset.
+ *  own controls on the left and the universal actions on the right as plain ghost controls.
+ *
+ *  Its height is `--topbar-height`, which aliases `--sidebar-header-height`, and its bottom rule is the
+ *  sidebar's own internal hairline token. Both are deliberate: this bar and the navigation header stand
+ *  side by side at the top of the window, so their hairlines have to be ONE line — same height, same
+ *  colour, same border box. A number or a colour stated independently here is a visible step at the seam.
  *
  *  It is a typed property of the SHELL, chosen once from `shellProfileFor()` — never a skin id read here,
  *  and never a utility class fighting an unlayered stylesheet for the same layout. */
@@ -81,7 +85,7 @@ export function TopBar({ onMenuClick, onNavToggle, navCollapsed = false, navSide
       data-testid="future-page-header"
       data-chat-controls-narrow={chatControlsNarrow || undefined}
       className={`${bar
-        ? 'top-bar top-bar--bar sticky top-0 z-30 flex h-12 shrink-0 items-center gap-3 border-b border-border bg-background px-4'
+        ? 'top-bar top-bar--bar sticky top-0 z-30 flex h-[var(--topbar-height)] shrink-0 items-center gap-3 border-b border-sidebar-border bg-background px-4'
         : 'top-bar relative z-30 flex min-h-16 shrink-0 items-start justify-between gap-4 px-4 pb-2 pt-3'}${hideOnPhone ? ' max-[767px]:hidden' : ''}`}
     >
       <div className={`top-bar__leading min-w-0 items-center gap-2 ${bar || showLocation || onMenuClick || onNavToggle ? 'flex' : 'hidden'} ${bar ? 'flex-1' : 'items-start gap-3'}`}>

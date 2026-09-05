@@ -23,8 +23,8 @@
  * wash, `backdrop-filter: none` against a `backdrop-blur-xl`. Four rules undoing four rules is not a
  * design decision, it is a fight, and whichever side is edited next the two drift apart.
  * The bar is now a typed variant of the component (`TopBar variant="bar"`), chosen from the shell
- * profile, so the markup that ships IS the bar: 48px, sticky, one rule, route-owned controls on the left
- * and global ghost controls on the right. Nothing is left here to override.
+ * profile, so the markup that ships IS the bar: `--topbar-height` tall, sticky, one rule, route-owned
+ * controls on the left and global ghost controls on the right. Nothing is left here to override.
  *
  * The gutter is the one page-frame value Studio still states, because it is a NUMBER rather than an
  * arrangement: 24px, once, on the shell's own inset — and the shell wrapper's 8px is given back so the
@@ -420,8 +420,13 @@
   font-size: 0.875rem;
 }
 
-/* The reference chrome is a 50px ruled strip. This stays skin-owned: the shared bar remains 48px for
-   spatial designs, while Studio's sticky registers offset from the same token below. */
+/* The chrome strip is the navigation header's own height, because the two stand side by side and their
+   bottom hairlines are ONE line across the window — see `--topbar-height` in tokens.css, which the
+   family's `--studio-top-bar-height` now aliases. The COLOUR follows the same rule and is therefore
+   `--color-sidebar-border`, the column's internal hairline, rather than this design's general
+   `--studio-line`: the two resolve to different values in both variants, which is what made the frame
+   line change colour halfway across. Only the LAYOUT below is skin-owned; the sticky registers offset
+   from the same height token. */
 /* Three regions: where you are on the left, what the PAGE offers in the middle, the universal actions on
    the right. The middle track used to hold a full-width command field — the widest slot in the app's
    chrome spent on a control the keyboard opens — and the page's own toolbar was crammed into the left
@@ -433,12 +438,12 @@
   height: var(--studio-top-bar-height);
   grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 1fr);
   gap: 0.75rem;
-  border-bottom-color: var(--studio-line);
+  border-bottom-color: var(--color-sidebar-border);
   padding-inline: 0.75rem;
 }
 /* The leading column must NOT clip. Every picker in a portaled page toolbar — project, model, the
    conversation list — opens as an absolutely positioned listbox anchored to its own trigger, and the bar
-   is 50px tall: `overflow: hidden` here left those menus rendered, focusable and completely invisible,
+   is one row tall: `overflow: hidden` here left those menus rendered, focusable and completely invisible,
    because they begin below the box that was clipping them. Width is held instead by the grid track
    (`minmax(0, 1fr)`) and by each control truncating its own label, which is what a bar should do anyway. */
 /* Each region names its own column. Placement CANNOT be left to document order: the page slot carries

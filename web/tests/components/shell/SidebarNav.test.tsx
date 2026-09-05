@@ -77,7 +77,7 @@ describe('SidebarNav destinations', () => {
     expect(screen.getByRole('link', { name: 'Skills' })).toHaveAttribute('href', '/p/skills');
   });
 
-  it('groups the column the way the reference does, account last behind its own rule', () => {
+  it('groups the column the way the reference does, account last and set apart by air', () => {
     const { container } = mount();
     const groups = Array.from(container.querySelectorAll<HTMLElement>('[data-group]'));
     expect(groups.map((group) => group.dataset.group)).toEqual(['primary', 'work', 'instance', 'account']);
@@ -85,11 +85,12 @@ describe('SidebarNav destinations', () => {
     expect(groups[0]!.querySelector('[data-sidebar="group-label"]')).toBeNull();
     expect(groups[1]!.querySelector('[data-sidebar="group-label"]')!.textContent).toBe('Work');
     expect(groups[2]!.querySelector('[data-sidebar="group-label"]')!.textContent).toBe('Instance');
-    // ONE separator in the whole column, and it sits immediately before the account block. Every other
-    // boundary is carried by the group label alone, which is how the reference draws them.
-    const separators = container.querySelectorAll('[data-sidebar="separator"]');
-    expect(separators).toHaveLength(1);
-    expect(separators[0]!.nextElementSibling).toBe(groups[3]!);
+    // NO separator anywhere in the column. The rule above the account was the last one the menu drew and
+    // the owner removed it on 5 Sep 2026: every boundary here, the account's included, is carried by the
+    // group label and by air alone.
+    expect(container.querySelectorAll('[data-sidebar="separator"]')).toHaveLength(0);
+    // And the account block is still the LAST thing in the menu, immediately after the instance group.
+    expect(groups[2]!.parentElement!.lastElementChild).toBe(groups[3]!);
     // A disclosure, not a link: the account page is a deck, so its own sections hang under this row like
     // any other world's pages.
     expect(groups[3]!.contains(screen.getByRole('button', { name: 'Account' }))).toBe(true);

@@ -657,7 +657,9 @@ test('the Studio page bar stays put while the register scrolls under it', async 
     };
   });
   expect(geometry.position, 'the bar variant is sticky').toBe('sticky');
-  expect(Math.round(geometry.bar), 'the Studio reference bar height').toBe(50);
+  // 58px, the navigation header's own height: the two stand side by side and their bottom hairlines are
+  // ONE line across the window (`--topbar-height` aliases `--sidebar-header-height`).
+  expect(Math.round(geometry.bar), 'the bar matches the navigation header').toBe(58);
   expect(
     geometry.containingBlock - geometry.bar,
     'the bar has room to stay behind — a wrapper holding only the header leaves none',
@@ -673,9 +675,45 @@ test('the Studio page bar stays put while the register scrolls under it', async 
   });
   expect(scrolled, 'the register is long enough to scroll').toBeGreaterThan(200);
   expect(Math.round((await bar.boundingBox())!.y), 'the bar after scrolling').toBe(0);
-  // The column names sit directly under the 50px bar, with neither a gap nor an overlap.
+  // The column names sit directly under the bar, with neither a gap nor an overlap.
   expect(Math.round((await app.locator('.data-table-header').first().boundingBox())!.y),
     'the sticky column names clear the bar exactly').toBe(Math.round(geometry.bar));
+
+  // THE FRAME LINE. The navigation header's hairline and the bar's are one line across the window, so
+  // they have to land on the same pixel row AND be painted the same colour. Neither is visible to a unit
+  // test: both are computed from a laid-out document, and the two used to differ by 8px and by a token.
+  const frameLine = await app.evaluate(() => {
+    const header = document.querySelector<HTMLElement>('.sidebar-nav__header')!;
+    const bar = document.querySelector<HTMLElement>('.top-bar--bar')!;
+    const headerStyle = getComputedStyle(header);
+    const barStyle = getComputedStyle(bar);
+    return {
+      headerBottom: Math.round(header.getBoundingClientRect().bottom),
+      barBottom: Math.round(bar.getBoundingClientRect().bottom),
+      headerColour: headerStyle.borderBottomColor,
+      barColour: barStyle.borderBottomColor,
+      headerWidth: headerStyle.borderBottomWidth,
+      barWidth: barStyle.borderBottomWidth,
+    };
+  });
+  expect(frameLine.headerBottom, 'the two hairlines sit on the same row').toBe(frameLine.barBottom);
+  expect(frameLine.headerColour, 'the two hairlines are the same ink').toBe(frameLine.barColour);
+  expect(frameLine.headerWidth).toBe('1px');
+  expect(frameLine.barWidth).toBe('1px');
+
+  // And the switcher is CENTRED in that header rather than parked against its top edge: the shadcn
+  // primitive ships `flex flex-col`, which is exactly how it ended up there.
+  const switcher = await app.evaluate(() => {
+    const header = document.querySelector<HTMLElement>('.sidebar-nav__header')!.getBoundingClientRect();
+    const button = document.querySelector<HTMLElement>('.sidebar-nav__switcher')!.getBoundingClientRect();
+    return {
+      height: Math.round(button.height),
+      above: Math.round(button.top - header.top),
+      below: Math.round(header.bottom - button.bottom),
+    };
+  });
+  expect(switcher.height, 'the switcher fills the header comfortably').toBe(40);
+  expect(Math.abs(switcher.above - switcher.below), 'the switcher is centred').toBeLessThanOrEqual(1);
 });
 
 test('Studio opens the reference chat rail only on demand and remembers the choice', async ({ app, seed }, testInfo) => {
@@ -817,8 +855,10 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
     // Folded, the column is the mark and nothing else: the wordmark is out of the flow rather than sliced
     // by the rail's edge, so the lockup fits inside the column it belongs to.
     brandClipped: false,
-    brandMarkWidth: 24,
-    brandName: { display: 'none', size: '16px', family: shellRhythm.brandName.family },
+    // 28px mark beside a 17px wordmark. The lockup names the instance and carries the 58px header, a
+    // step above the rows under it — 24/16 read as thin against the reference (owner, 5 Sep 2026).
+    brandMarkWidth: 28,
+    brandName: { display: 'none', size: '17px', family: shellRhythm.brandName.family },
     // Command search is one 32px glyph in the action cluster, not a field holding the middle of the bar.
     search: { width: 32, height: 32, border: '0px', inActions: true, icon: { width: '18', stroke: '1.5' } },
     skin: { width: 32, height: 32, border: '0px', radius: '6px', icon: { width: '18', stroke: '1.5' } },
@@ -841,7 +881,8 @@ test('Studio opens the reference chat rail only on demand and remembers the choi
       transition: '0.3s, 0.3s, 0.3s',
       easing: 'cubic-bezier(0, 0, 0.2, 1), cubic-bezier(0, 0, 0.2, 1), cubic-bezier(0, 0, 0.2, 1)',
     },
-    advisorHeaderHeight: 50,
+    // The rail's header rides the same `--topbar-height` as the page bar beside it.
+    advisorHeaderHeight: 58,
     advisorControl: { size: 32, iconWidth: '18', iconStroke: '1.5', duration: '0.075s, 0.075s' },
     advisorText: { size: '14px', lineHeight: '21px', family: shellRhythm.advisorText.family },
     topBarControlDuration: '0.075s',
@@ -937,7 +978,7 @@ test('the Studio chat is centred on its own frame and its bar pickers open out o
   expect(Math.abs(frame.slotCentre - frame.capCentre)).toBeLessThanOrEqual(1);
 
   // The regression: the bar's leading column clipped its own overflow, so a picker's Radix menu — anchored
-  // under a 50px bar — was rendered, focusable and entirely invisible. `toBeVisible` cannot see that (the
+  // under a one-row bar — was rendered, focusable and entirely invisible. `toBeVisible` cannot see that (the
   // element has a box either way), so this hit-tests the menu where the pointer would land.
   await app.locator('[data-testid="page-top-bar-host"] [data-testid="chat-model-picker"] button').click();
   const menu = await app.evaluate(() => {
