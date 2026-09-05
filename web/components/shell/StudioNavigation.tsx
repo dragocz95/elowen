@@ -5,7 +5,7 @@ import { usePathname } from 'next/navigation';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { ChevronRight, ChevronsUpDown, MoreHorizontal, Search, Settings2, UserRound, X } from 'lucide-react';
 import { useBrand } from '../../lib/brand';
-import { useHealth, useMe, usePulse } from '../../lib/queries';
+import { useBrainSessions, useHealth, useMe } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 import { Avatar } from '../ui/Avatar';
 import { SkinSwitcher } from '../ui/SkinSwitcher';
@@ -336,19 +336,29 @@ export function StudioNavigation({ compact = false, measured = true, side = 'lef
   const mode = drawer ? 'drawer' : compact ? 'rail' : 'full';
   const user = me.data?.user;
 
-  /** Live counts, keyed by the entry id they annotate. The instance pulse is a SHARED react-query key —
-   *  the dashboard and the presence hook already read it — so the badge costs no request of its own on
-   *  any page that shows figures, and one refresh moves both. Zero is not a badge: a row that
-   *  permanently wears a "0" is noise the reader learns to stop seeing. */
-  // `totals` is optional in practice even though the type calls it required: a rollup the daemon could
-  // not compute answers without it, and the dashboard already has a regression test for exactly that
-  // payload. A badge is not worth taking the whole navigation column down for.
-  const runningAgents = usePulse().data?.totals?.runningAgents ?? 0;
+  /** Live counts, keyed by the entry id they annotate. Zero is not a badge: a row that permanently wears
+   *  a "0" is noise the reader learns to stop seeing.
+   *
+   *  The Chat count is the reader's OWN busy conversations, read from the conversation list the chat rail
+   *  already holds under a SHARED react-query key — so the badge costs no request of its own wherever that
+   *  list is on screen, and the owner-scoped `conversations` SSE moves both (see useElowenEvents).
+   *
+   *  It deliberately no longer counts the instance pulse's `runningAgents`. That figure is every RUNNING
+   *  SUB-AGENT SESSION on the instance, derived from live streaming state: it counted other people's work,
+   *  counted children rather than the conversations the reader can open, and read zero whenever a child sat
+   *  in a tool call instead of a model stream — which is how two working conversations badged as one.
+   *  `working` is the daemon's durable answer per conversation and already treats a parent waiting on a
+   *  delegated child as busy. */
+  const sessions = useBrainSessions();
+  const workingConversations = useMemo(
+    () => (sessions.data ?? []).filter((session) => session.working === true).length,
+    [sessions.data],
+  );
   const counters = useMemo<Record<string, { count: number; title: string; live?: boolean }>>(
-    () => (runningAgents > 0
-      ? { chat: { count: runningAgents, title: `${t.nav.runningAgents}: ${runningAgents}`, live: true } }
+    () => (workingConversations > 0
+      ? { chat: { count: workingConversations, title: `${t.nav.workingConversations}: ${workingConversations}`, live: true } }
       : {} as Record<string, { count: number; title: string; live?: boolean }>),
-    [runningAgents, t.nav.runningAgents],
+    [workingConversations, t.nav.workingConversations],
   );
 
   /** One destination row, at either depth.

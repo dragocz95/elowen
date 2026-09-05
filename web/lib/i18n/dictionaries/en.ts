@@ -14,7 +14,7 @@ export const en = {
     sectionWork: 'Work',
     sectionInstance: 'Instance',
     instanceMenu: 'Instance menu',
-    runningAgents: 'Running agents',
+    workingConversations: 'Working conversations',
     home: 'Home',
     chat: 'Chat',
     system: 'System',

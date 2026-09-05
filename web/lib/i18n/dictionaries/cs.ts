@@ -10,7 +10,7 @@ export const cs = {
     sectionWork: 'Práce',
     sectionInstance: 'Instance',
     instanceMenu: 'Nabídka instance',
-    runningAgents: 'Běžící agenti',
+    workingConversations: 'Pracující konverzace',
     home: 'Domů',
     chat: 'Chat',
     system: 'Systém',

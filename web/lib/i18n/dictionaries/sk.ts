@@ -10,7 +10,7 @@ export const sk = {
     sectionWork: 'Práca',
     sectionInstance: 'Inštancia',
     instanceMenu: 'Ponuka inštancie',
-    runningAgents: 'Bežiaci agenti',
+    workingConversations: 'Pracujúce konverzácie',
     home: 'Domov',
     chat: 'Chat',
     system: 'Systém',
