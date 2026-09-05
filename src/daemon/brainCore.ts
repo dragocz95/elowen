@@ -348,6 +348,17 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // provider credentials via the same resolver plugins get. Pure network service, no DB access.
   const embeddings = new EmbeddingService({ resolveProvider });
   const brainStore = new BrainStore(db);
+  // Provider request attempts are correlated in process memory, so a row still pending when this process
+  // starts belongs to a correlator that died with the previous daemon (the pause closes its own; this
+  // catches a crash). DAEMON-ONLY, and before any session can spawn: a forked runner (`migrate:false`)
+  // attaches to a live daemon whose pending rows are in flight, and so does every CLI process — which is
+  // exactly why this is not part of openDb's migrations.
+  if (opts.migrate !== false) {
+    const interrupted = brainStore.providerRequests.interruptPending({
+      errorCode: 'daemon_restart', errorMessage: 'Provider request interrupted by daemon restart',
+    });
+    if (interrupted.length > 0) log.info(`boot: closed ${interrupted.length} provider request(s) left pending by the previous process`);
+  }
   // Session id → immutable spill namespace, for pathGuard's spill-dir allowance and the
   // toolResultClearing default dir. Wired HERE because this is the single construction path every
   // process shares (daemon and forked sub-agent runner alike) — an unwired process would fall back to

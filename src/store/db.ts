@@ -322,31 +322,12 @@ function applyAdditiveMigrations(db: Db): void {
   // the additive message column exists. The installer adds only metadata to an existing projection; it does
   // not backfill or scan historical messages.
   installBrainUsageRollup(db);
-  // Provider request rows are opened before the network call and terminally accounted exactly once. Any
-  // pending row surviving process startup belongs to a request whose in-memory correlator died; mark it
-  // interrupted before sessions can respawn, and never fold it into the summary a second time.
-  db.exec(
-    `INSERT INTO brain_request_session_summary
-       (session_id, capture_started_at, request_count, error_count, first_request_at, last_request_at)
-     SELECT session_id, MIN(started_at), COUNT(*), COUNT(*), MIN(started_at), unixepoch('now') * 1000
-       FROM brain_provider_requests WHERE status = 'pending' GROUP BY session_id
-     ON CONFLICT(session_id) DO UPDATE SET
-       request_count = request_count + excluded.request_count,
-       error_count = error_count + excluded.error_count,
-       first_request_at = CASE WHEN first_request_at IS NULL THEN excluded.first_request_at ELSE MIN(first_request_at, excluded.first_request_at) END,
-       last_request_at = CASE WHEN last_request_at IS NULL THEN excluded.last_request_at ELSE MAX(last_request_at, excluded.last_request_at) END;
-     UPDATE brain_provider_requests
-        SET status = 'interrupted', finished_at = COALESCE(finished_at, unixepoch('now') * 1000),
-            duration_ms = COALESCE(duration_ms, MAX(0, unixepoch('now') * 1000 - started_at)),
-            error_code = COALESCE(error_code, 'daemon_restart'),
-            error_message = COALESCE(error_message, 'Provider request interrupted by daemon restart'),
-            usage_epoch = COALESCE((
-              SELECT reset.usage_epoch FROM brain_sessions s
-              LEFT JOIN brain_usage_reset_state reset ON reset.user_id = s.user_id
-              WHERE s.id = brain_provider_requests.session_id
-            ), 0)
-      WHERE status = 'pending'`
-  );
+  // Pending provider request rows are deliberately NOT closed here. This block runs in every process that
+  // opens the database with migrations — the hourly `elowen update --auto`, any CLI command — and closing
+  // them from there interrupted the LIVE daemon's in-flight requests (the response then failed the
+  // "one pending attempt" check and capture broke for the rest of the session). Only the daemon knows
+  // which pending rows are dead; it closes them on pause and on its own boot — see
+  // ProviderRequestStore.interruptPending and its callers in brainService / brainCore.
   // A linked platform id is an identity key — enforce one-owner-per-id with a partial UNIQUE index so a
   // squatter can't claim another user's id (see schema.sql). Created here too for pre-existing DBs, and
   // derived per identity descriptor: the index NAME and the key are pinned in the descriptor, so this

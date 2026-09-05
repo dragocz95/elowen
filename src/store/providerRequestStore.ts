@@ -476,12 +476,45 @@ export class ProviderRequestStore {
     })();
   }
 
-  markResponse(requestId: string, status: number, at = Date.now()): void {
+  /** Record the HTTP response of a pending attempt. A provider may answer one payload several times — the
+   *  Codex SSE path retries a 429/5xx in-place without a new onPayload — so the LATEST response wins, and the
+   *  stored status is the one the attempt actually proceeded with. Returns false when the attempt is no
+   *  longer pending (closed by an interruption or an earlier terminal), which the caller reports; a
+   *  response to an unknown attempt is the only invariant breach. */
+  markResponse(requestId: string, status: number, at = Date.now()): boolean {
     const changed = this.db.prepare(
       `UPDATE brain_provider_requests SET response_at = ?, http_status = ?
-        WHERE request_id = ? AND status = 'pending' AND response_at IS NULL`
+        WHERE request_id = ? AND status = 'pending'`
     ).run(at, status, requestId).changes;
-    if (changed !== 1) throw new Error(`provider request correlation invariant: response without one pending attempt (${requestId})`);
+    if (changed === 1) return true;
+    const row = this.db.prepare('SELECT status FROM brain_provider_requests WHERE request_id = ?').get(requestId);
+    if (!row) throw new Error(`provider request correlation invariant: response without one pending attempt (${requestId})`);
+    return false;
+  }
+
+  /** Close every attempt still pending as `interrupted`: the correlator that owned it lives in process
+   *  memory, so a pending row can only be finished by the process that opened it. The daemon calls this
+   *  when it pauses (its streams die with it) and again on boot (for whatever a crash left behind), each
+   *  with its own reason; the boot pass is what guarantees no pending row ever survives a restart.
+   *  Restricted to one session when given. Each row goes through {@link finish}, so the session summary
+   *  accounts it exactly once. Returns the ids closed. */
+  interruptPending(reason: { errorCode: string; errorMessage: string }, opts: { sessionId?: string; at?: number } = {}): string[] {
+    return this.db.transaction(() => {
+      const rows = (opts.sessionId === undefined
+        ? this.db.prepare(`SELECT request_id FROM brain_provider_requests WHERE status = 'pending' ORDER BY started_at`).all()
+        : this.db.prepare(`SELECT request_id FROM brain_provider_requests WHERE status = 'pending' AND session_id = ? ORDER BY started_at`).all(opts.sessionId)
+      ) as { request_id: string }[];
+      const closed: string[] = [];
+      for (const row of rows) {
+        const done = this.finish({
+          requestId: row.request_id, status: 'interrupted',
+          errorCode: reason.errorCode, errorMessage: reason.errorMessage,
+          ...(opts.at !== undefined ? { finishedAt: opts.at } : {}),
+        });
+        if (done) closed.push(row.request_id);
+      }
+      return closed;
+    })();
   }
 
   finish(input: ProviderRequestTerminalInput): boolean {
@@ -490,7 +523,7 @@ export class ProviderRequestStore {
         `SELECT r.request_id, r.session_id, r.seq, r.status, r.started_at,
                 COALESCE(reset.usage_epoch, 0) AS usage_epoch
            FROM brain_provider_requests r
-           JOIN brain_sessions s ON s.id = r.session_id
+           LEFT JOIN brain_sessions s ON s.id = r.session_id
            LEFT JOIN brain_usage_reset_state reset ON reset.user_id = s.user_id
           WHERE r.request_id = ?`
       ).get(input.requestId) as (RequestRow & { usage_epoch: number }) | undefined;

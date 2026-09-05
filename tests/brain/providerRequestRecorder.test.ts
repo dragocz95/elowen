@@ -22,8 +22,17 @@ import { createAnthropicHostedToolReplay } from '../../src/brain/session/anthrop
 import { installAnthropicHostedToolSearch } from '../../src/brain/session/anthropicHostedToolSearch.js';
 import { installOpenAIHostedToolSearch } from '../../src/brain/session/openAiHostedToolSearch.js';
 import { ProviderRequestRecorder } from '../../src/brain/session/providerRequestRecorder.js';
+import { setLogSink, type LogLevel } from '../../src/shared/logger.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { openDb } from '../../src/store/db.js';
+
+/** Every line the recorder logs during a test, so a scenario can assert "no ERROR" the way the
+ *  production incident was diagnosed — from the daemon log. */
+function captureLog(): { lines: { level: LogLevel; message: string }[]; stop: () => void } {
+  const lines: { level: LogLevel; message: string }[] = [];
+  setLogSink({ push: (entry) => { if (entry.scope === 'provider-request-recorder') lines.push({ level: entry.level, message: entry.message }); } });
+  return { lines, stop: () => setLogSink(undefined) };
+}
 
 const usage = (totalTokens: number) => ({
   input: totalTokens, output: 2, reasoning: 1, cacheRead: 3, cacheWrite: 4, totalTokens: totalTokens + 10,
@@ -48,6 +57,8 @@ function stream(model: Model<Api>, answer: AssistantMessage) {
 }
 
 async function fixture(options: {
+  /** Reuse another fixture's store (a "next boot" on the same conversation) instead of opening a fresh DB. */
+  brain?: BrainStore;
   enabled?: () => boolean;
   firstStatus?: number;
   provider?: string;
@@ -58,9 +69,8 @@ async function fixture(options: {
   repeatPayload?: (request: SimpleStreamOptions, model: Model<Api>, payload: Record<string, unknown>) => Promise<void>;
   run: (model: Model<Api>, context: Context, request: SimpleStreamOptions, call: number) => ReturnType<typeof stream> | Promise<ReturnType<typeof stream>>;
 }) {
-  const db = openDb(':memory:');
-  const brain = new BrainStore(db);
-  brain.createSession({ id: 's1', userId: 7, model: 'chat-model', provider: 'configured' });
+  const brain = options.brain ?? new BrainStore(openDb(':memory:'));
+  if (!options.brain) brain.createSession({ id: 's1', userId: 7, model: 'chat-model', provider: 'configured' });
   const runtime = await inMemoryModelRuntime();
   const registry = new ModelRegistry(runtime);
   const api = options.api ?? `request-recorder-${Math.random()}` as Api;
@@ -393,6 +403,138 @@ describe('ProviderRequestRecorder', () => {
 
     expect(f.brain.providerRequests.rows('s1')).toHaveLength(1);
     expect(f.brain.providerRequests.rows('s1')[0]).toMatchObject({ status: 'error', error_message: 'socket exploded' });
+  });
+
+  // The pause/park incident of 5. 9. 2026: an attempt opened before SIGTERM is closed as `interrupted`
+  // while its stream is still open (the pause, or the boot pass after a crash). The old process may still
+  // see that stream's response and terminal; the next process opens a fresh attempt in the same session.
+  // Neither may log an ERROR or break capture — the old recorder just notes the late events.
+  it('survives a pause closing its pending attempt: late response is a warning and the resumed session captures again', async () => {
+    const log = captureLog();
+    try {
+      let release!: () => void;
+      const gate = new Promise<void>((resolve) => { release = resolve; });
+      let pauseHit = false;
+      const f = await fixture({
+        run: async (model) => {
+          const out = createAssistantMessageEventStream();
+          void (async () => {
+            out.push({ type: 'start', partial: message(model, []) });
+            await gate;
+            out.push({ type: 'done', reason: 'stop', message: message(model, [{ type: 'text', text: 'late answer' }]) });
+            out.end();
+          })();
+          return out;
+        },
+        repeatPayload: async (request, model) => {
+          // SIGTERM lands between the payload and the response: the pause closes the pending row, then
+          // the still-open stream delivers a (second) response and its terminal to the OLD recorder.
+          if (pauseHit) return;
+          pauseHit = true;
+          expect(f.brain.providerRequests.interruptPending({ errorCode: 'daemon_pause', errorMessage: 'paused' }, { sessionId: 's1' })).toHaveLength(1);
+          await request.onResponse?.({ status: 200, headers: {} } as never, model);
+        },
+      });
+      const prompt = f.session.prompt('park me');
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      release();
+      await prompt;
+
+      const parked = f.brain.providerRequests.rows('s1');
+      expect(parked).toHaveLength(1);
+      expect(parked[0]).toMatchObject({ status: 'interrupted', error_code: 'daemon_pause', http_status: 200 });
+      expect(log.lines.filter((line) => line.level === 'error')).toEqual([]);
+      expect(log.lines.some((line) => line.level === 'warn' && /arrived after the attempt was closed as interrupted \(daemon_pause\)/.test(line.message))).toBe(true);
+
+      // The next boot: nothing is left pending for the boot pass, and the resumed turn (a fresh recorder
+      // on the same session id) captures a new attempt without tripping the one-pending rule.
+      expect(f.brain.providerRequests.interruptPending({ errorCode: 'daemon_restart', errorMessage: 'restart' })).toEqual([]);
+      const resumed = await fixture({
+        brain: f.brain,
+        run: async (model) => stream(model, message(model, [{ type: 'text', text: 'resumed answer' }])),
+      });
+      await resumed.session.prompt('continue');
+      expect(f.brain.providerRequests.rows('s1').map((row) => row.status)).toEqual(['interrupted', 'succeeded']);
+      expect(log.lines.filter((line) => line.level === 'error')).toEqual([]);
+    } finally {
+      log.stop();
+    }
+  });
+
+  // The stale-pointer variant: the pending row is closed from outside and NO terminal event ever reaches the
+  // recorder (the stream simply never ends), then the same session issues its next request. The old code
+  // declared "request started before X terminated" and broke capture for the rest of the session.
+  it('opens a fresh attempt when its active row was closed from outside without a terminal', async () => {
+    const log = captureLog();
+    try {
+      const brain = new BrainStore(openDb(':memory:'));
+      brain.createSession({ id: 's1', userId: 7, model: 'chat-model', provider: 'configured' });
+      const recorder = new ProviderRequestRecorder({ store: brain.providerRequests, sessionId: 's1', configuredProvider: 'configured', enabled: () => true });
+      const model = { id: 'chat-model', provider: 'wire', api: 'stub' } as Model<Api>;
+      const runtime = recorder.wrapRuntime({
+        streamSimple: (_model: Model<Api>, _context: Context, request?: SimpleStreamOptions) => {
+          void request?.onPayload?.({ model: 'chat-model', messages: [] }, model);
+          return createAssistantMessageEventStream(); // never ends: the process is about to exit
+        },
+      } as unknown as Parameters<ProviderRequestRecorder['wrapRuntime']>[0]);
+      const context = { messages: [] } as unknown as Context;
+
+      runtime.streamSimple(model, context, {});
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(brain.providerRequests.interruptPending({ errorCode: 'daemon_pause', errorMessage: 'paused' })).toHaveLength(1);
+      runtime.streamSimple(model, context, {});
+      await new Promise((resolve) => setTimeout(resolve, 0));
+
+      expect(brain.providerRequests.rows('s1').map((row) => ({ status: row.status, code: row.error_code }))).toEqual([
+        { status: 'interrupted', code: 'daemon_pause' },
+        { status: 'pending', code: null },
+      ]);
+      expect(log.lines.filter((line) => line.level === 'error')).toEqual([]);
+      expect(log.lines.some((line) => line.level === 'warn' && /was closed as interrupted \(daemon_pause\) before its stream ended/.test(line.message))).toBe(true);
+    } finally {
+      log.stop();
+    }
+  });
+
+  // PI's split-turn compaction (the cut lands inside the newest turn) issues TWO sequential provider calls
+  // between one compaction_start and its compaction_end: the history summary, then the turn-prefix
+  // summary. Terminating compaction attempts only on compaction_end left the first call pending when the
+  // second opened — the production "request started before … terminated" invariant, three times in a week.
+  it('captures both calls of a split-turn compaction as separate succeeded attempts', async () => {
+    const log = captureLog();
+    try {
+      const summaries: string[] = [];
+      const f = await fixture({
+        run: async (model, context, _request, call) => {
+          if (context.systemPrompt?.includes('context summarization assistant')) {
+            summaries.push(context.messages.map((m) => JSON.stringify(m.content)).join('').slice(0, 40));
+            return stream(model, message(model, [{ type: 'text', text: `summary ${summaries.length}` }]));
+          }
+          // Turn 2 is a tool loop ending on an answer larger than the keep-recent budget (10 tokens), so
+          // the cut lands on that final assistant message, inside the turn: a split turn.
+          if (call === 2) return stream(model, message(model, [{ type: 'toolCall', id: 'probe-1', name: 'probe', arguments: {} }], 'toolUse'));
+          return stream(model, message(model, [{ type: 'text', text: call === 3 ? 'done '.repeat(40) : 'ok' }]));
+        },
+      });
+      await f.session.prompt(`one ${'history '.repeat(400)}`);
+      await f.session.prompt(`two ${'history '.repeat(400)}`);
+
+      const result = await f.session.compact('split capture');
+
+      expect(summaries).toHaveLength(2);
+      expect(result.summary).toContain('Turn Context (split turn)');
+      const compact = f.brain.providerRequests.rows('s1').filter((row) => row.kind === 'compaction');
+      expect(compact.map((row) => ({ status: row.status, turn: row.turn_id, retry: row.retry_of, tokens: row.total_tokens }))).toEqual([
+        { status: 'succeeded', turn: 'compaction:1', retry: null, tokens: 20 },
+        { status: 'succeeded', turn: 'compaction:1', retry: null, tokens: 20 },
+      ]);
+      expect(log.lines.filter((line) => line.level === 'error' || line.level === 'warn')).toEqual([]);
+      // Capture is intact afterwards: the next turn is still recorded.
+      await f.session.prompt('after');
+      expect(f.brain.providerRequests.rows('s1').at(-1)).toMatchObject({ kind: 'chat', status: 'succeeded' });
+    } finally {
+      log.stop();
+    }
   });
 
   it('stops new writes immediately when the runtime kill switch is off', async () => {
