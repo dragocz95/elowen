@@ -227,8 +227,9 @@ describe('picker application lifetime', () => {
     expect(plain()).toContain('Feature Alpha');
     expect(plain()).toContain('elowen/u1/feature-alpha');
 
-    modal!.handleInput('\x1b[B'); // + New workspace → Refresh
-    modal!.handleInput('\x1b[B'); // → the workspace row
+    // One step, because the list holds workspaces and the create row only — refreshing and returning are
+    // keys now, so nothing sits between the create row and the first real worktree.
+    modal!.handleInput('\x1b[B'); // + New workspace → the workspace row
     modal!.handleInput('\r');
     await settle();
     expect(plain()).toContain('Workspace Feature Alpha');
@@ -429,13 +430,12 @@ describe('picker application lifetime', () => {
 
     pickers.openSandboxModal();
     await settle();
-    // Offered because this conversation IS working in one of these worktrees, and it states what survives.
-    expect(plain()).toContain('Return to project');
-    expect(plain()).toContain('the workspace is kept');
+    // Advertised in the footer, not as a row: the list is worktrees, and a command about the list reading
+    // like one more worktree to open is exactly the confusion this replaced.
+    expect(plain()).toContain('ctrl+p return to project');
+    expect(plain()).not.toContain('Return to project');
 
-    modal!.handleInput('\x1b[B'); // + New workspace → Refresh
-    modal!.handleInput('\x1b[B'); // → Return to project
-    modal!.handleInput('\r');
+    modal!.handleInput('\x10'); // ctrl+p
     await settle();
 
     // The conversation id is the whole payload: no workspace is named, so nothing can be destroyed.
@@ -448,12 +448,97 @@ describe('picker application lifetime', () => {
     sandboxReleaseWorkspaces.mockRejectedValueOnce(
       new SandboxRouteError('workspace_in_use', 'workspace is in use by an active process'),
     );
-    modal!.handleInput('\x1b[B');
-    modal!.handleInput('\x1b[B');
-    modal!.handleInput('\r');
+    modal!.handleInput('\x10'); // ctrl+p again
     await settle();
     expect(state.notice).toContain('still working in the workspace');
     expect(state.notice).toContain('a process is still running in it');
+    await lifetime.stop();
+  });
+
+  /** Refreshing the list and returning to the project are commands ABOUT the modal, not worktrees to open.
+   *  As rows they sat above the real workspaces and read like two more of them. They are keys now, named in
+   *  the footer, and the list is nothing but the create row and actual workspaces.
+   *
+   *  The keys must not cost the modal anything it already had: plain letters still filter, and a ctrl chord
+   *  is consumed as a command rather than typed into that filter. */
+  it('exposes refresh and return as footer keys, keeps the list to workspaces, and still filters by typing', async () => {
+    initTheme();
+    const lifetime = new ChatApplicationLifetime<'metadata'>();
+    let modal: { handleInput(data: string): void; render(width: number): string[] } | null = null;
+    let handle: { hide: ReturnType<typeof vi.fn> } | null = null;
+    const tui = {
+      terminal: { columns: 120, rows: 40 },
+      showOverlay: vi.fn((component: typeof modal) => {
+        modal = component;
+        handle = { hide: vi.fn(), setHidden: vi.fn(), isHidden: () => false, focus: vi.fn(), unfocus: vi.fn(), isFocused: () => true };
+        return handle;
+      }),
+      setFocus: vi.fn(), requestRender: vi.fn(),
+    };
+    const workspace = (id: string, label: string) => ({
+      id, userId: 1, projectId: 1, label, path: `/data/ws/${id}`,
+      branch: `elowen/u1/${id}`, baseRef: 'main', lifecycle: 'active', orphanReason: null, accessible: true,
+      status: { head: 'abc', branch: `elowen/u1/${id}`, upstream: '', ahead: 0, behind: 0, dirty: 0, untracked: 0, clean: true },
+      // No bindings anywhere: this conversation is NOT working in either worktree.
+      files: [], uniqueCommits: 0, activeProcesses: 0, bindings: [],
+    });
+    const sandboxOverview = vi.fn(async () => ({
+      projects: [{ id: 1, slug: 'demo', path: '/var/www/demo', defaultRef: 'main' }],
+      sessions: [],
+      workspaces: [workspace('ws_1', 'Feature Alpha'), workspace('ws_2', 'Billing')],
+    }));
+    const sandboxReleaseWorkspaces = vi.fn(async () => ({ released: 1 }));
+    const state = new ChatState({ transcript: new TranscriptModel() });
+    const pickers = createPickers(
+      state,
+      {
+        client: { boundSession: 'brain-1', sandboxOverview, sandboxReleaseWorkspaces },
+        tui, editor: {}, termSettings: null, cwdLabel: '', branchLabel: '', commandDefs: [], lifetime,
+      } as never,
+      { render: vi.fn(), refreshMeta: async () => {} },
+      {} as never,
+      { reshowPanel: vi.fn(), reloadKeymap: vi.fn() },
+    );
+    const plain = (): string => modal!.render(100).join('\n').replace(/\x1b\[[0-9;]*m/g, '');
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+    pickers.openSandboxModal();
+    await settle();
+
+    // Neither action is a row any more, and the footer is where both are named.
+    expect(plain()).not.toContain('Refresh');
+    expect(plain()).not.toContain('Return to project');
+    expect(plain()).toContain('ctrl+r refresh');
+    expect(plain()).toContain('ctrl+p return to project');
+    // What IS listed: the create row and the two worktrees, nothing else.
+    expect(plain()).toContain('+ New workspace');
+    expect(plain()).toContain('Feature Alpha');
+    expect(plain()).toContain('Billing');
+
+    // ctrl+p with nothing bound says so instead of calling a route that could only answer "already there".
+    modal!.handleInput('\x10');
+    await settle();
+    expect(sandboxReleaseWorkspaces).not.toHaveBeenCalled();
+    expect(state.notice).toContain('already works in its project directory');
+
+    // ctrl+r re-reads the list exactly once per press.
+    expect(sandboxOverview).toHaveBeenCalledTimes(1);
+    modal!.handleInput('\x12');
+    await settle();
+    expect(sandboxOverview).toHaveBeenCalledTimes(2);
+
+    // Neither chord was typed into the filter: both workspaces are still listed after them.
+    expect(plain()).toContain('Feature Alpha');
+    expect(plain()).toContain('Billing');
+
+    // Plain letters still filter, which is the thing the footer has always promised.
+    modal!.handleInput('B');
+    expect(plain()).toContain('Billing');
+    expect(plain()).not.toContain('Feature Alpha');
+
+    // Esc still closes, and picking is still Enter on a real workspace row.
+    modal!.handleInput('\x1b');
+    expect(handle!.hide).toHaveBeenCalledTimes(1);
     await lifetime.stop();
   });
 
