@@ -9,9 +9,12 @@ export type SubagentDispatchMode = 'in-process' | 'runner';
 export interface SubagentDispatchDeps {
   /** Execute the delegated turn HERE — byte for byte what happened before the runner existed. */
   runTurn: (request: DelegatedTurnRequest, text: string, onEvent?: (e: BrainEvent) => void) => Promise<string>;
-  /** Hold the parts of a delegated turn that cannot leave this process (the parent/child edge and the
-   *  abort fencing) around an execution that happens somewhere else — see
-   *  ChannelSessionService.sendRemote. */
+  /** Hold the parts of a delegated CALL that live only in this process (the parent/child edge and the
+   *  abort fencing) around its execution, wherever that happens — see ChannelSessionService.sendRemote.
+   *  Both routes go through it: the call is open for as long as `run` is, and `run` is longer than the
+   *  child's own turn now that runDelegatedTurn settles the reply against the child's own delegations
+   *  (BrainService.settleDelegatedReply) — the edge held here is what keeps the child a live claim, and
+   *  a stop on it a real abort, for that whole wait. */
   fenceRemote: (request: DelegatedTurnRequest, run: () => Promise<string>) => Promise<string>;
   /** The forked runner. ABSENT in the runner itself, which is what structurally keeps a nested delegation
    *  inside the same process instead of forking a runner from a runner. */
@@ -58,7 +61,12 @@ export class SubagentDispatch {
 
   async send(request: DelegatedTurnRequest, text: string, onEvent?: (e: BrainEvent) => void): Promise<string> {
     const runner = this.d.runner;
-    if (!runner || this.mode() === 'in-process') return this.d.runTurn(request, text, onEvent);
+    // The in-process turn holds its own edge inside ChannelSessionService.send, but only for the turn; the
+    // outer fence here keeps the call open through the settlement that follows the turn (the edge counts
+    // overlapping holders, so the nesting is exact).
+    if (!runner || this.mode() === 'in-process') {
+      return this.d.fenceRemote(request, () => this.d.runTurn(request, text, onEvent));
+    }
     try {
       return await this.d.fenceRemote(request, () => runner.run(request, text, onEvent));
     } catch (e) {
@@ -68,7 +76,7 @@ export class SubagentDispatch {
       // effects it already had.
       if (!(e instanceof SubagentRunnerUnavailable)) throw e;
       log.warn(`sub-agent runner unavailable, running this delegated turn in-process: ${e.message}`);
-      return this.d.runTurn(request, text, onEvent);
+      return this.d.fenceRemote(request, () => this.d.runTurn(request, text, onEvent));
     }
   }
 }

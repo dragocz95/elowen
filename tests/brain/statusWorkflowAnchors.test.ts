@@ -246,6 +246,12 @@ describe('status reads keep running sub-agents visible across parent compaction'
     seedDelegation(store, 'call-live', 'child-live');
     seedDelegation(store, 'call-dead', 'child-dead');
     sessions.setChildRunning(SESSION, 'child-live', true);
+    // "Dead" is a durable fact — the call's lifecycle closed (here with its display projection left at
+    // `running`, the steered-continuation shape). Liveness is read off the lifecycle, the same answer
+    // DelegateList gives, not off the registry: a live row with no edge yet is still a running child.
+    expect(store.upsertSubagentRun(SESSION, {
+      id: 'call-dead', sessionId: 'child-dead', status: 'running', task: 'task call-dead', tools: 2, seconds: 30, background: true,
+    }, 'error')).toBe(true);
 
     store.appendMessage({ id: 'u-tail', sessionId: SESSION, parentId: null, role: 'user', content: { role: 'user', content: 'newer question' } });
     store.appendMessage({ id: 'a-tail', sessionId: SESSION, parentId: null, role: 'assistant', content: { role: 'assistant', content: [{ type: 'text', text: 'newer answer' }] } });

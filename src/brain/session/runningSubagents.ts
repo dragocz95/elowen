@@ -11,10 +11,14 @@ import type { LiveSessionRegistry } from './liveRegistry.js';
  *  minutes apart and the transcript in between belongs to other people. */
 export function runningSubagentsBlock(
   sessions: Pick<LiveSessionRegistry<LiveBrain>, 'childrenOf'>,
-  store: Pick<BrainStore, 'getSubagentRuns'>,
+  store: Pick<BrainStore, 'getSubagentRuns' | 'activeDelegationChildIds'>,
   sessionId: string,
 ): string {
-  const active = new Set(sessions.childrenOf(sessionId));
+  // The same liveness the transcript read model and DelegateList use (see BrainStatusService.subagentRuns):
+  // a run row whose lifecycle is still open, plus whatever the registry already claims. The model must not
+  // be told a child is finished that its own DelegateList would report running — a boot-claimed child whose
+  // recovery turn has not registered yet was exactly such a gap.
+  const active = new Set([...sessions.childrenOf(sessionId), ...store.activeDelegationChildIds(sessionId)]);
   const running = store.getSubagentRuns(sessionId)
     .filter((run) => run.status === 'running' && active.has(run.sessionId));
   if (running.length === 0) return '';

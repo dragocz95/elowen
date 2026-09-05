@@ -540,9 +540,14 @@ export class ChannelSessionService {
   private beginDelegatedCall(parentSessionId: string, childSessionId: string): void {
     let children = this.delegatedCalls.get(parentSessionId);
     if (!children) { children = new Map(); this.delegatedCalls.set(parentSessionId, children); }
-    children.set(childSessionId, (children.get(childSessionId) ?? 0) + 1);
+    const count = children.get(childSessionId) ?? 0;
+    children.set(childSessionId, count + 1);
     this.d.registry.setChildRunning(parentSessionId, childSessionId, true);
-    this.d.onDelegatedEdge?.(parentSessionId, childSessionId, true);
+    // Only the 0→1 transition crosses the wire. The mirror on the other side is a boolean per source
+    // (LiveSessionRegistry.setChildRunning), so reporting every overlapping holder — the settle fence
+    // around a nested turn's own edge — would let the FIRST release over there drop an edge this side
+    // still holds, and a `/stop` on the top conversation would walk past a child mid-settlement.
+    if (count === 0) this.d.onDelegatedEdge?.(parentSessionId, childSessionId, true);
   }
 
   private endDelegatedCall(parentSessionId: string, childSessionId: string): void {
@@ -1287,14 +1292,18 @@ export class ChannelSessionService {
     }
   }
 
-  /** Run ONE delegated turn whose EXECUTION happens in another process (the sub-agent runner), keeping in
-   *  THIS one everything that cannot leave it. The parent/child edge, the parent-abort fence and the
-   *  pending-abort marker all live in the in-memory LiveSessionRegistry and are used ACROSS sessions —
-   *  `isParentAborting` asks about the parent, which is a daemon session — so their fencing depends on
-   *  synchronous read-modify-write and cannot be distributed.
+  /** Hold ONE delegated CALL open around `run`, keeping in THIS process everything about it that cannot
+   *  leave it. The parent/child edge, the parent-abort fence and the pending-abort marker all live in the
+   *  in-memory LiveSessionRegistry and are used ACROSS sessions — `isParentAborting` asks about the parent,
+   *  which is a daemon session — so their fencing depends on synchronous read-modify-write and cannot be
+   *  distributed. Two callers: a turn whose EXECUTION happens in the sub-agent runner, and any delegated
+   *  call whose reply outlives the child's own turn — the settlement against the child's own delegations
+   *  (BrainService.settleDelegatedReply) runs after {@link send} released the turn's edge, and this is what
+   *  keeps the child a live, stoppable claim for that wait. The edge counts overlapping holders, so a
+   *  {@link send} nested inside `run` is exact.
    *
    *  Deliberately the same guards, in the same order, as the delegated half of {@link send}: this is the
-   *  same delegation, only its turn body is somewhere else. */
+   *  same delegation, only its turn body is somewhere else (or already over). */
   async sendRemote(
     req: { channelId: string; ownerUserId: number; parentSessionId: string },
     run: () => Promise<string>,

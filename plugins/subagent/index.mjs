@@ -157,12 +157,21 @@ const buildCollectReminder = (finished, stillRunning) => {
   return `${parts.join('\n')}\n`;
 };
 
-const buildNestedCollectReminder = (status) => '<system-reminder>\n'
-  + `<nested-subagents status="${xmlEscape(status)}" />\n`
-  + '<instruction>Your own background sub-agents have not produced an integrated result yet. The outer '
-  + 'delegation is deliberately still open. Do not report this delegated task as complete: keep waiting, '
-  + 'stop only work that is genuinely no longer needed, or state a concrete blocker that makes completion '
-  + 'impossible.</instruction>\n</system-reminder>\n';
+/** A child's own sub-agent (or workflow), as the progress row of the parent's call shows it while the child
+ *  waits on it. The host keeps a delegated call open until the child has no delegation of its own still
+ *  running (its settleDelegatedReply) and republishes the child's newest live sub-agent row — or workflow
+ *  snapshot — to this call's progress sink meanwhile; DelegateStatus and the rail read this detail off that
+ *  row. The short id is what the child itself would name in DelegateList / WorkflowStatus. */
+const nestedWaitDetail = (event) => {
+  if (event.type === 'workflow') {
+    const id = typeof event.id === 'string' ? event.id : '';
+    return id ? `waiting for its own workflow ${id}` : 'waiting for its own workflow';
+  }
+  const id = typeof event.sessionId === 'string' ? event.sessionId : '';
+  const short = id.startsWith('brain-ch-subagent-') ? id.slice('brain-ch-subagent-'.length) : id;
+  return short ? `waiting for its own sub-agent ${short}` : 'waiting for its own sub-agent';
+};
+const nestedWorkRunning = (event) => (event.type === 'subagent' || event.type === 'workflow') && event.status === 'running';
 
 export function register(ctx) {
   let run = null; // the host's channel handler, captured on connect
@@ -576,13 +585,15 @@ export function register(ctx) {
       // Distil the child's live stream into progress updates: which tool it runs, how many so far, its
       // token spend. Low-frequency events only (tool starts + step boundaries) — text deltas are ignored.
       let lastActivityAt = Date.now();
-      let nestedWorkSeen = false;
       const onEvent = (e) => {
         lastActivityAt = Date.now();
         if (e.type === 'session' && e.sessionId) { state.sessionId = e.sessionId; push('running'); }
         else if (e.type === 'tool' && e.name) { state.tools += 1; state.detail = e.detail ? `${e.name} ${e.detail}` : e.name; push('running'); }
         else if ((e.type === 'step' || e.type === 'idle') && e.usage?.totalTokens) { state.tokens = e.usage.totalTokens; push('running'); }
-        else if ((e.type === 'subagent' || e.type === 'workflow') && e.status === 'running') nestedWorkSeen = true;
+        // The child's own sub-agent or workflow is running (a nested Delegate mid-turn, or the host's
+        // keep-alive while the child waits on it after its turn): this call is not stalled and its progress
+        // says what it waits for. The host holds the call open itself — nothing to collect or loop on here.
+        else if (nestedWorkRunning(e)) { state.detail = nestedWaitDetail(e); push('running'); }
       };
       const collectSource = { platform: 'subagent', userId: 'subagent', roleIds: [], channelId, access };
       // See lib/stall.mjs. Aborting the child session is what unblocks the awaited run() — the rejection
@@ -602,23 +613,11 @@ export function register(ctx) {
       const runChild = async () => {
         const stallTimer = watchForStall();
         try {
+          // `run` resolves only once the host has settled the reply against the child's own delegations
+          // (BrainService.settleDelegatedReply): a child that spawned background sub-agents and ended its
+          // turn is held open by the host until they finish and its follow-up turn has answered on them, so
+          // what comes back here is the integrated conclusion, never "they are running".
           let raw = await run(collectSource, p.task, onEvent);
-          // A delegated parent that launches ITS OWN background sub-agents is not done when its first model
-          // turn says "they are running". Keep the outer Delegate call alive, let the host wait on the nested
-          // child claims and drain their durable results into this child's transcript, then return the newest
-          // integrated answer. Without this seam the parent row became terminal while its children continued,
-          // so their eventual results had no outer lifecycle left to complete.
-          if (nestedWorkSeen && state.sessionId && ctx.settleSubagentChildren) {
-            while (!state.settledExternally) {
-              push('running');
-              const nested = await ctx.settleSubagentChildren(state.sessionId, JOB_WAIT_TIMEOUT_MS);
-              if (nested.status === 'settled') { raw = nested.reply; break; }
-              // Unlike shell jobs, nested sub-agents have a durable recovery path and their result is the
-              // deliverable this parent exists to synthesize. A numeric collect cap would merely recreate
-              // the bug after N windows, so only an explicit stop, stall abort or real error may end it.
-              raw = await run(collectSource, buildNestedCollectReminder(nested.status), onEvent);
-            }
-          }
           // A child that starts terminal background work is still working. Keep the delegate lifecycle
           // open, wait without polling, then give the SAME child a turn to collect output and produce the
           // real conclusion. This is what prevents the parent receiving only "process started". Each turn
@@ -1007,6 +1006,9 @@ export function register(ctx) {
       const onEvent = (e) => {
         if (e.type === 'tool' && e.name) { state.tools += 1; state.detail = e.detail ? `${e.name} ${e.detail}` : e.name; push('running'); }
         else if ((e.type === 'step' || e.type === 'idle') && e.usage?.totalTokens) { state.tokens = e.usage.totalTokens; push('running'); }
+        // Same as Delegate: the host keeps this continuation open while the child's own sub-agent runs, and
+        // this is what the call's row says meanwhile.
+        else if (nestedWorkRunning(e)) { state.detail = nestedWaitDetail(e); push('running'); }
       };
       // Start the continuation BEFORE raising the progress row. The host decides between "steer into the
       // running turn" and "run an idle turn" by reading the very registry this row writes to (a `running`

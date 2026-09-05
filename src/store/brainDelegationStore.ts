@@ -451,6 +451,33 @@ export class BrainDelegationStore {
     ).all(parentSessionId, cur) as { child_session_id: string }[]).map((row) => row.child_session_id);
   }
 
+  /** Child sessions of one conversation with a delegated call STILL OPEN on them — a run row whose
+   *  lifecycle is `running` or `recovering`, whichever boot or process owns it. This is THE durable
+   *  answer to "which of this conversation's sub-agents are running", shared by the transcript read model
+   *  (BrainStatusService.subagentRuns), the DelegateList listing (listDelegatedChildren's `active_run`)
+   *  and the settlement of a delegated call whose child delegated further (BrainService.settleDelegatedReply)
+   *  — so the rail, the web card, the tool and the parent's blocking call cannot disagree about a child.
+   *  Lifecycle, not the JSON display status: a steered DelegateContinue leaves its own row visibly
+   *  `running` under a terminal lifecycle on purpose. ANY live row counts, not only the newest: the same
+   *  steered continuation is the newest row of a child whose original call still runs. A previous boot's
+   *  live rows are claimed (`recovering`) before any client attaches, so no filter on the owner is needed —
+   *  and none may be added: a row this boot is recovering in another process (the sub-agent runner stamps
+   *  its own boot id) is as live as one it runs itself. Same parent/child owner validation as
+   *  getSubagentRuns, so no reader can widen tenancy through it. */
+  activeDelegationChildIds(parentSessionId: string): string[] {
+    if (!parentSessionId) return [];
+    return (this.db.prepare(
+      `SELECT DISTINCT r.child_session_id
+         FROM brain_subagent_runs r
+         JOIN brain_sessions p ON p.id = r.parent_session_id
+         JOIN brain_sessions c ON c.id = r.child_session_id
+        WHERE r.parent_session_id = ?
+          AND r.lifecycle IN ('running', 'recovering')
+          AND c.parent_session_id = p.id
+          AND c.user_id = p.user_id`
+    ).all(parentSessionId) as { child_session_id: string }[]).map((row) => row.child_session_id);
+  }
+
   /** The delegated sub-agents ONE conversation spawned, newest first — the parent's own record of what
    *  it already ran, and the only way it may address a child for a continuation.
    *
@@ -918,17 +945,20 @@ export class BrainDelegationStore {
 
   /** Atomically CLAIM every restart-orphaned delegation for THIS boot, returning what to recover. Called
    *  exactly once at boot. The compare-and-swap is the whole point: `owner_boot_id != current` is the
-   *  primary signal (a running row owned by a PREVIOUS boot is by definition an orphan — the daemon is a
-   *  singleton, so the boot that owned it is gone), while the lease only fences a CONCURRENT recovery of a
-   *  row already `recovering` (a rare second booting instance): that one is left alone until its lease
-   *  lapses. A running row carries no live lease (it is set NULL in upsert), so a real restart claims it
-   *  immediately without waiting. attempt is bumped so a run that keeps crashing recovery eventually caps
-   *  out. json_valid guards the SELECT's later parse and skips a corrupt row (which then stays put — a
-   *  malformed row is neither claimable nor renderable, so it is inert rather than dangerous). */
-  claimRecoverableRuns(leaseMs: number): RecoverableRun[] {
+   *  whole signal — a `running` OR `recovering` row owned by a PREVIOUS boot is by definition an orphan.
+   *  The daemon is a singleton, so the boot that owned it is gone, and that holds just as much for a row
+   *  that boot had itself claimed for recovery: its recovery turn died with the process exactly like a
+   *  first-run turn does. The lease that used to fence a `recovering` row (meant for a concurrent second
+   *  instance, which a singleton never has) is what orphaned four delegations on 5 Sep: two restarts three
+   *  minutes apart, and the second boot skipped every row the first had claimed because its five-minute
+   *  lease had not lapsed — nothing ever ran them again, while the read model kept showing them running.
+   *  `lease_until` is always NULL now; the workflow claim below never had a lease for the same reason.
+   *  attempt is bumped so a run that keeps crashing recovery eventually caps out. json_valid guards the
+   *  SELECT's later parse and skips a corrupt row (which then stays put — a malformed row is neither
+   *  claimable nor renderable, so it is inert rather than dangerous). */
+  claimRecoverableRuns(): RecoverableRun[] {
     const cur = this.bootId;
     if (!cur) return []; // no boot identity (unit test store) -> nothing is ours to claim
-    const now = Date.now();
     return withWriteLock(this.db, () => {
       // Legacy rows written before the durable/display status split can claim a finished tool call as
       // running (most notably a DelegateContinue terminal update masked for UI while its target child was
@@ -977,13 +1007,38 @@ export class BrainDelegationStore {
                  AND COALESCE(json_extract(m.content, '$.details.interrupted'), 0) = 0
             )`
       ).run();
+      // A recovery claim that a NEWER call on the same child overtook is retired, not recovered again.
+      // Production shape (5 Sep): a boot claimed a background Delegate row for recovery, the next boot
+      // missed it (the lease bug above), and the parent's DelegateContinue then drove the same child under
+      // a new row. Recovering the old claim as well would run the child's continuation a second time and
+      // wake the parent with two answers for one piece of work; the newer call is the one every read model
+      // reports on (the newest row) and the one whose recovery carries the child's answer. Deliberately
+      // ONLY a `recovering` older row: a `running` one is a call that was genuinely open when the process
+      // died (a background Delegate beside a later continuation is a legitimate pair — killing it would
+      // silently lose the parent's background handle), and `recovery_required` already carries a durable
+      // parent notice. Both of those are claimed and recovered on their own terms below.
+      this.db.prepare(
+        `UPDATE brain_subagent_runs AS r
+            SET lifecycle = 'error', owner_boot_id = NULL, lease_until = NULL,
+                state = CASE WHEN json_valid(state)
+                  THEN json_set(state, '$.status', 'error', '$.detail', 'superseded by a later call on the same sub-agent')
+                  ELSE state END,
+                updated_at = datetime('now')
+          WHERE lifecycle = 'recovering' AND owner_boot_id != ?
+            AND EXISTS (
+              SELECT 1 FROM brain_subagent_runs newer
+               WHERE newer.parent_session_id = r.parent_session_id
+                 AND newer.child_session_id = r.child_session_id
+                 AND newer.rowid > r.rowid
+                 AND newer.lifecycle IN ('running', 'recovering')
+            )`
+      ).run(cur);
       this.db.prepare(
         `UPDATE brain_subagent_runs
-            SET lifecycle = 'recovering', owner_boot_id = ?, attempt = attempt + 1, lease_until = ?
-          WHERE json_valid(state) AND (
-                 (lifecycle = 'running' AND owner_boot_id IS NOT NULL AND owner_boot_id != ?)
-              OR (lifecycle = 'recovering' AND owner_boot_id != ? AND (lease_until IS NULL OR lease_until < ?)))`
-      ).run(cur, now + leaseMs, cur, cur, now);
+            SET lifecycle = 'recovering', owner_boot_id = ?, attempt = attempt + 1, lease_until = NULL
+          WHERE json_valid(state) AND lifecycle IN ('running', 'recovering')
+            AND owner_boot_id IS NOT NULL AND owner_boot_id != ?`
+      ).run(cur, cur);
       // Every recovering row now owned by this boot is one we just claimed (a fresh boot held none before).
       const rows = this.db.prepare(
         `SELECT parent_session_id, tool_call_id, child_session_id, attempt, state
