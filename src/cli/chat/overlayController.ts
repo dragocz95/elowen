@@ -158,6 +158,9 @@ export class OverlayController {
         record.native?.unfocus(unfocusOptions);
       },
       isFocused: () => !record.closed && (record.native?.isFocused() ?? record.focus === 'focused'),
+      // Bounds belong to a natively rendered overlay. A record whose native handle is detached (paused
+      // controller, between reflows) or already closed has no rendered rectangle to report.
+      getBounds: () => (record.closed ? undefined : record.native?.getBounds()),
     };
     record = {
       ...(name ? { name } : {}), component, options, handle,
@@ -194,6 +197,7 @@ export class OverlayController {
       focus: () => {},
       unfocus: () => {},
       isFocused: () => false,
+      getBounds: () => undefined,
     };
   }
 
