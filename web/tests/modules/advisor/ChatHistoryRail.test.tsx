@@ -1,22 +1,35 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { useState } from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
+import { Popover, PopoverTrigger } from '../../../components/ui/shadcn/popover';
+import type { BrainActivityView } from '../../../lib/types';
 import { ChatHistoryRail } from '../../../modules/advisor/ChatHistoryRail';
+
+type TestSession = {
+  id: string;
+  title: string;
+  provider?: string;
+  model: string;
+  active: boolean;
+  activity?: BrainActivityView;
+};
 
 // The rail reads the ONE controller (BrainChatProvider) and the client directly (search/rename/export,
 // mirroring Fáze 1); delete stays on the controller. We stub both so the test asserts the exact wiring.
 const ctrl = vi.hoisted(() => {
   const switchSession = vi.fn(() => Promise.resolve());
   const deleteSession = vi.fn(() => Promise.resolve());
+  const data: TestSession[] = [
+    { id: 's1', title: 'First', provider: 'chatgpt-account', model: 'openai/gpt-5.6-sol', active: true },
+    { id: 's2', title: 'Second', model: 'sonnet', active: false },
+  ];
   return {
     switchSession,
     deleteSession,
     value: {
-      sessions: { data: [
-        { id: 's1', title: 'First', provider: 'chatgpt-account', model: 'openai/gpt-5.6-sol', active: true },
-        { id: 's2', title: 'Second', model: 'sonnet', active: false },
-      ] },
+      sessions: { data },
       switchSession,
       deleteSession,
     },
@@ -32,9 +45,28 @@ const client = vi.hoisted(() => ({
 vi.mock('../../../modules/advisor/BrainChatProvider', () => ({ useBrainChat: () => ctrl.value }));
 vi.mock('../../../lib/elowenClient', () => ({ elowenClient: client }));
 
+/** The dropdown is a `PopoverContent`, so it mounts the way the dock mounts it: inside a `Popover` whose
+ *  trigger is the conversation name. That trigger is what Escape and an outside press hand focus back to,
+ *  so a test that dropped it would be testing a shape the app does not render. */
+function DropdownHarness({ onClose }: { onClose?: () => void }) {
+  const [open, setOpen] = useState(true);
+  return (
+    <Popover open={open} onOpenChange={(next) => { setOpen(next); if (!next) onClose?.(); }}>
+      <PopoverTrigger asChild>
+        <button type="button">Conversation</button>
+      </PopoverTrigger>
+      <ChatHistoryRail variant="dropdown" onClose={() => { setOpen(false); onClose?.(); }} />
+    </Popover>
+  );
+}
+
 function renderRail(variant: 'rail' | 'drawer' | 'dropdown') {
   const { wrapper: Wrapper, client: qc } = createWrapper();
-  const utils = render(<Wrapper><ToastProvider><ChatHistoryRail variant={variant} open /></ToastProvider></Wrapper>);
+  const utils = render(
+    <Wrapper><ToastProvider>
+      {variant === 'dropdown' ? <DropdownHarness /> : <ChatHistoryRail variant={variant} open />}
+    </ToastProvider></Wrapper>,
+  );
   return { ...utils, qc };
 }
 
@@ -42,7 +74,18 @@ const openRowMenu = (rowIndex: number) => {
   fireEvent.click(screen.getAllByRole('button', { name: /More actions|Další akce/i })[rowIndex]!);
 };
 
-beforeEach(() => { ctrl.switchSession.mockClear(); ctrl.deleteSession.mockClear(); client.brainSearch.mockClear(); client.brainRenameSession.mockClear(); client.brainExportSession.mockClear(); client.brainForkSession.mockClear(); });
+beforeEach(() => {
+  ctrl.value.sessions.data = [
+    { id: 's1', title: 'First', provider: 'chatgpt-account', model: 'openai/gpt-5.6-sol', active: true },
+    { id: 's2', title: 'Second', model: 'sonnet', active: false },
+  ];
+  ctrl.switchSession.mockClear();
+  ctrl.deleteSession.mockClear();
+  client.brainSearch.mockClear();
+  client.brainRenameSession.mockClear();
+  client.brainExportSession.mockClear();
+  client.brainForkSession.mockClear();
+});
 
 describe('ChatHistoryRail', () => {
   it('lists conversations with the bare structured model name', () => {
@@ -247,6 +290,49 @@ describe('ChatHistoryRail', () => {
     await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
   });
 
+  // The dock's picker used to be a bare absolutely-positioned div: no Escape, no outside dismissal, no
+  // way back to the trigger. It is a real `Popover` now, so all three are the primitive's and are pinned
+  // here rather than left to the next reader to rediscover.
+  it('mounts the dock picker as a real popover panel with the search field focused', async () => {
+    renderRail('dropdown');
+    const panel = document.querySelector('[data-slot="popover-content"]')!;
+    expect(panel).toBeTruthy();
+    await waitFor(() => {
+      expect(screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i })).toHaveFocus();
+    });
+    expect(screen.getByRole('button', { name: 'Conversation' })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('closes the dock picker on Escape and returns focus to the trigger', async () => {
+    const onClose = vi.fn();
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><DropdownHarness onClose={onClose} /></ToastProvider></Wrapper>);
+    const trigger = screen.getByRole('button', { name: 'Conversation' });
+    const search = screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i });
+
+    fireEvent.keyDown(search, { key: 'Escape' });
+    await waitFor(() => expect(onClose).toHaveBeenCalled());
+    await waitFor(() => expect(document.querySelector('[data-slot="popover-content"]')).toBeNull());
+    await waitFor(() => expect(trigger).toHaveFocus());
+  });
+
+  /** Outside dismissal itself is asserted structurally, not behaviourally, and deliberately so: jsdom
+   *  does not drive Radix's `DismissableLayer` — a stock `Popover` with nothing but `defaultOpen` stays
+   *  open under a synthetic outside `pointerdown` here too, so a behavioural assertion would pass or
+   *  fail on the environment rather than on this component. What this pins is the thing that decides the
+   *  behaviour: the panel IS the shared `PopoverContent`, whose Radix backing `shadcnAdoption` pins in
+   *  turn. The press itself is verified in a real browser. */
+  it('renders the dock picker through the shared popover primitive that owns dismissal', () => {
+    renderRail('dropdown');
+    const panel = document.querySelector('[data-slot="popover-content"]')!;
+    expect(panel).toBeTruthy();
+    expect(panel).toHaveAttribute('data-state', 'open');
+    // The list lives INSIDE that panel — not beside it, which is how the old hand-rolled div escaped
+    // every dismissal the primitive provides.
+    expect(within(panel as HTMLElement).getByText('First')).toBeInTheDocument();
+    expect(within(panel as HTMLElement).getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i })).toBeInTheDocument();
+  });
+
   it('runs a fulltext search (≥2 chars) and highlights the match', async () => {
     renderRail('rail');
     fireEvent.change(screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i }), { target: { value: 'he' } });
@@ -254,5 +340,149 @@ describe('ChatHistoryRail', () => {
     expect(await screen.findByText('Hit session')).toBeInTheDocument();
     const mark = document.querySelector('mark');
     expect(mark?.textContent).toBe('he');
+  });
+
+  it('carries the conversation activity state into search-result rows', async () => {
+    ctrl.value.sessions.data[0]!.activity = { state: 'done', seq: 8, at: null, detail: 'Finished', unread: true };
+    client.brainSearch.mockResolvedValueOnce([{ sessionId: 's1', sessionTitle: 'First', role: 'assistant', snippet: 'hello', ts: '2026-07-08T00:00:00Z' }]);
+    renderRail('rail');
+    fireEvent.change(screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i }), { target: { value: 'he' } });
+    const result = await screen.findByText('First');
+    expect(result).toHaveClass('font-semibold');
+    expect(result.closest('button')).toHaveAttribute('aria-current', 'page');
+    expect(result.closest('li')?.querySelector('[data-slot="sidebar-menu-badge"]')).toHaveAttribute('aria-hidden', 'true');
+    expect(result.closest('li')?.querySelector('[data-activity-state]')).toHaveAttribute('data-activity-state', 'done');
+  });
+
+  it('uses the real shadcn menu anatomy for regular and search-result rows', async () => {
+    renderRail('rail');
+    expect(screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i })).toHaveAttribute('data-slot', 'input');
+    const menu = document.querySelector('[data-slot="sidebar-menu"]')!;
+    expect(menu).toHaveAttribute('data-slot', 'sidebar-menu');
+    const item = within(menu as HTMLElement).getAllByRole('listitem')[0]!;
+    expect(item).toHaveAttribute('data-slot', 'sidebar-menu-item');
+    expect(item.querySelector('[data-slot="sidebar-menu-button"]')).toBeTruthy();
+
+    fireEvent.change(screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i }), { target: { value: 'he' } });
+    expect(await screen.findByText('Hit session')).toBeInTheDocument();
+    const searchMenu = document.querySelector('[data-slot="sidebar-menu"]')!;
+    expect(searchMenu).toHaveAttribute('data-slot', 'sidebar-menu');
+    expect(within(searchMenu as HTMLElement).getAllByRole('listitem')[0]).toHaveAttribute('data-slot', 'sidebar-menu-item');
+  });
+
+  it('renders neutral activity without inventing a state icon', () => {
+    renderRail('rail');
+    const state = screen.getByText('First').closest('li')!.querySelector('[data-activity-state]')!;
+    expect(state).toHaveAttribute('data-activity-state', 'idle');
+    expect(state.querySelector('svg')).toBeNull();
+    expect(state.querySelectorAll('.sr-only')).toHaveLength(1);
+  });
+
+  it('renders working activity as a reduced-motion-safe green pulse', () => {
+    ctrl.value.sessions.data[0]!.activity = { state: 'working', seq: 3, at: null, detail: 'Running', unread: false };
+    renderRail('rail');
+    const state = screen.getByText('First').closest('li')!.querySelector('[data-activity-state]')!;
+    const icon = state.querySelector('svg')!;
+    expect(state).toHaveAttribute('data-activity-state', 'working');
+    expect(icon).toHaveAttribute('width', '8');
+    expect(icon).toHaveClass('animate-pulse', 'fill-success', 'text-success', 'motion-reduce:animate-none');
+    expect(within(state as HTMLElement).getByText('Working')).toBeInTheDocument();
+  });
+
+  it('keeps a read done check and does not render an unread badge', () => {
+    ctrl.value.sessions.data[0]!.activity = { state: 'done', seq: 4, at: null, detail: 'Finished', unread: false };
+    renderRail('rail');
+    const row = screen.getByText('First').closest('li')!;
+    const state = row.querySelector('[data-activity-state]')!;
+    expect(state).toHaveAttribute('data-activity-state', 'done');
+    expect(state.querySelector('svg')).toHaveClass('text-success');
+    expect(row.querySelector('[data-slot="sidebar-menu-badge"]')).toBeNull();
+  });
+
+  it('renders a done unread result with a semibold title and an independent accent badge', () => {
+    ctrl.value.sessions.data[0]!.activity = { state: 'done', seq: 5, at: null, detail: 'Finished', unread: true };
+    renderRail('rail');
+    const row = screen.getByText('First').closest('li')!;
+    expect(screen.getByText('First')).toHaveClass('font-semibold');
+    const badge = row.querySelector('[data-slot="sidebar-menu-badge"]')!;
+    expect(badge).toHaveAttribute('aria-hidden', 'true');
+    expect(badge).toHaveAttribute('data-unread', 'true');
+    expect(badge).toHaveClass('bg-primary', 'rounded-full');
+    expect(within(row).getByText('Completed, Unread result')).toBeInTheDocument();
+    expect(row.querySelectorAll('.sr-only')).toHaveLength(1);
+  });
+
+  // The tip describes the ROW and hangs off it. Nothing inside the row's <button> may own it: a nested
+  // tab stop is invalid there and announces nothing, the row's own onClick would eat the tap meant to
+  // reveal the tip, and the floating panel is content no button is allowed to contain.
+  it('exposes a bounded failed tooltip from the row itself, with no control nested in the row button', async () => {
+    ctrl.value.sessions.data[0]!.activity = { state: 'failed', seq: 6, at: null, detail: 'The provider rejected the request.', unread: false };
+    renderRail('rail');
+    const row = screen.getByText('First').closest('li')!;
+    const rowButton = screen.getByText('First').closest('button')!;
+    expect(rowButton.querySelector('[tabindex="0"]')).toBeNull();
+    expect(rowButton.querySelector('[role="tooltip"]')).toBeNull();
+    expect(rowButton.querySelector('[data-slot="tooltip-content"]')).toBeNull();
+    // The dot is the anchor and nothing more: it positions the tip and stays out of the tab order.
+    const anchor = row.querySelector('[data-slot="tooltip-anchor"]')!;
+    expect(anchor).toBeTruthy();
+    expect(anchor.getAttribute('tabindex')).toBeNull();
+
+    fireEvent.focus(rowButton);
+    const tip = await screen.findByRole('tooltip');
+    expect(tip).toHaveClass('w-64');
+    expect(tip).toHaveTextContent('The provider rejected the request.');
+    expect(rowButton).toHaveAttribute('aria-describedby', tip.id);
+    expect(row.querySelector('[data-slot="sidebar-menu-badge"]')).toBeNull();
+
+    fireEvent.blur(rowButton);
+    await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+    expect(rowButton).not.toHaveAttribute('aria-describedby');
+  });
+
+  it('opens the same failure tip from row hover', async () => {
+    ctrl.value.sessions.data[0]!.activity = { state: 'failed', seq: 6, at: null, detail: 'Connection refused.', unread: false };
+    renderRail('rail');
+    const rowButton = screen.getByText('First').closest('button')!;
+
+    fireEvent.mouseEnter(rowButton);
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('Connection refused.');
+    fireEvent.mouseLeave(rowButton);
+    await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+  });
+
+  // A row whose run did not fail carries no tip at all — no anchor, no panel, nothing describing it.
+  it('adds no tooltip wiring to a row that did not fail', () => {
+    ctrl.value.sessions.data[0]!.activity = { state: 'done', seq: 6, at: null, detail: 'Finished', unread: false };
+    renderRail('rail');
+    const row = screen.getByText('First').closest('li')!;
+    const rowButton = screen.getByText('First').closest('button')!;
+    expect(row.querySelector('[data-slot="tooltip-anchor"]')).toBeNull();
+    expect(rowButton).not.toHaveAttribute('aria-describedby');
+    fireEvent.focus(rowButton);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
+
+  it('keeps failed unread state independent from the destructive tooltip', () => {
+    ctrl.value.sessions.data[0]!.activity = { state: 'failed', seq: 7, at: null, detail: 'Failed to connect.', unread: true };
+    renderRail('rail');
+    const row = screen.getByText('First').closest('li')!;
+    const state = row.querySelector('[data-activity-state]')!;
+    expect(state.querySelector('svg')).toHaveClass('fill-destructive', 'text-destructive');
+    expect(row.querySelector('[data-slot="sidebar-menu-badge"]')).toHaveAttribute('aria-hidden', 'true');
+    expect(within(row).getByText('Run failed, Unread result')).toBeInTheDocument();
+  });
+
+  it('keeps active selection, page current state, action keyboard access and touch-visible actions', async () => {
+    renderRail('rail');
+    const first = screen.getByText('First').closest('button')!;
+    expect(first).toHaveAttribute('aria-current', 'page');
+    expect(first).toHaveAttribute('data-active', 'true');
+    expect(first).toHaveClass('data-[active=true]:bg-sidebar-accent', 'data-[active=true]:text-sidebar-accent-foreground');
+    const trigger = screen.getAllByRole('button', { name: /More actions|Další akce/i })[0]!;
+    expect(trigger).toHaveClass('overlay-touch-target', 'pointer-coarse:opacity-100');
+    trigger.focus();
+    fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: /^Rename$|^Přejmenovat$/i })).toHaveFocus());
   });
 });

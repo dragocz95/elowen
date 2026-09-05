@@ -11,6 +11,7 @@ export function useElowenEvents(): void {
   const qc = useQueryClient();
   useEffect(() => {
     let es: EventSource | null = null;
+    let conversationsEs: EventSource | null = null;
 
     const makeHandler = (invalidate: () => void) => (event: MessageEvent) => {
       try { JSON.parse(event.data); } catch { return; }
@@ -41,6 +42,24 @@ export function useElowenEvents(): void {
       qc.invalidateQueries({ queryKey: ['users'] });
       qc.invalidateQueries({ queryKey: ['activity'] });
     });
+    const conversationsHandler = makeHandler(() => {
+      qc.invalidateQueries({ queryKey: ['brain-sessions'] });
+    });
+
+    function connectConversations(): void {
+      conversationsEs?.close();
+      conversationsEs = new EventSource(`${BASE}/brain/conversations`, { withCredentials: true });
+      conversationsEs.onopen = () => {
+        conversationsReconnect.succeeded();
+        qc.invalidateQueries({ queryKey: ['brain-sessions'] });
+      };
+      conversationsEs.onerror = () => {
+        if (!conversationsEs || conversationsEs.readyState !== EventSource.CLOSED) return;
+        conversationsEs.close();
+        conversationsReconnect.retry();
+      };
+      conversationsEs.addEventListener('conversations', conversationsHandler);
+    }
 
     function connect(): void {
       es?.close();
@@ -68,12 +87,20 @@ export function useElowenEvents(): void {
     }
 
     const reconnect = createReconnectController(connect);
+    const conversationsReconnect = createReconnectController(connectConversations);
     connect();
+    connectConversations();
     const offRevive = subscribeRevive(({ hiddenMs }) => {
-      if (es?.readyState === EventSource.OPEN && hiddenMs <= STALE_HIDE_MS) return;
-      reconnect.now();
+      if (!(es?.readyState === EventSource.OPEN && hiddenMs <= STALE_HIDE_MS)) reconnect.now();
+      if (!(conversationsEs?.readyState === EventSource.OPEN && hiddenMs <= STALE_HIDE_MS)) conversationsReconnect.now();
     });
 
-    return () => { offRevive(); reconnect.stop(); es?.close(); };
+    return () => {
+      offRevive();
+      reconnect.stop();
+      conversationsReconnect.stop();
+      es?.close();
+      conversationsEs?.close();
+    };
   }, [qc]);
 }

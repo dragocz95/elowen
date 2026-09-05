@@ -95,7 +95,8 @@ export interface BrainModelOption {
   vision?: boolean;
 }
 /** One brain conversation in the session picker (web chat + CLI). */
-export interface BrainSessionInfo { id: string; title: string; provider?: string; model: string; updated_at: string; running: boolean; active: boolean }
+export interface BrainActivityView { state: 'idle' | 'working' | 'done' | 'failed'; seq: number; at: string | null; detail: string; unread: boolean }
+export interface BrainSessionInfo { id: string; title: string; provider?: string; model: string; updated_at: string; running: boolean; active: boolean; attached?: number; activity?: BrainActivityView }
 /** A row in the admin session-management panel (all brain sessions the operator anchors). `platform` says
  *  WHERE it happened (null for web/CLI) and `direct` whether `ownerId` is the person talking there or only
  *  the account hosting a shared room — see ManagedSessionView in src/brain/service/statusService.ts. */
@@ -197,6 +198,8 @@ export interface BrainStreamSnapshotFrame {
   cards?: BrainCard[];
   /** Persisted open inline artifacts, folded with any artifact lifecycle events in the replay tail. */
   artifacts?: BrainInlineArtifact[];
+  /** Durable owner-activity sequence captured with this snapshot. */
+  activitySeq?: number;
   /** The daemon's authoritative control state at snapshot time. The tail is transient — cleared at settle,
    *  bounded, and terminal-less across an internal retry — so this, not the tail's shape, decides whether a
    *  turn is running and whether a question is parked. Both fields are explicit, so hydrating from this

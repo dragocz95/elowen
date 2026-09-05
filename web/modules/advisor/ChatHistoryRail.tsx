@@ -1,8 +1,8 @@
 'use client';
-import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
-import { Plus, Search, Trash2, X, MoreVertical, Pencil, Download, GitBranch, ArrowLeft, Library } from 'lucide-react';
+import { CheckCircle2, Circle, Plus, Search, Trash2, X, MoreVertical, Pencil, Download, GitBranch, ArrowLeft, Library } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useToast } from '../../components/ui/Toast';
 import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu';
@@ -15,6 +15,125 @@ import type { BrainSearchHit } from '../../lib/types';
 import { useBrainChat } from './BrainChatProvider';
 import { brainModelLabel, brainModelQualifiedLabel } from '../../lib/modelProvider';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
+import { Input } from '../../components/ui/shadcn/input';
+import {
+  SidebarMenu,
+  SidebarMenuBadge,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from '../../components/ui/shadcn/sidebar';
+import { Tooltip, TooltipAnchor, TooltipContent } from '../../components/ui/shadcn/tooltip';
+import { PopoverContent } from '../../components/ui/shadcn/popover';
+
+const ACTIVITY_STATES = ['idle', 'working', 'done', 'failed'] as const;
+type ActivityState = (typeof ACTIVITY_STATES)[number];
+type ActivityView = NonNullable<import('../../lib/types').BrainSessionInfo['activity']>;
+
+type ActivityLabels = {
+  idle: string;
+  working: string;
+  done: string;
+  failed: string;
+  unread: string;
+};
+
+function activityStateOf(activity?: ActivityView): ActivityState {
+  return activity?.state && ACTIVITY_STATES.includes(activity.state) ? activity.state : 'idle';
+}
+
+/** The leading state dot. Pure presentation: no tab stop, no handlers, no floating panel — everything
+ *  here renders INSIDE the row's <button>, where none of those would be legal. `anchored` only marks the
+ *  dot as the point `ActivityRow`'s tip is positioned against; a Radix anchor contributes a bare <span>
+ *  and no behaviour of its own. */
+function ActivityStatus({ state, unread, labels, anchored = false }: {
+  state: ActivityState;
+  unread: boolean;
+  labels: ActivityLabels;
+  anchored?: boolean;
+}) {
+  const stateLabel = labels[state];
+  const accessibleLabel = unread ? `${stateLabel}, ${labels.unread}` : stateLabel;
+
+  const icon = state === 'working' ? (
+    <Circle size={8} aria-hidden className="animate-pulse fill-success text-success motion-reduce:animate-none" />
+  ) : state === 'done' ? (
+    <CheckCircle2 size={14} aria-hidden className="text-success" />
+  ) : state === 'failed' ? (
+    <Circle size={8} aria-hidden className="fill-destructive text-destructive" />
+  ) : null;
+
+  return (
+    <span data-activity-state={state} className="flex size-5 shrink-0 items-center justify-center">
+      <span className="sr-only">{accessibleLabel}</span>
+      {anchored ? (
+        <TooltipAnchor asChild>
+          <span className="inline-flex size-4 shrink-0 items-center justify-center">{icon}</span>
+        </TooltipAnchor>
+      ) : icon}
+    </span>
+  );
+}
+
+type ActivityRowProps = {
+  onMouseEnter?: () => void;
+  onMouseLeave?: () => void;
+  onFocus?: () => void;
+  onBlur?: () => void;
+  'aria-describedby'?: string;
+};
+
+/** A row's activity presentation, and — when the last run FAILED — the tip carrying the reason.
+ *
+ *  The tip hangs off the ROW, never off a control inside it. The row is a <button>, so the dot that used
+ *  to own this could not keep it: an element with its own tab stop and click handler nested in a button
+ *  is invalid HTML, gives the row a second tab stop that announces nothing, and its tap never arrives
+ *  because the row's own onClick switches the conversation first. The floating panel was nested in there
+ *  too, which no button may contain.
+ *
+ *  So the dot is pure presentation and merely anchors the tip, while the row's own hover and focus open
+ *  it — the keyboard reaches the row anyway, and `aria-describedby` is what the tooltip primitive is
+ *  built for: a description OF the button, not a second thing to navigate into. */
+function ActivityRow({ activity, labels, children }: {
+  activity?: ActivityView;
+  labels: ActivityLabels;
+  children: (parts: { indicator: ReactNode; rowProps: ActivityRowProps }) => ReactNode;
+}) {
+  const [tooltipOpen, setTooltipOpen] = useState(false);
+  const tooltipId = useId();
+  const state = activityStateOf(activity);
+  const unread = activity?.unread === true;
+  const failed = state === 'failed';
+  const detail = activity?.detail?.trim();
+  const indicator = <ActivityStatus state={state} unread={unread} labels={labels} anchored={failed} />;
+
+  // The `Tooltip` root is rendered whatever the state; only its CONTENT and the row's hover wiring are
+  // gated on failure. Returning a Fragment for one state and a Tooltip for another would put a different
+  // element type in the same position, so React would unmount and rebuild the entire row the moment a run
+  // failed — taking keyboard focus off that row at exactly the moment the failure appears. The root
+  // renders no DOM of its own, so keeping it mounted costs nothing.
+  return (
+    <Tooltip open={failed && tooltipOpen} onOpenChange={setTooltipOpen}>
+      {children({
+        indicator,
+        rowProps: failed
+          ? {
+              onMouseEnter: () => setTooltipOpen(true),
+              onMouseLeave: () => setTooltipOpen(false),
+              onFocus: () => setTooltipOpen(true),
+              onBlur: () => setTooltipOpen(false),
+              'aria-describedby': tooltipOpen ? tooltipId : undefined,
+            }
+          : {},
+      })}
+      {failed ? (
+        <TooltipContent id={tooltipId} side="right" align="start" className="max-w-[min(16rem,calc(100vw-2rem))]">
+          <span className="block font-medium text-destructive">{labels.failed}</span>
+          {detail ? <span className="mt-1 block break-words">{detail}</span> : null}
+        </TooltipContent>
+      ) : null}
+    </Tooltip>
+  );
+}
 
 /** A search snippet with the first occurrence of the query highlighted. */
 function Highlight({ text, query }: { text: string; query: string }) {
@@ -105,6 +224,13 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
   const { toast } = useToast();
   const qc = useQueryClient();
   const { sessions, switchSession, deleteSession } = useBrainChat();
+  const activityLabels: ActivityLabels = {
+    idle: t.chat.activityIdle,
+    working: t.chat.activityWorking,
+    done: t.chat.activityDone,
+    failed: t.chat.activityFailed,
+    unread: t.chat.activityUnread,
+  };
 
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<BrainSearchHit[] | null>(null);
@@ -116,6 +242,7 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
   const deleteTargetRef = useRef<typeof deleteTarget>(null);
   const deletePendingRef = useRef(false);
   const deleteOpRef = useRef(0);
+  const dropdownRef = useRef<HTMLDivElement>(null);
   const [renameValue, setRenameValue] = useState('');
 
   // Debounced conversation search: ≥2 chars queries the daemon; anything shorter restores the list.
@@ -281,17 +408,17 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
       {/* Fulltext search across the caller's conversations; a live query swaps the list for hits. */}
       <div className="m-1 flex items-center gap-1.5 rounded-md border border-border bg-background px-2">
         <Search size={13} className="shrink-0 text-muted-foreground" aria-hidden />
-        <input
+        <Input
           value={search}
           onChange={(e) => setSearch(e.target.value)}
           placeholder={t.brainChat.searchPlaceholder}
           aria-label={t.brainChat.searchPlaceholder}
-          // One owner per variant. The dropdown is a plain popover and focuses itself on mount; the
-          // drawer is a dialog, where the surface's focus policy runs after mount and anchors on the
-          // surface unless a control asks for the focus by name — so it asks.
-          autoFocus={variant === 'dropdown'}
-          data-autofocus={variant === 'drawer' ? '' : undefined}
-          className="w-full bg-transparent py-1.5 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none"
+          // One owner for both overlay variants. Each is a Radix surface whose focus policy runs after
+          // mount and anchors on the surface itself unless a control asks for the focus by name — so it
+          // asks, and `onOpenAutoFocus` on either surface honours it. A bare `autoFocus` here would be
+          // overruled by that policy a tick later, which is why neither variant uses one.
+          data-autofocus={variant === 'rail' ? undefined : ''}
+          className="h-8 min-h-0 border-0 bg-transparent px-0 py-1.5 shadow-none placeholder:text-muted-foreground focus-visible:ring-0"
         />
       </div>
 
@@ -300,78 +427,126 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
           results === null ? null : results.length === 0 ? (
             <p className="px-2 py-2 text-xs text-muted-foreground">{t.brainChat.searchEmpty}</p>
           ) : (
-            results.map((h, i) => {
-              const when = formatTaskTime(h.ts, Date.now(), locale);
-              return (
-                <button
-                  key={i}
-                  type="button"
-                  onClick={() => openSession({ session: h.sessionId })}
-                  className="flex w-full flex-col rounded-md px-2 py-1.5 text-left transition-colors hover:bg-accent"
-                >
-                  <span className="flex w-full items-baseline justify-between gap-2">
-                    <span className="truncate text-sm text-foreground">{h.sessionTitle || t.brainChat.untitled}</span>
-                    <span className="shrink-0 text-tiny text-muted-foreground" title={when.title}>{when.label}</span>
-                  </span>
-                  <span className="w-full truncate text-tiny text-muted-foreground">
-                    <Highlight text={h.snippet} query={q} />
-                  </span>
-                </button>
-              );
-            })
+            <SidebarMenu>
+              {results.map((h, i) => {
+                const when = formatTaskTime(h.ts, Date.now(), locale);
+                const session = sessions.data?.find((candidate) => candidate.id === h.sessionId);
+                const unread = session?.activity?.unread === true;
+                return (
+                  <SidebarMenuItem key={`${h.sessionId}:${h.ts}:${i}`}>
+                    <ActivityRow activity={session?.activity} labels={activityLabels}>
+                      {({ indicator, rowProps }) => (
+                        <SidebarMenuButton
+                          asChild
+                          isActive={session?.active === true}
+                          className="h-auto min-h-12 items-start rounded-md px-2 py-1.5"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => openSession({ session: h.sessionId })}
+                            aria-current={session?.active ? 'page' : undefined}
+                            className="text-left"
+                            {...rowProps}
+                          >
+                            {indicator}
+                            <span className="flex min-w-0 flex-1 flex-col">
+                              <span className={`truncate text-sm text-foreground ${unread ? 'font-semibold' : 'font-normal'}`}>
+                                {h.sessionTitle || t.brainChat.untitled}
+                              </span>
+                              <span className="flex min-w-0 items-baseline justify-between gap-2">
+                                <span className="min-w-0 truncate text-tiny text-muted-foreground">
+                                  <Highlight text={h.snippet} query={q} />
+                                </span>
+                                <span className="shrink-0 text-tiny text-muted-foreground" title={when.title}>{when.label}</span>
+                              </span>
+                            </span>
+                            {unread ? <SidebarMenuBadge aria-hidden data-unread className="mt-1.5 size-1.5 rounded-full bg-primary" /> : null}
+                          </button>
+                        </SidebarMenuButton>
+                      )}
+                    </ActivityRow>
+                  </SidebarMenuItem>
+                );
+              })}
+            </SidebarMenu>
           )
         ) : sessions.isLoading && !sessions.data ? null : (sessions.data ?? []).length === 0 ? (
           <p className="px-2 py-2 text-xs text-muted-foreground">{t.chat.emptyHistory}</p>
-        ) : (sessions.data ?? []).map((s) => (
-          <div key={s.id} className={`group relative flex items-center rounded-md transition-colors hover:bg-accent ${s.active ? 'bg-accent' : ''}`}>
-            {renameFor === s.id ? (
-              <div className="m-1 flex min-w-0 items-center gap-2">
-                <input
-                  autoFocus
-                  value={renameValue}
-                  onChange={(e) => setRenameValue(e.target.value)}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') { e.preventDefault(); void commitRename(s.id); }
-                    if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
-                  }}
-                  onBlur={() => void commitRename(s.id)}
-                  disabled={renamePending}
-                  aria-label={t.chat.renamePlaceholder}
-                  placeholder={t.chat.renamePlaceholder}
-                  className="min-w-0 flex-1 rounded-md border border-border bg-background px-2 py-1 text-sm text-foreground focus:border-primary focus:outline-none disabled:opacity-60"
-                />
-                <AutoSaveStatus status={renameStatus} onRetry={() => void commitRename(s.id)} />
-              </div>
-            ) : (
-              <>
-                <button
-                  type="button"
-                  onClick={() => openSession({ session: s.id })}
-                  className="flex min-w-0 flex-1 flex-col px-2 py-1.5 text-left"
-                >
-                  <span className="truncate text-sm text-foreground">{s.title || t.brainChat.untitled}</span>
-                  <span
-                    className="truncate font-mono text-tiny text-muted-foreground"
-                    title={brainModelQualifiedLabel({ provider: s.provider ?? '', model: s.model })}
-                  >
-                    {brainModelLabel({ model: s.model })}
-                  </span>
-                </button>
-                <div className="mr-1">
-                  <ActionMenu
-                    label={`${s.title || t.brainChat.untitled}: ${t.chat.moreActions}`}
-                    items={actionItems(s)}
-                    trigger={<MoreVertical size={14} aria-hidden />}
-                    // Rename, branch, export and delete are reachable ONLY through this button, so it
-                    // cannot be a hover affordance. Touch and keyboard always reveal it; fine pointers keep
-                    // the quiet row treatment until hover, focus or Radix's open state.
-                    triggerClassName="overlay-touch-target flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100"
-                  />
-                </div>
-              </>
-            )}
-          </div>
-        ))}
+        ) : (
+          <SidebarMenu>
+            {(sessions.data ?? []).map((s) => {
+              const unread = s.activity?.unread === true;
+              return (
+                <SidebarMenuItem key={s.id} className="group relative">
+                  {renameFor === s.id ? (
+                    <div className="m-1 flex min-w-0 items-center gap-2">
+                      <Input
+                        autoFocus
+                        value={renameValue}
+                        onChange={(e) => setRenameValue(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') { e.preventDefault(); void commitRename(s.id); }
+                          if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
+                        }}
+                        onBlur={() => void commitRename(s.id)}
+                        disabled={renamePending}
+                        aria-label={t.chat.renamePlaceholder}
+                        placeholder={t.chat.renamePlaceholder}
+                        className="h-8 min-w-0 flex-1 bg-background px-2 py-1 focus-visible:border-primary focus-visible:ring-0"
+                      />
+                      <AutoSaveStatus status={renameStatus} onRetry={() => void commitRename(s.id)} />
+                    </div>
+                  ) : (
+                    <>
+                      <ActivityRow activity={s.activity} labels={activityLabels}>
+                        {({ indicator, rowProps }) => (
+                          <SidebarMenuButton
+                            asChild
+                            isActive={s.active}
+                            className="h-auto min-h-12 items-start rounded-md px-2 py-1.5 pr-10"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => openSession({ session: s.id })}
+                              aria-current={s.active ? 'page' : undefined}
+                              className="text-left"
+                              {...rowProps}
+                            >
+                              {indicator}
+                              <span className="flex min-w-0 flex-1 flex-col">
+                                <span className={`truncate text-sm text-foreground ${unread ? 'font-semibold' : 'font-normal'}`}>
+                                  {s.title || t.brainChat.untitled}
+                                </span>
+                                <span
+                                  className="truncate font-mono text-tiny text-muted-foreground"
+                                  title={brainModelQualifiedLabel({ provider: s.provider ?? '', model: s.model })}
+                                >
+                                  {brainModelLabel({ model: s.model })}
+                                </span>
+                              </span>
+                              {unread ? <SidebarMenuBadge aria-hidden data-unread className="mt-1.5 size-1.5 rounded-full bg-primary" /> : null}
+                            </button>
+                          </SidebarMenuButton>
+                        )}
+                      </ActivityRow>
+                      <div className="absolute right-1 top-1/2 -translate-y-1/2">
+                        <ActionMenu
+                          label={`${s.title || t.brainChat.untitled}: ${t.chat.moreActions}`}
+                          items={actionItems(s)}
+                          trigger={<MoreVertical size={14} aria-hidden />}
+                          // Rename, branch, export and delete are reachable ONLY through this button, so it
+                          // cannot be a hover affordance. Touch and keyboard always reveal it; fine pointers keep
+                          // the quiet row treatment until hover, focus or Radix's open state.
+                          triggerClassName="overlay-touch-target flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100"
+                        />
+                      </div>
+                    </>
+                  )}
+                </SidebarMenuItem>
+              );
+            })}
+          </SidebarMenu>
+        )}
       </div>
 
       {onOpenRegister ? (
@@ -400,11 +575,24 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
   );
 
   if (variant === 'dropdown') {
-    if (!open) return null;
+    // The dock's picker is a real `Popover`, so Escape, an outside press, the trigger's `aria-expanded`
+    // and handing focus back to that trigger on close are all the primitive's. The Root and the Trigger
+    // are the dock's (BrainChatSurface): the conversation title IS the trigger, and Radix cannot anchor
+    // to, or return focus to, a button it was never given. This side owns only the panel and where focus
+    // lands on the way IN — the search field, which asks for it with `[data-autofocus]`.
     return (
-      <div className="absolute left-2 right-2 top-full z-20 mt-1 flex max-h-72 flex-col overflow-y-auto rounded-lg border border-border bg-muted p-1 shadow-lg">
+      <PopoverContent
+        ref={dropdownRef}
+        align="start"
+        sideOffset={6}
+        className="flex max-h-72 w-[min(22rem,calc(100vw-2rem))] flex-col overflow-y-auto p-1"
+        onOpenAutoFocus={(event) => {
+          event.preventDefault();
+          if (dropdownRef.current) focusOverlaySurface(dropdownRef.current);
+        }}
+      >
         {body}
-      </div>
+      </PopoverContent>
     );
   }
 

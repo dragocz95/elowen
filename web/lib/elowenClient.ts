@@ -217,7 +217,7 @@ export const elowenClient = {
   /** `identity` claims the tab's stable client id + the new start generation on the selected conversation,
    *  so the daemon fences a network-reordered older selection (mirror of the CLI's start()). */
   brainStart: (opts: { session?: string; fresh?: boolean } = {}, identity?: { client: string; generation: number }) =>
-    req<{ sessionId: string }>('/brain/start', json({ ...opts, ...(identity ?? {}) })),
+    req<{ sessionId: string }>('/brain/start', json({ ...opts, surface: 'web', ...(identity ?? {}) })),
   /** `bind` threads the bound session + client/generation onto the turn so it lands in THIS client's
    *  conversation regardless of where the server's active pointer moved (mirror of the CLI's send()). */
   /** `mode` stamps the turn's work mode (build/plan/workflow), exactly like the CLI's send(): the daemon
@@ -268,6 +268,8 @@ export const elowenClient = {
     }).catch(() => undefined);
   },
   brainSessions: () => req<BrainSessionInfo[]>('/brain/sessions'),
+  brainReadActivity: (sessionId: string, through: number, surface: 'web' | 'cli' = 'web') =>
+    req<NonNullable<BrainSessionInfo['activity']>>(`/brain/sessions/${encodeURIComponent(sessionId)}/read`, json({ through, surface })),
   brainDebugSessions: (filters: Record<string, string | number | undefined> = {}) => {
     const q = new URLSearchParams();
     for (const [key, value] of Object.entries(filters)) if (value !== undefined && value !== '') q.set(key, String(value));

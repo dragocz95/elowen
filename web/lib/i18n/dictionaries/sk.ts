@@ -1696,6 +1696,11 @@ export const sk = {
     heroCost: 'Náklady',
     roleYou: 'Vy',
     roleElowen: '{agentName}',
+    activityIdle: 'Bez nedávnej aktivity',
+    activityWorking: 'Prebieha práca',
+    activityDone: 'Dokončené',
+    activityFailed: 'Beh zlyhal',
+    activityUnread: 'Neprečítaný výsledok',
   },
   telemetry: {
     title: 'Telemetria',

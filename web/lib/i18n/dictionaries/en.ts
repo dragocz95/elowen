@@ -1728,6 +1728,11 @@ export const en = {
     heroCost: 'Cost',
     roleYou: 'You',
     roleElowen: '{agentName}',
+    activityIdle: 'No recent activity',
+    activityWorking: 'Working',
+    activityDone: 'Completed',
+    activityFailed: 'Run failed',
+    activityUnread: 'Unread result',
   },
   telemetry: {
     title: 'Telemetry',

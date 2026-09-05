@@ -57,7 +57,7 @@ interface LiveStreamHandlers {
   ask: (frame: AskFrame) => void;
   askResolved: (id: string) => void;
   step: (usage?: BrainUsage) => void;
-  idle: (usage?: BrainUsage) => void;
+  idle: (usage?: BrainUsage, activitySeq?: number) => void;
 }
 
 interface ReadOnlyStreamHandlers extends Pick<LiveStreamHandlers,
@@ -127,7 +127,7 @@ export function useBrainChatStream({ connectRef, getGeneration, setReady, setRec
     // `heartbeat=1` upgrades the daemon's keep-alive comment to a named frame: SSE comment lines never
     // reach an EventSource, so without it a stream that silently died is indistinguishable from an idle one.
     const params = new URLSearchParams({
-      session, client, generation: String(boundGeneration), snapshot: '1', history: String(HISTORY_PAGE), heartbeat: '1',
+      session, client, generation: String(boundGeneration), surface: 'web', snapshot: '1', history: String(HISTORY_PAGE), heartbeat: '1',
     });
     const es = new EventSource(`${BASE}/brain/stream?${params.toString()}`);
     // A reconnect mints a fresh stream the daemon assumes is being watched, and the revive path
@@ -232,9 +232,13 @@ export function useBrainChatStream({ connectRef, getGeneration, setReady, setRec
     });
     onFrame('idle', (e) => {
       let usage: BrainUsage | undefined;
-      try { usage = (JSON.parse((e as MessageEvent).data) as { usage?: BrainUsage }).usage; }
-      catch { /* idle without payload */ }
-      handlers.idle(usage);
+      let activitySeq: number | undefined;
+      try {
+        const frame = JSON.parse((e as MessageEvent).data) as { usage?: BrainUsage; activitySeq?: unknown };
+        usage = frame.usage;
+        if (typeof frame.activitySeq === 'number' && Number.isSafeInteger(frame.activitySeq) && frame.activitySeq >= 0) activitySeq = frame.activitySeq;
+      } catch { /* idle without payload */ }
+      handlers.idle(usage, activitySeq);
     });
     esRef.current = es;
     handlers.ready();
@@ -244,7 +248,7 @@ export function useBrainChatStream({ connectRef, getGeneration, setReady, setRec
     // A drill-in is a READ-ONLY tap on an owned child, not this client's parent attachment. Carrying
     // client+generation would force the generation-bound owned-user branch and reject channel/task children.
     // Generation still fences this controller locally; it is deliberately not a server parameter.
-    const params = new URLSearchParams({ session, snapshot: '1', heartbeat: '1' });
+    const params = new URLSearchParams({ session, surface: 'web', snapshot: '1', heartbeat: '1' });
     const es = new EventSource(`${BASE}/brain/stream?${params.toString()}`);
     esRef.current = es;
     let snapshotSeen = false;

@@ -451,6 +451,23 @@ function useBrainChatController(): BrainChatValue {
   const boundGenRef = useRef<number | undefined>(undefined);
   /** The conversation this controller is bound to (mirror BrainClient.bound). */
   const boundSessionRef = useRef<string | undefined>(undefined);
+  /** A current stream boundary that has rendered and may acknowledge the latest visible activity row. */
+  const activityBoundaryRef = useRef<{ sessionId: string; generation: number; refreshed: boolean; renderedSeq: number | null } | null>(null);
+  const activityAckInFlightRef = useRef<string | null>(null);
+  const activityAckedRef = useRef(new Map<string, number>());
+  const [activityBoundaryVersion, setActivityBoundaryVersion] = useState(0);
+  const [activityWakeVersion, setActivityWakeVersion] = useState(0);
+  const markActivityBoundary = (sessionId: string | undefined, seq?: number): void => {
+    if (!sessionId) return;
+    const cachedSeq = sessions.data?.find((session) => session.id === sessionId)?.activity?.seq;
+    const boundary = { sessionId, generation: genRef.current, refreshed: false, renderedSeq: seq ?? cachedSeq ?? null };
+    activityBoundaryRef.current = boundary;
+    void qc.invalidateQueries({ queryKey: ['brain-sessions'] }).then(() => {
+      if (activityBoundaryRef.current !== boundary) return;
+      boundary.refreshed = true;
+      setActivityBoundaryVersion((value) => value + 1);
+    });
+  };
   // Keep stream recovery pointed at the freshest connect closure without recreating its controller.
   const connectRef = useRef<() => Promise<void>>(async () => {});
   /** ensureAttached idempotency: once true the stream stays live for the tab's life. */
@@ -594,6 +611,7 @@ function useBrainChatController(): BrainChatValue {
           // Goal outlives the journal. Presence distinguishes an older daemon from an explicit cleared goal.
           if (Object.prototype.hasOwnProperty.call(snap, 'goal')) setGoal(snap.goal ?? null);
           truncatedPendingRef.current = streaming && snap.truncated === true;
+          markActivityBoundary(boundSessionRef.current, snap.activitySeq);
         },
         text: (delta) => { setNotice(''); applyEvent({ type: 'text', delta }); },
         notice: (message, done) => setNotice(done ? '' : message),
@@ -715,7 +733,7 @@ function useBrainChatController(): BrainChatValue {
           setAsk((cur) => (cur && cur.id === id ? null : cur));
         },
         step: (nextUsage) => { if (nextUsage) setUsage(nextUsage); },
-        idle: (nextUsage) => {
+        idle: (nextUsage, activitySeq) => {
           setNotice('');
           // Do not clear ask here. Only snapshot/ask_resolved can say whether the parked question remains.
           applyEvent({ type: 'idle' });
@@ -740,7 +758,7 @@ function useBrainChatController(): BrainChatValue {
               setDaemonMode(status.workMode);
             })
             .catch(() => { /* the mode stays as hydrated; the next settle or reconnect reads it again */ });
-          void qc.invalidateQueries({ queryKey: ['brain-sessions'] });
+          if (activitySeq !== undefined) markActivityBoundary(boundSessionRef.current, activitySeq);
         },
       },
     });
@@ -766,6 +784,34 @@ function useBrainChatController(): BrainChatValue {
     if (fresh.artifacts === statusHydrationStamp.artifacts && Object.prototype.hasOwnProperty.call(st, 'artifacts')) setArtifacts(st.artifacts ?? []);
     if (fresh.queue === statusHydrationStamp.queue) setQueued(st.queued ?? []);
   };
+
+  // Acknowledge only a boundary this live tab rendered. The activity list can refresh independently, so a
+  // newer sequence arriving without a matching snapshot/terminal boundary is never cleared by this tab.
+  useEffect(() => {
+    const boundary = activityBoundaryRef.current;
+    if (!boundary || !boundary.refreshed) return;
+    if (document.hidden || !attachedRef.current || !ready || reconnecting) return;
+    if (boundary.generation !== genRef.current || boundary.sessionId !== boundSessionRef.current) return;
+    const seq = boundary.renderedSeq;
+    if (seq === null) return;
+    const previous = activityAckedRef.current.get(boundary.sessionId) ?? 0;
+    if (seq <= previous) {
+      if (activityBoundaryRef.current === boundary) activityBoundaryRef.current = null;
+      return;
+    }
+    const key = `${boundary.sessionId}:${seq}`;
+    if (activityAckInFlightRef.current === key) return;
+    activityAckInFlightRef.current = key;
+    void elowenClient.brainReadActivity(boundary.sessionId, seq, 'web')
+      .then(() => {
+        activityAckedRef.current.set(boundary.sessionId, Math.max(previous, seq));
+        if (activityBoundaryRef.current === boundary) activityBoundaryRef.current = null;
+      })
+      .catch(() => { /* the next rendered boundary or visibility return retries */ })
+      .finally(() => {
+        if (activityAckInFlightRef.current === key) activityAckInFlightRef.current = null;
+      });
+  }, [activityBoundaryVersion, activityWakeVersion, sessions.data, ready, reconnecting]);
 
   // Route a "open this session" request: a continuable one (own web/CLI conversation) is resumed live;
   // a non-continuable one (shared Discord channel / task worker) opens read-only.
@@ -1189,7 +1235,12 @@ function useBrainChatController(): BrainChatValue {
   useEffect(() => {
     const report = (): void => {
       if (!attachedRef.current) return;
-      elowenClient.brainVisibility({ client: clientId(), hidden: document.hidden });
+      const hidden = document.hidden;
+      elowenClient.brainVisibility({ client: clientId(), hidden });
+      if (!hidden) {
+        setActivityWakeVersion((value) => value + 1);
+        void qc.invalidateQueries({ queryKey: ['brain-sessions'] });
+      }
     };
     // `pagehide` is the one event iOS fires reliably when an installed PWA goes to the background or the
     // phone locks; `visibilitychange` alone can be skipped there, which left the daemon believing the

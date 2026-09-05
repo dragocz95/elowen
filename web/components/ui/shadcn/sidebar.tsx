@@ -199,7 +199,7 @@ function SidebarMenuItem({ className, ...props }: React.ComponentProps<'li'>) {
  *  in the Studio skin the painted result comes from the skin's own `.studio-nav__item` rule, which
  *  out-specifies a utility class by construction (the skin tree is unlayered). */
 const sidebarMenuButtonVariants = cva(
-  'peer/menu-button flex w-full items-center gap-2 overflow-hidden text-left outline-hidden transition-[width,height,padding] disabled:pointer-events-none disabled:opacity-50 [&>svg]:shrink-0',
+  'peer/menu-button flex w-full items-center gap-2 overflow-hidden text-left outline-hidden transition-[width,height,padding] disabled:pointer-events-none disabled:opacity-50 [&>svg]:shrink-0 data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground',
   {
     variants: {
       variant: {

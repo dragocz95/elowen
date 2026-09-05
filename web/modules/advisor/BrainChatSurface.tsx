@@ -18,6 +18,7 @@ import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Button, buttonClassName } from '../../components/ui/Button';
 import { Progress } from '../../components/ui/shadcn/progress';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '../../components/ui/shadcn/dropdown-menu';
+import { Popover, PopoverTrigger } from '../../components/ui/shadcn/popover';
 import { Input } from '../../components/ui/Input';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { ModelIcon } from '../../components/ui/ModelIcon';
@@ -1559,14 +1560,27 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           drawer toggle and new chat. */}
       {variant === 'compact' ? (
         <div className="relative flex items-center gap-1 border-b border-border px-2 py-1.5">
-          <button
-            type="button"
-            onClick={() => setPickerOpen((v) => !v)}
-            className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-foreground transition-colors hover:bg-accent"
-          >
-            <span className="truncate">{active?.title || t.brainChat.newChat}</span>
-            <ChevronDown size={14} className="shrink-0 text-muted-foreground" aria-hidden />
-          </button>
+          {/* The conversation's name is the switcher here too, and it is a real `PopoverTrigger`: the
+              `aria-expanded` / `aria-controls` pair, Escape, the outside press and the focus that comes
+              back to this button on close are all Radix's, rather than four behaviours this bar would
+              otherwise have to write and keep in step. `Popover.Root` renders no element of its own, so
+              the trigger stays a plain flex item of the bar and the panel stays out of the flow. */}
+          <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
+            <PopoverTrigger asChild>
+              {/* No `aria-label` here on purpose: the visible label IS the conversation title, and an
+                  override would replace it in the accessible name — hiding the one piece of information
+                  this control carries and leaving the spoken name unable to match what is on screen.
+                  The trigger's own `aria-expanded` / `aria-haspopup` already say that it discloses. */}
+              <button
+                type="button"
+                className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-foreground transition-colors hover:bg-accent"
+              >
+                <span className="truncate">{active?.title || t.brainChat.newChat}</span>
+                <ChevronDown size={14} className="shrink-0 text-muted-foreground" aria-hidden />
+              </button>
+            </PopoverTrigger>
+            <ChatHistoryRail variant="dropdown" onClose={() => setPickerOpen(false)} />
+          </Popover>
           <ProjectPicker variant="compact" />
           <ModelPicker variant="compact" />
           <ReasoningButton onOpen={() => setReasoningOpen(true)} />
@@ -1579,7 +1593,6 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
           >
             <Plus size={16} aria-hidden />
           </button>
-          <ChatHistoryRail variant="dropdown" open={pickerOpen} onClose={() => setPickerOpen(false)} />
         </div>
       ) : (
         <PageTopBarPortal>
