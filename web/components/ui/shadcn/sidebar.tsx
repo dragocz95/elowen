@@ -6,6 +6,7 @@ import { cva, type VariantProps } from 'class-variance-authority';
 
 import { cn } from '../../../lib/utils';
 import { useMobile } from '../../../lib/useMobile';
+import { Separator } from './separator';
 import { Skeleton } from './skeleton';
 
 /** The shadcn/ui Sidebar primitive, adopted with two deliberate deviations from upstream. Both exist
@@ -27,8 +28,6 @@ import { Skeleton } from './skeleton';
  *
  *  Everything else is upstream: the same part names, the same `data-slot`/`data-sidebar` attributes,
  *  the same CVA axes on the menu button, so a component copied from the shadcn docs drops in. */
-
-const SIDEBAR_WIDTH_ICON = '3rem';
 
 type SidebarState = 'expanded' | 'collapsed';
 
@@ -81,12 +80,10 @@ function SidebarProvider({
 
   return (
     <SidebarContext.Provider value={value}>
-      <div
-        data-slot="sidebar-wrapper"
-        style={{ '--sidebar-width-icon': SIDEBAR_WIDTH_ICON, ...style } as React.CSSProperties}
-        className={cn('contents', className)}
-        {...props}
-      >
+      {/* Upstream injects `--sidebar-width-icon` here as an inline style. The three width tokens live in
+          `app/styles/tokens.css` instead: an inline value on this wrapper outranks every stylesheet, so a
+          skin could not retune the collapsed rail, and the token contract test could not see the value. */}
+      <div data-slot="sidebar-wrapper" style={style} className={cn('contents', className)} {...props}>
         {children}
       </div>
     </SidebarContext.Provider>
@@ -275,6 +272,81 @@ function SidebarMenuSubItem({ className, ...props }: React.ComponentProps<'li'>)
   return <li data-slot="sidebar-menu-sub-item" data-sidebar="menu-sub-item" className={cn('group/menu-sub-item relative', className)} {...props} />;
 }
 
+/** A row one level down. Upstream's CVA axes verbatim, so a component copied from the shadcn docs sets
+ *  the same `size` it would there; the Studio skin paints the result from `--sidebar-sub-indent` and the
+ *  shared row geometry, exactly as it does for `SidebarMenuButton`. */
+const sidebarMenuSubButtonVariants = cva(
+  'flex min-w-0 items-center gap-2 overflow-hidden outline-hidden disabled:pointer-events-none disabled:opacity-50 [&>svg]:shrink-0 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground data-[active=true]:bg-sidebar-accent data-[active=true]:text-sidebar-accent-foreground',
+  {
+    variants: {
+      size: {
+        sm: 'text-xs',
+        md: 'text-sm',
+      },
+    },
+    defaultVariants: { size: 'md' },
+  },
+);
+
+function SidebarMenuSubButton({
+  asChild = false,
+  size,
+  isActive = false,
+  className,
+  ...props
+}: React.ComponentProps<'a'> & {
+  asChild?: boolean;
+  isActive?: boolean;
+} & VariantProps<typeof sidebarMenuSubButtonVariants>) {
+  const Comp = asChild ? Slot : 'a';
+  return (
+    <Comp
+      data-slot="sidebar-menu-sub-button"
+      data-sidebar="menu-sub-button"
+      data-size={size ?? 'md'}
+      // Same reason as `SidebarMenuButton`: the skin selects on the bare `[data-active]` attribute, which
+      // `data-active="false"` would satisfy — every sub-row would paint active.
+      data-active={isActive || undefined}
+      className={cn(sidebarMenuSubButtonVariants({ size }), className)}
+      {...props}
+    />
+  );
+}
+
+/** The rule between groups. `Separator` is Radix's, which is not portalled, so it is adopted whole. */
+function SidebarSeparator({ className, ...props }: React.ComponentProps<typeof Separator>) {
+  return (
+    <Separator
+      data-slot="sidebar-separator"
+      data-sidebar="separator"
+      className={cn('bg-sidebar-border mx-0 w-auto', className)}
+      {...props}
+    />
+  );
+}
+
+/** The fold control. Upstream renders it in the inset's header; here it is the column's own footer
+ *  control, so it carries no position of its own and the caller places it. Renders nothing outside a
+ *  provider — there is no state to toggle, and a dead button is worse than no button. */
+function SidebarTrigger({ className, onClick, ...props }: React.ComponentProps<'button'>) {
+  const sidebar = useSidebar();
+  if (!sidebar) return null;
+  return (
+    <button
+      type="button"
+      data-slot="sidebar-trigger"
+      data-sidebar="trigger"
+      aria-expanded={sidebar.open}
+      onClick={(event) => {
+        onClick?.(event);
+        if (!event.defaultPrevented) sidebar.toggleSidebar();
+      }}
+      className={cn('inline-flex items-center justify-center', className)}
+      {...props}
+    />
+  );
+}
+
 export {
   Sidebar,
   SidebarContent,
@@ -289,8 +361,11 @@ export {
   SidebarMenuItem,
   SidebarMenuSkeleton,
   SidebarMenuSub,
+  SidebarMenuSubButton,
   SidebarMenuSubItem,
   SidebarProvider,
   SidebarRail,
+  SidebarSeparator,
+  SidebarTrigger,
   useSidebar,
 };
