@@ -101,24 +101,23 @@ describe('listBrainModels', () => {
     expect(models.filter((m) => m.default).map((m) => m.model)).toEqual(['claude-opus-5']);
   });
 
-  // Elowen's Claude-account overlay must expose every verified model absent from the pinned PI catalog while
-  // preserving each predecessor tier's metadata and the rest of PI's native catalog.
-  it('offers Opus 5 and Fable 5.1 on the Claude account with their tier reasoning ladders', async () => {
+  // Opus 5 and Fable 5.1 are native PI catalog models since 0.85.1; Elowen used to clone them from the
+  // previous tier. They are the Claude account's working models, so the list must keep offering both with a
+  // real reasoning ladder and the catalog's own context window, alongside the rest of the native catalog.
+  it('offers Opus 5 and Fable 5.1 on the Claude account with their catalog reasoning ladders', async () => {
     const f = vi.fn() as unknown as typeof fetch;
     const cfg: BrainRuntimeConfig = {
       providers: [{ id: 'claude', label: 'Claude account', type: 'oauth-anthropic', baseUrl: '', models: [], apiKey: null }],
     };
     const models = await listBrainModels(cfg, f);
     const opus5 = models.find((m) => m.model === 'claude-opus-5');
-    const fable5 = models.find((m) => m.model === 'claude-fable-5');
     const fable51 = models.find((m) => m.model === 'claude-fable-5-1');
     expect(opus5).toBeDefined();
-    expect(opus5!.reasoningLevels).toEqual(models.find((m) => m.model === 'claude-opus-4-8')!.reasoningLevels);
     expect(fable51).toBeDefined();
-    expect(fable51!.reasoningLevels).toEqual(fable5!.reasoningLevels);
-    expect(fable51!.contextWindow).toBe(fable5!.contextWindow);
-    // Cloning must not cost the account the rest of its catalog: registering the extension replaces the
-    // provider's model list wholesale, so every built-in has to survive the round-trip.
+    for (const model of [opus5!, fable51!]) {
+      expect(model.reasoningLevels).toEqual(expect.arrayContaining(['high', 'max']));
+      expect(model.contextWindow).toBe(1_000_000);
+    }
     expect(models.map((m) => m.model)).toEqual(expect.arrayContaining([
       'claude-opus-4-8', 'claude-sonnet-5', 'claude-fable-5', 'claude-fable-5-1', 'claude-haiku-4-5',
     ]));

@@ -32,6 +32,9 @@ const SNAPSHOT_TASK_PREVIEW = 500;
 // Same bound for a terminal node's result/error preview: the modal dock shows a line or two, and the
 // full MAX_RESULT_CHARS body already reaches the parent through the blocking WorkflowStart return.
 const SNAPSHOT_RESULT_PREVIEW = 500;
+// How much of a failed node's reason WorkflowStatus prints on its status line. Enough for a provider's error
+// body to be recognisable, short enough that a wide DAG stays one screen.
+const STATUS_ERROR_PREVIEW = 300;
 // Never hand a node a slice too small to carry a finding. A fan-in whose results cannot each reach this
 // is REFUSED (see buildNodeAccess): a node reporting conclusions drawn from three words per dependency —
 // or, once the forced minimum overran the budget, from dependencies it was never shown — is worse than a
@@ -40,6 +43,12 @@ const DEP_MIN_CHARS = 400;
 // The blank line joining two result blocks inside one chunk.
 const DEP_BLOCK_SEPARATOR = '\n\n';
 
+// What a node hands its DIRECT dependents: a short handover it writes for them, never its whole result.
+// A full result is written for the human reading the workflow summary — a 8k-char report per dependency
+// crowds out the dependent's own work and buries the two facts it actually needs. So a node is asked to end
+// its final message with a handover section, and only that section travels down the edge.
+const MAX_HANDOVER_CHARS = 4_000;
+
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
 const clip = (text, limit) => (text.length <= limit ? text : `${text.slice(0, limit)}${TRUNCATION_MARKER}`);
 /** A dependency block keeps the END of the result for the same reason the result itself does — the finding is
@@ -47,14 +56,87 @@ const clip = (text, limit) => (text.length <= limit ? text : `${text.slice(0, li
  *  TRUNCATION_MARKER.length, which the per-block budget arithmetic below reserves, and DelegateRead would be
  *  no use to a node anyway: it reads a session's own children, and a sibling node is not one. `depIntro`
  *  already names, to the node, every dependency it is not seeing whole. */
-const clipDep = (text, limit) => (text.length <= limit ? text : `[truncated]\n${text.slice(-limit)}`);
-const depBlockHeading = (id) => `## Result from node "${id}"\n`;
-/** The note introducing the dependency blocks, naming the ones the node is not seeing in full. */
-const depIntro = (truncatedIds) => 'Results from the nodes this one depends on follow, one block per node.'
+const DEP_TRUNCATION_PREFIX = '[truncated]\n';
+const clipDep = (text, limit) => (text.length <= limit ? text : `${DEP_TRUNCATION_PREFIX}${text.slice(-limit)}`);
+const depBlockHeading = (id) => `## Handover from node "${id}"\n`;
+/** The note introducing the handover blocks: what they are, which were written by the node itself and which
+ *  the engine had to derive, and which had to be cut to fit. A node that mistakes a handover for a complete
+ *  result reports a partial finding as the whole picture, so the difference is stated rather than implied. */
+const depIntro = (derivedIds, truncatedIds) =>
+  'Handovers from the nodes this one depends on follow, one block per node. A handover is the short summary '
+  + 'that node wrote for its successors — NOT its full result, which is not available in this conversation.'
+  + (derivedIds.length
+    ? `\n\nThese nodes wrote no handover, so what follows is the plain END of their result: ${derivedIds.join(', ')}.`
+    : '')
   + (truncatedIds.length
     ? `\n\nThese were truncated to fit and you are NOT seeing them in full: ${truncatedIds.join(', ')}. `
-      + 'Say so in your output rather than treating what you received as the complete result.'
+      + 'Say so in your output rather than treating what you received as complete.'
     : '');
+
+/** The heading a node ends its final message with when it has successors. Matched case-insensitively, with
+ *  or without markdown heading marks, bold, a colon or a few trailing words ("## Handover for node x"),
+ *  because that is the range of shapes models produce for one instructed heading. */
+const HANDOVER_HEADING = new RegExp(
+  '^[ \\t]{0,3}(?:'
+  // "## Handover", "### Handover for node \"x\"" — a heading marker licenses trailing words.
+  + '#{1,6}[ \\t]*(?:\\*\\*)?handover\\b[^\\n]{0,40}?(?:\\*\\*)?'
+  // "**Handover:**" — bold does the same job as the marker.
+  + '|\\*\\*handover\\b[^\\n]{0,40}?\\*\\*'
+  // A bare line, which must then be the word alone: "handover-of:x" in a body is not a heading.
+  + '|handover'
+  + ')[ \\t]*:?[ \\t]*$',
+  'gim',
+);
+/** A fenced block opener or closer. The instruction quotes the heading verbatim, so a node that shows the
+ *  format in an example fence would otherwise hand its dependents that EXAMPLE — the last match wins. */
+const FENCE_LINE = /^[ \t]{0,3}(?:```|~~~)/;
+
+/** Character offsets of the fenced regions of a message, so a heading inside one can be ignored. */
+const fencedRanges = (text) => {
+  const ranges = [];
+  let open;
+  let offset = 0;
+  for (const line of text.split('\n')) {
+    if (FENCE_LINE.test(line)) {
+      if (open === undefined) open = offset;
+      else { ranges.push([open, offset + line.length]); open = undefined; }
+    }
+    offset += line.length + 1;
+  }
+  // An unterminated fence swallows the rest of the message, exactly as a renderer would read it.
+  if (open !== undefined) ranges.push([open, text.length]);
+  return ranges;
+};
+
+/** What a finished node hands down its edges: the text after the LAST handover heading in its final message,
+ *  or — when it wrote none — the END of its result, which is where a report's conclusion sits. Bounded either
+ *  way, and marked `derived` so the dependent is told which of the two it is reading. */
+const handoverOf = (reply) => {
+  HANDOVER_HEADING.lastIndex = 0;
+  const fences = fencedRanges(reply);
+  let heading;
+  for (let match = HANDOVER_HEADING.exec(reply); match; match = HANDOVER_HEADING.exec(reply)) {
+    if (!fences.some(([from, to]) => match.index >= from && match.index < to)) heading = match;
+  }
+  const explicit = heading ? reply.slice(heading.index + heading[0].length).trim() : '';
+  // MAX_HANDOVER_CHARS is a real ceiling on what travels, so both branches pay for their own marker rather
+  // than adding to the bound the dependent's budget arithmetic was sized against.
+  return explicit
+    ? { text: clip(explicit, MAX_HANDOVER_CHARS - TRUNCATION_MARKER.length), derived: false }
+    : { text: clipDep(reply.trim(), MAX_HANDOVER_CHARS - DEP_TRUNCATION_PREFIX.length), derived: true };
+};
+
+/** The instruction a node with successors gets, so the handover it hands down is one it WROTE rather than a
+ *  tail the engine had to cut. Named successors, because "someone downstream" is not something a node can
+ *  write for; a node with none is never asked for one. */
+const handoverInstruction = (dependentIds) =>
+  `The node${dependentIds.length > 1 ? 's' : ''} ${dependentIds.map((id) => `"${id}"`).join(', ')} depend`
+  + `${dependentIds.length > 1 ? '' : 's'} on this one and will receive ONLY a short handover from you — not `
+  + 'your full result, which they cannot read. So END your final message with a section that starts with the '
+  + `heading "## Handover" and says, in at most ${MAX_HANDOVER_CHARS} characters: what you changed or found `
+  + 'and where (exact paths, ids, commands), the decisions they must not undo, and what is still open or '
+  + 'unverified. Write it for them, not as a summary for the reader of your report. Without that section '
+  + 'they receive only the tail of your result, cut wherever it happens to end.';
 /** Whether two `ctx.currentAccess()` boundaries are the same one. The host bakes the boundary into a
  *  delegated child's IMMUTABLE persisted scope and lets that child run again only under an exact match, so
  *  a resume that re-captures a narrowed boundary can no longer re-enter the sessions it minted. Both sides
@@ -240,7 +322,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     try { unlinkSync(journalPath(workflowId)); } catch { /* already gone — the common case for a clean finish */ }
   };
 
-  const freshNodeState = () => ({ status: 'pending', sessionId: '', channelId: '', taskNote: '', tools: 0, detail: undefined, tokens: undefined, seconds: undefined, model: undefined, startedAt: undefined, result: undefined, error: undefined });
+  const freshNodeState = () => ({ status: 'pending', sessionId: '', channelId: '', taskNote: '', tools: 0, detail: undefined, tokens: undefined, seconds: undefined, model: undefined, startedAt: undefined, result: undefined, handover: undefined, error: undefined });
 
   /** Appended to a node's task when a resume puts it back into the conversation it already worked in. It has
    *  to read sensibly BOTH ways: the child session usually survives (the node reads its own prior work and
@@ -400,13 +482,23 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         + `to add them; otherwise just finish your task and report.`);
     }
     if (wf.sharedContext) contextParts.push(wf.sharedContext);
+    // Ask for the handover BEFORE the node starts working, or it writes its report and stops. Only nodes
+    // that actually have successors are asked; for a leaf the section would be pure noise.
+    const dependentIds = wf.nodes.filter((n) => (n.deps ?? []).includes(node.id)).map((n) => n.id);
+    if (dependentIds.length) contextParts.push(handoverInstruction(dependentIds));
     // What the node waited for. Without this a dependency edge only ORDERS the run: the node still starts
     // with an empty context and has to re-derive — or invent — whatever its dependencies already produced,
     // which is precisely the "gather → analyze → write" shape the tool advertises. Appended last, after the
     // workflow-wide shared context, so the stable part of the prefix stays identical across nodes.
+    //
+    // DIRECT dependencies only, and only their handovers. A transitive chain used to arrive in full: the
+    // fourth node of a pipeline read three complete reports, most of them about work it was not doing.
+    // A handover can arrive from the recovery journal, which is an agent-writable file: take it only when it
+    // still has the shape the blocks below slice, never on truthiness alone.
     const depResults = (node.deps ?? [])
-      .map((id) => ({ id, result: wf.state.get(id)?.result }))
-      .filter((d) => d.result);
+      .map((id) => ({ id, handover: wf.state.get(id)?.handover }))
+      .filter((d) => typeof d.handover?.text === 'string' && d.handover.text.length > 0)
+      .map((d) => ({ id: d.id, result: d.handover.text, derived: d.handover.derived === true }));
     if (depResults.length) {
       // Each dependency gets its OWN prompt chunk (several share one only when the DAG is wider than the
       // chunk budget), so the per-chunk ceiling bounds a SINGLE result rather than all of them joined.
@@ -424,7 +516,8 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       const groups = Math.ceil(depResults.length / perChunk);
       // Reserve the note at its WORST case — every dependency named — so the reservation cannot be
       // undercut by which of them turns out to need truncating.
-      const introChars = depIntro(depResults.map((d) => d.id)).length + TRUNCATION_MARKER.length;
+      const introChars = depIntro(depResults.map((d) => d.id), depResults.map((d) => d.id)).length
+        + TRUNCATION_MARKER.length;
       const blockChars = depResults.reduce((n, d) => n + depBlockHeading(d.id).length + TRUNCATION_MARKER.length, 0)
         + DEP_BLOCK_SEPARATOR.length * (depResults.length - groups);
       const perDep = Math.min(
@@ -444,7 +537,10 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       }
       // Say so IN the context. A node reading a truncated dependency cannot tell whether the finding it is
       // looking for was absent or merely cut off, and that difference decides whether it should re-derive.
-      contextParts.push(depIntro(depResults.filter((d) => d.result.length > perDep).map((d) => d.id)));
+      contextParts.push(depIntro(
+        depResults.filter((d) => d.derived).map((d) => d.id),
+        depResults.filter((d) => d.result.length > perDep).map((d) => d.id),
+      ));
       for (let i = 0; i < depResults.length; i += perChunk) {
         contextParts.push(depResults.slice(i, i + perChunk)
           .map((d) => `${depBlockHeading(d.id)}${clipDep(d.result, perDep)}`)
@@ -520,9 +616,10 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       const raw = await runNodeTurn(wf, node, ns, collectSource, onEvent);
       const reply = raw || '(the node returned nothing)';
       if (reply.startsWith('Error:')) { ns.status = 'error'; ns.error = clip(reply.slice('Error:'.length).trim() || reply, MAX_RESULT_CHARS); }
-      // The node's answer reaches the parent through `summarize` and its dependents through the blocks above:
-      // keep its END, where a report's conclusion is. An error stays head-first — it leads with what broke.
-      else { ns.status = 'done'; ns.result = clipTail(reply, MAX_RESULT_CHARS); }
+      // The node's answer reaches the parent through `summarize`: keep its END, where a report's conclusion
+      // is. An error stays head-first — it leads with what broke. Its DEPENDENTS get the handover instead,
+      // taken from the raw reply so a result clipped for the parent cannot cost them the section too.
+      else { ns.status = 'done'; ns.result = clipTail(reply, MAX_RESULT_CHARS); ns.handover = handoverOf(reply); }
     } catch (e) {
       ns.status = 'error';
       ns.error = clip(errorText(e), MAX_RESULT_CHARS);
@@ -838,7 +935,15 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       const prev = journaled.get(n.id);
       if (prev?.sessionId && typeof prev.sessionId === 'string') wf.childSessions.add(prev.sessionId);
       if (prev?.status === 'done') {
-        wf.state.set(n.id, { ...freshNodeState(), ...prev });
+        const restored = { ...freshNodeState(), ...prev };
+        // A journal written before handovers existed — or by a node whose handover did not survive the
+        // write — carries a result and nothing else. Deriving it here is what keeps a dependent from
+        // resuming with an EMPTY dependency block, which is worse than the tail it would have had: the
+        // node would silently re-derive or invent what its dependency already established.
+        if (!isRecord(restored.handover) && typeof restored.result === 'string') {
+          restored.handover = handoverOf(restored.result);
+        }
+        wf.state.set(n.id, restored);
         done += 1;
         continue;
       }
@@ -935,7 +1040,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       `Run a DAG of sub-agents whose complete definition lives in a JSON file. Before calling this tool, use Write to create that file, then pass its path as nodesFile. Do not pass nodes inline. When your session has unrestricted filesystem access, write it under ${workflowDir} (it already exists) so the run leaves nothing behind in the user's project. A project-scoped session cannot write there and must use a path inside an accessible repository — which is also the right choice for a definition you want to keep and version.`,
       'The file may contain either a JSON array of node objects, or an object shaped as { title?, context?, nodes: [...], background? }. Explicit title, context, or background tool arguments override the corresponding values from the file, so one file can be reused as a template.',
       'Each node requires a short unique string id and a complete self-contained string task. Optional fields are deps, model, read_only, tools, subagent_type, and workspaceId. WorkflowStart.workspaceId sets the default explicit Sandbox workspace; a node workspaceId may only preserve or narrow its effective parent scope. At least one node must have no deps. Each node is a fresh sub-agent that cannot see this conversation; put everything it needs in task or shared context.',
-      'Use a workflow instead of several separate delegate calls when the subtasks have an ORDER or dependency between them (gather → analyze → write), or when a later step needs earlier steps\' results. Independent nodes run in parallel, and a dependent receives its dependencies\' results as context. For fully independent tasks, plain parallel delegate calls are simpler.',
+      'Use a workflow instead of several separate delegate calls when the subtasks have an ORDER or dependency between them (gather → analyze → write), or when a later step needs earlier steps\' results. Independent nodes run in parallel, and a dependent receives a short handover from each of its DIRECT dependencies (not their full results, and nothing from further upstream) — so a node whose task needs an earlier finding must be reachable from it through the deps chain. For fully independent tasks, plain parallel delegate calls are simpler.',
       'By default the call BLOCKS and returns every node\'s result. Set background=true (in the file or as an explicit argument) to return a handle immediately and receive the summary in a NEW turn. A node whose dependency failed is reported as skipped.',
       'If the result names failed or skipped nodes and the workflow is still held in memory, use WorkflowResume instead of starting over — it re-runs only unfinished nodes and leaves every completed node unchanged.',
     ].join(' '),
@@ -1201,8 +1306,9 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       + 'workflow is going, or when you need a node id before WorkflowAddNodes or WorkflowResume. A '
       + 'foreground WorkflowStart already blocks and returns the full result, and a background one '
       + 'delivers its summary to you in a NEW turn — so you never need this to collect results, and '
-      + 'polling it in a loop is never the answer. It returns node STATUS only, not any node\'s output '
-      + 'text, and it changes nothing: to end a run early use WorkflowStop. Workflows live in memory on '
+      + 'polling it in a loop is never the answer. It returns node STATUS plus, for a failed node, a short '
+      + 'reason it failed — never a successful node\'s output text — and it changes nothing: to end a run '
+      + 'early use WorkflowStop. Workflows live in memory on '
       + 'this daemon, so one that expired, was evicted, ran before a restart, or belongs to another '
       + 'conversation is reported as unknown.',
     parameters: Type.Object({ workflowId: Type.String({ description: 'The workflow id returned by WorkflowStart (e.g. "wf-…").' }) }),
@@ -1214,7 +1320,13 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         const s = wf.state.get(n.id);
         lines.push(`- [${n.id}] ${s.status}${n.deps.length ? ` (deps: ${n.deps.join(', ')})` : ''}`
           + `${s.tokens !== undefined ? ` · ${s.tokens} tok` : ''}${s.seconds !== undefined ? ` · ${s.seconds}s` : ''}`
-          + `${s.detail ? ` · ${s.detail}` : ''}`);
+          + `${s.detail ? ` · ${s.detail}` : ''}`
+          // A bare "error" is unactionable: the caller cannot tell a bad task from a provider refusal, and
+          // the reason (a 400 body, a rejected model, a cancelled spawn) is already stored. One bounded
+          // single line of it — this is still a STATUS view, not the node's output.
+          // Collapsed AFTER the clip: TRUNCATION_MARKER itself starts with a newline, which would split the
+          // entry across two lines of the joined listing.
+          + `${s.status === 'error' && s.error ? ` · ${clip(s.error, STATUS_ERROR_PREVIEW).replace(/\s+/g, ' ').trim()}` : ''}`);
       }
       return ok(lines.join('\n'), { workflowId: wf.id, status: wf.status });
     },
