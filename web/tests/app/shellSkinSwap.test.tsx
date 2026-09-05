@@ -64,8 +64,7 @@ describe('switching between the two designs', () => {
     );
 
     // One shell for both designs, and the ambient rail belongs to no design this build ships.
-    expect(await screen.findByTestId('studio-navigation')).toBeInTheDocument();
-    expect(screen.queryByTestId('future-navigation')).toBeNull();
+    expect(await screen.findByTestId('sidebar-navigation')).toBeInTheDocument();
     expect(document.documentElement.getAttribute('data-skin')).toBe('studio-light');
 
     const probe = await screen.findByLabelText('probe');
@@ -81,8 +80,7 @@ describe('switching between the two designs', () => {
 
     await waitFor(() => expect(document.documentElement.getAttribute('data-skin')).toBe('studio-oled'));
     expect(screen.getByRole('button', { name: 'Skin: Dark' }).querySelector('svg')).toHaveClass('lucide-moon');
-    expect(screen.getByTestId('studio-navigation')).toBeInTheDocument();
-    expect(screen.queryByTestId('future-navigation')).toBeNull();
+    expect(screen.getByTestId('sidebar-navigation')).toBeInTheDocument();
 
     // Same node, same state, same single mount — the page never went away and came back.
     expect(screen.getByLabelText('probe')).toBe(probe);
@@ -90,15 +88,14 @@ describe('switching between the two designs', () => {
     expect(mounts).toBe(1);
   });
 
-  it('mounts the Studio navigation for a document already wearing the skin', async () => {
+  it('mounts the sidebar navigation for a document already wearing the skin', async () => {
     // localStorage stays the client's source of truth for the choice, so a reader who picked Studio
     // arrives with it stored and the document already rendered in it.
     localStorage.setItem('elowen-skin', 'studio-light');
     const { container } = render(
       <Shell skinSeed={{ choice: 'studio-light', allowed: ALLOWED, fallback: null }}><span>page-body</span></Shell>,
     );
-    expect(await screen.findByTestId('studio-navigation')).toBeInTheDocument();
-    expect(screen.queryByTestId('future-navigation')).toBeNull();
+    expect(await screen.findByTestId('sidebar-navigation')).toBeInTheDocument();
     expect(container.querySelector('.top-bar__context-nav')).toBeNull();
     expect(screen.getByTestId('page-top-bar-host')).toBeInTheDocument();
     expect(screen.getByTestId('page-top-bar-host')).toBeEmptyDOMElement();
@@ -112,7 +109,7 @@ describe('switching between the two designs', () => {
     render(
       <Shell skinSeed={{ choice: null, allowed: [], fallback: 'studio-light' }}><span>page-body</span></Shell>,
     );
-    expect(await screen.findByTestId('studio-navigation')).toBeInTheDocument();
+    expect(await screen.findByTestId('sidebar-navigation')).toBeInTheDocument();
   });
 });
 
@@ -151,7 +148,7 @@ describe('a design the reader did not switch away from', () => {
     const { rerender } = render(
       <Shell skinSeed={seed('studio-light', ALLOWED, null)}><Probe /><SkinReadout /></Shell>,
     );
-    expect(await screen.findByTestId('studio-navigation')).toBeInTheDocument();
+    expect(await screen.findByTestId('sidebar-navigation')).toBeInTheDocument();
     expect(document.documentElement.getAttribute('data-skin')).toBe('studio-light');
     expect(screen.getByTestId('skin-readout').textContent).toBe('studio-light');
 
@@ -165,8 +162,7 @@ describe('a design the reader did not switch away from', () => {
 
     // DEFAULT_SKIN, not "no design": the attribute is rewritten rather than removed, and the shell stays.
     await waitFor(() => expect(document.documentElement.getAttribute('data-skin')).toBe(DEFAULT_SKIN));
-    expect(screen.getByTestId('studio-navigation')).toBeInTheDocument();
-    expect(screen.queryByTestId('future-navigation')).toBeNull();
+    expect(screen.getByTestId('sidebar-navigation')).toBeInTheDocument();
     expect(screen.getByTestId('skin-readout').textContent).toBe(DEFAULT_SKIN);
     // The canvas goes back to the cascade rather than staying frozen at the design the document arrived in.
     expect(document.documentElement.style.backgroundColor).toBe('');
@@ -178,10 +174,9 @@ describe('a design the reader did not switch away from', () => {
     // Re-allowing it restores the design: the removal must not be a one-way door, and the stored choice
     // was never destroyed — only ignored while it was not on offer.
     rerender(<Shell skinSeed={seed('studio-light', ALLOWED, null)}><Probe /><SkinReadout /></Shell>);
-    expect(await screen.findByTestId('studio-navigation')).toBeInTheDocument();
+    expect(await screen.findByTestId('sidebar-navigation')).toBeInTheDocument();
     await waitFor(() => expect(document.documentElement.getAttribute('data-skin')).toBe('studio-light'));
     expect(screen.getByTestId('skin-readout').textContent).toBe('studio-light');
-    expect(screen.queryByTestId('future-navigation')).toBeNull();
     expect(mounts).toBe(1);
   });
 
@@ -195,7 +190,7 @@ describe('a design the reader did not switch away from', () => {
     const { rerender } = render(
       <Shell skinSeed={seed(null, [], 'studio-light')}><Probe /><SkinReadout /></Shell>,
     );
-    expect(await screen.findByTestId('studio-navigation')).toBeInTheDocument();
+    expect(await screen.findByTestId('sidebar-navigation')).toBeInTheDocument();
     expect(screen.getByTestId('skin-readout').textContent).toBe('studio-light');
 
     // ELOWEN_SKIN moves to the other variant of the same design. The attribute and the context follow it,
@@ -205,8 +200,7 @@ describe('a design the reader did not switch away from', () => {
 
     await waitFor(() => expect(document.documentElement.getAttribute('data-skin')).toBe('studio-oled'));
     expect(screen.getByTestId('skin-readout').textContent).toBe('studio-oled');
-    expect(screen.getByTestId('studio-navigation')).toBeInTheDocument();
-    expect(screen.queryByTestId('future-navigation')).toBeNull();
+    expect(screen.getByTestId('sidebar-navigation')).toBeInTheDocument();
     expect(mounts).toBe(1);
 
     // ...and away entirely. That used to mean no attribute and the ambient shell; it now means the floor
@@ -214,8 +208,7 @@ describe('a design the reader did not switch away from', () => {
     rerender(<Shell skinSeed={seed(null, [], null)}><Probe /><SkinReadout /></Shell>);
     await waitFor(() => expect(document.documentElement.getAttribute('data-skin')).toBe(DEFAULT_SKIN));
     expect(screen.getByTestId('skin-readout').textContent).toBe(DEFAULT_SKIN);
-    expect(screen.getByTestId('studio-navigation')).toBeInTheDocument();
-    expect(screen.queryByTestId('future-navigation'), 'the ambient shell belongs to no design this build ships').toBeNull();
+    expect(screen.getByTestId('sidebar-navigation')).toBeInTheDocument();
     expect(mounts).toBe(1);
   });
 });

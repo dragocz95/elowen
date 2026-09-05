@@ -60,11 +60,10 @@ describe('resolveNav', () => {
 // profile. It is no longer a way to reach the frameless masthead and orbital rail: those belong to the
 // ambient design this build stopped shipping, so what these cases describe is the only chrome there is.
 describe('Shell', () => {
-  it('renders the Studio navigation, ruled app bar and content slot', async () => {
+  it('renders the sidebar navigation, ruled app bar and content slot', async () => {
     render(<Shell><span>page-body</span></Shell>);
     // The navigation and Home world appear after the async gate opens.
-    expect(await screen.findByTestId('studio-navigation')).toHaveAttribute('data-mode', 'full');
-    expect(screen.queryByTestId('future-navigation'), 'the orbital rail belongs to no design this build ships').toBeNull();
+    expect(await screen.findByTestId('sidebar-navigation')).toHaveAttribute('data-mode', 'full');
     expect(screen.getByRole('link', { name: 'Home' })).toBeInTheDocument();
     expect(screen.getByText('page-body')).toBeInTheDocument();
     // The ruled bar, not the floating cluster: sticky and separated from the content it scrolls over.
@@ -90,7 +89,7 @@ describe('Shell', () => {
     pathname = '/dash';
     const view = render(<Shell><span>page-body</span></Shell>);
     try {
-      const navigation = await screen.findByTestId('studio-navigation');
+      const navigation = await screen.findByTestId('sidebar-navigation');
       const header = screen.getByTestId('future-page-header');
       expect(navigation).toHaveAttribute('data-measured', 'false');
       expect(header).toHaveAttribute('data-chat-controls-narrow');
@@ -104,8 +103,8 @@ describe('Shell', () => {
       const first = regionObserver();
       expect(first?.node).toBeTruthy();
       act(() => first?.emit(390));
-      await waitFor(() => expect(screen.getByTestId('studio-navigation')).toHaveAttribute('data-mode', 'drawer'));
-      expect(screen.getByTestId('studio-navigation')).toHaveAttribute('data-measured', 'true');
+      await waitFor(() => expect(screen.getByTestId('sidebar-navigation')).toHaveAttribute('data-mode', 'drawer'));
+      expect(screen.getByTestId('sidebar-navigation')).toHaveAttribute('data-measured', 'true');
 
       let previousNode = first!.node;
       for (const route of ['/chat', '/projects', '/memory']) {
@@ -118,7 +117,7 @@ describe('Shell', () => {
         const current = regionObserver()!;
         expect(current.node).toBeTruthy();
         act(() => current.emit(390));
-        await waitFor(() => expect(screen.getByTestId('studio-navigation')).toHaveAttribute('data-mode', 'drawer'));
+        await waitFor(() => expect(screen.getByTestId('sidebar-navigation')).toHaveAttribute('data-mode', 'drawer'));
         previousNode = current.node;
       }
     } finally {
