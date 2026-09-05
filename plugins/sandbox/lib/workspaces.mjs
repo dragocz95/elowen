@@ -66,7 +66,7 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
     return row ? rowWorkspace(row) : null;
   };
 
-  const currentAccount = () => ctx.currentContributionUserId() ?? ctx.currentIdentity()?.elowenUserId ?? null;
+  const currentAccount = () => ctx.currentAccountUserId();
   const requireAccount = (override) => {
     const userId = override ?? currentAccount();
     if (!Number.isSafeInteger(userId) || userId <= 0) throw coded('a linked Elowen account is required', 'account_required', 401);

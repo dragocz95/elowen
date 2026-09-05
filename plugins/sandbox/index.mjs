@@ -37,7 +37,7 @@ export async function register(ctx) {
   const execution = createExecutionService({ ctx, db, dataDir, listWorkspaces: () => workspaces?.listWorkspaces() ?? [] });
   workspaces = createWorkspaceService({ ctx, db, dataDir, execution });
 
-  const accountId = () => ctx.currentContributionUserId() ?? ctx.currentIdentity()?.elowenUserId ?? null;
+  const accountId = () => ctx.currentAccountUserId();
   const sessionId = () => ctx.currentSessionId() ?? null;
   const accessibleProjects = () => {
     const access = ctx.currentAccess();

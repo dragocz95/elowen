@@ -154,7 +154,9 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       throw new Error('a workspace-scoped workflow node cannot switch to a sibling workspace');
     }
     const sandbox = ctx.control?.('sandbox');
-    const accountUserId = access.contributionUserId;
+    // The host's one account resolver, not the contribution owner alone: a turn with a verified identity
+    // and no contribution scope creates workspaces through Sandbox and must be able to name them here.
+    const accountUserId = access.accountUserId;
     if (!sandbox || !Number.isSafeInteger(accountUserId) || accountUserId <= 0) {
       throw new Error('Sandbox workspace scope is unavailable for this workflow');
     }

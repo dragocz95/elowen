@@ -15,7 +15,7 @@ import type { PluginSecretBag } from '../shared/pluginSecrets.js';
 import { commandsWithPlugins, isReservedCommandName, type PluginSlashCommand, type SlashSurface } from '../brain/slashCommands.js';
 import type { PluginManifest } from './manifest.js';
 import { assertPathAllowed, allowedRoots, defaultCwd, displayPath, isAllAccess, currentAccess, pathStateKey, sanitizePathOutput } from './pathGuard.js';
-import { currentIdentity, currentContributionUserId, currentDeliveryTarget, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentSessionId } from './policyContext.js';
+import { currentIdentity, currentContributionUserId, currentAccountUserId, currentDeliveryTarget, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentSessionId } from './policyContext.js';
 import { processRegistry } from '../brain/processRegistry.js';
 import { subagentSessionId } from '../brain/sessionId.js';
 import type { AskAnswer } from '../brain/events.js';
@@ -1417,6 +1417,7 @@ export class PluginRegistry {
       currentAccess,
       currentIdentity,
       currentContributionUserId,
+      currentAccountUserId,
       currentSessionId,
       currentDeliveryTarget,
       // The parent anchor is read from the HOST's own turn scope, never taken from the plugin: that is
@@ -1524,7 +1525,7 @@ export class PluginRegistry {
       // but inherits its delegator's contribution account, so contribution ownership is authoritative when
       // present. Authenticated plugin API routes have identity but no turn contribution and use the fallback.
       userConfig: () => {
-        const userId = currentContributionUserId() ?? currentIdentity()?.elowenUserId ?? null;
+        const userId = currentAccountUserId();
         const read = host?.userPluginConfig;
         if (userId === null || !read) return null;
         return read(userId, name);
@@ -1534,7 +1535,7 @@ export class PluginRegistry {
         return host.pluginSecrets.instance(name);
       },
       userSecrets: () => {
-        const userId = currentContributionUserId() ?? currentIdentity()?.elowenUserId ?? null;
+        const userId = currentAccountUserId();
         if (userId === null) return null;
         if (!host?.pluginSecrets) throw new Error('plugin secret vault is not wired in this process');
         return host.pluginSecrets.user(userId, name);
