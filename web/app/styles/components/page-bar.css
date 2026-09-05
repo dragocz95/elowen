@@ -75,3 +75,19 @@
    command menu and account screen own them), while skin, language and account remain reachable as icons.
    This keeps the account hit target inside a chat panel narrowed by the telemetry rail. */
 .top-bar--bar[data-chat-controls-narrow] :is(.top-bar__search, .top-bar__logout, .skin-switcher__name, .language-switcher__name) { display: none; }
+
+/* A phone keeps all three global actions and the conversation identity beside its one-tap chat actions.
+   Compact horizontal targets, not hidden controls; coarse-pointer targets retain their full height. */
+@media (max-width: 767px) {
+  :root .top-bar.top-bar--bar:has(.chat-page-toolbar) {
+    gap: 0.25rem;
+    padding-inline: 0.5rem;
+  }
+  .top-bar--bar:has(.chat-page-toolbar) .top-bar__menu,
+  .top-bar--bar:has(.chat-page-toolbar) .top-bar__actions > :is(button, a) {
+    width: 2rem;
+    min-width: 2rem;
+  }
+  .top-bar__page-slot .chat-page-toolbar { gap: 0.125rem; }
+  .top-bar__page-slot .chat-conversation-switcher { padding-inline: 0.25rem; }
+}

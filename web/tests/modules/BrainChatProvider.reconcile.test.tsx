@@ -45,7 +45,7 @@ vi.mock('../../lib/elowenClient', () => ({
   },
 }));
 
-import { BrainChatProvider, useBrainChat } from '../../modules/advisor/BrainChatProvider';
+import { BrainChatProvider, useBrainChat, useBrainChatInput } from '../../modules/advisor/BrainChatProvider';
 
 const FIX_MODEL: BrainModelOption = {
   provider: 'chatgpt-account', providerLabel: 'Účet ChatGPT', model: 'gpt-5.6-sol', exec: 'chatgpt-account/gpt-5.6-sol',
@@ -54,11 +54,12 @@ const FIX_MODEL: BrainModelOption = {
 
 function Harness() {
   const c = useBrainChat();
+  const input = useBrainChatInput();
   useEffect(() => { c.ensureAttached(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div>
       <span data-testid="turns">{c.turns.length}</span>
-      <span data-testid="draft">{c.input}</span>
+      <span data-testid="draft">{input}</span>
       <span data-testid="hasMore">{c.hasMoreHistory ? 'yes' : 'no'}</span>
       <span data-testid="ask">{c.ask?.id ?? 'none'}</span>
       <button onClick={() => c.setInput('unsent draft')}>type</button>

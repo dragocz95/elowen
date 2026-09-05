@@ -11,7 +11,8 @@ test('long mobile history stays accessible during live tool updates', async ({ a
       output: { title: 'result', kind: 'result' as const, text: `stored output ${i}` } }],
   })));
   const chat = new ChatPage(app);
-  await chat.goto();
+  await app.goto('/chat');
+  await chat.waitForReady();
   for (let count = 100; count <= 300; count += 50) {
     // A prepend restores the previous first row's position, not scrollTop=0.
     await app.locator('main').hover();
@@ -29,6 +30,25 @@ test('long mobile history stays accessible during live tool updates', async ({ a
   const cdp = await app.context().newCDPSession(app);
   await cdp.send('Performance.enable');
   const metrics = async () => Object.fromEntries((await cdp.send('Performance.getMetrics')).metrics.map(({ name, value }) => [name, value]));
+  await chat.composer.focus();
+  const typed = 'This is a message typed while a long conversation is open.';
+  const emptyHeight = await chat.composer.evaluate((element) => element.getBoundingClientRect().height);
+  const typingBefore = await metrics();
+  const typingStart = performance.now();
+  await chat.composer.pressSequentially(typed);
+  await expect(chat.composer).toHaveValue(typed);
+  const typingAfter = await metrics();
+  console.info(JSON.stringify({ scenario: 'typing', characters: typed.length,
+    elapsedMs: performance.now() - typingStart,
+    taskMs: (typingAfter.TaskDuration - typingBefore.TaskDuration) * 1000,
+    scriptMs: (typingAfter.ScriptDuration - typingBefore.ScriptDuration) * 1000,
+    layoutMs: (typingAfter.LayoutDuration - typingBefore.LayoutDuration) * 1000,
+    layouts: typingAfter.LayoutCount - typingBefore.LayoutCount }));
+  const grownHeight = await chat.composer.evaluate((element) => element.getBoundingClientRect().height);
+  expect(grownHeight).toBeGreaterThan(emptyHeight);
+  await chat.composer.fill('a');
+  await expect.poll(() => chat.composer.evaluate((element) => element.getBoundingClientRect().height)).toBeLessThan(grownHeight);
+  await chat.composer.fill('');
   const before = await metrics();
   for (let i = 0; i < 20; i++) {
     await sse.toolProgress('live-tool', `progress ${i}`);
