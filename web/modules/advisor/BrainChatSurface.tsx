@@ -1,12 +1,11 @@
 'use client';
-import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, ExternalLink, Compass, Hammer, Workflow, type LucideIcon } from 'lucide-react';
 import { toolGlyph } from '../../lib/toolGlyph';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { interpolate, plural, useTranslation } from '../../lib/i18n';
-import { useDismiss } from '../../lib/useDismiss';
 import { useBrand } from '../../lib/brand';
 import type { LocaleDict } from '../../lib/i18n/types';
 import { useMobileViewport } from '../../lib/useMobile';
@@ -18,7 +17,7 @@ import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Button, buttonClassName } from '../../components/ui/Button';
 import { Progress } from '../../components/ui/shadcn/progress';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '../../components/ui/shadcn/dropdown-menu';
-import { Popover, PopoverTrigger } from '../../components/ui/shadcn/popover';
+import { Popover, PopoverContent, PopoverTrigger } from '../../components/ui/shadcn/popover';
 import { Input } from '../../components/ui/Input';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { ModelIcon } from '../../components/ui/ModelIcon';
@@ -788,7 +787,25 @@ function ToolAuthoringHint({ turn, locale }: {
   );
 }
 
-export function Message({ turn, artifacts, narration, pendingInput, models, full, showRole, showThoughts, tk }: { turn: ChatTurn; artifacts: BrainInlineArtifact[]; narration?: string; pendingInput?: PluginChatPendingInput | null; models?: readonly BrainModelOption[]; full?: boolean; showRole?: boolean; showThoughts: boolean; tk?: string }) {
+type MessageProps = { turn: ChatTurn; artifacts: BrainInlineArtifact[]; narration?: string; pendingInput?: PluginChatPendingInput | null; models?: readonly BrainModelOption[]; full?: boolean; showRole?: boolean; showThoughts: boolean; tk?: string };
+
+const NO_ARTIFACTS: BrainInlineArtifact[] = [];
+
+/** Only artifact-bearing turns consume live narration and pending-input changes. Keep those updates
+ *  from invalidating every settled message, while still delivering them to every mounted artifact. */
+export function Message({ artifacts, narration, pendingInput, ...props }: MessageProps) {
+  const { turn } = props;
+  const attached = useMemo(() => artifacts.filter((artifact) => turn.role === 'elowen'
+    && turn.segments.some((segment) => segment.kind === 'tools'
+      && segment.items.some((tool) => tool.id === artifact.toolCallId))), [turn, artifacts]);
+  return <MessageBody {...props} artifacts={attached.length ? attached : NO_ARTIFACTS}
+    narration={attached.length ? narration : undefined}
+    pendingInput={attached.length ? pendingInput : undefined} />;
+}
+
+/** Stored turns retain their identity across stream updates. Keep their mounted, interactive history
+ *  out of the live render path rather than hiding or removing it. */
+const MessageBody = memo(function MessageBody({ turn, artifacts, narration, pendingInput, models, full, showRole, showThoughts, tk }: MessageProps) {
   const { t, locale } = useTranslation();
   const { agentName } = useBrand();
   if (turn.role === 'divider') return <ContextDivider full={full} />;
@@ -846,7 +863,7 @@ export function Message({ turn, artifacts, narration, pendingInput, models, full
     );
   }
   return <div data-tk={tk} data-testid="chat-turn" data-role={roleAttr} className="mr-4 flex flex-col gap-1.5 self-start"><div data-testid="chat-assistant-body" className="flex flex-col gap-1.5">{body}</div><MessageMeta turn={turn} models={models} /></div>;
-}
+});
 
 /** Opens the conversation's reasoning controls. The historic test id stays stable for browser helpers,
  *  but this is no longer a second display toggle: the button and `/reasoning` open the same modal. */
@@ -943,10 +960,8 @@ function WorkModeSwitch({ variant }: { variant: 'full' | 'compact' }) {
 /** Phone-only overflow for the conversation bar: on a narrow screen the bar can't hold the model picker
  *  inline without cramming, so it folds behind one ⋯ button. The work-mode indicator deliberately does NOT
  *  live here any more — the composer's WorkModeSwitch shows (and changes) the mode on every surface, so a
- *  second, read-only mention would be noise. The reasoning button is also NOT here — it is changed often
- *  enough that burying it behind two taps was the complaint. A transient popover (outside-pointer / Escape
- *  dismiss, same grammar as ModelPicker), never a persistent panel. Desktop keeps every control inline and
- *  never mounts this. */
+ *  second, read-only mention would be noise. Phone actions lead the shared collision-aware popover;
+ *  pickers follow them. Narrow desktops retain the picker fallback without duplicating inline actions. */
 function BarOverflowMenu({ folded, onOpenTasks, onOpenReasoning, onOpenTelemetry, onNewChat }: {
   /** A phone: the bar keeps only the conversation name and this menu, so the per-conversation actions
    *  (reasoning, telemetry, new chat) fold in here as icon rows. Desktop keeps them inline. */
@@ -958,42 +973,39 @@ function BarOverflowMenu({ folded, onOpenTasks, onOpenReasoning, onOpenTelemetry
 }) {
   const { t } = useTranslation();
   const [open, setOpen] = useState(false);
-  const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  useDismiss(rootRef, open, () => setOpen(false));
+  const actionPicked = useRef(false);
   const rowClass = 'flex items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm text-foreground transition-colors hover:bg-accent';
   /** A row's action opens a modal or drawer whose focus scope remembers what was focused when it opened.
    *  The row itself is gone with the menu in that same commit, so focus is handed to the ⋯ trigger FIRST —
    *  that is where the overlay returns it on close, and a control that survives is the only one it can. */
   const pick = (action: () => void) => () => {
-    triggerRef.current?.focus();
+    actionPicked.current = true;
+    triggerRef.current?.focus({ preventScroll: true });
     setOpen(false);
     action();
   };
   return (
-    <div ref={rootRef} className="relative shrink-0">
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
       <button
         ref={triggerRef}
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
         aria-label={t.chat.moreOptions}
         title={t.chat.moreOptions}
         className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
       >
         <MoreHorizontal size={18} aria-hidden />
       </button>
-      {/* A plain popover, NOT `role="menu"`: that role promises menuitem children and arrow-key roving
-          focus, and this popover leads with the model picker — a composite control, not a menu row — so
-          the promise was one a screen reader could not cash. */}
-      {open ? (
-        <div data-chat-popover className="absolute right-0 z-20 mt-1 flex w-60 flex-col gap-0.5 rounded-lg border border-border bg-muted p-1.5 shadow-lg">
-          {/* The picker is the menu's heading — it is a control, not a menu row, so it reads wrong pushed
-              below one. Plain rows follow it. */}
-          <div className="px-1 pb-1"><ModelPicker variant="full" /></div>
-          {/* Where the agent works belongs beside what it is: the phone folds both away, so both come back
-              here rather than leaving the directory reachable only on a desktop. */}
-          <div className="px-1 pb-1"><ProjectPicker variant="full" /></div>
+      </PopoverTrigger>
+      <PopoverContent data-chat-popover align="end" aria-label={t.chat.moreOptions}
+        className="flex w-60 max-w-[calc(100vw-1.5rem)] max-h-[var(--radix-popover-content-available-height)] flex-col gap-0.5 overflow-y-auto p-1.5"
+        onCloseAutoFocus={(event) => {
+          // A picked action already handed focus to its modal. Do not steal it back on unmount.
+          if (actionPicked.current) event.preventDefault();
+          actionPicked.current = false;
+        }}>
+          {/* Frequently used phone actions precede the wider composite pickers. */}
           {folded ? (
             <>
               <button type="button" data-testid="chat-thoughts-toggle" onClick={pick(onOpenReasoning)} className={rowClass}>
@@ -1017,9 +1029,10 @@ function BarOverflowMenu({ folded, onOpenTasks, onOpenReasoning, onOpenTelemetry
             <ListChecks size={16} className="text-muted-foreground" aria-hidden />
             <span>{t.chat.todos}</span>
           </button>
-        </div>
-      ) : null}
-    </div>
+          <div className="px-1 pt-1"><ModelPicker variant="full" /></div>
+          <div className="px-1 pb-1"><ProjectPicker variant="full" /></div>
+      </PopoverContent>
+    </Popover>
   );
 }
 

@@ -34,6 +34,7 @@ export interface RecordedSend {
 export type RecordedCall =
   | { kind: 'model'; provider?: string; model?: string; session?: string; at: number }
   | { kind: 'abort'; session?: string; client?: string; at: number }
+  | { kind: 'think'; level: string; session?: string; at: number }
   | { kind: 'command'; name: string; argument?: string; session?: string; at: number };
 
 const recordedSends: RecordedSend[] = [];
@@ -161,6 +162,17 @@ export function registerBrainRoutes(app: Hono): void {
       at: Date.now(),
     });
     return c.json({ ok: true, accepted: true }, 202);
+  });
+
+  app.post('/brain/think', async (c) => {
+    const body = await c.req.json() as { level?: unknown; session?: unknown };
+    const status = getResponse('brain/status', brainStatus);
+    if (typeof body.level !== 'string' || !status.thinkingLevels?.includes(body.level)) {
+      return c.json({ error: 'Unsupported thinking level' }, 400);
+    }
+    recordedCalls.push({ kind: 'think', level: body.level,
+      session: typeof body.session === 'string' ? body.session : undefined, at: Date.now() });
+    return c.json({ thinkingLevel: body.level });
   });
 
   app.post('/brain/command', async (c) => {

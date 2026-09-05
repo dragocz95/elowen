@@ -105,6 +105,24 @@ describe('conversation bar controls', () => {
     expect(popover).toContainElement(screen.getByRole('button', { name: 'New chat' }));
   });
 
+  it('positions the top overflow with the shared collision-aware popover and opens telemetry', async () => {
+    setViewport(true);
+    const openTelemetry = vi.fn();
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><PageHeaderProvider><BrainChatProvider>
+      <PageTopBarHost />
+      <BrainChatSurface variant="full" onOpenTelemetry={openTelemetry} />
+    </BrainChatProvider></PageHeaderProvider></ToastProvider></Wrapper>);
+    const trigger = await screen.findByRole('button', { name: 'More options' });
+    fireEvent.click(trigger);
+    const popover = document.querySelector('[data-chat-popover]');
+    expect(popover).toHaveAttribute('data-slot', 'popover-content');
+    fireEvent.click(screen.getByRole('button', { name: 'Show telemetry' }));
+    expect(openTelemetry).toHaveBeenCalledOnce();
+    await waitFor(() => expect(document.querySelector('[data-chat-popover]')).toBeNull());
+    expect(trigger).toHaveFocus();
+  });
+
   it('opens the same Tasks modal as `/tasks` from the phone overflow', async () => {
     setViewport(true);
     renderSurface();
