@@ -1,7 +1,6 @@
 'use client';
 import { Activity, useCallback, useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
-import { UserCog, Mail, Boxes, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, Brain, SquareTerminal, Settings2 } from 'lucide-react';
-import type { LucideIcon } from 'lucide-react';
+import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, Brain, Settings2 } from 'lucide-react';
 import { ElowenApiError } from '../../lib/elowenClient';
 import type { PlatformLinkKey, ProfilePatch } from '../../lib/types';
 
@@ -42,17 +41,12 @@ import { TerminalSection } from './TerminalSection';
 import { AccountMemorySection } from './AccountMemorySection';
 import { PluginAccountSection } from './PluginAccountSection';
 import { parsePluginAccountSectionId, parsePluginUserConfigSectionId, pluginAccountSectionId, pluginUserConfigSectionId } from './pluginSections';
+import { accountSections, isAccountSection, type AccountSection } from './sections';
 import { UserPluginConfigSection } from './UserPluginConfigSection';
 import { userPluginConfigDescription, userPluginConfigLabel } from './userPluginConfigStrings';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
 import { rowAnchor } from '../../lib/rowAnchors';
 import { useRowAnchor } from '../../lib/useRowAnchor';
-
-const CORE_ACCOUNT_SECTIONS = ['profile', 'security', 'notifications', 'personality', 'cli', 'terminal', 'memory'] as const;
-type CoreAccountSection = typeof CORE_ACCOUNT_SECTIONS[number];
-type AccountSection = CoreAccountSection | `plugin-account:${string}` | `plugin-user-config:${string}`;
-const isAccountSection = (value: string): value is AccountSection =>
-  (CORE_ACCOUNT_SECTIONS as readonly string[]).includes(value) || parsePluginAccountSectionId(value) !== null || parsePluginUserConfigSectionId(value) !== null;
 
 /** Mount a section only after its first visit, then let React Activity retain its local form state.
  *  This avoids eagerly starting every section's queries while making section switches lossless. */
@@ -316,19 +310,12 @@ export function AccountView() {
   };
   const canSubmitPassword = currentPassword.length > 0 && newPassword.length >= 8 && newPassword === confirmPassword;
 
-  // Ordered by settings importance: account basics first, then the Elowen AI runtime and what shapes it
-  // (memory, personality), then operational (notifications, security), with the cosmetic terminal last.
-  const spatialSections: { id: AccountSection; icon: LucideIcon; label: string; description: string }[] = [
-    { id: 'profile', icon: UserCog, label: t.account.tabProfile, description: t.account.profileHint },
+  // The same list, in the same order, that the sidebar draws its sub-items from — the menu is now the
+  // only way between sections, so a second copy here would offer a section this page cannot open.
+  const spatialSections = accountSections(t, [
     ...deckPluginSections.map(({ id, icon, label, description }) => ({ id, icon, label, description })),
     ...userConfigSections.map(({ id, icon, label, description }) => ({ id, icon, label, description })),
-    { id: 'cli', icon: Boxes, label: t.account.tabCli, description: t.cli.modelRolesHint },
-    { id: 'memory', icon: Brain, label: t.account.tabMemory, description: t.help.memoryRecall },
-    { id: 'personality', icon: Sparkles, label: t.account.tabPersonality, description: t.personality.intro },
-    { id: 'notifications', icon: Bell, label: t.account.tabNotifications, description: t.help.pushEnable },
-    { id: 'security', icon: KeyRound, label: t.account.tabSecurity, description: t.account.passwordHint },
-    { id: 'terminal', icon: SquareTerminal, label: t.account.tabTerminal, description: t.terminal.colorsHelp },
-  ];
+  ]);
   const profileFeedback = combineSaveFeedback(
     { status: profileSave.status, retry: profileSave.retry },
     { status: linksSave.status, retry: linksSave.retry },
