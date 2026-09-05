@@ -37,7 +37,11 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) {
   --content-max: 72rem;
   --chat-max: 96rem;
-  --studio-top-bar-height: 3.125rem;
+  /* The chrome strip's height, and it is no longer a number of this skin's own. The bar stands beside the
+     navigation header, so the hairline under the two has to be ONE line: both follow `--topbar-height`
+     (which aliases `--sidebar-header-height`, 58px). The alias name stays because the sticky register
+     header and the assistant rail's header both offset from it. */
+  --studio-top-bar-height: var(--topbar-height);
 }
 
 /* ASK turns the application into one inset working card beside the chat rail. These are the measured

@@ -105,6 +105,13 @@
   --sidebar-sub-indent: 1.75rem;    /* 28px, `pl-7` per nesting level */
   --sidebar-text: 0.8125rem;        /* 13px, every row and group label */
   --sidebar-header-height: 3.625rem; /* 58px, the switcher row above the header hairline */
+  --sidebar-switcher-height: 2.5rem; /* 40px, the switcher itself, centred inside that header */
+  /* The page's top bar is the SAME height as the sidebar header, because the hairline under each is ONE
+     line across the whole window: the column's header and the page's bar are two halves of one frame,
+     and 58px beside a 50px bar is what left a visible step where the two met. Stated as an ALIAS rather
+     than as a second 58px — they are one measurement, so a design that retunes the frame moves both by
+     moving the sidebar header. */
+  --topbar-height: var(--sidebar-header-height);
   --sidebar-footer-height: 3rem;    /* 48px, the fold's row below the footer hairline */
   --sidebar-search-height: 2rem;    /* 32px, the command palette's field under the header */
   /* The disclosure caret's own duration. Not `--motion-base`: the Studio skins retune that to 150ms for
