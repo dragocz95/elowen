@@ -76,11 +76,30 @@ describe('design tokens', () => {
   // decision, 5 Sep 2026: 1:1 with the reference dashboard). The rule is still DECLARED, painted from a
   // token of its own, so a design that does step its column off the page gets the seam back by setting
   // one value — and it must not be `--color-sidebar-border`, which is the internal hairline the header,
-  // the group seams and the footer are still drawn with.
+  // the account separator and the footer are still drawn with.
   it('draws no outer rule down the navigation column', () => {
     expect(css).toContain('--color-sidebar-rule: transparent');
     expect(components).toMatch(/\.sidebar-nav\[data-side='left'\]\s*\{\s*border-right:\s*1px solid var\(--color-sidebar-rule\)/);
     expect(components).toMatch(/\.sidebar-nav\[data-side='right'\]\s*\{\s*border-left:\s*1px solid var\(--color-sidebar-rule\)/);
+  });
+
+  // Inside the column a group is introduced by its LABEL and by the air the label carries — 16px above,
+  // 8px below — and by nothing else. The reference draws exactly ONE hairline in the menu, the rule above
+  // the trailing account row; a seam under the landing block or between two labelled groups is a line it
+  // does not have (owner, 5 Sep 2026, checked against a fresh screenshot).
+  it('separates groups by their label alone, with a single hairline above the account', () => {
+    expect(components).not.toMatch(/\.sidebar-nav__group \+ \.sidebar-nav__group\s*\{[^}]*border-top/);
+    expect(components).toMatch(/\.sidebar-nav__group-label\s*\{[^}]*margin:\s*1rem 0 0\.5rem/);
+    expect(components).toMatch(/\.sidebar-nav__separator\s*\{[^}]*background:\s*var\(--color-sidebar-border\)/);
+  });
+
+  // The quick-search field is a white shape inside a light hairline at the row radius. Both halves are
+  // load-bearing: the fill must not be the canvas the column itself is grounded on, or the field is an
+  // outline around nothing, and the edge is the reference's own.
+  it('draws the quick-search field as a filled shape with a hairline edge', () => {
+    expect(components).toMatch(
+      /\.sidebar-nav__search-field\s*\{[^}]*border:\s*1px solid var\(--color-sidebar-border\);[^}]*background:\s*var\(--color-card\)/,
+    );
   });
 
   it('uses one account-dark token for shared document surfaces', () => {

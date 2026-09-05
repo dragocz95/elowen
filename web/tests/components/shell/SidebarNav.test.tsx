@@ -85,7 +85,11 @@ describe('SidebarNav destinations', () => {
     expect(groups[0]!.querySelector('[data-sidebar="group-label"]')).toBeNull();
     expect(groups[1]!.querySelector('[data-sidebar="group-label"]')!.textContent).toBe('Work');
     expect(groups[2]!.querySelector('[data-sidebar="group-label"]')!.textContent).toBe('Instance');
-    expect(container.querySelector('[data-sidebar="separator"]')).not.toBeNull();
+    // ONE separator in the whole column, and it sits immediately before the account block. Every other
+    // boundary is carried by the group label alone, which is how the reference draws them.
+    const separators = container.querySelectorAll('[data-sidebar="separator"]');
+    expect(separators).toHaveLength(1);
+    expect(separators[0]!.nextElementSibling).toBe(groups[3]!);
     // A disclosure, not a link: the account page is a deck, so its own sections hang under this row like
     // any other world's pages.
     expect(groups[3]!.contains(screen.getByRole('button', { name: 'Account' }))).toBe(true);
