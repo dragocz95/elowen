@@ -289,7 +289,7 @@ export class PluginRegistry {
    *  Resolution consults it live, so a control whose domain has no owner is unreachable rather than
    *  half-working. Travels with its control through `merge`. */
   readonly controlRequires = new Map<string, string>();
-  /** Plugin-contributed chat slash commands (prompt macros), keyed by command name (unique). */
+  /** Plugin-contributed chat slash commands (prompt macros and pickers), keyed by command name (unique). */
   readonly commands = new Map<string, PluginCommand>();
   readonly commandOwner = new Map<string, string>();
   // Per-contribution ownership for the flat lists above — index-aligned with their sibling array, so
@@ -1041,8 +1041,12 @@ export class PluginRegistry {
         // 1–32 chars, kebab-case. (The collision with another plugin's command is enforced at merge().)
         if (!/^[a-z0-9][a-z0-9-]{0,31}$/.test(clean)) { scoped.warn(`registerCommand refused: "${command.name}" is not kebab-case (a-z, 0-9, dashes)`); return; }
         if (isReservedCommandName(clean)) { scoped.warn(`registerCommand refused: "${clean}" shadows a built-in or reserved command`); return; }
-        if (typeof command.prompt !== 'string' || !command.prompt.trim()) { scoped.warn(`registerCommand refused: "${clean}" has an empty prompt`); return; }
-        this.commands.set(clean, { name: clean, description: command.description ?? '', prompt: command.prompt, surfaces: command.surfaces });
+        // Kind-aware prompt validation. A macro is nothing without its prompt; a picker has no model turn
+        // to expand one into, so a prompt there would be a declaration nothing can ever run.
+        const kind = command.kind === 'picker' ? 'picker' : 'prompt';
+        if (kind === 'prompt' && (typeof command.prompt !== 'string' || !command.prompt.trim())) { scoped.warn(`registerCommand refused: "${clean}" has an empty prompt`); return; }
+        if (kind === 'picker' && command.prompt !== undefined) { scoped.warn(`registerCommand refused: picker "${clean}" must not carry a prompt (a picker has no model turn to expand it into)`); return; }
+        this.commands.set(clean, { name: clean, description: command.description ?? '', kind, prompt: command.prompt, surfaces: command.surfaces });
         this.commandOwner.set(clean, name);
       },
       // The SINGLE source for a chat surface's command menu: built-ins (surface-scoped, admin included so

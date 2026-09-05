@@ -160,6 +160,27 @@ describe('slash command registry', () => {
       expect(merged.some((c) => c.name === 'deploy')).toBe(true); // an ordinary plugin command still passes
     });
 
+    /** A plugin may also declare a command a SURFACE draws itself. The plugin owns the declaration (so
+     *  disabling it removes the entry from every menu through this same merge), the surface owns the
+     *  renderer — a plugin can ship neither a TUI overlay nor a web dock modal. It therefore publishes as
+     *  a surface-local picker with no prompt: there is no model turn behind it. */
+    it('publishes a plugin picker command as a surface-local picker with no prompt', () => {
+      const picker = [{ name: 'sandbox', description: 'Pick a workspace', kind: 'picker' as const, plugin: 'sbx' }];
+      const merged = commandsWithPlugins('cli', true, picker, LOADED).find((c) => c.name === 'sandbox');
+      expect(merged).toMatchObject({ kind: 'picker', execution: 'surface-local', plugin: 'sbx' });
+      expect(merged?.prompt).toBeUndefined();
+    });
+
+    it('keeps a plugin picker from shadowing a built-in or an adapter-owned name', () => {
+      // The built-in stays, exactly once, and keeps its own kind — the picker never joins it.
+      const withHelp = commandsWithPlugins('cli', true, [{ name: 'help', description: 'x', kind: 'picker' as const }], LOADED);
+      expect(withHelp.filter((c) => c.name === 'help')).toHaveLength(1);
+      expect(withHelp.find((c) => c.name === 'help')?.kind).toBe('info');
+      // An adapter-owned name is reserved but published to no surface, so the picker must vanish entirely.
+      const withVoice = commandsWithPlugins('discord', true, [{ name: 'voice', description: 'x', kind: 'picker' as const }], LOADED);
+      expect(withVoice.some((c) => c.name === 'voice')).toBe(false);
+    });
+
     it('respects a plugin command surface restriction', () => {
       const cliOnly = [{ name: 'lint', description: 'x', prompt: 'lint it', surfaces: ['cli' as const] }];
       expect(commandsWithPlugins('cli', true, cliOnly, LOADED).some((c) => c.name === 'lint')).toBe(true);
@@ -212,6 +233,24 @@ describe('slash command registry', () => {
       expect(tpl).toMatchObject({ name: 'deploy', description: 'Ship it', content: 'Deploy to $1: $ARGUMENTS' });
       expect(tpl.filePath).toBe('db://prompts/deploy'); // synthetic, never read from disk
       expect(tpl.sourceInfo.path).toBe('db://prompts/deploy');
+    });
+
+    /** The spawner feeds this EVERY registered plugin command, so the kind filter has to live here: a
+     *  picker has no prompt, and letting one through would mint a PromptTemplate with undefined content
+     *  that PI would then expand as an empty turn. */
+    it('excludes plugin picker commands while keeping the prompt macros', () => {
+      const templates = buildPromptTemplates([
+        { name: 'deploy', description: 'Ship it', kind: 'prompt', prompt: 'Deploy to $1' },
+        { name: 'sandbox', description: 'Pick a workspace', kind: 'picker' },
+        { name: 'legacy', description: 'No kind declared', prompt: 'Still a macro' },
+      ]);
+      expect(templates.map((t) => t.name)).toEqual(['deploy', 'legacy']);
+      expect(templates.every((t) => typeof t.content === 'string' && t.content.length > 0)).toBe(true);
+    });
+
+    it('skips a command with no usable prompt instead of minting an empty template', () => {
+      expect(buildPromptTemplates([{ name: 'broken', description: 'x' }])).toEqual([]);
+      expect(buildPromptTemplates([{ name: 'broken', description: 'x', prompt: '' }])).toEqual([]);
     });
   });
 

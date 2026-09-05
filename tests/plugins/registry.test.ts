@@ -281,6 +281,16 @@ describe('PluginRegistry', () => {
       }
     });
 
+    /** A plugin picker reaches the adapter as a surface-local picker, not as a prompt macro — which is
+     *  what tells the surface to draw its own chooser instead of sending a slash to the brain. */
+    it('publishes a plugin picker command as kind:"picker" + execution:"surface-local"', () => {
+      const reg = new PluginRegistry();
+      const ctx = reg.contextFor('sbx', {}, noopLog, U, U, U, U, U, U, U, U, U, U, U, U, U,
+        () => [{ name: 'workspace', description: 'Pick a workspace', kind: 'picker' as const, plugin: 'sbx' }]);
+      const cmd = ctx.chatCommands('discord').find((c) => c.name === 'workspace');
+      expect(cmd).toMatchObject({ kind: 'picker', execution: 'surface-local' });
+    });
+
     it('honours a plugin command\'s surface restriction', () => {
       const reg = new PluginRegistry();
       const ctx = reg.contextFor('ops', {}, noopLog, U, U, U, U, U, U, U, U, U, U, U, U, U,
@@ -535,6 +545,45 @@ describe('PluginRegistry', () => {
       ctx.registerCommand({ name: 'display', description: 'x', prompt: 'y' });
       expect(reg.commands.has('voice')).toBe(false);
       expect(reg.commands.has('display')).toBe(false);
+      expect(warns.length).toBe(2);
+    });
+
+    /** The second kind a plugin may declare: a command a SURFACE draws as its own chooser. The plugin
+     *  owns the declaration (so the same registry gate that hides a disabled plugin's macros hides this
+     *  too), the surface owns the renderer. It stores `kind:'picker'` and carries no prompt. */
+    it('accepts a picker command and stores its kind without a prompt', () => {
+      const reg = new PluginRegistry();
+      reg.contextFor('sbx', {}, noopLog).registerCommand({ name: 'workspace', description: 'Pick a workspace', kind: 'picker' });
+      expect(reg.commands.get('workspace')).toMatchObject({ name: 'workspace', kind: 'picker' });
+      expect(reg.commands.get('workspace')?.prompt).toBeUndefined();
+      expect(reg.commandOwner.get('workspace')).toBe('sbx');
+    });
+
+    it('stamps kind:"prompt" on a command that declares none (every pre-existing caller)', () => {
+      const reg = new PluginRegistry();
+      reg.contextFor('ops', {}, noopLog).registerCommand({ name: 'deploy', description: 'Ship', prompt: 'Deploy $ARGS' });
+      expect(reg.commands.get('deploy')).toMatchObject({ kind: 'prompt', prompt: 'Deploy $ARGS' });
+    });
+
+    /** A picker never reaches the model, so a prompt on one is a declaration nothing can ever run —
+     *  refused loudly rather than half-registered. */
+    it('refuses a picker command that carries a prompt', () => {
+      const warns: string[] = [];
+      const reg = new PluginRegistry();
+      const ctx = reg.contextFor('sbx', {}, { info() {}, warn: (m: string) => warns.push(m), error() {} });
+      ctx.registerCommand({ name: 'workspace', description: 'x', kind: 'picker', prompt: 'do it' });
+      expect(reg.commands.has('workspace')).toBe(false);
+      expect(warns.some((w) => w.includes('workspace'))).toBe(true);
+    });
+
+    it('still refuses a picker whose name shadows a built-in or an adapter-owned command', () => {
+      const warns: string[] = [];
+      const reg = new PluginRegistry();
+      const ctx = reg.contextFor('sbx', {}, { info() {}, warn: (m: string) => warns.push(m), error() {} });
+      ctx.registerCommand({ name: 'help', description: 'x', kind: 'picker' });
+      ctx.registerCommand({ name: 'voice', description: 'x', kind: 'picker' });
+      expect(reg.commands.has('help')).toBe(false);
+      expect(reg.commands.has('voice')).toBe(false);
       expect(warns.length).toBe(2);
     });
 

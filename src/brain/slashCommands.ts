@@ -199,9 +199,17 @@ export function isReservedCommandName(name: string): boolean {
   return SLASH_COMMANDS.some((c) => c.name === name);
 }
 
-/** A plugin-contributed prompt command as a SlashCommandDef, for merging into a surface's menu. */
-export interface PluginSlashCommand { name: string; description: string; prompt: string; surfaces?: SlashSurface[]; plugin?: string }
+/** A plugin-contributed command as a SlashCommandDef, for merging into a surface's menu. `kind` is how a
+ *  surface RENDERS it: an absent `kind` (and every pre-existing caller) is the prompt macro carrying its
+ *  `prompt`; `'picker'` is a plugin-declared command a surface draws as its own chooser, with no prompt
+ *  and no model turn behind it. */
+export interface PluginSlashCommand { name: string; description: string; kind?: 'prompt' | 'picker'; prompt?: string; surfaces?: SlashSurface[]; plugin?: string }
 function pluginCommandDef(cmd: PluginSlashCommand): PublishedSlashCommand {
+  // A picker is surface-local by construction: the plugin owns the declaration, the surface owns the
+  // renderer, and no prompt exists to hand to the model.
+  if (cmd.kind === 'picker') {
+    return { name: cmd.name, description: cmd.description, kind: 'picker', execution: 'surface-local', surfaces: cmd.surfaces, plugin: cmd.plugin };
+  }
   return { name: cmd.name, description: cmd.description, kind: 'prompt', execution: 'plugin-prompt', prompt: cmd.prompt, surfaces: cmd.surfaces, plugin: cmd.plugin };
 }
 
@@ -241,15 +249,23 @@ export function isPromptCommand(text: string, session: { promptTemplates: Readon
   return !!name && session.promptTemplates.some((t) => t.name === name);
 }
 
-export function buildPromptTemplates(commands: Iterable<{ name: string; description: string; prompt: string }>): PromptTemplate[] {
-  return [...commands].map((c) => {
-    const path = `db://prompts/${c.name}`;
-    return {
-      name: c.name,
-      description: c.description,
-      content: c.prompt,
-      filePath: path,
-      sourceInfo: createSyntheticSourceInfo(path, { source: 'plugin', scope: 'user' }),
-    };
-  });
+export function buildPromptTemplates(
+  commands: Iterable<{ name: string; description: string; kind?: 'prompt' | 'picker'; prompt?: string }>,
+): PromptTemplate[] {
+  // The filter lives HERE, not at the call site, because the spawner hands us EVERY registered plugin
+  // command and this is the one place they become templates — a picker has no prompt to expand, and a
+  // future caller cannot forget a guard it never has to write.
+  return [...commands]
+    .filter((c): c is { name: string; description: string; kind?: 'prompt'; prompt: string } =>
+      c.kind !== 'picker' && typeof c.prompt === 'string' && c.prompt.length > 0)
+    .map((c) => {
+      const path = `db://prompts/${c.name}`;
+      return {
+        name: c.name,
+        description: c.description,
+        content: c.prompt,
+        filePath: path,
+        sourceInfo: createSyntheticSourceInfo(path, { source: 'plugin', scope: 'user' }),
+      };
+    });
 }

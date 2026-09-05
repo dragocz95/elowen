@@ -250,7 +250,10 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
         const ctx = staging.contextFor(name, opts.config?.[name] ?? {}, opts.logger, opts.dataRoot, opts.notify, opts.listModels, opts.resolveProvider, manifest.capabilities ?? {}, manifest.provides, opts.answerQuestion, opts.embeddings, opts.embeddingConfig, () => registry.tools.map((t) => t.name), opts.timezone, opts.subagentTypes, opts.requestReload,
           // Like `toolNames`, this closes over the MERGED registry (not the staging one): the adapter reads it
           // long after every plugin has merged, so it must see the whole live set of plugin prompt commands.
-          () => [...registry.commands.values()].map((c) => ({ name: c.name, description: c.description, prompt: c.prompt, surfaces: c.surfaces, plugin: registry.commandOwner.get(c.name) })),
+          // `kind` rides along: it decides whether the published projection is a prompt macro or a
+          // surface-drawn picker (see pluginCommandDef), so dropping it here would republish every picker
+          // as a prompt macro carrying no prompt.
+          () => [...registry.commands.values()].map((c) => ({ name: c.name, description: c.description, kind: c.kind, prompt: c.prompt, surfaces: c.surfaces, plugin: registry.commandOwner.get(c.name) })),
           opts.delegateContextChars, opts.delegatedChildren, opts.mcpBridgeSnapshot, opts.delegatedTurnsOutOfProcess,
           opts.delegatedWorkflowExpansionAvailable,
           // Reverse mutation of a daemon-owned DAG is gated INSIDE contextFor by the manifest's declared

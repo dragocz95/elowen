@@ -1328,18 +1328,31 @@ export interface KnownControls {
   skillCatalog: SkillCatalogControl;
 }
 
-/** A plugin-contributed chat slash command (a reusable prompt macro, opencode-style). Invoking `/name args`
- *  sends `prompt` to the agent as a normal user turn; PI's native prompt-template engine substitutes the
- *  argument placeholders — `$ARGUMENTS`/`$@` (everything typed after the command), `$1`..`$9` (positionals),
- *  `${N:-default}`, `${@:N}`. Surfaces render it in their command menu alongside the built-ins and send the
- *  slash RAW. This is how a plugin adds a new `/command` to the CLI without touching core. */
+/** A plugin-contributed chat slash command. Two kinds, and `kind` is what a surface RENDERS from:
+ *
+ *  `'prompt'` (the default, and what every pre-existing caller gets by omitting `kind`) is the reusable
+ *  prompt macro, opencode-style. Invoking `/name args` sends `prompt` to the agent as a normal user turn;
+ *  PI's native prompt-template engine substitutes the argument placeholders — `$ARGUMENTS`/`$@`
+ *  (everything typed after the command), `$1`..`$9` (positionals), `${N:-default}`, `${@:N}`. Surfaces
+ *  render it in their command menu alongside the built-ins and send the slash RAW. This is how a plugin
+ *  adds a new `/command` to the CLI without touching core.
+ *
+ *  `'picker'` is a plugin-owned command a SURFACE draws as its own chooser. It is published as
+ *  `kind:'picker'` + `execution:'surface-local'`, carries NO prompt, and never reaches the model — there
+ *  is no turn to expand into. The split is deliberate: the PLUGIN owns the declaration (so disabling the
+ *  plugin removes the command from every menu through the very same registry gate that governs a macro),
+ *  while the SURFACE owns the renderer, because a plugin can ship neither a TUI overlay nor a web dock
+ *  modal. */
 export interface PluginCommand {
   /** kebab-case, unique across plugins and not shadowing a built-in command. */
   name: string;
   /** One-line help shown in the command menu. */
   description: string;
-  /** The prompt sent to the agent; PI substitutes `$ARGUMENTS`/`$@`, `$1`..`$9`, `${N:-default}`. */
-  prompt: string;
+  /** How the surface renders it. Omitted = `'prompt'`, the prompt macro every earlier caller registers. */
+  kind?: 'prompt' | 'picker';
+  /** The prompt sent to the agent; PI substitutes `$ARGUMENTS`/`$@`, `$1`..`$9`, `${N:-default}`.
+   *  REQUIRED for a `'prompt'` command and REFUSED for a `'picker'`, which has no model turn. */
+  prompt?: string;
   /** Which surfaces expose it (default: all). */
   surfaces?: SlashSurface[];
 }
@@ -1436,9 +1449,12 @@ export interface PluginContext {
    *  matter and a reload is picked up automatically. For exactly that reason the result must NEVER be
    *  cached in a variable: call it again on every use, or you are holding a dead generation. */
   control<K extends keyof KnownControls>(name: K): KnownControls[K] | undefined;
-  /** Contribute a chat slash command (a prompt macro) that shows up in every surface's command menu.
-   *  Refused (and warned) if the name is not kebab-case, shadows a built-in, or collides with another
-   *  plugin's command. */
+  /** Contribute a chat slash command that shows up in every surface's command menu — either a prompt
+   *  macro (`kind:'prompt'`, the default: its `prompt` is sent to the agent and PI expands the argument
+   *  placeholders) or a picker (`kind:'picker'`: published as `execution:'surface-local'` with no prompt,
+   *  drawn by each surface as its own chooser and never sent to the model).
+   *  Refused (and warned) if the name is not kebab-case, shadows a built-in, collides with another
+   *  plugin's command, a prompt macro has an empty prompt, or a picker supplies one. */
   registerCommand(command: PluginCommand): void;
   /** Core chat command metadata for a platform: built-ins + plugin prompt commands, each with its `kind`
    *  (how to render it) AND its `execution` (which mechanism runs it) — together the whole answer to
