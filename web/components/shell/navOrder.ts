@@ -8,7 +8,7 @@
  *
  *  This is the navigation MODEL's ordering rule, not a presentation detail, which is why it lives beside
  *  navEntry.ts rather than inside the component that happened to need it first. */
-export const NAV_ROUTE_ORDER = [
+const NAV_ROUTE_ORDER = [
   '/dash', '/chat',
   '/projects', '/p/editor',
   '/p/subagent', '/p/cronjob', '/p/skills',

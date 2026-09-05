@@ -93,10 +93,9 @@ export default tseslint.config(
     files: ['web/app/**/*.{ts,tsx}', 'web/components/**/*.{ts,tsx}', 'web/modules/**/*.{ts,tsx}'],
     ignores: [
       'web/components/ui/shadcn/**',
-      // These shells are columns on desktop and modal drawers on narrow screens. They cannot join
-      // the body-portalled overlay stack without making their own shell ancestor inert.
-      'web/components/shell/OrbitalNav.tsx',
-      'web/components/shell/StudioNavigation.tsx',
+      // The navigation is a column on desktop and a modal sheet on narrow screens. It cannot join the
+      // body-portalled overlay stack without making its own shell ancestor inert.
+      'web/components/shell/SidebarNav.tsx',
       // Radix has no combobox primitive. The surrounding Dialog is Radix; only its native listbox and
       // option protocol remain application-owned and are tested as one aria-activedescendant widget.
       'web/components/shell/CommandPalette.tsx',
