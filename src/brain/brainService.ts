@@ -604,6 +604,19 @@ export class BrainService {
       if (this.d.turnPark?.parkNow(sessionId)) parked.push(sessionId);
       else unparkable.push(sessionId);
     }
+    // Every provider request still pending was opened by a correlator in THIS process, and its stream
+    // dies with the process — the resumed turn issues a fresh request under a fresh row. Close them in the
+    // same synchronous checkpoint, so the diagnostics never show a request in flight across a restart;
+    // the boot pass (brainCore) catches only what a crash leaves behind. Never fatal: the transcript
+    // writes above are what the resume needs, this is bookkeeping.
+    try {
+      const interrupted = this.d.store.providerRequests.interruptPending({
+        errorCode: 'daemon_pause', errorMessage: 'Provider request interrupted by daemon pause',
+      });
+      if (interrupted.length > 0) logger('brain').info(`pause: closed ${interrupted.length} in-flight provider request(s) as interrupted`);
+    } catch (e) {
+      logger('brain').error('pause: closing in-flight provider requests failed', e);
+    }
     return { turns: at.turns, children: at.children, parked, queued, unparkable };
   }
 

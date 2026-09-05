@@ -129,6 +129,14 @@ function checkPause(label, daemon, firstResumedAt) {
   check(`${label}: the daemon paused on SIGTERM and exited on its own within ${PAUSE_EXIT_BOUND_MS} ms`,
     !restart.forced && restart.exit?.code === 0 && restart.stopMs < PAUSE_EXIT_BOUND_MS,
     `stopMs=${restart.stopMs} forced=${restart.forced} exit=${JSON.stringify(restart.exit)}`);
+  // The provider request recorder correlates attempts in process memory; the pause closes its pending rows
+  // and the resumed turn opens fresh ones. A "correlation invariant" line means a request was left pending
+  // across the restart, or a late response/terminal was treated as a fault instead of being noted.
+  const invariantLines = daemonLog(daemon).split('\n').filter((line) => line.includes('correlation invariant'));
+  check(`${label}: no provider request correlation invariant was reported across the restart`, invariantLines.length === 0, invariantLines.slice(-3).join('\n'));
+  const pendingAcrossBoot = rows(daemon.dataDir,
+    "SELECT request_id FROM brain_provider_requests WHERE status = 'pending' AND started_at < ?", [restart.bootAt]);
+  check(`${label}: no provider request opened before the restart is still pending`, pendingAcrossBoot.length === 0, JSON.stringify(pendingAcrossBoot));
 }
 
 /** Runner variant (`ELOWEN_SUBAGENT_RUNNER=1`): delegated turns execute in a forked sub-agent runner, the

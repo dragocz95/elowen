@@ -273,8 +273,14 @@ export class ProviderRequestRecorder {
           this.breakCapture(`provider request correlation invariant: response mismatched ${capturedRequestId}`);
           return;
         }
-        try { this.options.store.markResponse(capturedRequestId, response.status, this.now()); }
-        catch (error) { this.breakCapture(`response capture failed: ${error instanceof Error ? error.message : String(error)}`); }
+        try {
+          // A response to an attempt that is no longer pending is not a correlation fault of this
+          // recorder: the row was closed from outside (a pause or boot reconcile, an earlier terminal).
+          // Report it and carry on; the next openAttempt reconciles the stale in-memory pointer.
+          if (!this.options.store.markResponse(capturedRequestId, response.status, this.now())) {
+            log.warn(`response for ${capturedRequestId} arrived after the attempt was closed as ${this.closedAs(capturedRequestId)} — not recorded`);
+          }
+        } catch (error) { this.breakCapture(`response capture failed: ${error instanceof Error ? error.message : String(error)}`); }
       },
     };
     const out = createAssistantMessageEventStream();
@@ -284,6 +290,12 @@ export class ProviderRequestRecorder {
         for await (const event of inner) {
           const error = eventError(event);
           if (error && capturedRequestId) this.closeStreamError(capturedRequestId, error);
+          // A compaction attempt terminates on its own stream: PI's compaction emits no message_end, and
+          // a split-turn compaction issues TWO sequential calls (history summary, then turn-prefix summary)
+          // inside one compaction_start/compaction_end bracket, so waiting for compaction_end left the
+          // first call pending when the second opened. compaction_end still closes an attempt that never
+          // produced a terminal event (an abort before the first token).
+          else if (event.type === 'done' && capturedRequestId && this.activeKind === 'compaction') this.closeCompactionCall(capturedRequestId, event.message);
           out.push(event);
         }
         out.end();
@@ -310,7 +322,15 @@ export class ProviderRequestRecorder {
     if (this.activeRequestId) {
       const row = this.options.store.row(this.activeRequestId);
       const httpStatus = row?.http_status;
-      if (typeof httpStatus === 'number' && httpStatus >= 400) {
+      if (!row || row.status !== 'pending') {
+        // Closed from outside while this correlator still pointed at it — a pause or boot reconcile
+        // marked it interrupted, or its session was deleted. The live turn is unaffected and the new
+        // request is a fresh attempt, so drop the stale pointer instead of declaring an invariant breach.
+        log.warn(`attempt ${this.activeRequestId} was closed as ${this.closedAs(this.activeRequestId, row)} before its stream ended — opening a new attempt`);
+        this.activeRequestId = null;
+        this.retryOf = undefined;
+        this.lastFailedRequestId = null;
+      } else if (typeof httpStatus === 'number' && httpStatus >= 400) {
         const failed = this.activeRequestId;
         try {
           this.options.store.finish({
@@ -360,6 +380,34 @@ export class ProviderRequestRecorder {
     } catch (error) {
       this.breakCapture(`request capture failed: ${error instanceof Error ? error.message : String(error)}`);
       return undefined;
+    }
+  }
+
+  /** Human-readable terminal state of a row that is no longer pending, for the warnings above. */
+  private closedAs(requestId: string, row = this.options.store.row(requestId)): string {
+    if (!row) return 'deleted';
+    const code = typeof row.error_code === 'string' && row.error_code ? ` (${row.error_code})` : '';
+    return `${String(row.status)}${code}`;
+  }
+
+  private closeCompactionCall(requestId: string, message: AssistantMessage): void {
+    if (this.activeRequestId !== requestId) {
+      this.breakCapture(`provider request correlation invariant: compaction terminal mismatched ${requestId}`);
+      return;
+    }
+    try {
+      this.options.store.finish({
+        requestId,
+        status: 'succeeded',
+        response: message,
+        assistantMessageId: assistantId(message),
+        usage: assistantUsage(message),
+        finishedAt: this.now(),
+      });
+      this.activeRequestId = null;
+      this.lastFailedRequestId = null;
+    } catch (error) {
+      this.breakCapture(`compaction terminal capture failed: ${error instanceof Error ? error.message : String(error)}`);
     }
   }
 

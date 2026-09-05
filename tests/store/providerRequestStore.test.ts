@@ -170,6 +170,18 @@ describe('ProviderRequestStore', () => {
     requests.finish({ requestId: first.requestId, status: 'error', errorMessage: 'boom' });
   });
 
+  it('keeps the latest of several responses to one payload and reports a response to a closed attempt', () => {
+    const { brain, requests } = fixture();
+    const first = start(brain);
+    // The Codex SSE path retries a 429 in place: one onPayload, two onResponse calls.
+    expect(requests.markResponse(first.requestId, 429, 1_005)).toBe(true);
+    expect(requests.markResponse(first.requestId, 200, 1_010)).toBe(true);
+    expect(requests.row(first.requestId)).toMatchObject({ http_status: 200, response_at: 1_010, status: 'pending' });
+    requests.finish({ requestId: first.requestId, status: 'succeeded', finishedAt: 1_020 });
+    expect(requests.markResponse(first.requestId, 200, 1_030)).toBe(false);
+    expect(requests.row(first.requestId)).toMatchObject({ http_status: 200, response_at: 1_010, status: 'succeeded' });
+  });
+
   it('accounts terminal requests once and keeps interruption/error counts in the session summary', () => {
     const { db, brain, requests } = fixture();
     const first = start(brain);
@@ -185,7 +197,10 @@ describe('ProviderRequestStore', () => {
       .toEqual({ request_count: 2, error_count: 1, total_tokens: 24, cost_usd: 0.12, costed_request_count: 1 });
   });
 
-  it('marks pending attempts interrupted on the next database boot without accounting them twice', () => {
+  // Opening the database must NOT touch pending rows: `elowen update --auto` and every CLI command open it
+  // with migrations while the daemon is live, and closing them there interrupted its in-flight requests.
+  // Only the daemon's own boot pass (brainCore → interruptPending) closes what the previous process left.
+  it('leaves pending attempts alone on database open and closes them only through the daemon boot pass', () => {
     const home = mkdtempSync(join(tmpdir(), 'elowen-provider-capture-'));
     homes.push(home);
     const path = join(home, 'elowen.db');
@@ -196,12 +211,36 @@ describe('ProviderRequestStore', () => {
     firstDb.close();
 
     const secondDb = openDb(path);
-    const row = secondDb.prepare('SELECT status, error_code, duration_ms FROM brain_provider_requests WHERE request_id = ?').get(attempt.requestId) as { status: string; error_code: string; duration_ms: number };
-    expect(row).toMatchObject({ status: 'interrupted', error_code: 'daemon_restart' });
-    expect(row.duration_ms).toBeGreaterThanOrEqual(0);
+    expect(secondDb.prepare('SELECT status FROM brain_provider_requests WHERE request_id = ?').get(attempt.requestId)).toEqual({ status: 'pending' });
+
+    const secondBrain = new BrainStore(secondDb);
+    const closed = secondBrain.providerRequests.interruptPending({ errorCode: 'daemon_restart', errorMessage: 'Provider request interrupted by daemon restart' }, { at: 5_000 });
+    expect(closed).toEqual([attempt.requestId]);
+    const row = secondDb.prepare('SELECT status, error_code, duration_ms, finished_at FROM brain_provider_requests WHERE request_id = ?').get(attempt.requestId);
+    expect(row).toEqual({ status: 'interrupted', error_code: 'daemon_restart', duration_ms: 4_000, finished_at: 5_000 });
     expect(secondDb.prepare("SELECT request_count, error_count FROM brain_request_session_summary WHERE session_id = 's1'").get())
       .toEqual({ request_count: 1, error_count: 1 });
+    // Idempotent: a second pass (the boot after a pause that already closed its own) finds nothing.
+    expect(secondBrain.providerRequests.interruptPending({ errorCode: 'daemon_restart', errorMessage: 'x' })).toEqual([]);
     secondDb.close();
+  });
+
+  it('interrupts the pending attempts of one session on pause and lets the session start a fresh attempt', () => {
+    const { brain, requests } = fixture();
+    const parked = start(brain, 's1');
+    const other = start(brain, 's2');
+
+    expect(requests.interruptPending({ errorCode: 'daemon_pause', errorMessage: 'paused' }, { sessionId: 's1', at: 2_000 })).toEqual([parked.requestId]);
+    expect(requests.row(parked.requestId)).toMatchObject({ status: 'interrupted', error_code: 'daemon_pause', error_message: 'paused' });
+    expect(requests.row(other.requestId)).toMatchObject({ status: 'pending' });
+    // The late terminal from the dead stream is a no-op, never a second accounting or an error.
+    expect(requests.finish({ requestId: parked.requestId, status: 'succeeded', finishedAt: 2_500 })).toBe(false);
+    // The resumed turn opens a new attempt in the same session without tripping the one-pending rule.
+    const resumed = requests.start({
+      sessionId: 's1', turnId: 'turn:1', kind: 'chat', configuredProvider: 'configured',
+      wireProvider: 'anthropic', api: 'anthropic-messages', model: 'wire-model', payload: body(), startedAt: 3_000,
+    });
+    expect(requests.latestPending('s1')?.request_id).toBe(resumed.requestId);
   });
 
   it('lists managed sessions and requests with stable cursors and indexed filters', () => {
