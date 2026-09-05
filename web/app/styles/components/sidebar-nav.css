@@ -379,7 +379,7 @@
 /* Folded, the column is the marks and nothing else. A sliced word is not a treatment, so every label,
    hint and caret is withheld rather than clipped, and the row centres on its glyph. The `title` on each
    row is what names it under the pointer; `aria-label` names it to a screen reader. */
-.sidebar-nav[data-mode='rail'] :is(.sidebar-nav__label, .sidebar-nav__kbd, .sidebar-nav__lockup, .sidebar-nav__switcher-caret, .sidebar-nav__group-label) {
+.sidebar-nav[data-mode='rail'] :is(.sidebar-nav__label, .sidebar-nav__search-label, .sidebar-nav__kbd, .sidebar-nav__lockup, .sidebar-nav__switcher-caret, .sidebar-nav__group-label) {
   display: none;
 }
 .sidebar-nav[data-mode='rail'] :is(.sidebar-nav__group, .sidebar-nav__search) { padding-inline: 0.5rem; }
@@ -388,7 +388,17 @@
   gap: 0;
   padding-inline: 0;
 }
-.sidebar-nav[data-mode='rail'] .sidebar-nav__footer { justify-content: center; padding-inline: 0.5rem; }
+/* Two 28px controls, a gap and the footer's own inset do not fit across a 57px rail, and `overflow:
+   hidden` on the column silently clipped the fold off its left edge. Stacked they are both square,
+   centred and whole, and the footer gives up its fixed height rather than either control moving. */
+.sidebar-nav[data-mode='rail'] .sidebar-nav__footer {
+  flex-direction: column;
+  justify-content: center;
+  height: auto;
+  padding-block: 0.375rem;
+  padding-inline: 0.5rem;
+}
+.sidebar-nav[data-mode='rail'] .sidebar-nav__more { margin-inline-start: 0; }
 /* Folded there is no room beside a 16px glyph, so the count becomes a dot on the row's corner: the
    statement "something is running here" survives, the exact number waits for the column to open. */
 .sidebar-nav[data-mode='rail'] .sidebar-nav__badge {
