@@ -123,8 +123,13 @@ function harness(opts: {
     // A node's own task is capped at 4 000 chars, so a report bigger than that cannot be echoed back from
     // it — `BULK:<n>` asks for a result of n chars instead, the way a real node returns far more than it
     // was asked. It ends in `:CONCLUSION`, so a test can tell whether the END of a report survived.
+    // `WITH_HANDOVER` makes the node end its answer with the handover section the engine asks dependent
+    // nodes' dependencies for — the difference between a handover a node WROTE and one the engine derived.
+    const handover = task.includes('WITH_HANDOVER') ? `\n\n## Handover\nhandover-of:${task}` : '';
     const bulk = /BULK:(\d+)/.exec(task);
-    return bulk ? `done:${task}:${'x'.repeat(Number(bulk[1]))}:CONCLUSION` : `done:${task}`;
+    return bulk
+      ? `done:${task}:${'x'.repeat(Number(bulk[1]))}:CONCLUSION${handover}`
+      : `done:${task}${handover}`;
   };
   /** Mutable so a test can call a tool AS one of the workflow's own node sessions. */
   const sessionId = { current: 'brain-parent' };
@@ -411,7 +416,7 @@ describe('workflow engine', () => {
   // to re-derive, or invent, what its dependencies had already produced. That made the tool's own
   // "gather → analyze → write" promise false, and a real synthesis node reported it could not do its job
   // because the reports it was told it would receive were nowhere in its context.
-  it('hands a node the results of the dependencies it waited for', async () => {
+  it('hands a node what the dependencies it waited for handed over', async () => {
     const { tools, contextOf } = harness();
     await tools.get('WorkflowStart')!.execute('t-deps', {
       nodesFile: workflowFile([
@@ -422,11 +427,84 @@ describe('workflow engine', () => {
     });
     const write = contextOf('write');
     expect(write).toContain('done:gather');
-    expect(write).toContain('gather'); // attributed to the node it came from
+    expect(write).toContain('## Handover from node "gather"'); // attributed to the node it came from
     // Only what it actually depends on — a sibling branch is not its business.
     expect(write).not.toContain('done:other');
-    // A root node has nothing to inherit and must not be handed a phantom results block.
-    expect(contextOf('gather')).not.toContain('Results from the nodes');
+    // A root node has nothing to inherit and must not be handed a phantom handover block.
+    expect(contextOf('gather')).not.toContain('Handovers from the nodes');
+  });
+
+  // Filip's design: an edge carries a HANDOVER, not a report. A node writes the section itself, and only
+  // that section travels — the full result stays with the parent's summary. Passing whole results is what
+  // filled a dependent's context with three reports about work it was not doing.
+  it('carries only the handover a node wrote, not its result', async () => {
+    const { tools, contextOf } = harness();
+    await tools.get('WorkflowStart')!.execute('t-handover', {
+      nodesFile: workflowFile([
+        { id: 'gather', task: 'gather WITH_HANDOVER BULK:6000' },
+        { id: 'write', task: 'write', deps: ['gather'] },
+      ]),
+    });
+    const write = contextOf('write');
+    expect(write).toContain('handover-of:gather WITH_HANDOVER BULK:6000');
+    // The body of the result — 6 000 chars of it — never travels down the edge.
+    expect(write).not.toContain('xxxxxxxxxx');
+    expect(write).not.toContain(':CONCLUSION');
+    expect(write.length).toBeLessThan(2_000);
+  });
+
+  // A node that wrote no section still has to hand something down, or its dependent starts blind. The
+  // engine derives the END of its result — where a report's conclusion sits — and SAYS that it did, so the
+  // dependent does not read a cut-off tail as a written summary.
+  it('derives a bounded handover when a node wrote none, and names it as derived', async () => {
+    const { tools, contextOf } = harness();
+    await tools.get('WorkflowStart')!.execute('t-derived', {
+      nodesFile: workflowFile([
+        { id: 'gather', task: 'gather BULK:9000' },
+        { id: 'write', task: 'write', deps: ['gather'] },
+      ]),
+    });
+    const write = contextOf('write');
+    expect(write).toContain('wrote no handover');
+    expect(write).toMatch(/wrote no handover[^\n]*gather/);
+    expect(write).toContain(':CONCLUSION'); // the END of the result, not its head
+    expect(write).not.toContain('done:gather BULK:9000'); // …and not the head
+    // Bounded at the handover cap, well under the 8 000-char result cap.
+    const body = write.split('## Handover from node "gather"\n')[1] ?? '';
+    expect(body.trim().length).toBeLessThanOrEqual(4_000);
+  });
+
+  // Only DIRECT dependencies. A four-node pipeline used to hand the last node every upstream report, so
+  // the further down the chain a node sat, the more of its context was about work two steps behind it.
+  it('never passes a transitive dependency down the chain', async () => {
+    const { tools, contextOf } = harness();
+    await tools.get('WorkflowStart')!.execute('t-transitive', {
+      nodesFile: workflowFile([
+        { id: 'a', task: 'a WITH_HANDOVER' },
+        { id: 'b', task: 'b WITH_HANDOVER', deps: ['a'] },
+        { id: 'c', task: 'c', deps: ['b'] },
+      ]),
+    });
+    const c = contextOf('c');
+    expect(c).toContain('handover-of:b WITH_HANDOVER');
+    expect(c).not.toContain('handover-of:a WITH_HANDOVER');
+    expect(c).not.toContain('## Handover from node "a"');
+  });
+
+  // A node cannot write a handover it was never asked for, so the instruction has to reach it BEFORE it
+  // works — and only when it actually has successors, or a leaf spends its answer on a section nobody reads.
+  it('asks a node with successors for a handover and leaves a leaf alone', async () => {
+    const { tools, contextOf } = harness();
+    await tools.get('WorkflowStart')!.execute('t-instruction', {
+      nodesFile: workflowFile([
+        { id: 'gather', task: 'gather' },
+        { id: 'write', task: 'write', deps: ['gather'] },
+      ]),
+    });
+    const gather = contextOf('gather');
+    expect(gather).toContain('## Handover');
+    expect(gather).toContain('"write"'); // named, so it can write FOR that node
+    expect(contextOf('write')).not.toContain('END your final message');
   });
 
   // A wide fan-in used to lose everything but its first dependency. The slices were cut to fit a budget
@@ -447,7 +525,7 @@ describe('workflow engine', () => {
     });
     const synthesis = contextOf('synthesise');
     // Every branch is present and attributed — not just however many fit before the clip.
-    for (const id of branches) expect(synthesis).toContain(`## Result from node "${id}"`);
+    for (const id of branches) expect(synthesis).toContain(`## Handover from node "${id}"`);
     // And the node is told, by name, what it is reading only part of.
     expect(synthesis).toContain('truncated to fit');
     for (const id of branches) expect(synthesis).toMatch(new RegExp(`truncated to fit[^\\n]*${id}`));
@@ -491,7 +569,7 @@ describe('workflow engine', () => {
     });
     const chunks = contexts.get('synthesise') ?? [];
     const joined = chunks.join('\n\n');
-    for (const id of branches) expect(joined).toContain(`## Result from node "${id}"`);
+    for (const id of branches) expect(joined).toContain(`## Handover from node "${id}"`);
     expect(joined).not.toContain('further context block'); // nothing silently cut by the chunker
     expect(chunks.length).toBeLessThanOrEqual(16);
     for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(8_000);
@@ -507,8 +585,8 @@ describe('workflow engine', () => {
   const receivedPerNode = (context: string, ids: string[]): Map<string, number> => {
     const sizes = new Map<string, number>();
     for (const id of ids) {
-      const body = context.split(`## Result from node "${id}"\n`)[1] ?? '';
-      sizes.set(id, body.split('## Result from node "')[0]!.trim().length);
+      const body = context.split(`## Handover from node "${id}"\n`)[1] ?? '';
+      sizes.set(id, body.split('## Handover from node "')[0]!.trim().length);
     }
     return sizes;
   };
@@ -534,9 +612,10 @@ describe('workflow engine', () => {
   });
 
   // The measured regression: five dependencies at the 8 000-char result cap used to reach the dependent
-  // node as ~1 093 chars each. The prompt total still cannot carry 40 000 chars, so they ARE truncated —
-  // but each must keep a usable share of its report, and the node must be told which ones were cut.
-  it('keeps a usable share of each dependency when a five-way fan-in cannot fit whole', async () => {
+  // node as ~1 093 chars each. Since only a bounded handover travels, five of them fit a generous budget
+  // whole — each arriving at the handover cap, none announced as cut. (The tight-budget case, where they
+  // genuinely cannot fit, is covered by the operator-budget test below.)
+  it('carries five capped handovers whole when the budget can hold them', async () => {
     const { tools, contextOf } = harness({ contextChars: 26_000 });
     const branches = ['a', 'b', 'c', 'd', 'e'];
     await tools.get('WorkflowStart')!.execute('t-five-big', {
@@ -548,8 +627,9 @@ describe('workflow engine', () => {
     const synthesis = contextOf('synthesise');
     for (const [id, size] of receivedPerNode(synthesis, branches)) {
       expect(size, `node ${id}`).toBeGreaterThan(3_000);
+      expect(size, `node ${id}`).toBeLessThanOrEqual(4_000);
     }
-    for (const id of branches) expect(synthesis).toMatch(new RegExp(`truncated to fit[^\\n]*${id}`));
+    expect(synthesis).not.toContain('truncated to fit');
   });
 
   // A node's report is capped at 8 000 chars before it reaches the parent's summary or any dependent. Over
@@ -991,6 +1071,28 @@ describe('workflow engine', () => {
     expect(rootBlock).not.toContain('did not run');
     // leaf never launched, so it genuinely did nothing.
     expect(text.slice(text.indexOf('[leaf]'))).toContain('did not run');
+  });
+
+  // A production node died on a provider 400 and WorkflowStatus reported a bare "error": the caller could
+  // not tell a bad task from a refused request without digging through the daemon log. The reason is stored
+  // either way, so the status line carries a bounded, single-line excerpt of it.
+  it('names why a node failed in WorkflowStatus, bounded and on one line', async () => {
+    const { tools, snapshots } = harness();
+    const longFailure = `400 invalid_request_error ${'y'.repeat(600)}\nsecond line`;
+    await tools.get('WorkflowStart')!.execute('t-status-error', {
+      nodesFile: workflowFile([
+        { id: 'ok', task: 'ok' },
+        { id: 'bad', task: `bad FAIL ${longFailure}` },
+      ]),
+    });
+    const status = await tools.get('WorkflowStatus')!.execute('t-status-error-read', { workflowId: snapshots[0]!.id });
+    const text = status.content[0]!.text;
+    const badLine = text.split('\n').find((line) => line.startsWith('- [bad]'))!;
+    expect(badLine).toContain('error');
+    expect(badLine).toContain('boom'); // the stored reason, not just the status word
+    expect(badLine.length).toBeLessThan(500); // bounded: a wide DAG stays readable
+    // A node that succeeded says nothing about its output here — this is still a status view.
+    expect(text.split('\n').find((line) => line.startsWith('- [ok]'))).not.toContain('done:ok');
   });
 
   it('rejects an invalid DAG without launching anything', async () => {

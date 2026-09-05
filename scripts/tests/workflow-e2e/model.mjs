@@ -59,9 +59,12 @@ export const PARALLEL_HOLD_MS = 900;
  *  counts that node's executions. Deliberately distinct from the RESULT marker: a dependent node is handed
  *  its dependencies' results, so one shared string would make "d ran" and "d saw b's output" indistinguishable. */
 export const nodeTask = (id) => `WF-TASK-${id}-6b1d`;
-/** The marker a node puts in its ANSWER — what the runner looks for in a dependent's request (proof the
- *  engine handed dependency results downstream) and in the workflow summary. */
+/** The marker a node puts in its HANDOVER section — what the runner looks for in a dependent's request
+ *  (proof the engine handed the handover downstream) and in the workflow summary. */
 export const nodeResult = (id) => `WF-RESULT-${id}-8e57`;
+/** The marker a node puts in the BODY of its answer, above the handover. A dependent must never be shown it:
+ *  an edge carries the handover alone, while the whole body still reaches the parent through the summary. */
+export const nodeBody = (id) => `WF-BODY-${id}-4c31`;
 
 /** Unique strings the runner asserts on. Kept in one place so run.mjs and the script cannot drift. */
 export const MARKERS = {
@@ -361,9 +364,12 @@ export async function startScriptedModel({ hangReadyTimeoutMs = 15_000 } = {}) {
         say(`Error: ${MARKERS.probeFailure}`);
       } else if (script.deps) {
         const carried = script.deps.every((dep) => allText.includes(nodeResult(dep)));
-        say(`Node ${id} report. ${nodeResult(id)} ${carried ? MARKERS.depsSeen : MARKERS.depsMissing}`);
+        // The body markers of its dependencies must NOT be here: an edge carries the handover alone.
+        const leaked = script.deps.filter((dep) => allText.includes(nodeBody(dep)));
+        say(`Node ${id} report. ${nodeBody(id)} ${carried && leaked.length === 0 ? MARKERS.depsSeen : MARKERS.depsMissing}`
+          + `\n\n## Handover\n${nodeResult(id)}`);
       } else {
-        say(`Node ${id} report. ${nodeResult(id)}`);
+        say(`Node ${id} report. ${nodeBody(id)}\n\n## Handover\n${nodeResult(id)}`);
       }
       span.endedAt = Date.now();
       finish();

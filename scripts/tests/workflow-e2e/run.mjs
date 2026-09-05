@@ -14,10 +14,10 @@
 //      per-node execution spans, and so is parallelism: b and c hold their responses open long enough that
 //      an engine running them one after another could not produce intersecting intervals. A tool result
 //      could never show this — only wall-clock spans can.
-//   B. DEPENDENCY RESULTS TRAVEL DOWNSTREAM. Asserted twice: on the WIRE (node d's model request carries
-//      b's and c's result markers) and BEHAVIOURALLY (d inspects its own context and answers with a
-//      different marker when they are missing, so a broken hand-off reaches the parent as a failure
-//      instead of as an invented answer).
+//   B. HANDOVERS TRAVEL DOWNSTREAM, AND ONLY HANDOVERS. Asserted twice: on the WIRE (node d's model request
+//      carries b's and c's handover markers and neither of their result bodies) and BEHAVIOURALLY (d
+//      inspects its own context and answers with a different marker when a handover is missing or a body
+//      leaked, so a broken hand-off reaches the parent as a failure instead of as an invented answer).
 //   C. FAILURE PROPAGATION. A failed node leaves its dependent unrun, and the summary NAMES both.
 //   D. WorkflowResume RE-RUNS ONLY THE UNFINISHED NODES — the load-bearing case. The model server counts
 //      executions per node, so "seed was not re-run" is a hard count of one, ever, not an inference from a
@@ -34,7 +34,7 @@
 import { join } from 'node:path';
 import { spawnRealDaemon } from '../brain-e2e/spawn-daemon.mjs';
 import {
-  startScriptedModel, contentText, nodeTask, nodeResult, MARKERS, SUBAGENT_PROMPT,
+  startScriptedModel, contentText, nodeTask, nodeResult, nodeBody, MARKERS, SUBAGENT_PROMPT,
   WORKFLOW_RESULT_TAG, UNKNOWN_WORKFLOW_ID, PARALLEL_HOLD_MS, DIAMOND_NODES, RETRY_NODES, BG_NODE,
 } from './model.mjs';
 
@@ -205,11 +205,17 @@ async function main() {
     check('the fan-in started only after BOTH branches had finished',
       haveAll && d.startedAt >= b.endedAt && d.startedAt >= c.endedAt, spanReport(DIAMOND_NODES));
 
-    // B, on the wire: the request that drove node d carried its dependencies' results.
+    // B, on the wire: the request that drove node d carried both dependencies' HANDOVERS — and neither of
+    // their result bodies, which is the whole point of a handover edge.
     const fanIn = diamond.find((r) => requestText(r).includes(SUBAGENT_PROMPT) && requestText(r).includes(nodeTask('d')));
-    check('the fan-in node was handed BOTH dependency results, not asked blind',
+    check('the fan-in node was handed BOTH dependency handovers, not asked blind',
       !!fanIn && requestText(fanIn).includes(nodeResult('b')) && requestText(fanIn).includes(nodeResult('c')),
       fanIn ? excerpt(conversationText(fanIn), 600) : 'node d never ran');
+    check('…and only those: neither dependency\'s result body travelled down the edge',
+      !!fanIn && !requestText(fanIn).includes(nodeBody('b')) && !requestText(fanIn).includes(nodeBody('c')),
+      fanIn ? excerpt(conversationText(fanIn), 600) : 'node d never ran');
+    check('…while the parent\'s summary still carries every node\'s full result body',
+      DIAMOND_NODES.every((id) => diamondSummary.includes(nodeBody(id))), excerpt(diamondSummary, 600));
     // B, behaviourally: the node itself said so, and that answer reached the parent through the summary.
     check('…and the node itself reported working from them, in the summary the parent received',
       diamondSummary.includes(MARKERS.depsSeen) && !diamondSummary.includes(MARKERS.depsMissing),
