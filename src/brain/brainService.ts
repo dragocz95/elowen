@@ -11,7 +11,7 @@ import { ConversationTitler } from './conversationTitler.js';
 import { logger } from '../shared/logger.js';
 import { BrainSessionFactory, resolveAutoCompactPct } from './session/factory.js';
 import { IdentityResolver } from './identity.js';
-import { LiveSessionRegistry } from './session/liveRegistry.js';
+import { LiveSessionRegistry, type PendingAbort } from './session/liveRegistry.js';
 import type { LiveBrain, QueuedMsg } from './session/liveBrain.js';
 import { DEFAULT_AUTO_COMPACT_PCT } from './session/liveBrain.js';
 import { enqueueMirrored } from './session/queueMirror.js';
@@ -415,7 +415,7 @@ export class BrainService {
         this.delegatedEdgeReporter?.(parentSessionId, childSessionId, running),
       // A delegated child running in the sub-agent runner has no live record here, so `/stop` can fence
       // the delegation but not interrupt the model call. This verb reaches the process that holds it.
-      ...(d.subagentRunner ? { abortRemote: (channelId: string) => d.subagentRunner?.abort(channelId) } : {}),
+      ...(d.subagentRunner ? { abortRemote: (channelId: string, abort: PendingAbort) => d.subagentRunner?.abort(channelId, abort) } : {}),
     });
     this.subagents = new SubagentDispatch({
       runTurn: (request, text, onEvent) => this.runDelegatedTurn(request, text, onEvent),
@@ -2446,8 +2446,8 @@ export class BrainService {
 
   /** Abort a channel session's in-flight turn and its delegated descendants — the same teardown a
    *  platform `/stop` does. Used by the sub-agent runner to carry out the daemon's abort verb. */
-  async abortChannel(channelId: string): Promise<void> {
-    await this.channelService.abort(channelId);
+  async abortChannel(channelId: string, abort?: PendingAbort): Promise<void> {
+    await this.channelService.abort(channelId, abort);
   }
 
   /** Steer a parent's follow-up into a delegated child turn RUNNING in this process, resolving only once

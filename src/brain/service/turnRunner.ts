@@ -46,6 +46,14 @@ const MAX_RESULT_DELIVERY_ATTEMPTS = 5;
 /** A message carrying our result id, as it appears in a live PI transcript. */
 type CustomResultMessage = { role?: string; details?: { resultId?: string } };
 
+class MissingRecoveryNotice extends Error {
+  constructor() { super('unsafe sub-agent recovery notice could not be restored'); }
+}
+
+function customSystemMessage(customType: string, content: string, resultId?: string) {
+  return { customType, content, display: false, details: { source: 'elowen', ...(resultId ? { resultId } : {}) } };
+}
+
 /** How far a hidden custom message got.
  *  `landed`  — it is provably in the parent's context (or went through a delegated parent's own verified
  *              turn), so the durable row may be acknowledged.
@@ -246,12 +254,7 @@ export class BrainTurnRunner {
     }
     const target = this.d.lifecycle.ownedUserSession(userId, session);
     if (!this.d.sessions.get(target)) await this.d.lifecycle.ensureLive(userId, target);
-    const message = {
-      customType,
-      content,
-      display: false,
-      details: { source: 'elowen', ...(resultId ? { resultId } : {}) },
-    };
+    const message = customSystemMessage(customType, content, resultId);
     const running = this.d.sessions.get(target);
     if (!running) throw new Error('brain not started for user');
     if (running.session.isStreaming) {
@@ -280,6 +283,17 @@ export class BrainTurnRunner {
     return this.serial(sendLockKey(target), () => this.serial(target, async (): Promise<CustomDelivery> => {
       const live = this.d.sessions.get(target);
       if (!live) throw new Error('brain not started for user');
+      return this.sendCustomSystemLocked(userId, live, message, triggerTurn);
+    }));
+  }
+
+  /** Caller holds both send/session locks. Shared by the durable drain and pre-admission restoration;
+   * joining a drain here would deadlock if it were already waiting for these same locks. */
+  private async sendCustomSystemLocked(
+    userId: number, live: LiveBrain, message: ReturnType<typeof customSystemMessage>, triggerTurn: boolean,
+  ): Promise<CustomDelivery> {
+      const target = live.sessionId;
+      const resultId = message.details.resultId;
       // An earlier steer that landed while we queued behind that turn is already in the context. Sending a
       // second copy is the one failure mode this whole durable pipeline must not produce. It did not produce
       // a fresh answer in THIS delivery, which matters to a genuinely parked owner turn.
@@ -349,7 +363,15 @@ export class BrainTurnRunner {
         }
         opened.close();
       }
-    }));
+  }
+
+  private async restoreRecoveryNoticesLocked(userId: number, live: LiveBrain): Promise<void> {
+    for (const result of this.d.store.pendingSubagentResults(live.sessionId)) {
+      if (!result.requiresUserAction) continue;
+      await this.sendCustomSystemLocked(userId, live,
+        customSystemMessage('subagent-result', subagentResultReminder(result), result.id), false);
+      if (!resultInContext(live.session.messages as CustomResultMessage[], result.id)) throw new MissingRecoveryNotice();
+    }
   }
 
   resultDeliveryWorkCount(): number {
@@ -766,10 +788,13 @@ export class BrainTurnRunner {
       // alone, so waiting on it left a sent message invisible for 1.4–5.8 s. The prompt below still gets
       // the recalled memories; only the echo is off that path.
       admission.echo();
-      const context = await this.contextBuilder.build(turnRequest, live);
+      let context = await this.contextBuilder.build(turnRequest, live);
       // Meter the turn so the OpenRouter (or OpenRouter-backed proxy) cost pi-ai drops is captured and
       // stamped onto the persisted assistant row by projectEvent (fired synchronously in this scope).
       const meter = newCostMeter();
+      let providerAccepted = false;
+      for (let preparation = 0; ; preparation += 1) {
+      try {
       await runWithMeter(meter, () => context.run(async (prompted, confirmProviderPreflight) => {
         // PI's preflightResult fires after extension/input/template/auth/compaction preparation and directly
         // before _runAgentPrompt. ADMITTING there closes the 202→isStreaming=false window: the prompt run
@@ -788,7 +813,8 @@ export class BrainTurnRunner {
               const missingRecoveryNotice = this.d.store.pendingSubagentResults(live.sessionId)
                 .some((result) => result.requiresUserAction
                   && !resultInContext(live.session.messages as CustomResultMessage[], result.id));
-              if (missingRecoveryNotice) throw new Error('unsafe sub-agent recovery notice could not be restored');
+              if (missingRecoveryNotice) throw new MissingRecoveryNotice();
+              providerAccepted = true;
             }
             admission.preflightResult(success);
             if (success) confirmProviderPreflight();
@@ -815,6 +841,15 @@ export class BrainTurnRunner {
           await live.session.prompt(NO_REPLY_NUDGE);
         }
       }));
+      break;
+      } catch (error) {
+        if (!(error instanceof MissingRecoveryNotice) || !isUserTurn || providerAccepted || preparation > 0) throw error;
+        // PI rejected before admission: keep the same durable row and echo, restore through the drain's
+        // locked delivery seam, then rebuild volatile context once. Never replay an accepted turn.
+        await this.restoreRecoveryNoticesLocked(userId, live);
+        context = await this.contextBuilder.build(turnRequest, live);
+      }
+      }
       // Post-turn curator: extract durable facts from this exchange. Only ARMED here, where the turn's
       // own text and auto-save verdict are in scope; settleTurn below runs it, so the owner surface and
       // a room cannot drift into curating different things (they already had).

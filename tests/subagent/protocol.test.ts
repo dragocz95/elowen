@@ -9,6 +9,21 @@ const boot = (extra: Record<string, unknown> = {}): unknown => ({
   ...extra,
 });
 
+describe('parseDaemonMessage — abort', () => {
+  it('preserves the absent legacy payload', () => {
+    expect(parseDaemonMessage({ type: 'abort', channelId: 'child' })).toEqual({ type: 'abort', channelId: 'child' });
+  });
+
+  it.each(['user_stop', 'parent_teardown', 'tree_abort', 'recovery'])('preserves %s and the exact reason', (origin) => {
+    const frame = { type: 'abort', channelId: 'child', abort: { origin, reason: 'test cancellation' } };
+    expect(parseDaemonMessage(JSON.parse(JSON.stringify(frame)))).toEqual(frame);
+  });
+
+  it.each([null, [], 'recovery', {}, { origin: 'unknown', reason: 'x' }, { origin: 'recovery' }, { origin: 'recovery', reason: 7 }].map((value) => [value]))('refuses malformed abort payload %j', (abort) => {
+    expect(parseDaemonMessage({ type: 'abort', channelId: 'child', abort })).toBeUndefined();
+  });
+});
+
 describe('parseDaemonMessage — boot', () => {
   it('parses a boot frame without a snapshot, and leaves the field absent', () => {
     const msg = parseDaemonMessage(boot());

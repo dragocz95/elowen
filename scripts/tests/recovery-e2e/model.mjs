@@ -17,6 +17,8 @@ export const MARKERS = {
   unsafeContinued: 'RECOVERY-UNSAFE-CONTINUED-f6b4',
   unsafeParentContinue: 'RECOVERY-UNSAFE-PARENT-CONTINUE-9a73',
   unsafeChildContinue: 'RECOVERY-UNSAFE-CHILD-CONTINUE-1c84',
+  stopRecoveredChild: 'RECOVERY-STOP-CHILD-OWNER-INPUT-7d31',
+  stopRecoveredAnswer: 'RECOVERY-STOP-CHILD-OWNER-ANSWER-8e42',
   ownerBashTask: 'RECOVERY-OWNER-BASH-TASK-7e21',
   ownerBashResult: 'RECOVERY-OWNER-BASH-RESULT-5d09',
   ownerSteer: 'RECOVERY-OWNER-STEER-3b6f',
@@ -64,7 +66,7 @@ async function readJson(req) {
 const frame = (payload) => `data: ${JSON.stringify(payload)}\n\n`;
 
 /** Start one isolated scripted provider for a recovery scenario. */
-export async function startRecoveryModel({ task, result, background = false, unsafe = false, ownerBash = false, nested = false, workflow = false }) {
+export async function startRecoveryModel({ task, result, background = false, unsafe = false, ownerBash = false, nested = false, workflow = false, holdRecovered = false }) {
   const requests = [];
   const toolCalls = [];
   let toolCallSequence = 0;
@@ -184,6 +186,10 @@ export async function startRecoveryModel({ task, result, background = false, uns
       // or — for a child that was held mid-model-call — the same request arrives a second time from a
       // fresh transport. Either way the child simply finishes.
       if (allText.includes(INTERRUPTED_RESULT) || (!unsafe && initialChildSignalled)) {
+        if (holdRecovered) {
+          await held;
+          if (res.destroyed || res.writableEnded) return;
+        }
         say(`Recovered child completed its original task. ${result}`);
         return;
       }
@@ -199,6 +205,18 @@ export async function startRecoveryModel({ task, result, background = false, uns
       }
       await held;
       if (!res.destroyed && !res.writableEnded) say(`Initial child was released. ${result}`);
+      return;
+    }
+
+    // The owner speaks while boot recovery is still running. Stop exactly the child they named through
+    // the real tool boundary; the following request acknowledges the stop rather than re-delegating.
+    if (!isChild && allText.includes(MARKERS.stopRecoveredChild)) {
+      if (awaitingTool || allText.includes(SUBAGENT_RESULT_TAG)) {
+        say(MARKERS.stopRecoveredAnswer);
+      } else {
+        const child = /stopChild=(brain-ch-subagent-\S+)/.exec(allText)?.[1];
+        callTool('DelegateStop', { id: child });
+      }
       return;
     }
 

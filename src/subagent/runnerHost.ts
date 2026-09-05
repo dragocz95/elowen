@@ -1,3 +1,4 @@
+import type { PendingAbort } from '../brain/session/liveRegistry.js';
 import { fork, type ChildProcess } from 'node:child_process';
 import { setPriority } from 'node:os';
 import { randomUUID } from 'node:crypto';
@@ -137,13 +138,13 @@ export class SubagentRunnerHost implements DelegatedTurnRunner {
     });
   }
 
-  abort(channelId: string): void {
+  abort(channelId: string, abort?: PendingAbort): void {
     // Revocation is synchronous: a reverse call waiting on daemon/plugin work must lose authority before
     // the runner gets around to acknowledging the abort and settling its turn.
     for (const turn of this.pending.values()) {
       if (turn.request.channelId === channelId) turn.rpcActive = false;
     }
-    if (this.child) this.post(this.child, { type: 'abort', channelId });
+    if (this.child) this.post(this.child, { type: 'abort', channelId, ...(abort ? { abort } : {}) });
   }
 
   async steer(channelId: string, text: string): Promise<{ outcome: RunnerSteerOutcome }> {

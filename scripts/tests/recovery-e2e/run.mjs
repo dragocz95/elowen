@@ -624,10 +624,58 @@ async function scenarioWorkflowRecovery() {
   }
 }
 
+async function scenarioOwnerStopsRecoveringChild() {
+  console.log('\n— 8: concurrent owner input stops a recovering child without losing the owner message —');
+  // Requires the isolated built daemon, like every scenario in this file. The exact preflight-window
+  // interleaving is pinned without timing in ownerTurnSettlement.test.ts; this exercises real delivery.
+  const model = await startRecoveryModel({ task: MARKERS.foregroundTask, result: MARKERS.foregroundResult, holdRecovered: true });
+  let daemon = null;
+  try {
+    daemon = await spawnRealDaemon({ providerBaseUrl: model.baseUrl, providerId: 'recovery-stop-race' }); currentDaemon = daemon;
+    const token = daemon.token;
+    await enableRunner(daemon, token);
+    const run = await startDelegation({ daemon, token, task: MARKERS.foregroundTask });
+    await model.initialChildArrived;
+    await daemon.restart();
+    const resumed = await waitFor('the recovering child to reach the held provider', () => model.childRequests().find((request) => request.at > daemon.lastRestart().bootAt));
+    checkPause('owner-stop', daemon, resumed.at);
+
+    const text = `${MARKERS.stopRecoveredChild} stopChild=${run.child_session_id}`;
+    const sent = await post(daemon.baseUrl, token, '/brain/send', { session: run.parent_session_id, text, mode: 'build' });
+    check('owner input is accepted while child recovery is running', sent?.accepted !== false);
+    await waitFor('the scripted owner to stop precisely its recovering child', () => model.toolCalls.find((call) => call.name === 'DelegateStop' && call.args.id === run.child_session_id));
+    await waitFor('the stopped recovery to leave its live claim', () => row(daemon.dataDir,
+      "SELECT lifecycle FROM brain_subagent_runs WHERE parent_session_id = ? AND tool_call_id = ? AND lifecycle IN ('error', 'recovery_required')",
+      [run.parent_session_id, run.tool_call_id]));
+    await waitFor('the owner answer to be stored', () => rows(daemon.dataDir,
+      "SELECT content FROM brain_messages WHERE session_id = ? AND role = 'assistant'", [run.parent_session_id])
+      .find((entry) => entry.content.includes(MARKERS.stopRecoveredAnswer)));
+    const ownerMessages = rows(daemon.dataDir, "SELECT content FROM brain_messages WHERE session_id = ? AND role = 'user'", [run.parent_session_id]);
+    check('the accepted owner message remains durable exactly once', ownerMessages.filter((entry) => entry.content.includes(MARKERS.stopRecoveredChild)).length === 1);
+    check('the child abort identifies its origin', daemonLog(daemon).includes('delegation aborted ('));
+    check('owner admission did not fail on the recovery notice', !daemonLog(daemon).includes('turn admission failed'));
+    const beforeRestart = model.childRequests().length;
+    await daemon.restart();
+    // An explicit later owner turn proves the new boot is accepting work, without a sleep as evidence.
+    await post(daemon.baseUrl, token, '/brain/send', { session: run.parent_session_id, text: 'Confirm the child remains stopped.', mode: 'build' });
+    // The claim pass is synchronous before platform startup and owner admission. Its attempt increment
+    // is durable even if a wrongly reclaimed child were to finish before this observation.
+    const afterRestart = row(daemon.dataDir,
+      'SELECT lifecycle, attempt FROM brain_subagent_runs WHERE parent_session_id = ? AND tool_call_id = ?',
+      [run.parent_session_id, run.tool_call_id]);
+    check('another boot did not reclaim the stopped child', afterRestart.attempt === 1
+      && ['error', 'recovery_required'].includes(afterRestart.lifecycle) && model.childRequests().length === beforeRestart);
+    check('no automatic DelegateContinue overrode the stop', !model.toolCalls.some((call) => call.name === 'DelegateContinue'));
+  } finally {
+    if (daemon) await daemon.stop();
+    await model.close();
+  }
+}
+
 /** `RECOVERY_E2E_ONLY=1,7` runs a subset while iterating on one scenario; the default is the whole suite. */
 const SCENARIOS = [
   scenarioBackgroundRecovery, scenarioForegroundRecovery, scenarioInterruptedToolRecovery, scenarioLegacyMigration,
-  scenarioOwnerTurnPause, scenarioNestedRecovery, scenarioWorkflowRecovery,
+  scenarioOwnerTurnPause, scenarioNestedRecovery, scenarioWorkflowRecovery, scenarioOwnerStopsRecoveringChild,
 ];
 const only = new Set((process.env.RECOVERY_E2E_ONLY ?? '').split(',').map((n) => Number(n)).filter((n) => Number.isInteger(n) && n > 0));
 

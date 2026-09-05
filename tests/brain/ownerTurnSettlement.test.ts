@@ -7,6 +7,7 @@ import { UsageOriginStore, billSettledTurn } from '../../src/store/usageOriginSt
 import { inMemoryModelRuntime } from '../../src/brain/providers.js';
 import type { ClientOrigin } from '../../src/api/clientIp.js';
 import type { OriginTurnUsage } from '../../src/store/usageOriginStore.js';
+import type { BrainTurnRunner } from '../../src/brain/service/turnRunner.js';
 
 /** What an OWNER turn does besides answering, against a real BrainStore and a real UsageOriginStore.
  *
@@ -61,7 +62,7 @@ function fakeDeps() {
     dispose: vi.fn(() => { listeners.length = 0; }),
     abort: vi.fn(async () => {}),
     sendCustomMessage: vi.fn(async (message: Record<string, unknown>, options?: { triggerTurn?: boolean }) => {
-      messages.push({ role: 'custom', content: JSON.stringify(message) });
+      messages.push({ role: 'custom', ...message } as never);
       if (options?.triggerTurn) messages.push({ role: 'assistant', content: 'processed', stopReason: 'stop' });
     }),
     abortCompaction: vi.fn(), abortBranchSummary: vi.fn(), messages, isStreaming: false,
@@ -319,6 +320,151 @@ describe('durable owner activity follows accepted turn ownership', () => {
       id: 'wf-activity-failed', toolCallId: 'call-wf-activity-failed', status: 'error', result: 'failed',
     });
     await vi.waitFor(() => expect(d.store.getSessionActivity(sessionId)?.state).toBe('failed'));
+  });
+});
+
+describe('recovery notices racing owner admission', () => {
+  function recoveryNotice(d: ReturnType<typeof fakeDeps>, parent: string, suffix = 'late') {
+    const child = `brain-ch-subagent-${suffix}`;
+    const toolCallId = `call-${suffix}`;
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: parent, delegatedAccess: { admin: true, owner: true, projectIds: [], permissionBoundary: null } });
+    d.store.setDelegationBootId(`old-${suffix}`);
+    d.store.upsertSubagentRun(parent, { id: toolCallId, sessionId: child, status: 'running', task: 'inspect', tools: 1, seconds: 1 });
+    d.store.setDelegationBootId(`new-${suffix}`);
+    expect(d.store.claimRecoverableRuns(60_000)).toHaveLength(1);
+    return () => {
+      expect(d.store.markRecoveryRequired(parent, toolCallId, 'delegation aborted', {
+        id: `notice-${suffix}`, toolCallId, sessionId: child, status: 'error', task: 'inspect', error: 'delegation aborted', tools: 1, seconds: 1,
+      })).toBe(true);
+    };
+  }
+
+  it('restores a notice created at preflight and admits the same owner message exactly once', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const sessionId = svc.status(1).sessionId!;
+    const arrive = recoveryNotice(d, sessionId);
+    const original = d.session.prompt.getMockImplementation()!;
+    const rejected: string[] = [];
+    const runner = (svc as unknown as { turnRunner: BrainTurnRunner }).turnRunner;
+    let concurrentDrain: Promise<unknown> | undefined;
+    d.session.prompt.mockImplementationOnce(async (text, options) => {
+      arrive();
+      // Recovery's completion hook can already be queued on the locks this admission holds.
+      concurrentDrain = runner.drainPendingSubagentResults(1, sessionId);
+      await Promise.resolve();
+      try { await original(text, options); }
+      catch (error) { rejected.push((error as Error).message); throw error; }
+    });
+    const accepted = vi.fn();
+    const seen: { type: string }[] = [];
+    svc.subscribe(1, (event) => seen.push(event));
+
+    await svc.send({ userId: 1, text: 'keep my message', onAdmitted: accepted });
+    await concurrentDrain;
+
+    expect(rejected).toEqual(['unsafe sub-agent recovery notice could not be restored']);
+    expect(d.session.prompt).toHaveBeenCalledTimes(2);
+    expect(accepted).toHaveBeenCalledTimes(1);
+    expect(seen.filter((event) => event.type === 'user')).toHaveLength(1);
+    expect(seen.some((event) => event.type === 'discard_user')).toBe(false);
+    expect(d.store.getMessages(sessionId).filter((row) => row.role === 'user')).toHaveLength(1);
+    expect(d.session.messages.map((message) => message.role)).toEqual(['custom', 'user', 'assistant']);
+    expect(d.session.sendCustomMessage).toHaveBeenCalledWith(expect.objectContaining({ details: expect.objectContaining({ resultId: 'notice-late' }) }), { triggerTurn: false, deliverAs: 'followUp' });
+    expect(d.store.pendingSubagentResults(sessionId)).toEqual([]);
+    expect(d.store.getSessionActivity(sessionId)).toMatchObject({ state: 'done' });
+  });
+
+  it('does not mistake an unrelated error with identical wording for its preflight guard', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    d.session.prompt.mockRejectedValueOnce(new Error('unsafe sub-agent recovery notice could not be restored'));
+    const accepted = vi.fn();
+
+    await expect(svc.send({ userId: 1, text: 'unrelated failure', onAdmitted: accepted })).rejects.toThrow('unsafe sub-agent recovery notice could not be restored');
+    expect(d.session.prompt).toHaveBeenCalledTimes(1);
+    expect(accepted).not.toHaveBeenCalled();
+  });
+
+  it.each(['throws', 'does not append'])('fails closed when locked notice restoration %s', async (failure) => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const sessionId = svc.status(1).sessionId!;
+    const arrive = recoveryNotice(d, sessionId);
+    const original = d.session.prompt.getMockImplementation()!;
+    d.session.prompt.mockImplementationOnce(async (text, options) => { arrive(); await original(text, options); });
+    if (failure === 'throws') d.session.sendCustomMessage.mockRejectedValueOnce(new Error('custom append failed'));
+    else d.session.sendCustomMessage.mockResolvedValueOnce(undefined);
+    const accepted = vi.fn();
+
+    await expect(svc.send({ userId: 1, text: 'retain the recovery warning', onAdmitted: accepted })).rejects.toThrow(
+      failure === 'throws' ? 'custom append failed' : 'unsafe sub-agent recovery notice could not be restored');
+    expect(d.session.prompt).toHaveBeenCalledTimes(1);
+    expect(accepted).not.toHaveBeenCalled();
+    expect(d.store.pendingSubagentResults(sessionId)).toHaveLength(1);
+    expect(d.session.messages.some((message) => message.role === 'user')).toBe(false);
+  });
+
+  it('does not retry an internal turn or let it bypass a late unsafe notice', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const sessionId = svc.status(1).sessionId!;
+    const arrive = recoveryNotice(d, sessionId);
+    const original = d.session.prompt.getMockImplementation()!;
+    d.session.prompt.mockImplementationOnce(async (text, options) => { arrive(); await original(text, options); });
+
+    await expect(svc.send({ userId: 1, text: 'automatic wake', internal: { kind: 'systemNudge' } })).rejects.toThrow('unsafe sub-agent recovery notice could not be restored');
+    expect(d.session.prompt).toHaveBeenCalledTimes(1);
+    expect(d.session.messages.some((message) => message.role === 'user')).toBe(false);
+    expect(d.store.pendingSubagentResults(sessionId)).toHaveLength(1);
+  });
+
+  it('retries preparation only once and keeps a second late notice fail-closed', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const sessionId = svc.status(1).sessionId!;
+    const arrive = recoveryNotice(d, sessionId);
+    const original = d.session.prompt.getMockImplementation()!;
+    d.session.prompt.mockImplementationOnce(async (text, options) => { arrive(); await original(text, options); });
+    d.session.prompt.mockImplementationOnce(async (text, options) => {
+      recoveryNotice(d, sessionId, 'second')();
+      await original(text, options);
+    });
+    const accepted = vi.fn();
+
+    await expect(svc.send({ userId: 1, text: 'not admitted yet', onAdmitted: accepted })).rejects.toThrow('unsafe sub-agent recovery notice could not be restored');
+    expect(d.session.prompt).toHaveBeenCalledTimes(2);
+    expect(accepted).not.toHaveBeenCalled();
+    expect(d.session.messages.some((message) => message.role === 'user')).toBe(false);
+    expect(d.store.pendingSubagentResults(sessionId)).toHaveLength(2);
+  });
+
+  it('never retries or retracts an already admitted owner message', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const sessionId = svc.status(1).sessionId!;
+    const arrive = recoveryNotice(d, sessionId);
+    d.session.prompt.mockImplementationOnce(async (_text, options) => {
+      options?.preflightResult?.(true);
+      // Even a second callback from a provider/extension cannot make an accepted turn replayable.
+      arrive();
+      options?.preflightResult?.(true);
+    });
+    const accepted = vi.fn();
+    const seen: { type: string }[] = [];
+    svc.subscribe(1, (event) => seen.push(event));
+
+    await expect(svc.send({ userId: 1, text: 'already admitted', onAdmitted: accepted })).rejects.toThrow('unsafe sub-agent recovery notice could not be restored');
+    expect(d.session.prompt).toHaveBeenCalledTimes(1);
+    expect(accepted).toHaveBeenCalledTimes(1);
+    expect(d.store.getMessages(sessionId).filter((row) => row.role === 'user')).toHaveLength(1);
+    expect(seen.some((event) => event.type === 'discard_user')).toBe(false);
   });
 });
 

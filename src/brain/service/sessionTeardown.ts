@@ -9,7 +9,7 @@ import { processRegistry } from '../processRegistry.js';
 import { abortSessionWork } from '../session/abortSessionWork.js';
 import { SESSION_IDLE_ROLLOVER_MS } from '../session/idleRollover.js';
 import type { LiveBrain } from '../session/liveBrain.js';
-import type { LiveSessionRegistry } from '../session/liveRegistry.js';
+import type { LiveSessionRegistry, PendingAbort } from '../session/liveRegistry.js';
 import { clearDeliveredUserEchoes } from '../session/queueMirror.js';
 import { channelIdOf, isChannelSession, isNonUserSession, isOwnedUserSession } from '../sessionId.js';
 import type { ClientAttachments } from './attachments.js';
@@ -107,7 +107,7 @@ export class SessionTeardownService {
     const discard = !b.turnProducedOutput ? b.lastAdmitted : undefined;
     if (discard) b.discardingUserTurn = discard.durableId;
     try {
-      await this.abortFenced(b);
+      await this.abortFenced(b, { origin: 'user_stop', reason: 'aborted' });
       if (discard) {
         // Delete the user row AND any partial assistant output the aborted turn's agent_end persisted:
         // projectEvent runs synchronously while abortFenced tears the run down, so a token that raced the
@@ -140,7 +140,7 @@ export class SessionTeardownService {
   }
 
   /** Shared destructive half of stop and queue-interrupt. Caller owns the parent-abort fence. */
-  async abortLive(b: LiveBrain): Promise<void> {
+  async abortLive(b: LiveBrain, abort: PendingAbort = { origin: 'parent_teardown', reason: 'aborted' }): Promise<void> {
     this.goals.cancelGoalContinuation(b.sessionId);
     b.session.clearQueue();
     clearDeliveredUserEchoes(b);
@@ -148,10 +148,14 @@ export class SessionTeardownService {
     await this.cancelWorkflowsFor(b.sessionId);
     // Spare detached/background children; abort only the foreground delegates bound to this turn.
     const spared = this.sparedChildSessionIds(b.sessionId);
-    const doomed = this.sessions.childrenOf(b.sessionId).filter((child) => !spared.has(child));
+    const children = new Set([
+      ...this.sessions.childrenOf(b.sessionId),
+      ...(abort.origin === 'user_stop' ? this.store.recoveringSubagentSessionIds(b.sessionId) : []),
+    ]);
+    const doomed = [...children].filter((child) => !spared.has(child));
     await Promise.all(doomed
       .filter((child) => isChannelSession(child))
-      .map((child) => this.channelService.abort(channelIdOf(child))));
+      .map((child) => this.channelService.abort(channelIdOf(child), abort)));
     // Deregister ONLY the doomed children — a spared child MUST stay registered so it keeps counting toward
     // emitSubagent/status/reconcile/hasActiveChildren (channel eviction, /status, running-subagents block).
     for (const child of doomed) this.sessions.setChildRunning(b.sessionId, child, false);
@@ -164,10 +168,10 @@ export class SessionTeardownService {
    *  live record uses. Fence before the child snapshot is taken inside: otherwise an idle drill-in
    *  continuation can register a fresh child between childrenOf() and the deregistration of the doomed
    *  ones, escaping this stop tree. */
-  private async abortFenced(b: LiveBrain): Promise<void> {
-    this.sessions.beginParentAbort(b.sessionId);
+  private async abortFenced(b: LiveBrain, abort: PendingAbort = { origin: 'parent_teardown', reason: 'aborted' }): Promise<void> {
+    this.sessions.beginParentAbort(b.sessionId, abort);
     try {
-      await this.abortLive(b);
+      await this.abortLive(b, abort);
     } finally {
       this.sessions.endParentAbort(b.sessionId);
     }
@@ -436,7 +440,7 @@ export class SessionTeardownService {
     void (async () => {
       await this.cancelWorkflowsFor(id);
       for (const child of children) {
-        if (isChannelSession(child)) await this.channelService.abort(channelIdOf(child));
+        if (isChannelSession(child)) await this.channelService.abort(channelIdOf(child), { origin: 'parent_teardown', reason: 'conversation deleted' });
         this.sessions.setChildRunning(id, child, false);
       }
     })().catch((e) => logger('brain').error(`delegated teardown failed for ${id}`, e));

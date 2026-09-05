@@ -8,7 +8,10 @@ const CHILD = 'brain-ch-subagent-sub-dlg-1';
 
 function serviceWith(extra: Record<string, unknown> = {}) {
   const registry = new LiveSessionRegistry<{ sessionId: string; session: { dispose(): void; isStreaming: boolean } }>();
-  const store = { getSession: (id: string) => (id === 'brain-1' ? { id, user_id: 1 } : undefined) };
+  const store = {
+    getSession: (id: string) => (id === 'brain-1' ? { id, user_id: 1 } : undefined),
+    recoveringSubagentSessionIds: () => [],
+  };
   const svc = new ChannelSessionService({ registry, store, ...extra } as never);
   return { svc, registry };
 }
@@ -81,8 +84,21 @@ describe('ChannelSessionService.abort — reaching a child that lives in the run
     const { svc, registry } = serviceWith({ abortRemote });
     registry.setChildRunning('brain-1', CHILD, true); // running, but in the other process
     await svc.abort('subagent-sub-dlg-1');
-    expect(abortRemote).toHaveBeenCalledWith('subagent-sub-dlg-1');
+    expect(abortRemote).toHaveBeenCalledWith('subagent-sub-dlg-1', { origin: 'user_stop', reason: 'aborted' });
     expect(registry.hasPendingAbort(CHILD)).toBe(true); // …and the delegation is terminal here regardless
+  });
+
+  it.each(['user_stop', 'parent_teardown', 'tree_abort', 'recovery'] as const)('propagates %s through a remote tree and its rejected result', async (origin) => {
+    const abortRemote = vi.fn();
+    const { svc, registry } = serviceWith({ abortRemote });
+    const nested = 'brain-ch-subagent-nested';
+    await expect(svc.sendRemote(req, async () => {
+      registry.setChildRunning(CHILD, nested, true);
+      await svc.abort(req.channelId, { origin, reason: 'test cancellation' });
+      throw new Error('runner interrupted');
+    })).rejects.toMatchObject({ message: `delegation aborted (${origin})`, origin, reason: 'test cancellation' });
+    expect(abortRemote).toHaveBeenCalledWith('subagent-nested', { origin, reason: 'test cancellation' });
+    expect(registry.pendingAbort(nested)).toEqual({ origin, reason: 'test cancellation' });
   });
 
   it('does not reach for the runner over a channel nothing is delegating', async () => {
