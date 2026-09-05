@@ -142,9 +142,9 @@ export interface SandboxWorkspaceView {
    *  conversation works where, so this is what tells a surface whether a workspace is active for it. */
   bindings: { sessionId: string; updatedAt: string }[];
 }
-/** A Project row as the overview carries it. `defaultBranch` stays optional because the Project store does
- *  not always know one — the caller falls back to `main` rather than inventing a ref. */
-export interface SandboxProjectView { id: number; slug: string; path: string; defaultBranch?: string }
+/** A Project row as the overview carries it. `defaultRef` is the repository’s REAL default branch as the
+ *  daemon read it, and null when there is none — the caller then asks for a ref instead of inventing one. */
+export interface SandboxProjectView { id: number; slug: string; path: string; defaultRef: string | null }
 export interface SandboxOverview {
   projects: SandboxProjectView[];
   sessions: { id: string; title: string; updatedAt: string }[];
@@ -671,9 +671,11 @@ export class BrainClient {
     return { projects: body.projects ?? [], sessions: body.sessions ?? [], workspaces: body.workspaces ?? [] };
   }
 
-  /** Create a real Git worktree for one accessible Project. The route reads `projectId`, `label` and
-   *  `baseRef`, and binds the new workspace to `sessionId` when one is given. */
-  async sandboxCreateWorkspace(input: { projectId: number; label: string; baseRef: string; sessionId?: string }): Promise<SandboxWorkspaceView> {
+  /** Create a real Git worktree for one accessible Project, and ONLY that: the route reads `projectId`,
+   *  `label` and `baseRef`, and no conversation is bound here. Binding stays the one explicit step it is
+   *  on every surface (`workspaces/use`), so creating never moves the caller’s working directory out from
+   *  under them. */
+  async sandboxCreateWorkspace(input: { projectId: number; label: string; baseRef: string }): Promise<SandboxWorkspaceView> {
     return (await this.sandboxRequest<{ workspace: SandboxWorkspaceView }>('workspaces/create', input)).workspace;
   }
 

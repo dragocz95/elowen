@@ -3,7 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import Link from 'next/link';
 import { ArrowLeft } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
-import { useTranslation } from '../../lib/i18n';
+import { interpolate, useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
 import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { useToast } from '../../components/ui/Toast';
@@ -29,7 +29,7 @@ import {
 import { uploadAttachment, type AttachRefusal, type Attachment } from './brainChatAttachments';
 import { useBrainChatHistory } from './brainChatHistory';
 import { useBrainChatStream } from './brainChatStream';
-import { isRenderablePluginPicker } from './pluginPickers';
+import { isRenderablePluginPicker, type PluginPickerRef } from './pluginPickers';
 
 const THOUGHTS_VALUES = ['show', 'hide'] as const;
 const withoutBackgroundProcessCards = (cards: readonly BrainCard[]): BrainCard[] =>
@@ -186,11 +186,12 @@ export interface BrainChatValue {
   /** `/tasks` — the current conversation's task descriptions, statuses and delete controls. */
   tasksOpen: boolean;
   setTasksOpen: (v: boolean) => void;
-  /** The name of the PLUGIN-contributed picker currently open, or null when none is. ONE slot rather
-   *  than a flag per plugin: the controller knows only that some plugin declared a surface-rendered
-   *  chooser and that this build has a renderer for it (`pluginPickers.tsx`). Which chooser it is, and
-   *  what it does, is deliberately none of the router's business. */
-  pluginPicker: string | null;
+  /** The PLUGIN-contributed picker currently open — its published name and the plugin that owns it — or
+   *  null when none is. ONE slot rather than a flag per plugin: the controller knows only that some
+   *  plugin declared a surface-rendered chooser and that this build has a renderer for that PAIR
+   *  (`pluginPickers.tsx`). Which chooser it is, and what it does, is deliberately none of the router's
+   *  business. The owner travels with the name because it is half of what resolves the renderer. */
+  pluginPicker: PluginPickerRef | null;
   closePluginPicker: () => void;
   syncSessionTasks: (tasks: SessionTask[]) => void;
   /** `/help` — the command catalog with descriptions (it used to be a toast of bare names). */
@@ -410,7 +411,7 @@ function useBrainChatController(): BrainChatValue {
   const [reasoningOpen, setReasoningOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
-  const [pluginPicker, setPluginPicker] = useState<string | null>(null);
+  const [pluginPicker, setPluginPicker] = useState<PluginPickerRef | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [queued, setQueued] = useState<{ id: string; text: string }[]>([]);
@@ -1177,11 +1178,17 @@ function useBrainChatController(): BrainChatValue {
       // A picker a PLUGIN contributed. The daemon publishes it as kind:'picker' + execution:'surface-local'
       // with an owning plugin and no prompt — it says the command exists and who owns it, and leaves the
       // chooser to whichever surface was asked to run it. So this branch carries no knowledge of any one
-      // plugin: it asks the web's renderer registry whether this build can draw the picker named, and
-      // opens it. A picker with no renderer here (a CLI-only plugin, a newer daemon than this build) falls
-      // THROUGH to the unknown-command handling below rather than opening an empty overlay, and a plugin
-      // that is switched off publishes no command at all, so its name never reaches this line.
-      if (isRenderablePluginPicker(cmd)) { setPluginPicker(cmd.name); return; }
+      // plugin: it asks the web's renderer registry whether this build can draw the picker that NAME and
+      // that OWNER identify, and opens it. A plugin that is switched off publishes no command at all, so
+      // its name never reaches this line.
+      if (cmd.plugin && isRenderablePluginPicker(cmd)) { setPluginPicker({ name: cmd.name, plugin: cmd.plugin }); return; }
+      // A picker this build cannot draw: either no renderer at all, or one registered under that name for
+      // a DIFFERENT plugin. Saying so is the whole point — the fall-through below ends in a success toast
+      // that names the command, which reads exactly like the picker opened somewhere off screen.
+      if (cmd.kind === 'picker' && cmd.plugin) {
+        toast(interpolate(t.brainChat.pluginPickerUnsupported, { name: cmd.name, plugin: cmd.plugin }), 'error');
+        return;
+      }
       if (cmd.kind === 'mode') {
         const mode = WORK_MODES.find((m) => m === cmd.name);
         if (mode) { runMode(mode); return; }

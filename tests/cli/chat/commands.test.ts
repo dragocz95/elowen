@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
-import { compactNotice, parseCommand, resolveThinkingLevel, wireSubmit } from '../../../src/cli/chat/commands.js';
+import { compactNotice, parseCommand, pluginPickerRenderer, resolveThinkingLevel, wireSubmit } from '../../../src/cli/chat/commands.js';
 import { loadPrefs } from '../../../src/cli/chat/prefs.js';
 import { TranscriptModel } from '../../../src/brain/transcriptModel.js';
 import { ChatState } from '../../../src/cli/chat/chatState.js';
@@ -26,6 +26,13 @@ const PLUGIN_PICKER_DEFS = [
   { name: 'sandbox', description: 'Inspect and manage Sandbox workspaces', kind: 'picker', execution: 'surface-local', plugin: 'sandbox' },
   { name: 'deployer', description: 'Pick a deployment target', kind: 'picker', execution: 'surface-local', plugin: 'deploy' },
   { name: 'tasks', description: 'Tasks', kind: 'picker', execution: 'surface-local' },
+] as never;
+
+/** The same `/sandbox` NAME, published by a plugin that owns none of the sandbox routes. Nothing stops a
+ *  second plugin from registering that name, and the terminal's sandbox renderer drives the sandbox
+ *  plugin's own endpoints — so this is the shape the CLI has to refuse to draw. */
+const IMPOSTOR_PICKER_DEFS = [
+  { name: 'sandbox', description: 'Pick a build sandbox', kind: 'picker', execution: 'surface-local', plugin: 'ci-runner' },
 ] as never;
 
 describe('resolveThinkingLevel', () => {
@@ -73,9 +80,9 @@ describe('parseCommand — /tasks', () => {
  *  written into it, so a plugin that is switched off simply stops publishing and the command stops
  *  resolving. */
 describe('parseCommand — plugin-declared picker commands', () => {
-  it('resolves any published surface-local picker owned by a plugin generically', () => {
-    expect(parseCommand('/sandbox', PLUGIN_PICKER_DEFS)).toEqual({ cmd: 'plugin-picker', name: 'sandbox' });
-    expect(parseCommand('/deployer', PLUGIN_PICKER_DEFS)).toEqual({ cmd: 'plugin-picker', name: 'deployer' });
+  it('resolves any published surface-local picker owned by a plugin generically, carrying its owner', () => {
+    expect(parseCommand('/sandbox', PLUGIN_PICKER_DEFS)).toEqual({ cmd: 'plugin-picker', name: 'sandbox', plugin: 'sandbox' });
+    expect(parseCommand('/deployer', PLUGIN_PICKER_DEFS)).toEqual({ cmd: 'plugin-picker', name: 'deployer', plugin: 'deploy' });
   });
 
   it('returns null for a name the catalog does not publish', () => {
@@ -89,7 +96,7 @@ describe('parseCommand — plugin-declared picker commands', () => {
 });
 
 describe('wireSubmit — plugin picker dispatch', () => {
-  const submitWith = (text: string, pickers: Record<string, unknown>): ChatState => {
+  const submitWith = (text: string, pickers: Record<string, unknown>, defs: unknown = PLUGIN_PICKER_DEFS): ChatState => {
     let onSubmit: ((value: string) => void) | undefined;
     const editor = {
       addToHistory: vi.fn(), setText: vi.fn(),
@@ -100,7 +107,7 @@ describe('wireSubmit — plugin picker dispatch', () => {
       state,
       {
         client: {}, editor, shellContext: new LocalShellBuffer(), attachmentChips: testAttachmentChips(),
-        commandDefs: PLUGIN_PICKER_DEFS, tui: {}, lifetime: new ChatApplicationLifetime<'metadata'>(),
+        commandDefs: defs, tui: {}, lifetime: new ChatApplicationLifetime<'metadata'>(),
       } as never,
       { render: vi.fn() } as never,
       { stream: {}, pickers } as never,
@@ -120,6 +127,24 @@ describe('wireSubmit — plugin picker dispatch', () => {
     const state = submitWith('/deployer', { openSandboxModal });
     expect(openSandboxModal).not.toHaveBeenCalled();
     expect(state.notice).toContain('/deployer');
+  });
+
+  /** The renderer registry is keyed by the published name AND the plugin that owns it. Keyed by name
+   *  alone, any plugin that registered `/sandbox` would have its command answered by the sandbox
+   *  renderer — which posts to the SANDBOX plugin's own workspace routes, creating and removing Git
+   *  worktrees on behalf of a command that plugin never declared. */
+  it('refuses to draw the sandbox chooser for a /sandbox published by a different plugin', () => {
+    const openSandboxModal = vi.fn();
+    const state = submitWith('/sandbox', { openSandboxModal }, IMPOSTOR_PICKER_DEFS);
+    expect(openSandboxModal).not.toHaveBeenCalled();
+    expect(state.notice).toContain('/sandbox');
+    expect(state.notice).toContain('ci-runner');
+  });
+
+  it('resolves the renderer only for the name AND owner it was registered for', () => {
+    expect(pluginPickerRenderer('sandbox', 'sandbox')).toBeTypeOf('function');
+    expect(pluginPickerRenderer('sandbox', 'ci-runner')).toBeNull();
+    expect(pluginPickerRenderer('deployer', 'deploy')).toBeNull();
   });
 });
 

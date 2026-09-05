@@ -152,18 +152,48 @@ test('creating a workspace posts the project, the name and the base reference', 
   await expect(drawer.root).toBeVisible();
 
   await drawer.createButton().click();
-  // The project defaults to the overview's first one and the base reference to the plugin's own `main`;
-  // only the name is the reader's to supply.
+  // The project defaults to the overview's first one and the base reference to THAT project's own default
+  // branch, as the overview states it; only the name is the reader's to supply.
   await drawer.root.getByLabel(SANDBOX_TEXT.label).fill('release audit');
   await expect(drawer.root.getByLabel(SANDBOX_TEXT.baseRef)).toHaveValue('main');
+  // The form states that creating leaves this conversation where it is — the switch is its own step.
+  await expect(drawer.root).toContainText(SANDBOX_TEXT.createHint);
   await drawer.createSubmit().click();
 
   await expect.poll(async () => (await drawer.calls()).filter((call) => call.kind === 'create'))
     .toEqual([expect.objectContaining({ kind: 'create', projectId: 1, label: 'release audit', baseRef: 'main' })]);
 
+  // Creating binds nothing: the conversation still works in the workspace it was in, and no `use` write
+  // went out behind the reader's back.
+  expect((await drawer.calls()).filter((call) => call.kind === 'use')).toEqual([]);
+  await expect(drawer.row(CLEAN_LABEL)).toHaveAttribute('aria-current', 'true');
+  await expect(drawer.row('release audit')).not.toHaveAttribute('aria-current', 'true');
+
   // The list is re-read from the daemon rather than patched locally, so the new worktree appears in it.
   await expect(drawer.row('release audit')).toBeVisible();
   await expect(drawer.rows()).toHaveCount(3);
+});
+
+test('a project that states no default branch leaves the base reference empty', async ({ app, seed }, testInfo) => {
+  authedOnly(testInfo);
+  const chat = await chatWithSandbox(app, seed);
+  const drawer = new SandboxDrawer(app);
+  await runSandboxCommand(chat);
+  await expect(drawer.root).toBeVisible();
+
+  await drawer.createButton().click();
+  await drawer.selectProject('kolin');
+
+  // No guessed `main`: the field is empty, it says why, and create stays shut until a ref is supplied.
+  await expect(drawer.root.getByLabel(SANDBOX_TEXT.baseRef)).toHaveValue('');
+  await expect(drawer.root).toContainText(SANDBOX_TEXT.baseRefUnknown);
+  await drawer.root.getByLabel(SANDBOX_TEXT.label).fill('catalog audit');
+  await expect(drawer.createSubmit()).toBeDisabled();
+
+  await drawer.root.getByLabel(SANDBOX_TEXT.baseRef).fill('trunk');
+  await drawer.createSubmit().click();
+  await expect.poll(async () => (await drawer.calls()).filter((call) => call.kind === 'create'))
+    .toEqual([expect.objectContaining({ kind: 'create', projectId: 2, label: 'catalog audit', baseRef: 'trunk' })]);
 });
 
 test('the drawer takes focus, Tab stays inside it and Escape closes it', async ({ app, seed }, testInfo) => {

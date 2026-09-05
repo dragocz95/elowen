@@ -22,7 +22,10 @@ export function resolveThinkingLevel(value: string, levels: string[], labels: Re
 /** A slash command this TUI recognized: one of its own built-ins, or a plugin-declared picker resolved
  *  generically from the published catalog (`plugin-picker`, which carries only the published name). */
 export type BuiltinCommand = { cmd: 'quit' | 'new' | 'clear' | 'stop' | 'stats' | 'context' | 'restart' | 'sessions' | 'resume' | 'rename' | 'delete' | 'model' | 'reasoning' | 'fast' | 'theme' | 'maskot' | 'cd' | 'editor' | 'keybinds' | 'statusline' | 'lsp' | 'mcp' | 'skills' | 'tasks' | 'tools' | 'goal' | 'subgoal' | 'compact' | 'plan' | 'build' | 'workflow' | 'yolo' | 'paste' | 'export' | 'help'; arg?: string };
-export type ParsedCommand = BuiltinCommand | { cmd: 'plugin-picker'; name: string };
+/** A plugin-declared picker carries its OWNING PLUGIN beside its name, because the name alone does not
+ *  identify the command: two plugins can publish the same one, and a renderer written for a picker drives
+ *  THAT plugin's own routes. */
+export type ParsedCommand = BuiltinCommand | { cmd: 'plugin-picker'; name: string; plugin: string };
 
 /** Local slash-command routing: returns the recognized command (with its argument) or null for a
  *  regular chat message. Pure, so the command surface is unit-testable without a TTY. */
@@ -77,7 +80,7 @@ export function parseCommand(text: string, available?: readonly SlashCommandDef[
     default: {
       const def = available?.find((command) => command.name === name);
       return def?.kind === 'picker' && def.execution === 'surface-local' && def.plugin
-        ? { cmd: 'plugin-picker', name }
+        ? { cmd: 'plugin-picker', name, plugin: def.plugin }
         : null;
     }
   }
@@ -86,10 +89,23 @@ export function parseCommand(text: string, available?: readonly SlashCommandDef[
 /** Which local overlay draws each plugin-declared picker. This is presentation wiring, not plugin
  *  behaviour: a plugin can ship an HTTP surface but not a TUI modal, so the terminal states which of its
  *  own renderers answers a published name. A name with no entry gets a notice instead of an empty
- *  chooser — the daemon may publish a picker this build has never drawn. */
-const PLUGIN_PICKER_RENDERERS: Record<string, (pickers: Pickers) => void> = {
-  sandbox: (pickers) => { pickers.openSandboxModal(); },
+ *  chooser — the daemon may publish a picker this build has never drawn.
+ *
+ *  Every entry names the plugin it was written FOR, and both halves have to match before it is used. The
+ *  renderers are not generic choosers: the sandbox one drives the sandbox plugin's own workspace routes,
+ *  so drawing it for a `/sandbox` published by some other plugin would point that plugin's command at a
+ *  different plugin's endpoints. */
+const PLUGIN_PICKER_RENDERERS: Record<string, { plugin: string; open: (pickers: Pickers) => void }> = {
+  sandbox: { plugin: 'sandbox', open: (pickers) => { pickers.openSandboxModal(); } },
 };
+
+/** The terminal's renderer for the picker `name` published by `plugin`, or null when this build has none
+ *  for that PAIR. A name registered here but owned by a different plugin is deliberately unrenderable:
+ *  the caller reports it as unsupported rather than drawing the wrong plugin's chooser. */
+export function pluginPickerRenderer(name: string, plugin: string): ((pickers: Pickers) => void) | null {
+  const entry = PLUGIN_PICKER_RENDERERS[name];
+  return entry && entry.plugin === plugin ? entry.open : null;
+}
 
 /** True while the input text can still be a slash-command name being typed ("/", "/mo", "/model").
  *  A space (arguments), a second '/' (a path like /var/www/x) or a wiped leading '/' means it's ordinary
@@ -322,9 +338,9 @@ export function wireSubmit(
       switch (command.cmd) {
         case 'quit': quit(); return;
         case 'plugin-picker': {
-          const renderer = PLUGIN_PICKER_RENDERERS[command.name];
+          const renderer = pluginPickerRenderer(command.name, command.plugin);
           if (!renderer) {
-            rt.notice = color.dim(`/${command.name} has no chooser in this terminal — use it from the web dock`);
+            rt.notice = color.dim(`/${command.name} from the ${command.plugin} plugin has no chooser in this terminal — use it from the web dock`);
             render();
             return;
           }

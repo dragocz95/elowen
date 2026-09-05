@@ -140,6 +140,8 @@ export const sk = {
     labelPlaceholder: 'Napríklad: refaktoring platieb',
     baseRef: 'Východisková referencia',
     baseRefPlaceholder: 'Vetva, značka alebo commit',
+    createHint: 'Vytvorenie pracovného priestoru doň túto konverzáciu neprepne. Keď v ňom budete chcieť pracovať, zvoľte pri jeho riadku „Použiť tu“.',
+    baseRefUnknown: 'Tento projekt neuvádza východiskovú vetvu, preto zadajte referenciu, z ktorej sa má odbočiť.',
     activeHere: 'Aktívny v tejto konverzácii',
     activeElsewhere: 'Aktívny v inej konverzácii',
     orphaned: 'Osirelý',
@@ -153,7 +155,7 @@ export const sk = {
     use: 'Použiť tu',
     useNoSession: 'Pred výberom pracovného priestoru otvorte konverzáciu.',
     switched: 'Táto konverzácia teraz pracuje v priestore {label}.',
-    created: 'Pracovný priestor {label} bol vytvorený.',
+    created: 'Pracovný priestor {label} bol vytvorený. Táto konverzácia naďalej pracuje tam, kde bola, kým nezvolíte „Použiť tu“.',
     removed: 'Pracovný priestor {label} bol odstránený.',
     workspaceActions: 'Akcie pracovného priestoru',
     remove: 'Odstrániť',
@@ -1692,6 +1694,9 @@ export const sk = {
       model: 'Prepnúť model AI',
     },
     modeSwitched: 'Pracovný režim:',
+    /** A picker command a plugin published that this build has no renderer for. A refusal, not a result:
+     *  nothing opened, and the reader is told where the command does work. */
+    pluginPickerUnsupported: 'Príkaz /{name} z pluginu {plugin} sa tu nedá zobraziť. Použite ho prosím v termináli.',
     renameTitle: 'Premenovať konverzáciu',
     commandField: {
       open: 'Otvoriť pole príkazov',

@@ -17,26 +17,35 @@ import { SandboxModal } from './SandboxModal';
  *  unknown-command handling rather than opening an empty overlay. The reverse is harmless: the entry
  *  below is unreachable while the sandbox plugin is disabled, because a disabled plugin publishes no
  *  command at all and the name is therefore never invoked. */
-const PLUGIN_PICKERS: Record<string, ComponentType<{ onClose: () => void }>> = {
-  sandbox: SandboxModal,
+/** Every entry names the plugin it was written FOR, and both halves of that pair have to match before it
+ *  is used. These components are not generic choosers: `SandboxModal` posts to the sandbox plugin's own
+ *  workspace routes, so drawing it for a `/sandbox` published by a DIFFERENT plugin would point that
+ *  plugin's command at another plugin's endpoints. */
+const PLUGIN_PICKERS: Record<string, { plugin: string; component: ComponentType<{ onClose: () => void }> }> = {
+  sandbox: { plugin: 'sandbox', component: SandboxModal },
 };
 
-/** Whether the web can draw the plugin picker published under `name`. Read by the chat controller, which
- *  deliberately knows nothing beyond this answer. */
-export const hasPluginPicker = (name: string): boolean =>
-  Object.prototype.hasOwnProperty.call(PLUGIN_PICKERS, name);
+/** The picker the controller currently has open: the published name AND the plugin that owns it, which
+ *  together are what resolves a renderer. */
+export interface PluginPickerRef { name: string; plugin: string }
 
-/** The component that draws the plugin picker published under `name`, or null when there is none. */
-export const pluginPickerComponent = (name: string | null): ComponentType<{ onClose: () => void }> | null =>
-  (name !== null && hasPluginPicker(name) ? PLUGIN_PICKERS[name]! : null);
+/** Whether this build can draw the picker `name` published by `plugin`. A name registered here but owned
+ *  by another plugin is deliberately NOT renderable. */
+export const hasPluginPicker = (name: string, plugin: string | undefined): boolean =>
+  !!plugin && PLUGIN_PICKERS[name]?.plugin === plugin;
+
+/** The component that draws an open plugin picker, or null when this build has none for that pair. */
+export const pluginPickerComponent = (picker: PluginPickerRef | null): ComponentType<{ onClose: () => void }> | null =>
+  (picker !== null && hasPluginPicker(picker.name, picker.plugin) ? PLUGIN_PICKERS[picker.name]!.component : null);
 
 /** Whether a catalog entry is a plugin-contributed picker this surface should render itself.
  *
  *  All four conditions matter. `kind`/`execution` are what the daemon publishes for a surface-rendered
  *  chooser; `plugin` is what marks it as CONTRIBUTED rather than one of the built-in pickers the
- *  controller dispatches by name; and the registry is what says this build can actually draw it. */
+ *  controller dispatches by name, and it is half of the registry key; and the registry is what says this
+ *  build can actually draw it. */
 export const isRenderablePluginPicker = (command: SlashCommandDef): boolean =>
   command.kind === 'picker'
   && command.execution === 'surface-local'
   && !!command.plugin
-  && hasPluginPicker(command.name);
+  && hasPluginPicker(command.name, command.plugin);

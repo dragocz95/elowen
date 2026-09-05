@@ -144,6 +144,8 @@ export const en = {
     labelPlaceholder: 'For example: payment refactor',
     baseRef: 'Base reference',
     baseRefPlaceholder: 'Branch, tag or commit',
+    createHint: 'Creating a workspace does not move this conversation into it. Choose “Use here” on its row when you want to work there.',
+    baseRefUnknown: 'This project states no default branch, so enter the reference to branch from.',
     activeHere: 'Active in this conversation',
     activeElsewhere: 'Active in another conversation',
     orphaned: 'Orphaned',
@@ -157,7 +159,7 @@ export const en = {
     use: 'Use here',
     useNoSession: 'Open a conversation before selecting a workspace.',
     switched: 'This conversation now works in {label}.',
-    created: 'The workspace {label} has been created.',
+    created: 'The workspace {label} has been created. This conversation keeps working where it is until you choose “Use here”.',
     removed: 'The workspace {label} has been removed.',
     workspaceActions: 'Workspace actions',
     remove: 'Remove',
@@ -1724,6 +1726,9 @@ export const en = {
       model: 'Switch the AI model',
     },
     modeSwitched: 'Work mode:',
+    /** A picker command a plugin published that this build has no renderer for. A refusal, not a result:
+     *  nothing opened, and the reader is told where the command does work. */
+    pluginPickerUnsupported: 'The /{name} command of the {plugin} plugin cannot be displayed here. Please use it in the terminal.',
     renameTitle: 'Rename conversation',
     commandField: {
       open: 'Open the command field',

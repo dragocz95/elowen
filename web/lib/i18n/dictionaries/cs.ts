@@ -140,6 +140,8 @@ export const cs = {
     labelPlaceholder: 'Například: refaktoring plateb',
     baseRef: 'Výchozí reference',
     baseRefPlaceholder: 'Větev, značka nebo commit',
+    createHint: 'Vytvoření pracovního prostoru do něj tuto konverzaci nepřepne. Až v něm budete chtít pracovat, zvolte u jeho řádku „Použít zde“.',
+    baseRefUnknown: 'Tento projekt neuvádí výchozí větev, proto zadejte referenci, ze které se má odbočit.',
     activeHere: 'Aktivní v této konverzaci',
     activeElsewhere: 'Aktivní v jiné konverzaci',
     orphaned: 'Osiřelý',
@@ -153,7 +155,7 @@ export const cs = {
     use: 'Použít zde',
     useNoSession: 'Před výběrem pracovního prostoru otevřete konverzaci.',
     switched: 'Tato konverzace nyní pracuje v prostoru {label}.',
-    created: 'Pracovní prostor {label} byl vytvořen.',
+    created: 'Pracovní prostor {label} byl vytvořen. Tato konverzace nadále pracuje tam, kde byla, dokud nezvolíte „Použít zde“.',
     removed: 'Pracovní prostor {label} byl odstraněn.',
     workspaceActions: 'Akce pracovního prostoru',
     remove: 'Odstranit',
@@ -1697,6 +1699,9 @@ export const cs = {
       model: 'Přepnout model AI',
     },
     modeSwitched: 'Pracovní režim:',
+    /** A picker command a plugin published that this build has no renderer for. A refusal, not a result:
+     *  nothing opened, and the reader is told where the command does work. */
+    pluginPickerUnsupported: 'Příkaz /{name} z pluginu {plugin} zde nelze zobrazit. Použijte jej prosím v terminálu.',
     renameTitle: 'Přejmenovat konverzaci',
     commandField: {
       open: 'Otevřít pole příkazů',

@@ -19,6 +19,9 @@ export const SANDBOX_TEXT = {
   createSubmit: 'Create',
   label: 'Name',
   baseRef: 'Base reference',
+  project: 'Project',
+  createHint: 'Creating a workspace does not move this conversation into it. Choose “Use here” on its row when you want to work there.',
+  baseRefUnknown: 'This project states no default branch, so enter the reference to branch from.',
   removeTitle: 'Remove this workspace?',
   remove: 'Remove',
   blockedNotClean: 'The workspace contains uncommitted changes or commits that exist nowhere else, so it was not removed.',
@@ -69,6 +72,13 @@ export class SandboxDrawer {
   /** The footer button that opens the create form. */
   createButton(): Locator {
     return this.root.getByRole('button', { name: SANDBOX_TEXT.create });
+  }
+
+  /** Choose a project in the create form. The control is the app's `SelectMenu` (a Radix select), so the
+   *  option lives in a portal outside the drawer and is reached from the page. */
+  async selectProject(slug: string): Promise<void> {
+    await this.root.getByRole('combobox', { name: SANDBOX_TEXT.project }).click();
+    await this.page.getByRole('option', { name: slug }).click();
   }
 
   /** The create form's submit. */

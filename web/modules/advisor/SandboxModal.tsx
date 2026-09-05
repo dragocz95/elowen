@@ -24,13 +24,6 @@ import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Badge } from '../../components/ui/shadcn/badge';
 import type { SandboxOverview, SandboxRemovalPreview, SandboxWorkspace } from '../../lib/types';
 
-/** The base reference a new workspace is cut from when the reader states none.
- *
- *  The overview's project projection carries an id, a slug and a path and no default branch, so there is
- *  nothing better to read — this is the same fallback the plugin's own settings screen uses, and the
- *  field stays editable for a repository whose trunk is called something else. */
-const DEFAULT_BASE_REF = 'main';
-
 /** The plugin's coded removal refusals, mapped to the sentence each one is reported with.
  *
  *  These are the three the SAFE removal path can answer with (see `removeWorkspace` in the plugin's
@@ -164,11 +157,17 @@ export function SandboxModal({ onClose }: { onClose: () => void }) {
 
   const mutating = createWorkspace.isPending || switchWorkspace.isPending || removalPreview.isPending || removeWorkspace.isPending;
 
-  const openCreate = (): void => setDraft({
-    projectId: String(projects[0]?.id ?? ''),
-    label: '',
-    baseRef: DEFAULT_BASE_REF,
-  });
+  /** The reference a new workspace is cut from, as the OVERVIEW states it for that project. The daemon
+   *  reads the repository's real default branch and answers null when there is none, so a null leaves the
+   *  field empty and the reader supplies the ref — a guessed `main` here silently branched from a name
+   *  that need not exist. */
+  const defaultRefOf = (projectId: string): string =>
+    projects.find((project) => String(project.id) === projectId)?.defaultRef ?? '';
+
+  const openCreate = (): void => {
+    const projectId = String(projects[0]?.id ?? '');
+    setDraft({ projectId, label: '', baseRef: defaultRefOf(projectId) });
+  };
 
   const runCreate = (): void => {
     if (!draft) return;
@@ -263,10 +262,16 @@ export function SandboxModal({ onClose }: { onClose: () => void }) {
         <ModalBody gap={4}>
           {draft ? (
             <div className="flex flex-col gap-3 rounded-md border border-border bg-card p-3">
+              {/* Create makes a worktree and nothing else: the conversation stays where it is until the
+                  reader switches it from a row. The form says so BEFORE the press, because the two
+                  surfaces differed on exactly this and the drawer's own toast is read afterwards. */}
+              <p className="text-xs text-muted-foreground">{t.sandboxModal.createHint}</p>
               <Field label={t.sandboxModal.project}>
                 <SelectMenu
                   value={draft.projectId}
-                  onChange={(projectId) => setDraft({ ...draft, projectId })}
+                  // The base reference belongs to the project it is read from, so it follows the choice
+                  // rather than leaving another project's default behind in the field.
+                  onChange={(projectId) => setDraft({ ...draft, projectId, baseRef: defaultRefOf(projectId) })}
                   label={t.sandboxModal.project}
                   options={projects.map((project) => ({ value: String(project.id), label: project.slug }))}
                 />
@@ -280,14 +285,23 @@ export function SandboxModal({ onClose }: { onClose: () => void }) {
                   onChange={(event) => setDraft({ ...draft, label: event.target.value })}
                 />
               </Field>
-              <Field label={t.sandboxModal.baseRef}>
-                <Input
-                  value={draft.baseRef}
-                  placeholder={t.sandboxModal.baseRefPlaceholder}
-                  aria-label={t.sandboxModal.baseRef}
-                  className="font-mono"
-                  onChange={(event) => setDraft({ ...draft, baseRef: event.target.value })}
-                />
+              {/* Required, and empty whenever the project states no default branch — the form asks for
+                  the ref instead of branching from a name nobody confirmed exists. */}
+              <Field
+                label={t.sandboxModal.baseRef}
+                required
+                {...(defaultRefOf(draft.projectId) ? {} : { description: t.sandboxModal.baseRefUnknown })}
+              >
+                {(control) => (
+                  <Input
+                    {...control}
+                    value={draft.baseRef}
+                    placeholder={t.sandboxModal.baseRefPlaceholder}
+                    aria-label={t.sandboxModal.baseRef}
+                    className="font-mono"
+                    onChange={(event) => setDraft({ ...draft, baseRef: event.target.value })}
+                  />
+                )}
               </Field>
               <div className="flex justify-end gap-2">
                 <Button variant="ghost" size="sm" onClick={() => setDraft(null)}>{t.common.cancel}</Button>

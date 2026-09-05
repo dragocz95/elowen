@@ -28,9 +28,11 @@ export const CLEAN_WORKSPACE_ID = 'ws-atlas-payments';
 /** The workspace with uncommitted work in it — the one whose removal the daemon refuses. */
 export const DIRTY_WORKSPACE_ID = 'ws-kolin-catalog';
 
+// `defaultRef` is the repository's real default branch as the daemon read it. The second project has
+// none, which is the case the create form must not paper over with a guessed branch name.
 const projects: SandboxProject[] = [
-  { id: 1, slug: 'atlas', path: '/srv/atlas' },
-  { id: 2, slug: 'kolin', path: '/srv/kolin' },
+  { id: 1, slug: 'atlas', path: '/srv/atlas', defaultRef: 'main' },
+  { id: 2, slug: 'kolin', path: '/srv/kolin', defaultRef: null },
 ];
 
 const sessions: SandboxSession[] = [

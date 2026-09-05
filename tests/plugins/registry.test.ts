@@ -587,6 +587,56 @@ describe('PluginRegistry', () => {
       expect(warns.length).toBe(2);
     });
 
+    /** A picker is DRAWN by the surface that runs it, and only the CLI and the web dock hold a renderer
+     *  registry to draw one with. A chat adapter that claimed the command would register the name into
+     *  its platform's native menu and then have nothing to answer the invocation with, so the surfaces a
+     *  picker may be published to are decided HERE rather than trusted from the declaration. */
+    it('defaults a picker to the surfaces that can draw it', () => {
+      const reg = new PluginRegistry();
+      reg.contextFor('sbx', {}, noopLog).registerCommand({ name: 'workspace', description: 'Pick a workspace', kind: 'picker' });
+      expect(reg.commands.get('workspace')?.surfaces).toEqual(['cli', 'web']);
+    });
+
+    it('drops a platform surface from a picker so no chat adapter can claim it', () => {
+      const warns: string[] = [];
+      const reg = new PluginRegistry();
+      const ctx = reg.contextFor('sbx', {}, { info() {}, warn: (m: string) => warns.push(m), error() {} });
+      ctx.registerCommand({ name: 'workspace', description: 'Pick a workspace', kind: 'picker', surfaces: ['web', 'discord'] });
+      expect(reg.commands.get('workspace')?.surfaces).toEqual(['web']);
+      expect(warns.some((w) => w.includes('discord'))).toBe(true);
+    });
+
+    it('refuses a picker whose declared surfaces are all platforms', () => {
+      const warns: string[] = [];
+      const reg = new PluginRegistry();
+      const ctx = reg.contextFor('sbx', {}, { info() {}, warn: (m: string) => warns.push(m), error() {} });
+      ctx.registerCommand({ name: 'workspace', description: 'x', kind: 'picker', surfaces: ['discord', 'telegram'] });
+      expect(reg.commands.has('workspace')).toBe(false);
+      expect(warns.some((w) => w.includes('workspace'))).toBe(true);
+    });
+
+    /** The end the clamp exists for: a platform's PUBLISHED menu, which is what an adapter registers. */
+    it('never publishes a platform-declared picker into that platform\u2019s menu', () => {
+      const reg = new PluginRegistry();
+      const U = undefined;
+      const ctx = reg.contextFor('sbx', {}, noopLog, U, U, U, U, U, U, U, U, U, U, U, U, U,
+        () => [...reg.commands.values()].map((cmd) => ({ ...cmd, plugin: reg.commandOwner.get(cmd.name) })));
+      ctx.registerCommand({ name: 'workspace', description: 'Pick a workspace', kind: 'picker', surfaces: ['cli', 'web', 'discord'] });
+      reg.setCapabilities('sbx', {}); // what the loader records for a plugin that registered cleanly
+
+      expect(ctx.chatCommands('discord').some((cmd) => cmd.name === 'workspace')).toBe(false);
+      // …and it IS published where a renderer exists, so the clamp narrows rather than deletes.
+      expect(ctx.chatCommands('web').some((cmd) => cmd.name === 'workspace')).toBe(true);
+    });
+
+    /** Prompt macros keep their unrestricted reach: a macro expands to a model turn, which every surface
+     *  can run — a chat platform included. */
+    it('leaves a prompt macro\u2019s declared surfaces untouched', () => {
+      const reg = new PluginRegistry();
+      reg.contextFor('ops', {}, noopLog).registerCommand({ name: 'deploy', description: 'Ship', prompt: 'Deploy $ARGS', surfaces: ['discord'] });
+      expect(reg.commands.get('deploy')?.surfaces).toEqual(['discord']);
+    });
+
     it('accepts a single-character command name (regex allows 1–32 chars)', () => {
       const reg = new PluginRegistry();
       reg.contextFor('p', {}, noopLog).registerCommand({ name: 'x', description: 'x', prompt: 'y' });

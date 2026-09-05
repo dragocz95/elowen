@@ -32,7 +32,12 @@ const workspace = (over: Record<string, unknown>) => ({
 });
 
 const overview = {
-  projects: [{ id: 1, slug: 'kolin', path: '/var/www/kolin' }, { id: 2, slug: 'elowen', path: '/var/www/elowen' }],
+  // `defaultRef` is what the daemon read from the repository. The second project has none, which is the
+  // case the form must not paper over with a guessed branch name.
+  projects: [
+    { id: 1, slug: 'kolin', path: '/var/www/kolin', defaultRef: 'main' },
+    { id: 2, slug: 'elowen', path: '/var/www/elowen', defaultRef: null },
+  ],
   sessions: [{ id: 'brain-7-a', title: 'Katalog', updatedAt: '2026-09-01' }],
   workspaces: [
     workspace({}),
@@ -73,6 +78,8 @@ vi.mock('../../../lib/i18n', () => ({
         loadError: 'Overview unavailable', emptyTitle: 'No workspaces', emptyDesc: 'Nothing here.',
         create: 'New workspace', createSubmit: 'Create',
         project: 'Project', label: 'Name', labelPlaceholder: 'For example', baseRef: 'Base reference', baseRefPlaceholder: 'Branch',
+        createHint: 'Creating does not move this conversation. Choose Use here to work there.',
+        baseRefUnknown: 'This project states no default branch, so enter the reference to branch from.',
         activeHere: 'Active in this conversation', activeElsewhere: 'Active in another conversation',
         orphaned: 'Orphaned', clean: 'Clean',
         dirty: 'Modified files: {n}', untracked: 'Untracked files: {n}',
@@ -140,10 +147,20 @@ describe('SandboxModal', () => {
     expect(screen.getByRole('button', { name: 'Use here: Docs' })).toBeDisabled();
   });
 
-  it('creates a workspace from the project, name and base reference, defaulting the reference to main', async () => {
+  /** Creating a workspace CREATES it, on both surfaces. The CLI used to bind the conversation to the new
+   *  worktree while this drawer did not, so the same button moved the working directory in one place and
+   *  not in the other. Switching is now the separate step everywhere, and the create payload is the
+   *  proof: the project, the name and the base reference, and no conversation id.
+   *
+   *  The CLI half of this parity is asserted in tests/cli/chat/pickers.test.ts ("creates a workspace
+   *  without binding this conversation, matching the web drawer"), which pins the identical payload. */
+  it('creates a workspace without binding this conversation, matching the CLI', async () => {
     renderModal();
 
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'New workspace' })); });
+    // The form says what create does BEFORE the press, not only in the toast afterwards.
+    expect(screen.getByText('Creating does not move this conversation. Choose Use here to work there.')).toBeInTheDocument();
+    // The base reference is the FIRST project's own default branch, read from the overview.
     const baseRef = screen.getByRole('textbox', { name: 'Base reference' });
     expect(baseRef).toHaveValue('main');
 
@@ -153,6 +170,40 @@ describe('SandboxModal', () => {
 
     expect(createMutate).toHaveBeenCalledTimes(1);
     expect(createMutate.mock.calls[0]![0]).toEqual({ projectId: 1, label: 'Refunds', baseRef: 'develop' });
+    // No binding travels with a create, and none is written on the side either.
+    expect(useMutate).not.toHaveBeenCalled();
+  });
+
+  /** The overview answers null for a repository whose default branch the daemon could not read. The form
+   *  then asks for the reference instead of typing `main` into it, which used to branch a worktree from a
+   *  name that need not exist in that repository at all. */
+  it('leaves the base reference empty and refuses to create when the project states no default branch', async () => {
+    renderModal();
+
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'New workspace' })); });
+    // The project without a default branch is chosen through the form's own select, by keyboard —
+    // Radix moves focus into the open listbox a frame later, so each step is awaited.
+    fireEvent.keyDown(screen.getByRole('combobox', { name: 'Project' }), { key: 'ArrowDown' });
+    await waitFor(() => expect(document.activeElement?.getAttribute('role')).toBe('option'));
+    fireEvent.keyDown(document.activeElement!, { key: 'End' });
+    await waitFor(() => expect(document.activeElement).toHaveTextContent('elowen'));
+    await act(async () => { fireEvent.keyDown(document.activeElement!, { key: 'Enter' }); });
+
+    const baseRef = screen.getByRole('textbox', { name: 'Base reference' });
+    expect(baseRef).toHaveValue('');
+    expect(screen.getByText('This project states no default branch, so enter the reference to branch from.')).toBeInTheDocument();
+
+    // A name alone is not enough: with no reference there is nothing to branch from, so create stays shut.
+    fireEvent.change(screen.getByRole('textbox', { name: 'Name' }), { target: { value: 'Spike' } });
+    const submit = screen.getByRole('button', { name: 'Create' });
+    expect(submit).toBeDisabled();
+    await act(async () => { fireEvent.click(submit); });
+    expect(createMutate).not.toHaveBeenCalled();
+
+    // Supplying one makes it the ref that travels — never a guessed default.
+    fireEvent.change(baseRef, { target: { value: 'trunk' } });
+    await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Create' })); });
+    expect(createMutate.mock.calls[0]![0]).toEqual({ projectId: 2, label: 'Spike', baseRef: 'trunk' });
   });
 
   // The switch is a server-side binding of THIS conversation. Nothing about a working directory is

@@ -738,9 +738,9 @@ export interface SessionTask {
  *
  *  Mirrored from the plugin's own `plugins/sandbox/web-src/runtime.ts`: the plugin owns every operation
  *  and the chat dock is one more reader of the same routes. Only the fields the dock renders are declared.
- *  A project here is the sandbox overview's own projection — id, slug and path, and no default branch,
- *  which is why the create form falls back to `main`. */
-export interface SandboxProject { id: number; slug: string; path: string }
+ *  `defaultRef` is the repository's REAL default branch as the daemon read it, and null when there is
+ *  none — the create form leaves its base reference empty in that case rather than guessing a name. */
+export interface SandboxProject { id: number; slug: string; path: string; defaultRef: string | null }
 /** One porcelain entry of a workspace's tree: the two-letter status code and the path it applies to. */
 export interface SandboxWorkspaceFile { path: string; code: string; untracked: boolean }
 /** The worktree's Git state. Null when its path is gone or is no longer a repository. */

@@ -709,18 +709,22 @@ export function createPickers(
             const label = rawLabel.trim();
             if (!label) { rt.notice = color.dim('cancelled — a workspace name is required'); render(); return; }
             openTextInput({
-              // The overview only sometimes knows a Project's default branch; `main` is the fallback rather
-              // than a guess at the repository's own naming.
-              tui, editor, title: `${label} · base ref`, initial: project.defaultBranch ?? 'main',
+              // The overview states the repository's REAL default branch, or null when it has none. A null
+              // leaves the field empty and the ref is asked for — `main` here was a guess at a name that
+              // need not exist in that repository at all.
+              tui, editor,
+              title: project.defaultRef
+                ? `${label} · base ref`
+                : `${label} · base ref (${project.slug} states no default branch)`,
+              initial: project.defaultRef ?? '',
               onSubmit: (rawRef) => {
                 const baseRef = rawRef.trim();
                 if (!baseRef) { rt.notice = color.dim('cancelled — a base ref is required'); render(); return; }
-                runSession(() => client.sandboxCreateWorkspace({
-                  projectId: project.id, label, baseRef,
-                  // Creating with a conversation binds it there through the same `useWorkspace` writer.
-                  ...(client.boundSession ? { sessionId: client.boundSession } : {}),
-                }), (workspace) => {
-                  rt.notice = color.success(`workspace ${workspace.label} ready at ${workspace.path}`);
+                // Create makes the worktree and nothing else. Binding this conversation to it is the
+                // separate, explicit `workspaces/use` step the web drawer also requires, so both surfaces
+                // mean the same thing by "create" and neither moves the working directory silently.
+                runSession(() => client.sandboxCreateWorkspace({ projectId: project.id, label, baseRef }), (workspace) => {
+                  rt.notice = color.success(`workspace ${workspace.label} ready at ${workspace.path} — this conversation still works where it did; open the workspace and choose "Use in this conversation" to switch`);
                   openSandboxModal();
                   render();
                 }, sandboxFail);
@@ -740,7 +744,7 @@ export function createPickers(
       openPicker({
         tui, editor, title: 'Sandbox workspaces',
         items: [
-          { value: '__create', label: '+ New workspace', description: 'create a Git worktree for a project' },
+          { value: '__create', label: '+ New workspace', description: 'create a Git worktree — this conversation stays where it is until you switch it' },
           { value: '__refresh', label: 'Refresh', description: 'read the workspace list again' },
           ...overview.workspaces.map((workspace) => ({
             value: workspace.id,
