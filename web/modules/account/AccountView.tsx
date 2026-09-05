@@ -347,16 +347,7 @@ export function AccountView() {
     <div className="flex w-full min-w-0 flex-col">
       <ModuleHeader title={t.account.title} icon={UserCog} />
 
-      <WorkspaceShell
-        variant="deck"
-        hero={deckHero}
-        navigation={{
-          sections: spatialSections,
-          value: activeSection.id,
-          onChange: (v) => setSection(v as typeof section),
-          ariaLabel: t.account.sectionsNav,
-        }}
-      >
+      <WorkspaceShell variant="deck" hero={deckHero}>
       {deckPluginSections.map((item) => (
         <AccountPanel key={item.id} id={item.id} active={section} visited={visitedSections}>
           <PluginAccountSection entry={item.plugin} sectionId={item.sectionId} onSaveState={reportSaveState} />

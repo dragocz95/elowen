@@ -476,7 +476,6 @@ export default function SettingsPage() {
       <WorkspaceShell
         variant="deck"
         hero={deckHero}
-        navigation={{ sections: deckSections, value: activeSection.id, onChange: setCategory, ariaLabel: t.settings.sectionsNav }}
         toolbar={toolbar}
       >
         <SettingsPanel id="models" active={category} visited={visitedCategories}>

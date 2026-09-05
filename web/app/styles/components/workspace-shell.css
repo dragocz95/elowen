@@ -60,8 +60,13 @@
   .workspace-page > .workspace-page__lead > .workspace-hero { padding-block-start: 1rem; }
 }
 
-/* Section navigation stays in the page. Registers and phone decks use the single-line Segmented track;
-   the track itself owns wheel/touch scrolling and measured edge fades. */
+/* A register's view tabs stay in the page: they switch between views of the collection the page is
+   already showing, which is not an address. The single-line Segmented track owns wheel/touch scrolling
+   and its own measured edge fades.
+
+   A configuration deck has no navigation here at all any more. Its sections ARE addresses (`?cat=`), so
+   they are rows of the sidebar's sub-menu, next to every other place the app can go. The two-column grid
+   that used to park a second menu beside the content is gone with them. */
 .workspace-shell__section-navigation {
   width: 100%;
   min-width: 0;
@@ -73,52 +78,8 @@
 }
 .workspace-shell__section-navigation > .segmented { width: 100%; }
 
-/* A deck becomes a two-column working surface from 768px upward. The hero and metric rail span the whole
-   measure; the section menu occupies the left column beside BOTH the toolbar and content. The two right
-   boxes re-declare the named container so settings records and toolbar controls respond to the width they
-   actually own rather than to the full shell. */
-.workspace-shell[data-section-layout='sidebar'] {
-  display: grid;
-  grid-template-columns: minmax(12rem, 14rem) minmax(0, 1fr);
-  grid-template-areas:
-    'hero hero'
-    'navigation toolbar'
-    'navigation content';
-  column-gap: clamp(1.5rem, 3cqi, 3rem);
-  align-items: start;
-}
-/* The navigation spans the toolbar and content rows. When the toolbar is empty, leaving its named row in
-   the grid lets the tall navigation divide its intrinsic height between TWO auto tracks; short account or
-   settings panels then begin halfway down the sidebar. Collapse that empty anatomy to one working row.
-   The same DOM condition owns the toolbar's display rule in page-toolbar.css, so a portal arriving later
-   restores the three-row layout without React measuring or duplicating toolbar state. */
-.workspace-shell[data-section-layout='sidebar']:not(:has(> .page-toolbar .page-toolbar__row > :not(.page-toolbar__slot:empty))) {
-  grid-template-areas:
-    'hero hero'
-    'navigation content';
-}
-.workspace-shell[data-section-layout='sidebar'] > .workspace-hero { grid-area: hero; width: 100%; }
-.workspace-shell[data-section-layout='sidebar'] > .workspace-shell__section-navigation {
-  position: sticky;
-  top: 1rem;
-  grid-area: navigation;
-  align-self: start;
-  max-height: calc(100dvh - 2rem);
-  overflow-x: hidden;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  padding-block: 1rem 2rem;
-  scrollbar-width: thin;
-}
-.workspace-shell[data-section-layout='sidebar'] > .page-toolbar {
-  container: workspace-shell / inline-size;
-  grid-area: toolbar;
-}
-.workspace-shell[data-section-layout='sidebar'] > .workspace-shell__content { grid-area: content; }
-.workspace-shell__section-navigation[data-layout='sidebar'] > .segmented { align-items: stretch; }
-
-/* The content column is always the nearest workspace container. In a sidebar deck the toolbar above it
-   gets the same name, so both right-column regions fold against their own measured width. */
+/* The content column is always the nearest workspace container, so records and toolbar controls fold
+   against the width they actually own rather than against the viewport. */
 .workspace-shell__content { container: workspace-shell / inline-size; min-width: 0; padding-block: 1rem 2rem; }
 
 @media (pointer: coarse) {
