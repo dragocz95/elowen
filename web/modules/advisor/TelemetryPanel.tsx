@@ -19,6 +19,7 @@ import { ScrollArea } from '../../components/ui/shadcn/scroll-area';
 import { Separator } from '../../components/ui/shadcn/separator';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../components/ui/shadcn/collapsible';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
+import { HelpTip } from '../../components/ui/HelpTip';
 import { MorePill } from '../../components/ui/MorePill';
 import { useToast } from '../../components/ui/Toast';
 import { focusOverlaySurface, useReturnFocus } from '../../components/ui/overlayStack';
@@ -671,10 +672,24 @@ function TelemetryFoot() {
   const { t } = useTranslation();
   const { telemetry } = useBrainChat();
   const project = telemetry.project;
+  const workspace = project?.workspace ?? null;
   if (!project?.cwd && !project?.branch) return null;
   return (
     <div data-testid="telemetry-foot" className="flex flex-col gap-0.5 px-3 py-2">
       <section className="flex flex-col gap-0.5" data-testid="telemetry-project">
+        {workspace ? (
+          // A bound Sandbox workspace means the next turn starts in the worktree, where shell commands run
+          // in its container rather than on the host; the directory below stays the client's own. Said
+          // once, calmly, with the explanation and the way out behind the shared help affordance.
+          <p className="flex min-w-0 items-center gap-1 text-xs" data-testid="telemetry-workspace">
+            <Badge variant="outline" className="min-w-0 max-w-full gap-1 px-1 py-0 font-mono text-[10px]">
+              <span className="shrink-0">{t.telemetry.workspaceBadge}</span>
+              <span className="shrink-0 text-subtle-foreground" aria-hidden>·</span>
+              <span className="min-w-0 truncate" title={workspace.label}>{workspace.label}</span>
+            </Badge>
+            <HelpTip align="left">{interpolate(t.telemetry.workspaceHelp, { label: workspace.label, branch: workspace.branch, path: workspace.path })}</HelpTip>
+          </p>
+        ) : null}
         {project?.cwd ? (
           <p className="truncate font-mono text-xs text-foreground" title={project.cwd}>{project.cwd}</p>
         ) : null}

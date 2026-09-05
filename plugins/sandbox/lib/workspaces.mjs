@@ -66,7 +66,7 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
     return row ? rowWorkspace(row) : null;
   };
 
-  const currentAccount = () => ctx.currentContributionUserId() ?? ctx.currentIdentity()?.elowenUserId ?? null;
+  const currentAccount = () => ctx.currentAccountUserId();
   const requireAccount = (override) => {
     const userId = override ?? currentAccount();
     if (!Number.isSafeInteger(userId) || userId <= 0) throw coded('a linked Elowen account is required', 'account_required', 401);
@@ -345,8 +345,9 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
   //
   // `keepProjectId` releases every binding EXCEPT that Project's. That is what an explicit move into a
   // Project means: the latest explicit intent wins, while a workspace belonging to the Project being
-  // entered keeps working. It is one narrow option rather than a second function because the guards,
-  // the transaction and the refusal are identical either way.
+  // entered keeps working. `projectId` is the opposite narrowing — release ONLY that Project's binding —
+  // for the model tool that hands one Project back while a second stays bound. Both are narrow options
+  // rather than second functions because the guards, the transaction and the refusal are identical.
   const releaseSessionWorkspaces = (input, options = {}) => {
     const userId = requireAccount(options.userId);
     const sessionId = String(input.sessionId ?? '').trim();
@@ -354,10 +355,13 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
     if (options.verifySessionOwner) options.verifySessionOwner(sessionId, userId);
     const keep = input.keepProjectId === undefined || input.keepProjectId === null ? null : Number(input.keepProjectId);
     if (keep !== null && !Number.isSafeInteger(keep)) throw coded('a valid Project id is required', 'invalid_project');
+    const only = input.projectId === undefined || input.projectId === null ? null : Number(input.projectId);
+    if (only !== null && (!Number.isSafeInteger(only) || only < 1)) throw coded('a valid Project id is required', 'invalid_project');
+    if (only !== null) assertProjectAccess(ctx, only, options.accessibleProjects);
     // A Project this account can no longer reach keeps its binding untouched: a caller who has lost the
     // grant has no business editing rows for it, exactly as it may not read or switch them.
     const scope = accessibleProjectIds(ctx, options.accessibleProjects)
-      .map(Number).filter((projectId) => Number.isSafeInteger(projectId) && projectId !== keep);
+      .map(Number).filter((projectId) => Number.isSafeInteger(projectId) && projectId !== keep && (only === null || projectId === only));
     if (scope.length === 0) return { released: 0, workspaceIds: [] };
     const placeholders = scope.map(() => '?').join(',');
     return db.transaction(() => {

@@ -2,7 +2,7 @@ import type { BrainCard, BrainInlineArtifact } from '../../brain/events.js';
 import { InlineArtifactCollection } from './inlineArtifacts.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import type { TranscriptModel } from '../../brain/transcriptModel.js';
-import type { BrainRateLimits, BrainStatus, BrainWorkMode, GoalView, McpServerView, PublicBrand } from './brainClient.js';
+import type { BrainProjectWorkspaceView, BrainRateLimits, BrainStatus, BrainWorkMode, GoalView, McpServerView, PublicBrand } from './brainClient.js';
 import { DEFAULT_PUBLIC_BRAND } from './brainClient.js';
 import { MASCOT_ART } from './mascot.js';
 import type { FrecencyMap, PendingImage } from './mentions.js';
@@ -24,6 +24,7 @@ export interface ChatStateSeed {
   fastOn?: boolean;
   fastAvailable?: boolean;
   lspEnabled?: boolean | null;
+  workspace?: BrainProjectWorkspaceView | null;
   yoloOn?: boolean;
   workMode?: BrainWorkMode;
   cards?: BrainCard[];
@@ -77,6 +78,9 @@ export class ChatState {
   fastOn: boolean;
   fastAvailable: boolean;
   lspEnabled: boolean | null;
+  /** The Sandbox workspace the daemon says this conversation's next turn runs in (status poll), or null.
+   *  Rendered as a marker beside the CLI's own cwd, which stays the client's directory. */
+  workspace: BrainProjectWorkspaceView | null;
   yoloOn: boolean;
   mcpList: McpServerView[] | null = null;
   rateLimitsByProvider: Record<string, BrainRateLimits> = {};
@@ -125,6 +129,7 @@ export class ChatState {
     this.fastOn = seed.fastOn ?? false;
     this.fastAvailable = seed.fastAvailable ?? false;
     this.lspEnabled = seed.lspEnabled ?? null;
+    this.workspace = seed.workspace ?? null;
     this.yoloOn = seed.yoloOn ?? false;
     this.workMode = seed.workMode ?? 'build';
     this.cards = seed.cards ?? [];

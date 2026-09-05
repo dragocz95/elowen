@@ -1666,7 +1666,7 @@ export interface PluginContext {
    *  toolPolicy carries exact allow+deny sets, and permissionBoundary carries the effective unattended
    *  granular-rule context so a child inherits exactly the caller's scope. `readOnly` is stamped by the
    *  host when the caller's turn is PLANNING — forward it untouched; never clear it. */
-  currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; settingsUserId?: number | null; contributionUserId?: number | null; readOnly?: boolean; workspaceRef?: SandboxWorkspaceRef };
+  currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; settingsUserId?: number | null; contributionUserId?: number | null; accountUserId?: number | null; readOnly?: boolean; workspaceRef?: SandboxWorkspaceRef };
   /** Who is driving the current turn (platform sender, resolved Elowen account, admin flag) — plugins
    *  that persist per-user state (long-term memory) key it on this. Null outside a prompt turn. */
   currentIdentity(): TurnIdentity | null;
@@ -1677,6 +1677,13 @@ export interface PluginContext {
    *  than the model was told about. Deliberately not `currentIdentity().elowenUserId`: a delegated child
    *  carries no account identity yet legitimately inherits its delegating turn's contributions. */
   currentContributionUserId(): number | null;
+  /** The ACCOUNT the current turn acts as, for state owned per account (Sandbox workspaces and HOME,
+   *  per-user config and secrets, process ownership): the contribution owner when the turn has one —
+   *  the only account a delegated child carries — else the verified identity's `elowenUserId` (an owner
+   *  or direct turn without a contribution scope, or an authenticated plugin API request). Null when
+   *  neither names an account. THE one resolver: read this instead of composing `currentContributionUserId()
+   *  ?? currentIdentity()?.elowenUserId` in the plugin, so every tool of one turn agrees on the account. */
+  currentAccountUserId(): number | null;
   /** The persisted brain-session id the current turn runs in (`brain-…`), or undefined outside a
    *  prompt turn. Lets a plugin bind scheduled work back to the exact conversation it was created
    *  from (a cron wake-up records it as the job's origin and the reply lands there). */

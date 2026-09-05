@@ -14,7 +14,7 @@ import { resolvePolicy, type Policy } from '../../src/plugins/policy.js';
 import { effectiveTurnWorkDir, releaseWorkspacesForMove } from '../../src/brain/service/workDir.js';
 import { processRegistry } from '../../src/brain/processRegistry.js';
 import { bubblewrapProbe, migrateLegacyHomes, runPrepared } from '../../plugins/sandbox/lib/execution.mjs';
-import { processIdentity, reconcileStaleLeases, withRepoLease } from '../../plugins/sandbox/lib/db.mjs';
+import { activeExecutionLeases, heartbeatRepoLease, processIdentity, reconcileStaleLeases, withRepoLease } from '../../plugins/sandbox/lib/db.mjs';
 import { createWorkspacePathView } from '../../src/plugins/pathView.js';
 import { commandsWithPlugins } from '../../src/brain/slashCommands.js';
 
@@ -690,19 +690,153 @@ describe('sandbox execution HOME and leases', () => {
 });
 
 describe('sandbox durable repository locks', () => {
-  it('does not reclaim an expired lease while its exact process owner is still alive', async () => {
+  it('does not reclaim a current lease while its exact process owner is still alive', async () => {
     const { db } = await setup();
     const identity = processIdentity();
     expect(identity).toBeTruthy();
+    const future = Date.now() + 60_000;
     db.prepare(`INSERT INTO p_sandbox_execution_leases
       (id,user_id,workspace_id,home_generation,outer_pid,runner_identity,kind,heartbeat_at,expires_at)
-      VALUES ('live',1,NULL,1,?,?, 'terminal',0,0)`).run(process.pid, identity);
+      VALUES ('live',1,NULL,1,?,?, 'terminal',0,?)`).run(process.pid, identity, future);
     db.prepare(`INSERT INTO p_sandbox_repo_leases
       (common_dir,owner_id,outer_pid,runner_identity,heartbeat_at,expires_at)
-      VALUES ('/repo/live','owner',?,?,0,0)`).run(process.pid, identity);
+      VALUES ('/repo/live','owner',?,?,0,?)`).run(process.pid, identity, future);
     expect(reconcileStaleLeases(db, Date.now())).toEqual({ executionRemoved: 0, reposRemoved: 0 });
     expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_execution_leases WHERE id='live'").get()).toEqual({ n: 1 });
     expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_repo_leases WHERE common_dir='/repo/live'").get()).toEqual({ n: 1 });
+  });
+
+  /** The daemon pid is alive for as long as the daemon is, so "owner provably dead" alone never reaps a
+   *  lease whose command was aborted or whose in-process runner crashed. The lease window plus heartbeat
+   *  is the contract: a lease nobody has refreshed past `expires_at` is stale, whoever its owner is. */
+  it('treats a lease past its expiry as stale even though its owner process is alive', async () => {
+    const { db } = await setup();
+    const identity = processIdentity();
+    const past = Date.now() - 1_000;
+    db.prepare(`INSERT INTO p_sandbox_execution_leases
+      (id,user_id,workspace_id,home_generation,outer_pid,runner_identity,kind,heartbeat_at,expires_at)
+      VALUES ('expired',1,'ws_x',1,?,?,'terminal',?,?)`).run(process.pid, identity, past, past);
+    db.prepare(`INSERT INTO p_sandbox_repo_leases
+      (common_dir,owner_id,outer_pid,runner_identity,heartbeat_at,expires_at)
+      VALUES ('/repo/expired','owner',?,?,?,?)`).run(process.pid, identity, past, past);
+    expect(reconcileStaleLeases(db, Date.now())).toEqual({ executionRemoved: 1, reposRemoved: 1 });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_execution_leases WHERE id='expired'").get()).toEqual({ n: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_repo_leases WHERE common_dir='/repo/expired'").get()).toEqual({ n: 0 });
+  });
+
+  it('does not count a lease past its expiry as active', async () => {
+    const { db } = await setup();
+    const identity = processIdentity();
+    const past = Date.now() - 1_000;
+    db.prepare(`INSERT INTO p_sandbox_execution_leases
+      (id,user_id,workspace_id,home_generation,outer_pid,runner_identity,kind,heartbeat_at,expires_at)
+      VALUES ('expired',1,'ws_x',1,?,?,'terminal',?,?)`).run(process.pid, identity, past, past);
+    expect(activeExecutionLeases(db, { workspaceId: 'ws_x' })).toEqual([]);
+  });
+
+  it('counts a heartbeated lease as active again after its window would have lapsed', async () => {
+    const { registry, db, projectPath } = await setup();
+    const workspace = (await runAs(registry, projectPath, 1, 'brain-heartbeat', 'SandboxCreateWorkspace', { projectId: 1, label: 'Beat', baseRef: 'main' })).details.workspace;
+    const lease = registry.control('sandbox')!.acquireDelegationLease({
+      accountUserId: 1, workspace: { workspaceId: workspace.id, projectId: 1 },
+    });
+    expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toHaveLength(1);
+    // Lapsed but not yet reaped: without the heartbeat the very next liveness read would drop it.
+    db.prepare('UPDATE p_sandbox_execution_leases SET expires_at = ? WHERE id = ?').run(Date.now() - 1, lease.id);
+    expect(reconcileStaleLeases(db, Date.now() - 2)).toEqual({ executionRemoved: 0, reposRemoved: 0 });
+    await lease.heartbeat();
+    expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toHaveLength(1);
+    expect(reconcileStaleLeases(db, Date.now())).toEqual({ executionRemoved: 0, reposRemoved: 0 });
+    await lease.release();
+    expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toHaveLength(0);
+  });
+
+  /** Reconcile runs on every lease creation and every liveness read, so an event-loop stall longer than
+   *  the window deletes the row of a process that is still running. The next heartbeat has to put the
+   *  row back, or the workspace reads as free under a live child for the rest of the run. */
+  it('resurrects an execution lease the reconcile reaped while its holder was still running', async () => {
+    const { registry, db, projectPath } = await setup();
+    const workspace = (await runAs(registry, projectPath, 1, 'brain-resurrect', 'SandboxCreateWorkspace', { projectId: 1, label: 'Resurrect', baseRef: 'main' })).details.workspace;
+    const lease = registry.control('sandbox')!.acquireDelegationLease({
+      accountUserId: 1, workspace: { workspaceId: workspace.id, projectId: 1 },
+    });
+    db.prepare('UPDATE p_sandbox_execution_leases SET expires_at = ? WHERE id = ?').run(Date.now() - 1, lease.id);
+    expect(reconcileStaleLeases(db, Date.now()).executionRemoved).toBe(1);
+    expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toEqual([]);
+
+    await lease.heartbeat();
+    const active = activeExecutionLeases(db, { workspaceId: workspace.id });
+    expect(active.map((row) => row.id)).toEqual([lease.id]);
+    expect(active[0]).toMatchObject({ user_id: 1, workspace_id: workspace.id, kind: 'terminal', outer_pid: process.pid });
+    // The resurrected row is the same lease: releasing it clears it, and a late heartbeat brings nothing back.
+    await lease.release();
+    expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toEqual([]);
+    await lease.heartbeat();
+    expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toEqual([]);
+  });
+
+  it('re-claims a reaped repository lease on heartbeat when it is free and reports a foreign holder', async () => {
+    const { db } = await setup();
+    const identity = processIdentity()!;
+    const past = Date.now() - 1_000;
+    const mine = 'srl_mine';
+    db.prepare(`INSERT INTO p_sandbox_repo_leases
+      (common_dir,owner_id,outer_pid,runner_identity,heartbeat_at,expires_at)
+      VALUES ('/repo/beat',?,?,?,?,?)`).run(mine, process.pid, identity, past, past);
+    expect(reconcileStaleLeases(db, Date.now()).reposRemoved).toBe(1);
+    // Free again: the heartbeat takes the row back and the lease is held as before.
+    expect(heartbeatRepoLease(db, '/repo/beat', mine, identity)).toBe('reclaimed');
+    expect(db.prepare("SELECT owner_id FROM p_sandbox_repo_leases WHERE common_dir='/repo/beat'").get()).toEqual({ owner_id: mine });
+    expect(heartbeatRepoLease(db, '/repo/beat', mine, identity)).toBe('held');
+    // Somebody else claimed it in the gap: two holders would be worse than a loud failure.
+    db.prepare("UPDATE p_sandbox_repo_leases SET owner_id = 'srl_other' WHERE common_dir='/repo/beat'").run();
+    expect(heartbeatRepoLease(db, '/repo/beat', mine, identity)).toBe('lost');
+    expect(db.prepare("SELECT owner_id FROM p_sandbox_repo_leases WHERE common_dir='/repo/beat'").get()).toEqual({ owner_id: 'srl_other' });
+  });
+
+  it('fails a withRepoLease holder loudly once its lease was lost to another claimant', async () => {
+    const { db } = await setup();
+    let release!: () => void;
+    const hold = new Promise<void>((resolveHold) => { release = resolveHold; });
+    const holder = withRepoLease(db, '/repo/lost', () => hold, { heartbeatMs: 20 });
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+    // The row vanishes (a reconcile after a stall) and a foreign claimant takes it before our next beat.
+    db.prepare("UPDATE p_sandbox_repo_leases SET owner_id = 'srl_intruder' WHERE common_dir='/repo/lost'").run();
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 60));
+    release();
+    await expect(holder).rejects.toThrow(/lease was lost/);
+    // The intruder's row is not ours to delete.
+    expect(db.prepare("SELECT owner_id FROM p_sandbox_repo_leases WHERE common_dir='/repo/lost'").get()).toEqual({ owner_id: 'srl_intruder' });
+  });
+
+  it('lets a conversation release its binding once the only lease on the workspace has expired', async () => {
+    const { registry, db, projects } = await setup(['sandbox'], false, ['main']);
+    db.prepare("INSERT INTO brain_sessions (id, user_id) VALUES ('brain-amy-expired', 1)").run();
+    const projectPath = projects[0]!.path;
+    const workspace = (await runAs(registry, projectPath, 1, 'brain-amy-expired', 'SandboxCreateWorkspace', { projectId: 1, label: 'Stale', baseRef: 'main' })).details.workspace;
+    const lease = registry.control('sandbox')!.acquireDelegationLease({
+      accountUserId: 1, workspace: { workspaceId: workspace.id, projectId: 1 },
+    });
+    const release = () => registry.apiRoute('sandbox', 'workspaces/release', 'POST')!.handler(pluginRequest(
+      'POST', {}, { sessionId: 'brain-amy-expired' }, { userId: 1, admin: false, tokenScope: 'user', accessibleProjects: [1, 2] },
+    ));
+    expect((await release()).status).toBe(409);
+    // The command was aborted and nobody released the row: only the lapse of its window may free it.
+    db.prepare('UPDATE p_sandbox_execution_leases SET expires_at = ? WHERE id = ?').run(Date.now() - 1, lease.id);
+    const freed = await release();
+    expect(freed.status).toBe(200);
+    expect(freed.body).toEqual({ released: 1, workspaceIds: [workspace.id] });
+  });
+
+  it('re-claims a repository lease whose live owner let it expire', async () => {
+    const { db } = await setup();
+    const identity = processIdentity();
+    const past = Date.now() - 1_000;
+    db.prepare(`INSERT INTO p_sandbox_repo_leases
+      (common_dir,owner_id,outer_pid,runner_identity,heartbeat_at,expires_at)
+      VALUES ('/repo/lapsed','stale-owner',?,?,?,?)`).run(process.pid, identity, past, past);
+    await expect(withRepoLease(db, '/repo/lapsed', async () => 'ok', { waitMs: 60 })).resolves.toBe('ok');
+    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_repo_leases WHERE common_dir='/repo/lapsed'").get()).toEqual({ n: 0 });
   });
 
   it('reclaims a reused PID only when the stored process identity is provably different', async () => {
@@ -738,7 +872,7 @@ describe('sandbox ownership contracts', () => {
     const manifest = JSON.parse(readFileSync(join(repoRoot, 'plugins', 'sandbox', 'elowen-plugin.json'), 'utf8')) as { userGrantable?: boolean; provides: { tools: string[] } };
     expect(manifest.userGrantable).toBeUndefined();
     expect(manifest.provides.tools).toEqual([
-      'SandboxListWorkspaces', 'SandboxCreateWorkspace', 'SandboxUseWorkspace', 'SandboxCommit', 'SandboxRemoveWorkspace',
+      'SandboxListWorkspaces', 'SandboxCreateWorkspace', 'SandboxUseWorkspace', 'SandboxReleaseWorkspace', 'SandboxCommit', 'SandboxRemoveWorkspace',
     ]);
     const registrations = readdirSync(join(repoRoot, 'plugins')).flatMap((name) => {
       const entry = join(repoRoot, 'plugins', name, 'index.mjs');
@@ -1290,6 +1424,101 @@ describe('sandbox releases a conversation back to its project', () => {
     })).toEqual({ released: 0 });
 
     await lease.release();
+  });
+});
+
+/** The model's own way out of a binding. Until it existed the only non-destructive release was the web
+ *  route, so an agent that had bound a workspace (SandboxCreateWorkspace = create + activate) could not
+ *  hand the conversation back to its Project without a person clicking. Same operation, same guards:
+ *  nothing is destroyed, a live process refuses, and a conversation the account does not own is refused. */
+describe('SandboxReleaseWorkspace tool', () => {
+  const bound = async () => {
+    const { registry, db, projects } = await setup(['sandbox'], false, ['main']);
+    db.prepare("INSERT INTO brain_sessions (id, user_id) VALUES ('brain-amy-tool', 1)").run();
+    db.prepare("INSERT INTO brain_sessions (id, user_id) VALUES ('brain-bob-room', 2)").run();
+    const control = registry.control('sandbox')!;
+    const turnPolicy = resolvePolicy({
+      userProjects: { forUser: () => projects.map((project) => project.id), isAdmin: () => false },
+      projects: { get: (id: number) => projects.find((project) => project.id === id) ?? null },
+      supplementalPaths: (userId, projectIds) => runWithContributionUser(userId, () => control.workspaceRoots({ projectIds })),
+    }, 1);
+    const act = (session: string, name: string, input: Record<string, unknown>, workDir = projects[0]!.path) =>
+      runWithPolicy(turnPolicy, () => tool(registry, name).execute('t', input), {
+        identity: nonOperator(1), contributionUserId: 1, sessionId: session, workDir,
+      });
+    const resolveTurn = (baseWorkDir: string, sessionId: string) => effectiveTurnWorkDir({
+      policy: turnPolicy, baseWorkDir, accountUserId: 1, sessionId,
+      projects: { list: () => projects }, sandbox: control,
+    });
+    const bindings = () => db.prepare('SELECT session_id, project_id FROM p_sandbox_session_bindings ORDER BY project_id').all();
+    return { registry, db, projects, act, resolveTurn, bindings };
+  };
+
+  it('is declared in the manifest beside the other workspace tools', () => {
+    const manifest = JSON.parse(readFileSync(join(repoRoot, 'plugins', 'sandbox', 'elowen-plugin.json'), 'utf8')) as { provides: { tools: string[] }; icons: Record<string, string>; showOutput: string[] };
+    expect(manifest.provides.tools).toContain('SandboxReleaseWorkspace');
+    expect(manifest.icons.SandboxReleaseWorkspace).toBeTruthy();
+    expect(manifest.showOutput).toContain('SandboxReleaseWorkspace');
+  });
+
+  it('releases every binding of the conversation and preserves the workspace', async () => {
+    const { projects, act, resolveTurn, bindings } = await bound();
+    const session = 'brain-amy-tool';
+    const first = (await act(session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Tool one', baseRef: 'main' })).details.workspace;
+    const second = (await act(session, 'SandboxCreateWorkspace', { projectId: 2, label: 'Tool two', baseRef: 'main' }, projects[1]!.path)).details.workspace;
+    expect(bindings()).toHaveLength(2);
+
+    const released = await act(session, 'SandboxReleaseWorkspace', {});
+    expect(released.details).toMatchObject({ released: 2 });
+    expect(released.details.workspaceIds).toEqual(expect.arrayContaining([first.id, second.id]));
+    expect(released.content[0]!.text).toMatch(/preserved/);
+    expect(bindings()).toEqual([]);
+    expect(resolveTurn(projects[0]!.path, session).workDir).toBe(projects[0]!.path);
+    expect(existsSync(first.path)).toBe(true);
+    expect(existsSync(second.path)).toBe(true);
+    expect(git(projects[0]!.path, 'branch', '--list', first.branch)).toContain(first.branch);
+
+    // Nothing left to release is an answer, not an error.
+    const again = await act(session, 'SandboxReleaseWorkspace', {});
+    expect(again.details).toMatchObject({ released: 0, workspaceIds: [] });
+  });
+
+  it('releases only the named Project when projectId is given', async () => {
+    const { projects, act, bindings } = await bound();
+    const session = 'brain-amy-tool';
+    await act(session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Keep', baseRef: 'main' });
+    const dropped = (await act(session, 'SandboxCreateWorkspace', { projectId: 2, label: 'Drop', baseRef: 'main' }, projects[1]!.path)).details.workspace;
+
+    const released = await act(session, 'SandboxReleaseWorkspace', { projectId: 2 });
+    expect(released.details).toMatchObject({ released: 1, workspaceIds: [dropped.id] });
+    expect(bindings()).toEqual([{ session_id: session, project_id: 1 }]);
+  });
+
+  it('refuses while a process holds the workspace and says so', async () => {
+    const { registry, act, bindings } = await bound();
+    const session = 'brain-amy-tool';
+    const workspace = (await act(session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Busy tool', baseRef: 'main' })).details.workspace;
+    const lease = registry.control('sandbox')!.acquireDelegationLease({
+      accountUserId: 1, workspace: { workspaceId: workspace.id, projectId: 1 },
+    });
+    const refused = await act(session, 'SandboxReleaseWorkspace', {});
+    expect(refused.details.ok).toBe(false);
+    expect(refused.details.error.code).toBe('workspace_in_use');
+    expect(refused.content[0]!.text).toMatch(/process/);
+    expect(bindings()).toHaveLength(1);
+    await lease.release();
+    expect((await act(session, 'SandboxReleaseWorkspace', {})).details).toMatchObject({ released: 1 });
+  });
+
+  it('refuses a conversation the account does not own and touches no binding', async () => {
+    const { act, bindings } = await bound();
+    // Amy binds inside a room Bob owns (a create does not check the room's owner — it binds where it is
+    // told), then asks to release it: the release is an ownership decision and fails closed.
+    await act('brain-bob-room', 'SandboxCreateWorkspace', { projectId: 1, label: 'Foreign room', baseRef: 'main' });
+    const refused = await act('brain-bob-room', 'SandboxReleaseWorkspace', {});
+    expect(refused.details.ok).toBe(false);
+    expect(refused.details.error.code).toBe('session_forbidden');
+    expect(bindings()).toHaveLength(1);
   });
 });
 

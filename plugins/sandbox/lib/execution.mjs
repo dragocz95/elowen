@@ -316,7 +316,7 @@ export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
     const explicitWorkspace = options.workspace ?? null;
     const accountUserId = explicitWorkspace?.userId ?? (options.accountUserId !== undefined
       ? options.accountUserId
-      : ctx.currentContributionUserId() ?? ctx.currentIdentity()?.elowenUserId ?? null);
+      : ctx.currentAccountUserId());
     const owner = options.owner !== undefined ? options.owner === true : access.owner === true;
     const configuredRoots = explicitWorkspace ? [explicitWorkspace.path] : options.roots ?? ctx.allowedRoots();
     const roots = bindableRoots([...new Set(configuredRoots.map(String))]);

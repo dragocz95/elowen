@@ -712,7 +712,7 @@ function withDropNotice(bg, text) {
 
 export function register(ctx) {
   const currentSessionId = () => ctx.currentSessionId?.() ?? null;
-  const currentAccountUserId = () => ctx.currentContributionUserId?.() ?? ctx.currentIdentity?.()?.elowenUserId ?? null;
+  const currentAccountUserId = () => ctx.currentAccountUserId();
   const sessionCwds = new Map();
   const cwdStateKey = () => {
     const sessionId = currentSessionId();

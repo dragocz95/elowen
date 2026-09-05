@@ -26,7 +26,9 @@ function repo(branch: string): string {
 }
 afterEach(() => { for (const d of dirs.splice(0)) rmSync(d, { recursive: true, force: true }); });
 
-function harness(policy?: (userId: number) => Policy) {
+type StatusDeps = ConstructorParameters<typeof BrainStatusService>[0];
+
+function harness(policy?: (userId: number) => Policy, extra: Pick<StatusDeps, 'projects' | 'sandbox' | 'projectPath'> = {}) {
   const store = new BrainStore(openDb(':memory:'));
   const sessions = new LiveSessionRegistry<LiveBrain>();
   const elicitation = new ElicitationRegistry();
@@ -49,10 +51,22 @@ function harness(policy?: (userId: number) => Policy) {
     lifecycle,
     permissions: new PermissionApprovalService({ elicitation }),
     config: undefined,
-    runtime: undefined as unknown as ConstructorParameters<typeof BrainStatusService>[0]['runtime'],
+    runtime: undefined as unknown as StatusDeps['runtime'],
     policy,
+    ...extra,
   });
   return { store, sessions, status };
+}
+
+/** A Sandbox control that answers exactly one binding for one conversation, the way the plugin's
+ *  `activeSessionWorkspace` does — with the same fields, so the status seam sees what a turn sees. */
+function sandboxWith(binding: { sessionId: string; workspaceId: string; projectId: number; path: string; label: string; branch: string }) {
+  const workspace = { workspaceId: binding.workspaceId, projectId: binding.projectId, path: binding.path, label: binding.label, branch: binding.branch, baseRef: 'main' };
+  return {
+    workspaceRoots: () => [{ workspaceId: workspace.workspaceId, projectId: workspace.projectId, path: workspace.path }],
+    activeSessionWorkspace: ({ sessionId }: { sessionId: string }) => (sessionId === binding.sessionId ? workspace : null),
+    activeWorkspace: () => workspace,
+  } as unknown as NonNullable<ReturnType<NonNullable<StatusDeps['sandbox']>>>;
 }
 
 describe('status() project section', () => {
@@ -73,13 +87,13 @@ describe('status() project section', () => {
     const root = repo('telemetry');
     store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
     store.setWorkDir('brain-1', root);
-    expect(status.status(1, 'brain-1').project).toEqual({ cwd: root, branch: 'telemetry' });
+    expect(status.status(1, 'brain-1').project).toEqual({ cwd: root, branch: 'telemetry', workspace: null });
   });
 
   it('a conversation with no recorded directory reports nulls, not the daemon process cwd', () => {
     const { store, status } = harness();
     store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
-    expect(status.status(1, 'brain-1').project).toEqual({ cwd: null, branch: null });
+    expect(status.status(1, 'brain-1').project).toEqual({ cwd: null, branch: null, workspace: null });
   });
 
   // The live session's directory wins over the stored stamp: a `/cd` moves the live conversation before
@@ -97,7 +111,7 @@ describe('status() project section', () => {
         getSteeringMessages: () => [], getFollowUpMessages: () => [],
       },
     } as unknown as LiveBrain);
-    expect(status.status(1, 'brain-1').project).toEqual({ cwd: live, branch: 'live' });
+    expect(status.status(1, 'brain-1').project).toEqual({ cwd: live, branch: 'live', workspace: null });
   });
 
   // The scoping guarantee: another user's conversation must never surface its path, not even to an
@@ -109,7 +123,7 @@ describe('status() project section', () => {
     store.setWorkDir('brain-2', root);
     expect(() => status.status(1, 'brain-2')).toThrow('unknown session');
     // …and user 1's own default view describes user 1, never the neighbour's directory.
-    expect(status.status(1).project).toEqual({ cwd: null, branch: null });
+    expect(status.status(1).project).toEqual({ cwd: null, branch: null, workspace: null });
   });
 
   // Project access is re-read on every poll and never inherited from the stamp: once the project is
@@ -121,8 +135,62 @@ describe('status() project section', () => {
     const { store, status } = harness(() => ({ allowedProjectIds: new Set([1]), allowedPaths: () => roots }));
     store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
     store.setWorkDir('brain-1', root);
-    expect(status.status(1, 'brain-1').project).toEqual({ cwd: root, branch: 'secret-work' });
+    expect(status.status(1, 'brain-1').project).toEqual({ cwd: root, branch: 'secret-work', workspace: null });
     roots = [];
-    expect(status.status(1, 'brain-1').project).toEqual({ cwd: null, branch: null });
+    expect(status.status(1, 'brain-1').project).toEqual({ cwd: null, branch: null, workspace: null });
+  });
+
+  /** The indicator has to say what a Bash command in THIS conversation will do, so it is computed by the
+   *  same resolver a turn runs (effectiveTurnWorkDir), against the same Sandbox control — never re-derived
+   *  from binding rows. A bound workspace means the shell runs in the container with the worktree at
+   *  /workspace, and the reported cwd is the worktree, because that is where the turn works. */
+  it('reports the bound Sandbox workspace as the confined place the conversation works', () => {
+    const project = repo('main');
+    const worktree = repo('elowen/u1/feature');
+    const projects = { list: () => [{ id: 1, path: project }] };
+    const sandbox = sandboxWith({ sessionId: 'brain-1', workspaceId: 'ws_1', projectId: 1, path: worktree, label: 'feature', branch: 'elowen/u1/feature' });
+    const { store, status } = harness(
+      () => ({ allowedProjectIds: new Set([1]), allowedPaths: () => [project, worktree] }),
+      { projects: projects as unknown as StatusDeps['projects'], sandbox: () => sandbox },
+    );
+    store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    store.setWorkDir('brain-1', project);
+    // The client's own directory and branch stay what they were; the worktree is reported UNDER workspace.
+    expect(status.status(1, 'brain-1').project).toEqual({
+      cwd: project,
+      branch: 'main',
+      workspace: { workspaceId: 'ws_1', label: 'feature', branch: 'elowen/u1/feature', path: worktree, confined: true },
+    });
+  });
+
+  /** A worktree row whose path the policy no longer admits falls back to the base directory in the turn
+   *  resolver — and then no container claim may be made, because the turn will not start in the worktree. */
+  it('reports no workspace when the resolver falls back to the base directory', () => {
+    const project = repo('main');
+    const worktree = repo('elowen/u1/feature');
+    const projects = { list: () => [{ id: 1, path: project }] };
+    const sandbox = sandboxWith({ sessionId: 'brain-1', workspaceId: 'ws_1', projectId: 1, path: worktree, label: 'feature', branch: 'elowen/u1/feature' });
+    const { store, status } = harness(
+      // The worktree is NOT among the allowed paths, so clientDir refuses it and the turn stays in the project.
+      () => ({ allowedProjectIds: new Set([1]), allowedPaths: () => [project] }),
+      { projects: projects as unknown as StatusDeps['projects'], sandbox: () => sandbox },
+    );
+    store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    store.setWorkDir('brain-1', project);
+    expect(status.status(1, 'brain-1').project).toEqual({ cwd: project, branch: 'main', workspace: null });
+  });
+
+  it('reports no workspace for a conversation the Sandbox has no binding for', () => {
+    const project = repo('main');
+    const worktree = repo('elowen/u1/feature');
+    const projects = { list: () => [{ id: 1, path: project }] };
+    const sandbox = sandboxWith({ sessionId: 'brain-other', workspaceId: 'ws_1', projectId: 1, path: worktree, label: 'feature', branch: 'elowen/u1/feature' });
+    const { store, status } = harness(
+      () => ({ allowedProjectIds: new Set([1]), allowedPaths: () => [project, worktree] }),
+      { projects: projects as unknown as StatusDeps['projects'], sandbox: () => ({ ...sandbox, activeWorkspace: () => null }) },
+    );
+    store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    store.setWorkDir('brain-1', project);
+    expect(status.status(1, 'brain-1').project).toEqual({ cwd: project, branch: 'main', workspace: null });
   });
 });

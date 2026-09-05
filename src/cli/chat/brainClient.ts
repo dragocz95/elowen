@@ -80,7 +80,16 @@ export interface BrainRateLimits {
  *  display name — render `providerLabel || provider`, never anything else. `usageProvider` is the internal
  *  pi provider that keys GET /brain/rate-limits/all and is not an identity to show. Both new fields are
  *  optional for rolling compatibility with an older daemon during a local upgrade. */
-export interface BrainStatus { running: boolean; sessionId: string | null; title?: string; model: string; provider: string; providerLabel?: string; usageProvider?: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; thinkingLevelLabels?: Record<string, string>; fast?: boolean; fastAvailable?: boolean; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards?: BrainCard[]; artifacts?: BrainInlineArtifact[]; queued?: { id: string; text: string }[]; lspEnabled?: boolean; yolo?: boolean }
+export interface BrainStatus { running: boolean; sessionId: string | null; title?: string; model: string; provider: string; providerLabel?: string; usageProvider?: string; usage: BrainUsageView | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; thinkingLevelLabels?: Record<string, string>; fast?: boolean; fastAvailable?: boolean; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; cards?: BrainCard[]; artifacts?: BrainInlineArtifact[]; queued?: { id: string; text: string }[]; lspEnabled?: boolean; yolo?: boolean; project?: BrainProjectView }
+/** The Sandbox workspace the daemon resolved for the conversation's NEXT turn. `confined` says the turn
+ *  starts inside that worktree (host path `path`), where a Bash command runs in the workspace container
+ *  (mounted at `/workspace`, no Git, no host paths) rather than in the directory this client sits in —
+ *  which is why the CLI marks it beside its own cwd. A command that moves outside the worktree runs by the
+ *  ordinary rules. */
+export interface BrainProjectWorkspaceView { workspaceId: string; label: string; branch: string; path: string; confined: true }
+/** The daemon's view of where the conversation works. The CLI keeps rendering its OWN cwd/branch (they
+ *  are what `/cd` moves); only `workspace` is read from here. Optional for an older daemon. */
+export interface BrainProjectView { cwd: string | null; branch: string | null; workspace?: BrainProjectWorkspaceView | null }
 export interface BrainActivityView { state: 'idle' | 'working' | 'done' | 'failed'; seq: number; at: string | null; detail: string; unread: boolean }
 /**
  * The subscription-rail key for a status or snapshot frame.
