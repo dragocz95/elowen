@@ -100,8 +100,11 @@ const EXTERNALLY_SET: Record<string, string> = {
   '--chat-dock-width': 'modules/advisor/BrainChatSurface.tsx useLayoutEffect sets it on the chat surface',
   '--chat-dock-spacer-top': 'modules/advisor/BrainChatSurface.tsx useLayoutEffect sets it on the wrapped prose block',
   // The entrance stagger's index, handed down per element by the component that knows the order
-  // (StudioNavigation rows, DashBento cards). There is no global value it could have.
-  '--stagger': 'components/shell/StudioNavigation.tsx and modules/dashboard/DashBento.tsx, inline style per element',
+  // (SidebarNav rows, DashBento cards). There is no global value it could have.
+  '--stagger': 'components/shell/SidebarNav.tsx and modules/dashboard/DashBento.tsx, inline style per element',
+  // Radix publishes the measured height of a collapsible's content on the content element itself, which
+  // is the only way to animate a fold open from zero without hard-coding a height per sub-menu.
+  '--radix-collapsible-content-height': '@radix-ui/react-collapsible sets it on [data-slot="collapsible-content"]',
   '--live-ring': 'per-instance override hook on .live-dot; unset by default, hence the literal fallback',
 };
 

@@ -95,6 +95,9 @@
   --sidebar-row-inset: 0.75rem;     /* 12px horizontal padding inside a row */
   --sidebar-sub-indent: 1.75rem;    /* 28px, `pl-7` per nesting level */
   --sidebar-text: 0.8125rem;        /* 13px, every row and group label */
+  --sidebar-header-height: 3.625rem; /* 58px, the switcher row above the header hairline */
+  --sidebar-footer-height: 3rem;    /* 48px, the fold's row below the footer hairline */
+  --sidebar-search-height: 2rem;    /* 32px, the command palette's field under the header */
 
   --color-border: #242424;
   /* NOT a shadcn token: the heavier rule, for a scrollbar thumb and a focused edge. */
