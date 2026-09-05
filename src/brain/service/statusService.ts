@@ -217,18 +217,17 @@ export class BrainStatusService {
   constructor(private d: StatusServiceDeps) {}
 
   private subagentRuns(sessionId: string) {
-    // Restart orphans are repaired durably at boot (the `delegations` recovery provider's claim), so this is
-    // NOT that fix — it is the read-time fallback for a row that goes stale WITHIN a process run: a child
-    // whose live registration is already gone while its terminal upsert has not landed. Hiding it keeps a
-    // dead child from rendering a phantom running spinner in the meantime.
-    //
-    // A boot-claimed recovery is the one durable exception. Claiming precedes platform startup, while the
-    // in-memory child edge is raised only when the recovery turn enters ChannelSessionService.send. Without
-    // this second liveness source, a reconnect snapshot taken in that window drops the running child from
-    // the transcript projection, and recovery emits no plugin progress event that could add it later.
+    // WHICH children count as running is the store's durable answer — a run row whose LIFECYCLE is still
+    // open (running/recovering), whichever boot or process owns it — the same answer DelegateList gives
+    // (listDelegatedChildren) and the parent's blocking call waits on (settleDelegatedReply). Reading it
+    // from the in-memory registry instead is what made the CLI rail and the model disagree on 5 Sep: a
+    // child this boot had claimed for recovery was reported running by the tool while the rail, keyed on
+    // a registry edge that is raised only once the recovery turn enters ChannelSessionService.send, showed
+    // nothing. The registry stays in the union for the one moment the store cannot know yet: a call
+    // registered before its first progress row lands.
     const active = new Set([
       ...this.d.sessions.childrenOf(sessionId),
-      ...this.d.store.recoveringSubagentSessionIds(sessionId),
+      ...this.d.store.activeDelegationChildIds(sessionId),
     ]);
     // ONE state per child: the NEWEST run row (by insertion, never updated_at) that the liveness filter
     // KEEPS. A child continued after it finished (DelegateContinue, or a boot-claimed recovery of that

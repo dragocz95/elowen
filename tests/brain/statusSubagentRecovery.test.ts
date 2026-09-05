@@ -82,22 +82,53 @@ describe('sub-agent recovery status projection', () => {
     })).toBe(true);
 
     store.setDelegationBootId('boot-new');
-    expect(store.claimRecoverableRuns(30_000)).toHaveLength(1);
+    expect(store.claimRecoverableRuns()).toHaveLength(1);
 
     expect(projectedSubagent(status)).toMatchObject({ sessionId: CHILD, status: 'running', task: 'recover me' });
   });
 
-  it('hides a recovering claim owned by a dead boot even while its lease has not expired', () => {
+  it('shows a recovering claim a dead boot left behind exactly as DelegateList does: the boot claims it, the rail shows it', () => {
+    // Production, 5 Sep 12:53 (parent brain-1-mrxd…, child …b8d67a3bb808): the boot before had claimed the
+    // child for recovery and was restarted mid-recovery. The rail keyed liveness on "this boot's claims"
+    // and showed nothing, while the DelegateList tool (lifecycle-based) told the agent the child was
+    // running — two answers to one question. Both now read the durable lifecycle, and the claim itself no
+    // longer skips a dead boot's `recovering` row, so the row is this boot's the moment it boots.
     const { db, store, status } = harness();
     store.setDelegationBootId('boot-old');
     expect(store.upsertSubagentRun(PARENT, {
       id: TOOL_CALL, sessionId: CHILD, status: 'running', task: 'dead boot', tools: 0, seconds: 1,
     })).toBe(true);
-    store.setDelegationBootId('boot-new');
-    expect(store.claimRecoverableRuns(30_000)).toHaveLength(1);
-    db.prepare('UPDATE brain_subagent_runs SET owner_boot_id = ? WHERE tool_call_id = ?').run('boot-dead', TOOL_CALL);
+    store.setDelegationBootId('boot-dead');
+    expect(store.claimRecoverableRuns()).toHaveLength(1);
+    db.prepare('UPDATE brain_subagent_runs SET lease_until = ? WHERE tool_call_id = ?').run(Date.now() + 60_000, TOOL_CALL);
 
-    expect(projectedSubagent(status)).toBeUndefined();
+    store.setDelegationBootId('boot-new');
+    // Even before this boot's claim pass the read model agrees with the listing…
+    expect(projectedSubagent(status)).toMatchObject({ sessionId: CHILD, status: 'running', task: 'dead boot' });
+    expect(store.listDelegatedChildren(PARENT)[0]).toMatchObject({ sessionId: CHILD, status: 'running' });
+    // …and the claim takes the row over despite the unexpired lease, so a worker exists for what is shown.
+    expect(store.claimRecoverableRuns()).toHaveLength(1);
+    expect(projectedSubagent(status)).toMatchObject({ sessionId: CHILD, status: 'running', task: 'dead boot' });
+  });
+
+  it('the stream snapshot a reconnecting client hydrates from carries the recovering child as running', () => {
+    // The CLI rail is projected from the snapshot's history sidecars, not from a separate children list;
+    // a boot-claimed child with no live record and no registry edge yet must be in that frame.
+    const { store, status } = harness();
+    store.setDelegationBootId('boot-old');
+    expect(store.upsertSubagentRun(PARENT, {
+      id: TOOL_CALL, sessionId: CHILD, status: 'running', task: 'recover me', tools: 2, seconds: 10,
+    })).toBe(true);
+    store.setDelegationBootId('boot-new');
+    expect(store.claimRecoverableRuns()).toHaveLength(1);
+
+    const snapshot = status.streamSnapshot(1, PARENT);
+    const subs = snapshot.history
+      .flatMap((message) => message.segments ?? [])
+      .filter((segment): segment is Extract<typeof segment, { kind: 'tool' }> => segment.kind === 'tool')
+      .map((segment) => segment.sub)
+      .filter((sub): sub is NonNullable<typeof sub> => !!sub);
+    expect(subs).toEqual([expect.objectContaining({ sessionId: CHILD, status: 'running', task: 'recover me' })]);
   });
 
   it('keeps an expired current-boot recovery claim visible while it waits in the serial queue', () => {
@@ -107,7 +138,7 @@ describe('sub-agent recovery status projection', () => {
       id: TOOL_CALL, sessionId: CHILD, status: 'running', task: 'queued', tools: 0, seconds: 1,
     })).toBe(true);
     store.setDelegationBootId('boot-new');
-    expect(store.claimRecoverableRuns(30_000)).toHaveLength(1);
+    expect(store.claimRecoverableRuns()).toHaveLength(1);
     db.prepare('UPDATE brain_subagent_runs SET lease_until = ? WHERE tool_call_id = ?').run(Date.now() - 1, TOOL_CALL);
 
     expect(projectedSubagent(status)).toMatchObject({ sessionId: CHILD, status: 'running', task: 'queued' });
@@ -129,7 +160,7 @@ describe('sub-agent recovery status projection', () => {
       id: CONTINUE_CALL, sessionId: CHILD, status: 'running', task: 'continue: fix the blockers', tools: 3, seconds: 60,
     })).toBe(true);
     store.setDelegationBootId('boot-new');
-    expect(store.claimRecoverableRuns(30_000)).toHaveLength(1);
+    expect(store.claimRecoverableRuns()).toHaveLength(1);
     // The recovering row's updated_at stays frozen at the pause; the finished row was touched later
     // (a late delivery acknowledgement). updated_at must not decide which row is the newest.
     db.prepare("UPDATE brain_subagent_runs SET updated_at = '2020-01-01 00:00:00' WHERE tool_call_id = ?").run(CONTINUE_CALL);
@@ -172,7 +203,7 @@ describe('sub-agent recovery status projection', () => {
       id: TOOL_CALL, sessionId: CHILD, status: 'running', task: 'unsafe', tools: 1, seconds: 2,
     })).toBe(true);
     store.setDelegationBootId('boot-new');
-    expect(store.claimRecoverableRuns(30_000)).toHaveLength(1);
+    expect(store.claimRecoverableRuns()).toHaveLength(1);
     expect(store.markRecoveryRequired(PARENT, TOOL_CALL, 'unanswered Write after restart', {
       id: 'result-recovery', toolCallId: TOOL_CALL, sessionId: CHILD, status: 'error', task: 'unsafe',
       error: 'manual continuation required', tools: 1, seconds: 2,
@@ -183,18 +214,23 @@ describe('sub-agent recovery status projection', () => {
     });
   });
 
-  it('still hides an unclaimed stale running row with no live child', () => {
+  it('a row whose lifecycle is still open shows as running whatever the registry says — the same answer DelegateList gives', () => {
+    // The durable lifecycle is the one source: a call registered in the live registry but not yet written
+    // shows nothing (there is no row), a row still `running` shows running. The transient window in which a
+    // finished call's terminal row has not landed is the price of never disagreeing with the tool.
     const { store, status } = harness();
     store.setDelegationBootId('boot-current');
     expect(store.upsertSubagentRun(PARENT, {
-      id: TOOL_CALL,
-      sessionId: CHILD,
-      status: 'running',
-      task: 'stale',
-      tools: 0,
-      seconds: 1,
+      id: TOOL_CALL, sessionId: CHILD, status: 'running', task: 'open', tools: 0, seconds: 1,
     })).toBe(true);
+    expect(projectedSubagent(status)).toMatchObject({ sessionId: CHILD, status: 'running', task: 'open' });
+    expect(store.listDelegatedChildren(PARENT)[0]).toMatchObject({ sessionId: CHILD, status: 'running' });
 
+    // …and a display `running` under a closed lifecycle (a steered continuation's own row) is not live.
+    expect(store.upsertSubagentRun(PARENT, {
+      id: TOOL_CALL, sessionId: CHILD, status: 'running', task: 'open', tools: 0, seconds: 1,
+    }, 'done')).toBe(true);
     expect(projectedSubagent(status)).toBeUndefined();
+    expect(store.listDelegatedChildren(PARENT)[0]).toMatchObject({ sessionId: CHILD, status: 'done' });
   });
 });
