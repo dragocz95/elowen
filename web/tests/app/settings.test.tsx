@@ -99,6 +99,35 @@ describe('SettingsPage', () => {
     expect(screen.queryByRole('button', { name: 'Add model' })).toBeNull();
   });
 
+  it('renders one brand-iconed catalog card per real provider and preserves slash model ids', async () => {
+    server.use(http.get('*/api/brain/models', () => HttpResponse.json([
+      { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus-5', exec: 'anthropic/claude-opus-5', program: 'elowen', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+      { provider: 'chatgpt-account', providerLabel: 'Účet ChatGPT', model: 'openai/gpt-5.6-sol', exec: 'chatgpt-account/openai/gpt-5.6-sol', program: 'elowen', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+    ])));
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Models' })).toBeInTheDocument();
+
+    const anthropicHeading = screen.getByRole('heading', { name: 'Anthropic' });
+    const chatgptHeading = screen.getByRole('heading', { name: 'Účet ChatGPT' });
+    for (const heading of [anthropicHeading, chatgptHeading]) {
+      expect(heading.closest('.settings-group__heading')!.querySelector('[data-brand-mark]')).not.toBeNull();
+    }
+    expect(screen.queryByRole('heading', { name: 'Elowen AI' })).toBeNull();
+
+    const card = chatgptHeading.closest<HTMLElement>('[data-settings-group]')!;
+    const row = within(card).getByLabelText('openai/gpt-5.6-sol');
+    expect(row).not.toBeChecked();
+    expect(within(card).queryByLabelText('claude-opus-5')).toBeNull();
+    expect(screen.getAllByTestId('model-row')).toHaveLength(2);
+
+    fireEvent.click(row);
+    await waitFor(() => expect(putBody).toBeTruthy());
+    const execs = (putBody as { allowedExecs: string[] }).allowedExecs;
+    expect(execs).toContain('chatgpt-account/openai/gpt-5.6-sol');
+    expect(execs).not.toContain('openai/gpt-5.6-sol');
+  });
+
   it('auto-saves an embedded model allowlist change', async () => {
     putBody = null;
     const { wrapper: Wrapper } = createWrapper();

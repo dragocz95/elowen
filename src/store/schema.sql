@@ -310,6 +310,8 @@ CREATE TABLE IF NOT EXISTS brain_messages (
   role TEXT NOT NULL,
   content TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  -- 0 settled · 1 pending (mirrored mid-turn, settled or replaced at agent_end) · 2 discarded (retired
+  -- from the transcript by a restart resume, kept only for the usage rollup — no reader returns it).
   pending INTEGER NOT NULL DEFAULT 0,
   -- Usage belongs to the owner's current epoch at persistence time. Reset advances the tiny per-user
   -- state row instead of rewriting historical transcript JSON.

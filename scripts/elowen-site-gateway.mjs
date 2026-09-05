@@ -22,6 +22,23 @@ const SAFE_HOST = /^[a-z0-9](?:[a-z0-9.-]{0,251}[a-z0-9])?$/;
 const SAFE_TOKEN = /^[A-Za-z0-9_-]{43,128}$/;
 const SAFE_SLUG = /^[a-z0-9][a-z0-9-]{1,63}$/;
 const SAFE_EMAIL = /^[^\s@]{1,64}@[a-z0-9][a-z0-9.-]{0,252}[a-z0-9]$/i;
+const SAFE_USER = /^[a-z_][a-z0-9_-]{0,31}$/i;
+export const ENVIRONMENT_PACKAGES = Object.freeze([
+  'podman', 'crun', 'uidmap', 'dbus-user-session', 'passt', 'slirp4netns',
+]);
+const OPTIONAL_OVERLAY_PACKAGE = 'fuse-overlayfs';
+export const ENVIRONMENT_DELEGATION_DROP_IN = '/etc/systemd/system/user@.service.d/elowen-sites-environments.conf';
+export const ENVIRONMENT_DELEGATION_CONTENT = '[Service]\nDelegate=cpu memory pids\n';
+const SYSTEM_PATH = '/usr/sbin:/usr/bin:/sbin:/bin';
+const PACKAGE_LABELS = Object.freeze({
+  podman: 'Podman',
+  crun: 'crun',
+  uidmap: 'UID mapping tools',
+  'dbus-user-session': 'D-Bus user session',
+  passt: 'passt network backend',
+  slirp4netns: 'slirp4netns network backend',
+  'fuse-overlayfs': 'FUSE overlay storage',
+});
 
 function fail(message) {
   throw new Error(message);
@@ -112,7 +129,7 @@ function siteBlock(deployment, slug, gatewayToken) {
     '        proxy_set_header Connection "";',
     '        proxy_buffering off;',
     '        proxy_read_timeout 3600s;',
-    '        client_max_body_size 64m;',
+    '        client_max_body_size 1m;',
     '    }',
     '}',
   ];
@@ -321,6 +338,318 @@ function removeSite(request, deployment) {
   return { ok: true, active: true, hostnameBase: deployment.hostnameBase, slugs: remaining };
 }
 
+function commandErrorText(error) {
+  if (!error || typeof error !== 'object') return '';
+  const stderr = 'stderr' in error ? String(error.stderr || '').trim() : '';
+  return stderr.slice(-1_000);
+}
+
+export function commandOptionsFor(file, _args = []) {
+  const apt = file === '/usr/bin/apt-get';
+  return {
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'pipe'],
+    timeout: apt ? 5 * 60_000 : 30_000,
+    maxBuffer: 2 * 1024 * 1024,
+    env: {
+      PATH: SYSTEM_PATH,
+      ...(apt ? { DEBIAN_FRONTEND: 'noninteractive', NEEDRESTART_MODE: 'l' } : {}),
+    },
+  };
+}
+
+function defaultCommandRunner(file, args) {
+  try {
+    const stdout = execFileSync(file, args, commandOptionsFor(file, args));
+    return { ok: true, stdout: String(stdout) };
+  } catch (error) {
+    return { ok: false, stderr: commandErrorText(error) };
+  }
+}
+
+export function helperRequestFields(request) {
+  if (!request || typeof request !== 'object' || Array.isArray(request)) fail('request is invalid');
+  const fields = Object.keys(request);
+  if (request.op !== 'environments-status' && request.op !== 'environments-provision') {
+    fail('environment operation is invalid');
+  }
+  if (fields.length !== 1 || fields[0] !== 'op') fail('environment request has extra fields');
+  return fields;
+}
+
+function sudoId(raw, label) {
+  if (typeof raw !== 'string' || !/^(?:0|[1-9]\d*)$/.test(raw)) fail(`the invoking service ${label} is invalid`);
+  const value = Number(raw);
+  if (!Number.isSafeInteger(value) || value < 0 || value > 0xffff_ffff) {
+    fail(`the invoking service ${label} is invalid`);
+  }
+  return value;
+}
+
+function serviceUser(runner, env) {
+  const name = typeof env.SUDO_USER === 'string' ? env.SUDO_USER : '';
+  if (!SAFE_USER.test(name) || name === 'root') fail('the invoking service user cannot be determined');
+  const sudoUid = sudoId(env.SUDO_UID, 'user id');
+  const sudoGid = sudoId(env.SUDO_GID, 'group id');
+  const result = runner('/usr/bin/getent', ['passwd', name]);
+  if (!result.ok) fail('the invoking service user does not exist');
+  const lines = String(result.stdout || '').trim().split('\n').filter(Boolean);
+  const fields = lines.length === 1 ? lines[0].split(':') : [];
+  const uid = Number(fields[2]);
+  const gid = Number(fields[3]);
+  const home = fields[5] || '';
+  if (fields.length !== 7 || fields[0] !== name
+    || !/^(?:0|[1-9]\d*)$/.test(fields[2] || '') || !/^(?:0|[1-9]\d*)$/.test(fields[3] || '')
+    || !Number.isSafeInteger(uid) || uid <= 0 || uid > 0xffff_ffff
+    || !Number.isSafeInteger(gid) || gid < 0 || gid > 0xffff_ffff
+    || !home.startsWith('/') || home.includes('\0')) {
+    fail('the invoking service user record is invalid');
+  }
+  if (sudoUid !== uid) fail('the invoking service user id does not match sudo');
+  if (sudoGid !== gid) fail('the invoking service group id does not match sudo');
+  return { name, uid, gid, home };
+}
+
+function runAsServiceUser(runner, user, command, args) {
+  return runner('/usr/sbin/runuser', [
+    '-u', user.name, '--', '/usr/bin/env', '-i',
+    `HOME=${user.home}`,
+    `USER=${user.name}`,
+    `LOGNAME=${user.name}`,
+    `PATH=${SYSTEM_PATH}`,
+    `XDG_RUNTIME_DIR=/run/user/${user.uid}`,
+    `DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/${user.uid}/bus`,
+    command, ...args,
+  ]);
+}
+
+function packageInstalled(runner, name) {
+  const result = runner('/usr/bin/dpkg-query', ['-W', '-f=${Status}', name]);
+  return result.ok && String(result.stdout || '').trim() === 'install ok installed';
+}
+
+function defaultReadText(path) {
+  try { return readFileSync(path, 'utf8'); } catch { return ''; }
+}
+
+export function supportedEnvironmentOs(raw) {
+  if (typeof raw !== 'string' || !raw.trim()) return { ok: false, detail: 'operating system information is unavailable' };
+  const values = new Map();
+  for (const sourceLine of raw.split('\n')) {
+    const line = sourceLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const match = /^([A-Z][A-Z0-9_]*)=(.*)$/.exec(line);
+    if (!match) return { ok: false, detail: 'operating system information is malformed' };
+    let value = match[2];
+    if (value.startsWith('"') || value.startsWith("'")) {
+      const quote = value[0];
+      if (value.length < 2 || !value.endsWith(quote)) return { ok: false, detail: 'operating system information is malformed' };
+      value = value.slice(1, -1);
+    }
+    values.set(match[1], value);
+  }
+  if (!values.has('ID') || !values.get('ID')) return { ok: false, detail: 'operating system information is malformed' };
+  const id = String(values.get('ID')).toLowerCase();
+  if (id === 'debian') return { ok: true, detail: 'Debian is supported' };
+  if (id === 'ubuntu') return { ok: true, detail: 'Ubuntu is supported' };
+  return { ok: false, detail: 'only Debian and Ubuntu are supported' };
+}
+
+function subidEntries(readText, path) {
+  const entries = [];
+  for (const sourceLine of String(readText(path) || '').split('\n')) {
+    const line = sourceLine.trim();
+    if (!line || line.startsWith('#')) continue;
+    const parts = line.split(':');
+    if (parts.length !== 3 || !/^[^\s:\0]+$/.test(parts[0]) || !/^\d+$/.test(parts[1]) || !/^\d+$/.test(parts[2])) {
+      fail(`${path} contains an invalid subordinate id entry`);
+    }
+    const start = Number(parts[1]);
+    const count = Number(parts[2]);
+    const end = start + count - 1;
+    if (!Number.isSafeInteger(start) || start < 0 || !Number.isSafeInteger(count) || count <= 0
+      || !Number.isSafeInteger(end) || end > 0xffff_ffff) {
+      fail(`${path} contains an invalid subordinate id entry`);
+    }
+    entries.push({ name: parts[0], start, end });
+  }
+  return entries;
+}
+
+function subidPresent(readText, path, user) {
+  return subidEntries(readText, path).some((entry) => entry.name === user.name);
+}
+
+function nextSubidRange(readText) {
+  const used = [
+    ...subidEntries(readText, '/etc/subuid'),
+    ...subidEntries(readText, '/etc/subgid'),
+  ];
+  for (let start = 100000; start <= 2_000_000_000; start += 65536) {
+    const end = start + 65535;
+    if (used.every((entry) => end < entry.start || start > entry.end)) return `${start}-${end}`;
+  }
+  fail('no subordinate id range is available');
+}
+
+function lingerEnabled(runner, user) {
+  const result = runner('/usr/bin/loginctl', ['show-user', user.name, '--property=Linger', '--value']);
+  return result.ok && String(result.stdout || '').trim() === 'yes';
+}
+
+function userDelegation(runner, user) {
+  const result = runner('/usr/bin/systemctl', [
+    'show', `user@${user.uid}.service`, '--property=Delegate', '--property=DelegateControllers', '--value',
+  ]);
+  const lines = String(result.stdout || '').trim().split('\n');
+  return {
+    enabled: result.ok && lines[0] === 'yes',
+    controllers: new Set((lines[1] || '').trim().split(/\s+/).filter(Boolean)),
+  };
+}
+
+function ensureDelegationDropIn(runner, readText, writeAtomic) {
+  if (readText(ENVIRONMENT_DELEGATION_DROP_IN) !== ENVIRONMENT_DELEGATION_CONTENT) {
+    writeAtomic(ENVIRONMENT_DELEGATION_DROP_IN, Buffer.from(ENVIRONMENT_DELEGATION_CONTENT), 0o644);
+  }
+  // Repeat daemon-reload while the live user manager still lacks delegation. It is idempotent, and this
+  // also recovers when a previous call wrote the file but daemon-reload itself failed.
+  runRequired(runner, '/usr/bin/systemctl', ['daemon-reload'], 'systemd daemon reload failed');
+}
+
+function podmanInfo(runner, user) {
+  const result = runAsServiceUser(runner, user, '/usr/bin/podman', ['info', '--format', 'json']);
+  if (!result.ok) {
+    const stderr = String(result.stderr || '');
+    return {
+      ok: false,
+      detail: /overlay|fuse-overlayfs|mount_program/i.test(stderr)
+        ? 'rootless overlay storage is unavailable'
+        : 'rootless podman info failed',
+    };
+  }
+  try {
+    const info = JSON.parse(String(result.stdout || ''));
+    const rootless = info?.host?.security?.rootless === true;
+    const manager = typeof info?.host?.cgroupManager === 'string' ? info.host.cgroupManager : 'unknown';
+    const version = typeof info?.host?.cgroupVersion === 'string' ? info.host.cgroupVersion : String(info?.host?.cgroupVersion ?? 'unknown');
+    const storage = typeof info?.store?.graphDriverName === 'string' ? info.store.graphDriverName : 'unknown';
+    const compatible = rootless && manager === 'systemd' && (version === 'v2' || version === '2');
+    return {
+      ok: compatible,
+      detail: rootless
+        ? `rootless; storage ${storage}; cgroup manager ${manager}; cgroup ${version}`
+        : 'podman info did not report rootless mode',
+    };
+  } catch {
+    return { ok: false, detail: 'podman info returned invalid JSON' };
+  }
+}
+
+function environmentStatus(options = {}) {
+  const runner = options.runner ?? defaultCommandRunner;
+  const readText = options.readText ?? defaultReadText;
+  const env = options.env ?? process.env;
+  const os = supportedEnvironmentOs(readText('/etc/os-release'));
+  const user = serviceUser(runner, env);
+  const packageState = new Map(ENVIRONMENT_PACKAGES.map((name) => [name, packageInstalled(runner, name)]));
+  const podman = packageState.get('podman') ? podmanInfo(runner, user) : { ok: false, detail: 'podman is not installed' };
+  const fuseInstalled = packageInstalled(runner, OPTIONAL_OVERLAY_PACKAGE);
+  const overlayRequired = !podman.ok && /overlay|fuse-overlayfs|mount_program/i.test(podman.detail);
+  const delegation = userDelegation(runner, user);
+  const bus = runAsServiceUser(runner, user, '/usr/bin/systemctl', ['--user', 'show-environment']);
+  const items = [{ id: 'os:supported', label: 'Supported operating system', ok: os.ok, detail: os.detail }];
+  items.push(...ENVIRONMENT_PACKAGES.map((name) => ({
+    id: `package:${name}`,
+    label: PACKAGE_LABELS[name],
+    ok: packageState.get(name) === true,
+    detail: packageState.get(name) ? 'installed' : 'not installed',
+  })));
+  items.push({
+    id: `package:${OPTIONAL_OVERLAY_PACKAGE}`,
+    label: PACKAGE_LABELS[OPTIONAL_OVERLAY_PACKAGE],
+    ok: fuseInstalled || !overlayRequired,
+    detail: fuseInstalled ? 'installed' : overlayRequired ? 'required by rootless overlay storage' : 'not required',
+  });
+  const hasSubuid = subidPresent(readText, '/etc/subuid', user);
+  const hasSubgid = subidPresent(readText, '/etc/subgid', user);
+  items.push(
+    { id: 'subuid', label: 'Subordinate user IDs', ok: hasSubuid, detail: hasSubuid ? `configured for ${user.name}` : 'not configured' },
+    { id: 'subgid', label: 'Subordinate group IDs', ok: hasSubgid, detail: hasSubgid ? `configured for ${user.name}` : 'not configured' },
+    { id: 'linger', label: 'Persistent user manager', ok: lingerEnabled(runner, user), detail: 'systemd linger' },
+    { id: 'user-bus', label: 'User D-Bus', ok: bus.ok, detail: bus.ok ? 'reachable' : 'not reachable' },
+  );
+  for (const controller of ['cpu', 'memory', 'pids']) {
+    const ok = delegation.enabled && delegation.controllers.has(controller);
+    items.push({
+      id: `cgroup:${controller}`,
+      label: `${controller} cgroup delegation`,
+      ok,
+      detail: ok ? 'delegated through cgroup v2' : 'not delegated to the user manager',
+    });
+  }
+  items.push({ id: 'podman-rootless', label: 'Rootless Podman', ok: podman.ok, detail: podman.detail });
+  return { ok: true, ready: items.every((item) => item.ok), items };
+}
+
+function runRequired(runner, file, args, failure) {
+  const result = runner(file, args);
+  if (!result.ok) fail(failure);
+}
+
+function provisionEnvironments(options = {}) {
+  const runner = options.runner ?? defaultCommandRunner;
+  const readText = options.readText ?? defaultReadText;
+  const writeAtomic = options.writeAtomic ?? atomicWrite;
+  const env = options.env ?? process.env;
+  const os = supportedEnvironmentOs(readText('/etc/os-release'));
+  if (!os.ok) fail(os.detail);
+  const user = serviceUser(runner, env);
+  const missing = ENVIRONMENT_PACKAGES.filter((name) => !packageInstalled(runner, name));
+  let aptUpdated = false;
+  if (missing.length > 0) {
+    runRequired(runner, '/usr/bin/apt-get', ['update'], 'apt package metadata update failed');
+    aptUpdated = true;
+    runRequired(runner, '/usr/bin/apt-get', ['install', '--yes', '--no-install-recommends', ...missing], 'environment package installation failed');
+  }
+  const hasSubuid = subidPresent(readText, '/etc/subuid', user);
+  const hasSubgid = subidPresent(readText, '/etc/subgid', user);
+  const range = hasSubuid && hasSubgid ? null : nextSubidRange(readText);
+  if (!hasSubuid) {
+    runRequired(runner, '/usr/sbin/usermod', ['--add-subuids', range, user.name], 'subordinate user id configuration failed');
+  }
+  if (!hasSubgid) {
+    runRequired(runner, '/usr/sbin/usermod', ['--add-subgids', range, user.name], 'subordinate group id configuration failed');
+  }
+  if (!lingerEnabled(runner, user)) {
+    runRequired(runner, '/usr/bin/loginctl', ['enable-linger', user.name], 'systemd linger enablement failed');
+  }
+  let status = environmentStatus({ runner, readText, env });
+  const delegationMissing = status.items.some((item) => item.id.startsWith('cgroup:') && !item.ok);
+  if (delegationMissing) ensureDelegationDropIn(runner, readText, writeAtomic);
+  const fuse = status.items.find((item) => item.id === `package:${OPTIONAL_OVERLAY_PACKAGE}`);
+  if (fuse && !fuse.ok && fuse.detail === 'required by rootless overlay storage') {
+    if (!aptUpdated) runRequired(runner, '/usr/bin/apt-get', ['update'], 'apt package metadata update failed');
+    runRequired(
+      runner,
+      '/usr/bin/apt-get',
+      ['install', '--yes', '--no-install-recommends', OPTIONAL_OVERLAY_PACKAGE],
+      'rootless overlay storage package installation failed',
+    );
+    status = environmentStatus({ runner, readText, env });
+  }
+  const delegationPending = status.items.some((item) => item.id.startsWith('cgroup:') && !item.ok)
+    && readText(ENVIRONMENT_DELEGATION_DROP_IN) === ENVIRONMENT_DELEGATION_CONTENT;
+  return {
+    ...status,
+    ...(status.ready ? {} : {
+      detail: delegationPending
+        ? 'systemd delegation is configured; a reboot or user-manager restart is required'
+        : 'environment support remains incomplete',
+    }),
+  };
+}
+
 const SAFE_SITE_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 export function runtimeSocketPathFor(siteId) {
@@ -355,8 +684,12 @@ function runtimeSocketRequest(request) {
   fail('runtime socket operation is not supported');
 }
 
-export async function applyRequest(request, deployment) {
+export async function applyRequest(request, deployment, options = {}) {
   if (!request || typeof request !== 'object' || typeof request.op !== 'string') fail('request is invalid');
+  if (request.op === 'environments-status' || request.op === 'environments-provision') {
+    helperRequestFields(request);
+    return request.op === 'environments-status' ? environmentStatus(options) : provisionEnvironments(options);
+  }
   if (request.op === 'prepare-runtime-socket' || request.op === 'seal-runtime-socket' || request.op === 'remove-runtime-socket') {
     return runtimeSocketRequest(request);
   }
@@ -426,23 +759,36 @@ async function readStdin() {
   }
 }
 
+export function helperRequestNeedsDeployment(request) {
+  return request?.op === 'status'
+    || request?.op === 'sync-sites'
+    || request?.op === 'ensure-site'
+    || request?.op === 'remove-site'
+    || request?.op === 'deny';
+}
+
 async function main() {
   if (typeof process.getuid === 'function' && process.getuid() !== 0) fail('helper must run as root');
   // No command-line modes at all: HTTP-01 needs no auth hook, so the sudoers rule can pin the empty
   // argument vector and there is no argv surface left to reach.
   if (process.argv.length > 2) fail('helper accepts no command-line arguments');
   const request = await readStdin();
-  if (request?.op === 'status'
+  if (request?.op === 'environments-status'
+    || request?.op === 'status'
     || request?.op === 'prepare-runtime-socket'
     || request?.op === 'seal-runtime-socket'
     || request?.op === 'remove-runtime-socket') {
-    const response = await applyRequest(request, readDeployment());
+    const response = helperRequestNeedsDeployment(request)
+      ? await applyRequest(request, readDeployment())
+      : await applyRequest(request);
     process.stdout.write(`${JSON.stringify(response)}\n`);
     return;
   }
   const release = await acquireMutationLock();
   try {
-    const response = await applyRequest(request, readDeployment());
+    const response = helperRequestNeedsDeployment(request)
+      ? await applyRequest(request, readDeployment())
+      : await applyRequest(request);
     process.stdout.write(`${JSON.stringify(response)}\n`);
   } finally {
     release();

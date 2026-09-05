@@ -111,7 +111,11 @@ describe('LoginGate', () => {
     }));
 
     render(<Wrap><LoginGate initiallyAuthenticated><span>secret-content</span></LoginGate></Wrap>);
-    await waitFor(() => expect(openedEventSources).toBe(1));
+    // Both of the shell's streams open while `/auth/me` is still held: the general `/events` feed and
+    // the per-user `/brain/conversations` one that carries conversation activity. The count is exact
+    // rather than "at least one" so a third stray stream, or either of these going missing, still fails
+    // here — but WHAT this test is about is that they open before the probe resolves, below.
+    await waitFor(() => expect(openedEventSources).toBe(2));
     release();
   });
 

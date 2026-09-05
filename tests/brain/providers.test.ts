@@ -291,6 +291,47 @@ describe('brain providers', () => {
     expect(registry.find('openai-codex', fable51)).toBeUndefined();
   });
 
+  it('adds GPT-6 Astra only to ChatGPT OAuth by inheriting the Sol descriptor', () => {
+    const astra = 'gpt-6-astra';
+    const providers: BrainRuntimeConfig = { providers: [
+      { id: 'codex', label: 'ChatGPT', type: 'oauth-openai-codex', baseUrl: '', models: ['gpt-5.5', astra], apiKey: null },
+      { id: 'api', label: 'OpenAI API', type: 'openai', baseUrl: 'https://api.openai.com/v1', models: [astra], apiKey: 'k' },
+    ] };
+    const registry = buildBrainRegistry(providers, runtime);
+    const inherited = registry.find('openai-codex', 'gpt-5.6-sol');
+    const added = registry.find('openai-codex', astra);
+    expect(inherited).toBeDefined();
+    expect(added).toBeDefined();
+    expect(added).toMatchObject({
+      api: inherited!.api,
+      provider: inherited!.provider,
+      baseUrl: inherited!.baseUrl,
+      reasoning: inherited!.reasoning,
+      thinkingLevelMap: inherited!.thinkingLevelMap,
+      input: inherited!.input,
+      cost: inherited!.cost,
+      contextWindow: inherited!.contextWindow,
+      maxTokens: inherited!.maxTokens,
+      samplingParams: inherited!.samplingParams,
+      compat: inherited!.compat,
+    });
+    expect(modelCapabilities(added!).levels).toEqual(modelCapabilities(inherited!).levels);
+
+    const oauthRoute = resolveBrainModelRoute(registry, providers, { provider: 'codex', model: astra });
+    expect(oauthRoute.providerId).toBe('codex');
+    expect(oauthRoute.model).toMatchObject({ id: astra, provider: 'openai-codex', api: 'openai-codex-responses' });
+    expect(oauthRoute.compactionFallback?.id).toBe('gpt-5.5');
+
+    const apiRoute = resolveBrainModelRoute(registry, providers, { provider: 'api', model: astra });
+    expect(apiRoute.model).toMatchObject({ provider: 'elowen-api', api: 'openai-responses' });
+    expect(apiRoute.model.cost).not.toEqual(added!.cost);
+    expect(apiRoute.model.compat).toBeUndefined();
+    expect(resolveFastModeRoute(providers.providers[0]!, oauthRoute.model)).toBeUndefined();
+    expect(registry.find('anthropic', astra)).toBeUndefined();
+    expect(registry.find('github-copilot', astra)).toBeUndefined();
+    expect(registry.find('kimi-coding', astra)).toBeUndefined();
+  });
+
   it('declares known OpenAI reasoning levels centrally and labels xhigh as ultra', () => {
     const known: BrainRuntimeConfig = {
       providers: [{ id: 'oa', label: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1', models: ['gpt-5.4'], apiKey: 'k' }],
@@ -683,6 +724,26 @@ describe('pinned context windows', () => {
   it('reaches the runtime descriptor of an OAuth built-in model, not just the picker', () => {
     const registry = buildBrainRegistry(oauthCfg({ 'openai-codex/gpt-5.6-sol': 372_000 }), runtime);
     expect(registry.find('openai-codex', 'gpt-5.6-sol')?.contextWindow).toBe(372_000);
+  });
+
+  it('pins GPT-6 Astra without losing inherited OAuth metadata', async () => {
+    const baseline = buildBrainRegistry(oauthCfg(), await inMemoryModelRuntime()).find('openai-codex', 'gpt-6-astra');
+    expect(baseline).toBeDefined();
+
+    const registry = buildBrainRegistry(oauthCfg({ 'openai-codex/gpt-6-astra': 333_000 }), runtime);
+    const pinned = registry.find('openai-codex', 'gpt-6-astra');
+    expect(pinned).toMatchObject({
+      contextWindow: 333_000,
+      api: baseline!.api,
+      baseUrl: baseline!.baseUrl,
+      cost: baseline!.cost,
+      reasoning: baseline!.reasoning,
+      thinkingLevelMap: baseline!.thinkingLevelMap,
+      input: baseline!.input,
+      maxTokens: baseline!.maxTokens,
+      samplingParams: baseline!.samplingParams,
+      compat: baseline!.compat,
+    });
   });
 
   it('leaves an unpinned model of the same provider on the catalog window', async () => {

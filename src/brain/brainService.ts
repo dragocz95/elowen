@@ -20,9 +20,9 @@ import type { ChannelSendOpts, DelegatedSteerOutcome } from './channels.js';
 import { PlatformOrchestrator } from './platforms.js';
 import { delegatedChannelSendOpts, type DelegatedTurnRequest } from './delegatedTurn.js';
 import { SubagentDispatch } from '../subagent/dispatch.js';
-import { lastAssistant, lastAssistantTextIn, type BrainMessageView } from './messageView.js';
+import { lastAssistantTextIn, type BrainMessageView } from './messageView.js';
 import { runCompaction, withDescendantUsage } from './events.js';
-import type { AskAnswer, BrainEvent, BrainInlineArtifact, BrainInlineArtifactClosed, CompactResult, PluginChatArtifact, PluginChatArtifactUpdate, WorkflowCompletion } from './events.js';
+import type { AskAnswer, BrainEvent, BrainInlineArtifact, BrainInlineArtifactClosed, CompactResult, PluginChatArtifact, PluginChatArtifactUpdate, WorkflowCompletion, WorkflowUpdate } from './events.js';
 import { InlineArtifactRegistry } from './inlineArtifacts.js';
 import { terminalizeWorkflow } from './workflowRuns.js';
 import { normalizeDelegatedExecutionScope, scopeExceedsCurrentAccess, type DelegatingTurnAccess } from './delegatedScope.js';
@@ -37,7 +37,7 @@ import { PermissionApprovalService } from './service/permissionApproval.js';
 import { GoalLoopService } from './service/goalLoop.js';
 import { LiveSessionSpawner } from './service/spawner.js';
 import { ConversationLifecycle } from './service/lifecycle.js';
-import { recordSessionEvent, scheduleReasoningMarker } from './service/sessionEvents.js';
+import { recordSessionEvent, recordWorkflowFinishMarker, scheduleReasoningMarker } from './service/sessionEvents.js';
 import { clientDir } from './service/workDir.js';
 import { BrainTurnRunner, subagentResultReminder } from './service/turnRunner.js';
 import type { BoundClientRequest, TurnRequest } from './service/turnRequest.js';
@@ -110,14 +110,6 @@ export interface PauseSummary {
  *  custom-message seam (`display:false`) so it never renders as a fake user bubble; it appends at the
  *  transcript's TAIL, after the fully-answered pending step the park left behind, so the cached prefix
  *  above it is untouched. The turn it triggers produces the answer the restart interrupted. */
-const PARKED_RESUME_NOTE = 'The daemon restarted and interrupted this conversation\'s active turn. '
-  + 'The remaining work was not done and the final answer was never delivered. A tool result marked [interrupted] '
-  + 'belongs to a call the restart cut off: its effect is unknown, so check the current state before repeating it '
-  + 'and never assume it completed; every other tool result above is complete. '
-  + 'Continue exactly where the transcript leaves off and finish the turn: complete any remaining work and give the user '
-  + 'the answer they are still waiting for. Do not redo work whose results are already above, and do not dwell on the '
-  + 'interruption. If the transcript shows the request was in fact fully answered, reply with a one-line confirmation only.';
-
 /** A result-specific follow-up when the durable custom result reached context but its parent retry ended before
  * answering. This is not the generic restart note: the result remains the subject and no work is replayed. */
 const RESULT_CONTINUATION_NOTE = 'A recovered delegated result is already present immediately above in this conversation, '
@@ -213,6 +205,9 @@ export class BrainService {
   private bootClaimedCalls = new Set<string>();
   /** The claim set itself, held between the `delegations-claim` and `delegations` providers' claims. */
   private bootClaimedRuns: RecoverableRun[] = [];
+  /** Workflows this boot claimed and has not yet handed back to the engine (or terminalized): the read
+   *  model shows them running meanwhile, whatever the engine's liveness probe says. */
+  private bootPendingWorkflows = new Set<string>();
   /** The destructive session lifecycle: turn interruption (Esc/Stop), the client-close stop, the idle
    *  reaper and conversation delete/purge — see SessionTeardownService. */
   private teardown: SessionTeardownService;
@@ -370,6 +365,7 @@ export class BrainService {
     });
     this.statusView = new BrainStatusService({
       store: d.store, sessions: this.sessions, attachments: this.attachments,
+      workflowResumePending: (workflowId) => this.bootPendingWorkflows.has(workflowId),
       elicitation: this.elicitation, cards: this.cards, artifacts: this.artifacts,
       lifecycle: this.lifecycle, permissions: this.permissionSvc,
       get config() { return d.config; },
@@ -698,15 +694,31 @@ export class BrainService {
       logger('brain').warn(`recovered sub-agent result(s) for unparked platform room ${parentSessionId} stay in the inbox; the room reads them through DelegateRead`);
       return;
     }
+    // The one thing a silent resume still has to SAY: the result itself (a room has no inbox drain). The
+    // wording names the work, never the restart — the transcript's [interrupted] tool result already
+    // explains why the Delegate call has no answer of its own.
     const note = `${results.map(subagentResultReminder).join('\n')}\n`
-      + 'The daemon restarted while this conversation was waiting on the sub-agent work above; the interrupted '
-      + 'Delegate call is marked [interrupted] in the transcript. Continue from these results and give the sender '
-      + 'the answer they are waiting for. Do not re-delegate the same work.';
+      + 'The delegated work this conversation was waiting on has finished; its Delegate call is marked '
+      + '[interrupted] in the transcript and the result above is its answer. Continue from these results and '
+      + 'give the sender the answer they are waiting for. Do not re-delegate the same work.';
     const outcome = await this.resumeParkedPlatformTurn({ id: row.id, park_attempts: row.park_attempts }, {
       note,
       acknowledge: () => { for (const result of results) this.d.store.acknowledgeSubagentResult(parentSessionId, result.id); },
     });
     logger('brain').info(`platform room ${parentSessionId}: recovered result delivered as its continuation (${outcome})`);
+  }
+
+  /** Tell every attached client to refetch its snapshot (see the `resync` BrainEvent). Published on every
+   *  live session's bus, owner conversations and channels alike: whoever attached in the boot window was
+   *  shown a read model that could not yet vouch for what this boot was recovering. */
+  publishResync(reason: 'boot-recovered'): void {
+    let told = 0;
+    for (const [, live] of [...this.sessions.liveEntries(), ...this.sessions.channelEntries()]) {
+      if (live.listeners.size === 0) continue;
+      live.replay.broadcast({ type: 'resync', reason });
+      told += 1;
+    }
+    if (told > 0) logger('brain').info(`boot recovery: told ${told} attached conversation(s) to resync (${reason})`);
   }
 
   /** The safety net under a parent PAUSED on its delegation (resumeParkedConversation's durable wait): the
@@ -812,7 +824,9 @@ export class BrainService {
 
   /** `workflows` provider, CLAIM: the workflow half of the reconcile {@link claimDelegationRecovery} ran. */
   claimWorkflowRecovery(): RecoverableWorkflow[] {
-    return this.delegated.takePendingWorkflowRecovery();
+    const claimed = this.delegated.takePendingWorkflowRecovery();
+    for (const wf of claimed) this.bootPendingWorkflows.add(wf.workflowId);
+    return claimed;
   }
 
   /** `workflows` provider, RESUME: hand ONE claimed DAG back to the engine, or terminalize it durably.
@@ -823,6 +837,27 @@ export class BrainService {
    *  conversation actually LEARNS the workflow died with the restart instead of discovering a silent
    *  `cancelled` badge later. */
   async resumeWorkflow(wf: RecoverableWorkflow): Promise<RecoveryOutcome> {
+    try { return await this.resumeClaimedWorkflow(wf); }
+    finally { this.bootPendingWorkflows.delete(wf.workflowId); }
+  }
+
+  /** Publish a resumed workflow's progress to whoever is attached to its origin conversation — exactly
+   *  what emitWorkflow does inside a live turn (turnContextBuilder / channels), which a boot resume has
+   *  none of. Without this the store learned every step and no client did: a CLI that reconnected in the
+   *  boot window kept the failed card it had been shown until its next reconnect. */
+  private publishWorkflowUpdate(parentSessionId: string, update: WorkflowUpdate): void {
+    const prevStatus = update.status === 'done' || update.status === 'error' || update.status === 'cancelled'
+      ? this.d.store.workflowStatus(parentSessionId, update.id)
+      : undefined;
+    if (!this.d.store.upsertWorkflowRun(parentSessionId, update)) return;
+    const live = this.sessions.get(parentSessionId)
+      ?? (isChannelSession(parentSessionId) ? this.sessions.channelGet(channelIdOf(parentSessionId)) : undefined);
+    if (!live) return;
+    live.replay.publish({ type: 'workflow', ...update });
+    recordWorkflowFinishMarker(this.d.store, parentSessionId, (event) => live.replay.publish(event), prevStatus, update);
+  }
+
+  private async resumeClaimedWorkflow(wf: RecoverableWorkflow): Promise<RecoveryOutcome> {
     const control = (await this.resolvePlugins())?.control('workflow');
     let reason = control ? 'the workflow engine declined to resume it' : 'the workflow engine is not available';
     try {
@@ -837,9 +872,10 @@ export class BrainService {
           ...(wf.state.workspaceRef ? { trustedWorkspaceRef: wf.state.workspaceRef } : {}),
           ...(Object.keys(trustedNodeWorkspaceRefs).length ? { trustedNodeWorkspaceRefs } : {}),
           hooks: {
-            emit: (update) => { this.d.store.upsertWorkflowRun(wf.parentSessionId, update); },
+            emit: (update) => { this.publishWorkflowUpdate(wf.parentSessionId, update); },
             complete: (completion) => { this.deliverWorkflowCompletion(wf.parentSessionId, completion); },
             stopChild: (childSessionId) => this.delegated.stopSubagent(wf.parentSessionId, childSessionId),
+            continueNode: (childSessionId, onEvent) => this.delegated.continueWorkflowNode(wf.parentSessionId, childSessionId, onEvent as ((e: BrainEvent) => void) | undefined),
             validateBoundary: (access) => this.journaledBoundaryCheck(wf.parentSessionId, access),
           },
         });
@@ -858,7 +894,7 @@ export class BrainService {
       reason = `resume failed: ${(e instanceof Error ? e.message : String(e)).slice(0, 2_000)}`;
     }
     logger('brain').warn(`boot recovery could not resume workflow ${wf.workflowId}: ${reason} — terminalizing`);
-    this.d.store.upsertWorkflowRun(wf.parentSessionId, terminalizeWorkflow(wf.state));
+    this.publishWorkflowUpdate(wf.parentSessionId, terminalizeWorkflow(wf.state));
     const done = wf.state.nodes.filter((n) => n.status === 'done').map((n) => n.id);
     this.deliverWorkflowCompletion(wf.parentSessionId, {
       id: wf.workflowId, toolCallId: wf.toolCallId,
@@ -908,13 +944,22 @@ export class BrainService {
   /** A parked turn owns the durable working fence across a restart. Terminal recovery must settle that
    * fence before clearing its marker, or the next accepted turn can never win its compare-and-set. */
   private failParkedConversationActivity(sessionId: string, detail: string): void {
+    this.settleParkedConversationActivity(sessionId, 'failed', detail);
+  }
+
+  /** The other terminal end of the same fence: the boot resume ANSWERED. The silent continuation
+   *  (continueInterrupted) deliberately runs outside the ordinary turn scope — it injects no message and
+   *  opens no turn — so nothing on that path settles the fence the pause left standing. Without this, the
+   *  conversation the restart just finished answering would keep pulsing "working" for the life of the
+   *  process, and every later turn in it would lose its compare-and-set against the dead turn id. */
+  private settleParkedConversationActivity(sessionId: string, state: 'done' | 'failed', detail: string): void {
     const activity = this.d.store.getSessionActivity(sessionId);
     if (!activity || activity.state !== 'working' || !activity.turnId) return;
     const changed = this.d.store.settleSessionActivity(
       sessionId,
       activity.turnId,
       activity.webParticipatedAt != null ? 'web' : 'cli',
-      'failed',
+      state,
       detail,
     );
     if (changed) this.d.onConversationActivityChanged?.(sessionId);
@@ -1085,23 +1130,22 @@ export class BrainService {
       return 'released';
     }
     try {
-      // A UNIQUE resultId, for two reasons: without one, sendCustomSystem's "already in context"
-      // forgiveness (`resultInContext(…, undefined)`) matches ANY custom row lacking a resultId — our
-      // own note included — and would report an errored resume as landed; and it keeps a crashed-boot
-      // retry honest (a second attempt's note is a different id, never mistaken for the first).
-      const beforeResume = this.sessions.get(row.id)?.session.messages.length ?? 0;
-      await this.turnRunner.sendCustomSystem(row.user_id, row.id, 'restart-resume', PARKED_RESUME_NOTE, `restart-resume-${randomUUID()}`);
-      // sendCustomSystem throws on definite non-delivery but forgives a turn that ERRORED after the
-      // note entered the context (right for sub-agent results, whose delivery is the note itself — not
-      // for us, where the deliverable is the ANSWER the triggered turn produces). Verify the outcome:
-      // this attempt itself must have produced a normally settled assistant, not merely inherit an older one.
-      const messages = this.sessions.get(row.id)?.session.messages as { role?: string; stopReason?: string; errorMessage?: string }[] ?? [];
-      const settled = lastAssistant(messages.slice(beforeResume));
-      if (!settled || settled.stopReason === 'aborted' || settled.stopReason === 'error') {
-        throw new Error(settled?.errorMessage?.trim() || `the resume turn ${settled?.stopReason ?? 'produced no assistant reply'}`);
-      }
+      // SILENT resume: the turn continues from its checkpointed tail — the interrupted tool calls were
+      // answered with `[interrupted]` results at spawn (settlePartialTurn), so no message is injected
+      // and the cached prefix is untouched. A transcript that already ends on a settled answer has
+      // nothing to continue: the pause hit after the model's last word, only the settlement was lost.
+      const outcome = await this.turnRunner.continueInterrupted(row.user_id, row.id);
       this.d.store.clearSessionPark(row.id);
-      log.info(`boot resume finished parked conversation ${row.id} (attempt ${row.park_attempts + 1})`);
+      // The marker and the activity fence go down together — see settleParkedConversationActivity. A
+      // transcript that already ended on a settled answer lost only its settlement to the pause, so the
+      // fence is closed there too; the difference is that no new output arrived, which is why it is
+      // settled with no detail rather than announced as fresh work.
+      this.settleParkedConversationActivity(row.id, 'done', '');
+      if (outcome === 'nothing') {
+        log.info(`parked conversation ${row.id} already ended on a settled answer — nothing to continue`);
+        return 'released';
+      }
+      log.info(`boot resume continued parked conversation ${row.id} (attempt ${row.park_attempts + 1})`);
       // The answer the user was waiting for has just landed while (almost certainly) nobody was
       // watching a reconnected client — same push the ordinary settled-turn notifier sends.
       if (this.attachments.watchingCount(row.id) === 0) {

@@ -188,6 +188,13 @@ export class LiveEventReplay {
     for (const listener of this.listeners) listener(stamped);
   }
 
+  /** Deliver a control instruction to the listeners attached NOW without journaling it: a `resync` is an
+   *  order to refetch, meaningful only to whoever is attached at the moment; replaying it into a later
+   *  snapshot would only make every reconnect fetch twice. */
+  broadcast(event: BrainEvent): void {
+    for (const listener of this.listeners) listener(event);
+  }
+
   /** Add an ordering marker without broadcasting it to the platform that already rendered the sender's
    * own message (shared Discord/WhatsApp channel steer). Snapshot clients still need the marker. */
   journal(event: BrainEvent): void { this.record(event); }

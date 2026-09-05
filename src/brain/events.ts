@@ -83,6 +83,12 @@ export type BrainEvent =
    *  their transcript to a 'context compacted' divider + that tail. Distinct from the compaction
    *  `notice` (the one-line status): this event drives the transcript REBUILD, the notice the status. */
   | { type: 'compacted' }
+  /** The daemon's durable state just changed UNDER an attached client, in a way no transcript event
+   *  describes: boot recovery has finished its claim pass, loaded the plugins and handed every claimed
+   *  workflow back to its engine. A client that attached in the boot window (the read model could not yet
+   *  vouch for what this boot was recovering) must refetch its snapshot — status and transcript — exactly
+   *  as it does on a reconnect. Same bus, same shape as `compacted`: a refetch instruction, not data. */
+  | { type: 'resync'; reason: 'boot-recovered' }
   /** The agent is asking the user to pick from predefined options and has PARKED the turn until they
    *  answer (see `AskUserQuestion` plugin + ElicitationRegistry). Synthetic — not derived from a PI
    *  event; the elicitor emits it straight into `listeners`. A client renders the questions as

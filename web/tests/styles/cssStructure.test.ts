@@ -88,6 +88,15 @@ const EXTERNALLY_SET: Record<string, string> = {
   // Viewport/composer measurements owned by BrainChatSurface's layout effect, not global design tokens.
   '--chat-visual-bottom-offset': 'modules/advisor/BrainChatSurface.tsx useLayoutEffect sets it on the chat surface',
   '--chat-composer-height': 'modules/advisor/BrainChatSurface.tsx useLayoutEffect sets it on the chat surface',
+  // A docked plugin live view (today the browser monitor) publishes its own measured height on the chat
+  // surface. The core only ever READS this one — the plugin is the setter — and it is absent whenever
+  // nothing is docked, which is what the 0px fallback at every read site is for.
+  '--chat-dock-height': 'the browser plugin bundle sets it on .chat-surface-full (plugins/browser/web-src)',
+  '--chat-dock-reserve': 'modules/advisor/BrainChatSurface.tsx useLayoutEffect sets it on the transcript',
+  // The card's measured WIDTH, and where the wrap spacer starts inside the last prose block. The plugin
+  // publishes only its height, so the core measures the rest and drives the float from these two.
+  '--chat-dock-width': 'modules/advisor/BrainChatSurface.tsx useLayoutEffect sets it on the chat surface',
+  '--chat-dock-spacer-top': 'modules/advisor/BrainChatSurface.tsx useLayoutEffect sets it on the wrapped prose block',
   // The entrance stagger's index, handed down per element by the component that knows the order
   // (StudioNavigation rows, DashBento cards). There is no global value it could have.
   '--stagger': 'components/shell/StudioNavigation.tsx and modules/dashboard/DashBento.tsx, inline style per element',

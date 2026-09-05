@@ -20,14 +20,31 @@ export const MARKERS = {
   ownerBashTask: 'RECOVERY-OWNER-BASH-TASK-7e21',
   ownerBashResult: 'RECOVERY-OWNER-BASH-RESULT-5d09',
   ownerSteer: 'RECOVERY-OWNER-STEER-3b6f',
+  grandTask: 'RECOVERY-GRANDCHILD-TASK-9a1e',
+  grandResult: 'RECOVERY-GRANDCHILD-RESULT-6f04',
+  nestedChildResult: 'RECOVERY-NESTED-CHILD-RESULT-2c77',
   parentGotResult: 'RECOVERY-PARENT-GOT-RESULT-8c42',
+  workflowTask: 'RECOVERY-WORKFLOW-TASK-4d2a',
+  workflowNodeOneTask: 'RECOVERY-WORKFLOW-NODE-ONE-TASK-5b1c',
+  workflowNodeOneResult: 'RECOVERY-WORKFLOW-NODE-ONE-RESULT-7e3f',
+  workflowNodeTwoTask: 'RECOVERY-WORKFLOW-NODE-TWO-TASK-8a4d',
+  workflowNodeTwoResult: 'RECOVERY-WORKFLOW-NODE-TWO-RESULT-9c5e',
+  workflowParentGot: 'RECOVERY-WORKFLOW-PARENT-GOT-0d6f',
 };
 
 const CHILD_PROMPT = 'You are a focused sub-agent';
-// Every child recovery instruction opens with this (mid-task, mid-step, or waiting on sub-agents).
-const RECOVERY_PROMPT = 'The daemon restarted and interrupted you';
-// The owner-conversation resume note and the durable result delivery, as the model sees them.
-const OWNER_RESUME_NOTE = 'The daemon restarted and interrupted this conversation';
+// The resume is SILENT: no note of any kind enters the context. What the model sees after a restart is
+// its own transcript, with the tool calls the restart cut off answered by `[interrupted …]` results —
+// and for a child held mid-model-call, exactly the request it was making before. Any wording that
+// announces a restart in a request is counted, so the suite can assert it never appears.
+const RESUME_NOTE_WORDINGS = [
+  'The daemon restarted',
+  // The workflow engine's own re-prompt note: a node resumed from the recovery journal must be CONTINUED
+  // like any delegated child, never prompted with its task again.
+  'an earlier attempt at this node was interrupted',
+];
+const WORKFLOW_RESULT_TAG = '<workflow-result';
+const INTERRUPTED_RESULT = '[interrupted';
 const SUBAGENT_RESULT_TAG = '<subagent-result';
 const LISTING_HEADER = 'in this conversation (newest first)';
 
@@ -47,7 +64,7 @@ async function readJson(req) {
 const frame = (payload) => `data: ${JSON.stringify(payload)}\n\n`;
 
 /** Start one isolated scripted provider for a recovery scenario. */
-export async function startRecoveryModel({ task, result, background = false, unsafe = false, ownerBash = false }) {
+export async function startRecoveryModel({ task, result, background = false, unsafe = false, ownerBash = false, nested = false, workflow = false }) {
   const requests = [];
   const toolCalls = [];
   let toolCallSequence = 0;
@@ -56,11 +73,13 @@ export async function startRecoveryModel({ task, result, background = false, uns
   let signalInitialChild = () => {};
   const initialChildArrived = new Promise((resolve) => { signalInitialChild = resolve; });
   let initialChildSignalled = false;
+  let resumeNotesSeen = 0;
 
   const server = createServer(async (req, res) => {
     const url = new URL(req.url ?? '/', 'http://127.0.0.1');
     const body = await readJson(req);
     requests.push({ path: url.pathname, body, at: Date.now() });
+    if (RESUME_NOTE_WORDINGS.some((wording) => JSON.stringify(body).includes(wording))) resumeNotesSeen += 1;
     if (req.method !== 'POST' || url.pathname !== '/v1/chat/completions') {
       res.writeHead(404, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: `unhandled ${req.method} ${url.pathname}` }));
@@ -101,13 +120,70 @@ export async function startRecoveryModel({ task, result, background = false, uns
       finish();
     };
 
+    // The FIRST user message names the task a session was given — the only reliable way to tell a child
+    // from its grandchild, since the child's own context also contains the grandchild's task (inside its
+    // Delegate call).
+    const firstUserText = contentText(messages.find((m) => m.role === 'user') ?? {});
+    // Nested mode (parent → child → grandchild): the GRANDCHILD is the one held mid-model-call until the
+    // restart; the child, waiting on its Delegate, is paused mid-call too. After the restart the grandchild
+    // finishes, the child finds its Delegate call answered [interrupted, result recovered] and finishes,
+    // and the parent receives the child's answer — exactly once.
+    if (nested && allText.includes(CHILD_PROMPT) && firstUserText.includes(MARKERS.grandTask)) {
+      if (initialChildSignalled) { say(`Grandchild finished. ${MARKERS.grandResult}`); return; }
+      initialChildSignalled = true;
+      signalInitialChild();
+      await held;
+      if (!res.destroyed && !res.writableEnded) say(`Grandchild was released. ${MARKERS.grandResult}`);
+      return;
+    }
+    if (nested && allText.includes(CHILD_PROMPT) && firstUserText.includes(task)) {
+      if (allText.includes('[interrupted, result recovered]') && allText.includes(MARKERS.grandResult)) {
+        say(`Child folded the grandchild's answer. ${MARKERS.nestedChildResult}`);
+        return;
+      }
+      if (awaitingTool) { say(`Child got a tool answer it did not expect. ${MARKERS.nestedChildResult}`); return; }
+      callTool('Delegate', { task: MARKERS.grandTask });
+      return;
+    }
+
+    // Workflow mode (parent → WorkflowStart{one → two}, background): node ONE starts a real Bash call that
+    // stays unanswered until the restart; afterwards its context ends on the `[interrupted]` result and it
+    // finishes. Node TWO then runs with node one's result as context, and the parent receives the workflow
+    // summary — exactly once.
+    if (workflow && allText.includes(CHILD_PROMPT) && firstUserText.includes(MARKERS.workflowNodeOneTask)) {
+      if (allText.includes(INTERRUPTED_RESULT)) { say(`Node one finished after the restart. ${MARKERS.workflowNodeOneResult}`); return; }
+      if (awaitingTool) { say(`Node one finished without a restart. ${MARKERS.workflowNodeOneResult}`); return; }
+      if (!initialChildSignalled) { initialChildSignalled = true; signalInitialChild(); }
+      callTool('Bash', { command: 'node -e "setTimeout(() => {}, 120000)"' });
+      return;
+    }
+    if (workflow && allText.includes(CHILD_PROMPT) && firstUserText.includes(MARKERS.workflowNodeTwoTask)) {
+      say(allText.includes(MARKERS.workflowNodeOneResult)
+        ? `Node two saw node one's result. ${MARKERS.workflowNodeTwoResult}`
+        : `Node two did NOT see node one's result. ${MARKERS.workflowNodeTwoResult}-MISSING-DEP`);
+      return;
+    }
+    if (workflow && allText.includes(WORKFLOW_RESULT_TAG)) {
+      say(`Parent received the workflow summary. ${MARKERS.workflowParentGot}`);
+      return;
+    }
+    if (workflow && allText.includes(task)) {
+      if (awaitingTool) { say('Parent acknowledged the workflow start.'); return; }
+      const nodesFile = /nodesFile=(\S+)/.exec(allText)?.[1] ?? '';
+      callTool('WorkflowStart', { nodesFile, background: true });
+      return;
+    }
+
     const isChild = allText.includes(CHILD_PROMPT) && allText.includes(task);
     if (isChild) {
       if (allText.includes(MARKERS.unsafeChildContinue)) {
         say(`The paused child was continued deliberately. ${MARKERS.unsafeContinued}`);
         return;
       }
-      if (allText.includes(RECOVERY_PROMPT)) {
+      // The continuation after the restart: the interrupted call is answered [interrupted] (unsafe mode),
+      // or — for a child that was held mid-model-call — the same request arrives a second time from a
+      // fresh transport. Either way the child simply finishes.
+      if (allText.includes(INTERRUPTED_RESULT) || (!unsafe && initialChildSignalled)) {
         say(`Recovered child completed its original task. ${result}`);
         return;
       }
@@ -133,8 +209,8 @@ export async function startRecoveryModel({ task, result, background = false, uns
     }
 
     if (ownerBash && allText.includes(task)) {
-      // The resumed OWNER turn: its Bash call is answered [interrupted] and the resume note follows.
-      if (allText.includes(OWNER_RESUME_NOTE)) {
+      // The resumed OWNER turn: its Bash call is answered [interrupted]; nothing else was added.
+      if (allText.includes(INTERRUPTED_RESULT)) {
         say(`Owner turn resumed after the pause. ${result}`);
         return;
       }
@@ -183,6 +259,8 @@ export async function startRecoveryModel({ task, result, background = false, uns
     requests,
     toolCalls,
     initialChildArrived,
+    /** How many requests carried a restart announcement — must stay 0. */
+    resumeNotesSeen: () => resumeNotesSeen,
     childRequests: () => requests.filter((request) => {
       const text = (Array.isArray(request.body?.messages) ? request.body.messages : []).map(contentText).join('\n');
       return text.includes(CHILD_PROMPT) && text.includes(task);

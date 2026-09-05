@@ -52,6 +52,11 @@ export interface PauseInterruption {
   createdAt: string;
 }
 
+/** `brain_messages.pending` sentinel for a row retired from the transcript (see discardMessage): not
+ *  pending (never settled, never deleted by the next agent_end), not settled (never read), kept only so
+ *  its usage rows survive. */
+export const DISCARDED_MESSAGE = 2;
+
 export interface BrainSessionRow {
   id: string; user_id: number; title: string; model: string; provider: string; work_dir: string; parent_session_id: string | null;
   delegated_access: string | null;
@@ -473,6 +478,13 @@ export class BrainStore {
       this.db.prepare('DELETE FROM brain_pause_interruptions').run();
       return rows.map((row) => ({ sessionId: row.session_id, class: row.class, detail: row.detail, createdAt: row.created_at }));
     });
+  }
+
+  /** Run several store writes as ONE immediate transaction (see db.ts withWriteLock). For callers that
+   *  must make two facts durable together — a settle and the acknowledgement of what it consumed — and
+   *  cannot afford a crash between them. Store methods that take their own lock nest as savepoints. */
+  atomically<T>(apply: () => T): T {
+    return withWriteLock(this.db, apply);
   }
 
   /** Discard a checkpointed queue without replaying it — the user cancelled the parked turn. */
@@ -1085,8 +1097,18 @@ export class BrainStore {
   /** Raw transcript rows, including provisional message_end mirrors. Recovery, compaction alignment and
    *  diagnostics need this exact on-disk state; user-facing history must use getSettledMessages instead. */
   getMessages(sessionId: string): BrainMessageRow[] {
-    return this.db.prepare('SELECT * FROM brain_messages WHERE session_id = ? ORDER BY rowid ASC')
+    return this.db.prepare(`SELECT * FROM brain_messages WHERE session_id = ? AND pending <> ${DISCARDED_MESSAGE} ORDER BY rowid ASC`)
       .all(sessionId) as BrainMessageRow[];
+  }
+
+  /** Retire a message from the transcript WITHOUT deleting it: the row stays for the usage rollup (its
+   *  tokens were paid for — the AFTER DELETE trigger would drop them from spend history) but no reader
+   *  sees it again: getMessages, the display read model, rehydration, export, compaction alignment all
+   *  filter on `pending`. Used for the unfinished trailing assistant a resume rewrites; a single UPDATE,
+   *  so a resume that changes PI's in-memory state and the durable transcript commits both or neither
+   *  as far as the transcript is concerned. */
+  discardMessage(sessionId: string, id: string): boolean {
+    return this.db.prepare(`UPDATE brain_messages SET pending = ${DISCARDED_MESSAGE} WHERE session_id = ? AND id = ?`).run(sessionId, id).changes > 0;
   }
 
   /** The one user-facing transcript read model. Pending rows remain queryable through getMessages for crash
@@ -1314,6 +1336,11 @@ export class BrainStore {
    *  {@link BrainDelegationStore.recoveringSubagentSessionIds}. */
   recoveringSubagentSessionIds(parentSessionId: string): ReturnType<BrainDelegationStore['recoveringSubagentSessionIds']> {
     return this.delegation.recoveringSubagentSessionIds(parentSessionId);
+  }
+
+  /** {@link BrainDelegationStore.recoveringWorkflowIds}. */
+  recoveringWorkflowIds(parentSessionId: string): ReturnType<BrainDelegationStore['recoveringWorkflowIds']> {
+    return this.delegation.recoveringWorkflowIds(parentSessionId);
   }
 
   /** Claim every restart-orphaned delegation for this boot — see

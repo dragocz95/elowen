@@ -128,7 +128,7 @@ describe('BrainStore', () => {
       toolCallId: 'delegate-1', sessionId: 'child', status: 'running', task: 'inspect',
       detail: 'Read src/a.ts', tools: 2, tokens: 1234, seconds: 2, model: 'm',
       thinkingLevel: 'high', thinkingLabel: 'High', background: true, workspaceId: 'ws_abc123',
-      startedAt: '2026-08-30 05:00:00', updatedAt: '2026-08-30 05:00:07',
+      startedAt: '2026-08-30 05:00:00', updatedAt: '2026-08-30 05:00:07', rowid: 1,
     }]);
     expect(store.upsertSubagentRun('root', {
       id: 'unrelated', sessionId: 'same-owner-unrelated', status: 'running', task: 'x', tools: 0, seconds: 0,
@@ -201,6 +201,34 @@ describe('BrainStore', () => {
     expect(lc('orphan')).toMatchObject({ lifecycle: 'recovering', owner_boot_id: 'boot-B', attempt: 1 });
     expect(lc('leased')).toMatchObject({ lifecycle: 'recovering', owner_boot_id: 'boot-C' }); // untouched
     expect(lc('live-b')).toMatchObject({ lifecycle: 'running', owner_boot_id: 'boot-B' }); // own live work
+  });
+
+  it('claims a run whose only settled parent result is the pause\'s synthetic [interrupted] promise', () => {
+    // Production, 4 Sep, second restart of the day: the first restart's resume had written the parent a
+    // settled `[interrupted, resuming]` toolResult (isError, details.interrupted) for the call it was
+    // blocked on. The boot-time healing read that as "this call already returned", healed the run to
+    // `error`, never claimed it, and the parent sat on a promise with no child behind it.
+    store.setDelegationBootId('boot-A');
+    store.createSession({ id: 'root', userId: 1, model: 'm' });
+    store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });
+    store.upsertSubagentRun('root', { id: 'd1', sessionId: 'child', status: 'running', task: 't', tools: 0, seconds: 0 });
+    store.appendMessage({
+      id: 'promise', sessionId: 'root', parentId: null, role: 'toolResult',
+      content: { role: 'toolResult', toolCallId: 'd1', toolName: 'Delegate', isError: true, details: { interrupted: true }, content: [{ type: 'text', text: '[interrupted, resuming] …' }] },
+    });
+    // A GENUINE settled error for another call still heals its run, so the legacy repair is not lost.
+    store.createSession({ id: 'child2', userId: 1, model: 'm', parentSessionId: 'root' });
+    store.upsertSubagentRun('root', { id: 'd2', sessionId: 'child2', status: 'running', task: 't', tools: 0, seconds: 0 });
+    store.appendMessage({
+      id: 'real', sessionId: 'root', parentId: null, role: 'toolResult',
+      content: { role: 'toolResult', toolCallId: 'd2', toolName: 'Delegate', isError: true, content: [{ type: 'text', text: 'failed' }] },
+    });
+
+    store.setDelegationBootId('boot-B');
+    expect(store.claimRecoverableRuns(30_000).map((r) => r.toolCallId)).toEqual(['d1']);
+    const lc = (tc: string) => db.prepare('SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = ?').get(tc) as { lifecycle: string };
+    expect(lc('d1')).toEqual({ lifecycle: 'recovering' });
+    expect(lc('d2')).toEqual({ lifecycle: 'error' });
   });
 
   it('completes a claimed run atomically (terminal + enqueue) and rejects a completion from a non-owner boot', () => {

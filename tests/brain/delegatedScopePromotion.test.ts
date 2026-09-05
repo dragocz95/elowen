@@ -153,6 +153,20 @@ describe('promoteDelegatedScope', () => {
     expect(promoted.projectIds).toEqual([]);
     expect(normalizeDelegatedExecutionScope(promoted)).toEqual(promoted);
   });
+
+  it('reads a null settings or contribution account as absent, the way the plugin API spells it', () => {
+    // Production, 4 Sep: a workflow journal captured the parent's access exactly as PluginToolContext
+    // handed it over — `settingsUserId: null` for an owner conversation — and the boundary check at
+    // resume refused it as "not a valid delegable scope". Every DAG started by the owner was terminalized
+    // as cancelled on the first restart. Null is the API's word for absence; only a wrong TYPE is corrupt.
+    const journaled = { ...access({ admin: true, projectIds: [] }), settingsUserId: null, contributionUserId: null } as unknown;
+    const scope = normalizeDelegatedExecutionScope(journaled);
+    expect(scope).toBeDefined();
+    expect(scope).not.toHaveProperty('settingsUserId');
+    expect(scope).not.toHaveProperty('contributionUserId');
+    expect(normalizeDelegatedExecutionScope({ ...access(), settingsUserId: 'seven' } as unknown)).toBeUndefined();
+    expect(normalizeDelegatedExecutionScope({ ...access(), contributionUserId: 0 } as unknown)).toBeUndefined();
+  });
 });
 
 /** Which read-only children may EVER be promoted is decided once, at spawn, and frozen into the durable

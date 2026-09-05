@@ -1,0 +1,111 @@
+import type { AgentSession } from '@earendil-works/pi-coding-agent';
+import type { BrainStore } from '../../store/brainStore.js';
+import { isUnfinishedTail } from '../persistence.js';
+
+/** Continue an interrupted turn from the transcript's current tail WITHOUT adding a message.
+ *
+ *  The resume after a pause-for-restart is a continuation, not a new prompt: the checkpointed transcript
+ *  ends on the answers to the tool calls the restart cut off (the synthetic `[interrupted]` results the
+ *  boot wrote, see persistence.ts settlePartialTurn), and what the model owes is simply its next step.
+ *  Any injected "the daemon restarted…" message was a second voice in the conversation — a user-shaped
+ *  entry the model had to acknowledge, and one more row in the cached prefix of every later turn.
+ *
+ *  PI's native mechanism for exactly this is the agent loop started with an EMPTY prompt batch
+ *  (pi-agent-core agent-loop.js `runAgentLoop(prompts = [])`: no message is appended or emitted and
+ *  `runLoop` proceeds straight to the next assistant response over the context as it stands). PI's own
+ *  auto-retry rides the same path (`Agent.continue()` → `runAgentLoopContinue`). The session-level entry
+ *  that wraps a run with the full lifecycle — `_isAgentRunActive`/isStreaming, retry, agent_settled —
+ *  is `AgentSession._runAgentPrompt(messages)` (pi-coding-agent agent-session.js; sendCustomMessage with
+ *  triggerTurn is its only other caller). It is not on the public type surface, so it is reached through
+ *  the same guarded probe this codebase already uses for `_checkCompaction`: absent seam → a loud
+ *  failure, never a silent no-op.
+ *
+ *  Precondition, PI's own: the last message must be a user or tool-result message. A trailing assistant
+ *  that is NOT provably final (a provider error, an abort, a length cut — what a failed earlier resume
+ *  or the pause itself leaves) is the fragment of a response the model produces again: it is removed
+ *  from PI's state AND from the durable transcript (the one row a resume may rewrite; PI's own retry
+ *  does the same to its state before `agent.continue()`), so the continuation starts from the message
+ *  before it. A trailing assistant that IS provably final means the turn had finished: `nothing`. */
+export async function continueInterruptedTurn(
+  session: AgentSession,
+  durable?: { store: BrainStore; sessionId: string },
+): Promise<'continued' | 'nothing'> {
+  const seam = session as unknown as ContinuationSeam;
+  if (typeof seam._runAgentPrompt !== 'function') {
+    throw new Error('PI runtime does not expose the turn continuation seam (_runAgentPrompt)');
+  }
+  const tail = seam.messages.at(-1);
+  if (!tail) return 'nothing';
+  if (tail.role === 'assistant') {
+    if (!trimUnfinishedTail(seam, durable) || !continuable(seam.messages)) return 'nothing';
+  }
+  await seam._runAgentPrompt(await prepareContinuation(seam));
+  return 'continued';
+}
+
+/** What PI's own prompt() does between admission and `_runAgentPrompt`, minus the user message — the
+ *  continuation must not skip any of it (pi-coding-agent agent-session.js prompt(), ~795-915):
+ *   - the model guard: no selected model means no request to make;
+ *   - the PRE-PROMPT compaction check `_checkCompaction(lastAssistant, false)`: a parked session that
+ *     crossed its threshold while it ran compacts BEFORE the continuation's first request, exactly as
+ *     before a new prompt; it goes through the factory-installed coordinator (compactionCheckCoordinator
+ *     wraps `_checkCompaction` on the session), so teardown observes it like every other native check;
+ *   - the system prompt reset to the session's base prompt: a rehydrated session may carry a fresh one,
+ *     and a stale per-turn extension override must not leak into the continued turn;
+ *   - the flush of messages queued for "the next turn" (`sendCustomMessage(…, { deliverAs: 'nextTurn' })`):
+ *     they ride into this run as its prompt batch — still no user message, and PI appends them behind
+ *     the tail (a custom message is a valid tail for the loop to continue from). */
+async function prepareContinuation(seam: ContinuationSeam): Promise<unknown[]> {
+  if ('model' in seam && !seam.model) throw new Error('no model selected for the continuation');
+  const lastAssistant = [...seam.messages].reverse().find((message) => message.role === 'assistant');
+  if (lastAssistant && typeof seam._checkCompaction === 'function') await seam._checkCompaction(lastAssistant, false);
+  if (seam.agent?.state && typeof seam._baseSystemPrompt === 'string') {
+    seam._systemPromptOverride = undefined;
+    seam.agent.state.systemPrompt = seam._baseSystemPrompt;
+  }
+  const batch = seam._pendingNextTurnMessages ?? [];
+  seam._pendingNextTurnMessages = [];
+  return batch;
+}
+
+/** The PI session members the continuation touches — every one of them the same member PI's own
+ *  prompt() uses, probed at runtime rather than typed, exactly like `_checkCompaction` elsewhere. */
+interface ContinuationSeam {
+  _runAgentPrompt?: (messages: unknown[]) => Promise<void>;
+  _checkCompaction?: (assistantMessage: { role?: string }, skipAbortedCheck?: boolean) => Promise<boolean>;
+  _baseSystemPrompt?: string;
+  _systemPromptOverride?: string;
+  _pendingNextTurnMessages?: unknown[];
+  model?: unknown;
+  messages: { role?: string }[];
+  agent?: { state?: { messages: { role?: string }[]; systemPrompt?: string } };
+}
+
+/** Whether a transcript tail can be continued at all (see {@link continueInterruptedTurn}). */
+export function continuable(messages: readonly { role?: string }[]): boolean {
+  const last = messages.at(-1);
+  return !!last && last.role !== 'assistant';
+}
+
+/** Retire the unfinished trailing assistant from PI's state (through the agent state setter PI's own
+ *  retry uses) and from the durable transcript (discardMessage, by row id — the row stays for the usage
+ *  rollup), so neither the next model call nor the next boot sees it. ONE rule decides, the same one the
+ *  checkpoint settle applies (persistence.ts isUnfinishedTail): PI's in-memory tail is judged as a
+ *  settled row of this session, so a user's Esc-cut answer survives this path exactly as it survives the
+ *  other. Returns whether anything was trimmed. */
+function trimUnfinishedTail(
+  seam: { messages: { role?: string }[]; agent?: { state?: { messages: { role?: string }[] } } },
+  durable?: { store: BrainStore; sessionId: string },
+): boolean {
+  const tail = seam.messages.at(-1);
+  if (!tail) return false;
+  const sessionId = durable?.sessionId ?? '';
+  if (!isUnfinishedTail({ role: String(tail.role), content: JSON.stringify(tail), pending: 0 }, sessionId)) return false;
+  if (durable) {
+    const last = durable.store.getMessages(durable.sessionId).at(-1);
+    if (last && isUnfinishedTail(last, durable.sessionId)) durable.store.discardMessage(durable.sessionId, last.id);
+  }
+  if (seam.agent?.state) seam.agent.state.messages = seam.messages.slice(0, -1);
+  else seam.messages.splice(-1, 1);
+  return true;
+}

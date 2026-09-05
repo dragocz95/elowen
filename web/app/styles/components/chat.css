@@ -51,7 +51,10 @@
 .chat-transcript {
   --chat-transcript-pad-top: 1rem;
   --chat-transcript-pad-bottom: 1rem;
-  padding-block: var(--chat-transcript-pad-top) var(--chat-transcript-pad-bottom);
+  /* `--chat-dock-reserve` is clearance for a docked plugin card. It stays 0 unless BrainChatSurface has
+     measured that this conversation's content really does reach into the card — see the note above
+     `--chat-dock-height` below for why the reserve is conditional rather than always on. */
+  padding-block: var(--chat-transcript-pad-top) calc(var(--chat-transcript-pad-bottom) + var(--chat-dock-reserve, 0px));
 }
 
 /* The statusline is its own container, so the truncation order below follows the width the row actually
@@ -92,12 +95,43 @@
    while the footer remains one visual layer rather than contributing its height twice. When iOS shrinks
    only visualViewport, the extra surface tail lives under the keyboard and gives the page enough scroll
    range to keep that reserve above the shifted dock. Chromium's resized layout reports an offset of zero. */
-/* A plugin live view — today the browser monitor — docks above the composer as a floating layer. It must
-   not push the transcript around: reserving its height as padding left a tall empty band under a short
-   conversation, which is worse than the overlap it was meant to prevent. Instead the docked card only
-   changes where AUTOSCROLL stops, so the newest turn comes to rest above the card while a short
-   transcript still starts at the top. Nothing docked means the variable is absent and this is a no-op. */
+/* A plugin live view — today the browser monitor — docks above the composer as a floating layer and
+   publishes its measured height here as `--chat-dock-height`. Being a layer it takes no room in the flow,
+   so the tail of a long conversation runs underneath it, and scrolling never frees those lines:
+   scroll-margin moves where autoscroll comes to REST without extending the scroll RANGE.
+
+   The answer is to wrap the text AROUND the card, the way prose wraps around a floated image — lines above
+   the card keep the full width and only the lines level with it break early. That is a real float, in the
+   one place the transcript still has normal block flow: the prose block of the last turn. The turn wrapper
+   is a grid and the turn body is a flex column, and neither lets a float affect its children, so the
+   spacer rides on `.chat-markdown` instead of on the turn.
+
+   BrainChatSurface measures and drives all of it. `--chat-dock-width` is the card's measured width (the
+   plugin publishes only its height); `--chat-dock-spacer-top` pushes the float down so its box lands on
+   the card's zone at the END of the block rather than at its top. A float may never sit higher than the
+   line boxes before it, which is why the spacer starts the block and is offset down instead of being
+   appended with a negative margin.
+
+   `--chat-dock-reserve` is the leftover: whatever part of the card's zone the wrap could not clear,
+   because the last block is shorter than the card or is not prose at all. It is the DIFFERENCE only, never
+   the whole card height, and it stays 0 for a conversation whose end never reaches the card.
+
+   Nothing docked means no attribute, no variables, and every rule here is a no-op. */
 .chat-surface-full .chat-transcript > :last-child { scroll-margin-bottom: var(--chat-dock-height, 0px); }
+
+/* The wrap spacer. `shape-outside: inset(0)` keeps the exclusion rectangular and explicit rather than
+   inherited from a box the theme might round. `clear: right` stops two spacers stacking side by side if a
+   re-measure ever leaves one behind. The attribute is set to `on` only after the frame's measurement is
+   taken with it `off`, so the height it reacts to is never a height it caused. */
+.chat-surface-full .chat-transcript [data-chat-dock-wrap='on']::before {
+  content: '';
+  float: right;
+  clear: right;
+  width: calc(var(--chat-dock-width, 0px) + 0.75rem);
+  height: var(--chat-dock-height, 0px);
+  margin-top: var(--chat-dock-spacer-top, 0px);
+  shape-outside: inset(0);
+}
 
 @media (width < 48rem) {
   .chat-surface-full { padding-bottom: var(--chat-visual-bottom-offset, 0px); }

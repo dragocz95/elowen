@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach, vi } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { useState } from 'react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
@@ -39,29 +39,40 @@ function StatefulUserPanel({ user: selected }: { user: User }) {
   return <div>Environment for {selected.username} mounted #{mountedFor}</div>;
 }
 
-function mount(u: User, projects: Project[] = [], globalExecs: string[] = []) {
+function mount(u: User, projects: Project[] = []) {
   const { wrapper: Wrapper } = createWrapper();
   render(
     <Wrapper>
       <ToastProvider>
-        <UserDetailPane user={u} projects={projects} globalExecs={globalExecs} customModels={[]} />
+        <UserDetailPane user={u} projects={projects} />
       </ToastProvider>
     </Wrapper>,
   );
 }
 
 describe('UserDetailPane', () => {
-  it('summarizes an unrestricted user as "all models allowed"', async () => {
-    server.use(http.get('*/api/users/2/projects', () => HttpResponse.json([])));
-    mount(user(), [], ['sonnet', 'codex:gpt-5.4']);
+  it('summarizes an unrestricted user from the live brain catalog', async () => {
+    server.use(
+      http.get('*/api/users/2/projects', () => HttpResponse.json([])),
+      http.get('*/api/brain/models', () => HttpResponse.json([
+        { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus-5', exec: 'anthropic/claude-opus-5', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+        { provider: 'z-ai', providerLabel: 'Z.ai', model: 'glm-5.3-flash', exec: 'z-ai/glm-5.3-flash', source: 'api-key', contextWindow: 1000000, contextWindowSet: true },
+      ])),
+    );
+    mount(user());
     expect(await screen.findByText('All models allowed · 2 available')).toBeTruthy();
-    // Samples list the available models when nothing is restricted.
-    expect(screen.getByText('Claude Sonnet 4.5')).toBeTruthy();
+    expect(screen.getByText('claude-opus-5')).toBeTruthy();
   });
 
-  it('summarizes a restricted user with model and provider counts', async () => {
-    server.use(http.get('*/api/users/2/projects', () => HttpResponse.json([])));
-    mount(user({ allowed_execs: ['sonnet', 'opus'] }), [], ['sonnet', 'opus', 'codex:gpt-5.4']);
+  it('summarizes a restricted user with real brain-provider counts', async () => {
+    server.use(
+      http.get('*/api/users/2/projects', () => HttpResponse.json([])),
+      http.get('*/api/brain/models', () => HttpResponse.json([
+        { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus-5', exec: 'anthropic/claude-opus-5', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+        { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-sonnet-5', exec: 'anthropic/claude-sonnet-5', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+      ])),
+    );
+    mount(user({ allowed_execs: ['anthropic/claude-opus-5', 'anthropic/claude-sonnet-5'] }));
     expect(await screen.findByText('2 models · 1 providers')).toBeTruthy();
   });
 
@@ -77,7 +88,7 @@ describe('UserDetailPane', () => {
           { provider: 'relay', providerLabel: 'Relay', model: 'claude-opus-5', exec: 'elowen:relay/claude-opus-5', legacyExec: 'elowen:relay/claude-opus-5', program: 'elowen', source: 'relay', contextWindow: 200000, contextWindowSet: false },
         ])),
       );
-      mount(user(), [], ['elowen:anthropic/claude-opus-5', 'elowen:relay/claude-opus-5']);
+      mount(user());
       fireEvent.click(await screen.findByRole('button', { name: 'Manage allowed models' }));
       const rows = await screen.findAllByRole('button', { name: /claude-opus-5/ });
       expect(rows).toHaveLength(2);
@@ -98,62 +109,123 @@ describe('UserDetailPane', () => {
         { provider: 'chatgpt-account', providerLabel: 'Účet ChatGPT', model: 'openai/gpt-5.6-sol', exec, legacyExec: `elowen:${exec}`, program: 'elowen', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
       ])),
     );
-    mount(user({ allowed_execs: [exec] }), [], [exec]);
+    mount(user({ allowed_execs: [exec] }));
     expect(await screen.findByText('openai/gpt-5.6-sol')).toBeTruthy();
     expect(screen.queryByText('Účet ChatGPT/openai/gpt-5.6-sol')).toBeNull();
   });
 
-  // The reported bug: deleting the `alibaba` provider left its models behind in the global `allowedExecs`
-  // list, and this pane built its rows straight from that list — so `alibaba/…` stayed listed and stayed
-  // selectable long after the provider was gone. A brain row must come from the LIVE catalog, which is
-  // built from the configured providers and therefore cannot contain a dead one. CLI worker execs
-  // (`sonnet`, `codex:…`) keep coming from the global list, which is where they legitimately live.
-  it('drops brain models whose provider is gone, and keeps CLI worker execs', async () => {
+  it('offers only models present in the live brain catalog', async () => {
     server.use(
       http.get('*/api/users/2/projects', () => HttpResponse.json([])),
       http.get('*/api/brain/models', () => HttpResponse.json([
         { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus-5', exec: 'anthropic/claude-opus-5', legacyExec: 'elowen:anthropic/claude-opus-5', program: 'elowen', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
       ])),
     );
-    // `alibaba/qwen3.8-max` is exactly the shape the operator's config is in: still in allowedExecs,
-    // no longer backed by any provider, so absent from /brain/models.
-    mount(user(), [], ['sonnet', 'anthropic/claude-opus-5', 'alibaba/qwen3.8-max']);
+    mount(user());
     fireEvent.click(await screen.findByRole('button', { name: 'Manage allowed models' }));
     expect(await screen.findByRole('button', { name: /claude-opus-5/ })).toBeTruthy();
-    expect(screen.getByRole('button', { name: /Claude Sonnet 4\.5/ })).toBeTruthy();
+    expect(screen.queryByRole('button', { name: /Claude Sonnet 4\.5/ })).toBeNull();
     expect(screen.queryByRole('button', { name: /qwen3\.8-max/ })).toBeNull();
   });
 
-  // Reducing the offered set must never reduce what the admin can SEE they granted. A user still carrying
-  // a dead model has to keep reading as restricted, or the pane would claim "all models allowed" — the one
-  // reading that would make a permission list look wider than it is.
-  it('does not read a user restricted to a dead model as unrestricted', async () => {
+  // A stale grant still restricts the account server-side, even when its provider disappeared from the
+  // live catalog. Keep that restriction visible instead of replacing it with an em-dash or "all models".
+  it('does not hide a user restriction when its model is no longer in the catalog', async () => {
     server.use(
       http.get('*/api/users/2/projects', () => HttpResponse.json([])),
       http.get('*/api/brain/models', () => HttpResponse.json([])),
     );
-    mount(user({ allowed_execs: ['alibaba/qwen3.8-max'] }), [], ['sonnet', 'alibaba/qwen3.8-max']);
-    expect(await screen.findByText(/1 models/)).toBeTruthy();
+    mount(user({ allowed_execs: ['alibaba/qwen3.8-max'] }));
+    expect(await screen.findByText('1 models · 0 providers')).toBeTruthy();
+    expect(screen.queryByText(/All models allowed/)).toBeNull();
+    expect(screen.getByRole('button', { name: 'Manage allowed models' })).toBeTruthy();
   });
 
-  it('saving the models modal PATCHes allowed_execs', async () => {
+  it('saving the models modal PATCHes live brain execs', async () => {
     let patched: { id?: string; body?: unknown } = {};
     server.use(
       http.get('*/api/users/2/projects', () => HttpResponse.json([])),
+      http.get('*/api/brain/models', () => HttpResponse.json([
+        { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus-5', exec: 'anthropic/claude-opus-5', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+      ])),
       http.patch('*/api/users/:id', async ({ params, request }) => {
         patched = { id: String(params.id), body: await request.json() };
         return HttpResponse.json({ id: 2 });
       }),
     );
-    mount(user(), [], ['sonnet', 'codex:gpt-5.4']);
+    mount(user());
     fireEvent.click(await screen.findByRole('button', { name: 'Manage allowed models' }));
-    // Models group by provider inside the modal.
-    expect(await screen.findByRole('heading', { name: 'Claude Code' })).toBeTruthy();
-    expect(screen.getByRole('heading', { name: 'Codex' })).toBeTruthy();
-    fireEvent.click(screen.getByRole('button', { name: /Claude Sonnet 4\.5/ }));
+    expect(await screen.findByRole('heading', { name: 'Anthropic' })).toBeTruthy();
+    expect(screen.queryByRole('heading', { name: 'Claude Code' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'claude-opus-5' }));
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(patched.id).toBe('2'));
-    expect((patched.body as { allowed_execs: string[] }).allowed_execs).toEqual(['sonnet']);
+    expect((patched.body as { allowed_execs: string[] }).allowed_execs).toEqual(['anthropic/claude-opus-5']);
+  });
+
+  // The manage modal separates brain models under one header per real catalog provider. A model id may
+  // itself contain a slash, so provider grouping must use the structured provider field and preserve the
+  // complete exec through the save payload.
+  it('separates brain models under their own brand-iconed provider headers and keeps a slash model id whole', async () => {
+    const exec = 'chatgpt-account/openai/gpt-5.6-sol';
+    let patched: { body?: unknown } = {};
+    server.use(
+      http.get('*/api/users/2/projects', () => HttpResponse.json([])),
+      http.get('*/api/brain/models', () => HttpResponse.json([
+        { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus-5', exec: 'anthropic/claude-opus-5', legacyExec: 'elowen:anthropic/claude-opus-5', program: 'elowen', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+        { provider: 'zai', providerLabel: 'Z.ai', model: 'glm-5.2', exec: 'zai/glm-5.2', legacyExec: 'elowen:zai/glm-5.2', program: 'elowen', source: 'api-key', contextWindow: 200000, contextWindowSet: false },
+        { provider: 'chatgpt-account', providerLabel: 'Účet ChatGPT', model: 'openai/gpt-5.6-sol', exec, legacyExec: `elowen:${exec}`, program: 'elowen', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+      ])),
+      http.patch('*/api/users/:id', async ({ request }) => {
+        patched = { body: await request.json() };
+        return HttpResponse.json({ id: 2 });
+      }),
+    );
+    mount(user());
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage allowed models' }));
+
+    // One header per real brain provider, each carrying its resolved brand mark. No legacy worker group
+    // may reappear beside them.
+    const headerMark = (name: string) => screen.getByRole('heading', { name }).querySelector('[data-brand-mark]');
+    for (const name of ['Anthropic', 'Z.ai', 'Účet ChatGPT']) {
+      expect(screen.getByRole('heading', { name })).toBeTruthy();
+      expect(headerMark(name)).toBeTruthy();
+    }
+    expect(screen.queryByRole('heading', { name: 'Claude Code' })).toBeNull();
+    // The group filter chips carry the same brand mark with the human label.
+    expect(within(screen.getByRole('tablist')).getByRole('tab', { name: 'Účet ChatGPT' }).querySelector('[data-brand-mark]')).toBeTruthy();
+
+    // No "Elowen AI" umbrella group over the brain rows, and the slash never became a provider boundary.
+    expect(screen.queryByRole('heading', { name: 'Elowen AI' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'chatgpt-account' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'openai' })).toBeNull();
+
+    // Exactly one row for the model, living in the Účet ChatGPT section — not split across two groups.
+    const rows = screen.getAllByRole('button', { name: 'openai/gpt-5.6-sol' });
+    expect(rows).toHaveLength(1);
+    const section = rows[0]!.closest('section')!;
+    expect(within(section).getByRole('heading', { name: 'Účet ChatGPT' })).toBeTruthy();
+    expect(within(section).queryByRole('button', { name: /Claude Sonnet 4\.5/ })).toBeNull();
+
+    // Saving grants the FULL exec — the identifier survives the round-trip unsplit.
+    fireEvent.click(rows[0]!);
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(patched.body).toBeTruthy());
+    expect((patched.body as { allowed_execs: string[] }).allowed_execs).toEqual([exec]);
+  });
+
+  it('counts the distinct live brain providers behind the grants', async () => {
+    const chatgptExec = 'chatgpt-account/openai/gpt-5.6-sol';
+    server.use(
+      http.get('*/api/users/2/projects', () => HttpResponse.json([])),
+      http.get('*/api/brain/models', () => HttpResponse.json([
+        { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus-5', exec: 'anthropic/claude-opus-5', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+        { provider: 'z-ai', providerLabel: 'Z.ai', model: 'glm-5.3-flash', exec: 'z-ai/glm-5.3-flash', source: 'api-key', contextWindow: 1000000, contextWindowSet: true },
+        { provider: 'chatgpt-account', providerLabel: 'Účet ChatGPT', model: 'openai/gpt-5.6-sol', exec: chatgptExec, source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+      ])),
+    );
+    mount(user({ allowed_execs: ['anthropic/claude-opus-5', 'z-ai/glm-5.3-flash', chatgptExec] }));
+    expect(await screen.findByText('3 models · 3 providers')).toBeTruthy();
   });
 
   it('mounts a generic plugin panel with the selected User DTO', async () => {
@@ -170,12 +242,12 @@ describe('UserDetailPane', () => {
     });
 
     const { wrapper: Wrapper } = createWrapper();
-    const view = render(<Wrapper><ToastProvider><UserDetailPane user={user({ name: 'Bob' })} projects={[]} globalExecs={[]} customModels={[]} /></ToastProvider></Wrapper>);
+    const view = render(<Wrapper><ToastProvider><UserDetailPane user={user({ name: 'Bob' })} projects={[]} /></ToastProvider></Wrapper>);
     expect(await screen.findByText('Development environment')).toBeInTheDocument();
     expect(await screen.findByText('Environment for bob mounted #2')).toBeInTheDocument();
     expect(loadPluginUi).toHaveBeenCalledWith('sandbox', '/plugins/sandbox/web/hash.js', undefined);
 
-    view.rerender(<Wrapper><ToastProvider><UserDetailPane user={user({ id: 3, username: 'amy', name: 'Amy' })} projects={[]} globalExecs={[]} customModels={[]} /></ToastProvider></Wrapper>);
+    view.rerender(<Wrapper><ToastProvider><UserDetailPane user={user({ id: 3, username: 'amy', name: 'Amy' })} projects={[]} /></ToastProvider></Wrapper>);
     expect(await screen.findByText('Environment for amy mounted #3')).toBeInTheDocument();
   });
 
@@ -210,6 +282,9 @@ describe('UserDetailPane', () => {
   it('gives every manage button in the drawer its own accessible name', async () => {
     server.use(
       http.get('*/api/users/2/projects', () => HttpResponse.json([])),
+      http.get('*/api/brain/models', () => HttpResponse.json([
+        { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus-5', exec: 'anthropic/claude-opus-5', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
+      ])),
       http.get('*/api/users/2/tools', () => HttpResponse.json([
         { name: 'ReadFile', label: 'ReadFile', icon: '💻', plugin: 'sandbox', group: 'plugin', state: 'allowed', toggleable: true },
       ])),
@@ -217,7 +292,7 @@ describe('UserDetailPane', () => {
         { name: 'sandbox', version: '1.0.0', enabled: true, removed: false, userGrantable: true },
       ])),
     );
-    mount(user(), [project(1, 'alpha')], ['sonnet']);
+    mount(user(), [project(1, 'alpha')]);
 
     // Every block loads from its own query, so wait until all four have arrived before comparing.
     await waitFor(() => expect(screen.getAllByRole('button', { name: /^Manage / })).toHaveLength(4));

@@ -204,6 +204,35 @@ describe('pauseForRestart — the durable checkpoint of a turn caught mid-step',
     expect(after).toMatchObject({ state: 'done', turnId: null });
   });
 
+  /** The success end of the same fence. Main's silent boot resume (continueInterrupted) deliberately runs
+   *  outside the ordinary turn scope — no message injected, no turn opened — so nothing on that path
+   *  settles the working fence the pause left standing. The conversation the restart had just finished
+   *  answering would otherwise pulse "working" for the life of the process, and every later turn in it
+   *  would lose its compare-and-set against the dead turn id. */
+  it('closes the activity fence when the boot resume answers the parked turn', async () => {
+    const first = fakeDeps();
+    const paused = new BrainService(first as never);
+    const sessionId = await startHangingTurn(first, paused);
+    paused.pauseForRestart();
+    expect(first.store.getSessionActivity(sessionId)).toMatchObject({ state: 'working' });
+
+    const next = { ...fakeDeps(), store: first.store };
+    const resumed = new BrainService(next as never);
+    first.store.reconcileSessionActivityOnBoot();
+    expect(first.store.getSessionActivity(sessionId)).toMatchObject({ state: 'working' });
+
+    // The continuation itself belongs to the resume path and is covered with it; what this pins is that a
+    // resume which ANSWERS also stands the fence down.
+    const runner = (resumed as unknown as { turnRunner: { continueInterrupted: (u: number, s: string) => Promise<string> } }).turnRunner;
+    runner.continueInterrupted = async () => 'continued';
+
+    const outcome = await resumed.resumeParkedConversation({ row: first.store.getSession(sessionId)!, parked: true } as never);
+
+    expect(outcome).toBe('resumed');
+    expect(first.store.getSession(sessionId)!.parked_at).toBeNull();
+    expect(first.store.getSessionActivity(sessionId)).toMatchObject({ state: 'done', turnId: null });
+  });
+
   it('reports an idle daemon as nothing to park and writes no marker', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);

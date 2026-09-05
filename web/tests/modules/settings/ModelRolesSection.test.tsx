@@ -24,6 +24,9 @@ const MODELS: BrainModelOption[] = [
   { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-haiku', exec: 'elowen:anthropic/claude-haiku', source: 'api-key', contextWindow: 200000, contextWindowSet: false },
   { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus', exec: 'elowen:anthropic/claude-opus', source: 'oauth', contextWindow: 200000, contextWindowSet: false, default: true },
   { provider: 'openai', providerLabel: 'OpenAI', model: 'text-embedding-3-small', exec: 'elowen:openai/text-embedding-3-small', source: 'api-key', contextWindow: 8192, contextWindowSet: false },
+  // A model id that itself contains a slash: the pickers group by the PROVIDER field, never by splitting
+  // this string, and the saved route must carry the full id.
+  { provider: 'chatgpt-account', providerLabel: 'Účet ChatGPT', model: 'openai/gpt-5.6-sol', exec: 'elowen:chatgpt-account/openai/gpt-5.6-sol', source: 'oauth', contextWindow: 200000, contextWindowSet: false },
 ];
 const state = vi.hoisted(() => ({ digest: { providerId: '', model: '' }, personalModel: '', embeddingError: false, categorizationError: false }));
 const mocks = vi.hoisted(() => ({ refetchEmbedding: vi.fn(), refetchCategorization: vi.fn() }));
@@ -210,6 +213,44 @@ describe('Settings → Models — Model roles', () => {
 
     await waitFor(() => expect(saveCategorization).toHaveBeenCalled(), { timeout: 1500 });
     expect(saveCategorization.mock.calls.at(-1)![0]).toMatchObject({ providerId: 'anthropic', model: 'claude-opus' });
+  });
+
+  // The role pickers separate their catalog under one header per brain provider, each header carrying
+  // that provider's brand mark, and a model whose MODEL id itself contains a slash (`openai/gpt-5.6-sol`)
+  // stays one whole row in its provider's group — the first slash segment must not become a group, and
+  // the persisted route keeps the full model id rather than a split at the slash.
+  it('groups picker rows under brand-iconed provider headers and saves a slash model id whole', async () => {
+    const view = renderSection();
+    openModelRolesGroup(view.container);
+    fireEvent.click(pick(en.settings.modelRoles.utility));
+    const dialog = screen.getByRole('dialog', { name: en.settings.modelRoles.utility });
+
+    // One header per brain provider, each carrying the provider's brand mark.
+    const headerMark = (name: string) => within(dialog).getByRole('heading', { name }).querySelector('[data-brand-mark]');
+    expect(within(dialog).getByRole('heading', { name: 'Anthropic' })).toBeTruthy();
+    expect(within(dialog).getByRole('heading', { name: 'OpenAI' })).toBeTruthy();
+    expect(within(dialog).getByRole('heading', { name: 'Účet ChatGPT' })).toBeTruthy();
+    expect(headerMark('Anthropic')).toBeTruthy();
+    expect(headerMark('OpenAI')).toBeTruthy();
+    expect(headerMark('Účet ChatGPT')).toBeTruthy();
+    // The group filter chips carry the same brand mark with the human label.
+    expect(within(within(dialog).getByRole('tablist')).getByRole('tab', { name: 'Účet ChatGPT' }).querySelector('[data-brand-mark]')).toBeTruthy();
+
+    // The slash never became a provider boundary: no group is named after either identifier half.
+    expect(within(dialog).queryByRole('heading', { name: 'chatgpt-account' })).toBeNull();
+    expect(within(dialog).queryByRole('heading', { name: 'openai' })).toBeNull();
+
+    // Exactly one row for the model, in the Účet ChatGPT section — then save keeps the identity whole.
+    const rows = within(dialog).getAllByRole('button', { name: 'openai/gpt-5.6-sol' });
+    expect(rows).toHaveLength(1);
+    const section = rows[0]!.closest('section')!;
+    expect(within(section).getByRole('heading', { name: 'Účet ChatGPT' })).toBeTruthy();
+    expect(within(section).queryByRole('button', { name: 'claude-opus' })).toBeNull();
+
+    fireEvent.click(rows[0]!);
+    fireEvent.click(within(dialog).getByRole('button', { name: en.managePicker.saveChanges }));
+    await waitFor(() => expect(saveCategorization).toHaveBeenCalled(), { timeout: 1500 });
+    expect(saveCategorization.mock.calls.at(-1)![0]).toMatchObject({ providerId: 'chatgpt-account', model: 'openai/gpt-5.6-sol' });
   });
 
   it('keeps every OAuth account out of the embedding picker and states why', () => {

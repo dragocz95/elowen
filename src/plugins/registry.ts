@@ -124,6 +124,7 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   github: ['sessionCredential'],
   publishedSitesGateway: [
     'hostnameBase', 'syncSites', 'ensureSite', 'removeSite', 'deny', 'status',
+    'environmentsStatus', 'provisionEnvironments',
     'prepareRuntimeSocket', 'sealRuntimeSocket', 'removeRuntimeSocket',
   ],
   skillCatalog: ['visibleSkills', 'canonicalBaseDir'],
@@ -134,6 +135,7 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
  * sibling cannot self-grant the seam by adding a manifest capability. Keep this list narrow and explicit. */
 const CONTROL_CONSUMERS: Partial<Record<keyof KnownControls, readonly string[]>> = {
   github: ['sandbox'],
+  publishedSitesGateway: ['sites'],
   sandbox: ['files', 'terminal', 'github', 'onedrive', 'sites'],
 };
 

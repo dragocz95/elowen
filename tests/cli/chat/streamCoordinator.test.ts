@@ -407,6 +407,32 @@ describe('StreamCoordinator — idle rollover', () => {
     expect(refreshMeta).toHaveBeenCalledOnce();
   });
 
+  it('a `resync` refetches history AND metadata, exactly like a reconnect — but not from a snapshot replay', async () => {
+    // Boot recovery finished under this attached stream (the daemon restarted; this client reattached
+    // in the window before its workflow/sub-agent state was recovered). Whatever it was shown then is
+    // refetched now, without reconnecting.
+    let onEvent!: (event: BrainEvent) => void;
+    let historyCalls = 0;
+    const client = {
+      stream: (cb: (event: BrainEvent) => void) => { onEvent = cb; return Promise.resolve(); },
+      history: () => { historyCalls += 1; return Promise.resolve([]); },
+      rebind: () => {},
+    } as unknown as BrainClient;
+    const rt = state();
+    const refreshMeta = vi.fn(async () => {});
+    const stream = new StreamCoordinator(
+      rt, { client }, actions({ refreshMeta }),
+      { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows,
+      new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
+    );
+    stream.openStream(rt.streamAc);
+
+    onEvent({ type: 'resync', reason: 'boot-recovered' });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(historyCalls).toBe(1);
+    expect(refreshMeta).toHaveBeenCalledOnce();
+  });
+
   it('drops buffered frames delivered by an aborted stale parent stream after a switch', () => {
     let staleEvent!: (event: BrainEvent) => void;
     const rebinds: string[] = [];

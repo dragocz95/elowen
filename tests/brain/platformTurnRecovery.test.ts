@@ -32,14 +32,25 @@ const AT = Date.UTC(2026, 7, 24, 10, 0);
  *  `settle` bills the turn's usage exactly where persistence.ts does — at agent_end, DURING the turn —
  *  because that timing is what consumes the origin pin. */
 function fakeBrain(sessionId: string, settle: () => void) {
-  const messages: { role?: string; content?: unknown; stopReason?: string }[] = [];
+  // A rehydrated parked room turn always ends on the sender's message (or an answered tool call) — the
+  // shape a continuation picks up from. An empty transcript would have nothing to continue.
+  const messages: { role?: string; content?: unknown; stopReason?: string }[] = [{ role: 'user', content: 'kolik stojí barvení?' }];
   const customSends: { customType: string; content: string }[] = [];
+  /** Transcript lengths at which a continuation was asked for (no message was added). */
+  const continuations: number[] = [];
   const session = {
     isStreaming: false,
     getContextUsage: () => ({ tokens: 50, contextWindow: 8000, percent: 1 }),
     messages,
     promptTemplates: [] as { name: string }[],
     prompt: vi.fn(async (t: string) => { messages.push({ role: 'assistant', content: `re: ${t}` }); settle(); }),
+    /** PI's continuation seam (src/brain/session/continueTurn.ts): no message, the next assistant follows. */
+    _runAgentPrompt: vi.fn(async (batch: unknown[]) => {
+      if (batch.length !== 0) throw new Error('the fake continuation seam only accepts an empty batch');
+      continuations.push(messages.length);
+      messages.push({ role: 'assistant', content: 'resumed answer' });
+      settle();
+    }),
     sendCustomMessage: vi.fn(async (msg: { customType: string; content: string }) => {
       customSends.push({ customType: msg.customType, content: msg.content });
       messages.push({ role: 'assistant', content: 'resumed answer' });
@@ -58,7 +69,7 @@ function fakeBrain(sessionId: string, settle: () => void) {
     thinkingLabels: {}, pluginToolNames: new Set<string>(),
     turnSender: undefined as number | undefined, interactedAt: undefined as number | undefined,
     turnRecallUserId: undefined as number | null | undefined,
-    customSends,
+    customSends, continuations,
     listeners, replay: new LiveEventReplay(listeners), turnContext: () => ({ beforeUser: '', afterUser: '' }),
   };
 }
@@ -230,10 +241,12 @@ describe('resumePlatformTurn — the boot resume of a parked platform channel tu
 
     // One fresh outbound post, routed to the thread the interrupted turn came from.
     expect(delivered).toEqual([{ text: 'resumed answer', target: 'destination:discord:ops' }]);
-    // The continuation rode the hidden custom-system seam — appended at the tail, never a fake user row.
+    // SILENT resume: the turn was CONTINUED from its tail — no custom message, no user row, nothing
+    // appended before the answer; the transcript the model saw is exactly the checkpointed one.
     expect(brains).toHaveLength(1);
-    expect(brains[0]!.customSends).toHaveLength(1);
-    expect(brains[0]!.customSends[0]!.customType).toBe('restart-resume');
+    expect(brains[0]!.customSends).toHaveLength(0);
+    expect(brains[0]!.continuations).toEqual([1]); // continued from the sender's message, nothing added
+    expect(brains[0]!.session.prompt).not.toHaveBeenCalled();
     expect(store.getMessages(sessionId).filter((m) => m.role === 'user')).toHaveLength(0);
     // Durable stand-down: marker and envelope gone (nothing can resume this turn again) and — because
     // the post was CONFIRMED — no pending delivery either.

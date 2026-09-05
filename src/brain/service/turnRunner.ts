@@ -36,6 +36,7 @@ import { logger } from '../../shared/logger.js';
 import { steerCustomMessage } from '../session/steerCustomMessage.js';
 import { conversationActivitySurface, resetConversationActivity } from '../session/conversationActivity.js';
 import type { ConversationActivitySurface } from '../session/conversationActivity.js';
+import { continuable, continueInterruptedTurn } from '../session/continueTurn.js';
 
 
 /** A durable sub-agent result is retried at most this many times before the drain gives up (leaves the
@@ -203,6 +204,33 @@ export class BrainTurnRunner {
    * STREAMING parent — STEER it into the running turn. PI injects a steering message into the context before
    * that turn's next model call, so a background result reaches the agent during the work it belongs to
    * instead of a whole turn later. Delivery is not confirmed here (see `CustomDelivery`). */
+  /** Continue an owner conversation's interrupted turn from its transcript tail — no message of any kind
+   *  (session/continueTurn.ts). The boot resume of a paused turn: the checkpointed tail already ends on
+   *  the answers to the interrupted calls, so the model simply takes its next step. Same locks and turn
+   *  scope as a hidden system turn. `nothing` when the transcript ends on an assistant message (the turn
+   *  had in fact finished; there is nothing to continue). Throws when the continuation ran but no fresh,
+   *  normally settled assistant came out of it. */
+  async continueInterrupted(userId: number, session: string): Promise<'continued' | 'nothing'> {
+    const target = this.d.lifecycle.ownedUserSession(userId, session);
+    if (!this.d.sessions.get(target)) await this.d.lifecycle.ensureLive(userId, target);
+    return this.serial(sendLockKey(target), () => this.serial(target, async (): Promise<'continued' | 'nothing'> => {
+      const live = this.d.sessions.get(target);
+      if (!live) throw new Error('brain not started for user');
+      if (live.session.isStreaming) throw new Error('cannot continue a turn that is already running');
+      const messages = live.session.messages as { role?: string; stopReason?: string; errorMessage?: string }[];
+      // An unfinished trailing assistant is trimmed by the continuation; count from the message before it.
+      const before = messages.length - (continuable(messages) ? 0 : 1);
+      const context = this.contextBuilder.buildScope(userId, live);
+      const outcome = await context.run(() => continueInterruptedTurn(live.session, { store: this.d.store, sessionId: target }));
+      if (outcome === 'nothing') return 'nothing';
+      const settled = lastAssistant((live.session.messages as typeof messages).slice(before));
+      if (!settled || settled.stopReason === 'aborted' || settled.stopReason === 'error') {
+        throw new Error(settled?.errorMessage?.trim() || `the continuation ${settled?.stopReason ?? 'produced no assistant reply'}`);
+      }
+      return 'continued';
+    }));
+  }
+
   async sendCustomSystem(
     userId: number,
     session: string,
