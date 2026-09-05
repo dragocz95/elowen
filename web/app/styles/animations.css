@@ -99,9 +99,10 @@
    Motion's JS animations, which `reduced` only shortens — so a rule it did not match would leave the
    strictest setting visibly livelier than the middle one. Written out rather than `:not([…='full'])`
    so a future mode has to opt in deliberately instead of inheriting damping it may not want. */
-/* The spatial route rail needs a little more time than ordinary micro-interactions. */
-html:is([data-effects='reduced'], [data-effects='off']) [data-testid='future-navigation'] [role='listitem'],
-html:is([data-effects='reduced'], [data-effects='off']) [data-testid='future-navigation'] .orbit-node {
+/* The navigation column's fold is a layout change rather than a micro-interaction, so a quiet mode
+   shortens it instead of letting it keep the full width transition. */
+html:is([data-effects='reduced'], [data-effects='off']) [data-shell='sidebar'],
+html:is([data-effects='reduced'], [data-effects='off']) [data-shell='sidebar'] .sidebar-nav__item {
   transition-duration: 140ms !important;
 }
 

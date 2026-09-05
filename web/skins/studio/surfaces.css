@@ -143,7 +143,7 @@
 
 /* The decorative panel belongs to the ember identity. It stays in the DOM — a page states its mascot as
    a prop and Studio does not fork pages — and simply does not paint, the same move shared.css makes for
-   `.ember-fall` and `.dash-beam`.
+   `.dash-beam`.
 
    Hiding it leaves the body's two-column grid with an empty first track, so the body is re-declared as
    a plain block: `:not(:has(.workspace-hero__mascot))` cannot help here, the element is still there. */

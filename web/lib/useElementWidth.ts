@@ -39,8 +39,3 @@ function useElementMeasure<T extends HTMLElement>(axis: MeasureAxis): [RefCallba
 export function useElementWidth<T extends HTMLElement = HTMLElement>(): [RefCallback<T>, number, boolean] {
   return useElementMeasure<T>('width');
 }
-
-/** Track the current element's content-box height plus whether that exact node has produced a measurement. */
-export function useElementHeight<T extends HTMLElement = HTMLElement>(): [RefCallback<T>, number, boolean] {
-  return useElementMeasure<T>('height');
-}

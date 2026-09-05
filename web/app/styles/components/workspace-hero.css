@@ -1,5 +1,5 @@
 /* The workspace hero and its metric rail: .workspace-hero*, .workspace-metric*, plus the two unrelated
-   classes that share the register's vertical rhythm (.escalation-register-row, .spatial-scroll-cue).
+   classes that share the register's vertical rhythm (.escalation-register-row).
 
    The hero is a HEAD and a RAIL, in that order: the title block that says what the page is, and a
    hairline strip of live figures directly under it. The decorative mascot column that used to sit beside
@@ -81,9 +81,6 @@
 .workspace-metric__label { display: flex; align-items: center; gap: 0.4rem; margin-top: 0.65rem; color: var(--color-muted-foreground); font-size: 0.72rem; }
 
 .escalation-register-row:last-child { border-bottom: var(--hairline); }
-.spatial-scroll-cue svg { animation: spatial-scroll-cue 1.8s ease-in-out infinite; }
-@keyframes spatial-scroll-cue { 0%, 100% { transform: translateY(0); opacity: 0.55; } 50% { transform: translateY(3px); opacity: 0.9; } }
-@media (prefers-reduced-motion: reduce) { .spatial-scroll-cue svg { animation: none; } }
 
 
 /* Narrow region: the head stacks.
