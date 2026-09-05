@@ -79,8 +79,14 @@
    instead of overrunning the title on a narrow viewport. */
 .settings-group__heading { display: flex; min-width: 0; flex: 1 1 auto; align-items: center; gap: 0.65rem; }
 .settings-group__icon { display: grid; flex: none; place-items: center; color: var(--color-primary); }
-.settings-group__heading h2 { color: var(--color-foreground); font-size: 0.95rem; font-weight: 600; letter-spacing: -0.015em; }
-.settings-group__heading p { margin-top: 0.15rem; color: var(--color-muted-foreground); font-size: 0.72rem; line-height: 1.45; }
+/* A section card's heading and the sentence under it are the type scale's section-title and meta steps.
+   Neither states a size, a weight or a tracking of its own any more: the three used to be assembled here
+   and re-assembled with different numbers in the Studio stylesheet, so the same heading was 15.2px in one
+   file and 15px in the other and neither was the step the design system names. The tracking ratio is
+   restated rather than inherited: `letter-spacing` inherits as a computed LENGTH, so the -0.01em on
+   <body> arrives here as a fixed -0.16px and the 13px line would keep the 16px correction. */
+.settings-group__heading h2 { color: var(--color-foreground); font-size: var(--text-section-title); font-weight: var(--text-section-title--font-weight); letter-spacing: var(--tracking-ui); line-height: var(--text-section-title--line-height); }
+.settings-group__heading p { margin-top: 0.15rem; color: var(--color-muted-foreground); font-size: var(--text-meta); font-weight: var(--text-meta--font-weight); letter-spacing: var(--tracking-ui); line-height: var(--text-meta--line-height); }
 /* A collapsible group's heading is ONE trigger button. It carries the static heading's flex geometry, so
    opening or closing the body never shifts or rewraps the header line, and the typography above is
    unchanged. The actions stay a sibling OUTSIDE the button — an action click must never toggle the
@@ -192,9 +198,13 @@
 html:is([data-effects='reduced'], [data-effects='off']) .settings-row:hover .settings-row__icon,
 html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-within .settings-row__icon { box-shadow: none; }
 
-.settings-row__title { display: block; color: var(--color-foreground); font-size: 0.82rem; font-weight: 580; letter-spacing: -0.005em; }
-.settings-row__description { margin-top: 0.16rem; color: var(--color-muted-foreground); font-size: 0.7rem; line-height: 1.45; }
-.settings-row__status { margin-top: 0.3rem; color: var(--color-muted-foreground); font-size: 0.68rem; line-height: 1.45; }
+/* A record's name is the card-title step and the two quiet lines beside it are the meta step. `580` was
+   a synthesised weight between Inter's 500 and 600 — a value no variable axis stop lands on and no
+   heading elsewhere in the app used — and it is what made a record name read heavier than the section
+   heading above it on some platforms and lighter on others. */
+.settings-row__title { display: block; color: var(--color-foreground); font-size: var(--text-card-title); font-weight: var(--text-card-title--font-weight); letter-spacing: var(--tracking-ui); line-height: var(--text-card-title--line-height); }
+.settings-row__description { margin-top: 0.16rem; color: var(--color-muted-foreground); font-size: var(--text-meta); font-weight: var(--text-meta--font-weight); letter-spacing: var(--tracking-ui); line-height: var(--text-meta--line-height); }
+.settings-row__status { margin-top: 0.3rem; color: var(--color-muted-foreground); font-size: var(--text-meta); font-weight: var(--text-meta--font-weight); letter-spacing: var(--tracking-ui); line-height: var(--text-meta--line-height); }
 /* One trailing cell owns status, control and actions, so every row has the same two logical columns even
    when a record carries more than one trailing value. It spans the control/action tracks of the shared
    subgrid; skins may retune the tracks without changing the DOM contract. */

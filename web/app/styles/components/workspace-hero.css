@@ -38,9 +38,19 @@
 .workspace-hero__titles { min-width: 0; flex: 1 1 auto; }
 .workspace-hero__eyebrow { margin-bottom: 0.35rem; font-family: var(--font-mono); color: var(--color-primary); font-size: 0.62rem; font-weight: 650; letter-spacing: 0.16em; text-transform: uppercase; }
 .workspace-hero__headline { display: flex; min-width: 0; align-items: baseline; gap: 0.75rem; }
-/* Sized against the hero, not the window: the title has to shrink when a dock narrows the region even
-   though the viewport never changed. */
-.workspace-hero h1 { color: var(--color-foreground); font-size: clamp(1.75rem, 1.25rem + 2.2cqi, 2.6rem); font-weight: 610; letter-spacing: -0.045em; line-height: 1; }
+/* THE page title, at the type scale's page-title step and nowhere else. It used to be a `clamp()`
+   against the hero container, which sounds like responsiveness and reads as inconsistency: the same page
+   carried a 42px title on a wide window and a 28px one the moment an advisor dock narrowed the region,
+   so the app's single largest piece of type was a different size on two screens showing the same thing.
+   The reference sets one 30/36 title at every width. Every part of the step comes from the token,
+   including the absolute tracking — see tokens.css for why that one is not the inherited ratio. */
+.workspace-hero h1 {
+  color: var(--color-foreground);
+  font-size: var(--text-page-title);
+  font-weight: var(--text-page-title--font-weight);
+  letter-spacing: var(--text-page-title--letter-spacing);
+  line-height: var(--text-page-title--line-height);
+}
 .workspace-hero__count { color: var(--color-muted-foreground); font-family: var(--font-mono); font-size: 0.9rem; }
 .workspace-hero__description { max-width: 42rem; margin-top: 0.5rem; color: var(--color-muted-foreground); font-size: 0.78rem; line-height: 1.55; }
 .workspace-hero__actions { display: flex; flex: none; align-items: center; gap: 0.75rem; margin-inline-start: auto; }

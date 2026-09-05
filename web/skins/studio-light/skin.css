@@ -17,8 +17,15 @@
      rendering in the dark scheme the base document declares. */
   color-scheme: light;
 
-  /* The reference uses one clean white canvas; depth comes from quiet fills and hairlines. */
-  --color-background: #ffffff;
+  /* The canvas is a near-white PAPER and the cards on it are white. It used to be white on white, with
+     only a hairline saying where a card began — which is why every surface in this design had to argue
+     for its own edge. The reference sets the page at oklch(0.9875 0 0), written here as the #fbfbfb it
+     resolves to because tests/lib/designTokens.test.ts has to evaluate this token for contrast and cannot
+     resolve an oklch() literal. Measured on it: text 19.03:1, muted 7.49:1, subtle 5.18:1.
+     `--color-document` and `--color-card` stay white on purpose — that half-step IS the depth, and it is
+     what lets a card, a register and a settings section read as placed on the page rather than cut out
+     of it. The first frame in app/layout.tsx carries the same literal and is pinned to this one. */
+  --color-background: #fbfbfb;
   --color-document: #ffffff;
   --color-card: #ffffff;
   --color-muted: #f4f4f5;

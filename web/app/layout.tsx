@@ -82,7 +82,7 @@ type DocumentPaint = { background: string; colorScheme: 'dark' | 'light' };
  *  ELOWEN_SKIN all land on DEFAULT_SKIN — so every document has a design, and the black Ember first frame
  *  that used to stand in for its absence would have been a third look nobody could select. */
 const SKIN_PAINT: Record<SkinName, DocumentPaint> = {
-  'studio-light': { background: '#ffffff', colorScheme: 'light' },
+  'studio-light': { background: '#fbfbfb', colorScheme: 'light' },
   'studio-oled': { background: '#03080a', colorScheme: 'dark' },
 };
 

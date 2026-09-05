@@ -150,6 +150,35 @@
      ratio it is -0.01em, so ONE token tracks both sizes and every other size in between. */
   --tracking-ui: -0.01em;
 
+  /* ---- The type scale -------------------------------------------------------------------------
+     Five steps, measured off the reference dashboard (plans/cloudflare-sidebar-spec.md). Each one is a
+     Tailwind v4 TEXT token, which means it carries its line height, its weight and — where it differs
+     from the inherited ratio — its tracking with it. That is the property the app was missing: a
+     heading used to be assembled from a size here, a weight there and a letter-spacing somewhere else,
+     so every surface that wanted "a section title" wrote its own three-quarters of one, and no two
+     agreed. A rule now reads `var(--text-section-title)` and the rest of the step is one variable away.
+
+     `--text-page-title` is the ONE step that states its tracking absolutely. `--tracking-ui` above is a
+     RATIO, which is what makes the reference's -0.16px at 16px and -0.13px at 13px the same correction;
+     at 30px that ratio gives -0.3px, while the reference still runs -0.16px on its page title. A ratio
+     cannot express both, so the outlier says so here rather than in whichever stylesheet noticed. */
+  --text-page-title: 1.875rem;               /* 30px, the single <h1> a page has */
+  --text-page-title--line-height: 2.25rem;   /* 36px */
+  --text-page-title--font-weight: 600;
+  --text-page-title--letter-spacing: -0.16px;
+  --text-section-title: 1rem;                /* 16px, the heading of a section card */
+  --text-section-title--line-height: 1.5rem;
+  --text-section-title--font-weight: 600;
+  --text-card-title: 0.875rem;               /* 14px, the name of one record inside a card */
+  --text-card-title--line-height: 1.25rem;
+  --text-card-title--font-weight: 500;
+  --text-meta: 0.8125rem;                    /* 13px, the quiet line under a title */
+  --text-meta--line-height: 1.25rem;
+  --text-meta--font-weight: 400;
+  --text-body: 1rem;                         /* 16px/24px, the document's own step */
+  --text-body--line-height: 1.5rem;
+  --text-body--font-weight: 400;
+
   --text-display: clamp(2rem, 1.55rem + 1.5vw, 3.25rem);
   --text-caption: 0.6875rem;
   --text-tiny: 0.5625rem;

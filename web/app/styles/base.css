@@ -16,7 +16,13 @@ html, body {
   /* Inter's default fit is looser than the reference design's. Expressed as a ratio rather than the
      measured -0.16px, so the correction holds at every size the app renders and not only at the 16px
      root — the reference's own -0.13px at 13px is this same ratio. Inherited, so it reaches every
-     element without a utility class; the mono face opts out below. */
+     element without a utility class; the mono face opts out below.
+
+     WHAT INHERITANCE DOES NOT DO. `letter-spacing` inherits as a COMPUTED LENGTH, so an `em` written
+     here resolves once, against 16px, and every descendant inherits the resulting -0.16px whatever size
+     it is set at. Measured in Chromium: 13px metadata came out at -0.16px rather than the reference's
+     -0.13px. A rule that changes the font size therefore has to restate `var(--tracking-ui)` for the
+     ratio to resolve again at its own size — which is why every step of the type scale does. */
   letter-spacing: var(--tracking-ui);
   font-feature-settings: "ss01" 1, "cv01" 1, "cv09" 1;
   -webkit-font-smoothing: antialiased;
@@ -26,6 +32,13 @@ html, body {
 body {
   overflow: hidden;
   overscroll-behavior: none;
+  /* The document's own step, stated rather than inherited from a framework reset. The reference runs
+     16px/24px and so does this, but the value used to be Tailwind preflight's `line-height: 1.5` on
+     <html> — a number nothing in the app could read, override per design, or check. It is on <body> and
+     not on the pair above on purpose: `font-size` on the root element would redefine what a rem is, and
+     every measurement in the app is written in rem against a true 16px root. */
+  font-size: var(--text-body);
+  line-height: var(--text-body--line-height);
   background-image:
     radial-gradient(circle at 71% -20%, rgb(var(--primary-rgb) / 0.03), transparent 34rem),
     radial-gradient(circle at 10% 112%, rgb(var(--primary-rgb) / 0.014), transparent 30rem);

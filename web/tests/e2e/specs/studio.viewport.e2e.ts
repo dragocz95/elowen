@@ -93,7 +93,8 @@ test('Studio renders under its own stylesheet, not the operator default', async 
   await expect(app.locator('[data-testid="sidebar-navigation"]')).toBeVisible();
   // The canvas is the skin's, not the built-in black — proof the token block is actually applied.
   const canvas = await app.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--color-background').trim());
-  expect(canvas.replace(/^#([\da-f])([\da-f])([\da-f])$/i, '#$1$1$2$2$3$3').toLowerCase()).toBe('#ffffff');
+  // The near-white paper the reference sets its page on, oklch(0.9875 0 0). Cards stay white ON it.
+  expect(canvas.replace(/^#([\da-f])([\da-f])([\da-f])$/i, '#$1$1$2$2$3$3').toLowerCase()).toBe('#fbfbfb');
 });
 
 test('Studio centres working pages in the reference 1152px frame', async ({ app, seed }, testInfo) => {
@@ -122,10 +123,13 @@ test('Studio matches the reference typography, toolbar and settings density', as
     const style = getComputedStyle(heading);
     return { size: style.fontSize, weight: style.fontWeight, spacing: style.letterSpacing, family: style.fontFamily };
   });
-  expect(pageStyle.size).toBe('24px');
-  expect(pageStyle.weight).toBe('400');
-  expect(pageStyle.spacing).toBe('-0.15px');
-  expect(pageStyle.family).toContain('Geist');
+  // The page title is the type scale's `--text-page-title` step, measured off the reference dashboard:
+  // 30/36/600 at an absolute -0.16px of tracking, in Inter Variable. It was 24px/400 in Geist, set by a
+  // rule the Studio stylesheet kept of its own; the scale owns that step now and no design restates it.
+  expect(pageStyle.size).toBe('30px');
+  expect(pageStyle.weight).toBe('600');
+  expect(pageStyle.spacing).toBe('-0.16px');
+  expect(pageStyle.family).toContain('Inter');
 
   const toolbar = app.locator('.page-toolbar__row');
   await expect(toolbar).toBeVisible();
