@@ -290,7 +290,7 @@ export interface BrainProject { cwd: string | null; branch: string | null; works
 /** A bound Sandbox workspace. `confined` says the turn starts inside the worktree, where a shell command
  *  runs in the workspace container (mounted at `/workspace`, no Git, no host paths); a command whose
  *  working directory lies outside the worktree runs by the ordinary rules. */
-export interface BrainProjectWorkspace { workspaceId: string; label: string; branch: string; path: string; confined: true }
+interface BrainProjectWorkspace { workspaceId: string; label: string; branch: string; path: string; confined: true }
 /** One MCP server of this daemon. `mcp: null` (non-admin, or the plugin is off) hides the section. */
 export interface McpServerStatus { name: string; status: string }
 /** `thinkingLevel*` are the reasoning-effort controls of the conversation's CURRENT model — the levels it
