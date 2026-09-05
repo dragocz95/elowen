@@ -172,11 +172,21 @@ export function createExecutionLease(db, input) {
     accountUserId: input.accountUserId,
     workspaceId: input.workspaceId,
     homeGeneration: input.homeGeneration,
+    // A heartbeat that finds no row puts it back. Reconcile runs on every lease creation and every
+    // liveness read, so an event-loop stall longer than the window lets it delete THIS row while the
+    // process it guards is still running; a plain UPDATE would then be a no-op for the rest of the run and
+    // the workspace would read as free under a live child. Re-inserted with its original identity, so the
+    // resurrected row is the same lease and `release()` still clears it.
     heartbeat() {
       if (released) return;
       const at = Date.now();
-      db.prepare('UPDATE p_sandbox_execution_leases SET heartbeat_at = ?, expires_at = ? WHERE id = ?')
-        .run(at, at + EXECUTION_LEASE_MS, id);
+      const changes = db.prepare('UPDATE p_sandbox_execution_leases SET heartbeat_at = ?, expires_at = ? WHERE id = ?')
+        .run(at, at + EXECUTION_LEASE_MS, id).changes;
+      if (changes > 0) return;
+      db.prepare(`INSERT OR IGNORE INTO p_sandbox_execution_leases
+        (id, user_id, workspace_id, home_generation, outer_pid, runner_identity, kind, heartbeat_at, expires_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`)
+        .run(id, input.accountUserId, input.workspaceId, input.homeGeneration, process.pid, runnerIdentity, input.kind, at, at + EXECUTION_LEASE_MS);
     },
     release() {
       if (released) return;
@@ -227,16 +237,37 @@ export async function withRepoLease(db, commonDir, fn, opts = {}) {
     await sleep(100);
   }
 
+  // The lease can be LOST mid-run: a reconcile after a stall deletes the row and another claimant takes
+  // it before the next beat. The beat detects that and the work is failed on the way out rather than
+  // reported as a success that ran beside a second holder. It cannot interrupt `fn`, so the loss is
+  // surfaced at the boundary where a caller can act on it; the intruder's row is left untouched.
+  let lost = false;
   const heartbeat = setInterval(() => {
-    const now = Date.now();
-    db.prepare(`UPDATE p_sandbox_repo_leases SET heartbeat_at = ?, expires_at = ?
-      WHERE common_dir = ? AND owner_id = ?`).run(now, now + REPO_LEASE_MS, commonDir, ownerId);
-  }, 5_000);
+    if (heartbeatRepoLease(db, commonDir, ownerId, runnerIdentity) === 'lost') lost = true;
+  }, opts.heartbeatMs ?? 5_000);
   heartbeat.unref?.();
   try {
-    return await fn();
+    const result = await fn();
+    if (lost) throw new Error('repository worktree lease was lost to another process while the work ran');
+    return result;
   } finally {
     clearInterval(heartbeat);
     db.prepare('DELETE FROM p_sandbox_repo_leases WHERE common_dir = ? AND owner_id = ?').run(commonDir, ownerId);
   }
+}
+
+/** Refresh one repository lease. `held` is the ordinary case. `reclaimed` means the row had been reaped
+ *  (a reconcile after a stall) and was free, so it was taken back under the same owner. `lost` means
+ *  somebody else holds the common dir now: the caller must not carry on as if it held the lock. */
+export function heartbeatRepoLease(db, commonDir, ownerId, runnerIdentity) {
+  const now = Date.now();
+  const refreshed = db.prepare(`UPDATE p_sandbox_repo_leases SET heartbeat_at = ?, expires_at = ?
+    WHERE common_dir = ? AND owner_id = ?`).run(now, now + REPO_LEASE_MS, commonDir, ownerId).changes;
+  if (refreshed > 0) return 'held';
+  const claimed = db.prepare(`INSERT OR IGNORE INTO p_sandbox_repo_leases
+    (common_dir, owner_id, outer_pid, runner_identity, heartbeat_at, expires_at)
+    VALUES (?, ?, ?, ?, ?, ?)`)
+    .run(commonDir, ownerId, process.pid, runnerIdentity, now, now + REPO_LEASE_MS).changes;
+  const held = db.prepare('SELECT owner_id FROM p_sandbox_repo_leases WHERE common_dir = ?').get(commonDir);
+  return claimed > 0 && held?.owner_id === ownerId ? 'reclaimed' : 'lost';
 }

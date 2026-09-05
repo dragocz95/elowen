@@ -14,7 +14,7 @@ import { resolvePolicy, type Policy } from '../../src/plugins/policy.js';
 import { effectiveTurnWorkDir, releaseWorkspacesForMove } from '../../src/brain/service/workDir.js';
 import { processRegistry } from '../../src/brain/processRegistry.js';
 import { bubblewrapProbe, migrateLegacyHomes, runPrepared } from '../../plugins/sandbox/lib/execution.mjs';
-import { activeExecutionLeases, processIdentity, reconcileStaleLeases, withRepoLease } from '../../plugins/sandbox/lib/db.mjs';
+import { activeExecutionLeases, heartbeatRepoLease, processIdentity, reconcileStaleLeases, withRepoLease } from '../../plugins/sandbox/lib/db.mjs';
 import { createWorkspacePathView } from '../../src/plugins/pathView.js';
 import { commandsWithPlugins } from '../../src/brain/slashCommands.js';
 
@@ -741,11 +741,72 @@ describe('sandbox durable repository locks', () => {
       accountUserId: 1, workspace: { workspaceId: workspace.id, projectId: 1 },
     });
     expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toHaveLength(1);
+    // Lapsed but not yet reaped: without the heartbeat the very next liveness read would drop it.
     db.prepare('UPDATE p_sandbox_execution_leases SET expires_at = ? WHERE id = ?').run(Date.now() - 1, lease.id);
+    expect(reconcileStaleLeases(db, Date.now() - 2)).toEqual({ executionRemoved: 0, reposRemoved: 0 });
     await lease.heartbeat();
     expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toHaveLength(1);
+    expect(reconcileStaleLeases(db, Date.now())).toEqual({ executionRemoved: 0, reposRemoved: 0 });
     await lease.release();
     expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toHaveLength(0);
+  });
+
+  /** Reconcile runs on every lease creation and every liveness read, so an event-loop stall longer than
+   *  the window deletes the row of a process that is still running. The next heartbeat has to put the
+   *  row back, or the workspace reads as free under a live child for the rest of the run. */
+  it('resurrects an execution lease the reconcile reaped while its holder was still running', async () => {
+    const { registry, db, projectPath } = await setup();
+    const workspace = (await runAs(registry, projectPath, 1, 'brain-resurrect', 'SandboxCreateWorkspace', { projectId: 1, label: 'Resurrect', baseRef: 'main' })).details.workspace;
+    const lease = registry.control('sandbox')!.acquireDelegationLease({
+      accountUserId: 1, workspace: { workspaceId: workspace.id, projectId: 1 },
+    });
+    db.prepare('UPDATE p_sandbox_execution_leases SET expires_at = ? WHERE id = ?').run(Date.now() - 1, lease.id);
+    expect(reconcileStaleLeases(db, Date.now()).executionRemoved).toBe(1);
+    expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toEqual([]);
+
+    await lease.heartbeat();
+    const active = activeExecutionLeases(db, { workspaceId: workspace.id });
+    expect(active.map((row) => row.id)).toEqual([lease.id]);
+    expect(active[0]).toMatchObject({ user_id: 1, workspace_id: workspace.id, kind: 'terminal', outer_pid: process.pid });
+    // The resurrected row is the same lease: releasing it clears it, and a late heartbeat brings nothing back.
+    await lease.release();
+    expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toEqual([]);
+    await lease.heartbeat();
+    expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toEqual([]);
+  });
+
+  it('re-claims a reaped repository lease on heartbeat when it is free and reports a foreign holder', async () => {
+    const { db } = await setup();
+    const identity = processIdentity()!;
+    const past = Date.now() - 1_000;
+    const mine = 'srl_mine';
+    db.prepare(`INSERT INTO p_sandbox_repo_leases
+      (common_dir,owner_id,outer_pid,runner_identity,heartbeat_at,expires_at)
+      VALUES ('/repo/beat',?,?,?,?,?)`).run(mine, process.pid, identity, past, past);
+    expect(reconcileStaleLeases(db, Date.now()).reposRemoved).toBe(1);
+    // Free again: the heartbeat takes the row back and the lease is held as before.
+    expect(heartbeatRepoLease(db, '/repo/beat', mine, identity)).toBe('reclaimed');
+    expect(db.prepare("SELECT owner_id FROM p_sandbox_repo_leases WHERE common_dir='/repo/beat'").get()).toEqual({ owner_id: mine });
+    expect(heartbeatRepoLease(db, '/repo/beat', mine, identity)).toBe('held');
+    // Somebody else claimed it in the gap: two holders would be worse than a loud failure.
+    db.prepare("UPDATE p_sandbox_repo_leases SET owner_id = 'srl_other' WHERE common_dir='/repo/beat'").run();
+    expect(heartbeatRepoLease(db, '/repo/beat', mine, identity)).toBe('lost');
+    expect(db.prepare("SELECT owner_id FROM p_sandbox_repo_leases WHERE common_dir='/repo/beat'").get()).toEqual({ owner_id: 'srl_other' });
+  });
+
+  it('fails a withRepoLease holder loudly once its lease was lost to another claimant', async () => {
+    const { db } = await setup();
+    let release!: () => void;
+    const hold = new Promise<void>((resolveHold) => { release = resolveHold; });
+    const holder = withRepoLease(db, '/repo/lost', () => hold, { heartbeatMs: 20 });
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
+    // The row vanishes (a reconcile after a stall) and a foreign claimant takes it before our next beat.
+    db.prepare("UPDATE p_sandbox_repo_leases SET owner_id = 'srl_intruder' WHERE common_dir='/repo/lost'").run();
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 60));
+    release();
+    await expect(holder).rejects.toThrow(/lease was lost/);
+    // The intruder's row is not ours to delete.
+    expect(db.prepare("SELECT owner_id FROM p_sandbox_repo_leases WHERE common_dir='/repo/lost'").get()).toEqual({ owner_id: 'srl_intruder' });
   });
 
   it('lets a conversation release its binding once the only lease on the workspace has expired', async () => {
