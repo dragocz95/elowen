@@ -296,9 +296,14 @@ export interface SessionSource {
     principal?: string;
     /** Account whose model, prompt, compaction and Fast preferences composed the delegating turn. */
     settingsUserId?: number | null;
-    /** Account whose personal contributions, HOME and Sandbox workspaces the delegated child inherits. It is
-     * host-resolved from the current turn, not guessed from the durable room owner. */
+    /** Account whose personal contributions the delegated child inherits. It is host-resolved from the
+     * current turn, not guessed from the durable room owner. */
     contributionUserId?: number | null;
+    /** The ACCOUNT the delegating turn acts as — `ctx.currentAccess().accountUserId`, the host's ONE
+     *  resolver (contribution owner, else the verified identity). An explicit workspace assignment is
+     *  resolved against THIS, so a turn that can CREATE a Sandbox workspace can also delegate into it.
+     *  Kept beside `contributionUserId`, which retains its narrower "whose personal contributions" meaning. */
+    accountUserId?: number | null;
     /** Idle cutoff (ms) for THIS surface's channel session — forwarded to ChannelSessionService.send as
      *  `idleRolloverMs`. Set by cron (shorter than the default 30 min) so a frequent job whose gap between
      *  ticks exceeds the prompt-cache window starts a fresh session instead of re-sending a growing context
@@ -996,6 +1001,10 @@ export interface WorkflowExpansionCallerAccess {
   toolPolicy?: { allow?: string[]; deny?: string[] };
   permissionBoundary: NoninteractivePermissionBoundary | null;
   readOnly?: boolean;
+  /** The ACCOUNT the calling node acts as, so a node it adds can name the workspace the run is already in.
+   *  A delegated child carries no account identity, so this is its inherited contribution owner — the same
+   *  value `currentAccountUserId()` resolves inside the child's own turn. */
+  accountUserId?: number | null;
 }
 
 /** Daemon-owned endpoint for a runner node's dynamic workflow expansion. Both caller fields are trusted only
@@ -1684,6 +1693,25 @@ export interface PluginContext {
    *  neither names an account. THE one resolver: read this instead of composing `currentContributionUserId()
    *  ?? currentIdentity()?.elowenUserId` in the plugin, so every tool of one turn agrees on the account. */
   currentAccountUserId(): number | null;
+  /** Resolve an explicit Sandbox workspace assignment against a delegable access boundary — THE one
+   *  resolver, the same host code path that resolves `access.workspaceId` when a delegated child is
+   *  actually spawned. A plugin that assigns workspaces to children (Delegate, workflow nodes) must ask
+   *  here rather than reach for the Sandbox control itself: the control is restricted to the plugins that
+   *  own process launch, so a plugin-local copy of this logic resolves to nothing at all in production
+   *  while passing every test that mocks the control.
+   *
+   *  `access` is a boundary the HOST stamped — `ctx.currentAccess()`, or a captured child boundary handed
+   *  back by the host — never one the plugin composed: the account and project ceiling in it are what the
+   *  workspace is checked against. Returns undefined when neither an inherited nor a requested workspace
+   *  applies (the plain project-scoped case). THROWS, with a message meant for the model, when the account
+   *  is missing, Sandbox is disabled, the id is not one of that account's workspaces inside its current
+   *  project scope, or the request would switch an already workspace-scoped turn to a sibling.
+   *
+   *  Gated by `reads:['controls']`, the same grant as the control it stands in for. */
+  resolveWorkspaceScope(
+    access: { admin: boolean; projectIds: readonly number[]; accountUserId?: number | null; workspaceRef?: SandboxWorkspaceRef },
+    workspaceId?: string,
+  ): SandboxWorkspaceRef | undefined;
   /** The persisted brain-session id the current turn runs in (`brain-…`), or undefined outside a
    *  prompt turn. Lets a plugin bind scheduled work back to the exact conversation it was created
    *  from (a cron wake-up records it as the job's origin and the reply lands there). */

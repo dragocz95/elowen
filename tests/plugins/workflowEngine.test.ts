@@ -3,6 +3,7 @@ import { AsyncLocalStorage } from 'node:async_hooks';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve, dirname, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { bindingRef, resolveDelegatedWorkspace, type WorkspaceAccessCeiling } from '../../src/brain/workspaceScope.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const workflowFilesDir = mkdtempSync(resolve(repoRoot, '.workflow-engine-test-'));
@@ -32,6 +33,23 @@ const { registerWorkflow } = await import(resolve(repoRoot, 'plugins/subagent/li
 // caught it was the very function the double replaced.
 const { delegateContextChunks } = await import(resolve(repoRoot, 'plugins/subagent/index.mjs')) as {
   delegateContextChunks(raw: unknown, totalChars?: number): string[];
+};
+
+/** The Sandbox ROWS are faked; the resolution rules are not. The harness serves `ctx.resolveWorkspaceScope`
+ *  out of the host's own resolver, so a change to how a workspace is admitted is felt here rather than by a
+ *  second implementation living in the test. */
+const fakeSandboxControl = {
+  workspacesFor: ({ userId }: { userId: number }) => (userId === 1
+    ? ['ws_root', 'ws_node', 'ws_child'].map((workspaceId) => ({
+      workspaceId, projectId: 1, path: `/host/${workspaceId}`, label: workspaceId, branch: 'b', baseRef: 'main',
+    }))
+    : []),
+  resolveWorkspace: ({ accountUserId, workspace }: { accountUserId: number; workspace: { workspaceId: string; projectId: number } }) =>
+    ({ accountUserId, ...workspace, path: `/host/${workspace.workspaceId}` }),
+} as unknown as Parameters<typeof resolveDelegatedWorkspace>[0];
+const testWorkspaceScope = (access: WorkspaceAccessCeiling, workspaceId?: string) => {
+  const binding = resolveDelegatedWorkspace(fakeSandboxControl, access, workspaceId);
+  return binding ? bindingRef(binding) : undefined;
 };
 
 interface Tool {
@@ -151,6 +169,8 @@ function harness(opts: {
   const stoppedSessions: string[] = [];
   /** What the engine warned about — the only channel it has for a failure it cannot itself recover from. */
   const warnings: string[] = [];
+  /** Every sibling control the engine asked for. `sandbox` must never appear: the real registry refuses it. */
+  const controlsAsked: string[] = [];
   const ctx = {
     dataDir: () => workflowFilesDir,
     registerTool: (def: Tool) => { tools.set(def.name, def); },
@@ -165,12 +185,12 @@ function harness(opts: {
     currentIdentity: () => ({ elowenUserId: 1, platform: 'cli', userId: '1' }),
     currentAccess: () => access.current,
     currentModel: () => model.current,
-    control: (name: string) => name === 'sandbox' ? {
-      workspacesFor: () => ['ws_root', 'ws_node', 'ws_child'].map((workspaceId) => ({
-        workspaceId, projectId: 1, path: `/host/${workspaceId}`, label: workspaceId, branch: 'b', baseRef: 'main',
-      })),
-      resolveWorkspace: ({ accountUserId, workspace }: any) => ({ accountUserId, ...workspace, path: `/host/${workspace.workspaceId}` }),
-    } : undefined,
+    // Exactly what the real registry hands the subagent plugin: NO Sandbox control — it is restricted to the
+    // plugins that own process launch (CONTROL_CONSUMERS in src/plugins/registry.ts) — and the host's own
+    // workspace resolver instead. A harness that mocked the control is what let the engine ship a resolution
+    // path that resolved to nothing in production while every test passed.
+    control: (name: string) => { controlsAsked.push(name); return undefined; },
+    resolveWorkspaceScope: testWorkspaceScope,
     assertPathAllowed: assertTestPathAllowed,
     sanitizePathOutput: (text: string) => text,
     workflowEmitter: () => (u: (typeof snapshots)[number]) => { snapshots.push(u); },
@@ -197,7 +217,7 @@ function harness(opts: {
   registerWorkflow(ctx, () => run, helpers);
   /** Everything the node can read, as one string — the chunks are a transport detail, not the content. */
   const contextOf = (task: string) => (contexts.get(task) ?? []).join('\n\n');
-  return { tools, controls, snapshots, launched, contexts, contextOf, sessionId, access, model, runs, stoppedSessions, warnings };
+  return { tools, controls, snapshots, launched, contexts, contextOf, sessionId, access, model, runs, stoppedSessions, warnings, controlsAsked };
 }
 
 describe('workflow engine', () => {
@@ -264,6 +284,63 @@ describe('workflow engine', () => {
     });
     expect(result.content[0]?.text).not.toContain('Sandbox workspace scope is unavailable');
     expect(runs.find((run) => run.task === 'account-node')?.workspaceRef).toEqual({ workspaceId: 'ws_root', projectId: 1 });
+  });
+
+  /** The engine must never reach for the Sandbox control. That control is restricted to the plugins that own
+   *  process launch, so the subagent plugin's `ctx.control('sandbox')` is `undefined` in every real daemon —
+   *  which is exactly how a live WorkflowStart failed with "Sandbox workspace scope is unavailable" in the
+   *  same conversation that had just created the workspace, while the mocked-control tests all passed. */
+  it('assigns a workspace with no Sandbox control of its own, and never asks for one', async () => {
+    const { tools, runs, controlsAsked } = harness();
+    const start = tools.get('WorkflowStart');
+    if (!start) throw new Error('WorkflowStart was not registered');
+    const result = await start.execute('workspace-no-control', {
+      nodesFile: workflowFile([{ id: 'node', task: 'no-control-node' }]),
+      workspaceId: 'ws_root',
+    });
+    expect(result.content[0]?.text).not.toContain('Sandbox workspace scope is unavailable');
+    expect(runs.find((run) => run.task === 'no-control-node')?.workspaceRef).toEqual({ workspaceId: 'ws_root', projectId: 1 });
+    expect(controlsAsked).not.toContain('sandbox');
+  });
+
+  /** An account-less turn — an unlinked sender in a shared room, instance automation — resolves no account
+   *  at all, and a workspace belongs to an account. It has to be refused rather than resolved against
+   *  whoever happens to own the Sandbox rows. */
+  it('refuses a workspace when the turn names no account', async () => {
+    const { tools, launched, access } = harness();
+    const { contributionUserId: _c, accountUserId: _a, ...anonymous } = access.current;
+    access.current = anonymous;
+    const start = tools.get('WorkflowStart');
+    if (!start) throw new Error('WorkflowStart was not registered');
+    const result = await start.execute('workspace-anonymous', {
+      nodesFile: workflowFile([{ id: 'node', task: 'anonymous-node' }]),
+      workspaceId: 'ws_root',
+    });
+    expect(result.content[0]?.text).toContain('requires a linked Elowen account');
+    expect(launched).toEqual([]);
+  });
+
+  /** A node that adds nodes of its own runs under a CAPTURED boundary, not the live turn. That boundary
+   *  dropped the account, so a dynamically added node could not name the workspace its own workflow was
+   *  already running in. */
+  it('lets a node add a node into the workspace the workflow already runs in', async () => {
+    const h = harness();
+    let release!: () => void;
+    gate = { task: 'root', promise: new Promise<void>((resolveGate) => { release = resolveGate; }) };
+    const start = h.tools.get('WorkflowStart')!.execute('ws-expand', {
+      nodesFile: workflowFile([{ id: 'root', task: 'root' }]),
+      workspaceId: 'ws_root',
+    });
+    await new Promise((resolveWait) => setTimeout(resolveWait, 5));
+    const workflowId = h.snapshots[0]!.id;
+    h.sessionId.current = 's-root';
+    const added = await h.tools.get('WorkflowAddNodes')!.execute('ws-expand-add', {
+      workflowId, nodes: [{ id: 'leaf', task: 'leaf', workspaceId: 'ws_root' }],
+    });
+    expect(added.content[0]?.text).toContain('leaf');
+    release();
+    await start;
+    expect(h.runs.find((run) => run.task === 'leaf')?.workspaceRef).toEqual({ workspaceId: 'ws_root', projectId: 1 });
   });
 
   it('lets explicit start arguments override reusable file options', async () => {

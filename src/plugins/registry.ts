@@ -16,6 +16,7 @@ import { commandsWithPlugins, isReservedCommandName, type PluginSlashCommand, ty
 import type { PluginManifest } from './manifest.js';
 import { assertPathAllowed, allowedRoots, defaultCwd, displayPath, isAllAccess, currentAccess, pathStateKey, sanitizePathOutput } from './pathGuard.js';
 import { currentIdentity, currentContributionUserId, currentAccountUserId, currentDeliveryTarget, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentSessionId } from './policyContext.js';
+import { bindingRef, resolveDelegatedWorkspace } from '../brain/workspaceScope.js';
 import { processRegistry } from '../brain/processRegistry.js';
 import { subagentSessionId } from '../brain/sessionId.js';
 import type { AskAnswer } from '../brain/events.js';
@@ -1418,6 +1419,24 @@ export class PluginRegistry {
       currentIdentity,
       currentContributionUserId,
       currentAccountUserId,
+      // THE workspace resolver, exposed instead of the Sandbox control it needs. `CONTROL_CONSUMERS`
+      // restricts that control to the plugins that own process launch, so a delegating plugin resolving
+      // workspaces on its own gets `undefined` in production while a mocked control keeps its tests green —
+      // which is exactly how a workflow node could be assigned a workspace the same turn had just created
+      // and then be refused it. One resolver, host-side, for assignment time and spawn time alike.
+      //
+      // Behind the same `reads:['controls']` grant as the control it stands in for. It hands back only the
+      // ownership tuple (`bindingRef` drops the host path), and the account it resolves against comes from
+      // a boundary the host stamped — but the caller still supplies that boundary, so this would otherwise
+      // let ANY enabled plugin ask whether a given workspace id belongs to a given account. Deny-by-default
+      // keeps that question inside the plugins the operator's manifest already admits to cross-domain reach.
+      resolveWorkspaceScope: (access, workspaceId) => {
+        if (!capabilities.reads?.includes('controls')) {
+          throw new Error(`plugin "${name}" did not declare the reads:['controls'] capability`);
+        }
+        const binding = resolveDelegatedWorkspace(resolveControl?.('sandbox'), access, workspaceId);
+        return binding ? bindingRef(binding) : undefined;
+      },
       currentSessionId,
       currentDeliveryTarget,
       // The parent anchor is read from the HOST's own turn scope, never taken from the plugin: that is

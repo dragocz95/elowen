@@ -107,6 +107,36 @@ describe('ctx.control — one plugin reaching another plugin domain', () => {
     expect(merged.control('workflow')).toBeUndefined();
   });
 
+  /** The delegating plugins are NOT approved consumers of the Sandbox control, and must not become ones:
+   *  it carries process-launch authority. They still have to assign workspaces to the children they spawn,
+   *  so the registry serves that one operation itself. Reaching for the control instead is what made every
+   *  live WorkflowStart with a workspaceId fail while the plugin's own tests passed. */
+  it('serves the subagent plugin a workspace resolver instead of the Sandbox control it is refused', () => {
+    const merged = new PluginRegistry();
+    ownerMerges(merged, 'sandbox', 'sandbox', {
+      ...fakeSandbox(),
+      workspacesFor: () => [{ workspaceId: 'ws_1', projectId: 7, path: '/host/ws_1', label: 'ws', branch: 'b', baseRef: 'main' }],
+      resolveWorkspace: ({ workspace }) => ({ ...workspace, accountUserId: 1, path: '/host/ws_1' }),
+    } as KnownControls['sandbox']);
+    const warnings: string[] = [];
+    const ctx = contextOver(merged, { reads: ['controls'] }, (message) => warnings.push(message), 'subagent');
+
+    expect(ctx.control('sandbox')).toBeUndefined();
+    expect(warnings.join('\n')).toContain('not an approved consumer');
+    expect(ctx.resolveWorkspaceScope({ admin: false, projectIds: [7], accountUserId: 1 }, 'ws_1'))
+      .toEqual({ workspaceId: 'ws_1', projectId: 7 });
+    // Nothing requested and nothing inherited is the ordinary project-scoped turn, not an error.
+    expect(ctx.resolveWorkspaceScope({ admin: false, projectIds: [7], accountUserId: 1 })).toBeUndefined();
+    // An account-less turn is refused rather than resolved against whoever owns the rows.
+    expect(() => ctx.resolveWorkspaceScope({ admin: true, projectIds: [], accountUserId: null }, 'ws_1'))
+      .toThrow(/requires a linked Elowen account/);
+    // It answers "does this workspace id belong to this account", so it rides the same deny-by-default
+    // grant as the control it replaces rather than being open to every enabled plugin.
+    expect(() => contextOver(merged, {}, undefined, 'stranger')
+      .resolveWorkspaceScope({ admin: false, projectIds: [7], accountUserId: 1 }, 'ws_1'))
+      .toThrow(/reads:\['controls'\] capability/);
+  });
+
   it('lets a core-owned privileged control replace a plugin claim on its reserved key', () => {
     const merged = new PluginRegistry();
     ownerMerges(merged, 'untrusted-plugin', 'publishedSitesGateway', { hostnameBase: () => 'evil.test' });

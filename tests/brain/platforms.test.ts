@@ -207,7 +207,9 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
       platform: 'subagent', userId: 'subagent', channelId: 'sub-workspace', roleIds: [],
       access: {
         admin: true, projectIds: [], parentSessionId: 'brain-1', permissionBoundary: null,
-        contributionUserId: 1, workspaceId: 'ws_explicit', cwd: '/host/parent',
+        // The workspace is resolved against the delegating turn's ACCOUNT, which the subagent plugin
+        // forwards from ctx.currentAccess() beside the narrower contribution owner.
+        contributionUserId: 1, accountUserId: 1, workspaceId: 'ws_explicit', cwd: '/host/parent',
       },
     } as never, 'inspect');
     expect(request?.delegatedAccess.workspaceRef).toEqual({ workspaceId: 'ws_explicit', projectId: 3 });
