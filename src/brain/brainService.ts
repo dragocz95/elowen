@@ -2,10 +2,11 @@ import { randomUUID } from 'node:crypto';
 import type { PluginRegistry } from '../plugins/registry.js';
 import { PluginHookBus } from '../plugins/hookBus.js';
 import { PluginServiceRunner } from '../plugins/serviceRunner.js';
-import type { DelegatedChildrenSettlement, DelegatedContinueResult, PluginChatArtifactRef, ServiceNotice, SubagentProgressEvent } from '../plugins/api.js';
+import type { DelegatedContinueResult, PluginChatArtifactRef, ServiceNotice, SubagentProgressEvent } from '../plugins/api.js';
 import { ElicitationRegistry } from './elicitation.js';
 import { CardRegistry } from './cards.js';
 import type { BrainStore, BrainSearchHit, BrainGoalRow, RecoverableRun, RecoverableWorkflow } from '../store/brainStore.js';
+import type { BrainSubagentRun } from '../store/brainDelegationStore.js';
 import { MemoryCurator } from './memoryCurator.js';
 import { ConversationTitler } from './conversationTitler.js';
 import { logger } from '../shared/logger.js';
@@ -93,6 +94,21 @@ const MAX_RESULT_WAKE_ATTEMPTS = 3;
  *  for a step about to finish, fixed and deliberately far below the unit's stop timeout. */
 const PAUSE_UNPARKABLE_WAIT_MS = 20_000;
 const PAUSE_UNPARKABLE_POLL_MS = 250;
+
+/** settleDelegatedReply's cadence. KEEPALIVE: how long the wait on a live grandchild goes without
+ *  republishing progress to the delegating plugin — well under any stall watchdog setting, so a child
+ *  waiting on real nested work is never mistaken for a wedged one. BACKOFF: the poll while the only signal
+ *  is a durable row or the workflow engine (neither has a waiter to park on). PENDING_DELIVERY_BUDGET: how
+ *  long an undeliverable nested result may hold the call open before the child's last answer stands. */
+const SETTLE_KEEPALIVE_MS = 30_000;
+const SETTLE_BACKOFF_MIN_MS = 250;
+const SETTLE_BACKOFF_MAX_MS = 5_000;
+const SETTLE_PENDING_DELIVERY_BUDGET_MS = 5 * 60_000;
+/** How long a run row ALONE (no registry edge, no engine-confirmed workflow) may hold a call open. A
+ *  boot-claimed grandchild registers within seconds of the platforms starting; a row still unbacked after
+ *  this long is one nobody is driving (a terminal upsert that never landed), and holding the parent on it
+ *  forever would be the hang this settlement exists to prevent, one level up. */
+const SETTLE_ROW_ONLY_BUDGET_MS = 5 * 60_000;
 
 /** What a pause-for-restart left behind — the shutdown log line's material. */
 export interface PauseSummary {
@@ -434,6 +450,8 @@ export class BrainService {
       // A DelegateContinue targeting a child whose turn runs in the sub-agent runner steers THROUGH that
       // process — only the process holding the PI session can inject into its running turn.
       ...(d.subagentRunner ? { steerRemote: (channelId: string, text: string) => d.subagentRunner?.steer(channelId, text) ?? Promise.resolve({ outcome: 'idle' as const }) } : {}),
+      settleReply: (parentSessionId, childSessionId, reply, onEvent) => this.settleDelegatedReply(parentSessionId, childSessionId, reply, onEvent),
+      isSettling: (childSessionId) => this.isSettlingChild(childSessionId),
       // The recovered child's answer takes the ordinary background-delivery path into its parent. A parent
       // that was PAUSED on that very delegation (park marker, no resume of its own — see
       // resumeParkedConversation) is un-parked once the answer has actually been consumed by a turn, so
@@ -1922,61 +1940,143 @@ export class BrainService {
     return this.delegated.readSubagent(parentSessionId, childSessionId);
   }
 
-  /** A delegated child returned from its model turn after launching ITS OWN background children. Keep the
-   *  outer Delegate call alive until those children settle, drain their durable results into the child's
-   *  transcript, and return the newest integrated answer. This is event-driven on child claims; bounded
-   *  backoff is used only when result delivery itself remains pending after the children are terminal. */
-  async settleSubagentChildren(
+  /** WHEN a delegated call is finished, as its parent sees it: the child's turn returned AND the child has
+   *  no delegation of its own still open. A child that launched a background sub-agent and ended its turn
+   *  ("its result arrives in a new turn") is not done — the turn the grandchild's result triggers on it is
+   *  the one that carries the real conclusion, and THAT reply is what the parent must receive. Until then
+   *  the call stays open: a blocking Delegate/DelegateContinue keeps waiting, the child stays a live
+   *  claim in the registry (the caller holds the edge around this), and every progress reader shows it
+   *  running. This is the single place that rule lives; it wraps every path that produces a delegated
+   *  call's reply (runDelegatedTurn — in-process and in the runner; an idle DelegateContinue; a boot
+   *  recovery respawn; a workflow node continuation), so the plugin holds no wait loop of its own.
+   *
+   *  "Still open" is read from the same sources every other reader uses: the live registry (a running or
+   *  mirrored child edge), the durable run rows (a lifecycle still running/recovering — a boot-claimed
+   *  grandchild whose recovery turn has not registered yet, or the instant between a call's edge dropping
+   *  and its terminal row landing) and the workflow engine (a DAG is running between node claims with no
+   *  child edge at all). The wait is event-driven on the registry and bounded backoff elsewhere; it has
+   *  no deadline of its own, because the only two things that legitimately end it are the grandchildren
+   *  finishing and the delegation being stopped — a stop is honoured through the abort fences, and a
+   *  wedged tree is the stall watchdog's call (progress is republished to `onEvent` only while a child is
+   *  provably live, so a silent stale row still trips it). Once the tree is quiet, the grandchildren's
+   *  durable results are drained INTO the child (the ordinary result delivery: a hidden turn on the
+   *  child, or a steer into its running turn) and the child's newest answer is read back; a delivery that
+   *  keeps failing is given a bounded budget and then the last answer stands — the row stays in the
+   *  inbox for the ordinary drains, and nothing is lost silently. */
+  async settleDelegatedReply(
     parentSessionId: string,
     childSessionId: string,
-    timeoutMs: number,
-  ): Promise<DelegatedChildrenSettlement> {
-    const parent = this.d.store.getSession(parentSessionId);
+    reply: string,
+    onEvent?: (e: BrainEvent) => void,
+  ): Promise<string> {
     const child = this.d.store.getSession(childSessionId);
-    if (!parent || !child || child.parent_session_id !== parentSessionId
-      || child.user_id !== parent.user_id || !isSubagentSession(childSessionId)) {
-      throw new Error('unknown sub-agent for this conversation — use DelegateList to choose an id from this conversation');
-    }
-    const workflowControl = (await this.resolvePlugins())?.control('workflow');
-    const hasLiveWorkflow = (): boolean => this.d.store.runningWorkflowIds(childSessionId)
-      .some((workflowId) => workflowControl?.isWorkflowLive({ workflowId }) === true);
-    const budget = Math.max(0, Math.floor(timeoutMs));
-    const deadline = Date.now() + budget;
-    let retryDelayMs = 250;
-    const backoff = async (): Promise<boolean> => {
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) return false;
-      await new Promise<void>((resolve) => {
-        const timer = setTimeout(resolve, Math.min(retryDelayMs, remaining));
-        timer.unref?.();
-      });
-      retryDelayMs = Math.min(retryDelayMs * 2, 5_000);
-      return true;
+    if (!child || child.parent_session_id !== parentSessionId || !isSubagentSession(childSessionId)) return reply;
+    let workflowControl: { isWorkflowLive(input: { workflowId: string }): boolean } | undefined | null = null;
+    const hasLiveWorkflow = async (): Promise<boolean> => {
+      const ids = this.d.store.runningWorkflowIds(childSessionId);
+      if (ids.length === 0) return false;
+      if (workflowControl === null) workflowControl = (await this.resolvePlugins())?.control('workflow');
+      return ids.some((workflowId) => workflowControl?.isWorkflowLive({ workflowId }) === true);
     };
-    while (true) {
-      if (this.sessions.hasActiveChildren(childSessionId)) {
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) return { status: 'timeout' };
-        const outcome = await this.sessions.waitForChildrenIdle(childSessionId, remaining);
-        if (outcome === 'timeout') return { status: 'timeout' };
+    const abortedByStop = (): boolean =>
+      this.sessions.hasPendingAbort(childSessionId) || this.sessions.isParentAborting(childSessionId);
+    const sleep = async (ms: number): Promise<void> => {
+      await new Promise<void>((resolve) => { setTimeout(resolve, ms).unref?.(); });
+    };
+    let latest = reply;
+    let drained = false;
+    let backoffMs = SETTLE_BACKOFF_MIN_MS;
+    let pendingSince: number | undefined;
+    let rowOnlySince: number | undefined;
+    this.settling.set(childSessionId, (this.settling.get(childSessionId) ?? 0) + 1);
+    try {
+    for (;;) {
+      // A DelegateStop on the child (or a stop of its parent) tears its tree down and marks the delegation
+      // aborted; running the drain's hidden turn on a stopped child would be new work on a dead call.
+      if (abortedByStop()) throw new Error('delegation aborted');
+      const liveChildren = this.sessions.hasActiveChildren(childSessionId);
+      const liveWorkflow = !liveChildren && await hasLiveWorkflow();
+      const openRows = !liveChildren && !liveWorkflow && this.d.store.activeDelegationChildIds(childSessionId).length > 0;
+      if (liveChildren || liveWorkflow) rowOnlySince = undefined;
+      if (openRows) {
+        rowOnlySince ??= Date.now();
+        if (Date.now() - rowOnlySince >= SETTLE_ROW_ONLY_BUDGET_MS) {
+          logger('brain-subagent').warn(`delegated call on ${childSessionId}: a nested run row stayed open with no live work behind it for ${Math.round(SETTLE_ROW_ONLY_BUDGET_MS / 60_000)} minutes — settling on the child's last answer`);
+          rowOnlySince = undefined;
+        }
       }
-      // A workflow publishes `running` BEFORE its first node acquires a child claim, and can have the same
-      // zero-child gap between nodes. Ask the owning engine, not the durable row (which can be stale after a
-      // failed terminal snapshot); bounded backoff bridges the gap until a node claim takes over.
-      if (hasLiveWorkflow()) {
-        if (!await backoff()) return { status: 'timeout' };
+      if (liveChildren || liveWorkflow || (openRows && rowOnlySince !== undefined)) {
+        if (liveChildren) {
+          if (await this.sessions.waitForChildrenIdle(childSessionId, SETTLE_KEEPALIVE_MS) === 'timeout') {
+            this.publishNestedProgress(childSessionId, onEvent);
+          }
+        } else {
+          await sleep(backoffMs);
+          backoffMs = Math.min(backoffMs * 2, SETTLE_BACKOFF_MAX_MS);
+          // A workflow is live work too (the engine vouched for it); keep the plugin's watchdog informed.
+          if (liveWorkflow && backoffMs >= SETTLE_BACKOFF_MAX_MS) this.publishNestedProgress(childSessionId, onEvent);
+        }
         continue;
       }
-
-      await this.turnRunner.drainPendingSubagentResults(child.user_id, childSessionId);
-      // A result-delivery turn may itself fan out more work. Re-enter both guards before reading the answer,
-      // or a second generation would be cut off exactly like the first one was.
-      if (this.sessions.hasActiveChildren(childSessionId) || hasLiveWorkflow()) continue;
+      backoffMs = SETTLE_BACKOFF_MIN_MS;
       if (this.d.store.pendingSubagentResults(childSessionId).length === 0) {
-        return { status: 'settled', reply: this.delegated.readSubagent(parentSessionId, childSessionId, true) };
+        if (!drained) return latest;
+        try { latest = this.delegated.readSubagent(parentSessionId, childSessionId, true); }
+        catch { /* the child answered nothing new — the last reply stands */ }
+        return latest;
       }
-      if (!await backoff()) return { status: 'pending' };
+      drained = true;
+      await this.turnRunner.drainPendingSubagentResults(child.user_id, childSessionId);
+      // The result turn may itself have fanned out again — re-enter the guards above before reading. A
+      // result the drain could not deliver (its own retry timer is armed) gets a bounded wait here.
+      if (this.d.store.pendingSubagentResults(childSessionId).length === 0) { pendingSince = undefined; continue; }
+      pendingSince ??= Date.now();
+      if (Date.now() - pendingSince >= SETTLE_PENDING_DELIVERY_BUDGET_MS) {
+        logger('brain-subagent').warn(`delegated call on ${childSessionId} settles with undelivered nested result(s) still in its inbox (the ordinary drains retry them)`);
+        try { latest = this.delegated.readSubagent(parentSessionId, childSessionId, true); } catch { /* as above */ }
+        return latest;
+      }
+      await sleep(backoffMs);
+      backoffMs = Math.min(backoffMs * 2, SETTLE_BACKOFF_MAX_MS);
     }
+    } finally {
+      const holders = (this.settling.get(childSessionId) ?? 1) - 1;
+      if (holders <= 0) this.settling.delete(childSessionId); else this.settling.set(childSessionId, holders);
+    }
+  }
+
+  /** Children whose delegated call is between turns inside {@link settleDelegatedReply}, with how many
+   *  calls hold them there. A follow-up to such a child is not "busy between model steps": nothing is
+   *  starting up, no turn is queued — the child is simply waiting, and its next turn can run now (the
+   *  session lock serializes it against the drain's own hidden turn). */
+  private readonly settling = new Map<string, number>();
+
+  /** Is this child waiting inside a delegated call's settlement (see {@link settling})? */
+  isSettlingChild(childSessionId: string): boolean {
+    return (this.settling.get(childSessionId) ?? 0) > 0;
+  }
+
+  /** The keep-alive of {@link settleDelegatedReply}: republish the child's newest live sub-agent row —
+   *  or, when its live work is a workflow (nodes carry no run row), the workflow snapshot — to the
+   *  delegating plugin's progress sink while the child waits on it. Real durable state, not a synthetic
+   *  tick: the plugin's stall watchdog counts it as activity (a wait on live nested work is not a stall)
+   *  and DelegateStatus / the rail render it as "waiting for its own sub-agent". Liveness is the
+   *  lifecycle's, not the display status': a steered continuation's row stays visibly running under a
+   *  closed lifecycle and must not be the one named here. */
+  private publishNestedProgress(childSessionId: string, onEvent?: (e: BrainEvent) => void): void {
+    if (!onEvent) return;
+    const live = new Set(this.d.store.activeDelegationChildIds(childSessionId));
+    let newest: BrainSubagentRun | undefined;
+    for (const run of this.d.store.getSubagentRuns(childSessionId)) {
+      if (run.status === 'running' && live.has(run.sessionId) && (!newest || run.rowid > newest.rowid)) newest = run;
+    }
+    if (newest) {
+      const { toolCallId: id, rowid: _rowid, ...state } = newest;
+      onEvent({ type: 'subagent', id, ...state });
+      return;
+    }
+    const workflow = this.d.store.getWorkflowRuns(childSessionId).findLast((run) => run.status === 'running');
+    if (workflow) onEvent({ type: 'workflow', ...workflow });
   }
 
   /** Stop a runaway or no-longer-needed DIRECT sub-agent — see DelegatedSessionService.stopSubagent. */
@@ -2436,12 +2536,16 @@ export class BrainService {
 
   /** Execute ONE delegated turn in THIS process. The single delegated entry point: the daemon reaches it
    *  through the dispatch when the runner is off, and the runner calls it for a turn that arrived over
-   *  IPC — so both compose the child's session from the same builder. */
+   *  IPC — so both compose the child's session from the same builder. The reply is SETTLED here, in the
+   *  process that ran the turn (see settleDelegatedReply): a child that delegated further is not finished
+   *  when its turn returns, and this process is the one whose registry, inbox drain and workflow engine
+   *  see the child's own children — the daemon's view of a runner-hosted child is only a mirror. */
   async runDelegatedTurn(request: DelegatedTurnRequest, text: string, onEvent?: (e: BrainEvent) => void): Promise<string> {
-    return this.channelService.send(
+    const reply = await this.channelService.send(
       delegatedChannelSendOpts(request, { policyForProjects: this.d.policyForProjects, identity: this.identity }, onEvent),
       text,
     );
+    return this.settleDelegatedReply(request.parentSessionId, channelSessionId(request.channelId), reply, onEvent);
   }
 
   /** Abort a channel session's in-flight turn and its delegated descendants — the same teardown a

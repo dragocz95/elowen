@@ -30,13 +30,14 @@ function modelSelectionFromSpec(spec: string): BrainModelSelection {
 }
 
 /** The BrainEvent members whose live fields actually feed a delegated child's progress row: the child's
- *  session id, tool starts, and step/idle token usage. The host narrows every child event onto the plugin
+ *  session id, tool starts, step/idle token usage, and the status of the child's own sub-agents (what the
+ *  call reports while the host holds it open for them). The host narrows every child event onto the plugin
  *  contract ({@link SubagentProgressEvent}) before invoking the delegating plugin's callback, so a
  *  BrainEvent change must fail HERE at compile time instead of silently widening or starving what the
  *  plugin receives. The pin below asserts the source members still fit the declared shape (catches a
  *  field type change) AND still carry every declared key (catches a field removal). */
-type SubagentProgressSource = Extract<BrainEvent, { type: 'session' | 'tool' | 'step' | 'idle' }>;
-type SubagentProgressKeys = 'type' | 'name' | 'detail' | 'sessionId' | 'usage';
+type SubagentProgressSource = Extract<BrainEvent, { type: 'session' | 'tool' | 'step' | 'idle' | 'subagent' | 'workflow' }>;
+type SubagentProgressKeys = 'type' | 'name' | 'detail' | 'sessionId' | 'status' | 'usage';
 type SourceKeysOf<T> = T extends T ? keyof T : never;
 const subagentProgressContract: (SubagentProgressSource extends SubagentProgressEvent ? true : never)
   & (SubagentProgressKeys extends SourceKeysOf<SubagentProgressSource> ? true : never) = true;
@@ -53,6 +54,7 @@ function narrowSubagentProgress(e: BrainEvent): SubagentProgressEvent {
     ...('name' in e && e.name !== undefined ? { name: e.name } : {}),
     ...('detail' in e && e.detail !== undefined ? { detail: e.detail } : {}),
     ...('sessionId' in e && e.sessionId !== undefined ? { sessionId: e.sessionId } : {}),
+    ...('status' in e && e.status !== undefined ? { status: e.status } : {}),
     ...('usage' in e && e.usage !== undefined ? { usage: { totalTokens: e.usage.totalTokens } } : {}),
   };
 }
@@ -114,6 +116,16 @@ interface DelegatedSessionDeps {
    *  find its own way in. The host routes by parent class: the owner/sub-agent inbox drain, or the
    *  platform room's own resume carrying the result. */
   onRecoveredRunCompleted?: (parentSessionId: string, ownerUserId: number) => Promise<void>;
+  /** Settle a delegated call's reply against the child's OWN still-open delegations before it is handed
+   *  to the parent — see BrainService.settleDelegatedReply, the one owner of that rule. Every path here
+   *  that produces such a reply (an idle DelegateContinue, a recovery respawn, a workflow node
+   *  continuation) runs through {@link settledCall}; the Delegate path itself settles in runDelegatedTurn.
+   *  Absent (a minimal wiring) ⇒ the turn's reply is the reply. */
+  settleReply?: (parentSessionId: string, childSessionId: string, reply: string, onEvent?: (e: BrainEvent) => void) => Promise<string>;
+  /** Is the child between turns inside a call's settlement (BrainService.isSettlingChild)? Such a child
+   *  reads as a live claim (the fence) with no steerable turn anywhere, which continueSubagent would
+   *  otherwise refuse as "starting up"; it can in fact take a fresh turn right now. */
+  isSettling?: (childSessionId: string) => boolean;
 }
 
 /** The sub-agent delegation half of the brain facade: the durable boot reconcile of restart-zombie
@@ -328,6 +340,25 @@ export class DelegatedSessionService {
     return settled.tail === 'continuable' ? { kind: 'continuable' } : { kind: 'empty', tail: settled.tail };
   }
 
+  /** Run ONE delegated call to the point where its reply is the parent's answer: the child's turn, then
+   *  the settlement against the child's own delegations (settleReply), all under the parent→child edge
+   *  and abort fences ChannelSessionService.sendRemote holds — the same shape the Delegate dispatch has.
+   *  The edge is what makes the wait observable and stoppable: the child reads as a live claim of this
+   *  call for as long as it is open (registry, status, the running-sub-agents block), and a stop on it or
+   *  on its parent reaches a call that is between turns exactly like one mid-turn. */
+  private settledCall(
+    parentSessionId: string, childSessionId: string, ownerUserId: number,
+    onEvent: ((e: BrainEvent) => void) | undefined, run: () => Promise<string>,
+  ): Promise<string> {
+    return this.d.channelService.sendRemote(
+      { channelId: channelIdOf(childSessionId), ownerUserId, parentSessionId },
+      async () => {
+        const reply = await run();
+        return this.d.settleReply ? this.d.settleReply(parentSessionId, childSessionId, reply, onEvent) : reply;
+      },
+    );
+  }
+
   /** A workflow node's child, resumed from the engine's recovery journal at boot. Workflow nodes have no
    *  run row (the DAG is the parent's durable unit), so the generic delegation sweep never sees them;
    *  the engine asks for the SAME continuation a delegation gets instead of re-prompting the node with
@@ -345,10 +376,11 @@ export class DelegatedSessionService {
     const settled = this.settleInterruptedChild(childSessionId);
     if (settled.kind === 'answered') return { outcome: 'answered', reply: settled.text };
     if (settled.kind === 'empty') return { outcome: 'empty' };
-    const reply = await this.sendDelegated(row.user_id, childSessionId, '', {
-      internalSystem: { customType: 'restart-continue', resultId: `restart-continue-${randomUUID()}`, continuation: true },
-      ...(onEvent ? { onEvent } : {}),
-    });
+    const reply = await this.settledCall(parentSessionId, childSessionId, row.user_id, onEvent, () =>
+      this.sendDelegated(row.user_id, childSessionId, '', {
+        internalSystem: { customType: 'restart-continue', resultId: `restart-continue-${randomUUID()}`, continuation: true },
+        ...(onEvent ? { onEvent } : {}),
+      }));
     return { outcome: 'continued', reply };
   }
 
@@ -397,9 +429,14 @@ export class DelegatedSessionService {
       });
       return 'terminalized';
     }
-    const answer = await this.sendDelegated(owner.user_id, childSessionId, '', {
-      internalSystem: { customType: 'restart-continue', resultId: `restart-continue-${randomUUID()}`, continuation: true },
-    });
+    // Settled like any other delegated call: a respawned child that delegates further in its continuation
+    // is finished only once its own children are, and the answer their results produce is the one that
+    // completes this run — completing on the provisional reply would hand the parent "still waiting" as
+    // the final word and leave the later conclusion with no run to ride into it.
+    const answer = await this.settledCall(parentSessionId, childSessionId, owner.user_id, undefined, () =>
+      this.sendDelegated(owner.user_id, childSessionId, '', {
+        internalSystem: { customType: 'restart-continue', resultId: `restart-continue-${randomUUID()}`, continuation: true },
+      }));
     // The respawn was a continuation turn of the CHILD, which never edits its own run row (that row belongs
     // to the parent), so the lifecycle is still `recovering` and completeRecoveredRun terminalizes it and
     // enqueues the answer in one transaction.
@@ -574,23 +611,32 @@ export class DelegatedSessionService {
       if (remote.outcome === 'aborted') throw new Error('delegation aborted');
       // Still registered as active with no steerable turn anywhere: the turn is queued for a runner slot,
       // starting up, or the child sits between turns (collecting background work). A fresh turn now could
-      // race the pending one — refuse, retryably, exactly like the old blanket refusal did.
-      if (this.d.sessions.isActiveChild(childSessionId)) {
+      // race the pending one — refuse, retryably, exactly like the old blanket refusal did. The one
+      // between-turns state that CAN take a turn is a call waiting in its settlement for the child's own
+      // sub-agents (isSettling): the child is idle, the wait is the whole grandchild's run, and the parent
+      // must be able to redirect it — the session lock serializes this turn against the drain's.
+      if (this.d.sessions.isActiveChild(childSessionId) && !this.d.isSettling?.(childSessionId)) {
         throw new Error('that sub-agent is busy between model steps (starting up or collecting background work) and cannot take a steered message right now — try again in a moment');
       }
-      // The delegation ended while we looked: the child is idle now, so fall through to a normal turn.
+      // The delegation ended while we looked (or is only settling): the child can run a normal turn.
     }
-    const reply = await this.sendDelegated(row.user_id, childSessionId, text, {
-      extraDeny: access.toolPolicy?.deny ?? [],
-      // A live PI session bakes its tool definitions in at construction, so the promoted scope would sit
-      // in the database doing nothing until the channel happened to be evicted. Respawn it — the same
-      // dispose-and-rebuild a model switch performs, and the transcript rehydrates from SQLite unchanged.
-      ...(promote || workspaceAttached ? { rebuildSession: true } : {}),
-      // The plugin's callback contract is the narrow progress shape, while the child's stream is the full
-      // BrainEvent set — narrow every event at this boundary so the value matches the declared contract.
-      ...(onEvent ? { onEvent: (e: BrainEvent) => onEvent(narrowSubagentProgress(e)) } : {}),
-      ...(model ? { model } : {}),
-    });
+    // The plugin's callback contract is the narrow progress shape, while the child's stream is the full
+    // BrainEvent set — narrow every event at this boundary so the value matches the declared contract.
+    const narrowed = onEvent ? (e: BrainEvent) => onEvent(narrowSubagentProgress(e)) : undefined;
+    // An idle continuation is a delegated call like the Delegate that spawned the child, and finishes on the
+    // same terms: its reply is final only once the child has no delegation of its own still open. This is
+    // the path the real case took — the parent's DelegateContinue returned "my helper is still running" as
+    // the child's answer while the grandchild it named ran on for another hour.
+    const reply = await this.settledCall(parentSessionId, childSessionId, row.user_id, narrowed, () =>
+      this.sendDelegated(row.user_id, childSessionId, text, {
+        extraDeny: access.toolPolicy?.deny ?? [],
+        // A live PI session bakes its tool definitions in at construction, so the promoted scope would sit
+        // in the database doing nothing until the channel happened to be evicted. Respawn it — the same
+        // dispose-and-rebuild a model switch performs, and the transcript rehydrates from SQLite unchanged.
+        ...(promote || workspaceAttached ? { rebuildSession: true } : {}),
+        ...(narrowed ? { onEvent: narrowed } : {}),
+        ...(model ? { model } : {}),
+      }));
     return { status: 'reply', reply };
   }
 

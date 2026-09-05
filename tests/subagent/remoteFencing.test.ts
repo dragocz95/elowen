@@ -73,6 +73,22 @@ describe('ChannelSessionService.sendRemote — the half of a delegated turn that
     await svc.sendRemote(req, async () => 'done');
     expect(edges).toEqual([['brain-1', CHILD, true], ['brain-1', CHILD, false]]);
   });
+
+  it('reports only the 0↔1 transitions of an edge held by overlapping calls — the mirror is a boolean', async () => {
+    // The settle fence (dispatch/settledCall) holds the edge AROUND the turn's own hold in send(). The
+    // daemon mirrors a runner's nested edges as one boolean claim per source, so an inner release reported
+    // over the wire would drop the edge while the outer holder still has it — and a `/stop` on the top
+    // conversation would walk past a child that is mid-settlement.
+    const edges: [string, string, boolean][] = [];
+    const { svc, registry } = serviceWith({ onDelegatedEdge: (p: string, c: string, r: boolean) => edges.push([p, c, r]) });
+    await svc.sendRemote(req, async () => {
+      await svc.sendRemote(req, async () => 'inner');
+      expect(registry.isActiveChild(CHILD)).toBe(true); // the outer hold survives the inner release
+      return 'outer';
+    });
+    expect(edges).toEqual([['brain-1', CHILD, true], ['brain-1', CHILD, false]]);
+    expect(registry.isActiveChild(CHILD)).toBe(false);
+  });
 });
 
 describe('ChannelSessionService.abort — reaching a child that lives in the runner', () => {

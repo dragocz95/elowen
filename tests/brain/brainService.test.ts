@@ -1391,25 +1391,38 @@ describe('BrainService', () => {
     expect(instruction).not.toContain('end your turn');
   });
 
-  it('does not inject stale durable running sub-agents when no live child is registered', async () => {
+  it('reports a durably open delegation as running — history and the running-subagents reminder alike — until its lifecycle closes', async () => {
+    // One source for "which children run": the run row's lifecycle, as DelegateList reads it. A row with no
+    // registry edge (a boot-claimed child whose recovery turn has not registered yet, or a child hosted in
+    // the runner before its edge mirrors) is still a running child, and hiding it here while the tool
+    // reported it running is the disagreement the 5 Sep rail bug came down to.
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     const { sessionId } = await svc.start(1);
-    d.store.createSession({ id: 'brain-ch-subagent-stale', userId: 1, model: 'm', parentSessionId: sessionId });
+    d.store.createSession({ id: 'brain-ch-subagent-open', userId: 1, model: 'm', parentSessionId: sessionId });
     d.store.appendMessage({
-      id: 'assistant-stale', sessionId, parentId: null, role: 'assistant',
-      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'delegate-stale', name: 'Delegate', arguments: { task: 'stale job' } }] },
+      id: 'assistant-open', sessionId, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'toolCall', id: 'delegate-open', name: 'Delegate', arguments: { task: 'open job' } }] },
     });
     d.store.upsertSubagentRun(sessionId, {
-      id: 'delegate-stale', sessionId: 'brain-ch-subagent-stale', status: 'running',
-      task: 'stale job', tools: 1, seconds: 9, background: true,
+      id: 'delegate-open', sessionId: 'brain-ch-subagent-open', status: 'running',
+      task: 'open job', tools: 1, seconds: 9, background: true, autoDeliver: true,
     });
 
     expect(svc.history(1).flatMap((turn) => turn.segments ?? [])
-      .some((segment) => segment.kind === 'tool' && segment.sub?.status === 'running')).toBe(false);
-
+      .some((segment) => segment.kind === 'tool' && segment.sub?.status === 'running')).toBe(true);
     await svc.send({ userId: 1, text: 'Continue', session: sessionId });
-    expect(d.session.prompt.mock.calls.at(-1)?.[0]).toBe('Continue');
+    expect(d.session.prompt.mock.calls.at(-1)?.[0]).toContain('<running-subagents>');
+
+    // The call closes (its terminal row lands): the same readers stop reporting it, registry or not.
+    d.store.upsertSubagentRun(sessionId, {
+      id: 'delegate-open', sessionId: 'brain-ch-subagent-open', status: 'done',
+      task: 'open job', tools: 3, seconds: 12, background: true, autoDeliver: true,
+    });
+    expect(svc.history(1).flatMap((turn) => turn.segments ?? [])
+      .some((segment) => segment.kind === 'tool' && segment.sub?.status === 'running')).toBe(false);
+    await svc.send({ userId: 1, text: 'Continue again', session: sessionId });
+    expect(d.session.prompt.mock.calls.at(-1)?.[0]).toBe('Continue again');
   });
 
   it('applies a per-user model override', async () => {
@@ -8360,16 +8373,18 @@ describe('BrainService.readSubagent (a parent recovering a stored final result)'
   });
 });
 
-describe('BrainService.settleSubagentChildren (a delegated parent waiting on its own children)', () => {
-  it('keeps the outer child active, waits for its grandchild, then returns the integrated answer', async () => {
+describe('BrainService.settleDelegatedReply (a delegated call is finished only when the child has no delegation of its own open)', () => {
+  const SCOPE = { admin: true, projectIds: [], owner: true, permissionBoundary: null };
+
+  /** One owner conversation, one child under it (already answered provisionally), one grandchild session. */
+  async function seed() {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     const { sessionId } = await svc.start(1);
     const child = 'brain-ch-subagent-sub-parent';
     const grandchild = 'brain-ch-subagent-sub-grandchild';
-    const scope = { admin: true, projectIds: [], owner: true, permissionBoundary: null };
-    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId, delegatedAccess: scope });
-    d.store.createSession({ id: grandchild, userId: 1, model: 'm', parentSessionId: child, delegatedAccess: scope });
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId, delegatedAccess: SCOPE });
+    d.store.createSession({ id: grandchild, userId: 1, model: 'm', parentSessionId: child, delegatedAccess: SCOPE });
     d.store.appendMessage({
       id: 'assistant-provisional', sessionId: child, parentId: null, role: 'assistant',
       content: { content: 'I started the explorers and will report later.' },
@@ -8378,30 +8393,164 @@ describe('BrainService.settleSubagentChildren (a delegated parent waiting on its
       sessions: {
         setChildRunning(parent: string, childId: string, running: boolean): void;
         isActiveChild(childId: string): boolean;
+        requestPendingAbort(id: string): void;
       };
     }).sessions;
-    sessions.setChildRunning(sessionId, child, true);      // the OUTER Delegate remains alive
-    sessions.setChildRunning(child, grandchild, true);     // nested background work
+    // The drain is the ordinary result delivery INTO the child (a hidden turn); here it stands in for the
+    // child's follow-up turn on the grandchild's result and writes the conclusion that turn would produce.
     const drain = vi.fn(async () => {
       d.store.appendMessage({
-        id: 'assistant-integrated', sessionId: child, parentId: null, role: 'assistant',
+        id: `assistant-integrated-${drain.mock.calls.length}`, sessionId: child, parentId: null, role: 'assistant',
         content: { content: 'All explorer findings are integrated and the fix is complete.' },
       });
+      for (const r of d.store.pendingSubagentResults(child)) d.store.acknowledgeSubagentResult(child, r.id);
       return { answered: true, requiresUserAction: false, acknowledged: [], deliveredPending: [] };
     });
     (svc as unknown as { turnRunner: { drainPendingSubagentResults: unknown } }).turnRunner.drainPendingSubagentResults = drain;
+    const settle = (onEvent?: (e: unknown) => void) =>
+      svc.settleDelegatedReply(sessionId, child, 'I started the explorers and will report later.', onEvent as never);
+    return { d, svc, sessionId, child, grandchild, sessions, drain, settle };
+  }
 
-    const settlement = svc.settleSubagentChildren(sessionId, child, 1_000);
-    await Promise.resolve();
+  it('returns the turn reply untouched when the child delegated nothing', async () => {
+    const { settle, drain } = await seed();
+    await expect(settle()).resolves.toBe('I started the explorers and will report later.');
     expect(drain).not.toHaveBeenCalled();
+  });
+
+  it('holds the call open while the grandchild runs, then delivers the conclusion of the turn its result triggers', async () => {
+    // The production case (5 Sep): the child ended its turn with "my helper is still running" while its
+    // background sub-agent ran on; the parent's blocking call returned that as the answer and the real
+    // conclusion, produced in the child's later turn, reached nobody.
+    const { d, sessionId, child, grandchild, sessions, drain, settle } = await seed();
+    sessions.setChildRunning(sessionId, child, true);   // the OUTER call's edge, held by the caller
+    sessions.setChildRunning(child, grandchild, true);  // the child's own background delegation
+    d.store.upsertSubagentRun(child, { id: 'gc-call', sessionId: grandchild, status: 'running', task: 'explore', tools: 0, seconds: 0, background: true });
+
+    let settled: string | undefined;
+    const pending = settle().then((reply) => { settled = reply; return reply; });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(settled).toBeUndefined();          // the parent's blocking call has NOT returned
+    expect(drain).not.toHaveBeenCalled();
+
+    // The grandchild finishes: its row goes terminal and its result lands in the child's inbox.
+    d.store.upsertSubagentRun(child, { id: 'gc-call', sessionId: grandchild, status: 'done', task: 'explore', tools: 3, seconds: 9, background: true });
+    expect(d.store.enqueueSubagentResult(child, {
+      id: 'gc-result', toolCallId: 'gc-call', sessionId: grandchild, status: 'done', task: 'explore', result: 'found it', tools: 3, seconds: 9,
+    })).toBe(true);
     sessions.setChildRunning(child, grandchild, false);
 
-    await expect(settlement).resolves.toEqual({
-      status: 'settled',
-      reply: 'All explorer findings are integrated and the fix is complete.',
-    });
+    await expect(pending).resolves.toBe('All explorer findings are integrated and the fix is complete.');
     expect(drain).toHaveBeenCalledWith(1, child);
-    expect(sessions.isActiveChild(child)).toBe(true); // reading the answer did not terminalize the outer call
+    expect(sessions.isActiveChild(child)).toBe(true); // settling never terminalizes the outer call itself
+  });
+
+  it('a still-open run row is enough to hold the call — a boot-claimed grandchild has no registry edge yet', async () => {
+    const { d, child, grandchild, drain, settle } = await seed();
+    d.store.upsertSubagentRun(child, { id: 'gc-call', sessionId: grandchild, status: 'running', task: 'explore', tools: 0, seconds: 0 });
+    let settled: string | undefined;
+    const pending = settle().then((reply) => { settled = reply; return reply; });
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    expect(settled).toBeUndefined();
+    d.store.upsertSubagentRun(child, { id: 'gc-call', sessionId: grandchild, status: 'done', task: 'explore', tools: 1, seconds: 1 });
+    await expect(pending).resolves.toBe('I started the explorers and will report later.');
+    expect(drain).not.toHaveBeenCalled(); // nothing was enqueued for the child, so no turn was spent
+  });
+
+  it('a stop on the child mid-wait ends the call as aborted instead of running a turn on a stopped child', async () => {
+    const { sessionId, child, grandchild, sessions, drain, settle } = await seed();
+    sessions.setChildRunning(sessionId, child, true);
+    sessions.setChildRunning(child, grandchild, true);
+    const pending = settle();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // What DelegateStop/abortTree do to a between-turns child: mark it, tear its children down.
+    sessions.requestPendingAbort(child);
+    sessions.setChildRunning(child, grandchild, false);
+    await expect(pending).rejects.toThrow('delegation aborted');
+    expect(drain).not.toHaveBeenCalled();
+  });
+
+  it('republishes the running grandchild to the delegating plugin while it waits, so the wait is neither silent nor a stall', async () => {
+    vi.useFakeTimers();
+    try {
+      const { d, sessionId, child, grandchild, sessions, settle } = await seed();
+      sessions.setChildRunning(sessionId, child, true);
+      sessions.setChildRunning(child, grandchild, true);
+      d.store.upsertSubagentRun(child, { id: 'gc-call', sessionId: grandchild, status: 'running', task: 'explore', tools: 2, seconds: 5 });
+      const events: Record<string, unknown>[] = [];
+      const pending = settle((e) => events.push(e as Record<string, unknown>));
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(events).toEqual([expect.objectContaining({ type: 'subagent', id: 'gc-call', sessionId: grandchild, status: 'running', task: 'explore' })]);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(events).toHaveLength(2);
+      d.store.upsertSubagentRun(child, { id: 'gc-call', sessionId: grandchild, status: 'done', task: 'explore', tools: 2, seconds: 5 });
+      sessions.setChildRunning(child, grandchild, false);
+      await expect(pending).resolves.toBe('I started the explorers and will report later.');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a run row nobody drives holds the call only for a bounded budget, then the last answer stands', async () => {
+    vi.useFakeTimers();
+    try {
+      const { d, child, grandchild, drain, settle } = await seed();
+      // No registry edge, no live workflow — a terminal upsert that never landed leaves this row `running`.
+      d.store.upsertSubagentRun(child, { id: 'gc-stale', sessionId: grandchild, status: 'running', task: 'stale', tools: 0, seconds: 0 });
+      let settled: string | undefined;
+      const pending = settle().then((reply) => { settled = reply; return reply; });
+      await vi.advanceTimersByTimeAsync(4 * 60_000);
+      expect(settled).toBeUndefined();
+      await vi.advanceTimersByTimeAsync(2 * 60_000);
+      await expect(pending).resolves.toBe('I started the explorers and will report later.');
+      expect(drain).not.toHaveBeenCalled();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps the plugin informed while the child\'s live work is a workflow (nodes carry no run row)', async () => {
+    vi.useFakeTimers();
+    try {
+      const { d, svc, child, settle } = await seed();
+      d.store.upsertWorkflowRun(child, { id: 'wf-live', toolCallId: 'call-wf-live', status: 'running', background: true, nodes: [] });
+      let workflowLive = true;
+      (svc as unknown as { resolvePlugins: () => Promise<unknown> }).resolvePlugins = async () => ({
+        control: (name: string) => name === 'workflow' ? { isWorkflowLive: () => workflowLive } : undefined,
+      });
+      const events: Record<string, unknown>[] = [];
+      const pending = settle((e) => events.push(e as Record<string, unknown>));
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(events.length).toBeGreaterThan(0);
+      expect(events[0]).toMatchObject({ type: 'workflow', id: 'wf-live', status: 'running' });
+      workflowLive = false;
+      d.store.upsertWorkflowRun(child, { id: 'wf-live', toolCallId: 'call-wf-live', status: 'done', background: true, nodes: [] });
+      await vi.advanceTimersByTimeAsync(10_000);
+      await expect(pending).resolves.toBe('I started the explorers and will report later.');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('a follow-up to a child that is only settling runs as its own turn instead of being refused as busy', async () => {
+    const { d, svc, sessionId, child, grandchild, sessions, settle } = await seed();
+    sessions.setChildRunning(sessionId, child, true);
+    sessions.setChildRunning(child, grandchild, true);
+    const pending = settle();
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(svc.isSettlingChild(child)).toBe(true);
+    const send = vi.fn(async () => 'redirected');
+    (svc as unknown as { channelService: { send: unknown; steerDelegatedTurn: unknown } }).channelService.send = send;
+    (svc as unknown as { channelService: { steerDelegatedTurn: unknown } }).channelService.steerDelegatedTurn = async () => 'idle';
+    // The continuation is itself a settled call and shares the wait; release the grandchild so both close.
+    const follow = svc.continueSubagent(sessionId, child, 'change course', { admin: true, projectIds: [], owner: true, permissionBoundary: null });
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(send).toHaveBeenCalledTimes(1); // the turn ran now, not "try again in a moment"
+    d.store.appendMessage({ id: 'redirected', sessionId: child, parentId: null, role: 'assistant', content: { content: 'redirected' } });
+    sessions.setChildRunning(child, grandchild, false);
+    await expect(follow).resolves.toEqual({ status: 'reply', reply: 'redirected' });
+    await expect(pending).resolves.toBe('I started the explorers and will report later.');
+    expect(svc.isSettlingChild(child)).toBe(false);
   });
 
   it('does not mistake a running workflow between node claims for an idle child', async () => {
@@ -8409,8 +8558,7 @@ describe('BrainService.settleSubagentChildren (a delegated parent waiting on its
     const svc = new BrainService(d as never);
     const { sessionId } = await svc.start(1);
     const child = 'brain-ch-subagent-sub-workflow-parent';
-    const scope = { admin: true, projectIds: [], owner: true, permissionBoundary: null };
-    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId, delegatedAccess: scope });
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId, delegatedAccess: SCOPE });
     d.store.appendMessage({
       id: 'assistant-workflow-provisional', sessionId: child, parentId: null, role: 'assistant',
       content: { content: 'The workflow started.' },
@@ -8427,19 +8575,43 @@ describe('BrainService.settleSubagentChildren (a delegated parent waiting on its
         id: 'assistant-workflow-integrated', sessionId: child, parentId: null, role: 'assistant',
         content: { content: 'The workflow is complete and integrated.' },
       });
+      for (const r of d.store.pendingSubagentResults(child)) d.store.acknowledgeSubagentResult(child, r.id);
       return { answered: true, requiresUserAction: false, acknowledged: [], deliveredPending: [] };
     });
     (svc as unknown as { turnRunner: { drainPendingSubagentResults: unknown } }).turnRunner.drainPendingSubagentResults = drain;
 
-    const settlement = svc.settleSubagentChildren(sessionId, child, 1_000);
+    const settlement = svc.settleDelegatedReply(sessionId, child, 'The workflow started.');
     await new Promise((resolve) => setTimeout(resolve, 20));
     expect(drain).not.toHaveBeenCalled();
     // Leave the durable row stale-running on purpose: only the engine can say whether the DAG still exists.
     workflowLive = false;
+    expect(d.store.enqueueWorkflowResult(child, { id: 'wf-gap', toolCallId: 'call-wf-gap', status: 'done', result: 'all nodes done' })).toBe(true);
 
-    await expect(settlement).resolves.toEqual({
-      status: 'settled', reply: 'The workflow is complete and integrated.',
+    await expect(settlement).resolves.toBe('The workflow is complete and integrated.');
+  });
+
+  it('runDelegatedTurn hands the parent the SETTLED reply — the Delegate path itself, in-process and in the runner', async () => {
+    const { d, svc, sessionId, child, grandchild, sessions, drain } = await seed();
+    (svc as unknown as { channelService: { send: unknown } }).channelService.send = vi.fn(async () => {
+      // The child's turn spawned a background grandchild and ended.
+      sessions.setChildRunning(child, grandchild, true);
+      d.store.upsertSubagentRun(child, { id: 'gc-call', sessionId: grandchild, status: 'running', task: 'explore', tools: 0, seconds: 0, background: true });
+      return 'I started the explorers and will report later.';
     });
+    const pending = svc.runDelegatedTurn({
+      channelId: 'subagent-sub-parent', ownerUserId: 1, parentSessionId: sessionId, delegatedAccess: SCOPE,
+    } as never, 'audit everything');
+    let settled: string | undefined;
+    void pending.then((reply) => { settled = reply; });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(settled).toBeUndefined();
+    d.store.upsertSubagentRun(child, { id: 'gc-call', sessionId: grandchild, status: 'done', task: 'explore', tools: 3, seconds: 9, background: true });
+    expect(d.store.enqueueSubagentResult(child, {
+      id: 'gc-result', toolCallId: 'gc-call', sessionId: grandchild, status: 'done', task: 'explore', result: 'found it', tools: 3, seconds: 9,
+    })).toBe(true);
+    sessions.setChildRunning(child, grandchild, false);
+    await expect(pending).resolves.toBe('All explorer findings are integrated and the fix is complete.');
+    expect(drain).toHaveBeenCalledWith(1, child);
   });
 });
 
@@ -8476,6 +8648,43 @@ describe('BrainService.continueSubagent (a delegating turn picking a sub-agent b
     expect(opts.delegatedAccess).toMatchObject({ admin: true, owner: true });
     // Never roll the transcript over: continuing IS the reason it is still around.
     expect(opts.idleRolloverMs).toBe(Number.POSITIVE_INFINITY);
+  });
+
+  it('an idle continuation is finished only once the child has no delegation of its own open — the 5 Sep case', async () => {
+    // The parent's DelegateContinue got "my helper is still running" back as the child's final answer while
+    // the grandchild the child had just started ran on; the conclusion of the child's later turn on that
+    // grandchild's result never reached the parent. The continuation now waits for it, exactly like a
+    // Delegate does, and is held as a live claim meanwhile.
+    const { d, svc, sessionId, child, send, sessions } = await seed();
+    const grandchild = 'brain-ch-subagent-sub-gc';
+    d.store.createSession({ id: grandchild, userId: 1, model: 'm', parentSessionId: child, delegatedAccess: SCOPE });
+    send.mockImplementation(async () => {
+      sessions.setChildRunning(child, grandchild, true);
+      d.store.upsertSubagentRun(child, { id: 'gc-call', sessionId: grandchild, status: 'running', task: 'verify', tools: 0, seconds: 0, background: true });
+      d.store.appendMessage({ id: 'child-provisional', sessionId: child, parentId: null, role: 'assistant', content: { content: 'started a helper, will report' } });
+      return 'started a helper, will report';
+    });
+    const drain = vi.fn(async () => {
+      d.store.appendMessage({ id: 'child-final', sessionId: child, parentId: null, role: 'assistant', content: { content: 'helper done: all green' } });
+      for (const r of d.store.pendingSubagentResults(child)) d.store.acknowledgeSubagentResult(child, r.id);
+      return { answered: true, requiresUserAction: false, acknowledged: [], deliveredPending: [] };
+    });
+    (svc as unknown as { turnRunner: { drainPendingSubagentResults: unknown } }).turnRunner.drainPendingSubagentResults = drain;
+    const isActive = (svc as unknown as { sessions: { isActiveChild(id: string): boolean } }).sessions;
+
+    let result: unknown;
+    const pending = svc.continueSubagent(sessionId, child, 'finish it', ADMIN_ACCESS).then((r) => { result = r; return r; });
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(result).toBeUndefined();                 // the blocking DelegateContinue has not returned
+    expect(isActive.isActiveChild(child)).toBe(true); // and the child is a live claim of this call meanwhile
+
+    d.store.upsertSubagentRun(child, { id: 'gc-call', sessionId: grandchild, status: 'done', task: 'verify', tools: 2, seconds: 4, background: true });
+    expect(d.store.enqueueSubagentResult(child, { id: 'gc-res', toolCallId: 'gc-call', sessionId: grandchild, status: 'done', task: 'verify', result: 'green', tools: 2, seconds: 4 })).toBe(true);
+    sessions.setChildRunning(child, grandchild, false);
+
+    await expect(pending).resolves.toEqual({ status: 'reply', reply: 'helper done: all green' });
+    expect(drain).toHaveBeenCalledWith(1, child);
+    expect(isActive.isActiveChild(child)).toBe(false); // the call closed with its answer
   });
 
   // The plugin contract promises only type/name/detail/sessionId/usage.totalTokens — the child's full

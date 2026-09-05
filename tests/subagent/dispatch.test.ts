@@ -59,6 +59,19 @@ describe('SubagentDispatch — where a delegated turn executes', () => {
     expect(await d.send(request, 'do it')).toBe('local');
   });
 
+  it('holds the in-process turn under the same fence: the call stays a live claim through its settlement', async () => {
+    // runDelegatedTurn settles the reply against the child's own delegations AFTER ChannelSessionService.send
+    // released the turn's edge; the fence here is what keeps the call open (and stoppable) for that wait.
+    const fenced: string[] = [];
+    const d = new SubagentDispatch({
+      runTurn: async () => 'local',
+      fenceRemote: (req, run) => { fenced.push(req.channelId); return run(); },
+    });
+    expect(d.mode()).toBe('in-process');
+    expect(await d.send(request, 'do it')).toBe('local');
+    expect(fenced).toEqual(['subagent-sub-dlg-1']);
+  });
+
   it('forwards to the runner while the switch is ON, through the daemon-side fence', async () => {
     const fenced: string[] = [];
     const runner = fakeRunner(async (_req, text) => `remote:${text}`);

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll } from 'vitest';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { loadPlugins } from '../../src/plugins/loader.js';
@@ -288,77 +288,57 @@ describe('delegate — the access handed to the child', () => {
   });
 });
 
-describe('Delegate — nested background sub-agents', () => {
-  it('returns the child\'s integrated answer instead of its provisional children-started reply', async () => {
-    const settleChildren = vi.fn(async () => ({ status: 'settled' as const, reply: 'all four audits integrated and fixed' }));
-    const reg = await loadPlugins({
-      dirs: [join(repoRoot, 'plugins')], enabled: ['subagent'], logger: log,
-      delegatedChildren: {
-        runs: () => [],
-        read: () => 'not used',
-        continue: async () => ({ status: 'reply', reply: 'not used' }),
-        settleChildren,
-        stop: async () => ({ stopped: false }),
-      },
-    });
-    const platform = reg.platforms.find((candidate) => candidate.name === 'subagent')!;
-    platform.listen(async (_source: unknown, _text: string, onEvent?: (event: Record<string, unknown>) => void) => {
-      onEvent?.({ type: 'session', sessionId: 'brain-ch-subagent-sub-parent' });
-      onEvent?.({ type: 'subagent', sessionId: 'brain-ch-subagent-sub-grandchild', status: 'running' });
-      return 'I started four explorers and will report later.';
-    });
-    const tool = reg.tools.find((candidate) => candidate.name === 'Delegate')!;
-    const result = await runWithPolicy(
-      adminPolicy,
-      () => (tool as unknown as { execute(id: string, params: unknown): Promise<{ content: { text: string }[] }> })
-        .execute('call-parent', { task: 'audit and implement everything' }),
-      { identity: owner, sessionId: 'brain-1' },
-    );
-
-    expect(result.content[0]?.text).toBe('all four audits integrated and fixed');
-    expect(settleChildren).toHaveBeenCalledWith(
-      'brain-1',
-      'brain-ch-subagent-sub-parent',
-      5 * 60_000,
-    );
-  });
-
-  it('does not terminalize the parent after the old eight-window collect ceiling', async () => {
-    let attempt = 0;
-    const settleChildren = vi.fn(async () => {
-      attempt += 1;
-      return attempt <= 9
-        ? { status: 'timeout' as const }
-        : { status: 'settled' as const, reply: 'long-running child tree finally integrated' };
-    });
+describe('Delegate — a child that delegates further', () => {
+  // The wait itself is the host's (BrainService.settleDelegatedReply): the `run` handle resolves only once
+  // the child has no delegation of its own open, so the plugin has NO loop and no collect reminder — it
+  // takes whatever the settled handle returns as the answer. What the plugin owns is what the call's
+  // progress row says meanwhile and that the wait never reads as a stall.
+  async function loadDelegate(runHandle: (source: unknown, text: string, onEvent?: (event: Record<string, unknown>) => void) => Promise<string>) {
+    const emitted: Record<string, unknown>[] = [];
     const reg = await loadPlugins({
       dirs: [join(repoRoot, 'plugins')], enabled: ['subagent'], logger: log,
       delegatedChildren: {
         runs: () => [], read: () => 'not used',
         continue: async () => ({ status: 'reply', reply: 'not used' }),
-        settleChildren, stop: async () => ({ stopped: false }),
+        stop: async () => ({ stopped: false }),
       },
     });
-    let turns = 0;
     const platform = reg.platforms.find((candidate) => candidate.name === 'subagent')!;
-    platform.listen(async (_source: unknown, _text: string, onEvent?: (event: Record<string, unknown>) => void) => {
-      turns += 1;
-      if (turns === 1) {
-        onEvent?.({ type: 'session', sessionId: 'brain-ch-subagent-sub-parent' });
-        onEvent?.({ type: 'subagent', sessionId: 'brain-ch-subagent-sub-grandchild', status: 'running' });
-      }
-      return 'still waiting';
-    });
+    platform.listen(runHandle);
     const tool = reg.tools.find((candidate) => candidate.name === 'Delegate')!;
     const result = await runWithPolicy(
       adminPolicy,
       () => (tool as unknown as { execute(id: string, params: unknown): Promise<{ content: { text: string }[] }> })
-        .execute('call-long-parent', { task: 'wait for every child' }),
-      { identity: owner, sessionId: 'brain-1' },
+        .execute('call-parent', { task: 'audit and implement everything' }),
+      { identity: owner, sessionId: 'brain-1', emitSubagent: ((update: Record<string, unknown>) => { emitted.push(update); return true; }) as never },
     );
+    return { result, emitted };
+  }
 
-    expect(settleChildren).toHaveBeenCalledTimes(10);
-    expect(turns).toBe(10); // initial turn + nine bounded wait reminders
-    expect(result.content[0]?.text).toBe('long-running child tree finally integrated');
+  it('takes the settled handle\'s answer as the result, with no collect loop of its own', async () => {
+    let turns = 0;
+    const { result } = await loadDelegate(async (_source, _text, onEvent) => {
+      turns += 1;
+      onEvent?.({ type: 'session', sessionId: 'brain-ch-subagent-sub-parent' });
+      onEvent?.({ type: 'subagent', id: 'gc', sessionId: 'brain-ch-subagent-sub-grandchild', status: 'running' });
+      // The host held the call open across the grandchild and the child's follow-up turn; this is that answer.
+      return 'all four audits integrated and fixed';
+    });
+    expect(result.content[0]?.text).toBe('all four audits integrated and fixed');
+    expect(turns).toBe(1);
+  });
+
+  it('reports the child as waiting for its own sub-agent on the progress row the host republishes', async () => {
+    const { emitted } = await loadDelegate(async (_source, _text, onEvent) => {
+      onEvent?.({ type: 'session', sessionId: 'brain-ch-subagent-sub-parent' });
+      onEvent?.({ type: 'tool', name: 'Read', detail: 'x.ts' });
+      onEvent?.({ type: 'subagent', id: 'gc', sessionId: 'brain-ch-subagent-sub-grandchild', status: 'running' });
+      return 'done';
+    });
+    const details = emitted.map((update) => update.detail);
+    expect(details).toContain('Read x.ts');
+    expect(details).toContain('waiting for its own sub-agent sub-grandchild');
+    // The wait replaces the tool detail in order: the row said "Read x.ts" first and "waiting" after.
+    expect(details.indexOf('Read x.ts')).toBeLessThan(details.indexOf('waiting for its own sub-agent sub-grandchild'));
   });
 });

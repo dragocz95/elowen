@@ -206,7 +206,8 @@ describe('DelegatedSessionService.continueSubagent — mid-turn children are ste
     const releaseRemote = vi.fn(async () => ({ busy: opts.remoteBusy === true }));
     const svc = new DelegatedSessionService({
       store, sessions: sessions as never,
-      channelService: { send, steerDelegatedTurn: steerLocal } as never,
+      // sendRemote is the call fence an idle continuation runs under (covered in tests/subagent/remoteFencing.test.ts).
+      channelService: { send, steerDelegatedTurn: steerLocal, sendRemote: (_req: unknown, run: () => Promise<string>) => run() } as never,
       identity: { forDelegatedTurn: () => ({ platform: 'subagent', userId: 'subagent', admin: true, owner: true }) } as never,
       users: { get: () => ({}) } as never,
       releaseRemote,

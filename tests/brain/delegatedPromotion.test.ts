@@ -39,7 +39,7 @@ function setup(scope: DelegatedExecutionScope = READ_ONLY_CHILD) {
   const steerLocal = vi.fn(async () => 'idle' as const);
   const svc = new DelegatedSessionService({
     store, sessions,
-    channelService: { send, steerDelegatedTurn: steerLocal } as never,
+    channelService: { send, steerDelegatedTurn: steerLocal, sendRemote: (_req: unknown, run: () => Promise<string>) => run() } as never,
     identity: { forDelegatedTurn: () => ({ platform: 'subagent', userId: 'subagent', admin: false, owner: false }) } as never,
     users: { get: () => ({}) } as never,
   });
