@@ -411,8 +411,8 @@ describe('telemetry rail — live work sections', () => {
     server.use(http.get('*/api/brain/status', () => HttpResponse.json({
       running: true, sessionId: 'brain-1', model: 'm', usage: null, statusline: null, cards: [], queued: [],
       project: {
-        cwd: '/data/sandbox/users/1/workspaces/lease-fixes', branch: 'elowen/u1/lease-fixes',
-        workspace: { workspaceId: 'ws_1', label: 'lease-fixes', branch: 'elowen/u1/lease-fixes', confined: true },
+        cwd: '/var/www/elowen', branch: 'main',
+        workspace: { workspaceId: 'ws_1', label: 'lease-fixes', branch: 'elowen/u1/lease-fixes', path: '/data/sandbox/users/1/workspaces/lease-fixes', confined: true },
       },
     })));
     await renderRail();
@@ -420,6 +420,8 @@ describe('telemetry rail — live work sections', () => {
     expect(badge.textContent).toContain('Sandbox');
     expect(badge.textContent).toContain('lease-fixes');
     expect(within(badge).getByRole('button', { name: 'Help' })).toBeInTheDocument();
+    // The client's own directory is still the one shown; the worktree lives under the badge.
+    expect(within(screen.getByTestId('telemetry-project')).getByTitle('/var/www/elowen')).toBeInTheDocument();
   });
 
   it('shows no Sandbox badge for a conversation with no bound workspace', async () => {

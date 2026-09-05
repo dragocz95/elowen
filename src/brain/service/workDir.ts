@@ -112,8 +112,32 @@ export function effectiveTurnWorkDir(input: {
     } catch { return fallback; }
     if (!workspace || workspace.projectId !== projectId) return fallback;
   }
+  // The workspace wins only when its path is where the turn will actually run: `workDir` is that path,
+  // re-validated, and nothing else. Consumers may rely on `workspace !== null` implying that `workDir`
+  // lies inside `workspace.path` — the "confined" indicator is exactly that implication, made explicit.
   const allowed = clientDir(input.policy, workspace.path);
-  return allowed ? { baseWorkDir: input.baseWorkDir, workDir: allowed, workspace } : fallback;
+  if (!allowed || realPathWithin(allowed, [workspace.path]) === null) return fallback;
+  return { baseWorkDir: input.baseWorkDir, workDir: allowed, workspace };
+}
+
+/** How long one conversation's resolved workspace is reused by the status poll. Every attached chat
+ *  client polls `/brain/status`, so the answer must not cost a plugin lookup per request; a few seconds of
+ *  staleness on an indicator is invisible, and a Use, Create or Release lands within this window. Same
+ *  reasoning and the same window as `gitBranch`. Turns never read this memo: they resolve fresh. */
+export const WORKSPACE_MEMO_TTL_MS = 5_000;
+const WORKSPACE_MEMO_LIMIT = 256;
+const workspaceMemo = new Map<string, { at: number; value: EffectiveTurnWorkDir }>();
+
+/** {@link effectiveTurnWorkDir} memoized per (account, conversation, base directory) for
+ *  {@link WORKSPACE_MEMO_TTL_MS}. `now` is injectable so the window is testable without fake timers. */
+export function memoizedTurnWorkspace(input: Parameters<typeof effectiveTurnWorkDir>[0], now = Date.now()): EffectiveTurnWorkDir {
+  const key = `${input.accountUserId ?? ''}\0${input.sessionId}\0${input.baseWorkDir ?? ''}`;
+  const hit = workspaceMemo.get(key);
+  if (hit && now - hit.at < WORKSPACE_MEMO_TTL_MS) return hit.value;
+  const value = effectiveTurnWorkDir(input);
+  if (workspaceMemo.size >= WORKSPACE_MEMO_LIMIT && !workspaceMemo.has(key)) workspaceMemo.clear();
+  workspaceMemo.set(key, { at: now, value });
+  return value;
 }
 
 /** Apply an EXPLICIT move of one conversation to a directory, on the Sandbox side.

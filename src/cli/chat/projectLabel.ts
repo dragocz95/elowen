@@ -11,8 +11,9 @@ export interface ProjectStatusInput {
 /** The one-line project context the composer footer and the start screen share: the client's own cwd and
  *  branch, plus a faint `[S] <label>` when the daemon says the conversation is bound to a Sandbox
  *  workspace. The marker matters because the two then disagree — the client still sits in its directory
- *  while every Bash command of the conversation runs inside the worktree's container, with the worktree
- *  mounted at `/workspace` and no Git. `cwd`/`branch` stay the client's: they are what `/cd` moves. */
+ *  while the conversation's turns start in the worktree, where a Bash command runs inside the workspace
+ *  container (worktree at `/workspace`, no Git). `cwd`/`branch` stay the client's: they are what `/cd`
+ *  moves. */
 export function projectStatusLabel(input: ProjectStatusInput): string {
   const parts = [color.dim(input.cwd)];
   if (input.branch) parts.push(color.faint(input.branch));

@@ -1785,7 +1785,7 @@ export const sk = {
     project: 'Projekt',
     branch: 'vetva',
     workspaceBadge: 'Sandbox',
-    workspaceHelp: 'Táto konverzácia je naviazaná na pracovný priestor Sandboxu {label} ({branch}). Príkazy shellu bežia v izolovanom kontajneri s worktree pripojeným ako /workspace a bez Gitu; commitujte nástrojom SandboxCommit. Nástroje Files ďalej pracujú na hostiteľovi. Konverzáciu uvoľníte nástrojom SandboxReleaseWorkspace, výberom /sandbox alebo na stránke Sandbox; pracovný priestor, jeho vetva aj adresár zostanú zachované.',
+    workspaceHelp: 'Táto konverzácia je naviazaná na pracovný priestor Sandboxu {label} ({branch}) v {path}. Príkazy shellu, ktorých pracovný adresár leží v pracovnom priestore, bežia v izolovanom kontajneri s worktree pripojeným ako /workspace a bez Gitu; commitujte nástrojom SandboxCommit. Nástroje Files ďalej pracujú na hostiteľovi. Konverzáciu uvoľníte nástrojom SandboxReleaseWorkspace, výberom /sandbox alebo na stránke Sandbox; pracovný priestor, jeho vetva aj adresár zostanú zachované.',
     mcp: 'MCP',
     mcpActive: '{active}/{total} aktívnych',
     lsp: 'LSP',

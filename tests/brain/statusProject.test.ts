@@ -155,11 +155,29 @@ describe('status() project section', () => {
     );
     store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
     store.setWorkDir('brain-1', project);
+    // The client's own directory and branch stay what they were; the worktree is reported UNDER workspace.
     expect(status.status(1, 'brain-1').project).toEqual({
-      cwd: worktree,
-      branch: 'elowen/u1/feature',
-      workspace: { workspaceId: 'ws_1', label: 'feature', branch: 'elowen/u1/feature', confined: true },
+      cwd: project,
+      branch: 'main',
+      workspace: { workspaceId: 'ws_1', label: 'feature', branch: 'elowen/u1/feature', path: worktree, confined: true },
     });
+  });
+
+  /** A worktree row whose path the policy no longer admits falls back to the base directory in the turn
+   *  resolver — and then no container claim may be made, because the turn will not start in the worktree. */
+  it('reports no workspace when the resolver falls back to the base directory', () => {
+    const project = repo('main');
+    const worktree = repo('elowen/u1/feature');
+    const projects = { list: () => [{ id: 1, path: project }] };
+    const sandbox = sandboxWith({ sessionId: 'brain-1', workspaceId: 'ws_1', projectId: 1, path: worktree, label: 'feature', branch: 'elowen/u1/feature' });
+    const { store, status } = harness(
+      // The worktree is NOT among the allowed paths, so clientDir refuses it and the turn stays in the project.
+      () => ({ allowedProjectIds: new Set([1]), allowedPaths: () => [project] }),
+      { projects: projects as unknown as StatusDeps['projects'], sandbox: () => sandbox },
+    );
+    store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    store.setWorkDir('brain-1', project);
+    expect(status.status(1, 'brain-1').project).toEqual({ cwd: project, branch: 'main', workspace: null });
   });
 
   it('reports no workspace for a conversation the Sandbox has no binding for', () => {

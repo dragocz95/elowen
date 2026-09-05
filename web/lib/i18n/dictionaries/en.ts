@@ -1817,7 +1817,7 @@ export const en = {
     project: 'Project',
     branch: 'branch',
     workspaceBadge: 'Sandbox',
-    workspaceHelp: 'This conversation is bound to the Sandbox workspace {label} ({branch}). Shell commands run in an isolated container with the worktree mounted at /workspace and no Git available; commit through SandboxCommit. Files tools keep working on the host. Release the conversation with SandboxReleaseWorkspace, the /sandbox picker or the Sandbox page; the workspace, its branch and its directory are preserved.',
+    workspaceHelp: 'This conversation is bound to the Sandbox workspace {label} ({branch}) at {path}. Shell commands whose working directory is inside the workspace run in an isolated container with the worktree mounted at /workspace and no Git available; commit through SandboxCommit. Files tools keep working on the host. Release the conversation with SandboxReleaseWorkspace, the /sandbox picker or the Sandbox page; the workspace, its branch and its directory are preserved.',
     mcp: 'MCP',
     mcpActive: '{active}/{total} active',
     lsp: 'LSP',

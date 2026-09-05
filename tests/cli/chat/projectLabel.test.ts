@@ -15,7 +15,7 @@ describe('projectStatusLabel', () => {
   it('appends the Sandbox marker with the workspace label when the conversation is confined', () => {
     const line = projectStatusLabel({
       cwd: '~/elowen', branch: 'main',
-      workspace: { workspaceId: 'ws_1', label: 'lease-fixes', branch: 'elowen/u1/lease-fixes', confined: true },
+      workspace: { workspaceId: 'ws_1', label: 'lease-fixes', branch: 'elowen/u1/lease-fixes', path: '/data/ws/lease-fixes', confined: true },
     });
     expect(strip(line)).toBe('~/elowen · main · [S] lease-fixes');
   });
