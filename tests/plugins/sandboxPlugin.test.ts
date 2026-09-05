@@ -1,5 +1,7 @@
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
-import { execFileSync } from 'node:child_process';
+import { execFileSync, spawn } from 'node:child_process';
+import { once } from 'node:events';
+import { createServer, type Socket } from 'node:net';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -7,14 +9,15 @@ import { fileURLToPath } from 'node:url';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { openDb } from '../../src/store/db.js';
+import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { RealGitReader } from '../../src/git/gitReader.js';
 import { realPathWithin } from '../../src/plugins/pathGuard.js';
 import { runWithContributionUser, runWithPolicy, type TurnIdentity } from '../../src/plugins/policyContext.js';
 import { resolvePolicy, type Policy } from '../../src/plugins/policy.js';
 import { effectiveTurnWorkDir, releaseWorkspacesForMove } from '../../src/brain/service/workDir.js';
 import { processRegistry } from '../../src/brain/processRegistry.js';
-import { bubblewrapProbe, migrateLegacyHomes, runPrepared } from '../../plugins/sandbox/lib/execution.mjs';
-import { activeExecutionLeases, heartbeatRepoLease, processIdentity, reconcileStaleLeases, withRepoLease } from '../../plugins/sandbox/lib/db.mjs';
+import { bubblewrapProbe, ensureUserHome, migrateLegacyHomes, resetUserHome, runPrepared } from '../../plugins/sandbox/lib/execution.mjs';
+import { activeExecutionLeases, createExecutionLease, heartbeatRepoLease, processIdentity, reconcileStaleLeases, withRepoLease } from '../../plugins/sandbox/lib/db.mjs';
 import { createWorkspacePathView } from '../../src/plugins/pathView.js';
 import { commandsWithPlugins } from '../../src/brain/slashCommands.js';
 
@@ -56,11 +59,16 @@ async function setup(enabled = ['sandbox'], confineNonOperators = false, extraBr
   db.prepare("INSERT INTO users (id, username, password_hash, is_admin) VALUES (3, 'admin', 'x', 1)").run();
   const projects = paths.map((path, index) => ({ id: index + 1, slug: `demo-${index + 1}`, path, notes: '', icon: '' }));
   for (const entry of projects) db.prepare('INSERT INTO projects (id, slug, path, notes) VALUES (?, ?, ?, ?)').run(entry.id, entry.slug, entry.path, '');
+  const userProjects = new UserProjectStore(db);
+  for (const project of projects) {
+    for (const userId of [1, 2]) userProjects.assign(userId, project.id);
+  }
   const projectPath = paths[0]!;
   const users = new Set([1, 2, 3]);
   const reader = new RealGitReader();
   const host = {
     stores: {
+      userProjects,
       projects: { get: (id: number) => projects.find((entry) => entry.id === id) ?? null, list: () => projects },
       homeProject: () => projects[0]!,
       usersRead: {
@@ -94,7 +102,7 @@ async function setup(enabled = ['sandbox'], confineNonOperators = false, extraBr
     host,
     delegatedTurnsOutOfProcess: () => false,
   });
-  return { registry, db, dataRoot, projectPath, projects, users };
+  return { registry, db, dataRoot, projectPath, projects, users, userProjects };
 }
 
 /** Stand-in for the GitHub plugin, which lives in the plugin registry rather than this repo. Installed
@@ -689,6 +697,33 @@ describe('sandbox execution HOME and leases', () => {
   });
 });
 
+async function withLeaseChild(run: (child: { pid: number; stop(): Promise<void> }) => Promise<void>, script = `
+  await new Promise((resolve) => { process.once('message', resolve); process.send('ready'); });
+`, args: string[] = []) {
+  const child = spawn(process.execPath, ['--input-type=module', '-e', `
+    const deadline = setTimeout(() => process.exit(2), 10_000);
+    process.once('disconnect', () => process.exit(0));
+    ${script}
+    clearTimeout(deadline);
+    if (process.connected) process.disconnect();
+  `, ...args], { cwd: repoRoot, stdio: ['ignore', 'pipe', 'pipe', 'ipc'] });
+  const closed = once(child, 'close');
+  let stderr = '';
+  child.stderr.on('data', (chunk) => { stderr += String(chunk); });
+  const stop = async () => {
+    if (child.connected) child.send('finish');
+    const [code] = await closed;
+    expect(code, stderr).toBe(0);
+  };
+  try {
+    const [message] = await once(child, 'message', { signal: AbortSignal.timeout(5_000) });
+    expect(message).toBe('ready');
+    await run({ pid: child.pid!, stop });
+  } finally {
+    await stop();
+  }
+}
+
 describe('sandbox durable repository locks', () => {
   it('does not reclaim a current lease while its exact process owner is still alive', async () => {
     const { db } = await setup();
@@ -701,15 +736,12 @@ describe('sandbox durable repository locks', () => {
     db.prepare(`INSERT INTO p_sandbox_repo_leases
       (common_dir,owner_id,outer_pid,runner_identity,heartbeat_at,expires_at)
       VALUES ('/repo/live','owner',?,?,0,?)`).run(process.pid, identity, future);
-    expect(reconcileStaleLeases(db, Date.now())).toEqual({ executionRemoved: 0, reposRemoved: 0 });
+    expect(reconcileStaleLeases(db)).toEqual({ executionRemoved: 0, reposRemoved: 0 });
     expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_execution_leases WHERE id='live'").get()).toEqual({ n: 1 });
     expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_repo_leases WHERE common_dir='/repo/live'").get()).toEqual({ n: 1 });
   });
 
-  /** The daemon pid is alive for as long as the daemon is, so "owner provably dead" alone never reaps a
-   *  lease whose command was aborted or whose in-process runner crashed. The lease window plus heartbeat
-   *  is the contract: a lease nobody has refreshed past `expires_at` is stale, whoever its owner is. */
-  it('treats a lease past its expiry as stale even though its owner process is alive', async () => {
+  it('retains expired leases while the exact owner process is alive', async () => {
     const { db } = await setup();
     const identity = processIdentity();
     const past = Date.now() - 1_000;
@@ -719,49 +751,45 @@ describe('sandbox durable repository locks', () => {
     db.prepare(`INSERT INTO p_sandbox_repo_leases
       (common_dir,owner_id,outer_pid,runner_identity,heartbeat_at,expires_at)
       VALUES ('/repo/expired','owner',?,?,?,?)`).run(process.pid, identity, past, past);
-    expect(reconcileStaleLeases(db, Date.now())).toEqual({ executionRemoved: 1, reposRemoved: 1 });
-    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_execution_leases WHERE id='expired'").get()).toEqual({ n: 0 });
-    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_repo_leases WHERE common_dir='/repo/expired'").get()).toEqual({ n: 0 });
+    expect(reconcileStaleLeases(db)).toEqual({ executionRemoved: 0, reposRemoved: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_execution_leases WHERE id='expired'").get()).toEqual({ n: 1 });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_repo_leases WHERE common_dir='/repo/expired'").get()).toEqual({ n: 1 });
   });
 
-  it('does not count a lease past its expiry as active', async () => {
+  it('counts an expired lease as active until its owner is provably dead', async () => {
     const { db } = await setup();
     const identity = processIdentity();
     const past = Date.now() - 1_000;
     db.prepare(`INSERT INTO p_sandbox_execution_leases
       (id,user_id,workspace_id,home_generation,outer_pid,runner_identity,kind,heartbeat_at,expires_at)
       VALUES ('expired',1,'ws_x',1,?,?,'terminal',?,?)`).run(process.pid, identity, past, past);
-    expect(activeExecutionLeases(db, { workspaceId: 'ws_x' })).toEqual([]);
+    expect(activeExecutionLeases(db, { workspaceId: 'ws_x' })).toHaveLength(1);
   });
 
-  it('counts a heartbeated lease as active again after its window would have lapsed', async () => {
+  it('renews an expired retained lease without losing active protection', async () => {
     const { registry, db, projectPath } = await setup();
     const workspace = (await runAs(registry, projectPath, 1, 'brain-heartbeat', 'SandboxCreateWorkspace', { projectId: 1, label: 'Beat', baseRef: 'main' })).details.workspace;
     const lease = registry.control('sandbox')!.acquireDelegationLease({
       accountUserId: 1, workspace: { workspaceId: workspace.id, projectId: 1 },
     });
     expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toHaveLength(1);
-    // Lapsed but not yet reaped: without the heartbeat the very next liveness read would drop it.
+    // A missed heartbeat does not prove that the guarded execution stopped.
     db.prepare('UPDATE p_sandbox_execution_leases SET expires_at = ? WHERE id = ?').run(Date.now() - 1, lease.id);
-    expect(reconcileStaleLeases(db, Date.now() - 2)).toEqual({ executionRemoved: 0, reposRemoved: 0 });
+    expect(reconcileStaleLeases(db)).toEqual({ executionRemoved: 0, reposRemoved: 0 });
     await lease.heartbeat();
     expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toHaveLength(1);
-    expect(reconcileStaleLeases(db, Date.now())).toEqual({ executionRemoved: 0, reposRemoved: 0 });
+    expect(reconcileStaleLeases(db)).toEqual({ executionRemoved: 0, reposRemoved: 0 });
     await lease.release();
     expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toHaveLength(0);
   });
 
-  /** Reconcile runs on every lease creation and every liveness read, so an event-loop stall longer than
-   *  the window deletes the row of a process that is still running. The next heartbeat has to put the
-   *  row back, or the workspace reads as free under a live child for the rest of the run. */
-  it('resurrects an execution lease the reconcile reaped while its holder was still running', async () => {
+  it('restores a missing execution lease without reviving it after explicit release', async () => {
     const { registry, db, projectPath } = await setup();
     const workspace = (await runAs(registry, projectPath, 1, 'brain-resurrect', 'SandboxCreateWorkspace', { projectId: 1, label: 'Resurrect', baseRef: 'main' })).details.workspace;
     const lease = registry.control('sandbox')!.acquireDelegationLease({
       accountUserId: 1, workspace: { workspaceId: workspace.id, projectId: 1 },
     });
-    db.prepare('UPDATE p_sandbox_execution_leases SET expires_at = ? WHERE id = ?').run(Date.now() - 1, lease.id);
-    expect(reconcileStaleLeases(db, Date.now()).executionRemoved).toBe(1);
+    db.prepare('DELETE FROM p_sandbox_execution_leases WHERE id = ?').run(lease.id);
     expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toEqual([]);
 
     await lease.heartbeat();
@@ -783,7 +811,7 @@ describe('sandbox durable repository locks', () => {
     db.prepare(`INSERT INTO p_sandbox_repo_leases
       (common_dir,owner_id,outer_pid,runner_identity,heartbeat_at,expires_at)
       VALUES ('/repo/beat',?,?,?,?,?)`).run(mine, process.pid, identity, past, past);
-    expect(reconcileStaleLeases(db, Date.now()).reposRemoved).toBe(1);
+    db.prepare("DELETE FROM p_sandbox_repo_leases WHERE common_dir='/repo/beat'").run();
     // Free again: the heartbeat takes the row back and the lease is held as before.
     expect(heartbeatRepoLease(db, '/repo/beat', mine, identity)).toBe('reclaimed');
     expect(db.prepare("SELECT owner_id FROM p_sandbox_repo_leases WHERE common_dir='/repo/beat'").get()).toEqual({ owner_id: mine });
@@ -794,22 +822,18 @@ describe('sandbox durable repository locks', () => {
     expect(db.prepare("SELECT owner_id FROM p_sandbox_repo_leases WHERE common_dir='/repo/beat'").get()).toEqual({ owner_id: 'srl_other' });
   });
 
-  it('fails a withRepoLease holder loudly once its lease was lost to another claimant', async () => {
+  it.each(['owner_id', 'runner_identity', 'outer_pid'] as const)('detects changed %s before the next heartbeat and preserves the successor', async (column) => {
     const { db } = await setup();
-    let release!: () => void;
-    const hold = new Promise<void>((resolveHold) => { release = resolveHold; });
-    const holder = withRepoLease(db, '/repo/lost', () => hold, { heartbeatMs: 20 });
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 25));
-    // The row vanishes (a reconcile after a stall) and a foreign claimant takes it before our next beat.
-    db.prepare("UPDATE p_sandbox_repo_leases SET owner_id = 'srl_intruder' WHERE common_dir='/repo/lost'").run();
-    await new Promise((resolvePromise) => setTimeout(resolvePromise, 60));
-    release();
+    const replacement = column === 'outer_pid' ? process.pid + 1 : 'successor';
+    const holder = withRepoLease(db, '/repo/lost', async () => {
+      db.prepare(`UPDATE p_sandbox_repo_leases SET ${column} = ? WHERE common_dir='/repo/lost'`).run(replacement);
+    }, { heartbeatMs: 60_000 });
     await expect(holder).rejects.toThrow(/lease was lost/);
-    // The intruder's row is not ours to delete.
-    expect(db.prepare("SELECT owner_id FROM p_sandbox_repo_leases WHERE common_dir='/repo/lost'").get()).toEqual({ owner_id: 'srl_intruder' });
+    expect(db.prepare(`SELECT ${column} FROM p_sandbox_repo_leases WHERE common_dir='/repo/lost'`).get())
+      .toEqual({ [column]: replacement });
   });
 
-  it('lets a conversation release its binding once the only lease on the workspace has expired', async () => {
+  it('keeps a conversation bound after lease expiry until the holder explicitly releases', async () => {
     const { registry, db, projects } = await setup(['sandbox'], false, ['main']);
     db.prepare("INSERT INTO brain_sessions (id, user_id) VALUES ('brain-amy-expired', 1)").run();
     const projectPath = projects[0]!.path;
@@ -821,30 +845,182 @@ describe('sandbox durable repository locks', () => {
       'POST', {}, { sessionId: 'brain-amy-expired' }, { userId: 1, admin: false, tokenScope: 'user', accessibleProjects: [1, 2] },
     ));
     expect((await release()).status).toBe(409);
-    // The command was aborted and nobody released the row: only the lapse of its window may free it.
     db.prepare('UPDATE p_sandbox_execution_leases SET expires_at = ? WHERE id = ?').run(Date.now() - 1, lease.id);
+    expect((await release()).status).toBe(409);
+    await lease.release();
     const freed = await release();
     expect(freed.status).toBe(200);
     expect(freed.body).toEqual({ released: 1, workspaceIds: [workspace.id] });
   });
 
-  it('re-claims a repository lease whose live owner let it expire', async () => {
+  it('refuses a repository lease whose live owner let it expire', async () => {
     const { db } = await setup();
     const identity = processIdentity();
     const past = Date.now() - 1_000;
     db.prepare(`INSERT INTO p_sandbox_repo_leases
       (common_dir,owner_id,outer_pid,runner_identity,heartbeat_at,expires_at)
       VALUES ('/repo/lapsed','stale-owner',?,?,?,?)`).run(process.pid, identity, past, past);
-    await expect(withRepoLease(db, '/repo/lapsed', async () => 'ok', { waitMs: 60 })).resolves.toBe('ok');
-    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_repo_leases WHERE common_dir='/repo/lapsed'").get()).toEqual({ n: 0 });
+    await expect(withRepoLease(db, '/repo/lapsed', async () => 'unsafe', { waitMs: 0 })).rejects.toThrow(/busy/);
+    expect(db.prepare("SELECT owner_id FROM p_sandbox_repo_leases WHERE common_dir='/repo/lapsed'").get()).toEqual({ owner_id: 'stale-owner' });
   });
 
   it('reclaims a reused PID only when the stored process identity is provably different', async () => {
     const { db } = await setup();
     db.prepare(`INSERT INTO p_sandbox_execution_leases
       (id,user_id,workspace_id,home_generation,outer_pid,runner_identity,kind,heartbeat_at,expires_at)
-      VALUES ('reused',1,NULL,1,?,'linux:different-boot:1','terminal',0,0)`).run(process.pid);
-    expect(reconcileStaleLeases(db, Date.now()).executionRemoved).toBe(1);
+      VALUES ('reused',1,NULL,1,?,'linux:different-boot:1','terminal',0,?)`).run(process.pid, Date.now() + 60_000);
+    db.prepare(`INSERT INTO p_sandbox_repo_leases
+      (common_dir,owner_id,outer_pid,runner_identity,heartbeat_at,expires_at)
+      VALUES ('/repo/reused','old',?,'linux:different-boot:1',0,?)`).run(process.pid, Date.now() + 60_000);
+    expect(reconcileStaleLeases(db)).toEqual({ executionRemoved: 1, reposRemoved: 1 });
+  });
+
+  it.each(['verified', 'unverifiable'] as const)('keeps expired execution and repo leases for a live subprocess with %s identity', async (kind) => {
+    const { db } = await setup();
+    await withLeaseChild(async ({ pid, stop }) => {
+      const identity = kind === 'verified' ? processIdentity(pid) : 'unverifiable:test';
+      expect(identity).toBeTruthy();
+      db.prepare(`INSERT INTO p_sandbox_execution_leases
+        (id,user_id,workspace_id,home_generation,outer_pid,runner_identity,kind,heartbeat_at,expires_at)
+        VALUES ('child',1,NULL,1,?,?,'terminal',0,0)`).run(pid, identity);
+      db.prepare(`INSERT INTO p_sandbox_repo_leases
+        (common_dir,owner_id,outer_pid,runner_identity,heartbeat_at,expires_at)
+        VALUES ('/repo/child','child',?,?,0,0)`).run(pid, identity);
+      expect.soft(reconcileStaleLeases(db)).toEqual({ executionRemoved: 0, reposRemoved: 0 });
+      expect.soft(activeExecutionLeases(db, { accountUserId: 1 })).toHaveLength(1);
+      await stop();
+      expect(reconcileStaleLeases(db)).toEqual({ executionRemoved: 1, reposRemoved: 1 });
+    });
+  });
+
+  it('reclaims future leases only after an actual subprocess owner exits', async () => {
+    const { db } = await setup();
+    await withLeaseChild(async ({ pid, stop }) => {
+      const identity = processIdentity(pid);
+      expect(identity).toBeTruthy();
+      await stop();
+      const future = Date.now() + 60_000;
+      db.prepare(`INSERT INTO p_sandbox_execution_leases
+        (id,user_id,workspace_id,home_generation,outer_pid,runner_identity,kind,heartbeat_at,expires_at)
+        VALUES ('dead',1,NULL,1,?,?,'terminal',0,?)`).run(pid, identity, future);
+      db.prepare(`INSERT INTO p_sandbox_repo_leases
+        (common_dir,owner_id,outer_pid,runner_identity,heartbeat_at,expires_at)
+        VALUES ('/repo/dead','dead',?,?,0,?)`).run(pid, identity, future);
+      expect(reconcileStaleLeases(db)).toEqual({ executionRemoved: 1, reposRemoved: 1 });
+      await expect(withRepoLease(db, '/repo/dead', async () => 'reclaimed', { waitMs: 0 })).resolves.toBe('reclaimed');
+    });
+  });
+
+  it.each([0, -1, 1.5])('keeps an unverifiable lease with invalid PID %s instead of treating it as dead', async (pid) => {
+    const { db } = await setup();
+    db.prepare(`INSERT INTO p_sandbox_execution_leases
+      (id,user_id,workspace_id,home_generation,outer_pid,runner_identity,kind,heartbeat_at,expires_at)
+      VALUES ('unknown',1,NULL,1,?,'unverifiable:test','terminal',0,0)`).run(pid);
+    db.prepare(`INSERT INTO p_sandbox_repo_leases
+      (common_dir,owner_id,outer_pid,runner_identity,heartbeat_at,expires_at)
+      VALUES ('/repo/unknown','unknown',?,'unverifiable:test',0,0)`).run(pid);
+    expect(reconcileStaleLeases(db)).toEqual({ executionRemoved: 0, reposRemoved: 0 });
+    expect(activeExecutionLeases(db)).toHaveLength(1);
+  });
+
+  it('does not admit a second repo holder while an expired actual subprocess holder is alive', async () => {
+    const { db } = await setup();
+    const databasePath = join(temp('lease-shared'), 'leases.db');
+    await db.backup(databasePath);
+    const { default: Database } = await import('better-sqlite3');
+    const shared = new Database(databasePath);
+    try {
+      await withLeaseChild(async ({ pid, stop }) => {
+        expect(shared.prepare("SELECT outer_pid FROM p_sandbox_repo_leases WHERE common_dir='shared-repo'").get()).toEqual({ outer_pid: pid });
+        shared.prepare("UPDATE p_sandbox_repo_leases SET expires_at=0 WHERE common_dir='shared-repo'").run();
+        let entered = false;
+        await expect.soft(withRepoLease(shared, 'shared-repo', async () => { entered = true; }, { waitMs: 0 })).rejects.toThrow(/busy/);
+        expect.soft(entered).toBe(false);
+        await stop();
+        await expect(withRepoLease(shared, 'shared-repo', async () => 'after-exit', { waitMs: 0 })).resolves.toBe('after-exit');
+      }, `
+        const { default: Database } = await import('better-sqlite3');
+        const { withRepoLease } = await import('./plugins/sandbox/lib/db.mjs');
+        const db = new Database(process.argv[1]);
+        await withRepoLease(db, 'shared-repo', () => new Promise((resolve) => {
+          process.once('message', resolve);
+          process.send('ready');
+        }), { heartbeatMs: 60_000 });
+        db.close();
+      `, [databasePath]);
+    } finally { shared.close(); }
+  });
+
+  it('blocks workspace release, removal and HOME reset under a live child then releases on actual exit', async () => {
+    const { registry, db, projectPath, dataRoot } = await setup();
+    const session = 'brain-child-lease';
+    db.prepare('INSERT INTO brain_sessions (id,user_id) VALUES (?,1)').run(session);
+    const workspace = (await runAs(registry, projectPath, 1, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Child lease', baseRef: 'main' })).details.workspace;
+    const dataDir = join(dataRoot, 'sandbox');
+    const home = ensureUserHome(dataDir, 1);
+    const server = createServer();
+    server.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('TCP fixture did not bind');
+    let socket: Socket | undefined;
+    try {
+      const prepared = await runWithPolicy(policy(workspace.path), () => registry.control('sandbox')!.prepareExecution({
+        command: { type: 'argv', file: process.execPath, args: ['-e', `
+          const socket = require('node:net').connect(${address.port}, '127.0.0.1');
+          const deadline = setTimeout(() => process.exit(2), 20_000);
+          socket.on('end', () => { clearTimeout(deadline); process.stdout.write('child-exited'); });
+        `] },
+        cwd: workspace.path, leaseKind: 'github',
+      }), { identity: nonOperator(1), contributionUserId: 1, sessionId: session, workDir: workspace.path });
+      const connected = once(server, 'connection', { signal: AbortSignal.timeout(5_000) });
+      const running = runPrepared(prepared);
+      // Observe rejection immediately even if the connection fails before the command can report it.
+      void running.catch(() => {});
+      try {
+        [socket] = await connected as [Socket];
+        db.prepare('UPDATE p_sandbox_execution_leases SET expires_at=0 WHERE id=?').run(prepared.lease.id);
+        expect.soft(activeExecutionLeases(db, { workspaceId: workspace.id })).toHaveLength(1);
+        const result = await runAs(registry, projectPath, 1, session, 'SandboxReleaseWorkspace', {});
+        expect.soft(result.details).toMatchObject({ ok: false, error: { code: 'workspace_in_use' } });
+        const removal = await runAs(registry, projectPath, 1, session, 'SandboxRemoveWorkspace', { workspaceId: workspace.id });
+        expect.soft(removal.details).toMatchObject({ ok: false, error: { code: 'workspace_in_use' } });
+        expect.soft(() => resetUserHome({ db, dataDir, userId: 1, expectedGeneration: home.generation })).toThrow(/HOME is in use/);
+      } finally {
+        socket?.end();
+        expect((await running).output).toBe('child-exited');
+      }
+      expect(processIdentity()).toBeTruthy();
+      expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toEqual([]);
+      expect((await runAs(registry, projectPath, 1, session, 'SandboxReleaseWorkspace', {})).details).toMatchObject({ released: 1 });
+    } finally {
+      socket?.destroy();
+      await new Promise<void>((resolveClose, reject) => server.close((error) => error ? reject(error) : resolveClose()));
+    }
+  }, 30_000);
+
+  it.each(['runner_identity', 'outer_pid'] as const)('execution heartbeat and release preserve a successor with changed %s', async (column) => {
+    const { db } = await setup();
+    const lease = createExecutionLease(db, { accountUserId: 1, workspaceId: null, homeGeneration: 1, kind: 'terminal' });
+    const replacement = column === 'outer_pid' ? process.pid + 1 : 'successor';
+    db.prepare(`UPDATE p_sandbox_execution_leases SET ${column}=?, heartbeat_at=123, expires_at=456 WHERE id=?`).run(replacement, lease.id);
+    const successor = db.prepare('SELECT * FROM p_sandbox_execution_leases WHERE id=?').get(lease.id);
+    await lease.heartbeat();
+    expect.soft(db.prepare('SELECT * FROM p_sandbox_execution_leases WHERE id=?').get(lease.id)).toEqual(successor);
+    await lease.release();
+    await lease.heartbeat();
+    expect(db.prepare('SELECT * FROM p_sandbox_execution_leases WHERE id=?').get(lease.id)).toEqual(successor);
+  });
+
+  it.each(['runner_identity', 'outer_pid'] as const)('repo heartbeat preserves a successor with changed %s', async (column) => {
+    const { db } = await setup();
+    const identity = processIdentity()!;
+    expect(heartbeatRepoLease(db, '/repo/successor', 'mine', identity)).toBe('reclaimed');
+    const replacement = column === 'outer_pid' ? process.pid + 1 : 'successor';
+    db.prepare(`UPDATE p_sandbox_repo_leases SET ${column}=?, heartbeat_at=123, expires_at=456 WHERE common_dir='/repo/successor'`).run(replacement);
+    const successor = db.prepare("SELECT * FROM p_sandbox_repo_leases WHERE common_dir='/repo/successor'").get();
+    expect.soft(heartbeatRepoLease(db, '/repo/successor', 'mine', identity)).toBe('lost');
+    expect(db.prepare("SELECT * FROM p_sandbox_repo_leases WHERE common_dir='/repo/successor'").get()).toEqual(successor);
   });
 
   it('serializes one Git common directory across concurrent owners', async () => {
@@ -1519,6 +1695,58 @@ describe('SandboxReleaseWorkspace tool', () => {
     expect(refused.details.ok).toBe(false);
     expect(refused.details.error.code).toBe('session_forbidden');
     expect(bindings()).toHaveLength(1);
+  });
+});
+
+describe('sandbox release live revocation', () => {
+  it.each(['tool', 'api', 'control'] as const)('intersects captured scope with durable grants through %s', async (surface) => {
+    const { registry, db, projects, userProjects } = await setup(['sandbox'], false, ['main']);
+    const sessionId = 'brain-release-revoked';
+    db.prepare('INSERT INTO brain_sessions (id, user_id) VALUES (?, 1)').run(sessionId);
+    const control = registry.control('sandbox')!;
+    const turnPolicy = resolvePolicy({
+      userProjects,
+      projects: { get: (id) => projects.find((project) => project.id === id) },
+      supplementalPaths: (userId, projectIds) => runWithContributionUser(userId, () => control.workspaceRoots({ projectIds })),
+    }, 1);
+    const scope = { identity: nonOperator(1), contributionUserId: 1, sessionId, workDir: projects[0]!.path };
+    const act = (name: string, input: Record<string, unknown>) =>
+      runWithPolicy(turnPolicy, () => tool(registry, name).execute('t', input), scope);
+    for (const project of projects) {
+      const created = await act('SandboxCreateWorkspace', { projectId: project.id, label: `Revoke ${project.id}`, baseRef: 'main' });
+      expect(created.details.workspace.projectId).toBe(project.id);
+    }
+    const bindings = () => db.prepare('SELECT project_id FROM p_sandbox_session_bindings WHERE session_id = ? ORDER BY project_id').all(sessionId);
+    const httpRelease = (input: Record<string, unknown>) => registry.apiRoute('sandbox', 'workspaces/release', 'POST')!.handler(pluginRequest(
+      'POST', {}, { sessionId, ...input }, { userId: 1, admin: false, tokenScope: 'user', accessibleProjects: [1, 2] },
+    ));
+    expect(turnPolicy.allowedPaths()).not.toEqual([]);
+    userProjects.unassign(1, 1);
+    userProjects.unassign(1, 2);
+    // Keep the SAME policy: its captured ids survive, but its live filesystem access is empty.
+    expect(turnPolicy.allowedProjectIds).toEqual(new Set([1, 2]));
+    expect(turnPolicy.allowedPaths()).toEqual([]);
+    if (surface === 'tool') {
+      expect((await act('SandboxReleaseWorkspace', { projectId: 1 })).details.error.code).toBe('project_forbidden');
+    } else if (surface === 'api') {
+      const refused = await httpRelease({ projectId: 1 });
+      expect(refused.status).toBe(403);
+      expect(refused.body).toMatchObject({ error: 'project_forbidden' });
+    }
+    expect(bindings()).toEqual([{ project_id: 1 }, { project_id: 2 }]);
+    const release = async () => {
+      if (surface === 'tool') return (await act('SandboxReleaseWorkspace', {})).details;
+      if (surface === 'api') return (await httpRelease({})).body;
+      return runWithContributionUser(1, () => control.releaseSessionWorkspaces!({ sessionId, projectIds: [1, 2] }));
+    };
+    expect(await release()).toMatchObject({ released: 0 });
+    expect(bindings()).toEqual([{ project_id: 1 }, { project_id: 2 }]);
+    userProjects.assign(1, 2);
+    // A live grant outside an explicit control ceiling must never widen that ceiling.
+    expect(runWithContributionUser(1, () => control.releaseSessionWorkspaces!({ sessionId, projectIds: [1] })))
+      .toMatchObject({ released: 0 });
+    expect(await release()).toMatchObject({ released: 1 });
+    expect(bindings()).toEqual([{ project_id: 1 }]);
   });
 });
 

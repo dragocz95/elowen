@@ -357,11 +357,12 @@ export function createWorkspaceService({ ctx, db, dataDir, execution }) {
     if (keep !== null && !Number.isSafeInteger(keep)) throw coded('a valid Project id is required', 'invalid_project');
     const only = input.projectId === undefined || input.projectId === null ? null : Number(input.projectId);
     if (only !== null && (!Number.isSafeInteger(only) || only < 1)) throw coded('a valid Project id is required', 'invalid_project');
-    if (only !== null) assertProjectAccess(ctx, only, options.accessibleProjects);
-    // A Project this account can no longer reach keeps its binding untouched: a caller who has lost the
-    // grant has no business editing rows for it, exactly as it may not read or switch them.
-    const scope = accessibleProjectIds(ctx, options.accessibleProjects)
-      .map(Number).filter((projectId) => Number.isSafeInteger(projectId) && projectId !== keep && (only === null || projectId === only));
+    // Captured turn/request scope is a ceiling, not a live grant. Core's account predicate may only
+    // narrow it: revoked bindings remain untouched, and an explicitly revoked Project is refused.
+    const allowed = accessibleProjectIds(ctx, options.accessibleProjects).map(Number)
+      .filter((projectId) => Number.isSafeInteger(projectId) && ctx.host.stores().userProjects.canAccess(userId, projectId));
+    if (only !== null) assertProjectAccess(ctx, only, allowed);
+    const scope = allowed.filter((projectId) => projectId !== keep && (only === null || projectId === only));
     if (scope.length === 0) return { released: 0, workspaceIds: [] };
     const placeholders = scope.map(() => '?').join(',');
     return db.transaction(() => {

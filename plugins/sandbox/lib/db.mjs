@@ -72,7 +72,7 @@ export function initSandboxDb(ctx) {
     // A supervised background runtime is a third kind of held execution, and the original CHECK named
     // only the two that existed. SQLite cannot widen a CHECK in place, so the table is rebuilt: the
     // rows are live leases of processes that may still be running, which is exactly why they are copied
-    // across rather than dropped and left to expire.
+    // across rather than discarded during migration.
     up(m) {
       m.exec(`
         CREATE TABLE p_sandbox_execution_leases_v2 (
@@ -104,7 +104,7 @@ export function initSandboxDb(ctx) {
 }
 
 function processExists(pid) {
-  if (!Number.isInteger(pid) || pid <= 0) return false;
+  if (!Number.isSafeInteger(pid) || pid <= 0) return null;
   try { process.kill(pid, 0); return true; }
   catch (error) {
     if (error?.code === 'ESRCH') return false;
@@ -137,22 +137,25 @@ function ownerProvablyDead(row) {
   return current !== null && current !== stored;
 }
 
-// A lease is stale on either of two grounds. Its owner process is provably gone — the crash-of-the-whole-
-// runner case. Or nobody has heartbeated it past `expires_at` — the case a live owner cannot express any
-// other way: the daemon pid outlives every aborted command and every runner that died inside it, so an
-// unrefreshed window is the only signal that the holder stopped caring.
-export function reconcileStaleLeases(db, now = Date.now()) {
-  let executionRemoved = db.prepare('DELETE FROM p_sandbox_execution_leases WHERE expires_at <= ?').run(now).changes;
+// A missed heartbeat is not proof that work stopped: a stalled owner can still have live writers.
+// Normal execution completion releases explicitly. Reconciliation only reaps provably dead/reused
+// owners, and compares the observed identity when deleting so it cannot remove a successor's lease.
+export function reconcileStaleLeases(db) {
+  let executionRemoved = 0;
   const execution = db.prepare('SELECT id, outer_pid, runner_identity FROM p_sandbox_execution_leases').all();
   for (const row of execution) {
     if (!ownerProvablyDead(row)) continue;
-    executionRemoved += db.prepare('DELETE FROM p_sandbox_execution_leases WHERE id = ?').run(String(row.id)).changes;
+    executionRemoved += db.prepare(`DELETE FROM p_sandbox_execution_leases
+      WHERE id = ? AND outer_pid = ? AND runner_identity = ?`)
+      .run(String(row.id), row.outer_pid, row.runner_identity).changes;
   }
-  let reposRemoved = db.prepare('DELETE FROM p_sandbox_repo_leases WHERE expires_at <= ?').run(now).changes;
-  const repos = db.prepare('SELECT common_dir, outer_pid, runner_identity FROM p_sandbox_repo_leases').all();
+  let reposRemoved = 0;
+  const repos = db.prepare('SELECT common_dir, owner_id, outer_pid, runner_identity FROM p_sandbox_repo_leases').all();
   for (const row of repos) {
     if (!ownerProvablyDead(row)) continue;
-    reposRemoved += db.prepare('DELETE FROM p_sandbox_repo_leases WHERE common_dir = ?').run(String(row.common_dir)).changes;
+    reposRemoved += db.prepare(`DELETE FROM p_sandbox_repo_leases
+      WHERE common_dir = ? AND owner_id = ? AND outer_pid = ? AND runner_identity = ?`)
+      .run(String(row.common_dir), row.owner_id, row.outer_pid, row.runner_identity).changes;
   }
   return { executionRemoved, reposRemoved };
 }
@@ -172,16 +175,14 @@ export function createExecutionLease(db, input) {
     accountUserId: input.accountUserId,
     workspaceId: input.workspaceId,
     homeGeneration: input.homeGeneration,
-    // A heartbeat that finds no row puts it back. Reconcile runs on every lease creation and every
-    // liveness read, so an event-loop stall longer than the window lets it delete THIS row while the
-    // process it guards is still running; a plain UPDATE would then be a no-op for the rest of the run and
-    // the workspace would read as free under a live child. Re-inserted with its original identity, so the
-    // resurrected row is the same lease and `release()` still clears it.
+    // Repair an absent row under the same identity, but never renew or replace another owner's row.
+    // Expiry alone no longer removes a live lease; explicit release permanently disables renewal.
     heartbeat() {
       if (released) return;
       const at = Date.now();
-      const changes = db.prepare('UPDATE p_sandbox_execution_leases SET heartbeat_at = ?, expires_at = ? WHERE id = ?')
-        .run(at, at + EXECUTION_LEASE_MS, id).changes;
+      const changes = db.prepare(`UPDATE p_sandbox_execution_leases SET heartbeat_at = ?, expires_at = ?
+        WHERE id = ? AND outer_pid = ? AND runner_identity = ?`)
+        .run(at, at + EXECUTION_LEASE_MS, id, process.pid, runnerIdentity).changes;
       if (changes > 0) return;
       db.prepare(`INSERT OR IGNORE INTO p_sandbox_execution_leases
         (id, user_id, workspace_id, home_generation, outer_pid, runner_identity, kind, heartbeat_at, expires_at)
@@ -191,16 +192,16 @@ export function createExecutionLease(db, input) {
     release() {
       if (released) return;
       released = true;
-      db.prepare('DELETE FROM p_sandbox_execution_leases WHERE id = ?').run(id);
+      db.prepare('DELETE FROM p_sandbox_execution_leases WHERE id = ? AND outer_pid = ? AND runner_identity = ?')
+        .run(id, process.pid, runnerIdentity);
     },
   };
 }
 
 export function activeExecutionLeases(db, input = {}) {
-  const now = Date.now();
-  reconcileStaleLeases(db, now);
-  const clauses = ['expires_at > ?'];
-  const params = [now];
+  reconcileStaleLeases(db);
+  const clauses = ['1 = 1'];
+  const params = [];
   if (input.accountUserId !== undefined) { clauses.push('user_id IS ?'); params.push(input.accountUserId); }
   if (input.workspaceId !== undefined) { clauses.push('workspace_id IS ?'); params.push(input.workspaceId); }
   if (input.homeGeneration !== undefined) { clauses.push('home_generation IS ?'); params.push(input.homeGeneration); }
@@ -237,10 +238,8 @@ export async function withRepoLease(db, commonDir, fn, opts = {}) {
     await sleep(100);
   }
 
-  // The lease can be LOST mid-run: a reconcile after a stall deletes the row and another claimant takes
-  // it before the next beat. The beat detects that and the work is failed on the way out rather than
-  // reported as a success that ran beside a second holder. It cannot interrupt `fn`, so the loss is
-  // surfaced at the boundary where a caller can act on it; the intruder's row is left untouched.
+  // Detect ownership loss at heartbeat and completion, including work that finishes before the next
+  // beat. This is a diagnostic, not fencing: live owners must never be displaced merely by expiry.
   let lost = false;
   const heartbeat = setInterval(() => {
     if (heartbeatRepoLease(db, commonDir, ownerId, runnerIdentity) === 'lost') lost = true;
@@ -248,21 +247,26 @@ export async function withRepoLease(db, commonDir, fn, opts = {}) {
   heartbeat.unref?.();
   try {
     const result = await fn();
-    if (lost) throw new Error('repository worktree lease was lost to another process while the work ran');
+    const held = db.prepare('SELECT owner_id, outer_pid, runner_identity FROM p_sandbox_repo_leases WHERE common_dir = ?').get(commonDir);
+    if (lost || held?.owner_id !== ownerId || held.outer_pid !== process.pid || held.runner_identity !== runnerIdentity) {
+      throw new Error('repository worktree lease was lost to another process while the work ran');
+    }
     return result;
   } finally {
     clearInterval(heartbeat);
-    db.prepare('DELETE FROM p_sandbox_repo_leases WHERE common_dir = ? AND owner_id = ?').run(commonDir, ownerId);
+    db.prepare(`DELETE FROM p_sandbox_repo_leases
+      WHERE common_dir = ? AND owner_id = ? AND outer_pid = ? AND runner_identity = ?`)
+      .run(commonDir, ownerId, process.pid, runnerIdentity);
   }
 }
 
-/** Refresh one repository lease. `held` is the ordinary case. `reclaimed` means the row had been reaped
- *  (a reconcile after a stall) and was free, so it was taken back under the same owner. `lost` means
- *  somebody else holds the common dir now: the caller must not carry on as if it held the lock. */
+/** Refresh one repository lease. An absent row can be reclaimed only while the common dir is free.
+ *  A different owner or process identity is never renewed or overwritten. */
 export function heartbeatRepoLease(db, commonDir, ownerId, runnerIdentity) {
   const now = Date.now();
   const refreshed = db.prepare(`UPDATE p_sandbox_repo_leases SET heartbeat_at = ?, expires_at = ?
-    WHERE common_dir = ? AND owner_id = ?`).run(now, now + REPO_LEASE_MS, commonDir, ownerId).changes;
+    WHERE common_dir = ? AND owner_id = ? AND outer_pid = ? AND runner_identity = ?`)
+    .run(now, now + REPO_LEASE_MS, commonDir, ownerId, process.pid, runnerIdentity).changes;
   if (refreshed > 0) return 'held';
   const claimed = db.prepare(`INSERT OR IGNORE INTO p_sandbox_repo_leases
     (common_dir, owner_id, outer_pid, runner_identity, heartbeat_at, expires_at)
