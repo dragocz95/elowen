@@ -133,10 +133,6 @@ const lastUserText = (messages) => {
   return '';
 };
 const workflowIdIn = (text) => (/wf-[0-9a-f-]{36}/.exec(text) ?? [''])[0];
-/** When the scripted parent issued DelegateStop. Module-level because the parent script and the request
- *  handler live in different scopes, and scenario F has to pair the two moments to prove causation. */
-const stopClock = { issuedAt: undefined };
-
 const PARENT_MODES = {
   // A: ordering + parallelism, B: dependency hand-off. One blocking WorkflowStart; the summary comes back as
   // the tool result the runner reads.
@@ -204,7 +200,7 @@ const PARENT_MODES = {
   // the last user message" as this turn is reset by it, making a mid-chain delivery indistinguishable from
   // the fresh one. Reading the transcript makes the script indifferent to which happened, which is the only
   // way this scenario is not a race.
-  stop: ({ say, callTool, awaitingTool, lastTool, allText }) => {
+  stop: async ({ say, callTool, awaitingTool, lastTool, allText, waitForHangingRequest, stopClock }) => {
     const jobId = (/Started background delegation (dlg-[0-9a-f-]+)/.exec(allText) ?? [])[1];
     const sessionId = (/Session: (brain-ch-subagent-\S+)/.exec(allText) ?? [])[1];
     // The delivered RESULT block, not the task marker: this scenario wrote the task itself, so the marker is
@@ -238,7 +234,13 @@ const PARENT_MODES = {
     // Stamp the moment the stop is ISSUED. Without it the suite can only observe that the hanging request
     // ended somehow — which a provider timeout, a transport reset or the daemon teardown would also produce.
     // The runner pairs this with the abort stamp to prove the stop is what ended it.
-    if (sessionId) { stopClock.issuedAt ??= Date.now(); return callTool('DelegateStop', { id: sessionId }); }
+    if (sessionId) {
+      // Session registration precedes inference. This scenario tests transport cancellation, so do not
+      // issue its stop until the provider has actually received the request it is supposed to abort.
+      if (!await waitForHangingRequest()) return say('Error: hanging child model request is not ready for DelegateStop.');
+      stopClock.issuedAt ??= Date.now();
+      return callTool('DelegateStop', { id: sessionId });
+    }
     // The child registers its session a moment after the job starts; poll a BOUNDED number of times rather
     // than stopping a job whose session id is still '(starting)'.
     return (allText.match(/Delegation job dlg-/g) ?? []).length < 12
@@ -250,16 +252,29 @@ const PARENT_MODES = {
 /**
  * @returns {Promise<{
  *   baseUrl: string, requests: object[], nodeRuns: Map<string, {startedAt:number,endedAt:number}[]>,
- *   hangs: { requests: number, aborted: number, released: number },
+ *   hangs: { requests: number, aborted: number, released: number, stopIssuedAt?: number, abortedAt?: number },
  *   setMode: (m: string) => void, releaseHangs: () => void, close: () => Promise<void>,
  * }>}
  */
-export async function startScriptedModel() {
+export async function startScriptedModel({ hangReadyTimeoutMs = 15_000 } = {}) {
   const requests = [];
   /** node id -> one span per EXECUTION of that node, in order. The suite's evidence for parallelism and for
    *  resume selectivity; see the header. */
   const nodeRuns = new Map();
   const hangs = { requests: 0, aborted: 0, released: 0, stopIssuedAt: undefined, abortedAt: undefined };
+  const stopClock = { issuedAt: undefined };
+  let markHangReady;
+  const hangReady = new Promise((resolve) => { markHangReady = resolve; });
+  const waitForHangingRequest = async () => {
+    let timeout;
+    try {
+      const ready = await Promise.race([
+        hangReady,
+        new Promise((resolve) => { timeout = setTimeout(() => resolve(false), hangReadyTimeoutMs); }),
+      ]);
+      return ready === true && hangs.requests === 1 && hangs.aborted === 0 && hangs.released === 0;
+    } finally { clearTimeout(timeout); }
+  };
   let releaseHang = () => {};
   /** Resolve when the suite releases the hanging children — chained so one release frees every waiter. */
   const hangReleased = () => new Promise((resolve) => {
@@ -316,10 +331,12 @@ export async function startScriptedModel() {
       // an explicit release is the stop taking effect at the transport — which is what the runner asserts on
       // (`hangs.aborted`), rather than trusting the tool's own "Stopped." reply.
       hangs.requests += 1;
-      const settled = await Promise.race([
+      const settlement = Promise.race([
         hangReleased().then(() => 'released'),
         new Promise((resolve) => res.on('close', () => resolve('aborted'))),
       ]);
+      markHangReady(true);
+      const settled = await settlement;
       hangs[settled] += 1;
       if (settled === 'aborted') { hangs.abortedAt ??= Date.now(); hangs.stopIssuedAt = stopClock.issuedAt; res.end(); return; }
       say('Released.');
@@ -361,7 +378,7 @@ export async function startScriptedModel() {
     }
 
     const respond = PARENT_MODES[mode];
-    if (typeof respond === 'function') respond({ say, callTool, awaitingTool, lastTool, messages, allText });
+    if (typeof respond === 'function') await respond({ say, callTool, awaitingTool, lastTool, messages, allText, waitForHangingRequest, stopClock });
     else say(`Nothing scripted for mode "${mode}".`);
     finish();
   });
@@ -381,6 +398,7 @@ export async function startScriptedModel() {
     // Teardown safety valve: any hanging child still held here is let go, so `close()` cannot block.
     releaseHangs: () => releaseHang(),
     close: () => new Promise((resolve) => {
+      markHangReady(false);
       releaseHang();
       server.close(() => { process.off('exit', cleanupNodesDir); cleanupNodesDir(); resolve(); });
     }),

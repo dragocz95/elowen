@@ -353,8 +353,10 @@ async function main() {
       excerpt(stopResults.join(' | '), 600));
     // The decisive one. The child never answers on its own, so its request can only end by being torn down.
     // If DelegateStop were a no-op the request would still be hanging here and this count would be zero.
+    await waitFor('the held child model request to actually abort',
+      () => model.hangs.aborted > 0, 15_000);
     check('…and the stop actually reached the child: its in-flight model request was aborted',
-      model.hangs.aborted === model.hangs.requests && model.hangs.released === 0, JSON.stringify(model.hangs));
+      model.hangs.requests === 1 && model.hangs.aborted === 1 && model.hangs.released === 0, JSON.stringify(model.hangs));
     // Counting an abort is not the same as proving the STOP caused it: a provider timeout, a transport
     // reset or the daemon teardown all close that socket too. Pin it down in time — the abort must land
     // AFTER the stop was issued and promptly, well inside any timeout that could have produced it anyway.
