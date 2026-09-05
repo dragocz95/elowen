@@ -1,6 +1,7 @@
 import { Container, visibleWidth } from '@earendil-works/pi-tui';
 import type { Component, MarkdownTheme, TUI } from '@earendil-works/pi-tui';
 import { color } from './theme.js';
+import { projectStatusLabel } from './projectLabel.js';
 import { StatusBar, CardPanel, SubagentPanel } from './components.js';
 import type { SubagentPanelEntry } from './components.js';
 import type { BrainRateLimits, BrainStatus } from './brainClient.js';
@@ -432,7 +433,7 @@ export function createChatComposition(
       hints: color.faint(fitSegments(startScreenHintItems(keymap), startScreenBox(term.columns).boxWidth, ' · ')),
       tip: `${color.warning('●')} ${color.bold(color.text('Tip'))} ${color.dim('ask anything — try')} ${color.text('"What is the tech stack of this project?"')}`,
       notice: rt.notice,
-      statusLeft: `${color.dim(resources.cwdLabel)}${resources.branchLabel ? color.faint(` · ${resources.branchLabel}`) : ''}`,
+      statusLeft: projectStatusLabel({ cwd: resources.cwdLabel, branch: resources.branchLabel, workspace: rt.workspace }),
       version: ELOWEN_CLI_VERSION,
       productLabel: rt.brand.productName.toLowerCase(),
       showMascot: rt.showMascot,
@@ -707,7 +708,7 @@ export function createChatComposition(
     currentAgents = stream.subagentStates(); // one transcript scan per frame, shared by rail + fallback
     currentWorkflows = stream.workflowStates();
     const agents = currentAgents;
-    const projectLine = `${color.dim(resources.cwdLabel)}${resources.branchLabel ? color.faint(` · ${resources.branchLabel}`) : ''}`;
+    const projectLine = projectStatusLabel({ cwd: resources.cwdLabel, branch: resources.branchLabel, workspace: rt.workspace });
     const line = statusline(rt.lineCfg ? { ...rt.lineCfg, showModel: false } : null, focusedUsage(), rt.modelName);
     const activeGoal = goalMeta(rt.goal);
     const metaRight = panelVisible() || !line ? projectLine : `${color.faint(line)} ${color.faint('·')} ${projectLine}`;

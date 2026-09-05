@@ -243,6 +243,22 @@ export function currentContributionUserId(): number | null {
   return store.getStore()?.contributionUserId ?? null;
 }
 
+/** The ACCOUNT the current turn acts as, for everything that is owned per account rather than per
+ *  conversation: Sandbox workspaces and HOME, per-user plugin config and secrets, process ownership.
+ *
+ *  The contribution owner wins because it is the only account a DELEGATED child carries: its identity is
+ *  deliberately account-less (see `TurnIdentity.conversation: 'delegated'`), while the account whose
+ *  workspaces and HOME it must keep using is inherited from the turn that spawned it. The verified
+ *  identity is the fallback for a turn that has an account but no contribution scope — an owner or direct
+ *  turn composed without one, or an authenticated plugin API request, which is an identity and not a
+ *  turn at all. Null when neither names an account (an unlinked room sender, instance automation).
+ *
+ *  This is THE one resolver. A plugin that inlines `contribution ?? identity` itself, or reads only one of
+ *  the two, is how the same turn came to create a workspace through one tool and be refused it by the next. */
+export function currentAccountUserId(): number | null {
+  return currentContributionUserId() ?? currentIdentity()?.elowenUserId ?? null;
+}
+
 /** WHOSE account settings composed the current live session. Kept separate from contribution ownership so
  * a delegated child can durably resume with the exact model, prompt and Fast preference account captured
  * from its parent turn, even after the parent live session has been evicted. */

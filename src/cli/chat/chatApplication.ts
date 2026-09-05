@@ -245,6 +245,7 @@ export class ChatApplication {
       fastOn: boot?.fast ?? false,
       fastAvailable: boot?.fastAvailable ?? false,
       lspEnabled: boot?.lspEnabled ?? null,
+      workspace: boot?.project?.workspace ?? null,
       yoloOn: boot?.yolo ?? false,
       workMode: 'build',
       cards: boot?.cards ?? [],
@@ -420,6 +421,7 @@ export class ChatApplication {
     if (status.artifacts) state.artifacts.replace(status.artifacts);
     state.queued = status.queued ?? [];
     state.lspEnabled = status.lspEnabled ?? null;
+    state.workspace = status.project?.workspace ?? null;
     state.yoloOn = status.yolo ?? state.yoloOn;
     this.syncTerminalTitle(state.conversationTitle);
   }

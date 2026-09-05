@@ -198,4 +198,32 @@ describe('currentAccess', () => {
       expect(access.planMode).toBeUndefined();
     }, { identity: owner });
   });
+
+  /** `accountUserId` is the ONE account resolver every plugin reads for account-owned state (Sandbox
+   *  workspaces and HOME, per-user config): the contribution owner when the turn has one — the only
+   *  account a delegated child carries — else the verified identity. `contributionUserId` stays exactly
+   *  the contribution owner beside it, never an identity fallback. */
+  it('resolves accountUserId from the identity when no contribution owner is in scope', () => {
+    runWithPolicy(userPolicy(['/repo/a']), () => {
+      expect(currentAccess()).toMatchObject({ accountUserId: 7, contributionUserId: null });
+    }, { identity: owner });
+  });
+
+  it('resolves accountUserId from the contribution owner when one is in scope, over the identity', () => {
+    runWithPolicy(userPolicy(['/repo/a']), () => {
+      expect(currentAccess()).toMatchObject({ accountUserId: 3, contributionUserId: 3 });
+    }, { identity: owner, contributionUserId: 3 });
+    // A delegated child: no account identity at all, only the inherited contribution owner.
+    const delegated: TurnIdentity = { platform: 'subagent', userId: 'subagent', admin: false, owner: false, conversation: 'delegated' };
+    runWithPolicy(userPolicy(['/repo/a']), () => {
+      expect(currentAccess()).toMatchObject({ accountUserId: 3, contributionUserId: 3 });
+    }, { identity: delegated, contributionUserId: 3 });
+  });
+
+  it('resolves no account when neither an identity account nor a contribution owner exists', () => {
+    const stranger: TurnIdentity = { platform: 'discord', userId: '4242', admin: false, owner: false };
+    runWithPolicy(userPolicy(['/repo/a']), () => {
+      expect(currentAccess()).toMatchObject({ accountUserId: null, contributionUserId: null });
+    }, { identity: stranger });
+  });
 });

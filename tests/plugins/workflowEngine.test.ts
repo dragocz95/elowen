@@ -44,7 +44,7 @@ interface Tool {
 /** Build a workflow harness: a mock plugin ctx that captures the registered tools + emitted snapshots,
  *  and a controllable fake `run` handler. `run` resolves each node to `done:<task>` unless the task
  *  contains "FAIL" (then it returns an Error), recording the order nodes were launched. */
-const TEST_ACCESS = { admin: false, projectIds: [1], owner: true, permissionBoundary: null, contributionUserId: 1 } as const;
+const TEST_ACCESS = { admin: false, projectIds: [1], owner: true, permissionBoundary: null, contributionUserId: 1, accountUserId: 1 } as const;
 
 interface WorkflowControl {
   cancelForSession(input: { sessionId: string }): { cancelled: number };
@@ -131,7 +131,7 @@ function harness(opts: {
   /** Mutable so a test can narrow the caller's access boundary between a start and a resume, the way an
    *  operator revoking a project or disabling tools does to a real conversation. */
   const access: {
-    current: { admin: boolean; projectIds: number[]; owner: boolean; permissionBoundary: null; toolPolicy?: { allow?: string[]; deny?: string[] }; readOnly?: boolean; contributionUserId?: number; workspaceRef?: { workspaceId: string; projectId: number } };
+    current: { admin: boolean; projectIds: number[]; owner: boolean; permissionBoundary: null; toolPolicy?: { allow?: string[]; deny?: string[] }; readOnly?: boolean; contributionUserId?: number; accountUserId?: number; workspaceRef?: { workspaceId: string; projectId: number } };
   } = {
     current: { ...TEST_ACCESS, toolPolicy: opts.toolPolicyAllow ? { allow: opts.toolPolicyAllow } : undefined },
   };
@@ -234,6 +234,25 @@ describe('workflow engine', () => {
     expect(rejected.content[0]?.text).toContain('cannot switch to a sibling workspace');
     const add = tools.get('WorkflowAddNodes');
     expect(add?.parameters?.properties).toHaveProperty('workspaceId');
+  });
+
+  /** The account a workspace is resolved against is the host's ONE account resolver (`accountUserId` on
+   *  currentAccess): the contribution owner when the turn has one, else the verified identity. A turn
+   *  with an identity but no contribution scope — SandboxCreateWorkspace succeeds there — used to make
+   *  WorkflowStart throw "Sandbox workspace scope is unavailable" because the plugin read only
+   *  `contributionUserId`. */
+  it('resolves WorkflowStart.workspaceId through the account resolver when the turn has identity but no contribution scope', async () => {
+    const { tools, runs, access } = harness();
+    const { contributionUserId: _dropped, ...withoutContribution } = access.current;
+    access.current = { ...withoutContribution, accountUserId: 1 };
+    const start = tools.get('WorkflowStart');
+    if (!start) throw new Error('WorkflowStart was not registered');
+    const result = await start.execute('workspace-account', {
+      nodesFile: workflowFile([{ id: 'node', task: 'account-node' }]),
+      workspaceId: 'ws_root',
+    });
+    expect(result.content[0]?.text).not.toContain('Sandbox workspace scope is unavailable');
+    expect(runs.find((run) => run.task === 'account-node')?.workspaceRef).toEqual({ workspaceId: 'ws_root', projectId: 1 });
   });
 
   it('lets explicit start arguments override reusable file options', async () => {

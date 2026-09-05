@@ -37,7 +37,7 @@ export async function register(ctx) {
   const execution = createExecutionService({ ctx, db, dataDir, listWorkspaces: () => workspaces?.listWorkspaces() ?? [] });
   workspaces = createWorkspaceService({ ctx, db, dataDir, execution });
 
-  const accountId = () => ctx.currentContributionUserId() ?? ctx.currentIdentity()?.elowenUserId ?? null;
+  const accountId = () => ctx.currentAccountUserId();
   const sessionId = () => ctx.currentSessionId() ?? null;
   const accessibleProjects = () => {
     const access = ctx.currentAccess();
@@ -232,6 +232,34 @@ export async function register(ctx) {
         workspaces.useWorkspace({ workspaceId: workspace.id, sessionId: session, projectId: workspace.projectId }, { accessibleProjects: accessibleProjects() });
         return ok(`Using ${workspace.label} (${workspace.branch}) for Project ${workspace.projectId}.`, { workspace });
       } catch (error) { return fail(error); }
+    },
+  }));
+
+  ctx.registerTool(defineTool({
+    name: 'SandboxReleaseWorkspace',
+    label: 'Release workspace',
+    description: 'Give THIS conversation its Project directory back: unbind the Sandbox workspace(s) bound to this conversation, so its next turn starts in the Project again instead of inside the worktree (where shell commands whose working directory is inside the workspace run in the workspace container). Only this conversation’s own bindings: a delegated child that started in its parent’s workspace holds no binding of its own and cannot release the parent’s. Nothing is destroyed — the workspace, its branch and its directory are preserved and can be re-activated with SandboxUseWorkspace. Refused while a process still runs in the workspace. Takes effect on the next turn.',
+    parameters: Type.Object({
+      projectId: Type.Optional(Type.Integer({ minimum: 1, description: 'Release only this Project’s binding. Omit to release every binding of this conversation.' })),
+    }),
+    execute: async (_id, input) => {
+      try {
+        const userId = accountId();
+        if (userId === null) throw new Error('a linked Elowen account is required');
+        const session = sessionId();
+        if (!session) throw new Error('workspace release requires a conversation');
+        const result = workspaces.releaseSessionWorkspaces(
+          { sessionId: session, ...(input.projectId ? { projectId: input.projectId } : {}) },
+          { userId, accessibleProjects: accessibleProjects(), verifySessionOwner: workspaces.verifySessionOwner },
+        );
+        if (result.released === 0) return ok('No workspace is bound to this conversation; nothing to release.', result);
+        return ok(`Released ${result.released} workspace binding${result.released === 1 ? '' : 's'} (${result.workspaceIds.join(', ')}). The next turn runs in the Project directory. Each workspace, its branch and its directory are preserved.`, result);
+      } catch (error) {
+        if (error?.code === 'workspace_in_use') {
+          return fail(Object.assign(new Error('a process is still running in the bound workspace; wait for it to finish or kill it, then release again'), { code: 'workspace_in_use' }));
+        }
+        return fail(error);
+      }
     },
   }));
 
