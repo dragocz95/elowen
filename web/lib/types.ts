@@ -283,8 +283,13 @@ export interface ProcessInfo { id: string; command: string; cwd: string; started
 /** The statusline plugin's display toggles (null = plugin disabled). */
 export interface StatuslineConfig { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean; showSpeed?: boolean }
 /** Where the conversation works: the live (or last stamped) directory and its git branch. Both null for
- *  a chat that never reported a directory — an ordinary web conversation has no client cwd. */
-export interface BrainProject { cwd: string | null; branch: string | null }
+ *  a chat that never reported a directory — an ordinary web conversation has no client cwd. `workspace`
+ *  is the Sandbox worktree the next turn runs in, when the conversation is bound to one; then `cwd` and
+ *  `branch` describe that worktree. Optional for an older daemon. */
+export interface BrainProject { cwd: string | null; branch: string | null; workspace?: BrainProjectWorkspace | null }
+/** A bound Sandbox workspace. `confined` says every shell command of the conversation runs in the
+ *  worktree's container (mounted at `/workspace`, no Git, no host paths) rather than on the host. */
+export interface BrainProjectWorkspace { workspaceId: string; label: string; branch: string; confined: true }
 /** One MCP server of this daemon. `mcp: null` (non-admin, or the plugin is off) hides the section. */
 export interface McpServerStatus { name: string; status: string }
 /** `thinkingLevel*` are the reasoning-effort controls of the conversation's CURRENT model — the levels it

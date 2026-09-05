@@ -86,7 +86,7 @@ const WORKSPACE_UNSUPPORTED_TOOLS = new Set([
   'LspDiagnostics', 'LspGoToDefinition', 'LspFindReferences', 'LspHover',
   'LspDocumentSymbol', 'LspWorkspaceSymbol',
   'CodebaseSearch', 'CodebaseReindex', 'CodebaseStatus',
-  'SandboxListWorkspaces', 'SandboxCreateWorkspace', 'SandboxUseWorkspace', 'SandboxCommit', 'SandboxRemoveWorkspace',
+  'SandboxListWorkspaces', 'SandboxCreateWorkspace', 'SandboxUseWorkspace', 'SandboxReleaseWorkspace', 'SandboxCommit', 'SandboxRemoveWorkspace',
   'ListMcpResources', 'ReadMcpResource',
 ]);
 const WORKSPACE_PATH_TOOLS = new Set(['Read', 'Write', 'Edit', 'ListDir', 'Search', 'FileInfo', 'GitStatus', 'Glob', 'Grep', 'WorkflowStart']);

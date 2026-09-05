@@ -404,6 +404,34 @@ describe('telemetry rail — live work sections', () => {
     expect(classesOf(within(section).getByTitle(LONG_BRANCH))).toEqual(expect.arrayContaining(['min-w-0', 'truncate']));
   });
 
+  // A conversation bound to a Sandbox workspace runs every shell command in that worktree's container, so
+  // the foot has to say so beside the directory — and explain, behind the shared help affordance, what
+  // that changes and how to leave. Nothing is shown when no workspace is bound.
+  it('shows a Sandbox badge with the workspace label when the daemon reports a bound workspace', async () => {
+    server.use(http.get('*/api/brain/status', () => HttpResponse.json({
+      running: true, sessionId: 'brain-1', model: 'm', usage: null, statusline: null, cards: [], queued: [],
+      project: {
+        cwd: '/data/sandbox/users/1/workspaces/lease-fixes', branch: 'elowen/u1/lease-fixes',
+        workspace: { workspaceId: 'ws_1', label: 'lease-fixes', branch: 'elowen/u1/lease-fixes', confined: true },
+      },
+    })));
+    await renderRail();
+    const badge = await screen.findByTestId('telemetry-workspace');
+    expect(badge.textContent).toContain('Sandbox');
+    expect(badge.textContent).toContain('lease-fixes');
+    expect(within(badge).getByRole('button', { name: 'Help' })).toBeInTheDocument();
+  });
+
+  it('shows no Sandbox badge for a conversation with no bound workspace', async () => {
+    server.use(http.get('*/api/brain/status', () => HttpResponse.json({
+      running: true, sessionId: 'brain-1', model: 'm', usage: null, statusline: null, cards: [], queued: [],
+      project: { cwd: '/var/www/elowen', branch: 'main', workspace: null },
+    })));
+    await renderRail();
+    await screen.findByTestId('telemetry-project');
+    expect(screen.queryByTestId('telemetry-workspace')).toBeNull();
+  });
+
   it('lets a section heading and its live rows shrink with the rail', async () => {
     processes = [{ ...process1, command: LONG_COMMAND }];
     await renderRail();

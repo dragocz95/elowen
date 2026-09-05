@@ -811,7 +811,7 @@ describe('sandbox ownership contracts', () => {
     const manifest = JSON.parse(readFileSync(join(repoRoot, 'plugins', 'sandbox', 'elowen-plugin.json'), 'utf8')) as { userGrantable?: boolean; provides: { tools: string[] } };
     expect(manifest.userGrantable).toBeUndefined();
     expect(manifest.provides.tools).toEqual([
-      'SandboxListWorkspaces', 'SandboxCreateWorkspace', 'SandboxUseWorkspace', 'SandboxCommit', 'SandboxRemoveWorkspace',
+      'SandboxListWorkspaces', 'SandboxCreateWorkspace', 'SandboxUseWorkspace', 'SandboxReleaseWorkspace', 'SandboxCommit', 'SandboxRemoveWorkspace',
     ]);
     const registrations = readdirSync(join(repoRoot, 'plugins')).flatMap((name) => {
       const entry = join(repoRoot, 'plugins', name, 'index.mjs');
@@ -1363,6 +1363,101 @@ describe('sandbox releases a conversation back to its project', () => {
     })).toEqual({ released: 0 });
 
     await lease.release();
+  });
+});
+
+/** The model's own way out of a binding. Until it existed the only non-destructive release was the web
+ *  route, so an agent that had bound a workspace (SandboxCreateWorkspace = create + activate) could not
+ *  hand the conversation back to its Project without a person clicking. Same operation, same guards:
+ *  nothing is destroyed, a live process refuses, and a conversation the account does not own is refused. */
+describe('SandboxReleaseWorkspace tool', () => {
+  const bound = async () => {
+    const { registry, db, projects } = await setup(['sandbox'], false, ['main']);
+    db.prepare("INSERT INTO brain_sessions (id, user_id) VALUES ('brain-amy-tool', 1)").run();
+    db.prepare("INSERT INTO brain_sessions (id, user_id) VALUES ('brain-bob-room', 2)").run();
+    const control = registry.control('sandbox')!;
+    const turnPolicy = resolvePolicy({
+      userProjects: { forUser: () => projects.map((project) => project.id), isAdmin: () => false },
+      projects: { get: (id: number) => projects.find((project) => project.id === id) ?? null },
+      supplementalPaths: (userId, projectIds) => runWithContributionUser(userId, () => control.workspaceRoots({ projectIds })),
+    }, 1);
+    const act = (session: string, name: string, input: Record<string, unknown>, workDir = projects[0]!.path) =>
+      runWithPolicy(turnPolicy, () => tool(registry, name).execute('t', input), {
+        identity: nonOperator(1), contributionUserId: 1, sessionId: session, workDir,
+      });
+    const resolveTurn = (baseWorkDir: string, sessionId: string) => effectiveTurnWorkDir({
+      policy: turnPolicy, baseWorkDir, accountUserId: 1, sessionId,
+      projects: { list: () => projects }, sandbox: control,
+    });
+    const bindings = () => db.prepare('SELECT session_id, project_id FROM p_sandbox_session_bindings ORDER BY project_id').all();
+    return { registry, db, projects, act, resolveTurn, bindings };
+  };
+
+  it('is declared in the manifest beside the other workspace tools', () => {
+    const manifest = JSON.parse(readFileSync(join(repoRoot, 'plugins', 'sandbox', 'elowen-plugin.json'), 'utf8')) as { provides: { tools: string[] }; icons: Record<string, string>; showOutput: string[] };
+    expect(manifest.provides.tools).toContain('SandboxReleaseWorkspace');
+    expect(manifest.icons.SandboxReleaseWorkspace).toBeTruthy();
+    expect(manifest.showOutput).toContain('SandboxReleaseWorkspace');
+  });
+
+  it('releases every binding of the conversation and preserves the workspace', async () => {
+    const { projects, act, resolveTurn, bindings } = await bound();
+    const session = 'brain-amy-tool';
+    const first = (await act(session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Tool one', baseRef: 'main' })).details.workspace;
+    const second = (await act(session, 'SandboxCreateWorkspace', { projectId: 2, label: 'Tool two', baseRef: 'main' }, projects[1]!.path)).details.workspace;
+    expect(bindings()).toHaveLength(2);
+
+    const released = await act(session, 'SandboxReleaseWorkspace', {});
+    expect(released.details).toMatchObject({ released: 2 });
+    expect(released.details.workspaceIds).toEqual(expect.arrayContaining([first.id, second.id]));
+    expect(released.content[0]!.text).toMatch(/preserved/);
+    expect(bindings()).toEqual([]);
+    expect(resolveTurn(projects[0]!.path, session).workDir).toBe(projects[0]!.path);
+    expect(existsSync(first.path)).toBe(true);
+    expect(existsSync(second.path)).toBe(true);
+    expect(git(projects[0]!.path, 'branch', '--list', first.branch)).toContain(first.branch);
+
+    // Nothing left to release is an answer, not an error.
+    const again = await act(session, 'SandboxReleaseWorkspace', {});
+    expect(again.details).toMatchObject({ released: 0, workspaceIds: [] });
+  });
+
+  it('releases only the named Project when projectId is given', async () => {
+    const { projects, act, bindings } = await bound();
+    const session = 'brain-amy-tool';
+    await act(session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Keep', baseRef: 'main' });
+    const dropped = (await act(session, 'SandboxCreateWorkspace', { projectId: 2, label: 'Drop', baseRef: 'main' }, projects[1]!.path)).details.workspace;
+
+    const released = await act(session, 'SandboxReleaseWorkspace', { projectId: 2 });
+    expect(released.details).toMatchObject({ released: 1, workspaceIds: [dropped.id] });
+    expect(bindings()).toEqual([{ session_id: session, project_id: 1 }]);
+  });
+
+  it('refuses while a process holds the workspace and says so', async () => {
+    const { registry, act, bindings } = await bound();
+    const session = 'brain-amy-tool';
+    const workspace = (await act(session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Busy tool', baseRef: 'main' })).details.workspace;
+    const lease = registry.control('sandbox')!.acquireDelegationLease({
+      accountUserId: 1, workspace: { workspaceId: workspace.id, projectId: 1 },
+    });
+    const refused = await act(session, 'SandboxReleaseWorkspace', {});
+    expect(refused.details.ok).toBe(false);
+    expect(refused.details.error.code).toBe('workspace_in_use');
+    expect(refused.content[0]!.text).toMatch(/process/);
+    expect(bindings()).toHaveLength(1);
+    await lease.release();
+    expect((await act(session, 'SandboxReleaseWorkspace', {})).details).toMatchObject({ released: 1 });
+  });
+
+  it('refuses a conversation the account does not own and touches no binding', async () => {
+    const { act, bindings } = await bound();
+    // Amy binds inside a room Bob owns (a create does not check the room's owner — it binds where it is
+    // told), then asks to release it: the release is an ownership decision and fails closed.
+    await act('brain-bob-room', 'SandboxCreateWorkspace', { projectId: 1, label: 'Foreign room', baseRef: 'main' });
+    const refused = await act('brain-bob-room', 'SandboxReleaseWorkspace', {});
+    expect(refused.details.ok).toBe(false);
+    expect(refused.details.error.code).toBe('session_forbidden');
+    expect(bindings()).toHaveLength(1);
   });
 });
 

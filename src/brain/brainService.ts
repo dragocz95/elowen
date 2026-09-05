@@ -395,6 +395,9 @@ export class BrainService {
       get cwd() { return d.cwd; },
       get policy() { return d.policy; },
       get fastMode() { return d.fastMode; },
+      get projects() { return d.projects; },
+      get projectPath() { return d.projectPath; },
+      sandbox: () => d.plugins?.peek()?.control('sandbox'),
     });
     this.channelService = new ChannelSessionService({
       registry: this.sessions, admitsNewWork: () => !this.draining && !this.reloadingPlugins,

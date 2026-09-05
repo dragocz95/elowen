@@ -24,8 +24,9 @@ import type { PermissionApprovalService } from './permissionApproval.js';
 import type { BrainStreamSnapshot } from '../session/liveEventReplay.js';
 import { abortSessionWork } from '../session/abortSessionWork.js';
 import { gitBranch } from './gitBranch.js';
-import { clientDir } from './workDir.js';
+import { clientDir, effectiveTurnWorkDir, turnWorkDir } from './workDir.js';
 import { recoverablePartialTurnRows } from '../persistence.js';
+import type { KnownControls } from '../../plugins/api.js';
 
 /** One row in the caller's conversation list (the pickers' "attached" marker rides `attached`). */
 export interface SessionListItem {
@@ -114,8 +115,15 @@ export interface BrainStatusView {
 /** Where the conversation works: the live session's directory (else the stamped one) and its git branch.
  *  Both null for a conversation that never reported a directory — a web chat has no client cwd. Scoped by
  *  the same session resolution as the rest of {@link BrainStatusView}, so it can only ever describe a
- *  conversation the caller owns. */
-interface BrainProjectView { cwd: string | null; branch: string | null }
+ *  conversation the caller owns.
+ *
+ *  `workspace` is the Sandbox worktree the NEXT turn runs in, or null when the conversation is bound to
+ *  none. It is the turn resolver's own answer (effectiveTurnWorkDir against the same Sandbox control), so
+ *  the indicator and the shell cannot disagree; when set, `cwd` and `branch` describe that worktree.
+ *  `confined` says a Bash command runs in the workspace container: worktree at `/workspace`, no host paths,
+ *  no Git — which is exactly what a bound workspace means for the shell. */
+interface BrainProjectView { cwd: string | null; branch: string | null; workspace: BrainProjectWorkspace | null }
+export interface BrainProjectWorkspace { workspaceId: string; label: string; branch: string; confined: true }
 
 /** One row of the admin session-management panel ({@link BrainStatusService.listManagedSessions}). */
 export interface ManagedSessionView {
@@ -205,6 +213,11 @@ interface StatusServiceDeps {
    *  assignments. Absent (tests) → all-access. */
   policy?: BrainDeps['policy'];
   fastMode?: BrainDeps['fastMode'];
+  /** The three inputs the turn resolver needs beyond the policy, so the project section can ask it where
+   *  the next turn runs instead of re-deriving a binding. Absent (tests, no Sandbox) → no workspace. */
+  projects?: BrainDeps['projects'];
+  projectPath?: BrainDeps['projectPath'];
+  sandbox?(): KnownControls['sandbox'] | undefined;
   /** Injected for tests; defaults to PI's createAgentSession (smoke test only). */
   createSession?: typeof createAgentSession;
   /** Working dir for the throwaway smoke-test session. Default: process.cwd(). */
@@ -453,7 +466,23 @@ export class BrainStatusService {
     // from the stored stamp: a directory stamped while the user still had the project must stop being
     // reported the moment that access is revoked.
     const policy = this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
-    const cwd = clientDir(policy, b?.workDir ?? row?.work_dir ?? undefined) ?? null;
+    const reported = clientDir(policy, b?.workDir ?? row?.work_dir ?? undefined) ?? null;
+    // Where the next turn actually runs — the resolver a turn uses, fed the same base directory it would
+    // compute, so a bound Sandbox workspace shows here exactly when the shell would run inside it. The
+    // account is the contribution owner of the live session, else the caller (the noteWorkDir rule).
+    const effective = activeId ? effectiveTurnWorkDir({
+      policy,
+      baseWorkDir: turnWorkDir(policy, reported ?? undefined, this.d.projectPath),
+      accountUserId: b?.contributionUserId ?? userId,
+      sessionId: activeId,
+      projects: this.d.projects,
+      sandbox: this.d.sandbox?.(),
+    }) : undefined;
+    const bound = effective?.workspace ?? null;
+    const cwd = bound ? effective?.workDir ?? reported : reported;
+    const workspace: BrainProjectWorkspace | null = bound
+      ? { workspaceId: bound.workspaceId, label: bound.label, branch: bound.branch, confined: true }
+      : null;
     return {
       running: !!b, sessionId: b?.sessionId ?? null, title, model: b?.model ?? '',
       // The live session's CONFIG provider id (`b.providerId`), never PI's registry name — falling back to
@@ -487,7 +516,7 @@ export class BrainStatusService {
       // Effective YOLO for the active conversation (session override, else the persisted default) —
       // drives the CLI's warning-toned indicator.
       yolo: this.d.permissions.effectiveYolo(userId, b),
-      project: { cwd, branch: cwd ? gitBranch(cwd, policy) : null },
+      project: { cwd, branch: (cwd ? gitBranch(cwd, policy) : null) ?? workspace?.branch ?? null, workspace },
     };
   }
 

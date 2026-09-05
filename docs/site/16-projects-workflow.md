@@ -90,7 +90,7 @@ elowen api GET /plugins/sandbox/api/overview
 elowen api GET /plugins/github/api/status
 ```
 
-The corresponding agent tools are `SandboxListWorkspaces`, `SandboxCreateWorkspace`, `SandboxUseWorkspace`, `SandboxCommit`, `SandboxRemoveWorkspace`, and the GitHub read and write tools exposed by the GitHub plugin. GitHub mutations require an interactive confirmation; delegated, scheduled, and unattended contexts remain read-only.
+The corresponding agent tools are `SandboxListWorkspaces`, `SandboxCreateWorkspace`, `SandboxUseWorkspace`, `SandboxReleaseWorkspace`, `SandboxCommit`, `SandboxRemoveWorkspace`, and the GitHub read and write tools exposed by the GitHub plugin. GitHub mutations require an interactive confirmation; delegated, scheduled, and unattended contexts remain read-only.
 
 For access rules, see [Users & Access](users-access). For plugin configuration, see [Plugins](plugins).
 

@@ -236,6 +236,34 @@ export async function register(ctx) {
   }));
 
   ctx.registerTool(defineTool({
+    name: 'SandboxReleaseWorkspace',
+    label: 'Release workspace',
+    description: 'Give this conversation its Project directory back: unbind the active Sandbox workspace(s) so the next turn runs in the Project again instead of inside the workspace container. Nothing is destroyed — the workspace, its branch and its directory are preserved and can be re-activated with SandboxUseWorkspace. Refused while a process still runs in the workspace. Takes effect on the next turn.',
+    parameters: Type.Object({
+      projectId: Type.Optional(Type.Integer({ minimum: 1, description: 'Release only this Project’s binding. Omit to release every binding of this conversation.' })),
+    }),
+    execute: async (_id, input) => {
+      try {
+        const userId = accountId();
+        if (userId === null) throw new Error('a linked Elowen account is required');
+        const session = sessionId();
+        if (!session) throw new Error('workspace release requires a conversation');
+        const result = workspaces.releaseSessionWorkspaces(
+          { sessionId: session, ...(input.projectId ? { projectId: input.projectId } : {}) },
+          { userId, accessibleProjects: accessibleProjects(), verifySessionOwner: workspaces.verifySessionOwner },
+        );
+        if (result.released === 0) return ok('No workspace is bound to this conversation; nothing to release.', result);
+        return ok(`Released ${result.released} workspace binding${result.released === 1 ? '' : 's'} (${result.workspaceIds.join(', ')}). The next turn runs in the Project directory. Each workspace, its branch and its directory are preserved.`, result);
+      } catch (error) {
+        if (error?.code === 'workspace_in_use') {
+          return fail(Object.assign(new Error('a process is still running in the bound workspace; wait for it to finish or kill it, then release again'), { code: 'workspace_in_use' }));
+        }
+        return fail(error);
+      }
+    },
+  }));
+
+  ctx.registerTool(defineTool({
     name: 'SandboxCommit',
     label: 'Commit workspace changes',
     description: 'Commit selected paths in the active workspace. Paths are explicit and workspace-relative; Sandbox never runs git add -A. Repository hooks are disabled. Unselected changes remain in the workspace and are reported after the commit.',
