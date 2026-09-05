@@ -57,10 +57,6 @@ function narrowSubagentProgress(e: BrainEvent): SubagentProgressEvent {
   };
 }
 
-/** How long a boot's recovery claim holds a run before ANOTHER booting instance may steal it (the lease
- *  in the compare-and-swap). Only matters for a rare concurrent recovery; a normal restart claims a
- *  previous boot's run immediately regardless, because its lease is never set while it runs. */
-const RECOVERY_LEASE_MS = 5 * 60_000;
 /** A run whose recovery keeps failing (crash loop) is given up as an error after this many attempts, so a
  *  poison transcript cannot respawn forever. attempt is bumped on each claim. */
 const MAX_RECOVERY_ATTEMPTS = 3;
@@ -158,7 +154,7 @@ export class DelegatedSessionService {
     if (orphaned > 0) {
       logger('brain').info(`boot: retired ${orphaned} delegated result(s) whose parent sub-agent had already finished`);
     }
-    this.pendingRecovery = this.d.store.claimRecoverableRuns(RECOVERY_LEASE_MS);
+    this.pendingRecovery = this.d.store.claimRecoverableRuns();
     if (this.pendingRecovery.length > 0) {
       logger('brain').info(`boot recovery claimed ${this.pendingRecovery.length} interrupted delegation(s) for respawn`);
     }

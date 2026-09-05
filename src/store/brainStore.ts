@@ -1332,6 +1332,12 @@ export class BrainStore {
     return this.delegation.getSubagentRuns(parentSessionId);
   }
 
+  /** Child sessions with a delegated call still open on them, whichever boot or process owns it — see
+   *  {@link BrainDelegationStore.activeDelegationChildIds}. */
+  activeDelegationChildIds(parentSessionId: string): ReturnType<BrainDelegationStore['activeDelegationChildIds']> {
+    return this.delegation.activeDelegationChildIds(parentSessionId);
+  }
+
   /** The child sessions durably claimed for restart recovery — see
    *  {@link BrainDelegationStore.recoveringSubagentSessionIds}. */
   recoveringSubagentSessionIds(parentSessionId: string): ReturnType<BrainDelegationStore['recoveringSubagentSessionIds']> {
@@ -1345,8 +1351,8 @@ export class BrainStore {
 
   /** Claim every restart-orphaned delegation for this boot — see
    *  {@link BrainDelegationStore.claimRecoverableRuns}. */
-  claimRecoverableRuns(leaseMs: number): ReturnType<BrainDelegationStore['claimRecoverableRuns']> {
-    return this.delegation.claimRecoverableRuns(leaseMs);
+  claimRecoverableRuns(): ReturnType<BrainDelegationStore['claimRecoverableRuns']> {
+    return this.delegation.claimRecoverableRuns();
   }
 
   /** Claim every restart-orphaned workflow for this boot — see

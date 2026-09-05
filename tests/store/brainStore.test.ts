@@ -176,31 +176,68 @@ describe('BrainStore', () => {
     expect(row()).toEqual({ lifecycle: 'done', owner_boot_id: 'boot-A' });
   });
 
-  it('claims restart orphans for the new boot but leaves its own live work and a leased concurrent recovery alone', () => {
+  it('claims restart orphans for the new boot — running AND recovering rows of a previous boot — but leaves its own live work alone', () => {
     // Boot A ran three children, then the daemon restarted as boot B.
     store.setDelegationBootId('boot-A');
     store.createSession({ id: 'root', userId: 1, model: 'm' });
     for (const c of ['c1', 'c2', 'c3']) store.createSession({ id: c, userId: 1, model: 'm', parentSessionId: 'root' });
     const running = (tc: string, child: string) => store.upsertSubagentRun('root', { id: tc, sessionId: child, status: 'running', task: 't', tools: 0, seconds: 0 });
     running('orphan', 'c1'); // owned by boot-A
-    // A row already `recovering` under a DIFFERENT boot with a LIVE lease = a concurrent recovery; leave it.
-    running('leased', 'c2');
-    db.prepare("UPDATE brain_subagent_runs SET lifecycle='recovering', owner_boot_id='boot-C', lease_until=? WHERE tool_call_id='leased'").run(Date.now() + 60_000);
-    // A row `recovering` under another boot with an EXPIRED lease = that recovery died; reclaim it.
+    // Production, 5 Sep: boot C claimed a row for recovery and was itself restarted three minutes later,
+    // inside the old five-minute lease. The daemon is a singleton, so a `recovering` row owned by ANOTHER
+    // boot is a recovery that died with its process — the lease must not fence it off, or nothing ever
+    // runs the child again while every read model keeps showing it running.
+    running('mid-recovery', 'c2');
+    db.prepare("UPDATE brain_subagent_runs SET lifecycle='recovering', owner_boot_id='boot-C', attempt=1, lease_until=? WHERE tool_call_id='mid-recovery'").run(Date.now() + 60_000);
     running('stale', 'c3');
-    db.prepare("UPDATE brain_subagent_runs SET lifecycle='recovering', owner_boot_id='boot-C', lease_until=? WHERE tool_call_id='stale'").run(Date.now() - 1);
+    db.prepare("UPDATE brain_subagent_runs SET lifecycle='recovering', owner_boot_id='boot-C', attempt=1, lease_until=? WHERE tool_call_id='stale'").run(Date.now() - 1);
 
     store.setDelegationBootId('boot-B');
     // Also start a genuinely live child under boot-B: it must NOT be claimed as an orphan.
     store.createSession({ id: 'c4', userId: 1, model: 'm', parentSessionId: 'root' });
     running('live-b', 'c4');
 
-    const claimed = store.claimRecoverableRuns(30_000).map((r) => r.toolCallId).sort();
-    expect(claimed).toEqual(['orphan', 'stale']); // boot-A orphan + expired-lease recovering
-    const lc = (tc: string) => (db.prepare('SELECT lifecycle, owner_boot_id, attempt FROM brain_subagent_runs WHERE tool_call_id = ?').get(tc) as { lifecycle: string; owner_boot_id: string; attempt: number });
-    expect(lc('orphan')).toMatchObject({ lifecycle: 'recovering', owner_boot_id: 'boot-B', attempt: 1 });
-    expect(lc('leased')).toMatchObject({ lifecycle: 'recovering', owner_boot_id: 'boot-C' }); // untouched
+    const claimed = store.claimRecoverableRuns().map((r) => r.toolCallId).sort();
+    expect(claimed).toEqual(['mid-recovery', 'orphan', 'stale']);
+    const lc = (tc: string) => (db.prepare('SELECT lifecycle, owner_boot_id, attempt, lease_until FROM brain_subagent_runs WHERE tool_call_id = ?').get(tc) as { lifecycle: string; owner_boot_id: string; attempt: number; lease_until: number | null });
+    expect(lc('orphan')).toMatchObject({ lifecycle: 'recovering', owner_boot_id: 'boot-B', attempt: 1, lease_until: null });
+    // The interrupted recovery counts as an attempt: a run whose recovery keeps dying still caps out.
+    expect(lc('mid-recovery')).toMatchObject({ lifecycle: 'recovering', owner_boot_id: 'boot-B', attempt: 2, lease_until: null });
     expect(lc('live-b')).toMatchObject({ lifecycle: 'running', owner_boot_id: 'boot-B' }); // own live work
+  });
+
+  it('retires an older still-open row of a child whose newer row is live, so one child is never recovered twice', () => {
+    // Production shape (5 Sep, brain-1-mrxd… → …b8d67a3bb808): a background Delegate row left `recovering`
+    // by a dead boot, then the parent's DelegateContinue drove the same child under a new row. Every read
+    // model speaks with the newest row; recovering the older one too would run the child's continuation a
+    // second time and wake the parent with two answers for one piece of work.
+    store.setDelegationBootId('boot-A');
+    store.createSession({ id: 'root', userId: 1, model: 'm' });
+    store.createSession({ id: 'brain-ch-subagent-sub-child', userId: 1, model: 'm', parentSessionId: 'root' });
+    store.upsertSubagentRun('root', { id: 'older', sessionId: 'brain-ch-subagent-sub-child', status: 'running', task: 'first', tools: 0, seconds: 0, background: true, autoDeliver: true });
+    db.prepare("UPDATE brain_subagent_runs SET lifecycle='recovering', owner_boot_id='boot-dead', attempt=1 WHERE tool_call_id='older'").run();
+    store.upsertSubagentRun('root', { id: 'newer', sessionId: 'brain-ch-subagent-sub-child', status: 'running', task: 'continue', tools: 0, seconds: 0 });
+    // A finished older row beside a live newer one is the ordinary DelegateContinue history and is untouched.
+    store.createSession({ id: 'brain-ch-subagent-sub-other', userId: 1, model: 'm', parentSessionId: 'root' });
+    store.upsertSubagentRun('root', { id: 'done-before', sessionId: 'brain-ch-subagent-sub-other', status: 'done', task: 'x', tools: 1, seconds: 1 });
+    store.upsertSubagentRun('root', { id: 'live-after', sessionId: 'brain-ch-subagent-sub-other', status: 'running', task: 'y', tools: 0, seconds: 0 });
+
+    // A background Delegate still OPEN beside a later continuation is a legitimate pair (the parent holds a
+    // background handle it is owed an answer on) — a `running` older row is never superseded, only claimed.
+    store.createSession({ id: 'brain-ch-subagent-sub-pair', userId: 1, model: 'm', parentSessionId: 'root' });
+    store.upsertSubagentRun('root', { id: 'bg-open', sessionId: 'brain-ch-subagent-sub-pair', status: 'running', task: 'bg', tools: 0, seconds: 0, background: true, autoDeliver: true });
+    store.upsertSubagentRun('root', { id: 'bg-continue', sessionId: 'brain-ch-subagent-sub-pair', status: 'running', task: 'more', tools: 0, seconds: 0 });
+
+    store.setDelegationBootId('boot-B');
+    expect(store.claimRecoverableRuns().map((r) => r.toolCallId).sort()).toEqual(['bg-continue', 'bg-open', 'live-after', 'newer']);
+    const row = (tc: string) => db.prepare('SELECT lifecycle, state FROM brain_subagent_runs WHERE tool_call_id = ?').get(tc) as { lifecycle: string; state: string };
+    expect(row('older').lifecycle).toBe('error');
+    expect(row('bg-open').lifecycle).toBe('recovering');
+    expect(JSON.parse(row('older').state)).toMatchObject({ status: 'error', detail: 'superseded by a later call on the same sub-agent' });
+    expect(row('done-before').lifecycle).toBe('done');
+    // The superseded call is no longer a live one for any reader.
+    expect(store.activeDelegationChildIds('root').sort()).toEqual(['brain-ch-subagent-sub-child', 'brain-ch-subagent-sub-other', 'brain-ch-subagent-sub-pair']);
+    expect(store.listDelegatedChildren('root').find((c) => c.sessionId === 'brain-ch-subagent-sub-child')).toMatchObject({ status: 'running', task: 'continue' });
   });
 
   it('claims a run whose only settled parent result is the pause\'s synthetic [interrupted] promise', () => {
@@ -225,7 +262,7 @@ describe('BrainStore', () => {
     });
 
     store.setDelegationBootId('boot-B');
-    expect(store.claimRecoverableRuns(30_000).map((r) => r.toolCallId)).toEqual(['d1']);
+    expect(store.claimRecoverableRuns().map((r) => r.toolCallId)).toEqual(['d1']);
     const lc = (tc: string) => db.prepare('SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = ?').get(tc) as { lifecycle: string };
     expect(lc('d1')).toEqual({ lifecycle: 'recovering' });
     expect(lc('d2')).toEqual({ lifecycle: 'error' });
@@ -237,7 +274,7 @@ describe('BrainStore', () => {
     store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });
     store.upsertSubagentRun('root', { id: 'd1', sessionId: 'child', status: 'running', task: 't', tools: 0, seconds: 0, autoDeliver: true });
     store.setDelegationBootId('boot-B');
-    expect(store.claimRecoverableRuns(30_000).map((r) => r.toolCallId)).toEqual(['d1']);
+    expect(store.claimRecoverableRuns().map((r) => r.toolCallId)).toEqual(['d1']);
 
     const completion = { id: 'dlg-x', toolCallId: 'd1', sessionId: 'child', status: 'done' as const, task: 't', result: 'recovered answer', tools: 1, seconds: 2 };
     // A completion from a boot that does NOT hold the claim is rejected.
@@ -256,7 +293,7 @@ describe('BrainStore', () => {
     store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });
     store.upsertSubagentRun('root', { id: 'd1', sessionId: 'child', status: 'running', task: 't', tools: 0, seconds: 0 });
     store.setDelegationBootId('boot-B');
-    store.claimRecoverableRuns(30_000);
+    store.claimRecoverableRuns();
     const notice = { id: 'd1', toolCallId: 'd1', sessionId: 'child', status: 'error' as const, task: 't', error: 'interrupted; use DelegateContinue to resume', tools: 0, seconds: 0 };
     // A non-owner boot cannot park it, and parking is atomic with the parent notice.
     store.setDelegationBootId('boot-OTHER');
@@ -1882,7 +1919,7 @@ describe('BrainStore', () => {
       store.setDelegationBootId('boot-B');
       // Unclaimed (still lifecycle 'running' owned by boot-A): refuse — only a held claim may be released.
       expect(store.supersedeClaimedRun('node-sess', 'nested', 'why')).toBe(false);
-      store.claimRecoverableRuns(30_000);
+      store.claimRecoverableRuns();
       expect(store.supersedeClaimedRun('node-sess', 'nested', 'superseded by workflow resume')).toBe(true);
       const row = db.prepare("SELECT lifecycle, owner_boot_id FROM brain_subagent_runs WHERE tool_call_id = 'nested'").get() as { lifecycle: string; owner_boot_id: string | null };
       expect(row.lifecycle).toBe('error');
