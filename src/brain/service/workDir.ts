@@ -57,8 +57,10 @@ export interface EffectiveTurnWorkDir {
 
 /** Resolve one turn's active Sandbox workspace without mutating the live PI session. The static session cwd
  * remains the cache-friendly spawn value; tools and delegation read this per-turn result from ALS, while the
- * prompt gets a volatile reminder when the two differ. Every returned workspace path is re-validated through
- * the canonical Policy, so a stale plugin row or revoked Project can only fall back to the registered path. */
+ * prompt gets a volatile reminder when the two differ. Selection is the conversation's own binding across
+ * every accessible Project first, and only then the project this cwd happens to sit in. Every returned
+ * workspace path is re-validated through the canonical Policy, so a stale plugin row or revoked Project can
+ * only fall back to the registered path. */
 export function effectiveTurnWorkDir(input: {
   policy: Policy;
   baseWorkDir?: string;
@@ -75,25 +77,41 @@ export function effectiveTurnWorkDir(input: {
     : [...input.policy.allowedProjectIds];
   if (projectIds.length === 0) return fallback;
 
-  let roots: ReturnType<KnownControls['sandbox']['workspaceRoots']> = [];
-  try {
-    roots = runWithContributionUser(input.accountUserId, () => input.sandbox!.workspaceRoots({ projectIds }));
-  } catch { return fallback; }
-
-  const projects = input.projects.list().filter((project) => projectIds.includes(project.id));
-  const registered = projects.find((project) => realPathWithin(input.baseWorkDir!, [project.path]) !== null);
-  const supplemental = roots.find((root) => realPathWithin(input.baseWorkDir!, [root.path]) !== null);
-  const projectId = registered?.id ?? supplemental?.projectId ?? (projectIds.length === 1 ? projectIds[0] : undefined);
-  if (projectId === undefined) return fallback;
-
+  // The conversation's OWN selection comes first, across every accessible project. A chooser offers all of
+  // them, so the workspace a switch bound is frequently in a project this cwd says nothing about — and when
+  // the cwd sits outside every project, the inference below cannot name one at all. Only when the session
+  // has no binding does the cwd-inferred project get to answer.
   let workspace: SandboxWorkspace | null;
   try {
-    workspace = runWithContributionUser(input.accountUserId, () => input.sandbox!.activeWorkspace({
+    workspace = runWithContributionUser(input.accountUserId, () => input.sandbox!.activeSessionWorkspace?.({
       sessionId: input.sessionId,
-      projectId,
-    }));
+      projectIds,
+    }) ?? null);
   } catch { return fallback; }
-  if (!workspace || workspace.projectId !== projectId) return fallback;
+  // Fail closed on a workspace outside the ceiling the caller just named: the plugin owns that filter, and
+  // core does not widen from an answer that disagrees with it.
+  if (workspace && !projectIds.includes(workspace.projectId)) return fallback;
+
+  if (!workspace) {
+    let roots: ReturnType<KnownControls['sandbox']['workspaceRoots']> = [];
+    try {
+      roots = runWithContributionUser(input.accountUserId, () => input.sandbox!.workspaceRoots({ projectIds }));
+    } catch { return fallback; }
+
+    const projects = input.projects.list().filter((project) => projectIds.includes(project.id));
+    const registered = projects.find((project) => realPathWithin(input.baseWorkDir!, [project.path]) !== null);
+    const supplemental = roots.find((root) => realPathWithin(input.baseWorkDir!, [root.path]) !== null);
+    const projectId = registered?.id ?? supplemental?.projectId ?? (projectIds.length === 1 ? projectIds[0] : undefined);
+    if (projectId === undefined) return fallback;
+
+    try {
+      workspace = runWithContributionUser(input.accountUserId, () => input.sandbox!.activeWorkspace({
+        sessionId: input.sessionId,
+        projectId,
+      }));
+    } catch { return fallback; }
+    if (!workspace || workspace.projectId !== projectId) return fallback;
+  }
   const allowed = clientDir(input.policy, workspace.path);
   return allowed ? { baseWorkDir: input.baseWorkDir, workDir: allowed, workspace } : fallback;
 }

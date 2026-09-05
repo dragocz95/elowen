@@ -1152,6 +1152,17 @@ export interface SandboxControl {
    *  only honest way to say whose workspaces are meant. Omitting `projectIds` means every project. */
   workspacesFor(input: { userId: number; projectIds?: readonly number[] }): SandboxWorkspace[];
   activeWorkspace(input: { sessionId: string; projectId: number }): SandboxWorkspace | null;
+  /** The conversation's active workspace ACROSS `projectIds`, most recently bound first. The turn resolver
+   *  has only a cwd, and a cwd names at most one project — but a switch may bind ANY project the account can
+   *  reach, so asking per inferred project makes a legitimate switch invisible (and answers nothing at all
+   *  when no project can be inferred). `projectIds` is the caller's own accessibility ceiling and the
+   *  account stays ambient, so this is the same authority as `activeWorkspace`, asked without a project.
+   *  Optional: an older Sandbox build simply does not answer it, and the caller keeps its per-project
+   *  lookup rather than losing workspace selection entirely. */
+  activeSessionWorkspace?(input: {
+    sessionId: string;
+    projectIds: readonly number[];
+  }): SandboxWorkspace | null;
   prepareExecution(
     input: {
       command: SandboxExecutionCommand;

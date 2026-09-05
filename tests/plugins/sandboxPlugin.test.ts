@@ -1,6 +1,6 @@
 import { afterAll, afterEach, describe, expect, it } from 'vitest';
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,8 +9,9 @@ import { makePluginDb } from '../../src/store/pluginDb.js';
 import { openDb } from '../../src/store/db.js';
 import { RealGitReader } from '../../src/git/gitReader.js';
 import { realPathWithin } from '../../src/plugins/pathGuard.js';
-import { runWithPolicy, type TurnIdentity } from '../../src/plugins/policyContext.js';
-import type { Policy } from '../../src/plugins/policy.js';
+import { runWithContributionUser, runWithPolicy, type TurnIdentity } from '../../src/plugins/policyContext.js';
+import { resolvePolicy, type Policy } from '../../src/plugins/policy.js';
+import { effectiveTurnWorkDir } from '../../src/brain/service/workDir.js';
 import { processRegistry } from '../../src/brain/processRegistry.js';
 import { bubblewrapProbe, migrateLegacyHomes, runPrepared } from '../../plugins/sandbox/lib/execution.mjs';
 import { processIdentity, reconcileStaleLeases, withRepoLease } from '../../plugins/sandbox/lib/db.mjs';
@@ -33,9 +34,9 @@ function git(cwd: string, ...args: string[]): string {
   return execFileSync('git', ['-C', cwd, ...args], { encoding: 'utf8' }).trim();
 }
 
-function createRepository(): string {
+function createRepository(branch = 'main'): string {
   const root = temp('repo');
-  git(root, 'init', '-b', 'main');
+  git(root, 'init', '-b', branch);
   git(root, 'config', 'user.name', 'Sandbox Test');
   git(root, 'config', 'user.email', 'sandbox@example.test');
   writeFileSync(join(root, 'README.txt'), 'base\n');
@@ -44,21 +45,24 @@ function createRepository(): string {
   return root;
 }
 
-async function setup(enabled = ['sandbox'], confineNonOperators = false) {
-  const projectPath = createRepository();
+/** `extraBranches` adds one further registered Project per entry, each a real repository created on that
+ *  branch name — what a second accessible Project and a repository whose trunk is not `main` both need. */
+async function setup(enabled = ['sandbox'], confineNonOperators = false, extraBranches: string[] = []) {
+  const paths = [createRepository(), ...extraBranches.map((branch) => createRepository(branch))];
   const dataRoot = temp('data');
   const db = openDb(':memory:');
   db.prepare("INSERT INTO users (id, username, password_hash, is_admin) VALUES (1, 'amy', 'x', 0)").run();
   db.prepare("INSERT INTO users (id, username, password_hash, is_admin) VALUES (2, 'bob', 'x', 0)").run();
   db.prepare("INSERT INTO users (id, username, password_hash, is_admin) VALUES (3, 'admin', 'x', 1)").run();
-  db.prepare('INSERT INTO projects (id, slug, path, notes) VALUES (1, ?, ?, ?)').run('demo', projectPath, '');
-  const project = { id: 1, slug: 'demo', path: projectPath, notes: '', icon: '' };
+  const projects = paths.map((path, index) => ({ id: index + 1, slug: `demo-${index + 1}`, path, notes: '', icon: '' }));
+  for (const entry of projects) db.prepare('INSERT INTO projects (id, slug, path, notes) VALUES (?, ?, ?, ?)').run(entry.id, entry.slug, entry.path, '');
+  const projectPath = paths[0]!;
   const users = new Set([1, 2, 3]);
   const reader = new RealGitReader();
   const host = {
     stores: {
-      projects: { get: (id: number) => id === 1 ? project : null, list: () => [project] },
-      homeProject: () => project,
+      projects: { get: (id: number) => projects.find((entry) => entry.id === id) ?? null, list: () => projects },
+      homeProject: () => projects[0]!,
       usersRead: {
         list: () => [...users].map((id) => ({ id, username: id === 1 ? 'amy' : id === 2 ? 'bob' : 'admin', isAdmin: id === 3 })),
         isAdmin: (id: number) => id === 3,
@@ -90,7 +94,7 @@ async function setup(enabled = ['sandbox'], confineNonOperators = false) {
     host,
     delegatedTurnsOutOfProcess: () => false,
   });
-  return { registry, db, dataRoot, projectPath, users };
+  return { registry, db, dataRoot, projectPath, projects, users };
 }
 
 /** Stand-in for the GitHub plugin, which lives in the plugin registry rather than this repo. Installed
@@ -117,13 +121,19 @@ async function runAs(registry: Awaited<ReturnType<typeof loadPlugins>>, projectP
   });
 }
 
-function pluginRequest(method: string, query: Record<string, string>, value: unknown = {}) {
+function pluginRequest(
+  method: string,
+  query: Record<string, string>,
+  value: unknown = {},
+  auth: { userId: number; admin: boolean; tokenScope: 'user'; accessibleProjects: number[] | null }
+    = { userId: 3, admin: true, tokenScope: 'user', accessibleProjects: null },
+) {
   const raw = Buffer.from(JSON.stringify(value));
   return {
     method, path: '', query, headers: {}, params: {},
     body: async () => raw,
     json: async <T>() => value as T,
-    auth: { userId: 3, admin: true, tokenScope: 'user' as const, accessibleProjects: null },
+    auth,
   };
 }
 
@@ -770,6 +780,185 @@ describe('sandbox slash command declaration', () => {
     expect(registry.loadedNames.has('sandbox')).toBe(false);
     expect(registry.commands.has('sandbox')).toBe(false);
     expect(publishedFor(registry).some((cmd) => cmd.name === 'sandbox')).toBe(false);
+  });
+});
+
+/** A create carries a caller-supplied conversation id and BINDS the new workspace to it, so the route is
+ *  exactly as much an ownership decision as `workspaces/use` is. The refusal has to land before anything
+ *  exists: a worktree and a workspace row created and then rejected would be a cross-account write that
+ *  merely reports failure. */
+describe('sandbox conversation ownership on create', () => {
+  const asAmy = { userId: 1, admin: false, tokenScope: 'user' as const, accessibleProjects: [1] };
+
+  it('refuses a create naming another account’s conversation and leaves no worktree, workspace row or binding', async () => {
+    const { registry, db, dataRoot, projectPath } = await setup();
+    db.prepare("INSERT INTO brain_sessions (id, user_id) VALUES ('brain-amy-own', 1)").run();
+    db.prepare("INSERT INTO brain_sessions (id, user_id) VALUES ('brain-bob-private', 2)").run();
+    const route = registry.apiRoute('sandbox', 'workspaces/create', 'POST')!;
+
+    const refused = await route.handler(pluginRequest('POST', {}, {
+      projectId: 1, label: 'Stolen', baseRef: 'main', sessionId: 'brain-bob-private',
+    }, asAmy));
+
+    expect(refused.status).toBe(403);
+    expect((refused.body as { error: string }).error).toBe('session_forbidden');
+    expect(existsSync(join(dataRoot, 'sandbox', 'users', '1', 'workspaces', 'stolen'))).toBe(false);
+    expect(git(projectPath, 'worktree', 'list')).not.toContain('stolen');
+    expect(git(projectPath, 'branch', '--list', 'elowen/u1/stolen')).toBe('');
+    expect(db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_workspaces').get()).toEqual({ n: 0 });
+    expect(db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_session_bindings').get()).toEqual({ n: 0 });
+
+    // The same call for the caller's OWN conversation still creates and binds — the guard rejects the
+    // foreign session, not the route.
+    const allowed = await route.handler(pluginRequest('POST', {}, {
+      projectId: 1, label: 'Mine', baseRef: 'main', sessionId: 'brain-amy-own',
+    }, asAmy));
+    expect(allowed.status).toBe(201);
+    const created = (allowed.body as { workspace: { id: string; path: string } }).workspace;
+    expect(existsSync(created.path)).toBe(true);
+    expect(db.prepare('SELECT session_id, user_id FROM p_sandbox_session_bindings').all())
+      .toEqual([{ session_id: 'brain-amy-own', user_id: 1 }]);
+  });
+});
+
+/** The cwd answers "which project am I standing in", which is a DIFFERENT question from "which workspace
+ *  did this conversation switch to". The chooser offers every accessible project, so these tests drive the
+ *  real resolver and assert the directory the NEXT turn would run in — not the binding row. */
+describe('sandbox workspace selection follows the conversation, not the cwd', () => {
+  type SandboxRoots = { workspaceRoots(input: { projectIds: readonly number[] }): { projectId: number; path: string }[] };
+  const scopedPolicy = (control: SandboxRoots, projects: { id: number; path: string }[]): Policy => resolvePolicy({
+    userProjects: { forUser: () => projects.map((project) => project.id), isAdmin: () => false },
+    projects: { get: (id: number) => projects.find((project) => project.id === id) ?? null },
+    supplementalPaths: (userId, projectIds) => runWithContributionUser(userId, () => control.workspaceRoots({ projectIds })),
+  }, 1);
+
+  /** Two registered Projects, both assigned to the same account — the ordinary state the chooser offers
+   *  and the one the cwd cannot describe on its own. */
+  const twoProjects = async (enabled = ['sandbox']) => {
+    const { registry, projects } = await setup(enabled, false, ['main']);
+    const control = registry.control('sandbox')!;
+    const turnPolicy = scopedPolicy(control, projects);
+    const act = (workDir: string, session: string, name: string, input: Record<string, unknown>) =>
+      runWithPolicy(turnPolicy, () => tool(registry, name).execute('t', input), {
+        identity: nonOperator(1), contributionUserId: 1, sessionId: session, workDir,
+      });
+    const resolveTurn = (forTurn: Policy, baseWorkDir: string, sessionId: string) => effectiveTurnWorkDir({
+      policy: forTurn,
+      baseWorkDir,
+      accountUserId: 1,
+      sessionId,
+      projects: { list: () => projects },
+      sandbox: control,
+    });
+    return { registry, projects, control, turnPolicy, act, resolveTurn };
+  };
+
+  it('follows a switch within the project the cwd names', async () => {
+    const { projects, turnPolicy, act, resolveTurn } = await twoProjects();
+    const session = 'brain-switch-same';
+    const first = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'First', baseRef: 'main' })).details.workspace;
+    const second = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Second', baseRef: 'main' })).details.workspace;
+    expect(first.path).not.toBe(second.path);
+
+    const effective = resolveTurn(turnPolicy, projects[0]!.path, session);
+    expect(effective.workDir).toBe(second.path);
+    expect(effective.workspace?.workspaceId).toBe(second.id);
+  });
+
+  it('follows a switch into a project the cwd says nothing about', async () => {
+    const { projects, turnPolicy, act, resolveTurn } = await twoProjects();
+    const session = 'brain-switch-cross';
+    const here = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Here', baseRef: 'main' })).details.workspace;
+    const elsewhere = (await act(projects[1]!.path, session, 'SandboxCreateWorkspace', { projectId: 2, label: 'Elsewhere', baseRef: 'main' })).details.workspace;
+
+    // The cwd is still project 1, whose own binding is intact — but the conversation's LAST switch was to
+    // project 2, and that is where the next turn belongs.
+    const effective = resolveTurn(turnPolicy, projects[0]!.path, session);
+    expect(effective.workDir).toBe(elsewhere.path);
+    expect(effective.workspace?.projectId).toBe(2);
+    expect(effective.workDir).not.toBe(here.path);
+
+    // Switching back is equally visible, so this is a live preference and not a "newest workspace" rule.
+    await act(projects[1]!.path, session, 'SandboxUseWorkspace', { workspaceId: here.id });
+    expect(resolveTurn(turnPolicy, projects[0]!.path, session).workDir).toBe(here.path);
+  });
+
+  it('resolves a switch even when the cwd belongs to no project at all', async () => {
+    const { projects, act, resolveTurn } = await twoProjects();
+    const session = 'brain-switch-noproject';
+    const chosen = (await act(projects[1]!.path, session, 'SandboxCreateWorkspace', { projectId: 2, label: 'Chosen', baseRef: 'main' })).details.workspace;
+    // An operator's cwd is frequently outside every registered Project, which leaves nothing to infer from.
+    const outside = realpathSync(temp('outside-projects'));
+
+    const effective = resolveTurn(adminPolicy, outside, session);
+    expect(effective.baseWorkDir).toBe(outside);
+    expect(effective.workDir).toBe(chosen.path);
+    expect(effective.workspace?.workspaceId).toBe(chosen.id);
+  });
+
+  it('keeps the Policy re-validation: a revoked Project falls back to the base directory', async () => {
+    const { projects, control, act, resolveTurn } = await twoProjects();
+    const session = 'brain-switch-revoked';
+    await act(projects[1]!.path, session, 'SandboxCreateWorkspace', { projectId: 2, label: 'Revoked', baseRef: 'main' });
+    // Project 2 is no longer assigned: its workspace root leaves allowedPaths with it, so the selected
+    // path fails the final clientDir check and the turn keeps its registered directory.
+    const narrowed = resolvePolicy({
+      userProjects: { forUser: () => [1], isAdmin: () => false },
+      projects: { get: (id: number) => projects.find((project) => project.id === id) ?? null },
+      supplementalPaths: (userId, projectIds) => runWithContributionUser(userId, () => control.workspaceRoots({ projectIds })),
+    }, 1);
+
+    const effective = resolveTurn(narrowed, projects[0]!.path, session);
+    expect(effective.workDir).toBe(projects[0]!.path);
+    expect(effective.workspace).toBeNull();
+  });
+
+  /** The turn scope installs one workDir at turn start and every tool in that turn reads it from ALS, so a
+   *  switch landing mid-turn is by construction invisible to the turn already running. Asserted on the
+   *  actual cwd a running turn's shell reports, not on the resolver's return value alone. */
+  it('does not retarget a turn already in flight', async () => {
+    const { registry, projects, turnPolicy, act, resolveTurn } = await twoProjects(['sandbox', 'terminal']);
+    const session = 'brain-switch-inflight';
+    const started = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Started', baseRef: 'main' })).details.workspace;
+    const later = (await act(projects[1]!.path, session, 'SandboxCreateWorkspace', { projectId: 2, label: 'Later', baseRef: 'main' })).details.workspace;
+    await act(projects[0]!.path, session, 'SandboxUseWorkspace', { workspaceId: started.id });
+
+    // The shell reports its cwd as the confined `/workspace` in either worktree, so the two are told apart
+    // by a file only one of them holds.
+    writeFileSync(join(started.path, 'marker.txt'), 'started-workspace\n');
+    writeFileSync(join(later.path, 'marker.txt'), 'later-workspace\n');
+
+    const turn = resolveTurn(turnPolicy, projects[0]!.path, session);
+    expect(turn.workDir).toBe(started.path);
+
+    // The switch happens while the turn is running…
+    await runWithPolicy(turnPolicy, async () => {
+      await act(projects[1]!.path, session, 'SandboxUseWorkspace', { workspaceId: later.id });
+      const marker = await tool(registry, 'Bash').execute('t', { command: 'cat marker.txt' });
+      expect(marker.content[0]!.text).toContain('started-workspace');
+      expect(marker.content[0]!.text).not.toContain('later-workspace');
+    }, { identity: nonOperator(1), contributionUserId: 1, sessionId: session, workDir: turn.workDir });
+
+    // …and takes effect on the NEXT turn, which resolves again.
+    expect(resolveTurn(turnPolicy, projects[0]!.path, session).workDir).toBe(later.path);
+  });
+});
+
+describe('sandbox overview publishes an authoritative base ref', () => {
+  it('reports each Project’s real default branch instead of guessing main', async () => {
+    const { registry, projects } = await setup(['sandbox'], false, ['trunk']);
+    const route = registry.apiRoute('sandbox', 'overview', 'GET')!;
+    const response = await route.handler(pluginRequest('GET', {}));
+    const listed = (response.body as { projects: { id: number; defaultRef: string | null }[] }).projects;
+    expect(listed.find((project) => project.id === 1)?.defaultRef).toBe('main');
+    expect(listed.find((project) => project.id === 2)?.defaultRef).toBe('trunk');
+
+    // A registered directory that is not a repository has no ref to offer, and none is invented.
+    const plain = temp('not-a-repo');
+    projects.push({ id: 3, slug: 'plain', path: plain, notes: '', icon: '' });
+    const again = await route.handler(pluginRequest('GET', {}));
+    expect((again.body as { projects: { id: number; defaultRef: string | null }[] }).projects
+      .find((project) => project.id === 3)?.defaultRef).toBeNull();
   });
 });
 

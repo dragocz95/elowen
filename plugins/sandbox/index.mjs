@@ -88,6 +88,24 @@ export async function register(ctx) {
         baseRef: workspace.baseRef,
       } : null;
     },
+    // The project-free form of the lookup above, for the ONE caller that cannot name a project: the turn
+    // resolver, whose only clue is a cwd. A switch may bind a project that cwd sits nowhere near, so the
+    // answer is the conversation's most recent binding among the projects the caller says are accessible.
+    // The account is still ambient and the project ceiling still comes from the caller, so this widens
+    // nothing: it only stops a legitimate switch from being invisible.
+    activeSessionWorkspace: ({ sessionId, projectIds }) => {
+      const accountUserId = accountId();
+      if (accountUserId === null) return null;
+      const workspace = workspaces.activeSessionWorkspace({ accountUserId, sessionId, projectIds });
+      return workspace ? {
+        workspaceId: workspace.id,
+        projectId: workspace.projectId,
+        path: workspace.path,
+        label: workspace.label,
+        branch: workspace.branch,
+        baseRef: workspace.baseRef,
+      } : null;
+    },
     // Two callers, neither with an ambient turn to read, and they are NOT the same caller.
     //
     // An explicit `workspace` is a DELEGATED turn pinned to one worktree: the account comes from the
