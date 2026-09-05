@@ -33,15 +33,27 @@
   --color-border: #e4e4e7;
   --color-border-strong: #d4d4d8;
 
-  /* The navigation column, one step quieter than the canvas it insets from, with its own row fill and
-     its own rule. It is deliberately NOT --color-muted: that step belongs to the content cards and
-     moves with them, and a sidebar row taking the card fill made the menu read as a stack of cards.
-     The row fill is the measured reference value (plans/cloudflare-sidebar-spec.md): oklch(0.965 0 0),
-     written as the hex it resolves to because tests/lib/designTokens.test.ts has to evaluate this token
-     to check contrast, and an oklch() literal is a colour it cannot resolve.
-     Measured on the new fill: text 17.93:1, muted 6.97:1, subtle 4.83:1 — all clear AA. */
-  --color-sidebar: #f7f7f8;
+  /* The navigation column is the CANVAS ITSELF — the same #fbfbfb the page is grounded on, with no rule
+     down its outer edge (--color-sidebar-rule in tokens.css is transparent). Owner decision, 5 Sep 2026:
+     1:1 with the reference dashboard, where the column is not a panel laid on the page but a region of
+     it, and the only structure it carries is its own internal hairlines. The step this token used to
+     hold (#f7f7f8) was a panel the reference does not draw.
+     The row fill is the measured reference value: oklch(0.965 0 0), written as the hex it resolves to
+     because tests/lib/designTokens.test.ts has to evaluate this token to check contrast, and an oklch()
+     literal is a colour it cannot resolve.
+     Measured on the column ground: text 19.23:1, muted 7.47:1, subtle 5.17:1. On the row fill: text
+     17.93:1, muted 6.97:1, subtle 4.83:1 — all clear AA.
+     The ink ON a row is its own token rather than the page's: the reference sets it at oklch(0.205 0 0),
+     one step off black, so a menu of a dozen rows never reads as heavy as body copy (12.21:1 on the
+     column, 11.39:1 on the row fill). --color-sidebar-foreground is the column's QUIET ink, used by the
+     group labels, and it is a NEUTRAL grey rather than the bluish --color-subtle-foreground: the
+     reference's oklch(0.556 0 0), 4.58:1 on the column ground.
+     --color-sidebar-border stays the INTERNAL hairline — header, group seams, footer — and is unrelated
+     to the outer rule that is now gone. */
+  --color-sidebar: #fbfbfb;
   --color-sidebar-accent: #f3f3f3;
+  --color-sidebar-accent-foreground: #333333;
+  --color-sidebar-foreground: #737373;
   --color-sidebar-border: #e6e6e9;
 
   /* Ink. --color-muted-foreground is #52525b rather than the lighter grey a light UI reaches for by
@@ -137,10 +149,11 @@
   --studio-fill-active: color-mix(in srgb, var(--color-foreground) 7%, transparent);
 
   /* ---- Chrome rhythm -------------------------------------------------------------------------
-     The folded navigation rail is the reference's measured 57px, stated on the shared `--sidebar-width-icon`
-     token the column and the shadcn primitive both read; toolbar fields, buttons and filters share a 40px
-     control height. Both are read by shared stylesheets rather than restated per rule. */
-  --sidebar-width-icon: 57px;
+     The folded navigation rail is NOT restated here. Its 57px is the reference's measurement and lives
+     once, on `--sidebar-width-icon` in app/styles/tokens.css, where the column and the shadcn primitive
+     both read it; a skin copy of the same number is a second source of truth that drifts silently.
+     Toolbar fields, buttons and filters share a 40px control height, read by shared stylesheets rather
+     than restated per rule. */
   --studio-control-height: 2.5rem;
   --studio-ask-ground: #f4f4f5;
   --studio-ask-shadow: 0 0 0 1px rgb(9 9 11 / 0.075), 0 4px 6px -2px rgb(16 24 40 / 0.03), 0 12px 16px -4px rgb(16 24 40 / 0.08);

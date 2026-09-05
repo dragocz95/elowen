@@ -201,7 +201,13 @@ function assertReadable(design: string, tokens: Record<string, string>) {
  *
  *  `accent` is deliberately absent: it is a wash of the foreground (`color-mix(… transparent)`) rather
  *  than an opaque surface, so what it composites over is whatever is behind it — which is the property
- *  that makes it legible on every design by construction, and which no static pair can express. */
+ *  that makes it legible on every design by construction, and which no static pair can express.
+ *
+ *  The three `sidebar` pairs are the navigation column's own ink, and they are here rather than in the
+ *  ramp above because neither of them is a step of the shared text ramp: `sidebar-accent-foreground` is
+ *  what every menu row is written in and `sidebar-foreground` is what the group labels are, both set per
+ *  design. The row ink is measured against BOTH of the column's grounds because a row carries it at rest
+ *  (on `--color-sidebar`) and under the pointer (on `--color-sidebar-accent`). */
 const SHADCN_PAIRS = [
   ['--color-background', '--color-foreground'],
   ['--color-card', '--color-card-foreground'],
@@ -210,6 +216,9 @@ const SHADCN_PAIRS = [
   ['--color-secondary', '--color-secondary-foreground'],
   ['--color-muted', '--color-muted-foreground'],
   ['--color-destructive', '--color-destructive-foreground'],
+  ['--color-sidebar', '--color-sidebar-foreground'],
+  ['--color-sidebar', '--color-sidebar-accent-foreground'],
+  ['--color-sidebar-accent', '--color-sidebar-accent-foreground'],
 ] as const;
 
 describe('text contrast', () => {

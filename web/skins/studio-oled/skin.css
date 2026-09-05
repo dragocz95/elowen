@@ -31,8 +31,10 @@
   --color-border: #171c1e;
   --color-border-strong: #3d3d42;
 
-  /* The navigation column sits on the canvas itself, as theirs does: the content's cards step UP from it,
-     so a column that stays at page level is the recessive surface, and the stronger rule separates them.
+  /* The navigation column IS the canvas, as theirs is: the content's cards step UP from it, so a column
+     that stays at page level is the recessive surface. It carries no rule down its outer edge either
+     (--color-sidebar-rule in tokens.css is transparent) — owner decision, 5 Sep 2026: 1:1 with the
+     reference dashboard, where the column is a region of the page rather than a panel on it.
      The row fill is the reference's dark active step (neutral-850, oklch(0.23 0 0)) rather than the card
      fill it borrowed before: an active row has to separate from a card sitting beside it, and #080d0f
      WAS the card fill. It keeps this design's cyan tint instead of the reference's flat neutral, so the
@@ -40,10 +42,19 @@
      tests/lib/designTokens.test.ts must evaluate the token to check contrast.
      Held at oklch L 0.221 rather than the reference's exact 0.23: at 0.23 the third text step measured
      4.44:1 on the fill and missed AA, and the text ramp is the skin's identity — the fill is what moves.
-     Measured on the new fill: text 16.81:1, muted 6.81:1, subtle 4.59:1. */
+     Measured on the fill: text 16.81:1, muted 6.81:1, subtle 4.59:1.
+     The two INK tokens are the light variant's decisions inverted, and both are flat neutrals: the row
+     ink is the reference's own oklch(0.985 0 0) (19.29:1 on the column, 16.51:1 on the fill), and
+     --color-sidebar-foreground is the column's quiet ink for the group labels, a neutral grey at 6.23:1
+     rather than the tinted --color-subtle-foreground.
+     --color-sidebar-border is the INTERNAL hairline only — header, group seams, footer — and is now the
+     reference's neutral rather than this palette's tinted --color-border-strong, which was carrying an
+     outer rule that no longer exists. */
   --color-sidebar: #03080a;
   --color-sidebar-accent: #161c1e;
-  --color-sidebar-border: #3d3d42;
+  --color-sidebar-accent-foreground: #fafafa;
+  --color-sidebar-foreground: #8f8f8f;
+  --color-sidebar-border: #262626;
 
   /* Off-white ink, with the muted step being that same white at 62.7% alpha, shipped already resolved
      over the card fill. The subtle step is the ONE measurement not copied: theirs (43.9%, #737678) lands
@@ -112,8 +123,7 @@
   --studio-fill-hover: color-mix(in srgb, var(--color-foreground) 4%, transparent);
   --studio-fill-active: color-mix(in srgb, var(--color-foreground) 8%, transparent);
 
-  /* ---- Chrome rhythm — see studio-light. ---- */
-  --sidebar-width-icon: 57px;
+  /* ---- Chrome rhythm — see studio-light. The folded rail's 57px lives once, in tokens.css. ---- */
   --studio-control-height: 2.5rem;
   --studio-ask-ground: #080d0f;
   --studio-ask-shadow: 0 0 0 1px rgb(255 255 255 / 0.043), 0 4px 6px -2px rgb(0 0 0 / 0.3), 0 12px 16px -4px rgb(0 0 0 / 0.48);

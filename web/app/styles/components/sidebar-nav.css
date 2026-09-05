@@ -34,11 +34,14 @@
    active row are never clipped by a neighbouring surface. The sheet is excluded: it belongs to the app's
    overlay layer and already carries `.overlay-layer-nav-drawer`, which assigns `--z-nav-drawer`. */
 .sidebar-nav:not([data-mode='drawer']) { z-index: 1; }
-/* The reference draws no rule down the column because its page ground and its sidebar ground are the
-   same colour. Ours are not on either built-in design, so the seam stays a hairline rather than a step
-   the eye has to find. A design that grounds both alike sets `--color-sidebar-border` to transparent. */
-.sidebar-nav[data-side='left'] { border-right: 1px solid var(--color-sidebar-border); }
-.sidebar-nav[data-side='right'] { border-left: 1px solid var(--color-sidebar-border); }
+/* NO rule down the column's outer edge, because the column and the page are the same ground: the
+   reference draws none, and this design now grounds both alike (owner decision, 5 Sep 2026 — 1:1 with
+   the reference dashboard). The declaration stays, painted from `--color-sidebar-rule`, which is
+   transparent in tokens.css: a design that does ground its column differently gives that token a colour
+   and gets the seam back without a stylesheet edit. It is NOT `--color-sidebar-border` — that one is the
+   column's internal hairline (header, group seams, footer) and is still drawn. */
+.sidebar-nav[data-side='left'] { border-right: 1px solid var(--color-sidebar-rule); }
+.sidebar-nav[data-side='right'] { border-left: 1px solid var(--color-sidebar-rule); }
 .sidebar-nav[data-mode='rail'] { width: var(--sidebar-width-icon); }
 
 /* The phone presentation is the primitive's own off-canvas sheet: a column of its own width slid over
@@ -167,15 +170,18 @@
   gap: 0.5rem;
   height: var(--sidebar-search-height);
   padding-inline: var(--sidebar-row-inset);
-  border: 1px solid var(--color-sidebar-border);
   border-radius: var(--sidebar-row-radius);
-  background: var(--color-background);
+  /* The CARD fill, not the canvas: the column now grounds on the canvas itself, so a field painted with
+     `--color-background` would be invisible. The reference draws this field as a filled shape with no
+     edge at all — the fill is what says "a control" — so there is no border here either, and the focus
+     ring is the only edge it ever takes. */
+  background: var(--color-card);
   color: var(--color-subtle-foreground);
   font-size: var(--sidebar-text);
-  transition: border-color var(--motion-fast) var(--ease-out), color var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
+  transition: color var(--motion-fast) var(--ease-out), box-shadow var(--motion-fast) var(--ease-out);
 }
 .sidebar-nav__search-field > svg { flex: none; opacity: 0.5; }
-.sidebar-nav__search-field:hover { border-color: var(--color-border-strong); color: var(--color-foreground); }
+.sidebar-nav__search-field:hover { color: var(--color-foreground); }
 .sidebar-nav__search-field:focus-visible { outline: none; box-shadow: var(--glow-accent); }
 .sidebar-nav__search-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .sidebar-nav__kbd {
@@ -221,12 +227,15 @@
 }
 .sidebar-nav__separator + .sidebar-nav__group { padding-top: 0.5rem; }
 
-/* A group's name. 13px/500 and muted, never uppercase: it names a REGION and must not compete with the
-   destinations under it. */
+/* A group's name. 13px/500 and quiet, never uppercase: it names a REGION and must not compete with the
+   destinations under it. The ink is the column's OWN quiet step, `--color-sidebar-foreground`, and not
+   the page's `--color-subtle-foreground`: that one carries a blue cast in the light design, and a
+   navigation label reading faintly blue beside neutral rows is a colour nobody chose. The reference's
+   value is a flat grey, oklch(0.556 0 0), which is what the skins now set the sidebar token to. */
 .sidebar-nav__group-label {
   margin: 1rem 0 0.5rem;
   padding-inline: var(--sidebar-row-inset);
-  color: var(--color-subtle-foreground);
+  color: var(--color-sidebar-foreground);
   font-size: var(--sidebar-text);
   font-weight: 500;
   letter-spacing: var(--tracking-ui);
@@ -289,10 +298,11 @@
   place-items: center;
   width: 1rem;
   height: 1rem;
+  /* Held at .5 in every state, hover and active included. The reference never brightens a leading glyph:
+     the row's own fill is what answers the pointer, and a second thing changing at the same time reads
+     as the icon doing something rather than the row being reachable. */
   opacity: 0.5;
 }
-.sidebar-nav__item[data-active] .sidebar-nav__icon,
-.sidebar-nav__item:hover .sidebar-nav__icon { opacity: 0.75; }
 .sidebar-nav__label {
   min-width: 0;
   overflow: hidden;
@@ -301,11 +311,14 @@
   white-space: nowrap;
   transition: opacity var(--motion-base) var(--ease-out);
 }
+/* The caret turns in its own time — `--sidebar-caret-motion`, 200ms, the reference's number. It is not
+   `--motion-base`, which the Studio skins retune to 150ms for navigation: this rotation is the one motion
+   in the column the eye follows all the way to its end, so it keeps the duration it was measured at. */
 .sidebar-nav__caret {
   flex: none;
   margin-inline-start: auto;
   opacity: 0.4;
-  transition: transform var(--motion-base) var(--ease-out), opacity var(--motion-base) var(--ease-out);
+  transition: transform var(--sidebar-caret-motion) var(--ease-out), opacity var(--sidebar-caret-motion) var(--ease-out);
 }
 .sidebar-nav__item:hover .sidebar-nav__caret { opacity: 1; }
 .sidebar-nav__disclosure[data-state='open'] > .sidebar-nav__item .sidebar-nav__caret { transform: rotate(90deg); }
@@ -377,8 +390,9 @@
 /* ── The icon rail ───────────────────────────────────────────────────────────────────────────────── */
 
 /* Folded, the column is the marks and nothing else. A sliced word is not a treatment, so every label,
-   hint and caret is withheld rather than clipped, and the row centres on its glyph. The `title` on each
-   row is what names it under the pointer; `aria-label` names it to a screen reader. */
+   hint and caret is withheld rather than clipped, and the row centres on its glyph. A tooltip beside the
+   row is what names it under the pointer (`SidebarMenuButton`'s `tooltip`, rendered only while the column
+   is collapsed); `aria-label` names it to a screen reader. */
 .sidebar-nav[data-mode='rail'] :is(.sidebar-nav__label, .sidebar-nav__search-label, .sidebar-nav__kbd, .sidebar-nav__lockup, .sidebar-nav__switcher-caret, .sidebar-nav__group-label) {
   display: none;
 }
@@ -440,8 +454,8 @@
 .sidebar-nav__more { margin-inline-start: auto; }
 .sidebar-nav__collapse:hover,
 .sidebar-nav__more:hover { background: var(--color-sidebar-accent); color: var(--color-foreground); }
-/* The fold's edge target. Invisible until the pointer is on it — an always-drawn line down the inner
-   edge would read as a second border beside the one already there. */
+/* The fold's edge target. Invisible until the pointer is on it: the column draws no outer rule at all
+   now, and a line that appeared there permanently would put one back. */
 .sidebar-nav__rail::after { background: transparent; transition: background-color var(--motion-fast) var(--ease-out); }
 .sidebar-nav__rail:hover::after { background: var(--color-primary); }
 

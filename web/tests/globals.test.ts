@@ -49,10 +49,38 @@ describe('design tokens', () => {
 
   // Geometry the sidebar primitive and the skin BOTH read. `--sidebar-width-icon` in particular is the
   // one upstream shadcn injects as an inline style; declared here it stays overridable by a skin.
+  //
+  // Every number is PINNED to the value measured off the reference dashboard, not merely asserted to
+  // exist: these are the column's proportions, and a token that still exists with a different value is
+  // exactly the change this file is here to catch. The rail is pinned for a second reason as well — both
+  // Studio skins used to restate 57px, and the value now lives here alone.
   it('defines the sidebar geometry the navigation column is built on', () => {
-    for (const token of ['--sidebar-width: 16.25rem', '--sidebar-width-icon', '--sidebar-width-mobile', '--sidebar-row-height', '--sidebar-row-radius', '--sidebar-sub-indent']) {
+    for (const token of [
+      '--sidebar-width: 16.25rem',        // 260px, the expanded column
+      '--sidebar-width-icon: 3.5625rem',  // 57px, the folded rail
+      '--sidebar-width-mobile',
+      '--sidebar-row-height: 2.125rem',   // 34px
+      '--sidebar-row-radius: 0.5rem',     // 8px
+      '--sidebar-sub-indent: 1.75rem',    // 28px
+      '--sidebar-text: 0.8125rem',        // 13px
+      '--sidebar-header-height: 3.625rem', // 58px
+      '--sidebar-footer-height: 3rem',    // 48px
+      '--sidebar-search-height: 2rem',    // 32px
+      '--sidebar-caret-motion: 200ms',    // the disclosure's own duration, not --motion-base
+    ]) {
       expect(css).toContain(token);
     }
+  });
+
+  // The column grounds on the page's own canvas, so it draws no rule down its outer edge (owner
+  // decision, 5 Sep 2026: 1:1 with the reference dashboard). The rule is still DECLARED, painted from a
+  // token of its own, so a design that does step its column off the page gets the seam back by setting
+  // one value — and it must not be `--color-sidebar-border`, which is the internal hairline the header,
+  // the group seams and the footer are still drawn with.
+  it('draws no outer rule down the navigation column', () => {
+    expect(css).toContain('--color-sidebar-rule: transparent');
+    expect(components).toMatch(/\.sidebar-nav\[data-side='left'\]\s*\{\s*border-right:\s*1px solid var\(--color-sidebar-rule\)/);
+    expect(components).toMatch(/\.sidebar-nav\[data-side='right'\]\s*\{\s*border-left:\s*1px solid var\(--color-sidebar-rule\)/);
   });
 
   it('uses one account-dark token for shared document surfaces', () => {
