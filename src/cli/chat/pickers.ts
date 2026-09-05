@@ -761,23 +761,38 @@ export function createPickers(
         !!client.boundSession && workspace.bindings.some((binding) => binding.sessionId === client.boundSession);
       openPicker({
         tui, editor, title: 'Sandbox workspaces',
+        // Refreshing the list and returning to the project are commands ABOUT this modal, not workspaces
+        // to open — as rows they read like two more worktrees to manage. They are keys instead, the way
+        // /sessions and /skills already expose their non-row actions, and the footer names them. Creating
+        // stays a row: it opens a flow of its own and belongs where the list of things one can end up
+        // with is.
         items: [
           { value: '__create', label: '+ New workspace', description: 'create a Git worktree — this conversation stays where it is until you switch it' },
-          { value: '__refresh', label: 'Refresh', description: 'read the workspace list again' },
-          ...(overview.workspaces.some(activeHere)
-            ? [{ value: '__release', label: 'Return to project', description: 'work in the project directory again — the workspace is kept' }]
-            : []),
           ...overview.workspaces.map((workspace) => ({
             value: workspace.id,
             label: `${activeHere(workspace) ? '▸ ' : ''}${workspace.label}`,
             description: `${projectName(workspace.projectId)} · ${workspace.branch} · ${sandboxStateSummary(workspace)}`,
           })),
         ],
-        footer: 'enter manage · type filter · esc close',
+        footer: 'enter manage · type filter · ctrl+r refresh · ctrl+p return to project · esc close',
+        onInput: (data, _selected, close) => {
+          if (isCtrlR(data)) { close(); openSandboxModal(); return true; }
+          if (isCtrlP(data)) {
+            // Same guard the row carried: with nothing bound here there is nothing to return FROM, and
+            // saying so beats a route call that can only answer "already there".
+            if (!overview.workspaces.some(activeHere)) {
+              rt.notice = color.dim('this conversation already works in its project directory');
+              render();
+              return true;
+            }
+            close();
+            releaseSandboxWorkspaces();
+            return true;
+          }
+          return false;
+        },
         onPick: (value) => {
-          if (value === '__refresh') { openSandboxModal(); return; }
           if (value === '__create') { createSandboxWorkspace(overview); return; }
-          if (value === '__release') { releaseSandboxWorkspaces(); return; }
           const workspace = overview.workspaces.find((entry) => entry.id === value);
           if (workspace) openSandboxActions(workspace, activeHere(workspace));
         },
