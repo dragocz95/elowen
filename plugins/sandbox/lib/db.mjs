@@ -137,15 +137,19 @@ function ownerProvablyDead(row) {
   return current !== null && current !== stored;
 }
 
-export function reconcileStaleLeases(db, _now = Date.now()) {
+// A lease is stale on either of two grounds. Its owner process is provably gone — the crash-of-the-whole-
+// runner case. Or nobody has heartbeated it past `expires_at` — the case a live owner cannot express any
+// other way: the daemon pid outlives every aborted command and every runner that died inside it, so an
+// unrefreshed window is the only signal that the holder stopped caring.
+export function reconcileStaleLeases(db, now = Date.now()) {
+  let executionRemoved = db.prepare('DELETE FROM p_sandbox_execution_leases WHERE expires_at <= ?').run(now).changes;
   const execution = db.prepare('SELECT id, outer_pid, runner_identity FROM p_sandbox_execution_leases').all();
-  let executionRemoved = 0;
   for (const row of execution) {
     if (!ownerProvablyDead(row)) continue;
     executionRemoved += db.prepare('DELETE FROM p_sandbox_execution_leases WHERE id = ?').run(String(row.id)).changes;
   }
+  let reposRemoved = db.prepare('DELETE FROM p_sandbox_repo_leases WHERE expires_at <= ?').run(now).changes;
   const repos = db.prepare('SELECT common_dir, outer_pid, runner_identity FROM p_sandbox_repo_leases').all();
-  let reposRemoved = 0;
   for (const row of repos) {
     if (!ownerProvablyDead(row)) continue;
     reposRemoved += db.prepare('DELETE FROM p_sandbox_repo_leases WHERE common_dir = ?').run(String(row.common_dir)).changes;
@@ -183,15 +187,15 @@ export function createExecutionLease(db, input) {
 }
 
 export function activeExecutionLeases(db, input = {}) {
-  reconcileStaleLeases(db);
-  const clauses = [];
-  const params = [];
+  const now = Date.now();
+  reconcileStaleLeases(db, now);
+  const clauses = ['expires_at > ?'];
+  const params = [now];
   if (input.accountUserId !== undefined) { clauses.push('user_id IS ?'); params.push(input.accountUserId); }
   if (input.workspaceId !== undefined) { clauses.push('workspace_id IS ?'); params.push(input.workspaceId); }
   if (input.homeGeneration !== undefined) { clauses.push('home_generation IS ?'); params.push(input.homeGeneration); }
-  const where = clauses.length ? ` WHERE ${clauses.join(' AND ')}` : '';
   return db.prepare(`SELECT id, user_id, workspace_id, home_generation, outer_pid, kind, heartbeat_at, expires_at
-    FROM p_sandbox_execution_leases${where} ORDER BY created_at`).all(...params);
+    FROM p_sandbox_execution_leases WHERE ${clauses.join(' AND ')} ORDER BY created_at`).all(...params);
 }
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

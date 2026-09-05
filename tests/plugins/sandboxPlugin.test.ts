@@ -14,7 +14,7 @@ import { resolvePolicy, type Policy } from '../../src/plugins/policy.js';
 import { effectiveTurnWorkDir, releaseWorkspacesForMove } from '../../src/brain/service/workDir.js';
 import { processRegistry } from '../../src/brain/processRegistry.js';
 import { bubblewrapProbe, migrateLegacyHomes, runPrepared } from '../../plugins/sandbox/lib/execution.mjs';
-import { processIdentity, reconcileStaleLeases, withRepoLease } from '../../plugins/sandbox/lib/db.mjs';
+import { activeExecutionLeases, processIdentity, reconcileStaleLeases, withRepoLease } from '../../plugins/sandbox/lib/db.mjs';
 import { createWorkspacePathView } from '../../src/plugins/pathView.js';
 import { commandsWithPlugins } from '../../src/brain/slashCommands.js';
 
@@ -690,19 +690,92 @@ describe('sandbox execution HOME and leases', () => {
 });
 
 describe('sandbox durable repository locks', () => {
-  it('does not reclaim an expired lease while its exact process owner is still alive', async () => {
+  it('does not reclaim a current lease while its exact process owner is still alive', async () => {
     const { db } = await setup();
     const identity = processIdentity();
     expect(identity).toBeTruthy();
+    const future = Date.now() + 60_000;
     db.prepare(`INSERT INTO p_sandbox_execution_leases
       (id,user_id,workspace_id,home_generation,outer_pid,runner_identity,kind,heartbeat_at,expires_at)
-      VALUES ('live',1,NULL,1,?,?, 'terminal',0,0)`).run(process.pid, identity);
+      VALUES ('live',1,NULL,1,?,?, 'terminal',0,?)`).run(process.pid, identity, future);
     db.prepare(`INSERT INTO p_sandbox_repo_leases
       (common_dir,owner_id,outer_pid,runner_identity,heartbeat_at,expires_at)
-      VALUES ('/repo/live','owner',?,?,0,0)`).run(process.pid, identity);
+      VALUES ('/repo/live','owner',?,?,0,?)`).run(process.pid, identity, future);
     expect(reconcileStaleLeases(db, Date.now())).toEqual({ executionRemoved: 0, reposRemoved: 0 });
     expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_execution_leases WHERE id='live'").get()).toEqual({ n: 1 });
     expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_repo_leases WHERE common_dir='/repo/live'").get()).toEqual({ n: 1 });
+  });
+
+  /** The daemon pid is alive for as long as the daemon is, so "owner provably dead" alone never reaps a
+   *  lease whose command was aborted or whose in-process runner crashed. The lease window plus heartbeat
+   *  is the contract: a lease nobody has refreshed past `expires_at` is stale, whoever its owner is. */
+  it('treats a lease past its expiry as stale even though its owner process is alive', async () => {
+    const { db } = await setup();
+    const identity = processIdentity();
+    const past = Date.now() - 1_000;
+    db.prepare(`INSERT INTO p_sandbox_execution_leases
+      (id,user_id,workspace_id,home_generation,outer_pid,runner_identity,kind,heartbeat_at,expires_at)
+      VALUES ('expired',1,'ws_x',1,?,?,'terminal',?,?)`).run(process.pid, identity, past, past);
+    db.prepare(`INSERT INTO p_sandbox_repo_leases
+      (common_dir,owner_id,outer_pid,runner_identity,heartbeat_at,expires_at)
+      VALUES ('/repo/expired','owner',?,?,?,?)`).run(process.pid, identity, past, past);
+    expect(reconcileStaleLeases(db, Date.now())).toEqual({ executionRemoved: 1, reposRemoved: 1 });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_execution_leases WHERE id='expired'").get()).toEqual({ n: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_repo_leases WHERE common_dir='/repo/expired'").get()).toEqual({ n: 0 });
+  });
+
+  it('does not count a lease past its expiry as active', async () => {
+    const { db } = await setup();
+    const identity = processIdentity();
+    const past = Date.now() - 1_000;
+    db.prepare(`INSERT INTO p_sandbox_execution_leases
+      (id,user_id,workspace_id,home_generation,outer_pid,runner_identity,kind,heartbeat_at,expires_at)
+      VALUES ('expired',1,'ws_x',1,?,?,'terminal',?,?)`).run(process.pid, identity, past, past);
+    expect(activeExecutionLeases(db, { workspaceId: 'ws_x' })).toEqual([]);
+  });
+
+  it('counts a heartbeated lease as active again after its window would have lapsed', async () => {
+    const { registry, db, projectPath } = await setup();
+    const workspace = (await runAs(registry, projectPath, 1, 'brain-heartbeat', 'SandboxCreateWorkspace', { projectId: 1, label: 'Beat', baseRef: 'main' })).details.workspace;
+    const lease = registry.control('sandbox')!.acquireDelegationLease({
+      accountUserId: 1, workspace: { workspaceId: workspace.id, projectId: 1 },
+    });
+    expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toHaveLength(1);
+    db.prepare('UPDATE p_sandbox_execution_leases SET expires_at = ? WHERE id = ?').run(Date.now() - 1, lease.id);
+    await lease.heartbeat();
+    expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toHaveLength(1);
+    await lease.release();
+    expect(activeExecutionLeases(db, { workspaceId: workspace.id })).toHaveLength(0);
+  });
+
+  it('lets a conversation release its binding once the only lease on the workspace has expired', async () => {
+    const { registry, db, projects } = await setup(['sandbox'], false, ['main']);
+    db.prepare("INSERT INTO brain_sessions (id, user_id) VALUES ('brain-amy-expired', 1)").run();
+    const projectPath = projects[0]!.path;
+    const workspace = (await runAs(registry, projectPath, 1, 'brain-amy-expired', 'SandboxCreateWorkspace', { projectId: 1, label: 'Stale', baseRef: 'main' })).details.workspace;
+    const lease = registry.control('sandbox')!.acquireDelegationLease({
+      accountUserId: 1, workspace: { workspaceId: workspace.id, projectId: 1 },
+    });
+    const release = () => registry.apiRoute('sandbox', 'workspaces/release', 'POST')!.handler(pluginRequest(
+      'POST', {}, { sessionId: 'brain-amy-expired' }, { userId: 1, admin: false, tokenScope: 'user', accessibleProjects: [1, 2] },
+    ));
+    expect((await release()).status).toBe(409);
+    // The command was aborted and nobody released the row: only the lapse of its window may free it.
+    db.prepare('UPDATE p_sandbox_execution_leases SET expires_at = ? WHERE id = ?').run(Date.now() - 1, lease.id);
+    const freed = await release();
+    expect(freed.status).toBe(200);
+    expect(freed.body).toEqual({ released: 1, workspaceIds: [workspace.id] });
+  });
+
+  it('re-claims a repository lease whose live owner let it expire', async () => {
+    const { db } = await setup();
+    const identity = processIdentity();
+    const past = Date.now() - 1_000;
+    db.prepare(`INSERT INTO p_sandbox_repo_leases
+      (common_dir,owner_id,outer_pid,runner_identity,heartbeat_at,expires_at)
+      VALUES ('/repo/lapsed','stale-owner',?,?,?,?)`).run(process.pid, identity, past, past);
+    await expect(withRepoLease(db, '/repo/lapsed', async () => 'ok', { waitMs: 60 })).resolves.toBe('ok');
+    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_repo_leases WHERE common_dir='/repo/lapsed'").get()).toEqual({ n: 0 });
   });
 
   it('reclaims a reused PID only when the stored process identity is provably different', async () => {
