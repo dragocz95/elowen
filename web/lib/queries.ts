@@ -27,6 +27,7 @@ export const QUERY_KEYS = {
   brainDebugRequest: ['brain-debug-request'] as const,
   pluginUi: ['plugin-ui'] as const,
   userPluginConfigs: ['user-plugin-configs'] as const,
+  sandboxOverview: ['sandbox-overview'] as const,
 };
 
 /** The published slash-command menu for the web surface — the single source of truth is the daemon's
@@ -318,6 +319,15 @@ export const useSessionTasks = (sessionId: string | null) =>
     queryFn: () => elowenClient.sessionTasks(sessionId as string),
     enabled: !!sessionId,
   });
+
+/** The sandbox plugin's workspaces for the signed-in account, with its accessible projects and
+ *  conversations (GET /plugins/sandbox/api/overview).
+ *
+ *  `enabled` is why the chat dock does not carry this request around: the `/sandbox` drawer is its only
+ *  reader, and a fetch fired while the drawer is closed would 404 on every install where the plugin is
+ *  switched off. Each workspace is a real worktree on disk, so it is refreshed on demand, never polled. */
+export const useSandboxOverview = (enabled = true) =>
+  useQuery({ queryKey: QUERY_KEYS.sandboxOverview, queryFn: elowenClient.sandboxOverview, enabled });
 
 /** The skills plugin's markdown skills — bundled + user (admin, the skills plugin detail). */
 export const usePluginSkills = () =>

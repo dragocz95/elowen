@@ -332,6 +332,46 @@ export function useDeletePluginSkill() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ['plugin-skills'] }),
   });
 }
+
+/** Create a sandbox workspace — a real Git worktree cut from `baseRef`. Nothing here is optimistic: the
+ *  daemon allocates the branch and the directory, and only its answer says what was actually made. */
+export function useCreateSandboxWorkspace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { projectId: number; label: string; baseRef: string }) => elowenClient.createSandboxWorkspace(v),
+    onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.sandboxOverview }),
+  });
+}
+
+/** Point THIS conversation at a workspace. The binding is server-side and the daemon derives the turn's
+ *  working directory from it, so the only client-side consequence is that the overview must be re-read:
+ *  the active mark lives in each workspace's `bindings`, which this write has just moved. */
+export function useUseSandboxWorkspace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { workspaceId: string; sessionId: string }) => elowenClient.useSandboxWorkspace(v),
+    onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.sandboxOverview }),
+  });
+}
+
+/** Ask what removing a workspace would take with it. A read, expressed as a mutation because it is a POST
+ *  the reader triggers deliberately rather than something worth holding in the cache. */
+export function useSandboxRemovalPreview() {
+  return useMutation({
+    mutationFn: (v: { workspaceId: string }) => elowenClient.sandboxRemovalPreview(v.workspaceId),
+  });
+}
+
+/** Remove a workspace along the SAFE path. The daemon refuses an unclean tree, unpushed commits or a
+ *  running process with a coded error, and the drawer reports that refusal rather than escalating —
+ *  discarding work is the plugin's own settings screen, never a chat drawer. */
+export function useRemoveSandboxWorkspace() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { workspaceId: string }) => elowenClient.removeSandboxWorkspace(v.workspaceId),
+    onSuccess: () => qc.invalidateQueries({ queryKey: QUERY_KEYS.sandboxOverview }),
+  });
+}
 /** Create (or overwrite) a user sub-agent of the subagent plugin. Applies live via plugin hot-reload. */
 export function useSavePluginSubagent() {
   const qc = useQueryClient();

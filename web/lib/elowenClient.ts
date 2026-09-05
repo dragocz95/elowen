@@ -1,4 +1,4 @@
-import type { ConfigSnapshot, ConfigPatch, DashRecap, User, UserPatch, ProfilePatch, CliSettings, TerminalSettings, TerminalSettingsSnapshot, PermissionSettings, NavLayout, PluginInfo, PluginDetail, PluginConfigSaveResponse, PluginContributions, PluginLogs, LogFileList, LogFileContent, PluginHookExecutions, Marketplace, CronJob, NotificationDestinationOption, PluginSkill, PluginSubagent, SessionTask, SessionTaskPatch, BrainModelOption, BrainSessionInfo, BrainWorkMode, BrainGoal, ManagedSession, BrainSearchHit, BrainMessagePage, BrainStatus, BrainContextBreakdown, BrainForkedSession, BrainDebugPage, BrainDebugSessionPage, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentPayload, BrainDebugRawPayload, BrainDebugLegacyTranscriptPage, ProviderUsage, ProcessInfo, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, PresenceEntry, PulseResponse, Project, ProjectSummary, ProjectGit, ModelUsage, DayUsage, UsageOriginGroup, UsageByOriginResult, ResetUsageResult, FileNode, DirListing, SystemInfo, SystemReadiness, Memory, MemoryEvent, MemoryVitalityHistory, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, MemoryMaintenanceJob, MemoryMaintenanceState, MemoryRecategorizeMode, ToolCatalogOption, UserToolPill, UserStats, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch, PluginUiListing, UserPluginConfigDetail, SearchRankCandidate, SearchAskCandidate, SearchRankResult, SearchAskResult } from './types';
+import type { ConfigSnapshot, ConfigPatch, DashRecap, User, UserPatch, ProfilePatch, CliSettings, TerminalSettings, TerminalSettingsSnapshot, PermissionSettings, NavLayout, PluginInfo, PluginDetail, PluginConfigSaveResponse, PluginContributions, PluginLogs, LogFileList, LogFileContent, PluginHookExecutions, Marketplace, CronJob, NotificationDestinationOption, PluginSkill, PluginSubagent, SessionTask, SessionTaskPatch, SandboxOverview, SandboxWorkspace, SandboxRemovalPreview, BrainModelOption, BrainSessionInfo, BrainWorkMode, BrainGoal, ManagedSession, BrainSearchHit, BrainMessagePage, BrainStatus, BrainContextBreakdown, BrainForkedSession, BrainDebugPage, BrainDebugSessionPage, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentPayload, BrainDebugRawPayload, BrainDebugLegacyTranscriptPage, ProviderUsage, ProcessInfo, SlashCommandDef, AskAnswer, OAuthFlowState, AuthResult, ActivityEvent, PresenceEntry, PulseResponse, Project, ProjectSummary, ProjectGit, ModelUsage, DayUsage, UsageOriginGroup, UsageByOriginResult, ResetUsageResult, FileNode, DirListing, SystemInfo, SystemReadiness, Memory, MemoryEvent, MemoryVitalityHistory, MemoryCreate, MemoryPatch, MemoryFilters, EmbeddingSettings, EmbeddingSettingsPatch, MemoryMaintenanceJob, MemoryMaintenanceState, MemoryRecategorizeMode, ToolCatalogOption, UserToolPill, UserStats, MemoryCategory, MemoryCategoryCreate, MemoryCategoryPatch, CategorizationSettings, CategorizationSettingsPatch, PluginUiListing, UserPluginConfigDetail, SearchRankCandidate, SearchAskCandidate, SearchRankResult, SearchAskResult } from './types';
 import { clearToken } from './token';
 import type { BrainBinding } from './brainSession';
 
@@ -190,6 +190,24 @@ export const elowenClient = {
     req<{ success: true; taskId: string; tasks: SessionTask[] }>(`/plugins/todo/api/task?session=${encodeURIComponent(session)}&taskId=${encodeURIComponent(taskId)}`, { method: 'DELETE' }),
   clearSessionTasks: (session: string, scope: 'completed' | 'all') =>
     req<{ success: true; removed: number; tasks: SessionTask[] }>(`/plugins/todo/api/tasks?session=${encodeURIComponent(session)}&scope=${scope}`, { method: 'DELETE' }),
+  /** The sandbox plugin's workspaces, its accessible projects and the caller's conversations, in one
+   *  read. Every call below goes through the plugin's own routes: it owns the worktrees, the session
+   *  bindings and every refusal, and the chat dock is one more reader of them. */
+  sandboxOverview: () => req<SandboxOverview>('/plugins/sandbox/api/overview'),
+  createSandboxWorkspace: (input: { projectId: number; label: string; baseRef: string }) =>
+    req<{ workspace: SandboxWorkspace }>('/plugins/sandbox/api/workspaces/create', json(input)),
+  /** Bind a conversation to a workspace. This is the AUTHORITATIVE switch: the daemon derives the turn's
+   *  working directory from the binding and verifies the conversation belongs to the caller, which is why
+   *  nothing about a working directory is ever written client-side. */
+  useSandboxWorkspace: (input: { workspaceId: string; sessionId: string }) =>
+    req<{ workspace: SandboxWorkspace }>('/plugins/sandbox/api/workspaces/use', json(input)),
+  sandboxRemovalPreview: (workspaceId: string) =>
+    req<SandboxRemovalPreview>('/plugins/sandbox/api/workspaces/remove-preview', json({ workspaceId })),
+  /** The SAFE removal, and the only one this client can ask for: the body carries the workspace id and
+   *  nothing else. `discard`, `phrase` and `previewHash` belong to the plugin's destructive path, and
+   *  leaving them out is exactly what makes the daemon refuse an unclean tree instead of discarding it. */
+  removeSandboxWorkspace: (workspaceId: string) =>
+    req<{ removed: string }>('/plugins/sandbox/api/workspaces/remove', json({ workspaceId })),
   /** The skills plugin's markdown skills (bundled + user); user skills are created/deleted per file. */
   pluginSkills: () => req<PluginSkill[]>('/plugins/skills/list'),
   createPluginSkill: ({ owner, ...skill }: { name: string; description: string; content: string; disableModelInvocation?: boolean; owner?: SkillOwner }) =>

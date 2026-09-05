@@ -29,6 +29,7 @@ import {
 import { uploadAttachment, type AttachRefusal, type Attachment } from './brainChatAttachments';
 import { useBrainChatHistory } from './brainChatHistory';
 import { useBrainChatStream } from './brainChatStream';
+import { isRenderablePluginPicker } from './pluginPickers';
 
 const THOUGHTS_VALUES = ['show', 'hide'] as const;
 const withoutBackgroundProcessCards = (cards: readonly BrainCard[]): BrainCard[] =>
@@ -185,6 +186,12 @@ export interface BrainChatValue {
   /** `/tasks` — the current conversation's task descriptions, statuses and delete controls. */
   tasksOpen: boolean;
   setTasksOpen: (v: boolean) => void;
+  /** The name of the PLUGIN-contributed picker currently open, or null when none is. ONE slot rather
+   *  than a flag per plugin: the controller knows only that some plugin declared a surface-rendered
+   *  chooser and that this build has a renderer for it (`pluginPickers.tsx`). Which chooser it is, and
+   *  what it does, is deliberately none of the router's business. */
+  pluginPicker: string | null;
+  closePluginPicker: () => void;
   syncSessionTasks: (tasks: SessionTask[]) => void;
   /** `/help` — the command catalog with descriptions (it used to be a toast of bare names). */
   helpOpen: boolean;
@@ -403,6 +410,7 @@ function useBrainChatController(): BrainChatValue {
   const [reasoningOpen, setReasoningOpen] = useState(false);
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
+  const [pluginPicker, setPluginPicker] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
   const [modelOpen, setModelOpen] = useState(false);
   const [queued, setQueued] = useState<{ id: string; text: string }[]>([]);
@@ -1166,6 +1174,14 @@ function useBrainChatController(): BrainChatValue {
       if (cmd.name === 'reasoning') { setReasoningOpen(true); return; }
       if (cmd.name === 'skills') { setSkillsOpen(true); return; }
       if (cmd.name === 'tasks') { setTasksOpen(true); return; }
+      // A picker a PLUGIN contributed. The daemon publishes it as kind:'picker' + execution:'surface-local'
+      // with an owning plugin and no prompt — it says the command exists and who owns it, and leaves the
+      // chooser to whichever surface was asked to run it. So this branch carries no knowledge of any one
+      // plugin: it asks the web's renderer registry whether this build can draw the picker named, and
+      // opens it. A picker with no renderer here (a CLI-only plugin, a newer daemon than this build) falls
+      // THROUGH to the unknown-command handling below rather than opening an empty overlay, and a plugin
+      // that is switched off publishes no command at all, so its name never reaches this line.
+      if (isRenderablePluginPicker(cmd)) { setPluginPicker(cmd.name); return; }
       if (cmd.kind === 'mode') {
         const mode = WORK_MODES.find((m) => m === cmd.name);
         if (mode) { runMode(mode); return; }
@@ -1315,7 +1331,9 @@ function useBrainChatController(): BrainChatValue {
 
   return {
     turns, busy, ready, reconnecting, registerSurface, hasSurface: surfaces > 0, notice, ask, cards, artifacts, narration, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
-    reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, syncSessionTasks, helpOpen, setHelpOpen, modelOpen, setModelOpen, loadSkill,
+    reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, syncSessionTasks,
+    pluginPicker, closePluginPicker: () => setPluginPicker(null),
+    helpOpen, setHelpOpen, modelOpen, setModelOpen, loadSkill,
     queued: visibleQueue, readOnly, activeSessionId,
     usage, telemetry, goal, subagents, workflows, lineCfg, draft, setInput, attachments, addFiles, removeAttachment, submit, switchSession,
     openReadOnly, exitReadOnly, deleteSession, onQueueRemove, onAnswer, abort, ensureAttached, loadOlder, hasMoreHistory, focusNonce,
