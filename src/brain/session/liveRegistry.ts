@@ -24,6 +24,19 @@ const lockedConversation = (key: string): string =>
  *  DelegateStop, the parent's abort tree and the shutdown gate. */
 export type ChildClaimSource = 'call' | 'progress';
 
+export type AbortOrigin = 'user_stop' | 'parent_teardown' | 'tree_abort' | 'recovery';
+export interface PendingAbort { origin: AbortOrigin; reason: string }
+
+export class DelegationAbortedError extends Error {
+  readonly origin: AbortOrigin;
+  readonly reason: string;
+  constructor(abort: PendingAbort) {
+    super(`delegation aborted (${abort.origin})`);
+    this.origin = abort.origin;
+    this.reason = abort.reason;
+  }
+}
+
 export class LiveSessionRegistry<T extends { sessionId: string; session: { dispose(): void; isStreaming: boolean }; pendingReasoningMarker?: { timer: ReturnType<typeof setTimeout> } }> {
   private live = new Map<string, T>();
   private active = new Map<number, string>();
@@ -42,7 +55,7 @@ export class LiveSessionRegistry<T extends { sessionId: string; session: { dispo
   private childIdleWaiters = new Map<string, Set<() => void>>();
   /** A child can be tracked before its channel spawn finishes. `/stop` records that narrow race here;
    *  ChannelSessionService consumes the marker before prompting (or immediately after an awaited spawn). */
-  private pendingAborts = new Set<string>();
+  private pendingAborts = new Map<string, PendingAbort>();
   /** Sessions whose teardown is COMMITTED and in flight: still registered in `live`, but already doomed.
    *  ensureLive's pre-lock fast path reads this to tell a healthy live session (attach immediately) from
    *  one being disposed (queue on the lock and respawn instead).
@@ -57,6 +70,7 @@ export class LiveSessionRegistry<T extends { sessionId: string; session: { dispo
   /** Parent aborts fence new delegated sends before the abort snapshots its child set. A counter keeps a
    * concurrent/nested abort from reopening the parent between another abort's snapshot and cleanup. */
   private abortingParents = new Map<string, number>();
+  private parentAbortOrigins = new Map<string, PendingAbort>();
   /** Fired when a parent gains its FIRST live delegated child or loses its LAST one, never on the claims
    *  in between — those change nothing an observer of "is this conversation busy" can see. The registry
    *  stays a pure container: it reports the transition and holds no opinion about who cares. Its owner
@@ -183,12 +197,23 @@ export class LiveSessionRegistry<T extends { sessionId: string; session: { dispo
     this.childIdleWaiters.delete(parentSessionId);
     for (const resolve of waiters) resolve();
   }
-  beginParentAbort(parentSessionId: string): void {
+  beginParentAbort(parentSessionId: string, abort: PendingAbort = { origin: 'tree_abort', reason: 'aborted' }): void {
     this.abortingParents.set(parentSessionId, (this.abortingParents.get(parentSessionId) ?? 0) + 1);
+    if (this.parentAbortOrigins.get(parentSessionId)?.origin !== 'user_stop') {
+      this.parentAbortOrigins.set(parentSessionId, { ...abort });
+    }
+  }
+  delegationAbortError(sessionId: string, parentSessionId?: string): DelegationAbortedError {
+    return new DelegationAbortedError(this.pendingAborts.get(sessionId)
+      ?? (parentSessionId ? this.parentAbortOrigins.get(parentSessionId) : undefined)
+      ?? { origin: 'tree_abort', reason: 'aborted' });
   }
   endParentAbort(parentSessionId: string): void {
     const count = this.abortingParents.get(parentSessionId) ?? 0;
-    if (count <= 1) this.abortingParents.delete(parentSessionId);
+    if (count <= 1) {
+      this.abortingParents.delete(parentSessionId);
+      this.parentAbortOrigins.delete(parentSessionId);
+    }
     else this.abortingParents.set(parentSessionId, count - 1);
   }
   isParentAborting(parentSessionId: string): boolean { return (this.abortingParents.get(parentSessionId) ?? 0) > 0; }
@@ -228,11 +253,24 @@ export class LiveSessionRegistry<T extends { sessionId: string; session: { dispo
     for (const claims of this.children.values()) for (const id of claims.keys()) out.add(id);
     return [...out];
   }
-  requestPendingAbort(sessionId: string): void { this.pendingAborts.add(sessionId); }
+  requestPendingAbort(sessionId: string, abort: PendingAbort = { origin: 'tree_abort', reason: 'aborted' }): void {
+    // Explicit Stop wins over cleanup/recovery that races the same turn's unwind.
+    if (this.pendingAborts.get(sessionId)?.origin === 'user_stop') return;
+    this.pendingAborts.set(sessionId, { ...abort });
+  }
   /** Observe a pending child abort without consuming it. Fast owner-steering needs this so the original
    * prompt completion can still consume the marker and settle as aborted. */
   hasPendingAbort(sessionId: string): boolean { return this.pendingAborts.has(sessionId); }
-  consumePendingAbort(sessionId: string): boolean { return this.pendingAborts.delete(sessionId); }
+  pendingAbort(sessionId: string): PendingAbort | undefined { return this.pendingAborts.get(sessionId); }
+  consumePendingAbort(sessionId: string): PendingAbort | undefined {
+    const abort = this.pendingAborts.get(sessionId);
+    this.pendingAborts.delete(sessionId);
+    return abort;
+  }
+  throwIfPendingAbort(sessionId: string): void {
+    const abort = this.consumePendingAbort(sessionId);
+    if (abort) throw new DelegationAbortedError(abort);
+  }
 
   // ── channel sessions (Map order = LRU order) ─────────────────────────────
   channelGet(channelId: string): T | undefined { return this.channels.get(channelId); }

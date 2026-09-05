@@ -45,7 +45,8 @@ import { globalMemoryRecallScope } from './memoryRecallScope.js';
 import { effectiveTurnWorkDir, turnWorkDir } from './service/workDir.js';
 import type { MemoryCurator } from './memoryCurator.js';
 import type { ConversationTitler } from './conversationTitler.js';
-import type { LiveSessionRegistry } from './session/liveRegistry.js';
+import { DelegationAbortedError, type LiveSessionRegistry, type PendingAbort } from './session/liveRegistry.js';
+import { syntheticRestartResultId } from '../store/brainStore.js';
 import type { LiveBrain, QueuedUserEcho, SpawnOpts } from './session/liveBrain.js';
 import { clearDeliveredUserEchoes, echoDeliveredId, enqueueMirrored } from './session/queueMirror.js';
 import { abortSessionWork } from './session/abortSessionWork.js';
@@ -502,7 +503,7 @@ export interface ChannelServiceDeps {
   /** Reach a delegated child whose PI session lives in the sub-agent runner process. The abort TREE stays
    *  here (its fencing is synchronous in-memory read-modify-write), but only the process actually holding
    *  the session can interrupt the model call — see SubagentDispatch. No-op without a runner. */
-  abortRemote?: (channelId: string) => void;
+  abortRemote?: (channelId: string, abort: PendingAbort) => void;
 }
 
 const sameScopePolicy = (policy: Policy, scope: DelegatedExecutionScope): boolean => {
@@ -728,7 +729,7 @@ export class ChannelSessionService {
     let admitted = false;
     try {
     if (parentSessionId) {
-      if (this.d.registry.isParentAborting(parentSessionId)) throw new Error('delegation aborted');
+      if (this.d.registry.isParentAborting(parentSessionId)) throw this.d.registry.delegationAbortError(sessionId, parentSessionId);
       const parent = this.d.store.getSession(parentSessionId);
       if (!parent || parent.user_id !== opts.ownerUserId || parent.id === sessionId) throw new Error('invalid parent session');
       if (delegated?.scope.workspaceRef) {
@@ -748,8 +749,8 @@ export class ChannelSessionService {
     const steered = await this.trySteerIntoRunningTurn(opts, turnText, senderText, delegationAborted);
     if (steered === null) ranOwnTurn = true;
     const reply = steered !== null ? steered : await this.d.registry.withLock(sessionId, async () => {
-      if (parentSessionId && this.d.registry.isParentAborting(parentSessionId)) throw new Error('delegation aborted');
-      if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
+      if (parentSessionId && this.d.registry.isParentAborting(parentSessionId)) throw this.d.registry.delegationAbortError(sessionId, parentSessionId);
+      this.d.registry.throwIfPendingAbort(sessionId);
       // Idle rollover (cache-cost fix): a channel that sat quiet past the idle cutoff has a long-expired
       // prompt cache, so continuing would re-send its whole stale transcript at full price for no benefit.
       // Roll it over like owner chat (lifecycle.maybeRollover): drop the live PI session and ARCHIVE the
@@ -787,7 +788,7 @@ export class ChannelSessionService {
         const past = await opts.history().catch((): PlatformHistory => []);
         seedMessages = platformHistorySeed(past, opts.historyPlatform ?? 'platform', opts.channelId);
       }
-      if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
+      this.d.registry.throwIfPendingAbort(sessionId);
       let ch = this.d.registry.channelGet(opts.channelId);
       // A provider, model or reasoning-effort switch mid-conversation rebuilds the session (history
       // rehydrates). Model ids are not globally unique: two configured providers may both expose e.g.
@@ -857,9 +858,9 @@ export class ChannelSessionService {
           clientCwd: delegated?.pathView?.root ?? opts.clientCwd,
           ...(delegated?.pathView ? { pathView: delegated.pathView } : {}),
         });
-        if (this.d.registry.consumePendingAbort(sessionId)) {
+        if (this.d.registry.hasPendingAbort(sessionId)) {
           ch.session.dispose();
-          throw new Error('delegation aborted');
+          this.d.registry.throwIfPendingAbort(sessionId);
         }
       }
       // Stamp the 1:1-vs-shared flag on EVERY platform message, not only when this turn happened to spawn
@@ -1108,7 +1109,7 @@ export class ChannelSessionService {
                 runningSubagents: runningSubagentsBlock(this.d.registry, this.d.store, ch.sessionId),
               });
             }
-            if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
+            this.d.registry.throwIfPendingAbort(sessionId);
             // Recall commits at HAND-OFF, before the turn runs, unlike the two below it. Those are read
             // again only when the NEXT turn is composed, so waiting for the whole agent loop to settle is
             // free insurance for them. This set is not: liveRecall reads it from inside PI's context hook
@@ -1136,13 +1137,13 @@ export class ChannelSessionService {
             commitSkillsDigest();
             // A parent stop that landed during prompt() must make the child terminally unsuccessful;
             // otherwise an empty aborted assistant is mistaken for a successful "returned nothing" job.
-            if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
+            this.d.registry.throwIfPendingAbort(sessionId);
             // Thinking-only guard (#115): a reasoning model that ends a 'stop' turn with ONLY a thinking
             // block would settle with an empty reply. ONE automatic nudge, never persisted, no loop.
             const settled = lastAssistant(ch.session.messages as { role?: string }[]);
             if (settled && isThinkingOnlyReply(settled)) {
               await ch.session.prompt(NO_REPLY_NUDGE);
-              if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
+              this.d.registry.throwIfPendingAbort(sessionId);
             }
           }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: effectiveWorkDir.workDir, ...(delegated?.pathView ? { pathView: delegated.pathView } : {}), settingsUserId: ch.settingsUserId, contributionUserId: turnContributionUserId, model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
           // Deterministic settled idle (model + context fill) AFTER the turn — proactive footers depend on it.
@@ -1246,6 +1247,11 @@ export class ChannelSessionService {
       curate = { curator: this.d.curator, userId: opts.writerUserId, userText: senderText, assistantText: reply };
     }
     return reply;
+    } catch (error) {
+      // Spawn/prompt can reject on interruption. Only the owning turn consumes the marker; a failed
+      // concurrent steer must leave it for that original turn's terminal result.
+      if (ranOwnTurn) this.d.registry.throwIfPendingAbort(sessionId);
+      throw error;
     } finally {
       // The settlement side of a room turn — see settleTurn. In a `finally`, like the owner surface's, and
       // for the same reason: a turn that THROWS after the prompt (a provider error, a parent abort landing
@@ -1294,19 +1300,23 @@ export class ChannelSessionService {
   ): Promise<string> {
     const sessionId = channelSessionId(req.channelId);
     const parentSessionId = req.parentSessionId;
-    if (this.d.registry.isParentAborting(parentSessionId)) throw new Error('delegation aborted');
+    if (this.d.registry.isParentAborting(parentSessionId)) throw this.d.registry.delegationAbortError(sessionId, parentSessionId);
     const parent = this.d.store.getSession(parentSessionId);
     if (!parent || parent.user_id !== req.ownerUserId || parent.id === sessionId) throw new Error('invalid parent session');
     // Register before the first async boundary. A background delegate may be stopped immediately after
     // its tool returns, before the runner has reported anything at all.
     this.beginDelegatedCall(parentSessionId, sessionId);
     try {
-      if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
+      this.d.registry.throwIfPendingAbort(sessionId);
       const reply = await run();
       // A parent stop that landed while the runner was working must make the child terminally
       // unsuccessful; otherwise an aborted child's partial answer is mistaken for a successful one.
-      if (this.d.registry.consumePendingAbort(sessionId)) throw new Error('delegation aborted');
+      this.d.registry.throwIfPendingAbort(sessionId);
       return reply;
+    } catch (error) {
+      // The runner may reject before returning its partial reply; keep the daemon's actual abort cause.
+      this.d.registry.throwIfPendingAbort(sessionId);
+      throw error;
     } finally {
       this.endDelegatedCall(parentSessionId, sessionId);
     }
@@ -1340,7 +1350,7 @@ export class ChannelSessionService {
       this.d.registry.isParentAborting(parentSessionId) || this.d.registry.hasPendingAbort(sessionId);
     const ch = this.d.registry.channelGet(channelId);
     if (!ch?.session.isStreaming) return 'idle';
-    if (aborted()) throw new Error('delegation aborted');
+    if (aborted()) throw this.d.registry.delegationAbortError(sessionId, parentSessionId);
     // This FRESH echo object is the steer's whole identity: deliverQueuedUserEcho stamps the durable row
     // id onto exactly this object at message_start, and every clear-and-requeue path re-enqueues the same
     // echo reference — so the checks below survive a concurrent cleanup rebuilding the queue's wrapper
@@ -1354,7 +1364,7 @@ export class ChannelSessionService {
       if (aborted()) {
         const live = this.d.registry.channelGet(channelId);
         if (live) { live.session.clearQueue(); clearDeliveredUserEchoes(live); }
-        throw new Error('delegation aborted');
+        throw this.d.registry.delegationAbortError(sessionId, parentSessionId);
       }
       if (landed()) return 'delivered';
       const live = this.d.registry.channelGet(channelId);
@@ -1394,6 +1404,8 @@ export class ChannelSessionService {
    *  Returns '' when it steered (nothing to run), or null when it fell through (no live turn / different
    *  sender) and send() must take the channel lock and run its own turn. */
   private async trySteerIntoRunningTurn(opts: ChannelSendOpts, turnText: string, senderText: string, delegationAborted: () => boolean): Promise<string | null> {
+    const sessionId = channelSessionId(opts.channelId);
+    const parentSessionId = opts.parentSessionId;
     const streaming = this.d.registry.channelGet(opts.channelId);
     if (streaming?.session.isStreaming) {
       // A durable sub-agent/workflow result for a DELEGATED parent (BrainTurnRunner.sendCustomSystem →
@@ -1407,14 +1419,14 @@ export class ChannelSessionService {
       if (opts.internalSystem) {
         // A continuation has nothing to steer: the turn it would continue is the one already running.
         if (opts.internalSystem.continuation) throw new Error('cannot continue a turn that is already running');
-        if (delegationAborted()) throw new Error('delegation aborted');
+        if (delegationAborted()) throw this.d.registry.delegationAbortError(sessionId, parentSessionId);
         steerCustomMessage(streaming.session, {
           customType: opts.internalSystem.customType, content: turnText, display: false,
           details: { source: 'elowen', resultId: opts.internalSystem.resultId },
         });
         if (delegationAborted()) {
           streaming.session.clearQueue();
-          throw new Error('delegation aborted');
+          throw this.d.registry.delegationAbortError(sessionId, parentSessionId);
         }
         return '';
       }
@@ -1425,14 +1437,14 @@ export class ChannelSessionService {
         // This path intentionally does not take the channel lock (it must steer the current PI turn), so
         // fence it on both sides of the await. If stop clears PI's queue while steer() is pending, the
         // second check clears it again before rejecting; no late instruction survives the aborted tree.
-        if (delegationAborted()) throw new Error('delegation aborted');
+        if (delegationAborted()) throw this.d.registry.delegationAbortError(sessionId, parentSessionId);
         await enqueueMirrored(streaming, 'steer', turnText, undefined, {
           persistText: turnText, displayText: senderText, sourceText: senderText, publish: true,
         });
         if (delegationAborted()) {
           streaming.session.clearQueue();
           clearDeliveredUserEchoes(streaming);
-          throw new Error('delegation aborted');
+          throw this.d.registry.delegationAbortError(sessionId, parentSessionId);
         }
         return '';
       }
@@ -1473,46 +1485,58 @@ export class ChannelSessionService {
   /** Abort the in-flight turn on a channel session (a platform `/stop` slash). Delegated descendants
    *  are stopped depth-first before their parent, so a nested child cannot keep working after the room's
    *  `/stop`. No-op when idle/absent. */
-  async abort(channelId: string): Promise<void> {
-    await this.abortTree(channelId, new Set());
+  async abort(channelId: string, abort: PendingAbort = { origin: 'user_stop', reason: 'aborted' }): Promise<void> {
+    await this.abortTree(channelId, new Set(), abort);
   }
 
-  private async abortTree(channelId: string, seen: Set<string>, reason = 'aborted'): Promise<void> {
+  private async abortTree(channelId: string, seen: Set<string>, abort: PendingAbort): Promise<void> {
     if (seen.has(channelId)) return;
     seen.add(channelId);
     const sessionId = channelSessionId(channelId);
     // Fence before inspecting descendants. A fresh idle-child continuation must not register itself
     // after this snapshot and then get erased by clearChildren() without being aborted.
-    this.d.registry.beginParentAbort(sessionId);
+    this.d.registry.beginParentAbort(sessionId, abort);
     try {
+      if (this.d.registry.isActiveChild(sessionId)) this.d.registry.requestPendingAbort(sessionId, abort);
+      // Stop is a durable cancellation, including a boot claim not yet registered as a live child.
+      // Reuse the claim-guarded terminal transition; later recovery cannot overwrite this error.
+      const parent = this.d.store.getSession(sessionId)?.parent_session_id;
+      if (abort.origin === 'user_stop' && parent) {
+        for (const run of this.d.store.getSubagentRuns(parent).filter((run) => run.sessionId === sessionId)) {
+          this.d.store.completeRecoveredRun(parent, run.toolCallId, {
+            ...run, id: syntheticRestartResultId(parent, run.toolCallId),
+            status: 'error', error: new DelegationAbortedError(abort).message,
+          });
+        }
+      }
       // Before tearing children down: a workflow ORIGINATING here (including a node's self-expansion)
       // must stop launching nodes, or it respawns fresh children the moment an aborted one settles.
       // INSIDE the try: this reaches into the plugin registry, and if that throws (a reload racing the
       // abort) an outer position would leave the fence held forever — permanently marking the session as
       // aborting, so every later delegation from it is refused until the daemon restarts.
       await this.d.cancelWorkflows?.(sessionId);
+      const descendants = new Set([
+        ...this.d.registry.childrenOf(sessionId),
+        ...(abort.origin === 'user_stop' ? this.d.store.recoveringSubagentSessionIds(sessionId) : []),
+      ]);
+      for (const child of descendants) {
+        if (isChannelSession(child)) await this.abortTree(channelIdOf(child), seen, abort);
+      }
+      this.d.registry.clearChildren(sessionId);
       const ch = this.d.registry.channelGet(channelId);
       if (!ch) {
         if (this.d.registry.isActiveChild(sessionId)) {
-          this.d.registry.requestPendingAbort(sessionId);
           // No live record here, but the session may be running in the sub-agent runner: the marker above
           // makes the delegation terminal, and this is what actually interrupts the model call.
-          this.d.abortRemote?.(channelId);
+          this.d.abortRemote?.(channelId, abort);
         }
         return;
       }
-      // Record cancellation before awaiting PI. The running send consumes this marker immediately after
-      // prompt settles and throws, so the delegate plugin records ERROR rather than DONE/empty output.
-      if (this.d.registry.isActiveChild(ch.sessionId)) this.d.registry.requestPendingAbort(ch.sessionId);
-      for (const child of this.d.registry.childrenOf(ch.sessionId)) {
-        if (isChannelSession(child)) await this.abortTree(channelIdOf(child), seen, reason);
-      }
-      this.d.registry.clearChildren(ch.sessionId);
       // Match owner-chat stop semantics: queued steering belongs to the interrupted turn and a parked
       // AskUserQuestion must reject before PI aborts, otherwise `/stop` can leave prompt() hanging.
       ch.session.clearQueue();
       clearDeliveredUserEchoes(ch);
-      this.d.elicitation?.cancelForSession(ch.sessionId, reason);
+      this.d.elicitation?.cancelForSession(ch.sessionId, abort.reason);
       await abortSessionWork(ch.session).catch(() => { /* nothing in flight / already settling */ });
     } finally {
       this.d.registry.endParentAbort(sessionId);
@@ -1539,7 +1563,7 @@ export class ChannelSessionService {
       .filter(([, ch]) => !settingsFilter || settingsFilter(ch.settingsUserId))
       .map(([channelId]) => channelId);
     await Promise.all(targets.map(async (channelId) => {
-      await this.abortTree(channelId, new Set(), reason);
+      await this.abortTree(channelId, new Set(), { origin: 'parent_teardown', reason });
       // The abort above interrupts any turn but does not itself remove the record — a concurrent send()
       // that is already mid-turn is still running its callback under the channel lock, so queue the
       // actual dispose behind it instead of tearing the record down out from under that turn.

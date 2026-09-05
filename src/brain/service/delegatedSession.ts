@@ -254,6 +254,8 @@ export class DelegatedSessionService {
     if (deeper.length > 0) await Promise.allSettled(deeper);
     try { return await this.recoverOne(run); }
     catch (e) {
+      // An explicit Stop may have terminalized this claim while its continuation unwound.
+      if (!this.d.store.recoveringSubagentSessionIds(run.parentSessionId).includes(run.childSessionId)) return 'terminalized';
       const message = (e instanceof Error ? e.message : String(e)).slice(0, 2_000);
       logger('brain').error(`boot recovery of ${run.childSessionId} failed: ${message}`);
       const reason = `automatic restart recovery failed: ${message}`;
@@ -365,6 +367,10 @@ export class DelegatedSessionService {
    *  the user to continue by hand would make every restart a chore. */
   private async recoverOne(run: RecoverableRun): Promise<RecoveryOutcome> {
     const { parentSessionId, toolCallId, childSessionId, attempt, state } = run;
+    // Claiming and resuming are separate boot phases; Stop can cancel between them. A vanished child
+    // is absent from the owner-validated liveness query too, but must still reach the error below.
+    if (this.d.store.getSession(childSessionId)
+      && !this.d.store.recoveringSubagentSessionIds(parentSessionId).includes(childSessionId)) return 'terminalized';
     const base = {
       id: syntheticRestartResultId(parentSessionId, toolCallId), toolCallId, sessionId: childSessionId,
       task: state.task, tools: state.tools, seconds: state.seconds,
@@ -402,6 +408,7 @@ export class DelegatedSessionService {
       return 'terminalized';
     }
     const answer = await this.sendDelegated(owner.user_id, childSessionId, '', {
+      recoveryClaim: true,
       internalSystem: { customType: 'restart-continue', resultId: `restart-continue-${randomUUID()}`, continuation: true },
     });
     // The respawn was a continuation turn of the CHILD, which never edits its own run row (that row belongs
@@ -477,7 +484,8 @@ export class DelegatedSessionService {
     if (!row || row.parent_session_id !== parentSessionId || !isSubagentSession(childSessionId)) {
       throw new Error('unknown sub-agent for this conversation — use DelegateList to choose an id from this conversation');
     }
-    if (!this.d.sessions.isActiveChild(childSessionId)) return { stopped: false };
+    if (!this.d.sessions.isActiveChild(childSessionId)
+      && !this.d.store.recoveringSubagentSessionIds(parentSessionId).includes(childSessionId)) return { stopped: false };
     await this.d.channelService.abort(channelIdOf(childSessionId));
     return { stopped: true };
   }
@@ -632,6 +640,8 @@ export class DelegatedSessionService {
   async sendDelegated(
     userId: number, sessionId: string, content: string,
     opts?: {
+      /** Re-check the boot claim after releasing the remote runtime, before starting a continuation. */
+      recoveryClaim?: true;
       internalSystem?: { customType: string; resultId: string; continuation?: boolean };
       /** Additional tool denies from the CALLING turn, layered on the account's own. Only ever narrows;
        *  the captured allow-list stays authoritative (see ChannelSessionService.delegatedExecution). */
@@ -669,6 +679,9 @@ export class DelegatedSessionService {
         }
         throw new Error('that sub-agent is running in the sub-agent runner — wait for it to finish before sending it more');
       }
+    }
+    if (opts?.recoveryClaim && !this.d.store.recoveringSubagentSessionIds(parentSessionId).includes(sessionId)) {
+      throw new Error('delegation recovery claim no longer held');
     }
     const policy = scope.admin
       ? { allowedProjectIds: 'all' as const, allowedPaths: () => [] }

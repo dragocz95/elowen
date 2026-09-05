@@ -7366,7 +7366,7 @@ describe('abort cascade + turn model exposure', () => {
     expect(d.session.abort).not.toHaveBeenCalled();
     releaseChild();
     await aborting;
-    expect(abortSpy).toHaveBeenCalledWith('subagent-subX'); // brain-ch- prefix stripped → channel id
+    expect(abortSpy).toHaveBeenCalledWith('subagent-subX', { origin: 'user_stop', reason: 'aborted' }); // brain-ch- prefix stripped → channel id
     expect(order).toEqual(['child-start', 'child-done', 'parent']);
   });
 
@@ -7404,7 +7404,7 @@ describe('abort cascade + turn model exposure', () => {
 
     await svc.abort(1);
 
-    expect(abortSpy).toHaveBeenCalledWith('subagent-subX');
+    expect(abortSpy).toHaveBeenCalledWith('subagent-subX', { origin: 'user_stop', reason: 'aborted' });
   });
 
   it('the turn scope exposes the session model for delegation inheritance', async () => {
