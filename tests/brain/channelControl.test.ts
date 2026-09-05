@@ -31,8 +31,10 @@ function serviceWith(map: Map<string, unknown>, extra: Record<string, unknown> =
     registry.channelTouch(id, channel);
     for (const child of channel.activeChildren ?? []) registry.setChildRunning(channel.sessionId, child, true);
   }
-  const store = { descendantUsage: () => ({ totalTokens: 0, cost: 0 }) };
-  // Control methods read the live registry plus persisted descendant usage for the aggregate meter.
+  // Control methods read the live registry plus persisted descendant usage for the aggregate meter; the
+  // abort path also looks the session up to record a user stop on a claimed run, and these channels are
+  // not persisted delegations.
+  const store = { descendantUsage: () => ({ totalTokens: 0, cost: 0 }), getSession: () => undefined, recoveringSubagentSessionIds: () => [] };
   return { svc: new ChannelSessionService({ registry, store, ...extra } as never), registry };
 }
 
