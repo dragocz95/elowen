@@ -1,6 +1,6 @@
 'use client';
 import { Activity, useCallback, useState, useEffect, useMemo, useRef, type ReactNode } from 'react';
-import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, Brain, Settings2 } from 'lucide-react';
+import { UserCog, Mail, Cpu, Upload, ShieldCheck, User as UserIcon, KeyRound, ZoomIn, Bell, Sparkles, Brain } from 'lucide-react';
 import { ElowenApiError } from '../../lib/elowenClient';
 import type { PlatformLinkKey, ProfilePatch } from '../../lib/types';
 
@@ -40,11 +40,15 @@ import { CliSection } from './CliSection';
 import { TerminalSection } from './TerminalSection';
 import { AccountMemorySection } from './AccountMemorySection';
 import { PluginAccountSection } from './PluginAccountSection';
-import { parsePluginAccountSectionId, parsePluginUserConfigSectionId, pluginAccountSectionId, pluginUserConfigSectionId } from './pluginSections';
-import { accountSections, isAccountSection, type AccountSection } from './sections';
+import { parsePluginAccountSectionId, parsePluginUserConfigSectionId } from './pluginSections';
+import {
+  accountSections,
+  isAccountSection,
+  pluginAccountSectionEntries,
+  userPluginConfigSectionEntries,
+  type AccountSection,
+} from './sections';
 import { UserPluginConfigSection } from './UserPluginConfigSection';
-import { userPluginConfigDescription, userPluginConfigLabel } from './userPluginConfigStrings';
-import { pluginLucideIcon } from '../../lib/pluginIcons';
 import { rowAnchor } from '../../lib/rowAnchors';
 import { useRowAnchor } from '../../lib/useRowAnchor';
 
@@ -105,6 +109,17 @@ export function AccountView() {
     window.addEventListener('popstate', apply);
     return () => window.removeEventListener('popstate', apply);
   }, [setSection]);
+  // The address always names the section on screen. Arriving at a bare `/account` used to leave the URL
+  // silent about which section was open; the page's own rail made up for it, and the menu outside the
+  // page — which is that rail now — can only mark the section the address names. `replaceState` because
+  // this is the same place by another spelling, not a step in the reader's history.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('cat') === section) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('cat', section);
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, [section]);
   // …and `?row=<anchor>` beside it: the record the palette named is scrolled into view and blinked once
   // as soon as its section is on screen.
   useRowAnchor();
@@ -116,31 +131,15 @@ export function AccountView() {
   useEffect(() => {
     setVisitedSections((current) => current.has(section) ? current : new Set(current).add(section));
   }, [section]);
-  const pluginAccountSections = useMemo(() => (pluginUi.data ?? []).flatMap((entry) => (entry.account ?? []).map((account) => ({
-    id: pluginAccountSectionId(entry.name, account.id),
-    plugin: entry,
-    sectionId: account.id,
-    // Absent means 'section': a daemon too old to send the field, like every plugin that never asked for
-    // anything else, keeps its own entry in the rail.
-    placement: account.placement ?? 'section',
-    icon: pluginLucideIcon(account.icon),
-    label: account.label,
-    description: entry.strings?.accountHint ?? entry.label ?? account.label,
-  }))), [pluginUi.data]);
-  // A panel that declares itself an identity hangs in the Linked accounts drawer instead of the rail. The
-  // host splits on the manifest field alone and never on which plugin sent it.
+  const pluginAccountSections = useMemo(() => pluginAccountSectionEntries(pluginUi.data ?? []), [pluginUi.data]);
+  // A panel that declares itself an identity hangs in the Linked accounts drawer instead of claiming a
+  // section. The host splits on the manifest field alone and never on which plugin sent it.
   const deckPluginSections = useMemo(() => pluginAccountSections.filter((item) => item.placement !== 'linkedAccount'), [pluginAccountSections]);
   const connectorPluginSections = useMemo(() => pluginAccountSections.filter((item) => item.placement === 'linkedAccount'), [pluginAccountSections]);
-  // The rail gets the plugin's NAME and the hero its sentence — two different strings from the manifest,
-  // resolved through the plugin's own i18n. Feeding the description to both is what put a paragraph in the
-  // rail and left the hero repeating it.
-  const userConfigSections = useMemo(() => (userPluginConfigs.data ?? []).map((detail) => ({
-    id: pluginUserConfigSectionId(detail.name),
-    detail,
-    icon: Settings2,
-    label: userPluginConfigLabel(detail, locale),
-    description: userPluginConfigDescription(detail, locale) ?? t.account.personalPluginConfig,
-  })), [locale, t.account.personalPluginConfig, userPluginConfigs.data]);
+  const userConfigSections = useMemo(
+    () => userPluginConfigSectionEntries(userPluginConfigs.data ?? [], locale, t.account.personalPluginConfig),
+    [locale, t.account.personalPluginConfig, userPluginConfigs.data],
+  );
   useEffect(() => {
     const accountId = parsePluginAccountSectionId(section);
     if (accountId) {

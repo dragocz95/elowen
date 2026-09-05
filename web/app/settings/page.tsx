@@ -22,7 +22,7 @@ import { combineSaveFeedback, type SaveFeedback } from '../../lib/saveFeedback';
 import { useUpdateConfig, useSystemUpdate, useSystemRestart } from '../../lib/mutations';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { SECTION_ALIASES, SETTINGS_CATEGORY_VALUES, SETTINGS_SECTIONS, type SettingsCategory } from '../../modules/settings/categories';
+import { SECTION_ALIASES, SETTINGS_CATEGORY_VALUES, settingsSectionHref, settingsSections, type SettingsCategory } from '../../modules/settings/categories';
 import { isPluginSettingsSectionId, parsePluginSettingsSectionId } from '../../modules/settings/pluginSections';
 import { pluginSectionHref } from '../../lib/pluginNav';
 import { useToast } from '../../components/ui/Toast';
@@ -184,6 +184,18 @@ export default function SettingsPage() {
     window.addEventListener('popstate', apply);
     return () => window.removeEventListener('popstate', apply);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // The address always names the section on screen. Arriving at a bare `/settings` — from the instance
+  // menu, a bookmark, a redirect — used to leave the URL silent about which of six sections was actually
+  // open, which the deck's own rail made up for by highlighting it. The menu outside the page is that
+  // rail now, and it can only mark the section the address names. `replaceState` because this is the same
+  // place by another spelling, not a step in the reader's history.
+  useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('cat') === category) return;
+    const url = new URL(window.location.href);
+    url.searchParams.set('cat', category);
+    window.history.replaceState(null, '', `${url.pathname}${url.search}${url.hash}`);
+    window.dispatchEvent(new PopStateEvent('popstate'));
+  }, [category]);
   // …and the row within it, when the link named one: `?row=<anchor>` scrolls that record into view and
   // blinks it once. It reads the same three sources this section state does and consumes the parameter.
   useRowAnchor();
@@ -192,7 +204,7 @@ export default function SettingsPage() {
     // Rewrite the URL directly (the Next router's replace() doesn't reliably update this statically
     // optimized route), then fire popstate so the sidebar's active-item highlight follows. F5 restores
     // this exact section from the URL.
-    window.history.replaceState(null, '', `/settings?cat=${next}`);
+    window.history.replaceState(null, '', settingsSectionHref(next));
     window.dispatchEvent(new PopStateEvent('popstate'));
   };
 
@@ -329,17 +341,10 @@ export default function SettingsPage() {
     system: combineSaveFeedback(autoUpdateSave, defaultsSave, pushContactSave, retentionSave),
   };
   const activeFeedback = feedbackByCategory[category] ?? { status: 'idle' as const };
-  const sectionHints: Record<Category, string> = {
-    models: t.settings.modelsSectionHint,
-    brain: t.settings.brainSectionHint,
-    dashboard: t.settings.dashboardSectionHint,
-    plugins: t.settings.pluginsSectionHint,
-    data: t.settings.dataSectionHint,
-    system: t.settings.systemSectionHint,
-  };
-  // Core sections, in their fixed order. Plugins do not appear here: each owns a world in the main
-  // navigation and its settings sections are pages of that world.
-  const deckSections = SETTINGS_SECTIONS.map(({ id, icon }) => ({ id, icon, label: id === 'brain' ? agentAiLabel : t.settings[id], description: sectionHints[id] }));
+  // The same list, in the same order, that the sidebar draws its Settings sub-items from. Plugins do not
+  // appear in it: each owns a world in the main navigation and its settings sections are pages of that
+  // world.
+  const deckSections = settingsSections(t, agentAiLabel);
   const diagnostics = system.data?.diagnostics;
   const activeSection = deckSections.find((section) => section.id === category) ?? deckSections[0]!;
 

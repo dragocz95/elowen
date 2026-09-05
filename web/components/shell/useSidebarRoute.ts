@@ -88,24 +88,36 @@ export function resolveSidebarRoute(
   return route;
 }
 
-/** The live query string and fragment.
+/** The live query string and fragment, from the two sources that each see half the truth.
  *
- *  `useSearchParams` is the client navigation's answer and the only one that updates when a deck row
- *  pushes `?cat=`. It reads EMPTY on a statically optimized route until that first client navigation,
- *  which is why the document's own URL is read once on mount as well — the same pair `lib/useRowAnchor.ts`
- *  reads, for the same reason. The mount read is dropped as soon as the router has an answer of its own,
- *  so it can never pin the column to the address the tab was opened at. */
+ *  `useSearchParams` is the ROUTER's answer. It is immediate on a client navigation — which is what a
+ *  sub-item click is — but it reads empty on a statically optimized route until that first navigation,
+ *  and it never learns about a section a deck page switches to itself: those rewrite the address with
+ *  `history.replaceState` and announce it with a synthetic `popstate`, which the router does not observe.
+ *
+ *  The ADDRESS BAR is the other source. It is read on mount, on every arrival, and on every `popstate`,
+ *  and while it holds an answer it wins — it is the document's actual URL. The router's answer takes over
+ *  again the moment it changes, so a stale reading can never pin the column to an address the reader has
+ *  already left. This is the same pair `lib/useRowAnchor.ts` reads, for the same reason. */
 function useLocation(): { search: string; hash: string } {
   const searchParams = useSearchParams();
   const routerSearch = searchParams.toString();
   const pathname = usePathname();
-  const [initial, setInitial] = useState<{ search: string; hash: string }>({ search: '', hash: '' });
+  // The reading carries the route it was taken on. An effect cannot run before the render that follows a
+  // navigation, so without that stamp the column would paint one frame of the previous section every time
+  // a sub-item is clicked; with it, a reading the router has already overtaken is simply not used.
+  const route = `${pathname}?${routerSearch}`;
+  const [address, setAddress] = useState<{ search: string; hash: string; route: string } | null>(null);
   useEffect(() => {
-    setInitial({ search: window.location.search, hash: window.location.hash });
-  }, [pathname]);
+    const read = () => setAddress({ search: window.location.search.replace(/^\?/, ''), hash: window.location.hash, route });
+    read();
+    window.addEventListener('popstate', read);
+    return () => window.removeEventListener('popstate', read);
+  }, [route]);
+  const current = address !== null && address.route === route ? address : null;
   return {
-    search: routerSearch === '' ? initial.search : routerSearch,
-    hash: initial.hash,
+    search: current?.search ?? routerSearch,
+    hash: current?.hash ?? '',
   };
 }
 
