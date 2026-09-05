@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { Db } from './db.js';
+import { withWriteLock, type Db } from './db.js';
 import { CHANNEL_PREFIX, SUBAGENT_PLATFORM } from '../brain/sessionId.js';
 import { fromRegistryProvider } from '../shared/execs.js';
 import type {
@@ -435,7 +435,7 @@ export class ProviderRequestStore {
   }
 
   start(input: ProviderRequestAttemptInput): { requestId: string; seq: number } {
-    return this.db.transaction(() => {
+    return withWriteLock(this.db, () => {
       const pending = this.db.prepare(
         `SELECT request_id FROM brain_provider_requests WHERE session_id = ? AND status = 'pending' LIMIT 1`
       ).get(input.sessionId) as { request_id: string } | undefined;
@@ -473,7 +473,7 @@ export class ProviderRequestStore {
          ON CONFLICT(session_id) DO UPDATE SET stored_bytes = stored_bytes + excluded.stored_bytes`
       ).run(input.sessionId, startedAt, storedBytes);
       return { requestId, seq };
-    })();
+    });
   }
 
   /** Record the HTTP response of a pending attempt. A provider may answer one payload several times — the
@@ -482,10 +482,10 @@ export class ProviderRequestStore {
    *  longer pending (closed by an interruption or an earlier terminal), which the caller reports; a
    *  response to an unknown attempt is the only invariant breach. */
   markResponse(requestId: string, status: number, at = Date.now()): boolean {
-    const changed = this.db.prepare(
+    const changed = withWriteLock(this.db, () => this.db.prepare(
       `UPDATE brain_provider_requests SET response_at = ?, http_status = ?
         WHERE request_id = ? AND status = 'pending'`
-    ).run(at, status, requestId).changes;
+    ).run(at, status, requestId).changes);
     if (changed === 1) return true;
     const row = this.db.prepare('SELECT status FROM brain_provider_requests WHERE request_id = ?').get(requestId);
     if (!row) throw new Error(`provider request correlation invariant: response without one pending attempt (${requestId})`);
@@ -499,7 +499,7 @@ export class ProviderRequestStore {
    *  Restricted to one session when given. Each row goes through {@link finish}, so the session summary
    *  accounts it exactly once. Returns the ids closed. */
   interruptPending(reason: { errorCode: string; errorMessage: string }, opts: { sessionId?: string; at?: number } = {}): string[] {
-    return this.db.transaction(() => {
+    return withWriteLock(this.db, () => {
       const rows = (opts.sessionId === undefined
         ? this.db.prepare(`SELECT request_id FROM brain_provider_requests WHERE status = 'pending' ORDER BY started_at`).all()
         : this.db.prepare(`SELECT request_id FROM brain_provider_requests WHERE status = 'pending' AND session_id = ? ORDER BY started_at`).all(opts.sessionId)
@@ -514,11 +514,11 @@ export class ProviderRequestStore {
         if (done) closed.push(row.request_id);
       }
       return closed;
-    })();
+    });
   }
 
   finish(input: ProviderRequestTerminalInput): boolean {
-    return this.db.transaction(() => {
+    return withWriteLock(this.db, () => {
       const row = this.db.prepare(
         `SELECT r.request_id, r.session_id, r.seq, r.status, r.started_at,
                 COALESCE(reset.usage_epoch, 0) AS usage_epoch
@@ -595,11 +595,11 @@ export class ProviderRequestStore {
         cost: cost ?? 0, costed: cost === null ? 0 : 1, stored_bytes: terminalStoredBytes,
       });
       return true;
-    })();
+    });
   }
 
   attachResponse(requestId: string, response: unknown, assistantMessageId?: string): void {
-    this.db.transaction(() => {
+    withWriteLock(this.db, () => {
       const row = this.db.prepare('SELECT session_id, response_segment FROM brain_provider_requests WHERE request_id = ?')
         .get(requestId) as { session_id: string; response_segment: string | null } | undefined;
       if (!row) throw new Error(`provider request correlation invariant: unknown attempt ${requestId}`);
@@ -612,7 +612,7 @@ export class ProviderRequestStore {
       const referenceGrowth = Math.max(0, Buffer.byteLength(responseJson) - Buffer.byteLength(row.response_segment ?? ''));
       this.db.prepare('UPDATE brain_request_session_summary SET stored_bytes = stored_bytes + ? WHERE session_id = ?')
         .run(responseSegment.storedBytes + referenceGrowth, row.session_id);
-    })();
+    });
   }
 
   private chainRefs(sessionId: string, root: ProviderRequestChainRoot): ProviderRequestSegmentRef[] {
@@ -999,7 +999,7 @@ export class ProviderRequestStore {
   }
 
   pruneDiagnostics(olderThan: number, maxStoredBytes: number, maxSessions = 8): { sessions: number; storedBytes: number } {
-    return this.db.transaction(() => {
+    return withWriteLock(this.db, () => {
       const limit = Number.isFinite(maxSessions) ? Math.max(1, Math.min(100, Math.floor(maxSessions))) : 8;
       const cap = Number.isFinite(maxStoredBytes) && maxStoredBytes >= 0 ? Math.floor(maxStoredBytes) : Number.MAX_SAFE_INTEGER;
       let sessions = 0;
@@ -1038,7 +1038,7 @@ export class ProviderRequestStore {
         total -= row.stored_bytes;
       }
       return { sessions, storedBytes };
-    })();
+    });
   }
 
   clearSession(sessionId: string): void {

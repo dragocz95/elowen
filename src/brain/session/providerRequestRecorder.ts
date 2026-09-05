@@ -14,6 +14,12 @@ import { logger } from '../../shared/logger.js';
 
 const log = logger('provider-request-recorder');
 
+function captureError(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error);
+  const code = error && typeof error === 'object' && 'code' in error ? error.code : undefined;
+  return typeof code === 'string' ? `${code}: ${message}` : message;
+}
+
 export interface ProviderRequestRecorderOptions {
   store: ProviderRequestStore;
   sessionId: string;
@@ -72,6 +78,8 @@ export class ProviderRequestRecorder {
       try {
         switch (event.type) {
         case 'agent_start':
+          // Disable a broken capture for its turn, not for the lifetime of a reused session.
+          this.captureBroken = false;
           this.turn += 1;
           return;
         case 'compaction_start':
@@ -161,7 +169,7 @@ export class ProviderRequestRecorder {
             return;
         }
       } catch (error) {
-        this.breakCapture(`lifecycle capture failed: ${error instanceof Error ? error.message : String(error)}`);
+        this.breakCapture(`lifecycle capture failed: ${captureError(error)}`);
       }
     };
   }
@@ -181,6 +189,7 @@ export class ProviderRequestRecorder {
       return undefined;
     }
     try {
+      this.reconcileOrphanedAttempt();
       const started = this.options.store.start({
         sessionId: this.options.sessionId,
         turnId: `compaction:${this.compaction}`,
@@ -196,7 +205,7 @@ export class ProviderRequestRecorder {
       this.activeKind = 'remote_compaction';
       return started.requestId;
     } catch (error) {
-      this.breakCapture(`remote compaction capture failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.breakCapture(`remote compaction capture failed: ${captureError(error)}`);
       return undefined;
     }
   }
@@ -207,7 +216,7 @@ export class ProviderRequestRecorder {
       return;
     }
     try { this.options.store.markResponse(requestId, status, this.now()); }
-    catch (error) { this.breakCapture(`remote response capture failed: ${error instanceof Error ? error.message : String(error)}`); }
+    catch (error) { this.breakCapture(`remote response capture failed: ${captureError(error)}`); }
   }
 
   finishRemoteCompaction(requestId: string, result: { response?: unknown; errorCode?: string; errorMessage?: string }): void {
@@ -227,7 +236,7 @@ export class ProviderRequestRecorder {
       this.activeRequestId = null;
       this.lastFailedRequestId = result.errorCode ? requestId : null;
     } catch (error) {
-      this.breakCapture(`remote terminal capture failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.breakCapture(`remote terminal capture failed: ${captureError(error)}`);
     }
   }
 
@@ -261,7 +270,9 @@ export class ProviderRequestRecorder {
       onPayload: async (payload: unknown, requestModel: Model<Api>) => {
         const transformed = await originalPayload?.(payload, requestModel);
         const finalPayload = transformed === undefined ? payload : transformed;
-        capturedRequestId = this.openAttempt(requestModel, finalPayload);
+        // Reconciliation also reads SQLite; diagnostics must never reject the provider's payload hook.
+        try { capturedRequestId = this.openAttempt(requestModel, finalPayload); }
+        catch (error) { this.breakCapture(`request capture failed: ${captureError(error)}`); }
         return finalPayload;
       },
       onResponse: async (response: Parameters<NonNullable<typeof originalResponse>>[0], responseModel: Model<Api>) => {
@@ -280,7 +291,7 @@ export class ProviderRequestRecorder {
           if (!this.options.store.markResponse(capturedRequestId, response.status, this.now())) {
             log.warn(`response for ${capturedRequestId} arrived after the attempt was closed as ${this.closedAs(capturedRequestId)} — not recorded`);
           }
-        } catch (error) { this.breakCapture(`response capture failed: ${error instanceof Error ? error.message : String(error)}`); }
+        } catch (error) { this.breakCapture(`response capture failed: ${captureError(error)}`); }
       },
     };
     const out = createAssistantMessageEventStream();
@@ -341,7 +352,7 @@ export class ProviderRequestRecorder {
             finishedAt: this.now(),
           });
         } catch (error) {
-          this.breakCapture(`HTTP failure capture failed: ${error instanceof Error ? error.message : String(error)}`);
+          this.breakCapture(`HTTP failure capture failed: ${captureError(error)}`);
           return undefined;
         }
         this.lastFailedRequestId = failed;
@@ -361,6 +372,7 @@ export class ProviderRequestRecorder {
     const kind = this.compactionActive ? 'compaction' : 'chat';
     const turnId = kind === 'compaction' ? `compaction:${this.compaction}` : `turn:${this.turn}`;
     try {
+      this.reconcileOrphanedAttempt();
       const started = this.options.store.start({
         sessionId: this.options.sessionId,
         turnId,
@@ -378,9 +390,22 @@ export class ProviderRequestRecorder {
       this.retryOf = undefined;
       return started.requestId;
     } catch (error) {
-      this.breakCapture(`request capture failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.breakCapture(`request capture failed: ${captureError(error)}`);
       return undefined;
     }
+  }
+
+  /** Only called before a fresh capture with no locally active request. AgentSession serializes calls;
+   *  a pending row here belongs to a retired correlator or to a closure that exhausted its busy retries. */
+  private reconcileOrphanedAttempt(): void {
+    if (!this.options.store.latestPending(this.options.sessionId)) return;
+    const closed = this.options.store.interruptPending({
+      errorCode: 'capture_failed',
+      errorMessage: 'Previous capture did not close before the next provider request',
+    }, { sessionId: this.options.sessionId, at: this.now() });
+    this.retryOf = undefined;
+    this.lastFailedRequestId = null;
+    for (const id of closed) log.warn(`orphaned attempt ${id} interrupted after capture failure — opening a new attempt`);
   }
 
   /** Human-readable terminal state of a row that is no longer pending, for the warnings above. */
@@ -407,7 +432,7 @@ export class ProviderRequestRecorder {
       this.activeRequestId = null;
       this.lastFailedRequestId = null;
     } catch (error) {
-      this.breakCapture(`compaction terminal capture failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.breakCapture(`compaction terminal capture failed: ${captureError(error)}`);
     }
   }
 
@@ -430,7 +455,7 @@ export class ProviderRequestRecorder {
       this.activeRequestId = null;
       this.lastFailedRequestId = requestId;
     } catch (error) {
-      this.breakCapture(`stream terminal capture failed: ${error instanceof Error ? error.message : String(error)}`);
+      this.breakCapture(`stream terminal capture failed: ${captureError(error)}`);
     }
   }
 
@@ -451,7 +476,7 @@ export class ProviderRequestRecorder {
         finishedAt: this.now(),
       });
     } catch (error) {
-      log.error(`failed to close broken capture ${pending}: ${error instanceof Error ? error.message : String(error)}`);
+      log.error(`failed to close broken capture ${pending}: ${captureError(error)}`);
     }
   }
 }
