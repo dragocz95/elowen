@@ -529,7 +529,15 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
                           </SidebarMenuButton>
                         )}
                       </ActivityRow>
-                      <div className="absolute right-1 top-1/2 -translate-y-1/2">
+                      {/* Centred by a flex box spanning the row, never by `top-1/2 -translate-y-1/2`.
+                          A transform CREATES A STACKING CONTEXT, and this element is the ancestor of the
+                          row's action menu: inside one, the menu's `overlay-layer-menu` z-index can only
+                          rank against its own siblings, so the panel ranked as this anchor does — a
+                          positioned element with z-index auto, painted in tree order. Every row BELOW
+                          this one then painted over the open menu, straight across Rename, Branch,
+                          Export and Delete. The geometry here is identical; what changes is that the
+                          menu's layer is free to reach the surface it belongs to. */}
+                      <div className="absolute inset-y-0 right-1 flex items-center">
                         <ActionMenu
                           label={`${s.title || t.brainChat.untitled}: ${t.chat.moreActions}`}
                           items={actionItems(s)}

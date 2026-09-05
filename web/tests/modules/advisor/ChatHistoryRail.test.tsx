@@ -486,3 +486,44 @@ describe('ChatHistoryRail', () => {
     await waitFor(() => expect(screen.getByRole('menuitem', { name: /^Rename$|^Přejmenovat$/i })).toHaveFocus());
   });
 });
+
+/** The incident: an open row menu was painted OVER by the conversation rows below it, straight across
+ *  Rename, Branch, Export and Delete — every action those rows reach only through that menu.
+ *
+ *  The panel carries `overlay-layer-menu`, the app's menu z-index band, and that was never the problem.
+ *  Its ANCHOR was: the action button sat in an absolutely positioned box centred with `top-1/2
+ *  -translate-y-1/2`, and a transform CREATES A STACKING CONTEXT. Inside one, the panel's z-index can
+ *  only rank against its own siblings — the subtree then ranks as the anchor does, a positioned element
+ *  with z-index auto, painted in tree order, so every later row won. Raising the panel's z-index changed
+ *  nothing, which is what makes this a stacking-context bug rather than a layer-value one.
+ *
+ *  jsdom paints nothing, so what is pinned here is that cause: no element between the open panel and its
+ *  row may create a stacking context. The paint order itself is verified in a real browser. */
+describe('ChatHistoryRail row menu — overlay stacking', () => {
+  // Tailwind utilities that create a stacking context and would trap the panel's layer again.
+  const TRAPS = /^(transform|transform-gpu|isolate|filter|opacity-\d|mix-blend-|backdrop-|will-change-|blur-|-?(translate|scale|rotate|skew)-)/;
+
+  it('holds the action menu in an anchor that creates no stacking context', async () => {
+    renderRail('rail');
+    openRowMenu(0);
+    const panel = await screen.findByRole('menu');
+    expect(panel).toHaveClass('overlay-layer-menu');
+
+    const row = panel.closest('[data-slot="sidebar-menu-item"]');
+    expect(row).not.toBeNull();
+    const trapped: string[] = [];
+    for (let node = panel.parentElement; node && node !== row; node = node.parentElement) {
+      for (const token of node.className.toString().split(/\s+/).filter(Boolean)) {
+        if (TRAPS.test(token)) trapped.push(token);
+      }
+    }
+    expect(trapped).toEqual([]);
+  });
+
+  it('centres the action button on the row without a transform', () => {
+    renderRail('rail');
+    const anchor = screen.getAllByRole('button', { name: /More actions|Další akce/i })[0]!.closest('.absolute')!;
+    expect(anchor).toHaveClass('inset-y-0', 'right-1', 'flex', 'items-center');
+    expect(anchor.className).not.toMatch(/translate|top-1\/2/);
+  });
+});
