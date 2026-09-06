@@ -1,4 +1,5 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -58,9 +59,10 @@ async function mount(
       };
     }),
   };
+  const warnings: string[] = [];
   register({
     config,
-    logger: { info() {} },
+    logger: { info() {}, warn: (message: string) => warnings.push(message) },
     host: { defaultInference: () => inference, publicHttp: () => publicHttp },
     registerTool: (tool: Tool) => tools.push(tool),
   });
@@ -72,6 +74,8 @@ async function mount(
     cancellations,
     inference,
     inferenceCalls,
+    publicHttp,
+    warnings,
   };
 }
 
@@ -490,47 +494,62 @@ describe('web plugin WebFetch pipeline', () => {
     expect(calls[0]!.url).toBe(base);
   });
 
-  it('bounds the fetch cache by entry count', async () => {
+  it('bounds the fetch cache at 64 entries', async () => {
     const { fetchTool, calls } = await mount({}, undefined, async () => new Response(
       'small', { status: 200, headers: { 'content-type': 'text/plain' } },
     ));
-    const overflow = 'https://93.184.216.34/cache-count-32';
-    for (let i = 0; i < 33; i++) {
-      await fetchTool.execute(String(i), { url: `https://93.184.216.34/cache-count-${i}`, prompt: 'Summarize' });
+    const url = (i: number) => `https://93.184.216.34/cache-count-${i}`;
+    // 65 distinct URLs: the ceiling recycles, so exactly the oldest one is gone and everything the
+    // ceiling still covers is served from cache.
+    for (let i = 0; i < 65; i++) {
+      await fetchTool.execute(String(i), { url: url(i), prompt: 'Summarize' });
     }
-    await fetchTool.execute('again', { url: overflow, prompt: 'Again' });
-    expect(calls.filter((call) => call.url === overflow)).toHaveLength(2);
+    await fetchTool.execute('kept', { url: url(1), prompt: 'Again' });
+    await fetchTool.execute('newest', { url: url(64), prompt: 'Again' });
+    await fetchTool.execute('evicted', { url: url(0), prompt: 'Again' });
+
+    expect(calls.filter((call) => call.url === url(1))).toHaveLength(1);
+    expect(calls.filter((call) => call.url === url(64))).toHaveLength(1);
+    expect(calls.filter((call) => call.url === url(0))).toHaveLength(2);
   });
 
   it('clears expiry timers when cache entries are evicted', async () => {
     vi.useFakeTimers();
     try {
-      const large = 'x'.repeat(150_000);
+      const large = '\u4e00'.repeat(100_000);
       const { fetchTool } = await mount({}, undefined, async () => new Response(
         large, { status: 200, headers: { 'content-type': 'text/plain' } },
       ));
       const baseline = vi.getTimerCount();
-      for (let i = 0; i < 21; i++) {
+      for (let i = 0; i < 27; i++) {
         await fetchTool.execute(String(i), { url: `https://93.184.216.34/cache-timer-${i}`, prompt: 'Summarize' });
       }
       await vi.advanceTimersByTimeAsync(20_001);
-      expect(vi.getTimerCount() - baseline).toBe(19);
+      expect(vi.getTimerCount() - baseline).toBe(26);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('bounds the fetch cache by retained content bytes', async () => {
-    const large = 'x'.repeat(150_000);
+  it('bounds the fetch cache at 8 MB of retained content', async () => {
+    // One entry is capped at 100k Markdown CHARS, so only multi-byte content reaches the byte budget
+    // before the 64-entry ceiling does: 3 bytes per char here, so 26 entries fit and the 27th does not.
+    const large = '\u4e00'.repeat(100_000);
     const { fetchTool, calls } = await mount({}, undefined, async () => new Response(
       large, { status: 200, headers: { 'content-type': 'text/plain' } },
     ));
-    const first = 'https://93.184.216.34/cache-bytes-0';
-    for (let i = 0; i < 21; i++) {
-      await fetchTool.execute(String(i), { url: `https://93.184.216.34/cache-bytes-${i}`, prompt: 'Summarize' });
+    const url = (i: number) => `https://93.184.216.34/cache-bytes-${i}`;
+    for (let i = 0; i < 26; i++) {
+      await fetchTool.execute(String(i), { url: url(i), prompt: 'Summarize' });
     }
-    await fetchTool.execute('again', { url: first, prompt: 'Again' });
-    expect(calls.filter((call) => call.url === first)).toHaveLength(2);
+    // Still under the budget, so nothing has been evicted yet. This also refreshes entry 0, which leaves
+    // entry 1 as the oldest and therefore the one the next fetch has to make room for.
+    await fetchTool.execute('under', { url: url(0), prompt: 'Again' });
+    await fetchTool.execute('over', { url: url(26), prompt: 'Summarize' });
+    await fetchTool.execute('evicted', { url: url(1), prompt: 'Again' });
+
+    expect(calls.filter((call) => call.url === url(0))).toHaveLength(1);
+    expect(calls.filter((call) => call.url === url(1))).toHaveLength(2);
   });
 
   it('reuses URL content for 15 minutes and refetches after expiry', async () => {
@@ -550,5 +569,158 @@ describe('web plugin WebFetch pipeline', () => {
     await fetchTool.execute('c', { url, prompt: 'Third' });
     expect(calls).toHaveLength(2);
     clock.mockRestore();
+  });
+});
+
+/** The preapproved list decides ONE thing: whether the fetched page still goes through the summarizing
+ *  inference call. WebFetch asks for no permission today (it is planSafe and core has no WebFetch rule),
+ *  so there is no permission ask for it to skip — and it must never become a network policy either. */
+describe('web plugin WebFetch preapproved documentation hosts', () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  const docsPage = async () => new Response(
+    '<html><body><h1>os — Miscellaneous OS interfaces</h1><p>Docs body.</p></body></html>',
+    { status: 200, headers: { 'content-type': 'text/html' } },
+  );
+
+  it('returns a listed documentation page as Markdown and never calls inference', async () => {
+    const { fetchTool, inferenceCalls } = await mount({}, undefined, docsPage);
+
+    const result = await fetchTool.execute('f', {
+      url: 'https://docs.python.org/3/library/os.html', prompt: 'What does os do?',
+    });
+
+    expect(inferenceCalls).toHaveLength(0);
+    expect(textOf(result)).toContain('# os — Miscellaneous OS interfaces');
+    expect(result.details).toMatchObject({ url: 'https://docs.python.org/3/library/os.html', preapproved: true });
+  });
+
+  it('keeps the HTTPS upgrade and the pinned host transport for a listed host', async () => {
+    const { fetchTool, calls, publicHttp } = await mount({}, undefined, docsPage);
+
+    await fetchTool.execute('f', { url: 'http://docs.python.org/3/library/os.html', prompt: 'Anything' });
+
+    expect(calls.map((call) => call.url)).toEqual(['https://docs.python.org/3/library/os.html']);
+    expect(publicHttp.request).toHaveBeenCalledTimes(1);
+  });
+
+  it('still refuses a non-global redirect target reached from a listed host', async () => {
+    const { fetchTool, publicHttp, inferenceCalls } = await mount({}, undefined, async () => new Response('', {
+      status: 302, headers: { location: 'http://127.0.0.1/private' },
+    }));
+
+    const text = textOf(await fetchTool.execute('f', {
+      url: 'https://docs.python.org/redirect', prompt: 'Anything',
+    }));
+
+    expect(text).toMatch(/non-global address/i);
+    expect(publicHttp.validate).toHaveBeenCalledWith('https://127.0.0.1/private');
+    expect(inferenceCalls).toHaveLength(0);
+  });
+
+  it('leaves a host outside the list on the inference path', async () => {
+    const { fetchTool, inferenceCalls } = await mount({}, undefined, docsPage);
+
+    const result = await fetchTool.execute('f', {
+      url: 'https://blog.example.com/post', prompt: 'What does os do?',
+    });
+
+    expect(inferenceCalls).toHaveLength(1);
+    expect(textOf(result)).toBe('INFERRED: yes');
+    expect(result.details).not.toMatchObject({ preapproved: true });
+  });
+
+  it('treats an exact entry as exact and a "*." entry as subdomains only', async () => {
+    const config = { preapprovedHosts: ['docs.python.org', '*.readthedocs.io'] };
+    const { fetchTool, inferenceCalls } = await mount(config, undefined, docsPage);
+
+    const sub = await fetchTool.execute('a', { url: 'https://requests.readthedocs.io/en/latest/', prompt: 'x' });
+    const apex = await fetchTool.execute('b', { url: 'https://readthedocs.io/', prompt: 'x' });
+    const deeper = await fetchTool.execute('c', { url: 'https://sub.docs.python.org/page', prompt: 'x' });
+
+    expect(textOf(sub)).toContain('# os');
+    expect(textOf(apex)).toBe('INFERRED: yes');
+    expect(textOf(deeper)).toBe('INFERRED: yes');
+    expect(inferenceCalls).toHaveLength(2);
+  });
+
+  it('replaces the built-in list with the configured one, and an empty list turns the shortcut off', async () => {
+    const { fetchTool, inferenceCalls } = await mount({ preapprovedHosts: [] }, undefined, docsPage);
+
+    await fetchTool.execute('f', { url: 'https://docs.python.org/3/library/os.html', prompt: 'Anything' });
+
+    expect(inferenceCalls).toHaveLength(1);
+  });
+
+  it('warns about a malformed entry and keeps the valid ones', async () => {
+    const { fetchTool, inferenceCalls, warnings } = await mount(
+      { preapprovedHosts: ['docs.python.org', 'https://evil.example/path', '*'] }, undefined, docsPage,
+    );
+
+    await fetchTool.execute('f', { url: 'https://docs.python.org/3/library/os.html', prompt: 'Anything' });
+
+    expect(inferenceCalls).toHaveLength(0);
+    expect(warnings).toHaveLength(2);
+    expect(warnings[0]).toContain('https://evil.example/path');
+  });
+
+  it('summarizes a listed page too large to stay inline instead of spilling it', async () => {
+    // The daemon spills a single tool result over its inline budget to a file the model then has to read
+    // back, so above that size the summary is the cheaper answer. The boundary is 50 000 BYTES: the
+    // multi-byte page below is only 16 667 characters and must still be summarized.
+    const bodies: Record<string, string> = {
+      fits: 'y'.repeat(50_000),
+      big: 'y'.repeat(50_001),
+      wide: '\u4e00'.repeat(16_667),
+    };
+    const { fetchTool, inferenceCalls } = await mount({}, undefined, async (url) => new Response(
+      bodies[String(url).split('/').pop()!], { status: 200, headers: { 'content-type': 'text/plain' } },
+    ));
+
+    const fits = await fetchTool.execute('a', { url: 'https://docs.python.org/fits', prompt: 'Anything' });
+    const big = await fetchTool.execute('b', { url: 'https://docs.python.org/big', prompt: 'Anything' });
+    const wide = await fetchTool.execute('c', { url: 'https://docs.python.org/wide', prompt: 'Anything' });
+
+    expect(textOf(fits)).toBe(bodies.fits);
+    expect(textOf(big)).toBe('INFERRED: yes');
+    expect(textOf(wide)).toBe('INFERRED: yes');
+    expect(inferenceCalls).toHaveLength(2);
+  });
+
+  it('treats a config value that is not a list as granting nothing', async () => {
+    const { fetchTool, inferenceCalls, warnings } = await mount(
+      { preapprovedHosts: 'docs.python.org' }, undefined, docsPage,
+    );
+
+    await fetchTool.execute('f', { url: 'https://docs.python.org/3/library/os.html', prompt: 'Anything' });
+
+    expect(inferenceCalls).toHaveLength(1);
+    expect(warnings).toEqual([expect.stringContaining('must be a list of host names')]);
+  });
+
+  // An entry drops the framing that says a page is untrusted text, so a host that publishes what
+  // strangers wrote must not be seeded — however documentation-shaped the pages look.
+  it('seeds no host whose content anyone can edit, and reaches the Prisma docs by subdomain', async () => {
+    const { DEFAULT_PREAPPROVED_HOSTS } = await import(`${pluginEntry}?test=${importNonce++}`) as { DEFAULT_PREAPPROVED_HOSTS: string[] };
+    expect(DEFAULT_PREAPPROVED_HOSTS).not.toContain('pkg.go.dev');      // renders any published module's docs
+    expect(DEFAULT_PREAPPROVED_HOSTS).not.toContain('en.cppreference.com'); // a wiki
+
+    // The docs live on www.prisma.io, which the bare apex entry never matched.
+    const { fetchTool, inferenceCalls } = await mount({}, undefined, docsPage);
+    expect(textOf(await fetchTool.execute('a', { url: 'https://www.prisma.io/docs', prompt: 'x' }))).toContain('# os');
+    expect(textOf(await fetchTool.execute('b', { url: 'https://pkg.go.dev/net/http', prompt: 'x' }))).toBe('INFERRED: yes');
+    expect(inferenceCalls).toHaveLength(1);
+  });
+
+  it('ships the same seed list in the plugin and in the manifest default', async () => {
+    // The manifest default is display-only (the settings form pre-fills it); the runtime default lives in
+    // the plugin. If the two drift, the list silently changes the first time an admin saves the form.
+    const { DEFAULT_PREAPPROVED_HOSTS } = await import(`${pluginEntry}?test=${importNonce++}`) as { DEFAULT_PREAPPROVED_HOSTS: string[] };
+    const manifest = JSON.parse(readFileSync(join(repoRoot, 'plugins/web/elowen-plugin.json'), 'utf-8')) as {
+      configSchema: { key: string; default?: unknown }[];
+    };
+    const field = manifest.configSchema.find((f) => f.key === 'preapprovedHosts');
+
+    expect(field?.default).toEqual(DEFAULT_PREAPPROVED_HOSTS);
   });
 });
