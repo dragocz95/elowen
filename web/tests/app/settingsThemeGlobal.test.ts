@@ -182,6 +182,35 @@ describe('settings row layout contract', () => {
     expect(block(block(studio, PHONE), '.settings-row[data-trailing] .settings-row__label,')).toMatch(/grid-column:\s*1/);
   });
 
+  /** A SEGMENTED SET CANNOT BE NARROWED, so the card it sits in widens its control column instead. The
+   *  track is shared through subgrid, so raising its floor moves every record's control column together
+   *  and keeps the right edge flush with the switches above and below it. Both sheets are checked: the
+   *  Studio skin outranks the base one by construction, so a floor the skin does not restate is a floor
+   *  the default design never gets. */
+  it('gives a card carrying a segmented a control column its content fits in', () => {
+    for (const [sheet, name, expected] of [
+      [core, 'core', /minmax\(min-content,\s*1\.05fr\)/],
+      [studio, 'studio', /minmax\(min-content,\s*20rem\)/],
+    ] as const) {
+      expect(block(sheet, '.settings-group__body:has(> .settings-row .segmented)'), `${name} must raise the control track's floor`)
+        .toMatch(expected);
+    }
+    // The two-stack card takes the same floor, and Studio's own narrow ratio restates it.
+    expect(block(core, '.settings-group__column:has(> .settings-row .segmented) {')).toMatch(/minmax\(min-content,\s*0\.85fr\)/);
+    expect(block(block(studio, '@container workspace-shell (width < 48rem)'), '.settings-group__body:has(> .settings-row .segmented),'))
+      .toMatch(/minmax\(min-content,\s*1\.1fr\)/);
+
+    // And it collapses with everything else when the record folds: the `:has` that opens it outranks the
+    // fold rule above, so the phone width has to spell the collapse out.
+    const phone = block(core, PHONE);
+    expect(block(phone, '.settings-group__body:has(> .settings-row .segmented),')).toMatch(/grid-template-columns:\s*1fr/);
+    // One track is all there is at that width: the set keeps its line and scrolls inside the record
+    // instead of overrunning the card.
+    const scroller = block(phone, '.settings-row__control > .segmented {');
+    expect(scroller).toMatch(/max-width:\s*100%/);
+    expect(scroller).toMatch(/overflow-x:\s*auto/);
+  });
+
   it('keeps a status readable rather than clipping it inside its badge', () => {
     // The label-line status shrinks its own children (a model id truncates) and never hides overflow
     // itself, which is what clipped "Configured" inside its badge the last time this was tuned.

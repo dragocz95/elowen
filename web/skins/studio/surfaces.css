@@ -634,6 +634,13 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__column {
   grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 20rem) auto;
 }
+/* Studio's own answer to the base stylesheet's segmented rule: 20rem is a ceiling for controls that can
+   be told to fit, and a three-option segmented cannot. The card raises the track's floor to what the set
+   actually measures, so the set stays on one line and its right edge stays on the card's column. */
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .settings-row .segmented),
+:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__column:has(> .settings-row .segmented) {
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(min-content, 20rem) auto;
+}
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row {
   gap: 0.75rem 1rem;
   padding: 0.75rem clamp(1rem, 1.6vw, 1.25rem);
@@ -682,6 +689,11 @@
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .settings-row),
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__column {
     grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+  }
+  /* Two tracks, and the value one still has to hold a segmented set that cannot be narrowed. */
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .settings-row .segmented),
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__column:has(> .settings-row .segmented) {
+    grid-template-columns: minmax(0, 0.9fr) minmax(min-content, 1.1fr);
   }
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing {
     grid-column: 2;

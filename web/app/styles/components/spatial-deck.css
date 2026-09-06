@@ -137,6 +137,22 @@
 /* Half the width means half the room: the label track gives some of it back to the control. */
 .settings-group__column { grid-template-columns: minmax(8rem, 1fr) minmax(0, auto) minmax(0, 0.85fr) auto; }
 
+/* A CARD CARRYING A SEGMENTED GIVES ITS CONTROL COLUMN THE ROOM IT NEEDS. A segmented set is ONE track
+   and never wraps (see the primitive), so a three-option one — "Only the owner / People on the project /
+   Any signed-in account" — is wider than the fractional share the control column hands out. It used to
+   fold onto a second line and draw past the card's right edge while the two-option record under it sat
+   neatly right-aligned, which is the "scattered table" this fixes.
+   Raising the control track's MINIMUM to its content settles it for the whole card at once: the track is
+   shared through subgrid, so every record's control still ends on one column and the actions still sit
+   against one right edge. `:has` scopes it because the minimum has a price — a card whose controls are
+   switches keeps the fractional split and leaves that room to its labels. */
+.settings-group__body:has(> .settings-row .segmented) {
+  grid-template-columns: minmax(10rem, 1fr) minmax(0, auto) minmax(min-content, 1.05fr) auto;
+}
+.settings-group__column:has(> .settings-row .segmented) {
+  grid-template-columns: minmax(8rem, 1fr) minmax(0, auto) minmax(min-content, 0.85fr) auto;
+}
+
 /* A padded body for grouped content that is a free block (pill lists, log tails, config field grids)
    rather than a stack of records — inset matched to the card header. */
 .settings-group__panel { padding: 1.05rem clamp(1rem, 1.6vw, 1.4rem) 1.3rem; }
@@ -373,6 +389,14 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
      third line, because an inline record's trailing cell does not wrap at any width (see the rule above);
      a record whose only trailing value was a status has no second line at all. */
   .settings-group__body:has(> .settings-row), .settings-group__column { grid-template-columns: 1fr; }
+  /* The segmented card's wider control track collapses with everything else. Spelled out because the
+     `:has` that opens it is more specific than the rule above and would otherwise survive the fold. */
+  .settings-group__body:has(> .settings-row .segmented),
+  .settings-group__column:has(> .settings-row .segmented) { grid-template-columns: 1fr; }
+  /* One track is all the room there is, and a set of three sentences does not fit a phone at any size.
+     The track keeps its one line and scrolls inside the record instead of overrunning the card — the
+     only width at which a segmented is allowed to hide part of itself. */
+  .settings-row__control > .segmented { max-width: 100%; overflow-x: auto; overscroll-behavior-x: contain; }
   .settings-row { grid-template-columns: 1fr; gap: 0.6rem; }
   /* One track: release the pinned columns, or each slot would open an implicit column of its own. */
   .settings-row__control, .settings-row__actions { grid-column: auto; }
