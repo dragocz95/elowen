@@ -85,6 +85,23 @@ describe('AskQuestionCard — approval in another language', () => {
     expect(onSubmit).toHaveBeenCalledWith([{ header: 'Approval', selected: ['Always allow'], other: undefined }]);
   });
 
+  // The destructive-command note is informational — it changes no decision — but it is the only part of
+  // the prompt that says WHY this one deserves a second look, so it must survive translation.
+  it('renders the destructive-command note in the reader’s language, keyed on the id', async () => {
+    const flagged = { ...approval, approval: { ...approval.approval!, warning: 'rmRecursiveForce' as const } };
+    render(<AskQuestionCard questions={[flagged]} kind="approval" onSubmit={vi.fn()} />, { wrapper: createWrapper().wrapper });
+
+    const note = interpolate(cs.brainChat.approvalWarningNote, { note: cs.brainChat.approvalWarnings.rmRecursiveForce });
+    expect(await screen.findByText(note)).toBeTruthy();
+    expect(screen.queryByText(new RegExp(en.brainChat.approvalWarnings.rmRecursiveForce))).toBeNull();
+  });
+
+  it('shows no note when the daemon sent none', async () => {
+    render(<AskQuestionCard questions={[approval]} kind="approval" onSubmit={vi.fn()} />, { wrapper: createWrapper().wrapper });
+    await screen.findByText(cs.brainChat.approvalOnce);
+    expect(screen.queryByText(/Upozornění/)).toBeNull();
+  });
+
   // An ordinary AskUserQuestion has no `approval` block and no option ids; it must render exactly as sent.
   it('leaves a non-approval question untouched', async () => {
     const plain = { ...approval, approval: undefined, options: [{ label: 'Blue' }, { label: 'Green' }] };
