@@ -95,6 +95,21 @@
 .animate-pop-in { animation: pop-in var(--motion-base) var(--ease-out) both; }
 .animate-drawer-in { animation: drawer-in var(--motion-base) var(--ease-out) both; }
 
+/* The recap strip's variant rotation: a short crossfade between two tellings of the same day. The
+   two sides are stacked in ONE grid cell by RecapStrip (plain CSS classes written literally there,
+   so the purge keeps them), so the box never changes size mid-fade and nothing below the strip
+   jumps; only opacity moves. */
+@keyframes recap-variant-in { from { opacity: 0; } to { opacity: 1; } }
+@keyframes recap-variant-out { from { opacity: 1; } to { opacity: 0; } }
+.recap-variant-in { animation: recap-variant-in 500ms var(--ease-out) both; }
+.recap-variant-out { animation: recap-variant-out 500ms var(--ease-out) both; }
+
+/* The rotation itself is ambient motion — the content is the same day either way — so quiet modes
+   drop the crossfade entirely, and RecapStrip (which reads the same setting) also stops advancing
+   on its own timer. The class still comes and goes; nothing is left behind either way. */
+html:is([data-effects='reduced'], [data-effects='off']) .recap-variant-in,
+html:is([data-effects='reduced'], [data-effects='off']) .recap-variant-out { animation: none !important; }
+
 /* Every damping rule below matches BOTH quiet modes. `off` is the stricter of the two — it also cuts
    Motion's JS animations, which `reduced` only shortens — so a rule it did not match would leave the
    strictest setting visibly livelier than the middle one. Written out rather than `:not([…='full'])`

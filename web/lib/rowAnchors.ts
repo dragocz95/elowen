@@ -76,6 +76,7 @@ export const SETTINGS_ROW_SPECS = {
     { path: 'settings.dashboardSection.recap', hint: 'settings.dashboardSection.recapDesc' },
     { path: 'settings.dashboardSection.digest', hint: 'settings.dashboardSection.digestDesc' },
     { path: 'settings.dashboardSection.perDay', hint: 'settings.dashboardSection.perDayDesc' },
+    { path: 'settings.dashboardSection.variants', hint: 'settings.dashboardSection.variantsDesc' },
     { path: 'settings.dashboardSection.greeting', hint: 'settings.dashboardSection.greetingDesc' },
     { path: 'settings.dashboardSection.pills', hint: 'settings.dashboardSection.pillsDesc' },
     { path: 'settings.dashboardSection.continue', hint: 'settings.dashboardSection.continueDesc' },
