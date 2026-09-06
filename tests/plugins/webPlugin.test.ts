@@ -494,22 +494,22 @@ describe('web plugin WebFetch pipeline', () => {
     expect(calls[0]!.url).toBe(base);
   });
 
-  it('bounds the fetch cache at 256 entries', async () => {
+  it('bounds the fetch cache at 64 entries', async () => {
     const { fetchTool, calls } = await mount({}, undefined, async () => new Response(
       'small', { status: 200, headers: { 'content-type': 'text/plain' } },
     ));
     const url = (i: number) => `https://93.184.216.34/cache-count-${i}`;
-    // 257 distinct URLs: the ceiling recycles, so exactly the oldest one is gone and everything the
+    // 65 distinct URLs: the ceiling recycles, so exactly the oldest one is gone and everything the
     // ceiling still covers is served from cache.
-    for (let i = 0; i < 257; i++) {
+    for (let i = 0; i < 65; i++) {
       await fetchTool.execute(String(i), { url: url(i), prompt: 'Summarize' });
     }
     await fetchTool.execute('kept', { url: url(1), prompt: 'Again' });
-    await fetchTool.execute('newest', { url: url(256), prompt: 'Again' });
+    await fetchTool.execute('newest', { url: url(64), prompt: 'Again' });
     await fetchTool.execute('evicted', { url: url(0), prompt: 'Again' });
 
     expect(calls.filter((call) => call.url === url(1))).toHaveLength(1);
-    expect(calls.filter((call) => call.url === url(256))).toHaveLength(1);
+    expect(calls.filter((call) => call.url === url(64))).toHaveLength(1);
     expect(calls.filter((call) => call.url === url(0))).toHaveLength(2);
   });
 
@@ -521,31 +521,31 @@ describe('web plugin WebFetch pipeline', () => {
         large, { status: 200, headers: { 'content-type': 'text/plain' } },
       ));
       const baseline = vi.getTimerCount();
-      for (let i = 0; i < 167; i++) {
+      for (let i = 0; i < 27; i++) {
         await fetchTool.execute(String(i), { url: `https://93.184.216.34/cache-timer-${i}`, prompt: 'Summarize' });
       }
       await vi.advanceTimersByTimeAsync(20_001);
-      expect(vi.getTimerCount() - baseline).toBe(166);
+      expect(vi.getTimerCount() - baseline).toBe(26);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it('bounds the fetch cache at 50 MB of retained content', async () => {
+  it('bounds the fetch cache at 8 MB of retained content', async () => {
     // One entry is capped at 100k Markdown CHARS, so only multi-byte content reaches the byte budget
-    // before the 256-entry ceiling does: 3 bytes per char here, so 166 entries fit and the 167th does not.
+    // before the 64-entry ceiling does: 3 bytes per char here, so 26 entries fit and the 27th does not.
     const large = '\u4e00'.repeat(100_000);
     const { fetchTool, calls } = await mount({}, undefined, async () => new Response(
       large, { status: 200, headers: { 'content-type': 'text/plain' } },
     ));
     const url = (i: number) => `https://93.184.216.34/cache-bytes-${i}`;
-    for (let i = 0; i < 166; i++) {
+    for (let i = 0; i < 26; i++) {
       await fetchTool.execute(String(i), { url: url(i), prompt: 'Summarize' });
     }
     // Still under the budget, so nothing has been evicted yet. This also refreshes entry 0, which leaves
     // entry 1 as the oldest and therefore the one the next fetch has to make room for.
     await fetchTool.execute('under', { url: url(0), prompt: 'Again' });
-    await fetchTool.execute('over', { url: url(166), prompt: 'Summarize' });
+    await fetchTool.execute('over', { url: url(26), prompt: 'Summarize' });
     await fetchTool.execute('evicted', { url: url(1), prompt: 'Again' });
 
     expect(calls.filter((call) => call.url === url(0))).toHaveLength(1);
@@ -696,6 +696,20 @@ describe('web plugin WebFetch preapproved documentation hosts', () => {
 
     expect(inferenceCalls).toHaveLength(1);
     expect(warnings).toEqual([expect.stringContaining('must be a list of host names')]);
+  });
+
+  // An entry drops the framing that says a page is untrusted text, so a host that publishes what
+  // strangers wrote must not be seeded — however documentation-shaped the pages look.
+  it('seeds no host whose content anyone can edit, and reaches the Prisma docs by subdomain', async () => {
+    const { DEFAULT_PREAPPROVED_HOSTS } = await import(`${pluginEntry}?test=${importNonce++}`) as { DEFAULT_PREAPPROVED_HOSTS: string[] };
+    expect(DEFAULT_PREAPPROVED_HOSTS).not.toContain('pkg.go.dev');      // renders any published module's docs
+    expect(DEFAULT_PREAPPROVED_HOSTS).not.toContain('en.cppreference.com'); // a wiki
+
+    // The docs live on www.prisma.io, which the bare apex entry never matched.
+    const { fetchTool, inferenceCalls } = await mount({}, undefined, docsPage);
+    expect(textOf(await fetchTool.execute('a', { url: 'https://www.prisma.io/docs', prompt: 'x' }))).toContain('# os');
+    expect(textOf(await fetchTool.execute('b', { url: 'https://pkg.go.dev/net/http', prompt: 'x' }))).toBe('INFERRED: yes');
+    expect(inferenceCalls).toHaveLength(1);
   });
 
   it('ships the same seed list in the plugin and in the manifest default', async () => {

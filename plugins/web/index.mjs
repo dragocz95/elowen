@@ -17,8 +17,12 @@ const MAX_PROMPT_CHARS = 10_000;
  * headroom. An operator who tunes that budget under this value can still have a raw page spilled. */
 const MAX_INLINE_RESULT_BYTES = 50_000;
 const MAX_REDIRECTS = 3;
-const MAX_CACHE_ENTRIES = 256;
-const MAX_CACHE_BYTES = 50_000_000;
+/** What one daemon may retain for fifteen minutes of fetched pages. Deliberately modest: the cache exists
+ * to stop a turn refetching the same URL, not to be a document store, and nothing measured says a bigger
+ * one answers more questions. Both bounds are enforced together — an entry holds up to 100 000 Markdown
+ * characters, so the byte ceiling is what actually binds on multi-byte pages. */
+const MAX_CACHE_ENTRIES = 64;
+const MAX_CACHE_BYTES = 8_000_000;
 const SNIPPET_CHARS = 300;
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
 const fail = (e) => ok(`Error: ${e instanceof Error ? e.message : String(e)}`);
@@ -322,7 +326,11 @@ function parseHostName(rawHost) {
  * where page text is framed as untrusted data (`buildInferencePrompt`), so a listed host's content
  * reaches the model as ordinary text. Only hosts whose PRIMARY content is published documentation belong
  * here, never hosts whose content is user-submitted. Host granularity is as fine as this gets: several
- * of these publish user comments on subpages, which a host list cannot exclude. */
+ * of these publish user comments on subpages, which a host list cannot exclude.
+ *
+ * Deliberately NOT here, though the reference lists them: `pkg.go.dev`, which renders the documentation
+ * of any module anyone publishes, and `en.cppreference.com`, which is a wiki. Both serve text a stranger
+ * wrote, and the whole effect of an entry is to drop the framing that says so. */
 export const DEFAULT_PREAPPROVED_HOSTS = [
   'platform.claude.com',
   'code.claude.com',
@@ -331,13 +339,11 @@ export const DEFAULT_PREAPPROVED_HOSTS = [
   'docs.python.org',
   'doc.rust-lang.org',
   'go.dev',
-  'pkg.go.dev',
   'www.typescriptlang.org',
   'nodejs.org',
   'bun.sh',
   'docs.oracle.com',
   'learn.microsoft.com',
-  'en.cppreference.com',
   'docs.swift.org',
   'kotlinlang.org',
   'ruby-doc.org',
@@ -363,7 +369,7 @@ export const DEFAULT_PREAPPROVED_HOSTS = [
   'www.sqlite.org',
   'redis.io',
   'graphql.org',
-  'prisma.io',
+  '*.prisma.io',
   'docs.aws.amazon.com',
   'cloud.google.com',
   'kubernetes.io',
