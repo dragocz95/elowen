@@ -43,7 +43,9 @@ const menuPanel = cn(
   // `overlay-layer-menu` is the app's menu z-index band, so a menu paints above the surface it opens
   // from. The stacking order lives once in tokens.css; never a literal `z-` here.
   'overlay-layer-menu min-w-48 overflow-y-auto overflow-x-hidden',
-  'rounded-lg border border-border bg-popover p-1.5 text-popover-foreground shadow-[var(--shadow-raised)]',
+  // Radius 10 and 6px of padding, measured off the reference. `rounded-md` is the scale's 10px step; the
+  // 12px it replaces made the panel read as a card rather than as a menu attached to its trigger.
+  'rounded-md border border-border bg-popover p-1.5 text-popover-foreground shadow-[var(--shadow-raised)]',
   'data-[state=open]:animate-fade-up',
 );
 
@@ -107,7 +109,9 @@ function DropdownMenuSubContent({
  *  text contrast, so the wash reads by construction. */
 const dropdownMenuItemVariants = cva(
   cn(
-    'overlay-menu-item relative flex w-full cursor-default select-none items-center gap-2.5 rounded-md px-3 py-2',
+    // 32px per row: 20px of line box plus 6px above and below. The 8px it replaces made a three-item
+    // menu 12px taller than the reference's without carrying any more information.
+    'overlay-menu-item relative flex w-full cursor-default select-none items-center gap-2.5 rounded-md px-3 py-1.5',
     'text-left text-sm outline-none transition-colors',
     'data-[disabled]:pointer-events-none data-[disabled]:opacity-40',
     '[&_svg]:pointer-events-none [&_svg]:shrink-0',
