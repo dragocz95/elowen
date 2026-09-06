@@ -245,6 +245,15 @@ const safePath = ctx.assertPathAllowed(requestedPath);
 
 `assertPathAllowed` applies the current project and symlink policy. Do not reproduce path checks or infer another plugin's data directory. `ctx.defaultCwd()` is the safe default working directory for the current turn; `ctx.workDir()` reports whether the turn is actually bound to a Project.
 
+When a tool result can only carry a bounded excerpt of what the tool produced, persist the whole output rather than discarding the rest:
+
+```javascript
+const spill = await ctx.persistToolOutput({ toolCallId, text: fullOutput });
+const note = spill ? `full output saved to ${spill.path} (${spill.bytes} bytes) — read it with the Read tool` : '';
+```
+
+`toolCallId` is the first argument PI passes to a tool's `execute`. The text lands in the host's existing tool-result spill directory for the current conversation, so the session Reads it back through the ordinary path guard and it is removed when that conversation is cleared or deleted. Do not build a second store or a plugin-private directory for this. The call resolves `null` outside a prompt turn (worker and cron runs own no conversation), so handle that instead of assuming a path.
+
 ### Secrets
 
 Use encrypted secret bags for credentials:

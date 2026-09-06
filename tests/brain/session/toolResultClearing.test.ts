@@ -22,6 +22,7 @@ import {
   toolResultSpillPath,
   toolResultOccurrenceKey,
   parseSpillDescriptor,
+  persistToolOutputSpill,
 } from '../../../src/brain/session/toolResultClearing.js';
 import type { PersistedToolResultLatch, ToolResultLatchStore } from '../../../src/brain/session/toolResultClearing.js';
 import { setSpillNamespaceResolver, toolResultSpillDir } from '../../../src/shared/paths.js';
@@ -1233,6 +1234,50 @@ describe('toolResultSpillPath', () => {
   // placeholder byte-identically.
   it('carries the mode and byte count needed to rebuild the placeholder', () => {
     expect(toolResultSpillPath('/s', 'c', { mode: 'preview', bytes: 50003 })).toBe('/s/c.v1-preview-50003.txt');
+  });
+});
+
+describe('persistToolOutputSpill', () => {
+  const spillDir = (): string => {
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-output-spill-'));
+    dirs.push(dir);
+    return join(dir, 'ns');
+  };
+
+  it('writes the complete text into the spill dir, creating it, and reports its byte size', async () => {
+    const dir = spillDir();
+    const text = 'á'.repeat(5000); // 10 000 bytes, so the count is not the character count
+    const { path, bytes } = await persistToolOutputSpill(dir, 'call-1', text);
+
+    expect(path).toBe(join(dir, 'call-1.v1-output-10000.txt'));
+    expect(bytes).toBe(10_000);
+    expect(readFileSync(path, 'utf8')).toBe(text);
+  });
+
+  it('fs-encodes the toolCallId so a hostile id cannot escape the spill dir', async () => {
+    const dir = spillDir();
+    const { path } = await persistToolOutputSpill(dir, '../escape', 'x');
+    expect(path).toBe(join(dir, '..%2Fescape.v1-output-1.txt'));
+  });
+
+  // A persisted full output is NOT the spill of the result the model received (that result carries an
+  // excerpt), so restoreLatch must never offer it as a latch candidate for that toolCallId — it would
+  // compare unequal, log a "no spill matches" warning and, if it ever did match, describe the result with
+  // the wrong byte count.
+  it('is named outside the latch descriptor grammar', async () => {
+    const dir = spillDir();
+    const { path } = await persistToolOutputSpill(dir, 'c', 'hello');
+    expect(parseSpillDescriptor(path.slice(path.lastIndexOf('/') + 1), 'c')).toBeNull();
+  });
+
+  // Same id AND same size is only reachable through a reused sequential toolCallId; refusing the write
+  // would cost the caller its "saved to" note to protect a file that is almost certainly identical.
+  it('overwrites its own earlier file rather than failing the caller', async () => {
+    const dir = spillDir();
+    const first = await persistToolOutputSpill(dir, 'call-1', 'aaaaa');
+    const second = await persistToolOutputSpill(dir, 'call-1', 'bbbbb');
+    expect(second.path).toBe(first.path);
+    expect(readFileSync(second.path, 'utf8')).toBe('bbbbb');
   });
 });
 

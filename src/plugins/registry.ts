@@ -16,6 +16,8 @@ import { commandsWithPlugins, isReservedCommandName, type PluginSlashCommand, ty
 import type { PluginManifest } from './manifest.js';
 import { assertPathAllowed, allowedRoots, defaultCwd, displayPath, isAllAccess, currentAccess, pathStateKey, sanitizePathOutput } from './pathGuard.js';
 import { currentIdentity, currentContributionUserId, currentAccountUserId, currentDeliveryTarget, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentSessionId } from './policyContext.js';
+import { persistToolOutputSpill } from '../brain/session/toolResultClearing.js';
+import { sessionToolResultSpillDir } from '../shared/paths.js';
 import { bindingRef, resolveDelegatedWorkspace } from '../brain/workspaceScope.js';
 import { processRegistry } from '../brain/processRegistry.js';
 import { subagentSessionId } from '../brain/sessionId.js';
@@ -1400,6 +1402,15 @@ export class PluginRegistry {
       displayPath,
       pathStateKey,
       sanitizePathOutput,
+      // The spill DIRECTORY comes from the host's own turn scope, never from the plugin: the caller names
+      // only its tool call and the text, so it can no more write into another conversation's spills than
+      // it could name one. Sessionless (worker/cron) turns own no directory and get null rather than a
+      // path outside any conversation's reach.
+      persistToolOutput: async ({ toolCallId, text }) => {
+        const sessionId = currentSessionId();
+        if (!sessionId) return null;
+        return persistToolOutputSpill(sessionToolResultSpillDir(process.env, sessionId), toolCallId, text);
+      },
       allowedRoots,
       defaultCwd,
       workDir: currentWorkDir,

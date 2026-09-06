@@ -1629,6 +1629,18 @@ export interface PluginContext {
   pathStateKey(path: string): string;
   /** Remove exact verified host workspace prefixes from diagnostics before returning them to the model. */
   sanitizePathOutput(text: string): string;
+  /** Persist the COMPLETE output of the current tool call when the inline result can only carry a bounded
+   *  excerpt of it, and get back the path to name in that excerpt. Writes into the host's EXISTING
+   *  tool-result spill store — the same `<dataDir>/tool-results/<spill namespace>/` directory the context
+   *  cleaner spills large results to — so the file needs no lifecycle of its own: the owning session may
+   *  Read it back through the ordinary path guard, and deleting or clearing the conversation removes it
+   *  with the rest of that directory. `toolCallId` is the first argument PI hands to
+   *  `ToolDefinition.execute`; it is fs-encoded by the host, so an exotic id cannot escape the directory.
+   *  Ungated: it writes only inside the current turn's own spill directory, which that session can already
+   *  write through `assertPathAllowed`. Resolves null outside a prompt turn (worker/cron runs own no
+   *  conversation, so there is no spill directory to write into) — the caller keeps whatever it does when
+   *  nothing can be persisted. Rejects on a real write failure. */
+  persistToolOutput(input: { toolCallId: string; text: string }): Promise<{ path: string; bytes: number } | null>;
   /** The repo roots the current session may operate in (empty for an admin's all-access). Used to default
    *  a tool's working directory. */
   allowedRoots(): string[];

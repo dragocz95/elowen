@@ -160,6 +160,39 @@ export interface SpillDescriptor { mode: 'time' | 'preview'; bytes: number }
 
 const SPILL_NAME_VERSION = 'v1';
 
+/** Name of a tool's COMPLETE output persisted by {@link persistToolOutputSpill}. Deliberately outside the
+ *  `time|preview` grammar {@link parseSpillDescriptor} matches: this file is NOT the spill of the result
+ *  the model received — the result carries an excerpt — so a restore pass must never offer it as a latch
+ *  candidate for that result. Everything else (directory, fs-safe id encoding, version prefix, the byte
+ *  count in the name) is the same, so there is one naming authority for this directory. */
+function toolOutputSpillPath(spillDir: string, toolCallId: string, bytes: number): string {
+  return join(spillDir, `${fsSafeSegment(toolCallId)}.${SPILL_NAME_VERSION}-output-${bytes}.txt`);
+}
+
+/** Persist the COMPLETE output of one tool call, for a tool whose inline result can only carry a bounded
+ *  excerpt of it (the terminal plugin's foreground Bash). Same store as the clearing spills above, reached
+ *  by plugins through `ctx.persistToolOutput`: same directory, same naming, and therefore the same
+ *  lifecycle for free — pathGuard already lets the OWNING session Read the file back, and deleting or
+ *  clearing the conversation removes the whole directory with it. A second store would have to re-earn
+ *  both.
+ *
+ *  Overwrites rather than the latch spills' write-once `wx`. Nothing here has to stay byte-stable: the
+ *  file backs a path named in one inline result, not a placeholder the provider has cached. The only way
+ *  to collide is a REUSED toolCallId (sequential `call_0` styles reset per turn) whose output is also
+ *  byte-identical in size, and refusing that write would cost the caller its note to protect a file that
+ *  is almost certainly identical. */
+export async function persistToolOutputSpill(
+  spillDir: string,
+  toolCallId: string,
+  text: string,
+): Promise<{ path: string; bytes: number }> {
+  const bytes = Buffer.byteLength(text, 'utf8');
+  const path = toolOutputSpillPath(spillDir, toolCallId, bytes);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, text);
+  return { path, bytes };
+}
+
 /** One durable latch entry — what a `latched` map entry looks like at rest. Written the moment a result
  *  is cleared and read back on the first pass after a respawn. The store is daemon-owned, so unlike the
  *  spill FILES these rows need no anti-spoof verification against the live message text — which is the
