@@ -111,15 +111,20 @@ describe('design tokens', () => {
     expect(components).toMatch(/\.sidebar-nav__version\s*\{[^}]*font-size:\s*var\(--text-caption\)/);
   });
 
-  // The column grounds on the page's own canvas, so it draws no rule down its outer edge (owner
-  // decision, 5 Sep 2026: 1:1 with the reference dashboard). The rule is still DECLARED, painted from a
-  // token of its own, so a design that does step its column off the page gets the seam back by setting
-  // one value — and it must not be `--color-sidebar-border`, which is the internal hairline the header,
-  // the footer and the search field are still drawn with.
-  it('draws no outer rule down the navigation column', () => {
-    expect(css).toContain('--color-sidebar-rule: transparent');
+  // The column is framed on its outer edge by the SAME hairline the top bar draws, so the two are one
+  // frame turning a corner (owner decision, 6 Sep 2026, overriding the transparent edge of 5 Sep). The
+  // rule keeps a token name of its own — a design may still want the column to melt into the canvas —
+  // but that token must RESOLVE to `--color-sidebar-border`, or the vertical line and the horizontal one
+  // drift apart in colour again. The border sits on the column itself, which is what runs it the full
+  // height, header and footer included, and keeps it on the folded rail.
+  it('draws the outer rule down the navigation column in the frame hairline', () => {
+    expect(css).toContain('--color-sidebar-rule: var(--color-sidebar-border)');
     expect(components).toMatch(/\.sidebar-nav\[data-side='left'\]\s*\{\s*border-right:\s*1px solid var\(--color-sidebar-rule\)/);
     expect(components).toMatch(/\.sidebar-nav\[data-side='right'\]\s*\{\s*border-left:\s*1px solid var\(--color-sidebar-rule\)/);
+    // Neither Studio skin may pin the outer edge back to a colour of its own.
+    for (const skin of ['studio-light', 'studio-oled']) {
+      expect(read(join(STYLES, '..', '..', 'skins', skin, 'skin.css'))).not.toContain('--color-sidebar-rule:');
+    }
   });
 
   // Inside the column a group is introduced by its LABEL and by the air the label carries — 16px above,

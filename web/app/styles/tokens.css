@@ -80,13 +80,15 @@
   --color-sidebar-accent-foreground: var(--color-foreground);
   --color-sidebar-border: var(--color-border);
   --color-sidebar-ring: var(--color-ring);
-  /* NOT a shadcn token, and deliberately separate from --color-sidebar-border, which is the column's
-     INTERNAL hairline (the header rule, the group seams, the footer rule). This one is the rule down the
-     column's OUTER edge, and it is transparent by construction: the navigation grounds on the same canvas
-     the page does, so there is no seam to draw there. Owner decision, 5 Sep 2026 — 1:1 with the reference
-     dashboard, where the column is a region of the page rather than a panel laid on it. A design that
-     grounds its column on a different surface gives this token a colour and gets its edge back. */
-  --color-sidebar-rule: transparent;
+  /* NOT a shadcn token. The rule down the column's OUTER edge, and it now ALIASES
+     --color-sidebar-border rather than holding a colour of its own: the frame the top bar draws across
+     the window turns the corner and runs the full height of the column, so the vertical line and the
+     horizontal one have to resolve to one value or the frame changes colour where they meet. Owner
+     decision, 6 Sep 2026, overriding the transparent outer edge of 5 Sep — the column is framed on its
+     right the way the page is framed on top. The name stays because the two edges are still separate
+     DECISIONS: a design that wants its column to melt into the canvas sets this one token to
+     `transparent` and keeps the internal hairlines (header, footer, search field). */
+  --color-sidebar-rule: var(--color-sidebar-border);
 
   /* The column's GEOMETRY, as measured off the Cloudflare dashboard (plans/cloudflare-sidebar-spec.md).
      Separate tokens from the colours above because they are a different kind of decision: a skin
