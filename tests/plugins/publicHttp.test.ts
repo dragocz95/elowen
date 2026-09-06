@@ -42,6 +42,11 @@ describe('public HTTP DNS pinning', () => {
     const callback = vi.fn();
     (options.lookup as Function)('xn--bcher-kva.example', {}, callback);
     expect(callback).toHaveBeenCalledWith(null, '93.184.216.34', 4);
+    // The socket's family auto-selection asks with `all: true` and wants an array — a scalar there
+    // surfaces as "Invalid IP address: undefined" and every fetch dies before DNS is even consulted.
+    const allCallback = vi.fn();
+    (options.lookup as Function)('xn--bcher-kva.example', { all: true }, allCallback);
+    expect(allCallback).toHaveBeenCalledWith(null, [{ address: '93.184.216.34', family: 4 }]);
     expect(lookup).toHaveBeenCalledTimes(1);
   });
 

@@ -64,7 +64,13 @@ export function makePinnedRequestOptions(
     path: `${pinned.url.pathname}${pinned.url.search}`,
     servername: isIP(hostname) ? undefined : hostname,
     headers: { ...safeHeaders, host: pinned.url.host },
-    lookup: (_hostname, _options, callback) => callback(null, pinned.address, pinned.family),
+    // `net` asks for `{ all: true }` when it auto-selects the address family (Node ≥ 20 default) and
+    // then expects an array; the scalar shape is what the older, single-address path still takes.
+    lookup: (_hostname, options, callback) => (
+      options.all
+        ? (callback as (err: null, addresses: { address: string; family: number }[]) => void)(null, [{ address: pinned.address, family: pinned.family }])
+        : callback(null, pinned.address, pinned.family)
+    ),
   };
 }
 
