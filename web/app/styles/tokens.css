@@ -155,6 +155,43 @@
   --color-warning: #edae49;
   --color-info: #62a8ea;
 
+  /* ---- Code and diff -------------------------------------------------------------------------
+     NOT shadcn tokens, and deliberately NOT derived from `success`/`destructive`: a diff is a code
+     surface, and it is the ONE place in the app that has to read the same as the terminal client. The
+     values are what the CLI paints (src/cli/chat/components.ts): the saturated ANSI-256 add/delete
+     line backgrounds Claude Code uses, on a near-black code canvas, with Monokai on top.
+
+     They stay a fixed dark canvas under every skin on purpose. Monokai is a dark palette — composited
+     over a light row tint its tokens lose their contrast — and a diff is an artifact of the agent's
+     work rather than a document surface, so it carries its own ground the way an embedded terminal
+     does. A skin that wants a paper diff overrides these eight and the code palette below; nothing
+     else in the app reads them. */
+  --color-diff-canvas: #0d0d10;
+  /* The row tints are the CLI's own add/delete colours (ANSI-256 22 and 52) mixed into the canvas
+     rather than painted flat. A terminal cell has no alpha, so the CLI carries them at full strength —
+     on a screen that puts Monokai's pink keyword at 2.1:1 on the green, which is a colour scheme you
+     cannot read a diff in. At 30% the row is unmistakably green or red and every token clears 3:1, the
+     keyword and above 4.5:1. The markers keep the full-strength hues, where nothing sits on top. */
+  --color-diff-add: color-mix(in srgb, #005f00 30%, var(--color-diff-canvas));
+  --color-diff-add-marker: #50c850;
+  --color-diff-del: color-mix(in srgb, #5f0000 30%, var(--color-diff-canvas));
+  --color-diff-del-marker: #dc5a5a;
+  /* Removed code is never syntax-highlighted (the CLI does the same, and Claude Code before it): a dark
+     Monokai token on the red ground would vanish, so a delete renders in Monokai's plain off-white. */
+  --color-diff-del-foreground: #f8f8f2;
+  --color-diff-gutter: #7d7d88;
+
+  /* The Monokai categories the diff and its lexer share (web/lib/codeHighlight.ts). Same hexes the
+     CLI's shiki theme resolves, so a row looks the same in both clients. */
+  --color-code-plain: #f8f8f2;
+  --color-code-keyword: #f92672;
+  --color-code-string: #e6db74;
+  --color-code-number: #ae81ff;
+  --color-code-comment: #75715e;
+  --color-code-type: #66d9ef;
+  --color-code-function: #a6e22e;
+  --color-code-punct: #f8f8f2;
+
   /* The categorical series. Charts and legends read these and never a literal, so a repaint moves the
      whole set. 1–3 are the brand ramp; 4 and 5 are deliberately UNLIKE it, so a swatch stays
      distinguishable from its neighbours without borrowing `destructive` or `success` and implying a

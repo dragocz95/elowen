@@ -130,6 +130,25 @@
   --color-warning: #edae49;
   --color-info: #62a8ea;
 
+  /* Code and diff surfaces. Mirrored from the host so a plugin sheet compiled against this kit resolves
+     the same values; the app renders diffs itself, so a plugin bundle has none of its own to paint. */
+  --color-diff-canvas: #0d0d10;
+  --color-diff-add: color-mix(in srgb, #005f00 30%, var(--color-diff-canvas));
+  --color-diff-add-marker: #50c850;
+  --color-diff-del: color-mix(in srgb, #5f0000 30%, var(--color-diff-canvas));
+  --color-diff-del-marker: #dc5a5a;
+  --color-diff-del-foreground: #f8f8f2;
+  --color-diff-gutter: #7d7d88;
+
+  --color-code-plain: #f8f8f2;
+  --color-code-keyword: #f92672;
+  --color-code-string: #e6db74;
+  --color-code-number: #ae81ff;
+  --color-code-comment: #75715e;
+  --color-code-type: #66d9ef;
+  --color-code-function: #a6e22e;
+  --color-code-punct: #f8f8f2;
+
   /* The categorical series. Charts and legends read these and never a literal, so a repaint moves the
      whole set. 1–3 are the brand ramp; 4 and 5 are deliberately UNLIKE it, so a swatch stays
      distinguishable from its neighbours without borrowing `destructive` or `success` and implying a
