@@ -12,6 +12,7 @@ docs/superpowers/
 docs/plans/
 docs/_DOCS_AUDIT.md
 CLAUDE.md
+AGENTS.local.md
 data/
 *.db-shm
 *.db-wal

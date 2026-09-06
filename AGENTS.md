@@ -2,7 +2,7 @@
 
 ## Scope
 
-This repository is Elowen (`github.com/dragocz95/elowen`): a TypeScript daemon (`src/`), a Next.js web UI (`web/`), a CLI (`src/cli/`) and bundled plugins (`plugins/`). Treat the checked-out code and `origin/main` as the source of truth; `docs/` explains architecture, `CLAUDE.md` (gitignored) holds the private deployment facts of this box.
+This repository is Elowen (`github.com/dragocz95/elowen`): a TypeScript daemon (`src/`), a Next.js web UI (`web/`), a CLI (`src/cli/`) and bundled plugins (`plugins/`). Treat the checked-out code and `origin/main` as the source of truth; `docs/` explains architecture. This is the only instruction file; when a gitignored `AGENTS.local.md` exists beside it, read it too — it holds the private facts of the host (paths, services, sibling repositories) that must never reach the public repo.
 
 ## Engineering rules
 
