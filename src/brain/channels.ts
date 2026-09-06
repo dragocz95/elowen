@@ -1001,7 +1001,7 @@ export class ChannelSessionService {
         // their own Project, then Sandbox may select that account's active workspace.
         const baseWorkDir = delegated?.pathView?.root
           ?? turnWorkDir(opts.policy, opts.clientCwd ?? ch.workDir, this.d.projectPath);
-        const effectiveWorkDir = delegated?.pathView
+        const resolveWorkDir = () => delegated?.pathView
           ? { baseWorkDir, workDir: delegated.pathView.root, workspace: null }
           : effectiveTurnWorkDir({
               policy: opts.policy,
@@ -1011,6 +1011,7 @@ export class ChannelSessionService {
               projects: this.d.projects,
               sandbox: this.d.sandbox?.(),
             });
+        const effectiveWorkDir = resolveWorkDir();
         const workspaceReminder = workDirReorientation(ch.workDir, effectiveWorkDir.workDir);
         try {
           // …and, in a room, narrowed to the tools this writer OWNS as well as the ones they were granted.
@@ -1151,7 +1152,7 @@ export class ChannelSessionService {
               await ch.session.prompt(NO_REPLY_NUDGE);
               this.d.registry.throwIfPendingAbort(sessionId);
             }
-          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: effectiveWorkDir.workDir, ...(delegated?.pathView ? { pathView: delegated.pathView } : {}), settingsUserId: ch.settingsUserId, contributionUserId: turnContributionUserId, model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
+          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: effectiveWorkDir.workDir, resolveWorkDir: () => resolveWorkDir().workDir, ...(delegated?.pathView ? { pathView: delegated.pathView } : {}), settingsUserId: ch.settingsUserId, contributionUserId: turnContributionUserId, model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
           // Deterministic settled idle (model + context fill) AFTER the turn — proactive footers depend on it.
           turnOnEvent?.({
             type: 'idle',

@@ -3690,7 +3690,7 @@ describe('BrainService', () => {
     expect(hist?.text).toContain('1× image');
   });
 
-  it('uses the owner account\'s active workspace per turn without changing the spawned cwd', async () => {
+  it.each(['owner', 'channel'])('resolves %s workspace switches within the same turn without changing the spawned cwd', async (surface) => {
     const d = fakeDeps();
     const project = tmpDir('owner-project');
     const workspace = tmpDir('owner-workspace');
@@ -3701,10 +3701,11 @@ describe('BrainService', () => {
       allowedPaths: () => [project, workspace],
     });
     const reg = new PluginRegistry();
+    let selected = true;
     reg.contextFor('sandbox', {}, { info() {}, warn() {}, error() {} }).registerControl('sandbox', {
       workspaceRoots: () => [{ workspaceId: 'ws-owner', projectId: 7, path: workspace }],
       workspacesFor: () => [{ workspaceId: 'ws-owner', projectId: 7, path: workspace, label: 'Owner', branch: 'owner/topic', baseRef: 'main' }],
-      activeWorkspace: () => ({ workspaceId: 'ws-owner', projectId: 7, path: workspace, label: 'Owner', branch: 'owner/topic', baseRef: 'main' }),
+      activeWorkspace: () => selected ? ({ workspaceId: 'ws-owner', projectId: 7, path: workspace, label: 'Owner', branch: 'owner/topic', baseRef: 'main' }) : null,
       resolveWorkspace: async () => ({ ref: { workspaceId: 'ws-owner', projectId: 7 }, path: workspace, accountId: 1, label: 'Owner', branch: 'owner/topic', baseRef: 'main' }),
       acquireDelegationLease: async () => ({ heartbeat: () => {}, release: () => {} }),
       prepareExecution: async () => ({}),
@@ -3713,12 +3714,20 @@ describe('BrainService', () => {
     let scopedCwd: string | undefined;
     d.session.prompt.mockImplementationOnce(async (text: string, options?: { preflightResult?: (success: boolean) => void }) => {
       scopedCwd = currentWorkDir();
+      selected = false;
+      expect(currentWorkDir()).toBe(project);
+      selected = true;
+      expect(currentWorkDir()).toBe(workspace);
       options?.preflightResult?.(true);
       d.session.messages.push({ role: 'user', content: text }, { role: 'assistant', content: 'ok' });
     });
     const svc = new BrainService(d as never);
     const { sessionId } = await svc.start(1, { cwd: project });
-    await svc.send({ userId: 1, text: 'work here', clientCwd: project, session: sessionId });
+    if (surface === 'owner') await svc.send({ userId: 1, text: 'work here', clientCwd: project, session: sessionId });
+    else await svc.channelSend({ channelId: 'workspace-context', ownerUserId: 1, writerUserId: 1, clientCwd: project,
+      identity: { platform: 'discord', userId: 'linked', elowenUserId: 1, admin: false, owner: false, conversation: 'shared' },
+      policy: { allowedProjectIds: new Set([7]), allowedPaths: () => [project, workspace] },
+    }, 'work here');
 
     expect(scopedCwd).toBe(workspace);
     const prompt = d.session.prompt.mock.calls.at(-1)![0] as string;

@@ -2,7 +2,7 @@ import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { createExecutionLease, initSandboxDb, reconcileStaleLeases } from './lib/db.mjs';
 import {
-  bubblewrapProbe, createExecutionService, ensureUserHome, migrateLegacyHomes, removeUserData,
+  bubblewrapProbe, createExecutionService, ensureUserHome, migrateLegacyHomes, removeUserData, workspaceForCwd,
 } from './lib/execution.mjs';
 import { createWorkspaceService } from './lib/workspaces.mjs';
 import { registerSandboxApi } from './lib/api.mjs';
@@ -49,6 +49,18 @@ export async function register(ctx) {
     if (userId === null || !session) return null;
     return workspaces.activeWorkspace({ accountUserId: userId, sessionId: session, projectId });
   };
+
+  ctx.registerTurnContext(() => {
+    const userId = accountId();
+    const cwd = ctx.currentWorkDir();
+    if (userId === null || !cwd) return '';
+    const allowed = new Set(accessibleProjects());
+    const workspace = workspaceForCwd(workspaces.listWorkspaces({ userId }), userId, cwd);
+    if (!workspace || !allowed.has(workspace.projectId)) return '';
+    const escape = (value) => String(value).replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+    const path = ctx.currentAccess().workspaceRef ? '.' : workspace.path;
+    return `<sandbox_context>\nYou are working in a Sandbox Git worktree. Relative file operations use this workspace. Shell commands run with it mounted at /workspace.\n<id>${escape(workspace.id)}</id>\n<name>${escape(workspace.label)}</name>\n<project_id>${workspace.projectId}</project_id>\n<branch>${escape(workspace.branch)}</branch>\n<path>${escape(path)}</path>\n</sandbox_context>`;
+  }, { placement: 'before-user' });
 
   ctx.registerControl('sandbox', {
     workspaceRoots: ({ projectIds }) => {
@@ -231,7 +243,7 @@ export async function register(ctx) {
         if (!workspace) throw new Error('workspace not found');
         if (!session) throw new Error('workspace activation requires a conversation');
         workspaces.useWorkspace({ workspaceId: workspace.id, sessionId: session, projectId: workspace.projectId }, { accessibleProjects: accessibleProjects() });
-        return ok(`Using ${workspace.label} (${workspace.branch}) for Project ${workspace.projectId}.`, { workspace });
+        return ok(`Using ${workspace.label} (${workspace.branch}) for Project ${workspace.projectId}. Subsequent tools in this turn use this workspace.`, { workspace, metadataChanged: true });
       } catch (error) { return fail(error); }
     },
   }));
@@ -239,7 +251,7 @@ export async function register(ctx) {
   ctx.registerTool(defineTool({
     name: 'SandboxReleaseWorkspace',
     label: 'Release workspace',
-    description: 'Give THIS conversation its Project directory back: unbind the Sandbox workspace(s) bound to this conversation, so its next turn starts in the Project again instead of inside the worktree (where shell commands whose working directory is inside the workspace run in the workspace container). Only this conversation’s own bindings: a delegated child that started in its parent’s workspace holds no binding of its own and cannot release the parent’s. Nothing is destroyed — the workspace, its branch and its directory are preserved and can be re-activated with SandboxUseWorkspace. Refused while a process still runs in the workspace. Takes effect on the next turn.',
+    description: 'Give THIS conversation its Project directory back: unbind the Sandbox workspace(s) bound to this conversation, so subsequent tools in this turn use the Project again instead of the worktree (where shell commands whose working directory is inside the workspace run in the workspace container). Only this conversation’s own bindings: a delegated child that started in its parent’s workspace holds no binding of its own and cannot release the parent’s. Nothing is destroyed — the workspace, its branch and its directory are preserved and can be re-activated with SandboxUseWorkspace. Refused while a process still runs in the workspace. Takes effect immediately after the tool succeeds.',
     parameters: Type.Object({
       projectId: Type.Optional(Type.Integer({ minimum: 1, description: 'Release only this Project’s binding. Omit to release every binding of this conversation.' })),
     }),
@@ -254,7 +266,7 @@ export async function register(ctx) {
           { userId, accessibleProjects: accessibleProjects(), verifySessionOwner: workspaces.verifySessionOwner },
         );
         if (result.released === 0) return ok('No workspace is bound to this conversation; nothing to release.', result);
-        return ok(`Released ${result.released} workspace binding${result.released === 1 ? '' : 's'} (${result.workspaceIds.join(', ')}). The next turn runs in the Project directory. Each workspace, its branch and its directory are preserved.`, result);
+        return ok(`Released ${result.released} workspace binding${result.released === 1 ? '' : 's'} (${result.workspaceIds.join(', ')}). Subsequent tools in this turn use the Project directory. Each workspace, its branch and its directory are preserved.`, { ...result, metadataChanged: true });
       } catch (error) {
         if (error?.code === 'workspace_in_use') {
           return fail(Object.assign(new Error('a process is still running in the bound workspace; wait for it to finish or kill it, then release again'), { code: 'workspace_in_use' }));

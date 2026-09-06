@@ -268,6 +268,18 @@ describe('tool_execution_end → image vs tool_output (Bash must not be hijacked
 });
 
 describe('tool_execution_end → lifecycle-only event', () => {
+  it('carries an explicit successful metadata change to the client', () => {
+    expect(ev({ type: 'tool_execution_end', toolName: 'SandboxUseWorkspace', toolCallId: 'switch',
+      result: { content: [], details: { metadataChanged: true } } }))
+      .toMatchObject({ metadataChanged: true, id: 'switch' });
+    expect(ev({ type: 'tool_execution_end', toolName: 'Read', toolCallId: 'failed', isError: true,
+      result: { content: [], details: { metadataChanged: true } } }))
+      .not.toHaveProperty('metadataChanged');
+    expect(ev({ type: 'tool_execution_end', toolName: 'Read', toolCallId: 'invalid',
+      result: { content: [], details: { metadataChanged: 'true' } } }))
+      .not.toHaveProperty('metadataChanged');
+  });
+
   it('closes a successful tool even when its output policy yields no display block', () => {
     expect(ev({ type: 'tool_execution_end', toolName: 'Read', toolCallId: 'r1', result: { content: [], details: {} } }))
       .toEqual({ type: 'tool_end', id: 'r1' });

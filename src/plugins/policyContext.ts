@@ -172,7 +172,7 @@ export function toolOwnedByOtherAccount(name: string, personal: PersonalToolOwne
  *  layer keeps its one-directional dependency; the brain's TurnMode is structurally identical. */
 export type TurnWorkMode = 'build' | 'plan' | 'workflow';
 
-interface TurnScope { policy?: Policy; workDir?: string; pathView?: WorkspacePathView; sessionId?: string; deliveryTarget?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; emitSubagentCompletion?: SubagentCompletionEmitter; emitWorkflow?: WorkflowEmitter; emitWorkflowCompletion?: WorkflowCompletionEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel; mode?: TurnWorkMode; memoryRecallScope?: MemoryRecallScope; settingsUserId?: number | null; contributionUserId?: number | null }
+interface TurnScope { policy?: Policy; workDir?: string; resolveWorkDir?: () => string | undefined; pathView?: WorkspacePathView; sessionId?: string; deliveryTarget?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; emitSubagentCompletion?: SubagentCompletionEmitter; emitWorkflow?: WorkflowEmitter; emitWorkflowCompletion?: WorkflowCompletionEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel; mode?: TurnWorkMode; memoryRecallScope?: MemoryRecallScope; settingsUserId?: number | null; contributionUserId?: number | null }
 
 /** pi tools have no per-call session context, so a plugin tool can't be told which user's policy applies
  *  through its arguments. We carry the resolved Policy (+ the sender's identity + their effective tool
@@ -184,8 +184,8 @@ const store = new AsyncLocalStorage<TurnScope>();
 /** Run `fn` (a brain prompt turn) with `policy` established for any plugin tool it invokes. `opts`
  *  carries the sender's identity, a turn-bound elicitor/card-emitter, and the effective tool policy —
  *  all read at tool-execute time via the `current*()` accessors. */
-export function runWithPolicy<T>(policy: Policy, fn: () => T, opts?: { workDir?: string; pathView?: WorkspacePathView; sessionId?: string; deliveryTarget?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; emitSubagentCompletion?: SubagentCompletionEmitter; emitWorkflow?: WorkflowEmitter; emitWorkflowCompletion?: WorkflowCompletionEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel; mode?: TurnWorkMode; memoryRecallScope?: MemoryRecallScope; settingsUserId?: number | null; contributionUserId?: number | null }): T {
-  return store.run({ policy, workDir: opts?.workDir, pathView: opts?.pathView, sessionId: opts?.sessionId, deliveryTarget: opts?.deliveryTarget, identity: opts?.identity, elicit: opts?.elicit, emitCard: opts?.emitCard, emitSubagent: opts?.emitSubagent, emitSubagentCompletion: opts?.emitSubagentCompletion, emitWorkflow: opts?.emitWorkflow, emitWorkflowCompletion: opts?.emitWorkflowCompletion, toolPolicy: opts?.toolPolicy, permissions: opts?.permissions, model: opts?.model, mode: opts?.mode, memoryRecallScope: opts?.memoryRecallScope, settingsUserId: opts?.settingsUserId, contributionUserId: opts?.contributionUserId }, fn);
+export function runWithPolicy<T>(policy: Policy, fn: () => T, opts?: { workDir?: string; resolveWorkDir?: () => string | undefined; pathView?: WorkspacePathView; sessionId?: string; deliveryTarget?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; emitSubagentCompletion?: SubagentCompletionEmitter; emitWorkflow?: WorkflowEmitter; emitWorkflowCompletion?: WorkflowCompletionEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel; mode?: TurnWorkMode; memoryRecallScope?: MemoryRecallScope; settingsUserId?: number | null; contributionUserId?: number | null }): T {
+  return store.run({ policy, workDir: opts?.workDir, resolveWorkDir: opts?.resolveWorkDir, pathView: opts?.pathView, sessionId: opts?.sessionId, deliveryTarget: opts?.deliveryTarget, identity: opts?.identity, elicit: opts?.elicit, emitCard: opts?.emitCard, emitSubagent: opts?.emitSubagent, emitSubagentCompletion: opts?.emitSubagentCompletion, emitWorkflow: opts?.emitWorkflow, emitWorkflowCompletion: opts?.emitWorkflowCompletion, toolPolicy: opts?.toolPolicy, permissions: opts?.permissions, model: opts?.model, mode: opts?.mode, memoryRecallScope: opts?.memoryRecallScope, settingsUserId: opts?.settingsUserId, contributionUserId: opts?.contributionUserId }, fn);
 }
 
 /** Run `fn` with only the caller's IDENTITY established — the shape an authenticated HTTP request has.
@@ -209,11 +209,11 @@ export function currentPolicy(): Policy | undefined {
   return store.getStore()?.policy;
 }
 
-/** The project path the current turn's session is bound to (a task worker's checkout), or undefined for
- *  an unbound session. Established fresh by each `runWithPolicy` scope, so a directory the agent moved
- *  to during one run can never carry into the next — every run starts back at the bound project path. */
+/** Read the conversation's current directory at tool execution time. Ordinary turns resolve live
+ *  workspace selection; explicitly confined children keep their immutable path view and captured cwd. */
 export function currentWorkDir(): string | undefined {
-  return store.getStore()?.workDir;
+  const scope = store.getStore();
+  return scope?.pathView ? scope.pathView.root : scope?.resolveWorkDir ? scope.resolveWorkDir() : scope?.workDir;
 }
 
 /** Exact logical filesystem view for an explicitly workspace-scoped delegated turn. */

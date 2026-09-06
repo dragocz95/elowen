@@ -301,7 +301,7 @@ function buildWorkspaceBubblewrap(command, hostCwd, workspace, home, gitStub) {
   return { launch: { type: 'argv', file: BWRAP, args: [...args, command.file, ...command.args], env }, guestCwd };
 }
 
-function workspaceForCwd(workspaces, accountUserId, cwd) {
+export function workspaceForCwd(workspaces, accountUserId, cwd) {
   if (accountUserId === null) return null;
   const real = resolve(cwd);
   return workspaces

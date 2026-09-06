@@ -154,6 +154,43 @@ const waitUntil = async (check: () => boolean, timeoutMs = 5_000) => {
 };
 
 describe('sandbox plugin workspaces', () => {
+  it('renders fresh sandbox context from the turn cwd, including inherited children and release', async () => {
+    const { registry, projectPath, db } = await setup();
+    db.prepare("INSERT INTO brain_sessions (id, user_id) VALUES ('brain-context', 1)").run();
+    const created = await runAs(registry, projectPath, 1, 'brain-context', 'SandboxCreateWorkspace', { projectId: 1, label: 'Context work', baseRef: 'main' });
+    const workspace = created.details.workspace;
+    const context = (cwd: string, userId = 1, projectIds = [1], sessionId = 'brain-context') => runWithPolicy(
+      { allowedProjectIds: new Set(projectIds), allowedPaths: () => [projectPath] },
+      () => registry.turnContexts.map((entry) => entry.render()).join('\n'),
+      { identity: nonOperator(userId), contributionUserId: userId, sessionId, workDir: cwd },
+    );
+    expect(context(projectPath)).not.toContain('<sandbox_context>');
+    const selected = await runAs(registry, projectPath, 1, 'brain-context', 'SandboxUseWorkspace', { workspaceId: workspace.id });
+    expect(selected.details.metadataChanged).toBe(true);
+    const rendered = context(workspace.path);
+    expect(rendered).toContain('<sandbox_context>');
+    expect(rendered).toContain('<name>Context work</name>');
+    expect(rendered).toContain(`<id>${workspace.id}</id>`);
+    expect(rendered).toContain(`<path>${workspace.path}</path>`);
+    expect(rendered).toContain(`<branch>${workspace.branch}</branch>`);
+    expect(context(workspace.path, 1, [1], 'unbound-child')).toBe(rendered);
+    const pinned = runWithPolicy(policy(projectPath),
+      () => registry.turnContexts.map((entry) => entry.render()).join('\n'),
+      { contributionUserId: 1, workDir: workspace.path,
+        pathView: createWorkspacePathView({ workspaceId: workspace.id, projectId: 1, accountUserId: 1, path: workspace.path }) });
+    expect(pinned).toContain('<path>.</path>');
+    expect(pinned).not.toContain(workspace.path);
+    expect(context(workspace.path, 2)).not.toContain('<sandbox_context>');
+    expect(context(workspace.path, 1, [])).not.toContain('<sandbox_context>');
+    expect(context(`${workspace.path}-outside`)).not.toContain('<sandbox_context>');
+    db.prepare('UPDATE p_sandbox_workspaces SET label = ? WHERE id = ?').run('work </name><injected>&', workspace.id);
+    expect(context(workspace.path)).toContain('<name>work &lt;/name&gt;&lt;injected&gt;&amp;</name>');
+    expect(context(workspace.path)).not.toContain('<injected>');
+    const released = await runAs(registry, projectPath, 1, 'brain-context', 'SandboxReleaseWorkspace', {});
+    expect(released.details.metadataChanged).toBe(true);
+    expect(context(projectPath)).not.toContain('<sandbox_context>');
+  });
+
   /** The directory and branch are the caller's label, so `git worktree list` and a path in a task brief
    *  read as what is being worked on — never `ws_<uuid>`. A name already in use (a second workspace
    *  with the same label, or a branch that outlived its removed worktree) steps to `-2`, `-3`, … */
@@ -1384,10 +1421,9 @@ describe('sandbox workspace selection follows the conversation, not the cwd', ()
     expect(effective.workspace).toBeNull();
   });
 
-  /** The turn scope installs one workDir at turn start and every tool in that turn reads it from ALS, so a
-   *  switch landing mid-turn is by construction invisible to the turn already running. Asserted on the
-   *  actual cwd a running turn's shell reports, not on the resolver's return value alone. */
-  it('does not retarget a turn already in flight', async () => {
+  /** A completed switch changes the next tool's cwd in the same turn, without moving an already
+   *  running process. The marker distinguishes real worktrees even though both mount at /workspace. */
+  it('retargets subsequent tools in a turn already in flight', async () => {
     const { registry, projects, turnPolicy, act, resolveTurn } = await twoProjects(['sandbox', 'terminal']);
     const session = 'brain-switch-inflight';
     const started = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Started', baseRef: 'main' })).details.workspace;
@@ -1408,11 +1444,12 @@ describe('sandbox workspace selection follows the conversation, not the cwd', ()
     await runWithPolicy(turnPolicy, async () => {
       await act(projects[1]!.path, session, 'SandboxUseWorkspace', { workspaceId: later.id });
       const marker = await tool(registry, 'Bash').execute('t', { command: 'cat marker.txt' });
-      expect(marker.content[0]!.text).toContain('started-workspace');
-      expect(marker.content[0]!.text).not.toContain('later-workspace');
-    }, { identity: nonOperator(1), contributionUserId: 1, sessionId: session, workDir: turn.workDir });
+      expect(marker.content[0]!.text).toContain('later-workspace');
+      expect(marker.content[0]!.text).not.toContain('started-workspace');
+    }, { identity: nonOperator(1), contributionUserId: 1, sessionId: session, workDir: turn.workDir,
+      resolveWorkDir: () => resolveTurn(turnPolicy, projects[0]!.path, session).workDir });
 
-    // …and takes effect on the NEXT turn, which resolves again.
+    // The next turn resolves the same durable selection.
     expect(resolveTurn(turnPolicy, projects[0]!.path, session).workDir).toBe(later.path);
   });
 });
@@ -1537,10 +1574,9 @@ describe('sandbox releases a conversation back to its project', () => {
     expect(resolveTurn(projects[0]!.path, session).workDir).toBe(projects[0]!.path);
   });
 
-  /** A release lands on the NEXT turn, exactly like a switch: the turn scope installs one workDir at turn
-   *  start and every tool in that turn reads it from ALS. Asserted on the cwd a running turn's shell
-   *  actually reports, not on the resolver's return value alone. */
-  it('takes effect on the next turn and does not retarget a turn already in flight', async () => {
+  /** A successful release changes the next tool immediately, using the same durable resolver as a
+   *  switch. Existing process leases still prevent release while a workspace process is running. */
+  it('releases subsequent tools to the project within the same turn', async () => {
     const { registry, projects, turnPolicy, act, resolveTurn, release } = await bound(['sandbox', 'terminal']);
     const session = 'brain-amy-release';
     const workspace = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Inflight', baseRef: 'main' })).details.workspace;
@@ -1554,9 +1590,10 @@ describe('sandbox releases a conversation back to its project', () => {
     await runWithPolicy(turnPolicy, async () => {
       expect((await release({ sessionId: session })).status).toBe(200);
       const marker = await tool(registry, 'Bash').execute('t', { command: 'cat marker.txt' });
-      expect(marker.content[0]!.text).toContain('workspace');
-      expect(marker.content[0]!.text).not.toContain('project');
-    }, { identity: nonOperator(1), contributionUserId: 1, sessionId: session, workDir: turn.workDir });
+      expect(marker.content[0]!.text).toContain('project');
+      expect(marker.content[0]!.text).not.toContain('workspace');
+    }, { identity: nonOperator(1), contributionUserId: 1, sessionId: session, workDir: turn.workDir,
+      resolveWorkDir: () => resolveTurn(projects[0]!.path, session).workDir });
 
     expect(resolveTurn(projects[0]!.path, session).workDir).toBe(projects[0]!.path);
   });

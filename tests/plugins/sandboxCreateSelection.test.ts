@@ -37,7 +37,7 @@ beforeEach(async () => {
     dataDir: () => '/test/data', config: {},
     currentAccountUserId: () => 1, currentSessionId: () => state.session,
     currentAccess: () => ({ admin: false, projectIds: [1] }),
-    registerControl: vi.fn(), registerCommand: vi.fn(), registerReadinessCheck: vi.fn(),
+    registerTurnContext: vi.fn(), registerControl: vi.fn(), registerCommand: vi.fn(), registerReadinessCheck: vi.fn(),
     registerBootReconcile: vi.fn(), registerInterval: vi.fn(), registerUserRemoved: vi.fn(),
     registerProjectRemoved: vi.fn(), registerHook: vi.fn(), logger: { info: vi.fn() },
     registerTool: (tool: any) => state.tools.set(tool.name, tool),

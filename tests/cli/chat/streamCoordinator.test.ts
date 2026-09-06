@@ -50,6 +50,26 @@ function actions(overrides: Partial<ChatApplicationActions> = {}): ChatApplicati
 }
 
 describe('StreamCoordinator — parent stream ownership', () => {
+  it('refreshes metadata immediately when a completed tool changes it, without waiting for idle', async () => {
+    let onEvent!: (event: BrainEvent) => void;
+    const client = {
+      stream: (callback: (event: BrainEvent) => void) => { onEvent = callback; return Promise.resolve(); },
+      rebind: () => {},
+    } as unknown as BrainClient;
+    const rt = state();
+    const refreshMeta = vi.fn(async () => {});
+    const coordinator = new StreamCoordinator(rt, { client }, actions({ refreshMeta }),
+      {} as Flows, new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner());
+    rt.streamAc = new AbortController();
+    coordinator.openStream(rt.streamAc);
+    onEvent({ type: 'tool_end', id: 'ordinary' });
+    expect(refreshMeta).not.toHaveBeenCalled();
+    onEvent({ type: 'tool_end', id: 'switch', metadataChanged: true });
+    await Promise.resolve();
+    expect(refreshMeta).toHaveBeenCalledOnce();
+    coordinator.stop();
+  });
+
   it('atomically aborts and replaces the parent controller when a rebuilt session restarts', () => {
     const streamSignals: AbortSignal[] = [];
     const client = {

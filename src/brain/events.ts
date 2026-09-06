@@ -40,7 +40,7 @@ export type BrainEvent =
    *  "formatted a.ts with prettier" — see `details.notes`) the reducer attaches alongside the diff;
    *  clients that ignore it lose only the note, never the diff. */
   | { type: 'diff'; diff: string; id?: string; output?: ToolOutputView }
-  | { type: 'tool_output'; output: ToolOutputView; id?: string; plan?: string }
+  | { type: 'tool_output'; output: ToolOutputView; id?: string; plan?: string; metadataChanged?: true }
   /** A tool completed without a displayable output block. This closes status-only renderers (Discord)
    *  while transcript clients may safely ignore it; output/diff events already imply completion.
    *
@@ -48,7 +48,7 @@ export type BrainEvent =
    *  `BrainSegment.plan`, so the plan panel and the "implement it?" decision are driven by the CALL on
    *  the live path too, not only after a history refetch. It rides both settle events because a
    *  hook-annotated result would take the `tool_output` branch instead. */
-  | { type: 'tool_end'; id?: string; isError?: boolean; plan?: string }
+  | { type: 'tool_end'; id?: string; isError?: boolean; plan?: string; metadataChanged?: true }
   /** A structured display card a plugin pushed via `ctx.emitCard` — a live panel (CLI above the status
    *  bar, Discord in the streamed message, web in a cards region) keyed by `card.id` so a re-emit
    *  replaces it; an empty card (no items/body) removes it. Generalizes what the todo checklist used to
@@ -502,7 +502,7 @@ export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now(), ima
     };
   }
   const anyE = e as {
-    type: string; toolName?: string; args?: unknown; result?: { details?: { diff?: unknown; sharedImage?: unknown; sharedFile?: unknown } }; isError?: boolean;
+    type: string; toolName?: string; args?: unknown; result?: { details?: { diff?: unknown; sharedImage?: unknown; sharedFile?: unknown; metadataChanged?: unknown } }; isError?: boolean;
     toolCallId?: string; partialResult?: unknown;
     // toolcall_start additionally carries the in-progress assistant message: the tool NAME is already on
     // the partial block at `contentIndex` (only its arguments stream in later), so we thread it out.
@@ -656,8 +656,10 @@ export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now(), ima
       // event-level `isError` flag IS authoritative here, so pass it through for a correct live tone.
       const output = toolOutputView(anyE.toolName, anyE.args, anyE.result, anyE.isError === true);
       const plan = submittedPlan(anyE.toolName, anyE.result);
-      if (output) return { type: 'tool_output', output, id: anyE.toolCallId, ...(plan ? { plan } : {}) };
-      return { type: 'tool_end', id: anyE.toolCallId, ...(anyE.isError === true ? { isError: true } : {}), ...(plan ? { plan } : {}) };
+      const metadata = anyE.isError !== true && anyE.result?.details?.metadataChanged === true
+        ? { metadataChanged: true as const } : {};
+      if (output) return { type: 'tool_output', output, id: anyE.toolCallId, ...(plan ? { plan } : {}), ...metadata };
+      return { type: 'tool_end', id: anyE.toolCallId, ...(anyE.isError === true ? { isError: true } : {}), ...(plan ? { plan } : {}), ...metadata };
     }
   }
   return null;

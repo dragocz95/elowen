@@ -349,7 +349,7 @@ export class TurnContextBuilder {
       ? memoryRecallScope(userId, recallCwd, this.d.memoryCategoryStore, this.d.projects)
       : { projectId: null, categoryIds: new Set<number>(), sharedCategoryIds: new Set<number>() };
     const baseWorkDir = turnWorkDir(live.policy, clientCwd ?? live.workDir, this.d.projectPath);
-    const effective = effectiveTurnWorkDir({
+    const resolveWorkDir = () => effectiveTurnWorkDir({
       policy: live.policy,
       baseWorkDir,
       accountUserId: live.contributionUserId,
@@ -357,6 +357,7 @@ export class TurnContextBuilder {
       projects: this.d.projects,
       sandbox: this.d.sandbox?.(),
     });
+    const effective = resolveWorkDir();
     const base = this.d.permissions.turnPermissions(userId, live, true);
     // The other half of admitting Bash in plan mode: narrow the turn's shell rules to the shared
     // non-destructive clamp. Appended LAST so last-match-wins puts it over the user's own rules — a
@@ -397,6 +398,7 @@ export class TurnContextBuilder {
         toolPolicy,
         permissions,
         workDir: effective.workDir,
+        resolveWorkDir: () => resolveWorkDir().workDir,
         memoryRecallScope: recallScope,
         // Read off the live rather than re-derived: it is the exact id this session's skill set and its
         // system-prompt announcement were composed from, so a tool resolving the caller through it can only
