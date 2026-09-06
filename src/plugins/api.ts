@@ -617,6 +617,51 @@ export interface PluginHostStores {
     mayUsePlugin(userId: number, plugin: string): boolean;
   };
   eventsRead?: { list(opts: { target?: string; type?: string }): { detail: string }[] };
+  /** The CORE-owned answer to "which conversation may this be organized under", so a plugin that groups
+   *  durable records by conversation never re-derives eligibility or ownership from the session tables.
+   *  Read-only and metadata-only by construction — see {@link PluginHostConversations}. */
+  conversationsRead: PluginHostConversations;
+}
+
+/** One eligible conversation as a plugin sees it. Identity and display metadata only: a plugin that
+ *  organizes its records by conversation needs to name one and show it, never to read what was said in it.
+ *
+ *  `id` is the CURRENT session id and is what navigation uses — but it is not stable, so it must not be
+ *  the only thing a durable association stores. `key` is: it is the row's immutable identity, minted once
+ *  and carried through a channel rollover's re-key, and it dies with the conversation. Store both, resolve
+ *  by `key`, navigate by the `id` that resolution returns. */
+export interface PluginConversationTarget {
+  id: string;
+  /** Opaque immutable identity. Never a filesystem path, never parsed, never accepted from a client. */
+  key: string;
+  title: string;
+  ownerUserId: number;
+  /** `discord`, `msteams`, … or null for an ordinary web/CLI conversation. */
+  platform: string | null;
+  /** A DIRECT 1:1 platform chat rather than a shared room; false for an owner conversation. */
+  direct: boolean;
+  updatedAt: string;
+}
+
+/** The narrow read-only conversation projection on {@link PluginHostStores}. The host — not the caller —
+ *  decides the scope: `ownerUserId` names a PERSONAL scope (that account's own eligible conversations),
+ *  which only that account or an administrator may ask for, and omitting it asks for the INSTANCE scope
+ *  across every account, which requires an administrator. Either violation THROWS rather than returning an
+ *  empty list, because a silently empty picker reads as "you have no conversations" and hides the bug.
+ *
+ *  The plugin must supply `actorUserId` from verified tool or request identity only. A projection call
+ *  grants no access to the conversation itself and confers no authority to act as its owner. */
+export interface PluginHostConversations {
+  /** Eligible targets, newest first. */
+  list(opts: { actorUserId: number; ownerUserId?: number | null }): PluginConversationTarget[];
+  /** One target the caller NAMED by session id, under the same eligibility and scope rules. `null` when
+   *  it does not exist, is not eligible, or lies outside the requested scope — the three are deliberately
+   *  indistinguishable, so a probe cannot enumerate another account's conversations. */
+  resolve(opts: { actorUserId: number; ownerUserId?: number | null; sessionId: string }): PluginConversationTarget | null;
+  /** A SAVED association resolved by its immutable key, or `null` when that conversation is gone — never
+   *  a fallback to whatever now holds the old id. Unscoped on purpose: it answers "which row is this" for
+   *  a key the host itself minted, and the caller applies its own visibility rule to the answer. */
+  resolveKey(key: string): PluginConversationTarget | null;
 }
 
 /** User-override-aware prompt rendering (the core PromptService): resolves a user's saved prompt
@@ -972,6 +1017,36 @@ export interface KillForegroundControl {
  *  context and demote its reply to the notification channel. */
 export interface PendingWakeupControl {
   pendingWakeupOriginSessionIds(userId: number): string[];
+  /** The cronjob plugin's NAVIGATION seam: the recurring jobs organized under conversations the host has
+   *  already authorized for this requester, so a conversation listing can show a collapsed jobs branch.
+   *  Organization only — this says nothing about where a job runs, which model it uses or where its result
+   *  is delivered, and reading it changes nothing.
+   *
+   *  OPTIONAL, and deliberately absent from the registry's required cron method list: an older installed
+   *  cronjob plugin must keep resolving as the cron control so it goes on protecting pending wake-up
+   *  origins from the retention sweep even before this capability exists. Core treats a missing method
+   *  exactly like a disabled plugin — no branch, no error.
+   *
+   *  `conversationIds` is the already-authorized set; the plugin filters to it and applies its own job
+   *  ownership rule, and core re-checks both on the way out. Called once per listing, never per row. */
+  conversationLinks?(input: {
+    requesterUserId: number;
+    requesterIsAdmin: boolean;
+    conversationIds: readonly string[];
+  }): CronConversationLink[];
+}
+
+/** One recurring job's navigation summary. Deliberately minimal — a name to render and the ids to link
+ *  with. The prompt, schedule, check command, last result and delivery target stay inside the plugin. */
+export interface CronConversationLink {
+  jobId: string;
+  /** The CURRENT session id of the conversation this job is organized under, as the plugin resolved it
+   *  from its saved immutable key. */
+  conversationId: string;
+  name: string;
+  enabled: boolean;
+  /** The account whose job this is, or null for an instance job. */
+  ownerUserId: number | null;
 }
 
 /** The workflow engine's abort seam. Aborting a parent turn tears down the node child sessions that are

@@ -20,6 +20,7 @@ import { bubblewrapProbe, ensureUserHome, migrateLegacyHomes, resetUserHome, run
 import { activeExecutionLeases, createExecutionLease, heartbeatRepoLease, processIdentity, reconcileStaleLeases, withRepoLease } from '../../plugins/sandbox/lib/db.mjs';
 import { createWorkspacePathView } from '../../src/plugins/pathView.js';
 import { commandsWithPlugins } from '../../src/brain/slashCommands.js';
+import { testConversationsRead } from '../helpers/testApp.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const log = { info() {}, warn() {}, error() {} };
@@ -77,6 +78,7 @@ async function setup(enabled = ['sandbox'], confineNonOperators = false, extraBr
         allowedExecs: () => [],
         mayUsePlugin: () => true,
       },
+      conversationsRead: testConversationsRead({ isAdmin: (id: number) => id === 3 }),
     },
     git: {
       projectSnapshot: (root: string) => reader.snapshot(root),

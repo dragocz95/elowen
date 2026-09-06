@@ -212,10 +212,26 @@ describe('ConversationLifecycle.clearConversation', () => {
     expect(harness.deleteSession).not.toHaveBeenCalled();
 
     // The same sweep on a conversation that was merely opened and never used still removes the shell.
+    // Untitled as well as empty: a shell nobody typed into also has no name (the harness row carries one
+    // because it stands in for a USED conversation elsewhere in this file).
     const other = makeLifecycle(new LiveSessionRegistry<LiveBrain>(), async () => live({ fresh: true }));
+    other.__setRow({ title: '' });
     other.__setMessageCount(0);
     other.lifecycle.dropIfUnspoken(SESSION);
     expect(other.deleteSession).toHaveBeenCalledWith(SESSION);
+  });
+
+  /** An explicitly RENAMED conversation is not an empty shell either, even before anyone speaks in it:
+   *  naming one is how a person creates the organizational root that recurring jobs are grouped under,
+   *  and the /new prune would otherwise delete it the next time that user opened a conversation. */
+  it('leaves an explicitly named, never-spoken conversation immune to the unspoken-shell sweep', () => {
+    const harness = makeLifecycle(new LiveSessionRegistry<LiveBrain>(), async () => live({ fresh: true }));
+    harness.__setRow({ title: 'CRON JOBS', cleared_at: null });
+    harness.__setMessageCount(0);
+
+    harness.lifecycle.dropIfUnspoken(SESSION);
+
+    expect(harness.deleteSession).not.toHaveBeenCalled();
   });
 
   /** The stored model/provider pin is only restored for a conversation that has been spoken in — evidence

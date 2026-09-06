@@ -3,6 +3,7 @@ import { PluginRegistry, type PluginHostWiring } from '../../src/plugins/registr
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
 import type { PluginCapabilities, PluginHostStores } from '../../src/plugins/api.js';
 import type { TmuxDriver } from '../../src/tmux/types.js';
+import { testConversationsRead } from '../helpers/testApp.js';
 
 const noopLog = { info() {}, warn() {}, error() {} };
 
@@ -14,6 +15,7 @@ const fakeStores = {
     list: () => [{ id: 1, username: 'a', isAdmin: true }],
     isAdmin: () => true, allowedExecs: () => null, mayUsePlugin: () => true,
   },
+  conversationsRead: testConversationsRead(),
 } satisfies PluginHostStores;
 
 const wire = (caps?: PluginCapabilities, host?: PluginHostWiring) => {
