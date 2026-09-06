@@ -112,31 +112,40 @@ describe('settings row layout contract', () => {
     // The cell spans every trailing track it is given, so a skin may retune them without touching the DOM.
     expect(block(core, '\n.settings-row__trailing {')).toMatch(/grid-column:\s*2\s*\/\s*-1/);
 
-    const band = block(core, ".settings-row[data-trailing='inline'] .settings-row__trailing {");
+    // Both layouts take the band. `stack` says what a record does when the card gets NARROW; on a wide
+    // card it has the same three slots as everything else, and leaving it out was what kept the one row
+    // with a badge, a switch and a button off the alignment it needed most.
+    const band = block(core, '.settings-row[data-trailing] .settings-row__trailing {');
     expect(band).toMatch(/display:\s*grid/);
     expect(band).toMatch(/grid-template-columns:\s*subgrid/);
 
     for (const [slot, column] of [['status', '1'], ['control', '2'], ['actions', '3']] as const) {
-      const rule = block(core, `.settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__${slot} {`);
+      const rule = block(core, `.settings-row[data-trailing] .settings-row__trailing > .settings-row__${slot} {`);
       expect(rule, `${slot} must be placed explicitly`).toMatch(new RegExp(`grid-column:\\s*${column}`));
     }
-    // Status and actions hug the control between them; the control fills its own track so a select still
-    // spans it while a bare switch lands on the column's edge.
+    // An inline record's slots are scalars and hug the middle of the band; the control fills its own track
+    // so a select still spans it while a bare switch lands on the column's edge.
     expect(block(core, ".settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__status {")).toMatch(/justify-self:\s*end/);
-    expect(block(core, ".settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__actions {")).toMatch(/justify-self:\s*end/);
+    expect(block(core, '.settings-row[data-trailing] .settings-row__trailing > .settings-row__actions {')).toMatch(/justify-self:\s*end/);
     expect(block(core, ".settings-row[data-trailing='inline'] .settings-row__trailing .settings-row__control {")).toMatch(/justify-content:\s*flex-end/);
+    // A record with no control reaches its reading across the empty column instead of stranding it there.
+    expect(core).toContain(".settings-row[data-trailing='inline'] .settings-row__trailing:not(:has(> .settings-row__control)) > .settings-row__status { grid-column: 1 / 3; }");
   });
 
   /** One track cannot be subgridded into three. Both sheets have to hand the band back to flex where they
    *  collapse the record, or the slots open implicit columns and the card grows an edge nothing reaches. */
   it('releases the band back to a flex line wherever the record collapses', () => {
     const phone = block(core, PHONE);
-    expect(block(phone, ".settings-row[data-trailing='inline'] .settings-row__trailing {")).toMatch(/display:\s*flex/);
+    expect(block(phone, '.settings-row[data-trailing] .settings-row__trailing {')).toMatch(/display:\s*flex/);
     expect(phone).toMatch(/grid-column:\s*auto;\s*justify-self:\s*auto/);
 
     const studioNarrow = block(studio, '@container workspace-shell (width < 48rem)');
-    expect(block(studioNarrow, ".settings-row[data-trailing='inline'] .settings-row__trailing {")).toMatch(/display:\s*flex/);
+    expect(block(studioNarrow, '.settings-row[data-trailing] .settings-row__trailing {')).toMatch(/display:\s*flex/);
     expect(studioNarrow).toMatch(/grid-column:\s*auto;\s*justify-self:\s*auto/);
+
+    // The one record that never joins the band: a risk field needs two full-width lines, and a band is
+    // three columns by definition.
+    expect(block(core, '.settings-row.plugin-config-risk-row .settings-row__trailing {')).toMatch(/display:\s*flex/);
   });
 
   it('folds every record to the two-line band in a narrow container', () => {

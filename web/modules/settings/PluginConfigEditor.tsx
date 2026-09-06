@@ -944,21 +944,24 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
           status={<span className="flex flex-wrap items-center gap-2">{risk}{error ? <span role="alert" className="text-destructive">{error}</span> : null}</span>}
           trailingLayout="stack"
           className={risk ? 'plugin-config-risk-row' : undefined}
+          // The credential is the control and the commit is an action. They used to share one box in the
+          // control slot, which put a button in the column the band reserves for values and left the
+          // record's actions column empty beside it.
           control={(
-            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-              <Input
-                type="password"
-                aria-label={label}
-                value={secretDrafts[f.key] ?? ''}
-                onChange={(e) => setSecretDrafts((current) => ({ ...current, [f.key]: e.target.value }))}
-                placeholder={t.pluginCfg.secretReplacementPlaceholder}
-                autoComplete="off"
-                autoFocus={replacingSecrets.has(f.key)}
-              />
-              <Button type="button" variant="accent" className="h-8" disabled={saving || !(secretDrafts[f.key] ?? '').trim()} onClick={() => void commitSecret(f.key)}>
-                {saving ? t.common.saving : t.common.save}
-              </Button>
-            </div>
+            <Input
+              type="password"
+              aria-label={label}
+              value={secretDrafts[f.key] ?? ''}
+              onChange={(e) => setSecretDrafts((current) => ({ ...current, [f.key]: e.target.value }))}
+              placeholder={t.pluginCfg.secretReplacementPlaceholder}
+              autoComplete="off"
+              autoFocus={replacingSecrets.has(f.key)}
+            />
+          )}
+          actions={(
+            <Button type="button" variant="accent" className="h-8" disabled={saving || !(secretDrafts[f.key] ?? '').trim()} onClick={() => void commitSecret(f.key)}>
+              {saving ? t.common.saving : t.common.save}
+            </Button>
           )}
         />
       );

@@ -693,13 +693,13 @@
      track left for the trailing band to subgrid — the slots would spill into implicit columns and the
      card would grow a phantom right edge. The cell is the right-aligned flex line again, which is the
      same reading order (status, control, actions) without the shared columns. */
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='inline'] .settings-row__trailing {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing] .settings-row__trailing {
     display: flex;
     grid-template-columns: none;
   }
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__status,
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__control,
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__actions {
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing] .settings-row__trailing > .settings-row__status,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing] .settings-row__trailing > .settings-row__control,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing] .settings-row__trailing > .settings-row__actions {
     grid-column: auto;
     justify-self: auto;
   }

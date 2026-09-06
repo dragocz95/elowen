@@ -180,15 +180,18 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
           )}
           status={<span className="tabular-nums">{Number.isFinite(parsedSteps) && parsedSteps > 0 ? parsedSteps : 200}</span>}
         />
-        {/* Each of these four records IS one action — it opens the editor that owns the group of knobs —
-            so the button sits in the actions slot rather than posing as the record's control. */}
+        {/* Each of these four records is operated through ONE button that opens the editor owning that
+            group of knobs, and that button is the record's control — the same reading the skin picker and
+            the plugin config editor already take for an identical affordance. Filed as an action instead,
+            it landed in the band's action column while the name and step rows above kept their controls in
+            the control column, so one card ended on two different right edges. */}
         {limits ? (
           <SettingsRow
             label={t.brain.limits.title}
             rowId={rowAnchor('brain.limits.title')}
             description={t.brain.limits.hint}
             icon={SlidersHorizontal}
-            actions={<Button variant="ghost" size="sm" icon={SlidersHorizontal} onClick={() => setLimitsOpen(true)}>{t.brain.limits.manage}</Button>}
+            control={<Button variant="ghost" size="sm" icon={SlidersHorizontal} onClick={() => setLimitsOpen(true)}>{t.brain.limits.manage}</Button>}
           />
         ) : null}
         {runtime ? (
@@ -197,7 +200,7 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
             rowId={rowAnchor('brain.runtime.title')}
             description={t.brain.runtime.hint}
             icon={Gauge}
-            actions={<Button variant="ghost" size="sm" icon={Gauge} onClick={() => setRuntimeOpen(true)}>{t.brain.runtime.manage}</Button>}
+            control={<Button variant="ghost" size="sm" icon={Gauge} onClick={() => setRuntimeOpen(true)}>{t.brain.runtime.manage}</Button>}
           />
         ) : null}
         {runtime ? (
@@ -206,7 +209,7 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
             rowId={rowAnchor('brain.toolLoading.title')}
             description={t.brain.toolLoading.hint}
             icon={Boxes}
-            actions={<Button variant="ghost" size="sm" icon={Boxes} onClick={() => setToolLoadingOpen(true)}>{t.brain.toolLoading.manage}</Button>}
+            control={<Button variant="ghost" size="sm" icon={Boxes} onClick={() => setToolLoadingOpen(true)}>{t.brain.toolLoading.manage}</Button>}
           />
         ) : null}
         {runtime ? (
@@ -215,7 +218,7 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
             rowId={rowAnchor('brain.retention.title')}
             description={t.brain.retention.hint}
             icon={ShieldCheck}
-            actions={<Button variant="ghost" size="sm" icon={ShieldCheck} onClick={() => setRetentionOpen(true)}>{t.brain.retention.manage}</Button>}
+            control={<Button variant="ghost" size="sm" icon={ShieldCheck} onClick={() => setRetentionOpen(true)}>{t.brain.retention.manage}</Button>}
           />
         ) : null}
       </SettingsGroup>

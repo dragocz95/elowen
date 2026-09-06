@@ -216,30 +216,40 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
    when a record carries more than one trailing value. It spans the status/control/action tracks of the
    shared subgrid; skins may retune the tracks without changing the DOM contract. */
 .settings-row__trailing { display: flex; min-width: 0; grid-column: 2 / -1; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.5rem 0.75rem; }
-/* THE TRAILING BAND. An INLINE record's trailing side is one line, here and at every width below — and
-   on a wide card it is a SUBGRID of the three trailing tracks rather than a flex line. That is the
-   difference between a card that lines up and the one this replaced: flex sizes each row from its own
-   content, so the single record carrying a status pill pushed its own switch left while every switch
-   above it stayed where it was, and a record with a trailing action ended somewhere else again. Sharing
-   the tracks puts every status in one column, every switch in one column, and every action against one
-   right edge, without a single call site having to know about it.
-   `flex-wrap: nowrap` is not dead here: the phone fold below returns this cell to flex, and that is the
-   width at which an inline record must still refuse to become three lines. `stack` keeps the wrapping
-   flex line, because a record that declared it is carrying several values on purpose. */
-.settings-row[data-trailing='inline'] .settings-row__trailing {
+/* THE TRAILING BAND. On a wide card a record's trailing cell is a SUBGRID of the three trailing tracks
+   rather than a flex line. That is the difference between a card that lines up and the one this replaced:
+   flex sizes each row from its own content, so the single record carrying a status pill pushed its own
+   switch left while every switch above it stayed where it was, and a record with a trailing action ended
+   somewhere else again. Sharing the tracks puts every status in one column, every switch in one column
+   and every action against one right edge, without a single call site having to know about it.
+   BOTH layouts take the band. `stack` is about what a record does when the card gets NARROW — it is the
+   opt-out for a record carrying several trailing values that cannot share a phone's value column — and a
+   stacked record on a wide card has exactly the three slots every other record has. Excluding it was what
+   left the one row with a badge, a switch and a button out of the very alignment it needed most. */
+.settings-row[data-trailing] .settings-row__trailing {
   display: grid;
   grid-template-columns: subgrid;
   align-items: center;
-  flex-wrap: nowrap;
 }
+/* `flex-wrap: nowrap` is not dead: the phone fold below returns this cell to flex, and that is the width
+   at which an inline record must still refuse to become three lines. */
+.settings-row[data-trailing='inline'] .settings-row__trailing { flex-wrap: nowrap; }
 /* The slots are placed EXPLICITLY. A record may omit any of the three, and auto-placement would then
    slide its control into the status column — which is the misalignment this whole band exists to fix. */
-.settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__status { grid-column: 1; justify-self: end; }
-.settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__control { grid-column: 2; }
-.settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__actions { grid-column: 3; justify-self: end; }
-/* The control cell ends at its track's edge: a bare switch lands in the same column as the switch above
-   it, while a select or an input still fills the track through its own full-width class. */
+.settings-row[data-trailing] .settings-row__trailing > .settings-row__status { grid-column: 1; }
+.settings-row[data-trailing] .settings-row__trailing > .settings-row__control { grid-column: 2; }
+.settings-row[data-trailing] .settings-row__trailing > .settings-row__actions { grid-column: 3; justify-self: end; }
+/* An inline record's slots are scalars, so they hug the middle of the band: the status ends where the
+   control begins and the control ends at its track's edge, which is how a bare switch lands in the same
+   column as the switch above it while a select or an input still fills the track through its own
+   full-width class. A stacked record's status is a BLOCK — an endpoint over a model count over a badge
+   row — and keeps the whole track to lay that out in. */
+.settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__status { justify-self: end; }
 .settings-row[data-trailing='inline'] .settings-row__trailing .settings-row__control { display: flex; align-items: center; justify-content: flex-end; gap: 0.5rem; }
+/* A record with NO control reaches its status across the empty control column. The reading still ENDS
+   where every switch in the card begins, so it keeps the band's alignment while sitting directly beside
+   its own action instead of stranded a full column away from it. */
+.settings-row[data-trailing='inline'] .settings-row__trailing:not(:has(> .settings-row__control)) > .settings-row__status { grid-column: 1 / 3; }
 /* The short status is atomic — often a Badge — so it must keep its min-content width. Shrinking this
    wrapper clipped "Configured" inside the badge while the control beside it still owned a generous flex
    basis. The control is the elastic part of an inline record; multi-value rows that need full-width bands
@@ -251,8 +261,13 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
 /* A translated risk badge plus a wide control (notably a three-option access-mode segment) can have a
    combined min-content width larger than the whole plugin card. Right alignment then overflows LEFT,
    directly across the field label. Only risk rows opt into this shape: the badge gets its own line and
-   the control keeps the full value column, while every ordinary inline settings record stays unchanged. */
-.settings-row.plugin-config-risk-row .settings-row__trailing { flex-wrap: wrap; }
+   the control keeps the full value column, while every ordinary inline settings record stays unchanged.
+   This is the ONE record that stays off the band: two full-width lines is precisely what it needs, and a
+   band is three columns by definition. */
+.settings-row.plugin-config-risk-row .settings-row__trailing { display: flex; grid-template-columns: none; flex-wrap: wrap; }
+.settings-row.plugin-config-risk-row .settings-row__trailing > .settings-row__status,
+.settings-row.plugin-config-risk-row .settings-row__trailing > .settings-row__control,
+.settings-row.plugin-config-risk-row .settings-row__trailing > .settings-row__actions { grid-column: auto; justify-self: auto; }
 .settings-row.plugin-config-risk-row .settings-row__control { flex: 1 1 100%; width: 100%; }
 .settings-row.plugin-config-risk-row .settings-row__status { white-space: normal; }
 /* PROVIDER RECORDS ALIGN ON A SHARED STATUS COLUMN. A provider row is a stacked record whose status
@@ -360,10 +375,10 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
      line again — still one line for an inline record, and left-aligned under its own label rather than
      right-aligned against an edge the label no longer reaches. Every placement the wide band set has to
      be spelled out again here: these selectors are more specific than the reset above them. */
-  .settings-row[data-trailing='inline'] .settings-row__trailing { display: flex; grid-template-columns: none; }
-  .settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__status,
-  .settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__control,
-  .settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__actions { grid-column: auto; justify-self: auto; }
+  .settings-row[data-trailing] .settings-row__trailing { display: flex; grid-template-columns: none; }
+  .settings-row[data-trailing] .settings-row__trailing > .settings-row__status,
+  .settings-row[data-trailing] .settings-row__trailing > .settings-row__control,
+  .settings-row[data-trailing] .settings-row__trailing > .settings-row__actions { grid-column: auto; justify-self: auto; }
   .settings-row[data-trailing='inline'] .settings-row__trailing .settings-row__control { justify-content: flex-start; }
   /* A record that declared `trailingLayout="stack"` carries SEVERAL trailing values (a connected
      account's meters, a provider entry's endpoint and badge set). Give each of them the row's whole
