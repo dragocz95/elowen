@@ -1,17 +1,21 @@
 'use client';
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Circle, Plus, Search, Trash2, X, MoreVertical, Pencil, Download, GitBranch, ArrowLeft, Library } from 'lucide-react';
+import { CheckCircle2, ChevronRight, Circle, Plus, Search, Trash2, X, MoreVertical, Pencil, Download, GitBranch, ArrowLeft, Library } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useToast } from '../../components/ui/Toast';
 import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { Dialog, DialogContent } from '../../components/ui/shadcn/dialog';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../components/ui/shadcn/collapsible';
 import { focusOverlaySurface, useReturnFocus } from '../../components/ui/overlayStack';
 import { elowenClient } from '../../lib/elowenClient';
 import { formatTaskTime } from '../../lib/format';
-import type { BrainSearchHit } from '../../lib/types';
+import { groupJobLinks } from '../../lib/conversationTree';
+import { useConversationJobLinks } from '../../lib/queries';
+import { ScheduledJobLink, scheduledJobName } from '../../components/brain/ScheduledJobLink';
+import type { BrainSearchHit, ConversationJobLink } from '../../lib/types';
 import { useBrainChat } from './BrainChatProvider';
 import { brainModelLabel, brainModelQualifiedLabel } from '../../lib/modelProvider';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
@@ -21,6 +25,9 @@ import {
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
 } from '../../components/ui/shadcn/sidebar';
 import { Tooltip, TooltipAnchor, TooltipContent } from '../../components/ui/shadcn/tooltip';
 import { PopoverContent } from '../../components/ui/shadcn/popover';
@@ -234,6 +241,9 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
 
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<BrainSearchHit[] | null>(null);
+  // Which conversations have their scheduled-job branch open. Local to this mount and keyed by session
+  // id: navigation state, not something to persist or sync across devices.
+  const [openJobs, setOpenJobs] = useState<ReadonlySet<string>>(() => new Set<string>());
   const [renameFor, setRenameFor] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string; active: boolean } | null>(null);
   const [deletePending, setDeletePending] = useState(false);
@@ -367,6 +377,78 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
   const q = search.trim();
   const listScroll = variant === 'dropdown' ? 'flex flex-col' : 'flex min-h-0 flex-1 flex-col overflow-y-auto';
 
+  // The recurring jobs organized under THIS caller's conversations. The endpoint already bounds `mine` by
+  // the personal session list; the render below still only asks the map for sessions that list holds, so
+  // a shared platform room can never appear here as a conversation the sidebar does not otherwise show.
+  const jobLinks = useConversationJobLinks('mine');
+  const jobsByConversation = useMemo(() => groupJobLinks(jobLinks.data?.links ?? []), [jobLinks.data]);
+  const jobsFailed = jobLinks.data?.status === 'error' || jobLinks.isError;
+
+  /** Conversations whose SCHEDULES answer the query, each listed once with the jobs that matched.
+   *  Additive: the transcript hits above are untouched, and a conversation that answered there can still
+   *  appear here for a different reason — its schedule, which no transcript snippet would ever mention. */
+  const jobSearchGroups = useMemo(() => {
+    const needle = q.toLowerCase();
+    if (needle.length < 2) return [];
+    const groups: { session: { id: string; title?: string }; jobs: ConversationJobLink[] }[] = [];
+    for (const session of sessions.data ?? []) {
+      const matched = (jobsByConversation.get(session.id) ?? []).filter((link) => link.name.toLowerCase().includes(needle));
+      if (matched.length > 0) groups.push({ session, jobs: matched });
+    }
+    return groups;
+  }, [q, sessions.data, jobsByConversation]);
+
+  /** The collapsed schedules of one conversation, under its row. Radix owns the disclosure contract here
+   *  — `aria-expanded`, the trigger/content wiring, Enter and Space, and handing focus back to the
+   *  trigger when the branch that held it closes. The trigger is a SIBLING of the conversation row's
+   *  button, never inside it: opening a branch and opening a conversation are different acts, and a
+   *  control nested in another control is invalid markup. */
+  const jobBranch = (sessionId: string, title: string, jobs: readonly ConversationJobLink[]): ReactNode => {
+    const open = openJobs.has(sessionId);
+    return (
+      <Collapsible
+        open={open}
+        onOpenChange={(next) => setOpenJobs((current) => {
+          const updated = new Set(current);
+          if (next) updated.add(sessionId); else updated.delete(sessionId);
+          return updated;
+        })}
+      >
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            aria-label={t.scheduledJobs.toggle.replace('{title}', title)}
+            className="flex w-full min-w-0 items-center gap-1 rounded-md py-1 pl-7 pr-2 text-left text-tiny text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+          >
+            <ChevronRight size={11} aria-hidden className={`shrink-0 transition-transform motion-reduce:transition-none ${open ? 'rotate-90' : ''}`} />
+            <span className="truncate">{t.scheduledJobs.branch}</span>
+            <span className="font-mono tabular-nums">{jobs.length}</span>
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          {/* The border is the only hierarchy mark, and the indent is a fixed step rather than a per-level
+              one — this list is one level deep and stays legible on a 288px drawer. */}
+          <SidebarMenuSub className="ml-4 border-l border-sidebar-border pl-2">
+            {jobs.map((link) => (
+              <SidebarMenuSubItem key={link.jobId}>
+                <SidebarMenuSubButton asChild size="sm" className="rounded-md px-2 py-1">
+                  <Link
+                    href={link.href}
+                    onClick={dismiss}
+                    aria-label={scheduledJobName(link, t.scheduledJobs)}
+                    className="min-w-0"
+                  >
+                    <ScheduledJobLink link={link} labels={t.scheduledJobs} />
+                  </Link>
+                </SidebarMenuSubButton>
+              </SidebarMenuSubItem>
+            ))}
+          </SidebarMenuSub>
+        </CollapsibleContent>
+      </Collapsible>
+    );
+  };
+
   const body = (
     <div className="flex min-h-0 flex-1 flex-col">
       {homeLink ? (
@@ -424,9 +506,10 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
 
       <div className={`${listScroll} px-1 pb-1`}>
         {q.length >= 2 ? (
-          results === null ? null : results.length === 0 ? (
+          results === null ? null : results.length === 0 && jobSearchGroups.length === 0 ? (
             <p className="px-2 py-2 text-xs text-muted-foreground">{t.brainChat.searchEmpty}</p>
           ) : (
+            <>
             <SidebarMenu>
               {results.map((h, i) => {
                 const when = formatTaskTime(h.ts, Date.now(), locale);
@@ -469,6 +552,36 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
                 );
               })}
             </SidebarMenu>
+            {/* Schedules whose NAME answers the query, grouped once under the conversation they are filed
+                in and placed after the transcript hits — those keep their snippets and their order, and a
+                conversation with three matching snippets still contributes exactly one group here. */}
+            {jobSearchGroups.length > 0 ? (
+              <div className="mt-1 border-t border-sidebar-border pt-1">
+                <p className="px-2 py-1 text-tiny text-muted-foreground">{t.scheduledJobs.branch}</p>
+                {jobSearchGroups.map((group) => (
+                  <div key={group.session.id}>
+                    <p className="truncate px-2 text-tiny text-muted-foreground">{group.session.title || t.brainChat.untitled}</p>
+                    <SidebarMenuSub className="ml-4 border-l border-sidebar-border pl-2">
+                      {group.jobs.map((link) => (
+                        <SidebarMenuSubItem key={link.jobId}>
+                          <SidebarMenuSubButton asChild size="sm" className="rounded-md px-2 py-1">
+                            <Link
+                              href={link.href}
+                              onClick={dismiss}
+                              aria-label={scheduledJobName(link, t.scheduledJobs)}
+                              className="min-w-0"
+                            >
+                              <ScheduledJobLink link={link} labels={t.scheduledJobs} />
+                            </Link>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                      ))}
+                    </SidebarMenuSub>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            </>
           )
         ) : sessions.isLoading && !sessions.data ? null : (sessions.data ?? []).length === 0 ? (
           <p className="px-2 py-2 text-xs text-muted-foreground">{t.chat.emptyHistory}</p>
@@ -476,6 +589,7 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
           <SidebarMenu>
             {(sessions.data ?? []).map((s) => {
               const unread = s.activity?.unread === true;
+              const jobs = jobsByConversation.get(s.id) ?? [];
               return (
                 <SidebarMenuItem key={s.id} className="group relative">
                   {renameFor === s.id ? (
@@ -498,56 +612,62 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
                     </div>
                   ) : (
                     <>
-                      <ActivityRow activity={s.activity} labels={activityLabels}>
-                        {({ indicator, rowProps }) => (
-                          <SidebarMenuButton
-                            asChild
-                            isActive={s.active}
-                            className="h-auto min-h-12 items-start rounded-md px-2 py-1.5 pr-10"
-                          >
-                            <button
-                              type="button"
-                              onClick={() => openSession({ session: s.id })}
-                              aria-current={s.active ? 'page' : undefined}
-                              className="text-left"
-                              {...rowProps}
+                      {/* The row and its action menu share one positioned box, so the absolutely placed
+                          menu centres on the ROW rather than on the row plus whatever branch hangs
+                          under it. */}
+                      <div className="relative">
+                        <ActivityRow activity={s.activity} labels={activityLabels}>
+                          {({ indicator, rowProps }) => (
+                            <SidebarMenuButton
+                              asChild
+                              isActive={s.active}
+                              className="h-auto min-h-12 items-start rounded-md px-2 py-1.5 pr-10"
                             >
-                              {indicator}
-                              <span className="flex min-w-0 flex-1 flex-col">
-                                <span className={`truncate text-sm text-foreground ${unread ? 'font-semibold' : 'font-normal'}`}>
-                                  {s.title || t.brainChat.untitled}
+                              <button
+                                type="button"
+                                onClick={() => openSession({ session: s.id })}
+                                aria-current={s.active ? 'page' : undefined}
+                                className="text-left"
+                                {...rowProps}
+                              >
+                                {indicator}
+                                <span className="flex min-w-0 flex-1 flex-col">
+                                  <span className={`truncate text-sm text-foreground ${unread ? 'font-semibold' : 'font-normal'}`}>
+                                    {s.title || t.brainChat.untitled}
+                                  </span>
+                                  <span
+                                    className="truncate font-mono text-tiny text-muted-foreground"
+                                    title={brainModelQualifiedLabel({ provider: s.provider ?? '', model: s.model })}
+                                  >
+                                    {brainModelLabel({ model: s.model })}
+                                  </span>
                                 </span>
-                                <span
-                                  className="truncate font-mono text-tiny text-muted-foreground"
-                                  title={brainModelQualifiedLabel({ provider: s.provider ?? '', model: s.model })}
-                                >
-                                  {brainModelLabel({ model: s.model })}
-                                </span>
-                              </span>
-                              {unread ? <SidebarMenuBadge aria-hidden data-unread className="mt-1.5 size-1.5 rounded-full bg-primary" /> : null}
-                            </button>
-                          </SidebarMenuButton>
-                        )}
-                      </ActivityRow>
-                      {/* Centred by a flex box spanning the row, never by `top-1/2 -translate-y-1/2`.
-                          A transform CREATES A STACKING CONTEXT, and this element is the ancestor of the
-                          row's action menu: inside one, the menu's `overlay-layer-menu` z-index can only
-                          rank against its own siblings, so the panel ranked as this anchor does — a
-                          positioned element with z-index auto, painted in tree order. Every row BELOW
-                          this one then painted over the open menu, straight across Rename, Branch,
-                          Export and Delete. The geometry here is identical; what changes is that the
-                          menu's layer is free to reach the surface it belongs to. */}
-                      <div className="absolute inset-y-0 right-1 flex items-center">
-                        <ActionMenu
-                          label={`${s.title || t.brainChat.untitled}: ${t.chat.moreActions}`}
-                          items={actionItems(s)}
-                          trigger={<MoreVertical size={14} aria-hidden />}
-                          // Rename, branch, export and delete are reachable ONLY through this button, so it
-                          // cannot be a hover affordance. Touch and keyboard always reveal it; fine pointers keep
-                          // the quiet row treatment until hover, focus or Radix's open state.
-                          triggerClassName="overlay-touch-target flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100"
-                        />
+                                {unread ? <SidebarMenuBadge aria-hidden data-unread className="mt-1.5 size-1.5 rounded-full bg-primary" /> : null}
+                              </button>
+                            </SidebarMenuButton>
+                          )}
+                        </ActivityRow>
+                        {/* Centred by a flex box spanning the row, never by `top-1/2 -translate-y-1/2`.
+                            A transform CREATES A STACKING CONTEXT, and this element is the ancestor of the
+                            row's action menu: inside one, the menu's `overlay-layer-menu` z-index can only
+                            rank against its own siblings, so the panel ranked as this anchor does — a
+                            positioned element with z-index auto, painted in tree order. Every row BELOW
+                            this one then painted over the open menu, straight across Rename, Branch,
+                            Export and Delete. The geometry here is identical; what changes is that the
+                            menu's layer is free to reach the surface it belongs to. */}
+                        <div className="absolute inset-y-0 right-1 flex items-center">
+                          <ActionMenu
+                            label={`${s.title || t.brainChat.untitled}: ${t.chat.moreActions}`}
+                            items={actionItems(s)}
+                            trigger={<MoreVertical size={14} aria-hidden />}
+                            // Rename, branch, export and delete are reachable ONLY through this button, so it
+                            // cannot be a hover affordance. Touch and keyboard always reveal it; fine pointers keep
+                            // the quiet row treatment until hover, focus or Radix's open state.
+                            triggerClassName="overlay-touch-target flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100"
+                          />
+                        </div>
                       </div>
+                      {jobs.length > 0 ? jobBranch(s.id, s.title || t.brainChat.untitled, jobs) : null}
                     </>
                   )}
                 </SidebarMenuItem>
@@ -555,6 +675,10 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
             })}
           </SidebarMenu>
         )}
+        {/* A failed read is said out loud, once, under the list. A cron plugin that is absent, disabled or
+            not granted answers `unavailable` and shows nothing at all — but a read that FAILED must not
+            be presented as "no conversation has a schedule". */}
+        {jobsFailed ? <p className="px-2 py-1 text-tiny text-muted-foreground">{t.scheduledJobs.error}</p> : null}
       </div>
 
       {onOpenRegister ? (

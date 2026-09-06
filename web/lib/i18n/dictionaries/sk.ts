@@ -380,6 +380,16 @@ export const sk = {
     confirmDeleteAllTitle: 'Vymazať všetky relácie?',
     confirmDeleteAllDesc: 'Všetky konverzácie — chat, CLI aj kanály — budú natrvalo odstránené. Túto akciu nemožno vrátiť.',
     confirmDeleteAllEveryoneDesc: 'Trvalo sa zmažú všetky konverzácie všetkých účtov vrátane kanálových a úlohových relácií. Akciu nemožno vziať späť.',
+    subAgents: 'Sub-agenti',
+    subAgentsToggle: 'Sub-agenti konverzácie {title}',
+  },
+  scheduledJobs: {
+    branch: 'Naplánované úlohy',
+    toggle: 'Naplánované úlohy konverzácie {title}',
+    open: 'Otvoriť plán: {name}',
+    active: 'Aktívne',
+    paused: 'Pozastavené',
+    error: 'Naplánované úlohy sa nepodarilo načítať',
   },
   dashboard: {
     greetingMorning: 'Dobré ráno',

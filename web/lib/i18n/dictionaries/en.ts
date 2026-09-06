@@ -404,6 +404,18 @@ export const en = {
     confirmDeleteAllTitle: 'Delete every session?',
     confirmDeleteAllDesc: 'Every conversation — chat, CLI and channels — will be permanently removed. This cannot be undone.',
     confirmDeleteAllEveryoneDesc: 'Every conversation of every account will be permanently deleted, including channel and task sessions. This cannot be undone.',
+    subAgents: 'Sub-agents',
+    subAgentsToggle: 'Sub-agents of {title}',
+  },
+  /** The collapsed recurring-job branches, shared by the chat sidebar and the conversation register.
+   *  Grouping only: opening one of these rows opens the schedule's editor and runs nothing. */
+  scheduledJobs: {
+    branch: 'Scheduled jobs',
+    toggle: 'Scheduled jobs of {title}',
+    open: 'Open the schedule: {name}',
+    active: 'Active',
+    paused: 'Paused',
+    error: 'Scheduled jobs could not be loaded',
   },
   dashboard: {
     greetingMorning: 'Good morning',

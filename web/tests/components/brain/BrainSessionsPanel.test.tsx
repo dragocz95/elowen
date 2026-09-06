@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeAll, beforeEach, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, beforeEach, afterAll, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
@@ -22,15 +22,27 @@ const conversations = Array.from({ length: 13 }, (_, index) => ({
 /** Set by a test that needs specific register rows (platform/ownership shapes) instead of the plain
  *  thirteen conversations the pagination and sorting tests rely on. */
 let managedOverride: Record<string, unknown>[] | null = null;
+/** The collapsed scheduled-job branches. `available` with no links is the normal case for an instance
+ *  whose cron plugin is installed but has nothing filed under a conversation. */
+let jobLinks: { status: string; links: Record<string, unknown>[] } = { status: 'available', links: [] };
 const server = setupServer(
   http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 2, username: 'user', is_admin: admin } })),
   http.get('*/api/brain/sessions', () => HttpResponse.json(conversations)),
   http.get('*/api/brain/managed-sessions', () => HttpResponse.json(
     managedOverride ?? conversations.map((session) => ({ ...session, kind: 'conversation', tokens: 1200 })),
   )),
+  http.get('*/api/brain/conversation-links', () => HttpResponse.json(jobLinks)),
 );
-beforeEach(() => { admin = false; managedOverride = null; localStorage.clear(); });
+beforeEach(() => {
+  admin = false;
+  managedOverride = null;
+  jobLinks = { status: 'available', links: [] };
+  localStorage.clear();
+});
 beforeAll(() => server.listen()); afterAll(() => server.close());
+// A `server.use(...)` override outlives the test that added it, so a describe that installs its own
+// fixture used to keep serving it to every describe below. Reset between tests instead.
+afterEach(() => server.resetHandlers());
 
 function renderPanel() {
   const { wrapper: Wrapper } = createWrapper();
@@ -224,6 +236,176 @@ describe('BrainSessionsPanel — owner, filtering and sorting', () => {
   });
 });
 
+/** Delegated sessions belong UNDER the conversation that started them, not beside it as duplicates. The
+ *  register still lists conversations: a branch is collapsed until somebody opens it, and only roots are
+ *  sorted, counted and paged. */
+describe('BrainSessionsPanel — the sub-agent tree', () => {
+  const family = [
+    { id: 'brain-root', title: 'Planning', model: 'gpt-5.5', updated_at: '2026-07-05T10:00:00.000Z', running: false, active: false, kind: 'conversation', tokens: 10, ownerId: 2, ownerLabel: 'Me' },
+    { id: 'brain-child', title: 'Delegated worker', model: 'gpt-5.5', updated_at: '2026-07-04T10:00:00.000Z', running: false, active: false, kind: 'conversation', tokens: 20, ownerId: 2, ownerLabel: 'Me', parentSessionId: 'brain-root' },
+    { id: 'brain-grandchild', title: 'Nested worker', model: 'gpt-5.5', updated_at: '2026-07-03T10:00:00.000Z', running: false, active: false, kind: 'conversation', tokens: 30, ownerId: 2, ownerLabel: 'Me', parentSessionId: 'brain-child' },
+    { id: 'brain-orphan', title: 'Detached worker', model: 'gpt-5.5', updated_at: '2026-07-02T10:00:00.000Z', running: false, active: false, kind: 'conversation', tokens: 40, ownerId: 2, ownerLabel: 'Me', parentSessionId: 'brain-gone' },
+    { id: 'brain-foreign-child', title: 'Foreign worker', model: 'gpt-5.5', updated_at: '2026-07-01T10:00:00.000Z', running: false, active: false, kind: 'conversation', tokens: 50, ownerId: 7, ownerLabel: 'Bob', parentSessionId: 'brain-root' },
+  ];
+  beforeEach(() => { admin = true; managedOverride = family; });
+
+  const disclosure = (title: string) => screen.getByRole('button', { name: `Sub-agents of ${title}` });
+
+  it('hides a delegated session until its parent branch is opened', async () => {
+    renderPanel();
+    await screen.findByText('Planning');
+    expect(screen.queryByText('Delegated worker')).toBeNull();
+    expect(disclosure('Planning')).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(disclosure('Planning'));
+
+    expect(await screen.findByText('Delegated worker')).toBeInTheDocument();
+    expect(disclosure('Planning')).toHaveAttribute('aria-expanded', 'true');
+    // The grandchild stays behind its own branch — one click opens one level.
+    expect(screen.queryByText('Nested worker')).toBeNull();
+    fireEvent.click(disclosure('Delegated worker'));
+    expect(await screen.findByText('Nested worker')).toBeInTheDocument();
+  });
+
+  it('counts descendants on the disclosure and opens the conversation only from the title', async () => {
+    const opened: string[] = [];
+    const listener = (event: Event) => opened.push((event as CustomEvent<{ sessionId: string }>).detail.sessionId);
+    window.addEventListener('elowen:open-brain-session', listener);
+    try {
+      renderPanel();
+      await screen.findByText('Planning');
+      // Two sessions hang below Planning; the foreign one is not one of them.
+      expect(within(disclosure('Planning')).getByText('2')).toBeInTheDocument();
+
+      fireEvent.click(disclosure('Planning'));
+      expect(opened).toEqual([]);
+
+      fireEvent.click(screen.getByRole('button', { name: 'Open in web chat: Planning' }));
+      expect(opened).toEqual(['brain-root']);
+    } finally {
+      window.removeEventListener('elowen:open-brain-session', listener);
+    }
+  });
+
+  it('shows a session whose parent is gone, and one owned by somebody else, as roots', async () => {
+    renderPanel();
+    await screen.findByText('Planning');
+    // Both are visible without opening anything: an unreachable child would be a deleted conversation.
+    expect(screen.getByText('Detached worker')).toBeInTheDocument();
+    expect(screen.getByText('Foreign worker')).toBeInTheDocument();
+    // A leaf root has nothing to disclose.
+    expect(screen.queryByRole('button', { name: 'Sub-agents of Detached worker' })).toBeNull();
+  });
+
+  it('pages and counts roots, never the rows an open branch adds', async () => {
+    renderPanel();
+    await screen.findByText('Planning');
+    const roots = () => screen.getByTestId('brain-sessions-list').querySelectorAll('[data-tree-row="root"]');
+    expect(roots()).toHaveLength(3); // Planning, Detached worker, Foreign worker
+    expect(within(screen.getByTestId('brain-sessions-toolbar')).getByText('3')).toBeInTheDocument();
+
+    fireEvent.click(disclosure('Planning'));
+    await screen.findByText('Delegated worker');
+
+    expect(roots()).toHaveLength(3);
+    expect(within(screen.getByTestId('brain-sessions-toolbar')).getByText('3')).toBeInTheDocument();
+  });
+
+  it('keeps a matching descendant reachable and restores the reader’s own branches after the search', async () => {
+    renderPanel();
+    await screen.findByText('Planning');
+
+    // A match deep in the tree pulls its ancestors along and opens the path to it.
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'Nested' } });
+    expect(await screen.findByText('Nested worker')).toBeInTheDocument();
+    expect(screen.getByText('Planning')).toBeInTheDocument();
+    await waitFor(() => expect(screen.queryByText('Detached worker')).toBeNull());
+
+    // Clearing it returns to the reader's own state, which was: everything closed.
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: '' } });
+    await waitFor(() => expect(screen.getByText('Detached worker')).toBeInTheDocument());
+    expect(screen.queryByText('Nested worker')).toBeNull();
+    expect(screen.queryByText('Delegated worker')).toBeNull();
+
+    // A branch the reader opened survives a search that hides it entirely.
+    fireEvent.click(disclosure('Planning'));
+    await screen.findByText('Delegated worker');
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'Detached' } });
+    await waitFor(() => expect(screen.queryByText('Planning')).toBeNull());
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: '' } });
+    expect(await screen.findByText('Delegated worker')).toBeInTheDocument();
+  });
+});
+
+/** The recurring jobs organized under a conversation. They are navigation, not sessions: they hang in
+ *  their own collapsed branch, they open the cron editor, and they never enter the conversation count. */
+describe('BrainSessionsPanel — scheduled job branches', () => {
+  const one = [
+    { id: 'brain-root', title: 'Planning', model: 'gpt-5.5', updated_at: '2026-07-05T10:00:00.000Z', running: false, active: false, kind: 'conversation', tokens: 10, ownerId: 2, ownerLabel: 'Me' },
+  ];
+  beforeEach(() => {
+    admin = true;
+    managedOverride = one;
+    jobLinks = {
+      status: 'available',
+      links: [
+        { jobId: 'job-2', conversationId: 'brain-root', name: 'Weekly report', enabled: false, scope: 'personal', href: '/p/cronjob?job=job-2' },
+        { jobId: 'job-1', conversationId: 'brain-root', name: 'Nightly digest', enabled: true, scope: 'personal', href: '/p/cronjob?job=job-1' },
+      ],
+    };
+  });
+
+  it('files the schedules in their own collapsed branch and links each to its editor', async () => {
+    renderPanel();
+    await screen.findByText('Planning');
+    expect(screen.queryByText('Scheduled jobs')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sub-agents of Planning' }));
+    const branch = await screen.findByRole('button', { name: 'Scheduled jobs of Planning' });
+    expect(branch).toHaveAttribute('aria-expanded', 'false');
+    expect(within(branch).getByText('2')).toBeInTheDocument();
+    expect(screen.queryByText('Nightly digest')).toBeNull();
+
+    fireEvent.click(branch);
+
+    // Ordered by name, and each row is a link into the job's own editor — nothing runs.
+    const links = screen.getAllByRole('link');
+    expect(links.map((a) => a.textContent)).toEqual(['Nightly digest', 'Weekly reportPaused']);
+    expect(links[0]).toHaveAttribute('href', '/p/cronjob?job=job-1');
+    expect(links[1]).toHaveAttribute('href', '/p/cronjob?job=job-2');
+    expect(screen.getByRole('link', { name: 'Open the schedule: Weekly report, paused' })).toBeInTheDocument();
+    // A schedule is not a conversation: the register still counts one.
+    expect(within(screen.getByTestId('brain-sessions-toolbar')).getByText('1')).toBeInTheDocument();
+  });
+
+  it('finds a conversation by the name of a job filed under it', async () => {
+    renderPanel();
+    await screen.findByText('Planning');
+
+    fireEvent.change(screen.getByLabelText('Search'), { target: { value: 'Nightly' } });
+
+    expect(await screen.findByText('Nightly digest')).toBeInTheDocument();
+    expect(screen.getByText('Planning')).toBeInTheDocument();
+    // Only the matching schedule — the other one is not an answer to this query.
+    expect(screen.queryByText('Weekly report')).toBeNull();
+  });
+
+  it('says a job read failed instead of showing a conversation as having no schedules', async () => {
+    jobLinks = { status: 'error', links: [] };
+    renderPanel();
+    await screen.findByText('Planning');
+    expect(await screen.findByText('Scheduled jobs could not be loaded')).toBeInTheDocument();
+  });
+
+  it('renders no branch at all when the cron plugin cannot answer', async () => {
+    jobLinks = { status: 'unavailable', links: [] };
+    renderPanel();
+    await screen.findByText('Planning');
+    expect(screen.queryByText('Scheduled jobs could not be loaded')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sub-agents of Planning' })).toBeNull();
+  });
+});
+
 /** The register sits in a FIXED-height dialog, so a hardcoded page of twelve rows left a dead band under
  *  the table on a large screen. The page is now measured from the scroll box. jsdom lays nothing out, so
  *  the geometry is supplied by hand — the point of the test is the arithmetic and the fallback, which is
@@ -272,6 +454,50 @@ describe('BrainSessionsPanel — the page fills the dialog', () => {
       expect(screen.getByText('Conversation 13')).toBeInTheDocument();
     } finally {
       restore();
+      Reflect.deleteProperty(globalThis as unknown as Record<string, unknown>, 'ResizeObserver');
+    }
+  });
+
+  /** The page is a page of ROOTS, so the row it is measured from has to be a root. Opening a branch puts
+   *  a nested session — shorter and denser — directly under the first conversation, and measuring that
+   *  one claimed ten times as many conversations fit as actually do. */
+  it('measures a root row rather than whatever an open branch put second', async () => {
+    const realRect = HTMLElement.prototype.getBoundingClientRect;
+    Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', {
+      configurable: true,
+      value(this: HTMLElement) {
+        if (this.dataset['treeRow'] === 'root') return { height: 100 } as DOMRect;
+        if (this.getAttribute('role') === 'row') return { height: 10 } as DOMRect;
+        return realRect.call(this);
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get(this: HTMLElement) { return this.dataset['testid'] === 'brain-sessions-scroll' ? 1000 : 0; },
+    });
+    (globalThis as unknown as { ResizeObserver: unknown }).ResizeObserver = FakeResizeObserver;
+    admin = true;
+    managedOverride = [
+      ...conversations.map((session) => ({ ...session, kind: 'conversation', tokens: 10, ownerId: 2, ownerLabel: 'Me' })),
+      { id: 'brain-nested', title: 'Nested worker', model: 'gpt-5.5', updated_at: '2026-07-13T09:00:00.000Z', running: false, active: false, kind: 'conversation', tokens: 5, ownerId: 2, ownerLabel: 'Me', parentSessionId: 'brain-1' },
+    ];
+    try {
+      renderPanel();
+      await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
+      // (1000 - 10 header) / 100 = 9 conversations fit.
+      await act(async () => { FakeResizeObserver.last?.run(); });
+      expect(screen.queryByText('Conversation 10')).toBeNull();
+      expect(screen.getByText('Conversation 9')).toBeInTheDocument();
+
+      fireEvent.click(screen.getByRole('button', { name: 'Sub-agents of Conversation 1' }));
+      await screen.findByText('Nested worker');
+      await act(async () => { FakeResizeObserver.last?.run(); });
+
+      expect(screen.queryByText('Conversation 10')).toBeNull();
+      expect(screen.getByText('Conversation 9')).toBeInTheDocument();
+    } finally {
+      Object.defineProperty(HTMLElement.prototype, 'getBoundingClientRect', { configurable: true, value: realRect });
+      Reflect.deleteProperty(HTMLElement.prototype, 'clientHeight');
       Reflect.deleteProperty(globalThis as unknown as Record<string, unknown>, 'ResizeObserver');
     }
   });

@@ -40,6 +40,7 @@ const client = vi.hoisted(() => ({
   brainRenameSession: vi.fn(() => Promise.resolve({ id: 's1', title: 'Renamed' })),
   brainExportSession: vi.fn(() => Promise.resolve()),
   brainForkSession: vi.fn(() => Promise.resolve({ id: 's1-fork', title: 'First', forkedFrom: 's1' })),
+  brainConversationLinks: vi.fn(() => Promise.resolve({ status: 'available', links: [] as Record<string, unknown>[] })),
 }));
 
 vi.mock('../../../modules/advisor/BrainChatProvider', () => ({ useBrainChat: () => ctrl.value }));
@@ -85,6 +86,8 @@ beforeEach(() => {
   client.brainRenameSession.mockClear();
   client.brainExportSession.mockClear();
   client.brainForkSession.mockClear();
+  client.brainConversationLinks.mockClear();
+  client.brainConversationLinks.mockResolvedValue({ status: 'available', links: [] });
 });
 
 describe('ChatHistoryRail', () => {
@@ -484,6 +487,109 @@ describe('ChatHistoryRail', () => {
     trigger.focus();
     fireEvent.keyDown(trigger, { key: 'ArrowDown' });
     await waitFor(() => expect(screen.getByRole('menuitem', { name: /^Rename$|^Přejmenovat$/i })).toHaveFocus());
+  });
+});
+
+/** The recurring jobs filed under a conversation, as a collapsed branch under its row. Navigation only:
+ *  a job row opens the schedule's own editor and nothing about the schedule changes. */
+describe('ChatHistoryRail — scheduled job branches', () => {
+  const digest = { jobId: 'job-1', conversationId: 's1', name: 'Nightly digest', enabled: true, scope: 'personal', href: '/p/cronjob?job=job-1' };
+  const report = { jobId: 'job-2', conversationId: 's1', name: 'Weekly report', enabled: false, scope: 'personal', href: '/p/cronjob?job=job-2' };
+  const withLinks = (...links: Record<string, unknown>[]) =>
+    client.brainConversationLinks.mockResolvedValue({ status: 'available', links });
+  const branch = () => screen.findByRole('button', { name: 'Scheduled jobs of First' });
+
+  it('keeps the schedules folded away until the disclosure is opened', async () => {
+    withLinks(digest, report);
+    renderRail('rail');
+    const trigger = await branch();
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(within(trigger).getByText('2')).toBeInTheDocument();
+    expect(screen.queryByText('Nightly digest')).toBeNull();
+    // A conversation with no schedules gets no branch at all.
+    expect(screen.queryByRole('button', { name: 'Scheduled jobs of Second' })).toBeNull();
+
+    fireEvent.click(trigger);
+
+    const links = await screen.findAllByRole('link');
+    expect(links.map((a) => a.getAttribute('href'))).toEqual(['/p/cronjob?job=job-1', '/p/cronjob?job=job-2']);
+    expect(screen.getByRole('link', { name: 'Open the schedule: Weekly report, paused' })).toBeInTheDocument();
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    // Radix names the content the trigger controls, so the disclosure announces itself properly.
+    expect(trigger).toHaveAttribute('aria-controls');
+  });
+
+  it('separates the disclosure from opening the conversation', async () => {
+    withLinks(digest);
+    renderRail('rail');
+    fireEvent.click(await branch());
+    expect(ctrl.switchSession).not.toHaveBeenCalled();
+    // The trigger is a sibling of the row button, never nested inside it.
+    expect(screen.getByText('First').closest('button')!.querySelector('[data-slot="collapsible-trigger"]')).toBeNull();
+  });
+
+  it('dismisses an overlay variant when a schedule is opened and leaves the rail mounted', async () => {
+    withLinks(digest);
+    const onClose = vi.fn();
+    const { wrapper: Wrapper } = createWrapper();
+    const { unmount } = render(<Wrapper><ToastProvider><ChatHistoryRail variant="drawer" open onClose={onClose} /></ToastProvider></Wrapper>);
+    fireEvent.click(await branch());
+    fireEvent.click(await screen.findByRole('link', { name: /Nightly digest/ }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+    unmount();
+
+    renderRail('rail');
+    fireEvent.click(await branch());
+    fireEvent.click(await screen.findByRole('link', { name: /Nightly digest/ }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('adds job matches to the search without losing the transcript snippets', async () => {
+    withLinks(digest, report);
+    client.brainSearch.mockResolvedValueOnce([
+      { sessionId: 's1', sessionTitle: 'First', role: 'user', snippet: 'a digest of the day', ts: '2026-07-08T00:00:00Z' },
+      { sessionId: 's1', sessionTitle: 'First', role: 'assistant', snippet: 'the digest again', ts: '2026-07-08T01:00:00Z' },
+    ]);
+    renderRail('rail');
+    fireEvent.change(screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i }), { target: { value: 'digest' } });
+
+    // The snippets survive, highlight and all — the match itself sits in its own <mark>, so the
+    // surrounding text is what identifies each row.
+    expect(await screen.findByText(/of the day/)).toBeInTheDocument();
+    expect(screen.getByText(/again/)).toBeInTheDocument();
+    expect(document.querySelectorAll('mark')).toHaveLength(2);
+    // The schedule is offered once, under its conversation, however many snippets matched.
+    const jobRows = await screen.findAllByRole('link', { name: /Open the schedule/ });
+    expect(jobRows).toHaveLength(1);
+    expect(jobRows[0]).toHaveAttribute('href', '/p/cronjob?job=job-1');
+    expect(screen.queryByText('Weekly report')).toBeNull();
+  });
+
+  it('never lists a conversation the sidebar does not hold', async () => {
+    // A direct platform chat is an eligible cron target but is NOT in the personal conversation list.
+    withLinks({ ...digest, conversationId: 'brain-ch-telegram-42', name: 'Channel digest' });
+    renderRail('rail');
+    await screen.findByText('First');
+    expect(screen.queryByText('Channel digest')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Scheduled jobs of/ })).toBeNull();
+
+    fireEvent.change(screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i }), { target: { value: 'digest' } });
+    await screen.findByText('Hit session');
+    expect(screen.queryByText('Channel digest')).toBeNull();
+  });
+
+  it('says a job read failed instead of showing every conversation as unscheduled', async () => {
+    client.brainConversationLinks.mockResolvedValue({ status: 'error', links: [] });
+    renderRail('rail');
+    expect(await screen.findByText('Scheduled jobs could not be loaded')).toBeInTheDocument();
+  });
+
+  it('shows nothing at all when the cron plugin cannot answer', async () => {
+    client.brainConversationLinks.mockResolvedValue({ status: 'unavailable', links: [] });
+    renderRail('rail');
+    await screen.findByText('First');
+    expect(screen.queryByText('Scheduled jobs could not be loaded')).toBeNull();
+    expect(screen.queryByRole('button', { name: /Scheduled jobs of/ })).toBeNull();
   });
 });
 

@@ -1,13 +1,24 @@
 'use client';
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Trash2, Circle, FileCode, FileJson, MoreHorizontal } from 'lucide-react';
+import { Trash2, Circle, ChevronRight, CornerDownRight, FileCode, FileJson, MoreHorizontal } from 'lucide-react';
 import { elowenClient } from '../../lib/elowenClient';
 import { openBrainSession } from '../../lib/brainDock';
 import { localDateTime, formatTokens } from '../../lib/format';
 import { useTranslation } from '../../lib/i18n';
 import { useToast } from '../ui/Toast';
-import { useMe } from '../../lib/queries';
+import { useConversationJobLinks, useMe } from '../../lib/queries';
+import {
+  buildConversationTree,
+  filterConversationTree,
+  groupJobLinks,
+  sortConversationTree,
+  type ConversationRow,
+  type ConversationTreeNode,
+} from '../../lib/conversationTree';
+import { ScheduledJobLink, scheduledJobName } from './ScheduledJobLink';
+import type { ConversationJobLink } from '../../lib/types';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { Avatar } from '../ui/Avatar';
 import { ModelIcon } from '../ui/ModelIcon';
@@ -35,7 +46,15 @@ const FALLBACK_PAGE_SIZE = 12;
 const MIN_PAGE_SIZE = 4;
 const FALLBACK_ROW_HEIGHT = 44;
 
-interface Row { id: string; title: string; model: string; updated_at: string; running: boolean; kind: 'conversation' | 'channel' | 'task'; tokens?: number; ownerId?: number; ownerLabel?: string; platform?: string | null; direct?: boolean; lastWriterId?: number | null; lastWriterLabel?: string | null }
+/** How far one nesting level shifts a row, and how many levels are allowed to shift it. Past the cap the
+ *  ancestry is still there — the rows are still nested under their parent and still only reachable
+ *  through it — but a deep chain stops eating the title column on a narrow register. */
+const INDENT_STEP = 16;
+const MAX_INDENT_LEVELS = 4;
+
+/** One shared empty set for "nothing is expanded", so an unfiltered render keeps the same identities and
+ *  the memo below it does not recompute on every keystroke elsewhere in the panel. */
+const EMPTY_IDS: ReadonlySet<string> = new Set<string>();
 
 /** Platforms that are MACHINE work rather than a place people talk: a delegated sub-agent and a scheduled
  *  run. The account that owns those really did start them, so they are never re-labelled as hosted. */
@@ -44,7 +63,7 @@ const MACHINE_PLATFORMS = new Set(['subagent', 'cron']);
 /** Whether this row's owner merely HOSTS the transcript instead of being the person talking in it — a
  *  shared platform room, which core deliberately anchors on the instance operator because a room has no
  *  single author (see `direct` on ManagedSessionView). A direct 1:1 chat is genuinely its owner's. */
-const hostedRoom = (s: Row): boolean =>
+const hostedRoom = (s: ConversationRow): boolean =>
   s.kind === 'channel' && !!s.platform && !s.direct && !MACHINE_PLATFORMS.has(s.platform);
 
 type SortKey = 'title' | 'owner' | 'model' | 'tokens' | 'updated';
@@ -52,6 +71,21 @@ type SortKey = 'title' | 'owner' | 'model' | 'tokens' | 'updated';
 /** The order a column takes when it is first clicked: text reads naturally A→Z, while a number and a
  *  timestamp are almost always wanted biggest/newest first. */
 const DEFAULT_DIRECTION: Record<SortKey, SortDirection> = { title: 'asc', owner: 'asc', model: 'asc', tokens: 'desc', updated: 'desc' };
+
+/** The register's sort, as one comparator over rows so the roots and every sibling set get the same
+ *  order. Each key falls back to recency, which keeps rows with an equal key stable and meaningful. */
+function rowComparator(sort: SortKey, direction: SortDirection): (a: ConversationRow, b: ConversationRow) => number {
+  const flip = direction === 'asc' ? 1 : -1;
+  return (a, b) => {
+    switch (sort) {
+      case 'title': return flip * a.title.localeCompare(b.title) || b.updated_at.localeCompare(a.updated_at);
+      case 'owner': return flip * (a.ownerLabel ?? '').localeCompare(b.ownerLabel ?? '') || b.updated_at.localeCompare(a.updated_at);
+      case 'model': return flip * a.model.localeCompare(b.model) || b.updated_at.localeCompare(a.updated_at);
+      case 'tokens': return flip * ((a.tokens ?? 0) - (b.tokens ?? 0)) || b.updated_at.localeCompare(a.updated_at);
+      default: return flip * a.updated_at.localeCompare(b.updated_at);
+    }
+  };
+}
 
 // Model first, then the conversation, its owner, the tokens it burned and when it last moved.
 const COLUMNS = 'minmax(0,1.2fr) minmax(0,2.4fr) minmax(0,1.2fr) 5.5rem 10rem 2.25rem';
@@ -83,6 +117,9 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
   const [sort, setSort] = useState<SortKey>('updated');
   const [direction, setDirection] = useState<SortDirection>('desc');
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
+  // Prefix for the row ids the disclosure buttons point `aria-controls` at — the register can be mounted
+  // twice (the chat modal over the settings page), and two rows may not share one id.
+  const uid = useId();
 
   // Accounts are read only to put a FACE on the owner column — the rows already carry the name. An
   // ordinary user never sees a foreign row, so the admin-only endpoint stays unasked for them.
@@ -91,29 +128,45 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
   const managed = useQuery({ queryKey: ['brain-managed-sessions'], queryFn: elowenClient.brainManagedSessions, enabled: isAdmin && view === 'all' });
   const own = useQuery({ queryKey: ['brain-sessions'], queryFn: elowenClient.brainSessions, enabled: view === 'mine' });
   const q = view === 'all' ? managed : own;
+  // The recurring jobs organized under these conversations, scoped to the list being shown. Read once for
+  // the whole register — search has to see every link before the roots are paged.
+  const jobLinks = useConversationJobLinks(view === 'all' ? 'all' : 'mine');
   // Own sessions carry no kind/tokens — they're always continuable conversations.
-  const sessions: Row[] = view === 'all'
+  const sessions: ConversationRow[] = useMemo(() => (view === 'all'
     ? (managed.data ?? [])
-    : (own.data ?? []).map((s) => ({ ...s, kind: 'conversation' as const }));
+    : (own.data ?? []).map((s) => ({ ...s, kind: 'conversation' as const }))), [view, managed.data, own.data]);
+  const jobsByConversation = useMemo(() => groupJobLinks(jobLinks.data?.links ?? []), [jobLinks.data]);
+  // The forest is built BEFORE filtering, sorting and pagination: a child has to find its parent among
+  // every row the daemon sent, not only among the ones this page happens to show.
+  const tree = useMemo(() => buildConversationTree(sessions, jobsByConversation), [sessions, jobsByConversation]);
+
   const needle = search.trim().toLowerCase();
   // The search covers the owner too, so narrowing to one person needs no separate filter control.
-  const visible = sessions
-    .filter((s) => !needle || `${s.title} ${s.ownerLabel ?? ''} ${s.model}`.toLowerCase().includes(needle))
-    .slice()
-    .sort((a, b) => {
-      const flip = direction === 'asc' ? 1 : -1;
-      switch (sort) {
-        case 'title': return flip * a.title.localeCompare(b.title) || b.updated_at.localeCompare(a.updated_at);
-        case 'owner': return flip * (a.ownerLabel ?? '').localeCompare(b.ownerLabel ?? '') || b.updated_at.localeCompare(a.updated_at);
-        case 'model': return flip * a.model.localeCompare(b.model) || b.updated_at.localeCompare(a.updated_at);
-        // Every sort falls back to recency, so rows with an equal key keep a stable, meaningful order.
-        case 'tokens': return flip * ((a.tokens ?? 0) - (b.tokens ?? 0)) || b.updated_at.localeCompare(a.updated_at);
-        default: return flip * a.updated_at.localeCompare(b.updated_at);
-      }
-    });
+  const filtered = useMemo(() => (needle
+    ? filterConversationTree(tree, needle, (r) => `${r.title} ${r.ownerLabel ?? ''} ${r.model}`.toLowerCase().includes(needle))
+    : { roots: tree, expanded: EMPTY_IDS, jobsExpanded: EMPTY_IDS }), [tree, needle]);
+  const visible = useMemo(
+    () => sortConversationTree(filtered.roots, rowComparator(sort, direction)),
+    [filtered.roots, sort, direction],
+  );
   const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
   const clampedPage = Math.min(page, pageCount - 1);
+  // A page is a page of ROOTS. Whatever an open branch adds scrolls inside the same viewport and never
+  // pushes a conversation onto the next page.
   const pageRows = visible.slice(clampedPage * pageSize, (clampedPage + 1) * pageSize);
+
+  // Manual expansion, keyed by session id and branch kind, kept for as long as the register is mounted —
+  // a refetch must not fold a branch the reader opened. The search adds its own temporary expansion on
+  // top WITHOUT writing here, which is what restores the reader's own state when the query is cleared.
+  const [openBranches, setOpenBranches] = useState<ReadonlySet<string>>(EMPTY_IDS);
+  const [openJobBranches, setOpenJobBranches] = useState<ReadonlySet<string>>(EMPTY_IDS);
+  const branchOpen = (id: string): boolean => openBranches.has(id) || filtered.expanded.has(id);
+  const jobBranchOpen = (id: string): boolean => openJobBranches.has(id) || filtered.jobsExpanded.has(id);
+  const toggle = (setter: typeof setOpenBranches) => (id: string) => setter((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
 
   useEffect(() => { setPage(0); }, [view, search, sort, direction]);
 
@@ -127,7 +180,10 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
       // the live DOM keeps this honest when density, font size or zoom changes.
       const rows = box.querySelectorAll('[role="row"]');
       const headHeight = rows[0]?.getBoundingClientRect().height ?? 0;
-      const rowHeight = rows[1]?.getBoundingClientRect().height ?? FALLBACK_ROW_HEIGHT;
+      // A ROOT row, explicitly marked, because the page counts roots. The first body row used to do, and
+      // stopped the day one of them could be a nested sub-agent or a job link: those are shorter and
+      // denser, so measuring one would claim more conversations fit than actually do.
+      const rowHeight = box.querySelector('[data-tree-row="root"]')?.getBoundingClientRect().height ?? FALLBACK_ROW_HEIGHT;
       if (rowHeight <= 0) return;
       const next = Math.max(MIN_PAGE_SIZE, Math.floor((available - headHeight) / rowHeight));
       const prev = pageSizeRef.current;
@@ -176,13 +232,13 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
     catch { toast(t.common.error, 'error'); }
   };
 
-  const rowActions = (session: Row) => [
+  const rowActions = (session: ConversationRow) => [
     { label: t.sessionsPanel.exportHtml, icon: FileCode, onSelect: () => { void doExport(session.id, 'html'); } },
     { label: t.sessionsPanel.exportJsonl, icon: FileJson, onSelect: () => { void doExport(session.id, 'jsonl'); } },
     { label: t.common.delete, icon: Trash2, tone: 'danger' as const, onSelect: () => setConfirmId(session.id) },
   ];
 
-  const openRowContextMenu = (event: React.MouseEvent, session: Row) => {
+  const openRowContextMenu = (event: React.MouseEvent, session: ConversationRow) => {
     event.preventDefault();
     setContextMenu({
       x: event.clientX,
@@ -194,6 +250,212 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
         onClick: item.onSelect,
       })),
     });
+  };
+
+  // Row ids for `aria-controls`. The session id goes through `encodeURIComponent` because a channel id
+  // carries `:` and `@` and an id list is space-separated — the encoding is reversible, so two different
+  // conversations can never collide on one DOM id.
+  const rowDomId = (sessionId: string) => `${uid}-row-${encodeURIComponent(sessionId)}`;
+  const jobsRowDomId = (sessionId: string) => `${uid}-jobs-${encodeURIComponent(sessionId)}`;
+  const indentOf = (depth: number) => ({ paddingInlineStart: Math.min(depth, MAX_INDENT_LEVELS) * INDENT_STEP });
+
+  /** The leading slot of the title cell: the branch disclosure when there is something to reveal, the
+   *  nesting mark on a leaf below the top level, and nothing at all on a leaf root.
+   *
+   *  It is a button of its own, beside the title button and never inside it — opening a branch and
+   *  opening the conversation are two different acts, and a control nested in another is invalid anyway.
+   *  The revealed rows are table rows, so they have no single wrapper to point `aria-controls` at; the
+   *  ids of the rows this button reveals are listed instead. */
+  const branchToggle = (node: ConversationTreeNode): ReactNode => {
+    const hasBranch = node.children.length > 0 || node.jobs.length > 0;
+    if (!hasBranch) {
+      return node.depth > 0
+        ? <CornerDownRight size={12} aria-hidden className="w-5 shrink-0 text-muted-foreground/70" />
+        : <span aria-hidden className="w-5 shrink-0" />;
+    }
+    const open = branchOpen(node.row.id);
+    const revealed = [
+      ...(node.jobs.length > 0 ? [jobsRowDomId(node.row.id)] : []),
+      ...node.children.map((child) => rowDomId(child.row.id)),
+    ];
+    return (
+      <button
+        type="button"
+        onClick={() => toggle(setOpenBranches)(node.row.id)}
+        aria-expanded={open}
+        // Only while the rows exist: a closed branch is unmounted, and an IDREF pointing at nothing is
+        // worse than no reference at all.
+        aria-controls={open ? revealed.join(' ') : undefined}
+        aria-label={t.sessionsPanel.subAgentsToggle.replace('{title}', node.row.title || t.sessionsPanel.untitled)}
+        // What the bare number beside the chevron counts. The accessible name already says it; this is
+        // for the pointer, which otherwise reads a digit with nothing attached to it.
+        title={t.sessionsPanel.subAgents}
+        className="flex shrink-0 items-center gap-0.5 rounded-md px-0.5 py-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+      >
+        <ChevronRight size={12} aria-hidden className={`transition-transform motion-reduce:transition-none ${open ? 'rotate-90' : ''}`} />
+        {node.descendantCount > 0 ? (
+          <span className="font-mono text-tiny tabular-nums">{node.descendantCount}</span>
+        ) : null}
+      </button>
+    );
+  };
+
+  const sessionRow = (node: ConversationTreeNode): ReactNode => {
+    const s = node.row;
+    // Own conversations (web/CLI) resume & continue in the web chat; channel (Discord) and
+    // task-worker sessions open read-only (the daemon won't let the owner post into them).
+    // A foreign conversation opens READ-ONLY: the daemon lets an admin read the transcript
+    // but never accept a post into it, so offering "continue" would just fail at send.
+    const foreign = s.ownerId !== undefined && myId !== undefined && s.ownerId !== myId;
+    const continuable = s.kind === 'conversation' && !foreign;
+    const label = continuable ? t.sessionsPanel.openInChat : t.sessionsPanel.viewInChat;
+    const title = s.title || t.sessionsPanel.untitled;
+    // A session whose owner is not in the account list (or a list this caller may not read)
+    // still deserves a face, so fall back to the name the row carries.
+    const owner = s.ownerId == null ? undefined
+      : userById.get(s.ownerId) ?? { id: s.ownerId, username: s.ownerLabel || String(s.ownerId) };
+    // The person who last wrote here, resolved the same way — used on a shared room, where the
+    // owner names the account hosting the transcript rather than anyone talking in it.
+    const writer = s.lastWriterId == null ? undefined
+      : userById.get(s.lastWriterId) ?? { id: s.lastWriterId, username: s.lastWriterLabel || String(s.lastWriterId) };
+    return (
+      // `data-tree-row` is what the page measurement reads: only a ROOT is a page unit.
+      <DataTableRow
+        key={s.id}
+        id={rowDomId(s.id)}
+        data-tree-row={node.depth === 0 ? 'root' : 'descendant'}
+        interactive
+        className="group"
+        onContextMenu={(event) => openRowContextMenu(event, s)}
+      >
+        <DataTableCell priority="mobile" lines={1}>
+          <span className="flex min-w-0 items-center gap-1.5" title={s.model}>
+            <ModelIcon name={s.model} size={14} />
+            <span className="truncate text-xs text-muted-foreground">{s.model}</span>
+          </span>
+        </DataTableCell>
+        {/* The title IS the row's control here, so the cell keeps its focus ring and its own
+            layout instead of being clipped; the label inside truncates on its own. */}
+        <DataTableCell lines="auto" style={indentOf(node.depth)}>
+          <span className="flex min-w-0 items-center gap-1">
+            {branchToggle(node)}
+            <button
+              type="button"
+              onClick={() => { openBrainSession(s.id, continuable); afterOpen?.(); }}
+              title={label}
+              aria-label={`${label}: ${title}`}
+              className="flex w-full min-w-0 items-center gap-1.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+            >
+              <span className="truncate text-sm text-foreground transition-colors group-hover:text-primary">{title}</span>
+              {/* WHERE the conversation happened. A web chat carries no mark — it is the norm
+                  here and labelling every row would be noise. */}
+              {s.platform ? <PlatformIcon platform={s.platform} /> : null}
+              {s.running ? <Circle size={7} className="shrink-0 fill-success text-success" aria-label={t.sessionsPanel.running} /> : null}
+            </button>
+          </span>
+        </DataTableCell>
+        <DataTableCell priority="wide" lines={1}>
+          {/* The account row when it is known (it carries the uploaded picture); otherwise the
+              name the session itself reported, which still yields a monogram. */}
+          {/* On a SHARED room the person who writes is the useful answer, and it is NOT the
+              owner: a room has no single author, so core anchors it on the operator. Show the
+              writer there and mark the account as merely hosting the transcript. Everywhere
+              else the owner IS the person talking, and nothing changes. */}
+          {hostedRoom(s) && writer ? (
+            <span className="flex min-w-0 items-center gap-2" title={s.lastWriterLabel ?? ''}>
+              <Avatar user={writer} size={20} />
+              <span className="truncate text-xs text-muted-foreground">{s.lastWriterLabel}</span>
+              <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-tiny text-muted-foreground">{t.sessionsPanel.roomBadge}</span>
+            </span>
+          ) : owner ? (
+            <span className="flex min-w-0 items-center gap-2" title={s.ownerLabel ?? ''}>
+              <Avatar user={owner} size={20} />
+              <span className="truncate text-xs text-muted-foreground">{s.ownerLabel ?? ''}</span>
+              {hostedRoom(s) ? (
+                <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-tiny text-muted-foreground">{t.sessionsPanel.roomBadge}</span>
+              ) : null}
+            </span>
+          ) : null}
+        </DataTableCell>
+        <DataTableCell priority="wide" lines={1} className="text-right font-mono text-tiny text-muted-foreground">
+          {s.tokens != null ? formatTokens(s.tokens) : ''}
+        </DataTableCell>
+        <DataTableCell priority="wide" lines={1} className="font-mono text-tiny text-muted-foreground">{localDateTime(s.updated_at, locale, false)}</DataTableCell>
+        <DataTableCell lines="auto">
+          <ActionMenu
+            label={`${title}: ${t.common.actions}`}
+            items={rowActions(s)}
+            trigger={<MoreHorizontal size={16} aria-hidden />}
+            triggerClassName="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+          />
+        </DataTableCell>
+      </DataTableRow>
+    );
+  };
+
+  /** The schedules organized under a conversation, as their own labelled branch. They are NOT sessions:
+   *  they carry no owner face, no token total and no row actions, and they are counted separately. */
+  const jobsBranchRow = (node: ConversationTreeNode): ReactNode => {
+    const open = jobBranchOpen(node.row.id);
+    return (
+      <DataTableRow key={`${node.row.id}:jobs`} id={jobsRowDomId(node.row.id)} data-tree-row="jobs">
+        <DataTableCell priority="mobile" lines={1}>{null}</DataTableCell>
+        <DataTableCell lines="auto" style={indentOf(node.depth + 1)}>
+          <button
+            type="button"
+            onClick={() => toggle(setOpenJobBranches)(node.row.id)}
+            aria-expanded={open}
+            aria-controls={open ? node.jobs.map((link) => `${jobsRowDomId(node.row.id)}-${encodeURIComponent(link.jobId)}`).join(' ') : undefined}
+            aria-label={t.scheduledJobs.toggle.replace('{title}', node.row.title || t.sessionsPanel.untitled)}
+            className="flex min-w-0 items-center gap-1 rounded-md px-0.5 py-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+          >
+            <ChevronRight size={12} aria-hidden className={`shrink-0 transition-transform motion-reduce:transition-none ${open ? 'rotate-90' : ''}`} />
+            <span className="truncate text-xs">{t.scheduledJobs.branch}</span>
+            <span className="font-mono text-tiny tabular-nums">{node.jobs.length}</span>
+          </button>
+        </DataTableCell>
+        <DataTableCell priority="wide" lines={1}>{null}</DataTableCell>
+        <DataTableCell priority="wide" lines={1}>{null}</DataTableCell>
+        <DataTableCell priority="wide" lines={1}>{null}</DataTableCell>
+        <DataTableCell lines="auto">{null}</DataTableCell>
+      </DataTableRow>
+    );
+  };
+
+  /** One schedule. The link is generated by the daemon and only ever points at the job's own editor —
+   *  opening it changes nothing about when the job runs or where its result goes. */
+  const jobRow = (node: ConversationTreeNode, link: ConversationJobLink): ReactNode => (
+    <DataTableRow key={`${node.row.id}:job:${link.jobId}`} id={`${jobsRowDomId(node.row.id)}-${encodeURIComponent(link.jobId)}`} data-tree-row="job">
+      <DataTableCell priority="mobile" lines={1}>{null}</DataTableCell>
+      <DataTableCell lines="auto" style={indentOf(node.depth + 2)}>
+        <Link
+          href={link.href}
+          onClick={() => afterOpen?.()}
+          aria-label={scheduledJobName(link, t.scheduledJobs)}
+          className="flex w-full min-w-0 items-center gap-1.5 rounded-md text-left text-xs text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+        >
+          <ScheduledJobLink link={link} labels={t.scheduledJobs} />
+        </Link>
+      </DataTableCell>
+      <DataTableCell priority="wide" lines={1}>{null}</DataTableCell>
+      <DataTableCell priority="wide" lines={1}>{null}</DataTableCell>
+      <DataTableCell priority="wide" lines={1}>{null}</DataTableCell>
+      <DataTableCell lines="auto">{null}</DataTableCell>
+    </DataTableRow>
+  );
+
+  /** One conversation and, when its branch is open, what hangs under it: first its schedules as their own
+   *  collapsed branch, then the sessions it delegated, each recursing the same way. A closed register is
+   *  therefore exactly as long as its list of roots. */
+  const renderNode = (node: ConversationTreeNode): ReactNode[] => {
+    const rows: ReactNode[] = [sessionRow(node)];
+    if (!branchOpen(node.row.id)) return rows;
+    if (node.jobs.length > 0) {
+      rows.push(jobsBranchRow(node));
+      if (jobBranchOpen(node.row.id)) for (const link of node.jobs) rows.push(jobRow(node, link));
+    }
+    for (const child of node.children) rows.push(...renderNode(child));
+    return rows;
   };
 
   return (
@@ -237,6 +499,12 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
       </ControlSurfaceToolbar>
 
       <ControlSurfaceRegister className="flex min-h-0 flex-1 flex-col">
+      {/* A failed job read is said out loud. A missing or ungranted cron plugin is `unavailable` and shows
+          nothing at all, but a genuine read failure must never be presented as "this conversation has no
+          schedules" — that is a wrong answer, not an empty one. */}
+      {!q.isError && (jobLinks.data?.status === 'error' || jobLinks.isError) ? (
+        <p role="status" className="px-1 pt-1 text-tiny text-muted-foreground">{t.scheduledJobs.error}</p>
+      ) : null}
       <div ref={scrollRef} data-testid="brain-sessions-scroll" className="min-h-0 flex-1 overflow-y-auto">
       {q.isLoading ? <LoadingLine />
         : q.isError ? <p className="py-8 text-xs italic text-muted-foreground">{t.common.daemonUnreachable}</p>
@@ -253,86 +521,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
                   would leave a non-cell child inside role="row", which is invalid. */}
               <DataTableCell header lines={1}><span className="sr-only">{t.common.actions}</span></DataTableCell>
             </DataTableRow>
-            {pageRows.map((s) => {
-              // Own conversations (web/CLI) resume & continue in the web chat; channel (Discord) and
-              // task-worker sessions open read-only (the daemon won't let the owner post into them).
-              // A foreign conversation opens READ-ONLY: the daemon lets an admin read the transcript
-              // but never accept a post into it, so offering "continue" would just fail at send.
-              const foreign = s.ownerId !== undefined && myId !== undefined && s.ownerId !== myId;
-              const continuable = s.kind === 'conversation' && !foreign;
-              const label = continuable ? t.sessionsPanel.openInChat : t.sessionsPanel.viewInChat;
-              const title = s.title || t.sessionsPanel.untitled;
-              // A session whose owner is not in the account list (or a list this caller may not read)
-              // still deserves a face, so fall back to the name the row carries.
-              const owner = s.ownerId == null ? undefined
-                : userById.get(s.ownerId) ?? { id: s.ownerId, username: s.ownerLabel || String(s.ownerId) };
-              // The person who last wrote here, resolved the same way — used on a shared room, where the
-              // owner names the account hosting the transcript rather than anyone talking in it.
-              const writer = s.lastWriterId == null ? undefined
-                : userById.get(s.lastWriterId) ?? { id: s.lastWriterId, username: s.lastWriterLabel || String(s.lastWriterId) };
-              return (
-                <DataTableRow key={s.id} interactive className="group" onContextMenu={(event) => openRowContextMenu(event, s)}>
-                  <DataTableCell priority="mobile" lines={1}>
-                    <span className="flex min-w-0 items-center gap-1.5" title={s.model}>
-                      <ModelIcon name={s.model} size={14} />
-                      <span className="truncate text-xs text-muted-foreground">{s.model}</span>
-                    </span>
-                  </DataTableCell>
-                  {/* The title IS the row's control here, so the cell keeps its focus ring and its own
-                      layout instead of being clipped; the label inside truncates on its own. */}
-                  <DataTableCell lines="auto">
-                    <button
-                      type="button"
-                      onClick={() => { openBrainSession(s.id, continuable); afterOpen?.(); }}
-                      title={label}
-                      aria-label={`${label}: ${title}`}
-                      className="flex w-full min-w-0 items-center gap-1.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
-                    >
-                      <span className="truncate text-sm text-foreground transition-colors group-hover:text-primary">{title}</span>
-                      {/* WHERE the conversation happened. A web chat carries no mark — it is the norm
-                          here and labelling every row would be noise. */}
-                      {s.platform ? <PlatformIcon platform={s.platform} /> : null}
-                      {s.running ? <Circle size={7} className="shrink-0 fill-success text-success" aria-label={t.sessionsPanel.running} /> : null}
-                    </button>
-                  </DataTableCell>
-                  <DataTableCell priority="wide" lines={1}>
-                    {/* The account row when it is known (it carries the uploaded picture); otherwise the
-                        name the session itself reported, which still yields a monogram. */}
-                    {/* On a SHARED room the person who writes is the useful answer, and it is NOT the
-                        owner: a room has no single author, so core anchors it on the operator. Show the
-                        writer there and mark the account as merely hosting the transcript. Everywhere
-                        else the owner IS the person talking, and nothing changes. */}
-                    {hostedRoom(s) && writer ? (
-                      <span className="flex min-w-0 items-center gap-2" title={s.lastWriterLabel ?? ''}>
-                        <Avatar user={writer} size={20} />
-                        <span className="truncate text-xs text-muted-foreground">{s.lastWriterLabel}</span>
-                        <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-tiny text-muted-foreground">{t.sessionsPanel.roomBadge}</span>
-                      </span>
-                    ) : owner ? (
-                      <span className="flex min-w-0 items-center gap-2" title={s.ownerLabel ?? ''}>
-                        <Avatar user={owner} size={20} />
-                        <span className="truncate text-xs text-muted-foreground">{s.ownerLabel ?? ''}</span>
-                        {hostedRoom(s) ? (
-                          <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-tiny text-muted-foreground">{t.sessionsPanel.roomBadge}</span>
-                        ) : null}
-                      </span>
-                    ) : null}
-                  </DataTableCell>
-                  <DataTableCell priority="wide" lines={1} className="text-right font-mono text-tiny text-muted-foreground">
-                    {s.tokens != null ? formatTokens(s.tokens) : ''}
-                  </DataTableCell>
-                  <DataTableCell priority="wide" lines={1} className="font-mono text-tiny text-muted-foreground">{localDateTime(s.updated_at, locale, false)}</DataTableCell>
-                  <DataTableCell lines="auto">
-                    <ActionMenu
-                      label={`${title}: ${t.common.actions}`}
-                      items={rowActions(s)}
-                      trigger={<MoreHorizontal size={16} aria-hidden />}
-                      triggerClassName="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
-                    />
-                  </DataTableCell>
-                </DataTableRow>
-              );
-            })}
+            {pageRows.flatMap(renderNode)}
           </DataTable>
         )}
       </div>

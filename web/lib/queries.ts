@@ -2,7 +2,7 @@ import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { useRef } from 'react';
 import { elowenClient } from './elowenClient';
 import { useTranslation } from './i18n';
-import type { DashRecap, MemoryFilters, SlashCommandDef, ProcessInfo, UsageOriginGroup } from './types';
+import type { ConversationLinksResponse, DashRecap, MemoryFilters, SlashCommandDef, ProcessInfo, UsageOriginGroup } from './types';
 
 export const QUERY_KEYS = {
   health: ['health'] as const,
@@ -25,6 +25,9 @@ export const QUERY_KEYS = {
   brainDebugSessions: ['brain-debug-sessions'] as const,
   brainDebugRequests: ['brain-debug-requests'] as const,
   brainDebugRequest: ['brain-debug-request'] as const,
+  /** The prefix; the scope (`mine` / `all`) is the second element, so invalidating the prefix refreshes
+   *  both the sidebar's and the register's branches at once. */
+  brainConversationLinks: ['brain-conversation-links'] as const,
   pluginUi: ['plugin-ui'] as const,
   userPluginConfigs: ['user-plugin-configs'] as const,
   sandboxOverview: ['sandbox-overview'] as const,
@@ -39,6 +42,22 @@ export const useBrainCommands = () =>
     queryKey: QUERY_KEYS.brainCommands,
     queryFn: () => elowenClient.brainCommands().then((r) => r.commands),
     staleTime: 60_000,
+  });
+
+/** The recurring jobs organized under each conversation — the collapsed "Scheduled jobs" branches in the
+ *  chat sidebar (`mine`) and in the admin register (`all`).
+ *
+ *  ONE request per list, holding the whole minimal summary array: search has to see every link before the
+ *  register pages its roots, and a request per visible row would multiply a quiet navigation aid into a
+ *  burst. There is no poll — schedules change when somebody edits them, and the cron mutations invalidate
+ *  this key — but a focus refetch is kept (against the client default) so a tab left open beside the cron
+ *  editor catches up on return instead of listing a job that was renamed elsewhere. */
+export const useConversationJobLinks = (scope: 'mine' | 'all' = 'mine') =>
+  useQuery<ConversationLinksResponse>({
+    queryKey: [...QUERY_KEYS.brainConversationLinks, scope],
+    queryFn: () => elowenClient.brainConversationLinks(scope),
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
   });
 
 /** Background processes for the panel next to the todos. Polls quickly while any is running (to catch
