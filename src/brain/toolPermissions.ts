@@ -1,4 +1,5 @@
 import type { AskAnswer, AskQuestion } from './events.js';
+import { DESTRUCTIVE_WARNING_NOTES, destructiveWarningId } from './destructiveCommandWarning.js';
 import { collapseWhitespace } from '../shared/text.js';
 
 /** Granular tool permissions (opencode-style): every tool call resolves to one of three actions.
@@ -656,16 +657,45 @@ export function summarizePermissions(perms: Pick<TurnPermissions, 'ruleset' | 'y
   return lines.join('\n');
 }
 
+/** The strings the destructive-command table is matched against for one shell command: the command
+ *  verbatim, then the canonical form of each simple command inside it (wrappers stripped, program reduced
+ *  to its basename — see {@link segmentMatchValues}). A segment whose canonical form IS its verbatim form
+ *  adds nothing the raw command did not already offer, so it is left out.
+ *
+ *  This is a DISPLAY helper and nothing more. It reuses the resolver's split and canonicalisation so a
+ *  note and a decision agree on what a segment is running, but it can never influence the decision: the
+ *  only caller is `approvalQuestion`, which runs after one has been made. */
+function destructiveCandidates(command: string): string[] {
+  const canonical = splitBashSegments(command).segments
+    .map((segment) => segmentMatchValues(segment)[1])
+    .filter((value): value is string => value !== undefined);
+  return [command, ...canonical];
+}
+
 /** Option labels of the approval prompt. English on purpose: core wire texts are English (the model
  *  and every surface see them verbatim), mirroring AskUserQuestion. Stable — the decision mapping
  *  below and both frontends key on them. */
 export const APPROVAL_LABELS = { once: 'Allow once', always: 'Always allow', deny: 'Deny' } as const;
 
 /** Build the AskQuestion an approval rides the elicitation pipeline with (`ask` event, kind
- *  'approval'). Single-select, no free-text Other — the three options are the whole contract. */
+ *  'approval'). Single-select, no free-text Other — the three options are the whole contract.
+ *
+ *  A shell command that matches a known destructive shape also carries an INFORMATIONAL note (see
+ *  destructiveCommandWarning.ts). It arrives here AFTER the decision has already been made — this
+ *  function is only ever called because a rule resolved to `ask` — so it cannot influence one; it exists
+ *  so the person answering the prompt knows what "Allow once" costs if it goes wrong. The note rides both
+ *  the English question (which the CLI shows verbatim) and `approval.warning` (from which the web
+ *  composes its own wording), exactly like the tool name and the always-pattern beside it. */
 export function approvalQuestion(req: ApprovalRequest): AskQuestion {
   const cmd = req.command ? collapseWhitespace(req.command) : '';
   const shownCmd = cmd.length > 200 ? `${cmd.slice(0, 199)}…` : cmd;
+  // Matched on the RAW command — several patterns anchor on the newlines and control operators that
+  // separate chained commands, and the collapsed display copy above has already lost them — PLUS the
+  // canonical form of each simple command in it. The second half is what makes `sudo rm -rf /srv` draw
+  // the same note as `rm -rf /srv`, which is the case a human most needs it for; reusing the resolver's
+  // own canonicalisation keeps the list of shell wrappers in exactly one place.
+  const warning = req.command ? destructiveWarningId(destructiveCandidates(req.command)) : null;
+  const note = warning ? `\nNote: ${DESTRUCTIVE_WARNING_NOTES[warning]}` : '';
   // "Always allow" is offered only when there IS a safe pattern to persist — never for an empty command
   // (its pattern would be an allow-all `*`).
   const options: AskQuestion['options'] = [{ label: APPROVAL_LABELS.once, description: 'run it this time only', id: 'once' }];
@@ -673,7 +703,7 @@ export function approvalQuestion(req: ApprovalRequest): AskQuestion {
   options.push({ label: APPROVAL_LABELS.deny, description: 'skip this call', id: 'deny' });
   return {
     header: 'Approval',
-    question: shownCmd ? `Run this command?\n$ ${shownCmd}` : `Allow the "${req.tool}" tool to run?`,
+    question: shownCmd ? `Run this command?\n$ ${shownCmd}${note}` : `Allow the "${req.tool}" tool to run?`,
     multiSelect: false,
     custom: false,
     options,
@@ -683,6 +713,7 @@ export function approvalQuestion(req: ApprovalRequest): AskQuestion {
       tool: req.tool,
       ...(shownCmd ? { command: shownCmd } : {}),
       ...(req.alwaysPattern ? { alwaysPattern: req.alwaysPattern } : {}),
+      ...(warning ? { warning } : {}),
     },
   };
 }

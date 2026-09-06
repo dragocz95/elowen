@@ -99,6 +99,11 @@ export function AskQuestionCard({ questions, kind, onSubmit }: { questions: AskQ
             default: return { label: op.label, description: op.description };
           }
         };
+        // The informational destructive-command note, in the reader's language. Keyed on the id the
+        // daemon sent rather than on the English sentence beside it — and an id this build does not know
+        // renders nothing at all, so an older tab meeting a newer daemon shows the prompt without a note
+        // instead of a blank line or a raw identifier.
+        const warningNote = wording?.warning ? t.brainChat.approvalWarnings[wording.warning] : undefined;
         // A preview is a pane for ONE focused option, which multi-select has no notion of. The tool schema
         // and runtime reject that combination; this guard keeps historical events display-safe too.
         const hasPreview = !q.multiSelect && q.options.some((op) => op.preview);
@@ -155,6 +160,9 @@ export function AskQuestionCard({ questions, kind, onSubmit }: { questions: AskQ
                   : q.question}
               </span>
             </div>
+            {warningNote ? (
+              <p className="text-tiny text-warning">{interpolate(t.brainChat.approvalWarningNote, { note: warningNote })}</p>
+            ) : null}
             {hasPreview ? (
               // Side by side on a wide viewport; the preview stacks under the list on a narrow one, where
               // two columns would leave neither readable.

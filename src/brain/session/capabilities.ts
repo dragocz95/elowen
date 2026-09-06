@@ -1,5 +1,5 @@
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import { currentContributionUserId, currentSessionId, currentToolPolicy, currentTurnMode, currentTurnPermissions, listCovers, toolOwnedByOtherAccount, toolPermitted, toolVisibleUnderPolicy, type PersonalToolOwnership, type ToolPolicy } from '../../plugins/policyContext.js';
+import { currentContributionUserId, currentSessionId, currentToolPolicy, currentTurnMode, currentTurnPermissions, listCovers, runWithApprovedCall, toolOwnedByOtherAccount, toolPermitted, toolVisibleUnderPolicy, type PersonalToolOwnership, type ToolPolicy } from '../../plugins/policyContext.js';
 import { isSessionPlanPath } from '../../plugins/pathGuard.js';
 import type { ToolDeferralOverrides } from '../../shared/wireContract.js';
 import { buildExitPlanModeTool } from '../tools/exitPlanMode.js';
@@ -268,6 +268,12 @@ function gatePermissions(tool: ToolDefinition): ToolDefinition {
         if (decision === 'always' && alwaysPattern) {
           try { perms.persistAllow?.(rule.scope, alwaysPattern); } catch { /* persistence is best-effort */ }
         }
+        // A person just read THIS call and said yes. Marked for the duration of the call so a tool can
+        // hold back a convenience it would otherwise apply by itself — the terminal plugin does not
+        // auto-background an approved command, because "run this" and "start this and walk away" are
+        // different answers and only one of them was given. Deliberately NOT set for an unattended turn
+        // or under YOLO: neither of those is a human looking at the command.
+        return runWithApprovedCall(() => run(...args));
       }
     }
     return run(...args);

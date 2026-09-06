@@ -248,7 +248,20 @@ interface AskOption { label: string; description?: string; preview?: string; id?
  *  client can compose its own wording without taking the English apart. Without it the only way to
  *  localize "always allow \"git status*\"" would be to regex the pattern back out of a sentence this
  *  repo also owns — which works right up until the sentence changes. */
-export interface ApprovalPrompt { tool: string; command?: string; alwaysPattern?: string }
+export interface ApprovalPrompt { tool: string; command?: string; alwaysPattern?: string; warning?: DestructiveWarningId }
+
+/** Which known destructive shape a shell command matched, when it matched one. Purely INFORMATIONAL: it
+ *  is a note on the prompt and never part of the allow/ask/deny decision — see
+ *  brain/destructiveCommandWarning.ts, which owns the pattern table and the English wording. An id rather
+ *  than a finished sentence, for the same reason `alwaysPattern` is a pattern rather than a phrase: the
+ *  client renders it in the reader's own language. A client that meets an id it does not know shows no
+ *  note, so the daemon may add ids without a lockstep client release. */
+export type DestructiveWarningId =
+  | 'gitResetHard' | 'gitForcePush' | 'gitCleanForce' | 'gitDiscardWorktree' | 'gitStashDrop'
+  | 'gitBranchForceDelete' | 'gitNoVerify' | 'gitCommitAmend'
+  | 'rmRecursiveForce' | 'rmRecursive' | 'rmForce'
+  | 'sqlDropTable' | 'sqlDeleteAll' | 'kubectlDelete' | 'terraformDestroy'
+  | 'mkfs' | 'deviceOverwrite' | 'chmodWorldWritable' | 'killEveryProcess' | 'forkBomb';
 
 /** One question of a parked `AskUserQuestion`. Clients POST the picked labels back to `/brain/answer`. */
 export interface AskQuestion { question: string; header: string; multiSelect: boolean; custom?: boolean; options: AskOption[]; approval?: ApprovalPrompt }
