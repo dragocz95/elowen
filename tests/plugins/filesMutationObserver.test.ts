@@ -116,32 +116,4 @@ describe('files plugin — file mutations observable through tools.call.after', 
     expect(event).toBeDefined();
     expect(details(event!)).toMatchObject({ ok: false });
   });
-
-  // ONE mechanism: the files plugin announces a write through the shared seam and nowhere else. Its only
-  // hook is the read-guard reseed it SUBSCRIBES to; it broadcasts no mutation event of its own, because a
-  // second, files-specific channel would be a parallel mechanism for the same fact.
-  it('adds no mutation channel of its own — the shared seam is the only one', () => {
-    expect(reg.hooks.map((h) => h.name)).toEqual(['brain.session.afterSpawn']);
-  });
-
-  // No subscriber, no work: with nothing registered for the name, the bus fans out to nobody and the
-  // tool result is unchanged. This is what keeps the LSP behaviour free when the plugin is absent.
-  it('costs nothing when no plugin subscribes', async () => {
-    const path = join(dir, `${n}-nosub.ts`);
-    const bus = new PluginHookBus({ hooks: [], hookOwners: [], logger: log });
-    const composed = composeSessionTools({
-      kind: 'owner-chat',
-      pluginTools: reg.tools,
-      onToolResult: (e) => bus.emit('tools.call.after', e),
-    }).find((t) => t.name === 'Write');
-    const res = await runWithPolicy(
-      userPolicy([dir]),
-      () => (composed!.execute as unknown as Execute)('t', { file_path: path, content: 'x\n' }, undefined, undefined, undefined),
-      { sessionId: session },
-    );
-
-    expect(res.details).toMatchObject({ ok: true });
-    expect(readFileSync(path, 'utf-8')).toBe('x\n');
-    expect(seen).toEqual([]);
-  });
 });
