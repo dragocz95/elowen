@@ -242,6 +242,7 @@ export async function register(ctx) {
         const session = sessionId();
         if (!workspace) throw new Error('workspace not found');
         if (!session) throw new Error('workspace activation requires a conversation');
+        if (ctx.currentAccess().workspaceRef) throw Object.assign(new Error('an explicitly scoped child cannot change its assigned workspace'), { code: 'workspace_pinned' });
         workspaces.useWorkspace({ workspaceId: workspace.id, sessionId: session, projectId: workspace.projectId }, { accessibleProjects: accessibleProjects() });
         return ok(`Using ${workspace.label} (${workspace.branch}) for Project ${workspace.projectId}. Subsequent tools in this turn use this workspace.`, { workspace, metadataChanged: true });
       } catch (error) { return fail(error); }
@@ -261,6 +262,7 @@ export async function register(ctx) {
         if (userId === null) throw new Error('a linked Elowen account is required');
         const session = sessionId();
         if (!session) throw new Error('workspace release requires a conversation');
+        if (ctx.currentAccess().workspaceRef) throw Object.assign(new Error('an explicitly scoped child cannot release its assigned workspace'), { code: 'workspace_pinned' });
         const result = workspaces.releaseSessionWorkspaces(
           { sessionId: session, ...(input.projectId ? { projectId: input.projectId } : {}) },
           { userId, accessibleProjects: accessibleProjects(), verifySessionOwner: workspaces.verifySessionOwner },
