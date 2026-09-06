@@ -27,13 +27,17 @@ function modulesOf(plugin: string): string[] {
   return out;
 }
 
-/** Static imports, dynamic imports and requires — the specifier only, not what it resolves to. */
+/** Static imports, re-exports, dynamic imports and requires — the specifier only, not what it resolves
+ *  to. A re-export (`export * from`) is the idiomatic way one module would surface another's exports, so
+ *  it has to be matched as carefully as an import; the `from` keyword is what separates it from an
+ *  ordinary `export const x = '…'`. */
 function specifiersOf(source: string): string[] {
   const out: string[] = [];
   const patterns = [
-    /(?:^|[\s;}])import\s+(?:[^'"]*?\sfrom\s+)?['"]([^'"]+)['"]/g,
+    /(?:^|[\s;}])import\s*(?:[^;'"]*?\bfrom\s*)?['"]([^'"]+)['"]/g,
+    /(?:^|[\s;}])export\s*[^;'"]*?\bfrom\s*['"]([^'"]+)['"]/g,
     /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
-    /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
+    /\brequire(?:\.resolve)?\s*\(\s*['"]([^'"]+)['"]\s*\)/g,
   ];
   for (const pattern of patterns) {
     for (const match of source.matchAll(pattern)) out.push(match[1]!);
