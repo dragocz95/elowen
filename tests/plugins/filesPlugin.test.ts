@@ -592,20 +592,24 @@ describe('files plugin — Grep', () => {
   it('matches case-sensitively by default and folds case only with -i', async () => {
     const cs = tmpDir('grep-case');
     writeFileSync(join(cs, 'c.txt'), 'Needle upper\nneedle lower\nNEEDLE shout\n');
+    // A second file whose ONLY match is uppercase, so a file count of 1 vs 2 tells the two modes apart.
+    writeFileSync(join(cs, 'd.txt'), 'NEEDLE only\n');
     const sensitive = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Grep', { path: cs, pattern: 'needle' }));
     expect(detailsOf(sensitive).matches).toBe(1); // ripgrep's default: only the lowercase line
     expect(textOf(sensitive)).toContain('needle lower');
     expect(textOf(sensitive)).not.toContain('Needle upper');
     const folded = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Grep', { path: cs, pattern: 'needle', '-i': true }));
-    expect(detailsOf(folded).matches).toBe(3);
+    expect(detailsOf(folded).matches).toBe(4);
     // The flag reaches rg in every output mode, not just content.
-    const files = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Grep', { path: cs, pattern: 'NEEDLE', output_mode: 'files_with_matches' }));
-    expect(detailsOf(files).matches).toBe(1);
-    const foldedFiles = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Grep', { path: cs, pattern: 'zzz|NEEDLE', output_mode: 'count', '-i': true }));
-    expect(textOf(foldedFiles)).toContain('c.txt:3');
+    const files = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Grep', { path: cs, pattern: 'needle', output_mode: 'files_with_matches' }));
+    expect(detailsOf(files).matches).toBe(1); // only c.txt has a lowercase match
+    const foldedFiles = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Grep', { path: cs, pattern: 'needle', output_mode: 'files_with_matches', '-i': true }));
+    expect(detailsOf(foldedFiles).matches).toBe(2);
+    const foldedCount = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Grep', { path: cs, pattern: 'zzz|NEEDLE', output_mode: 'count', '-i': true }));
+    expect(textOf(foldedCount)).toContain('c.txt:3');
     // Search is the discovery tool and stays case-insensitive on the same input — one documented rule each.
     const search = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Search', { path: cs, query: 'needle' }));
-    expect(detailsOf(search).matches).toBe(3);
+    expect(detailsOf(search).matches).toBe(4);
   });
 
   it('offset pages through a truncated listing and reaches the tail without gaps or repeats', async () => {
