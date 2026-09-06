@@ -409,6 +409,12 @@ describe('DataTable row selection', () => {
     // Space firing the row's own navigation from inside the control that exists to avoid it.
     fireEvent.keyDown(box, { key: ' ', code: 'Space' });
     expect(onKeyDown).not.toHaveBeenCalled();
+
+    // Only the keys the checkbox itself consumes, though. A register's roving navigation lives on the
+    // row because a keystroke aimed at any cell reaches it there, so swallowing every keydown would
+    // strand the reader on whichever row they last ticked.
+    fireEvent.keyDown(box, { key: 'ArrowDown' });
+    expect(onKeyDown).toHaveBeenCalledTimes(1);
   });
 });
 

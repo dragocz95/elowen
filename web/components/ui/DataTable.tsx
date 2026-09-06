@@ -111,7 +111,10 @@ export type DataTableSelectCellProps = { className?: string } & (
   /** A row's own checkbox. `rowId` and `label` are BOTH required, and the union is what enforces it: an
    *  optional `rowId` renders a focusable control that is permanently unchecked and does nothing when
    *  activated, and an optional `label` leaves it announced as a bare "checkbox". This is the same
-   *  discriminated-union device `DataTableRowOpen` below uses, for the same reason. */
+   *  discriminated-union device `DataTableRowOpen` below uses, for the same reason.
+   *
+   *  Being a discriminant, `header` wants a literal: `header={someBoolean}` satisfies neither arm. Branch
+   *  in the JSX — the header cell and a row cell take different props anyway. */
   | { header?: false; rowId: string; label: string }
 );
 export function DataTableSelectCell({ className = '', ...props }: DataTableSelectCellProps) {
@@ -147,6 +150,11 @@ export function DataTableSelectCell({ className = '', ...props }: DataTableSelec
   }
 
   const { rowId, label } = props;
+  // The union above already makes this unreachable for every TypeScript caller, but this component is
+  // published to plugin bundles (`lib/pluginUi.tsx`) and those are plain JavaScript that no compiler has
+  // read. Without the guard, a bundle omitting `rowId` puts `undefined` into the register's selection
+  // Set and hands it back through `onSelectionChange`.
+  if (typeof rowId !== 'string') return null;
   return (
     <DataTableCell
       lines="auto"
@@ -154,12 +162,16 @@ export function DataTableSelectCell({ className = '', ...props }: DataTableSelec
       // The row-open overlay is a button stretched over the whole row, and a register may also carry its
       // own row handlers. Ticking a checkbox is not opening the row, so the activation stops here.
       //
-      // BOTH events, not just the click: a checkbox is reached with the keyboard as often as with a
-      // pointer, and Space on it bubbles a keydown to whatever `onKeyDown` the register put on the row.
-      // Stopping only the click left the keyboard path firing the row's navigation from inside the
-      // control that exists to avoid it.
+      // The keyboard needs saying as well as the pointer: a checkbox is reached with Space as often as
+      // with a click, and that keydown bubbles to whatever `onKeyDown` the register put on the row.
+      // Only the two keys the checkbox itself consumes are stopped, though — a register's roving arrow,
+      // Home and End navigation lives on the row precisely because a keystroke aimed at any cell reaches
+      // it there (see `modules/projects/ProjectsView.tsx`), and swallowing everything would strand the
+      // reader on whichever row they last ticked.
       onClick={(event) => event.stopPropagation()}
-      onKeyDown={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        if (event.key === ' ' || event.key === 'Enter') event.stopPropagation();
+      }}
     >
       <Checkbox
         checked={selected.has(rowId)}

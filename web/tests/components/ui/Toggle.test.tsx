@@ -93,9 +93,17 @@ describe('Switch geometry', () => {
     expect(track.className).not.toContain('bg-secondary');
   });
 
-  it('keeps the OFF track clear of every surface token, in both shipped designs', () => {
-    // A value check rather than a class check: the class only says which token, and the defect was the
-    // token resolving to the same colour as the surface behind it.
+  it('keeps the OFF track token from collapsing into a surface in a future palette', () => {
+    // A GUARD, not a proof of the fix above — it reads the skins, which the switch change did not touch,
+    // so it would pass on either side of it. What it defends is the property that made `secondary`
+    // unusable here: a token that resolves to the same value as the surface it is drawn on leaves the
+    // track with no extent. `--color-border` satisfies that today in both designs, and a palette edit
+    // that quietly stopped satisfying it would otherwise be invisible until someone looked at a toggle.
+    //
+    // Equality, not a contrast ratio: the ratios here are legitimately faint (about 1.14:1 on card) and
+    // the thumb is what carries perceivability, so a threshold would either fail honest palettes or
+    // assert nothing. `--color-sticky` is out of reach either way, being color-mix()-derived in
+    // tokens.css rather than stated in a skin.
     const read = (path: string) => readFileSync(join(resolve(process.cwd()), path), 'utf-8');
     const valueOf = (css: string, token: string) => css.match(new RegExp(`${token}:\\s*([^;]+);`))?.[1]?.trim();
     for (const skin of ['studio-light', 'studio-oled']) {

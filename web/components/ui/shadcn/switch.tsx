@@ -18,12 +18,17 @@ import { cn } from '../../../lib/utils';
  *  track had to move off the surface ramp and onto `--color-border` — see below. */
 const switchVariants = cva([
   'peer inline-flex h-[18px] w-9 shrink-0 items-center rounded-full outline-none transition-colors',
-  // The OFF track is `border`, not `secondary`. With the edge gone the fill is the ONLY thing that draws
-  // the control, and `secondary` aliases `--color-muted`, which is a SURFACE: in studio-oled it is
-  // #080d0f, byte-identical to that skin's card, so an OFF switch on a card was a thumb floating on
-  // nothing, and on studio-light it was #f4f4f5 on white at about 1.05:1. `--color-border` is the token
-  // each design already tunes to be the faint-but-visible step away from its surfaces — studio-light
-  // resolves it to #e4e4e7, which is the reference's own oklch(0.922) track.
+  // The OFF track is `border`, not `secondary`. `secondary` aliases `--color-muted`, which is a SURFACE:
+  // studio-oled resolves it to #080d0f, byte-identical to that skin's card, so an OFF switch on a card
+  // had no track at all — just a thumb floating on nothing. `--color-border` is the token each design
+  // already tunes to be its faintest visible step away from a surface, and studio-light resolves it to
+  // #e4e4e7, the reference's own oklch(0.922) track.
+  //
+  // Faint is the honest word: the track clears about 1.14:1 on card and only 1.05:1 on `--color-sticky`,
+  // the toolbar surface. That is the reference's relationship too, and it is fine, because the TRACK is
+  // not what has to be perceivable — the thumb is, and `muted-foreground` on this track holds 6.1:1 on
+  // studio-light and 6.8:1 on studio-oled. What the OFF track owes is that it not vanish INTO the
+  // surface the way `secondary` did, and the extent it hints at then reads against the thumb, not the page.
   'data-[state=checked]:bg-primary data-[state=unchecked]:bg-border',
   // No focus utilities here on purpose. `app/styles/base.css` gives `[role="switch"]:focus-visible` a
   // box-shadow ring and is imported unlayered, so it outranks the whole of Tailwind's utilities layer —
