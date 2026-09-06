@@ -45,6 +45,9 @@ describe('files plugin — Read dedup of an unchanged range', () => {
   const inSession = (name: string, params: Record<string, unknown>, sid = session) =>
     runWithPolicy(userPolicy([dir]), () => runTool(reg, name, params), { sessionId: sid });
 
+  const afterSpawn = (sid: string, messages: unknown[]) =>
+    new PluginHookBus({ hooks: reg.hooks }).emit('brain.session.afterSpawn', { sessionId: sid, messages });
+
   const fixture = (name: string, body: string) => {
     const path = join(dir, `${n}-${name}`);
     writeFileSync(path, body);
@@ -95,20 +98,38 @@ describe('files plugin — Read dedup of an unchanged range', () => {
     expect(res.content[0].text).toContain('gamma');
   });
 
-  it('never stubs against bytes we authored ourselves — an Edit result is a diff, not the file', async () => {
-    const path = fixture('authored.txt', 'alpha\nbeta\n');
+  // A Write/Edit result carries a diff, not the file, so its baseline must never stand in for content the
+  // model was never shown. What says so is the recorded RANGE, which only a text Read writes.
+  it('never stubs against a Write baseline, and dedups again once a Read has shown the file', async () => {
+    const path = join(dir, `${n}-authored.txt`);
+    expect((await inSession('Write', { file_path: path, content: 'alpha\nbeta\n' })).content[0].text).toContain('Wrote');
+
+    const first = await inSession('Read', { file_path: path });
+    expect(first.content[0].text).toContain('alpha');
+    expect((await inSession('Read', { file_path: path })).content[0].text).toBe(STUB);
+  });
+
+  it('sends full content after our own Edit — the bytes it reported are not the bytes on disk', async () => {
+    const path = fixture('edited.txt', 'alpha\nbeta\n');
     await inSession('Read', { file_path: path });
     expect((await inSession('Edit', { file_path: path, old_string: 'alpha', new_string: 'ALPHA' })).details)
       .toMatchObject({ ok: true });
 
-    // The file moved, so this read is full content on the hash alone…
     const after = await inSession('Read', { file_path: path });
     expect(after.content[0].text).toContain('ALPHA');
+  });
 
-    // …and the one after it, which matches on hash AND range, is still full content: the entry it would
-    // match is the one our own Edit baselined.
-    const again = await inSession('Read', { file_path: path });
-    expect(again.content[0].text).toContain('ALPHA');
+  // The stub is text. Returning it for an image, a PDF or a notebook would silently drop the attachment the
+  // model actually needs, so those branches record no range and can never match.
+  it('never stubs an image read', async () => {
+    const path = join(dir, `${n}-pic.png`);
+    writeFileSync(path, Buffer.from('89504e470d0a1a0a0000000d494844520000000100000001080600000'
+      + '01f15c4890000000a49444154789c6300010000050001', 'hex'));
+    await inSession('Read', { file_path: path });
+
+    const second = await inSession('Read', { file_path: path });
+    expect(second.content[0].text).not.toBe(STUB);
+    expect(second.content).toContainEqual(expect.objectContaining({ type: 'image' }));
   });
 
   it('lets a stub authorize a mutation exactly as the read it stands in for would', async () => {
@@ -125,13 +146,28 @@ describe('files plugin — Read dedup of an unchanged range', () => {
     const path = fixture('replayed.txt', 'alpha\nbeta\n');
     const read = await inSession('Read', { file_path: path });
     const revived = `${session}-revived`;
-    await new PluginHookBus({ hooks: reg.hooks })
-      .emit('brain.session.afterSpawn', { sessionId: revived, messages: [{ role: 'toolResult', details: read.details }] });
+    await afterSpawn(revived, [{ role: 'toolResult', details: read.details }]);
 
     const res = await inSession('Read', { file_path: path }, revived);
     expect(res.content[0].text).toContain('alpha');
 
     // The seeded entry still authorizes, which is what the replay is for.
+    const write = await inSession('Write', { file_path: path, content: 'rewritten\n' }, revived);
+    expect(write.content[0].text).toContain('Wrote');
+  });
+
+  // A stub carries the same details as the read it replaces, so replaying it after a restart authorizes
+  // exactly as that read would. A stub that vouched for less would make a conversation forget a file it can
+  // still see, purely because the last mention of it was short.
+  it('replays a stub result as the read it stands in for', async () => {
+    const path = fixture('replayed-stub.txt', 'alpha\nbeta\n');
+    await inSession('Read', { file_path: path });
+    const stub = await inSession('Read', { file_path: path });
+    expect(stub.content[0].text).toBe(STUB);
+
+    const revived = `${session}-revived-stub`;
+    await afterSpawn(revived, [{ role: 'toolResult', details: stub.details }]);
+
     const write = await inSession('Write', { file_path: path, content: 'rewritten\n' }, revived);
     expect(write.content[0].text).toContain('Wrote');
   });

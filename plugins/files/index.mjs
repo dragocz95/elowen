@@ -609,17 +609,19 @@ function recordTextRead(sessionId, key, hash, offset, limit) {
 const FILE_UNCHANGED_STUB = 'File unchanged since last read. The content from the earlier Read tool_result '
   + 'in this conversation is still current — refer to that instead of re-reading.';
 
-/** Whether this Read would hand back bytes the model provably still has, so the stub above can stand in for
- * them (`FileReadTool.ts:522-573`). Same conversation, same file, same range, and the same hash the guard
- * already computes — nothing here decides authorization, it only chooses what to say.
+/** Whether this Read would hand back bytes an earlier Read already put in front of the model, so the stub
+ * above can stand in for them (`FileReadTool.ts:522-573`). Same conversation, same file, same range, and the
+ * same hash the guard already computes — nothing here decides authorization, it only chooses what to say.
  *
- * A baseline WE authored never qualifies, even once a later Read has re-recorded its range: `ours` marks
- * bytes that reached the model as a diff, not as file content, and the reference skips its own writes for
- * the same reason. */
+ * The range is what says a READ recorded this entry: a Write/Edit baseline, a PDF/image/notebook read and a
+ * transcript replay all record a hash without one, and none of them displayed this text. That is exactly the
+ * reference's `existingState.offset !== undefined` (`FileReadTool.ts:547-551`) — `ours` is a different
+ * question (who wrote the bytes, for Edit's formatter tolerance) and stays sticky across re-reads, so using
+ * it here would silence the dedup for every file the conversation has ever edited. */
 function readIsDuplicate(sessionId, key, hash, offset, limit) {
   if (!sessionId) return false;
   const entry = readState.get(sessionId)?.get(key);
-  return entry !== undefined && entry.ours !== true && entry.hash === hash
+  return entry !== undefined && entry.hash === hash
     && entry.offset === offset && entry.limit === limit;
 }
 
@@ -1115,8 +1117,9 @@ export function register(ctx) {
         const key = statePath(abs);
         const details = { ...pathMeta(abs), bytes: snapshot.totalBytes, truncated, contentHash: snapshot.contentHash };
         // Re-reading the same range of a file that has not moved would send a second copy of content the
-        // earlier tool_result still carries. Point at that copy instead — and record the read anyway, so a
-        // stub is worth exactly as much to the guard as the full read it replaces.
+        // earlier tool_result still carries. Point at that copy instead. The record call writes the same
+        // entry back, for its LRU effect alone: a file read through the stub is still a file in use, and
+        // without the touch a busy conversation could age its own entry out from under the guard.
         if (readIsDuplicate(sessionId, key, snapshot.contentHash, start, p.limit)) {
           recordTextRead(sessionId, key, snapshot.contentHash, start, p.limit);
           return ok('Read', FILE_UNCHANGED_STUB, details);
