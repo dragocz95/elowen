@@ -172,7 +172,7 @@ export function toolOwnedByOtherAccount(name: string, personal: PersonalToolOwne
  *  layer keeps its one-directional dependency; the brain's TurnMode is structurally identical. */
 export type TurnWorkMode = 'build' | 'plan' | 'workflow';
 
-interface TurnScope { policy?: Policy; workDir?: string; resolveWorkDir?: () => string | undefined; pathView?: WorkspacePathView; sessionId?: string; deliveryTarget?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; emitSubagentCompletion?: SubagentCompletionEmitter; emitWorkflow?: WorkflowEmitter; emitWorkflowCompletion?: WorkflowCompletionEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel; mode?: TurnWorkMode; memoryRecallScope?: MemoryRecallScope; settingsUserId?: number | null; contributionUserId?: number | null }
+interface TurnScope { policy?: Policy; workDir?: string; resolveWorkDir?: () => string | undefined; pathView?: WorkspacePathView; sessionId?: string; deliveryTarget?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; emitSubagentCompletion?: SubagentCompletionEmitter; emitWorkflow?: WorkflowEmitter; emitWorkflowCompletion?: WorkflowCompletionEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel; mode?: TurnWorkMode; memoryRecallScope?: MemoryRecallScope; settingsUserId?: number | null; contributionUserId?: number | null; approvedByAsk?: boolean }
 
 /** pi tools have no per-call session context, so a plugin tool can't be told which user's policy applies
  *  through its arguments. We carry the resolved Policy (+ the sender's identity + their effective tool
@@ -202,6 +202,15 @@ export function runWithIdentity<T>(identity: TurnIdentity, fn: () => T): T {
  * the account themselves instead of accepting an arbitrary user id from another plugin. */
 export function runWithContributionUser<T>(userId: number, fn: () => T): T {
   return store.run({ ...store.getStore(), contributionUserId: userId }, fn);
+}
+
+/** Run ONE tool call marked as having been approved by a human at an `ask` prompt. Set only by the
+ *  execute-time permission gate, around that single call — every other field of the turn is preserved.
+ *  A tool reads it to answer "did a person just look at this exact call and say yes?", which nothing else
+ *  in the scope can express: `permissions.requestApproval` says an approval channel EXISTS, not that this
+ *  call went through it, and by the time the tool runs the prompt is long settled. */
+export function runWithApprovedCall<T>(fn: () => T): T {
+  return store.run({ ...store.getStore(), approvedByAsk: true }, fn);
 }
 
 /** The Policy in effect for the current prompt turn, or undefined outside a `runWithPolicy` scope. */
@@ -305,6 +314,15 @@ export function currentTurnMode(): TurnWorkMode | undefined {
  *  the pre-permission behaviour (task workers, tests). */
 export function currentTurnPermissions(): TurnPermissions | undefined {
   return store.getStore()?.permissions;
+}
+
+/** Whether the tool call running right now was approved by a human at an `ask` prompt (see
+ *  {@link runWithApprovedCall}). False for everything else — a rule that already allowed the call, an
+ *  unattended turn, YOLO, or no permission wiring at all. A tool uses it to hold back a convenience it
+ *  would otherwise apply on its own: a person who approved one command expects THAT command, not a
+ *  variation of it the tool decided on afterwards. */
+export function currentCallApprovedByAsk(): boolean {
+  return store.getStore()?.approvedByAsk === true;
 }
 
 /** The turn-bound elicitor for `ctx.askUser`, or null outside a prompt turn (or when the transport

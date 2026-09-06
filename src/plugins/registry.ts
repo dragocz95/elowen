@@ -15,7 +15,7 @@ import type { PluginSecretBag } from '../shared/pluginSecrets.js';
 import { commandsWithPlugins, isReservedCommandName, type PluginSlashCommand, type SlashSurface } from '../brain/slashCommands.js';
 import type { PluginManifest } from './manifest.js';
 import { assertPathAllowed, allowedRoots, defaultCwd, displayPath, isAllAccess, currentAccess, pathStateKey, sanitizePathOutput } from './pathGuard.js';
-import { currentIdentity, currentContributionUserId, currentAccountUserId, currentDeliveryTarget, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentSessionId } from './policyContext.js';
+import { currentIdentity, currentContributionUserId, currentAccountUserId, currentCallApprovedByAsk, currentDeliveryTarget, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentSessionId } from './policyContext.js';
 import { bindingRef, resolveDelegatedWorkspace } from '../brain/workspaceScope.js';
 import { processRegistry } from '../brain/processRegistry.js';
 import { subagentSessionId } from '../brain/sessionId.js';
@@ -1419,6 +1419,7 @@ export class PluginRegistry {
       currentIdentity,
       currentContributionUserId,
       currentAccountUserId,
+      callApprovedByAsk: currentCallApprovedByAsk,
       // THE workspace resolver, exposed instead of the Sandbox control it needs. `CONTROL_CONSUMERS`
       // restricts that control to the plugins that own process launch, so a delegating plugin resolving
       // workspaces on its own gets `undefined` in production while a mocked control keeps its tests green —

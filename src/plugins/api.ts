@@ -1693,6 +1693,14 @@ export interface PluginContext {
    *  neither names an account. THE one resolver: read this instead of composing `currentContributionUserId()
    *  ?? currentIdentity()?.elowenUserId` in the plugin, so every tool of one turn agrees on the account. */
   currentAccountUserId(): number | null;
+  /** Whether a human approved THIS tool call at an `ask` permission prompt a moment ago. False for a call
+   *  a rule already allowed, an unattended turn, a YOLO turn, and any context without permission wiring.
+   *
+   *  It is not a permission — the call is running either way, so nothing may be UNLOCKED by it. It exists
+   *  so a tool can hold back an autonomous convenience: someone who read one command and pressed "Allow
+   *  once" agreed to that command finishing in front of them, not to the tool quietly changing how it
+   *  runs. Terminal reads it to keep an approved command out of its auto-backgrounding. */
+  callApprovedByAsk(): boolean;
   /** Resolve an explicit Sandbox workspace assignment against a delegable access boundary — THE one
    *  resolver, the same host code path that resolves `access.workspaceId` when a delegated child is
    *  actually spawned. A plugin that assigns workspaces to children (Delegate, workflow nodes) must ask

@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import { composeSessionTools } from '../../src/brain/session/capabilities.js';
-import { runWithPolicy } from '../../src/plugins/policyContext.js';
+import { currentCallApprovedByAsk, runWithPolicy } from '../../src/plugins/policyContext.js';
 import { buildPermissionRuleset, sanitizePermissionSettings, type ApprovalDecision, type ApprovalRequest, type TurnPermissions } from '../../src/brain/toolPermissions.js';
 import type { Policy } from '../../src/plugins/policy.js';
 
@@ -179,5 +179,60 @@ describe('permission gate — the single tool-call choke point (composeSessionTo
     await callTool(gated, { command: '' }, perms({ requestApproval, persistAllow }));
     expect(ran()).toBe(1);
     expect(persistAllow).not.toHaveBeenCalled();
+  });
+});
+
+// The gate is the only place that can answer "did a person just approve THIS call?", and a tool that
+// holds back an autonomous behaviour on the strength of that answer (terminal's auto-backgrounding) is
+// only as correct as the marker. A false positive silently disables a feature; a false negative takes an
+// approved command and changes how it runs behind the person who approved it.
+describe('permission gate — marking a call as human-approved', () => {
+  /** A tool whose execute records what `currentCallApprovedByAsk()` said while it ran. */
+  const approvalProbe = () => {
+    const seen: boolean[] = [];
+    const tool = {
+      name: 'Bash', label: 'Bash', description: 'Bash', parameters: {} as never,
+      execute: async () => {
+        seen.push(currentCallApprovedByAsk());
+        return { content: [{ type: 'text', text: 'ok' }], details: {} };
+      },
+    } as unknown as ToolDefinition;
+    const gated = composeSessionTools({ kind: 'owner-chat', pluginTools: [tool] }).find((t) => t.name === 'Bash');
+    return { gated: gated!, seen };
+  };
+
+  it('marks a call the user answered at an ask prompt', async () => {
+    const { gated, seen } = approvalProbe();
+    const requestApproval = vi.fn(async (): Promise<ApprovalDecision> => 'once');
+    await callTool(gated, { command: 'rm -rf build' }, perms({ requestApproval }));
+    expect(requestApproval).toHaveBeenCalledTimes(1);
+    expect(seen).toEqual([true]);
+  });
+
+  it('does not mark a call no human answered', async () => {
+    // An allow rule (nobody was asked), an unattended turn (nobody could be asked), YOLO (the prompt is
+    // skipped) and an ungated context all run the command — none of them is a person reading it first.
+    const allowed = approvalProbe();
+    await callTool(allowed.gated, { command: 'git status --porcelain' }, perms({ requestApproval: vi.fn() }));
+
+    const unattended = approvalProbe();
+    await callTool(unattended.gated, { command: 'rm -rf build' }, perms({ unattendedAsks: 'allow' }));
+
+    const yolo = approvalProbe();
+    const requestApproval = vi.fn(async (): Promise<ApprovalDecision> => 'once');
+    await callTool(yolo.gated, { command: 'rm -rf build' }, perms({ requestApproval, yolo: true }));
+    expect(requestApproval).not.toHaveBeenCalled();
+
+    const ungated = approvalProbe();
+    await callTool(ungated.gated, { command: 'rm -rf build' }, undefined);
+
+    expect([...allowed.seen, ...unattended.seen, ...yolo.seen, ...ungated.seen]).toEqual([false, false, false, false]);
+  });
+
+  it('does not leak the mark into the next call', async () => {
+    const { gated, seen } = approvalProbe();
+    await callTool(gated, { command: 'rm -rf build' }, perms({ requestApproval: vi.fn(async (): Promise<ApprovalDecision> => 'once') }));
+    await callTool(gated, { command: 'git status --porcelain' }, perms({ requestApproval: vi.fn() }));
+    expect(seen).toEqual([true, false]);
   });
 });
