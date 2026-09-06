@@ -1,4 +1,7 @@
 import { openDb, type Db } from '../../src/store/db.js';
+import { BrainStore } from '../../src/store/brainStore.js';
+import { createConversationTargets } from '../../src/brain/conversationTargets.js';
+import type { PluginHostConversations } from '../../src/plugins/api.js';
 import { ConfigStore } from '../../src/store/configStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserStore } from '../../src/store/userStore.js';
@@ -46,6 +49,18 @@ export async function makeTestApp(opts: TestAppOpts = {}) {
   return { app, token, db, serverDeps, deps: { config, users, projects, bus, tmux } };
 }
 
+/** The REAL conversation projection over a test database — the same implementation production wires, so a
+ *  host fixture carries the actual scope rule (including its throws) instead of a permissive stub. Pass
+ *  the suite's own db to exercise it against seeded conversations; omit it for a host that never reads
+ *  conversations and gets an empty one. `isAdmin` defaults to true, matching the other permissive
+ *  identity stubs in this file. */
+export function testConversationsRead(w: { db?: Db; isAdmin?: (userId: number) => boolean } = {}): PluginHostConversations {
+  return createConversationTargets({
+    store: new BrainStore(w.db ?? openDb(':memory:')),
+    isAdmin: w.isAdmin ?? (() => true),
+  });
+}
+
 /** Complete generic plugin-host wiring for tests that load plugin manifests. */
 export function pluginTestHost(w: { db: Db; config?: ConfigStore; projects?: ProjectStore; tmux?: FakeTmuxDriver }) {
   const projects = w.projects ?? new ProjectStore(w.db);
@@ -59,6 +74,7 @@ export function pluginTestHost(w: { db: Db; config?: ConfigStore; projects?: Pro
       projects,
       homeProject: () => projects.list()[0] ?? { id: 1, slug: 'elowen', path: '/o', notes: '', icon: '' },
       usersRead: { list: () => [], isAdmin: () => true, allowedExecs: () => null, mayUsePlugin: () => true },
+      conversationsRead: testConversationsRead({ db: w.db }),
     },
     externalUsers: {
       resolve: () => null,

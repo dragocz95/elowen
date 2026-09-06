@@ -154,6 +154,13 @@ export interface ManagedSessionView {
    *  never denormalized, so renaming an account renames it throughout the history too. */
   ownerId: number;
   ownerLabel: string;
+  /** The conversation that DELEGATED this one, copied verbatim from the durable row, or null for a root.
+   *  It is what lets the register nest a sub-agent under the conversation that actually spawned it
+   *  instead of listing both as peers. Deliberately raw ancestry and nothing more: deleting a parent
+   *  detaches its children rather than cascading, so a child may name a row that is no longer in this
+   *  listing, and a consumer treats such a session as a root. Workflow dependency edges are NOT ancestry —
+   *  sibling nodes spawned by one conversation all name that conversation here. */
+  parentSessionId: string | null;
   /** WHO last wrote here, when that is known and is not simply the owner again. On a shared room this is
    *  the answer people actually want from the register — the owner column names the account hosting the
    *  transcript, so without this a colleague's Teams room reads as the operator's own conversation.
@@ -607,6 +614,7 @@ export class BrainStatusService {
         direct: s.direct === 1,
         ownerId: s.user_id,
         ownerLabel: s.owner_name || s.owner_username || `#${s.user_id}`,
+        parentSessionId: s.parent_session_id,
         lastWriterId: s.last_writer_user_id,
         lastWriterLabel: s.last_writer_user_id == null
           ? null

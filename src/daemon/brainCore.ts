@@ -54,9 +54,9 @@ import { loadAgentRegistry, subagentCatalog, type AgentDef } from '../brain/agen
 import { makeSubagentCatalog } from '../brain/agents/catalogService.js';
 import { listBrainModels } from '../brain/models.js';
 import { setToolOutputCaps, setToolOutputPolicy } from '../brain/messageView.js';
-import { lastAssistantText } from '../brain/conversationRead.js';
 import { publicHttpTransport } from '../plugins/publicHttp.js';
 import { platformTurnParkEligible } from '../brain/platformTurnRecovery.js';
+import { createConversationTargets } from '../brain/conversationTargets.js';
 import { setSpillMaxResultBytes, setToolResultGroupBudget } from '../brain/session/toolResultClearing.js';
 import { dataDir, dbPath as configuredDbPath, setSpillNamespaceResolver } from '../shared/paths.js';
 import { setCompactionFailureLimit } from '../brain/session/compactionCircuitBreaker.js';
@@ -655,7 +655,8 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
             },
           },
           eventsRead: { list: (opts: { target?: string; type?: string }) => events.list(opts) },
-          conversationsRead: { lastAssistantText: (sessionId, userId) => lastAssistantText(brainStore, sessionId, userId) },
+          // Scope decisions must reflect current account grants, not the plugin's load-time identity.
+          conversationsRead: createConversationTargets({ store: brainStore, isAdmin: (id) => users.isAdmin(id) }),
         },
         externalUsers: {
           resolvePlatformUser: (platform, platformUserId, verifiedEmail) => {

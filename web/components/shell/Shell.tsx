@@ -18,6 +18,7 @@ import { CommandPalette } from './CommandPalette';
 import { AdvisorPanel } from '../../modules/advisor/AdvisorPanel';
 import { AdvisorLauncher } from '../../modules/advisor/AdvisorLauncher';
 import { BrainChatProvider } from '../../modules/advisor/BrainChatProvider';
+import { ConversationSwitcherModal } from '../../modules/advisor/ConversationSwitcherModal';
 import { ChatRailSplit } from '../../modules/advisor/ChatRailSplit';
 import { TelemetryRailProvider } from '../../modules/advisor/telemetryRailState';
 import { ImpersonationBanner } from './ImpersonationBanner';
@@ -335,6 +336,10 @@ function ShellLayout({ children }: { children: ReactNode }) {
         {dockBottom ? <AdvisorPanel dock={dock} /> : null}
       </div>
       <CommandPalette />
+      {/* THE conversation switcher, mounted once beside the controller that holds its open state: every
+          entry point — /chat's header, the dock's conversation name — opens this one, so the app has a
+          single conversation list rather than a rail, a drawer, a popover and a register modal. */}
+      <ConversationSwitcherModal />
       {launcherVisible && <AdvisorLauncher onOpen={openAdvisor} />}
       </TelemetryRailProvider>
     </BrainChatProvider>

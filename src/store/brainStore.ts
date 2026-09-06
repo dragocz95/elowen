@@ -170,6 +170,24 @@ export interface BrainSessionEvent {
 /** Radius of context kept around a search match in its snippet. */
 const SNIPPET_RADIUS = 60;
 
+/** THE predicate for "this row is an empty shell, not a conversation" — shared by the two unspoken
+ *  listings so the personal rail and the admin register can never disagree about what they hide.
+ *
+ *  A row holding no message at all is a shell (the CLI mints one simply by launching), with two
+ *  exceptions that mean it IS a conversation:
+ *   - `cleared_at`: it was used and then deliberately emptied by `/clear`;
+ *   - an explicit TITLE on an owner conversation. Auto-titling happens at the first settled turn, by
+ *     which point a message exists, so the only way a message-less owner row carries a title is
+ *     {@link BrainStore.renameSession} — a deliberate human act, and how the organizational conversations
+ *     recurring jobs are grouped under are created. Channel/worker sessions are deliberately excluded:
+ *     task sessions name THEMSELVES at spawn (see BrainSessionFactory), so a title there is the
+ *     spawner's, not a person's, and would resurrect every empty platform shell.
+ *
+ *  `dropIfUnspoken` applies the same two exceptions on the delete side. */
+const EMPTY_SHELL_SQL = `s.cleared_at IS NULL
+         AND (s.title = '' OR s.id LIKE '${CHANNEL_PREFIX}%')
+         AND NOT EXISTS (SELECT 1 FROM brain_messages m WHERE m.session_id = s.id)`;
+
 /** Mint a conversation's immutable spill namespace: the creation-time id for on-disk readability, plus
  *  a random suffix for uniqueness. The suffix is NOT decoration — channel-slot ids are deterministic
  *  and REUSED across generations (`brain-ch-<key>` frees up whenever its occupant is archived), so a
@@ -688,9 +706,7 @@ export class BrainStore {
   /** Empty shells across every account — the cross-account counterpart of {@link unspokenSessionIds}. */
   unspokenSessionIdsAll(): Set<string> {
     const rows = this.db.prepare(
-      `SELECT s.id FROM brain_sessions s
-       WHERE s.cleared_at IS NULL
-         AND NOT EXISTS (SELECT 1 FROM brain_messages m WHERE m.session_id = s.id)`
+      `SELECT s.id FROM brain_sessions s WHERE ${EMPTY_SHELL_SQL}`
     ).all() as { id: string }[];
     return new Set(rows.map((row) => row.id));
   }
@@ -707,12 +723,11 @@ export class BrainStore {
    *
    *  A CLEARED conversation is empty for the opposite reason — it was used and then deliberately emptied
    *  by /clear — so `cleared_at` excludes it here. Without that it would silently disappear from the
-   *  session picker and the history rail, and be swept by dropIfUnspoken on the next quit. */
+   *  session picker and the history rail, and be swept by dropIfUnspoken on the next quit. An explicitly
+   *  RENAMED owner conversation is excluded for the same reason — see {@link EMPTY_SHELL_SQL}. */
   unspokenSessionIds(userId: number): Set<string> {
     const rows = this.db.prepare(
-      `SELECT s.id FROM brain_sessions s
-       WHERE s.user_id = ? AND s.cleared_at IS NULL
-         AND NOT EXISTS (SELECT 1 FROM brain_messages m WHERE m.session_id = s.id)`
+      `SELECT s.id FROM brain_sessions s WHERE s.user_id = ? AND ${EMPTY_SHELL_SQL}`
     ).all(userId) as { id: string }[];
     return new Set(rows.map((row) => row.id));
   }
@@ -1003,6 +1018,21 @@ export class BrainStore {
   spillNamespace(sessionId: string): string {
     const row = this.db.prepare('SELECT spill_ns FROM brain_sessions WHERE id = ?').get(sessionId) as { spill_ns: string } | undefined;
     return row?.spill_ns || sessionId;
+  }
+
+  /** The session carrying this immutable namespace — the INVERSE of {@link spillNamespace}, and the one
+   *  way a durable reference to a conversation survives what an id does not. A session id is not stable:
+   *  channel idle rollover re-keys the transcript under an archive id and frees the deterministic id for
+   *  a fresh conversation, so a stored id can silently come to name someone else's chat. `spill_ns` is
+   *  minted once at creation, travels with the row through `reassignSession`, and dies with the row —
+   *  which is why a deleted conversation resolves to nothing here even after its id is reused.
+   *
+   *  Deliberately NOT the id fallback {@link spillNamespace} applies: a blank key would equality-match
+   *  any row whose backfill never ran and hand back an arbitrary conversation. Ownership is not checked —
+   *  this answers "which row is this", and the caller applies its own visibility rule to the answer. */
+  sessionBySpillNamespace(spillNs: string): BrainSessionRow | undefined {
+    if (!spillNs.trim()) return undefined;
+    return this.db.prepare('SELECT * FROM brain_sessions WHERE spill_ns = ?').get(spillNs) as BrainSessionRow | undefined;
   }
 
   /** The session's provisional mid-turn rows, oldest first. */

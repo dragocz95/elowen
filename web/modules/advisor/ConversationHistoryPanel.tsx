@@ -1,17 +1,19 @@
 'use client';
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Circle, Plus, Search, Trash2, X, MoreVertical, Pencil, Download, GitBranch, ArrowLeft, Library } from 'lucide-react';
+import { CheckCircle2, ChevronRight, Circle, Plus, Search, Trash2, MoreVertical, Pencil, Download, GitBranch, ArrowLeft } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useToast } from '../../components/ui/Toast';
 import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
-import { Dialog, DialogContent } from '../../components/ui/shadcn/dialog';
-import { focusOverlaySurface, useReturnFocus } from '../../components/ui/overlayStack';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../components/ui/shadcn/collapsible';
 import { elowenClient } from '../../lib/elowenClient';
 import { formatTaskTime } from '../../lib/format';
-import type { BrainSearchHit } from '../../lib/types';
+import { groupJobLinks } from '../../lib/conversationTree';
+import { useConversationJobLinks } from '../../lib/queries';
+import { ScheduledJobLink, scheduledJobName } from '../../components/brain/ScheduledJobLink';
+import type { BrainSearchHit, ConversationJobLink } from '../../lib/types';
 import { useBrainChat } from './BrainChatProvider';
 import { brainModelLabel, brainModelQualifiedLabel } from '../../lib/modelProvider';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
@@ -21,9 +23,11 @@ import {
   SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
+  SidebarMenuSub,
+  SidebarMenuSubButton,
+  SidebarMenuSubItem,
 } from '../../components/ui/shadcn/sidebar';
 import { Tooltip, TooltipAnchor, TooltipContent } from '../../components/ui/shadcn/tooltip';
-import { PopoverContent } from '../../components/ui/shadcn/popover';
 
 const ACTIVITY_STATES = ['idle', 'working', 'done', 'failed'] as const;
 type ActivityState = (typeof ACTIVITY_STATES)[number];
@@ -148,77 +152,26 @@ function Highlight({ text, query }: { text: string; query: string }) {
   );
 }
 
-/** The phone slide-over, on the shadcn `Dialog` (Radix): the dialog role, the focus trap, Escape and the
- *  layer order among several open overlays are Radix's, so this file no longer writes any of them.
+/** The caller's OWN conversations: the list, the fulltext search with its snippets, the activity and
+ *  unread marks, switch / new / rename / branch / export / delete, and the collapsed branch of recurring
+ *  jobs filed under each conversation.
  *
- *  It is the one overlay shape in the app that does NOT take `useOverlayIsolation`: that stack isolates
- *  the background by marking every OTHER child of <body> inert, which needs an overlay portalled to the
- *  body. This drawer renders inside the chat shell, so its own body-level ancestor is what would be
- *  marked — the drawer would disable itself. Radix's `aria-hidden` sweep walks the ancestor chain
- *  instead and reaches the same surfaces from in here. What the stack still owns and Radix cannot is
- *  where focus goes on the way out, because there is no `Dialog.Trigger` to hand it back to. */
-function HistoryDrawer({ label, onClose, children }: { label: string; onClose?: () => void; children: ReactNode }) {
-  const surfaceRef = useRef<HTMLDivElement>(null);
-  const { restoreFocus } = useReturnFocus();
-  return (
-    <Dialog open onOpenChange={(open) => { if (!open) onClose?.(); }}>
-      <div
-        className="overlay-layer-drawer fixed inset-0"
-        // Radix's modal content sets `pointer-events: none` on <body> and re-enables them on itself;
-        // this layer would inherit the block and the backdrop below would stop answering the click that
-        // dismisses the drawer. Opting back in is what `DialogOverlay` does for the same reason.
-        style={{ pointerEvents: 'auto' }}
-      >
-        <div className="absolute inset-0 bg-background/50" onClick={onClose} aria-hidden />
-        <DialogContent
-          ref={surfaceRef}
-          // A left rail, which none of the primitive's presentations describes; the geometry stays here.
-          // Only the geometry: `presentation={null}` drops the shape classes, but `.overlay-surface` is
-          // in the variant BASE and still paints the ground, the border colour and the raised shadow —
-          // so a `bg-card shadow-xl` written here was never what the reader saw, only a second answer to
-          // a question `primitives.css` had already settled.
-          presentation={null}
-          aria-label={label}
-          aria-describedby={undefined}
-          className="absolute inset-y-0 left-0 w-72 max-w-[85%] border-r border-border"
-          // The backdrop above already owns dismissal, and it is the only owner that knows a nested
-          // overlay's backdrop must not close its parent.
-          onInteractOutside={(event) => event.preventDefault()}
-          // Focus lands in the search input, which asks for it with `[data-autofocus]`; Radix would take
-          // the first control in the tab order (the dashboard link or "new chat") instead.
-          onOpenAutoFocus={(event) => {
-            event.preventDefault();
-            if (surfaceRef.current) focusOverlaySurface(surfaceRef.current);
-          }}
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            restoreFocus();
-          }}
-        >
-          {children}
-        </DialogContent>
-      </div>
-    </Dialog>
-  );
-}
-
-/** The single source for the conversation history: list + fulltext search + switch / new / rename /
- *  export / delete. Rendered three ways — the persistent left `rail` on /chat desktop, the mobile
- *  `drawer` slide-over, and the compact dock's `dropdown` popover — all off the one shared controller
- *  (BrainChatProvider) so there is never a second session list or a second mutation surface. Delete goes
- *  through the controller (it re-targets the active conversation); rename/export/search hit the client
- *  directly (pure metadata / read-only), mirroring Fáze 1's search split. */
-export function ChatHistoryRail({ variant, open = false, onClose, className, homeLink = false, onOpenRegister }: {
-  variant: 'rail' | 'drawer' | 'dropdown';
-  open?: boolean;
-  onClose?: () => void;
-  className?: string;
-  // On a phone /chat hides the global TopBar, so this drawer becomes the only way back to the app — it
-  // then shows a "← dashboard" link at its top. Off everywhere the TopBar still carries navigation.
+ *  It is a PANEL, not an overlay. The app has exactly one conversation switcher — the shared
+ *  `ConversationSwitcherModal` — and this is what it shows under "Just mine"; an administrator's "All"
+ *  is the register beside it. The persistent rail, the phone drawer and the dock's popover used to be
+ *  three presentations of this same list, which is the duplication that modal removes, so the surface,
+ *  its focus contract and its dismissal all belong to the modal now.
+ *
+ *  Everything here reads the ONE shared controller (BrainChatProvider), so there is never a second
+ *  session list or a second mutation surface. Delete goes through the controller (it re-targets the
+ *  active conversation); rename/branch/export/search hit the client directly (pure metadata /
+ *  read-only), mirroring Fáze 1's search split. */
+export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
+  /** Called once this panel has handed a conversation or a schedule on — the host modal closes on it. */
+  onNavigate?: () => void;
+  // On a phone /chat hides the global TopBar, so the switcher is also the way back to the rest of the
+  // app — it then carries a "← dashboard" link. Off where the TopBar still holds the navigation.
   homeLink?: boolean;
-  // The Chat page passes this to surface the full conversation register (channels + task agents, admin
-  // oversight, exports) as a modal; this list itself stays the caller's own conversations.
-  onOpenRegister?: () => void;
 }) {
   const { t, locale } = useTranslation();
   const { toast } = useToast();
@@ -234,6 +187,9 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
 
   const [search, setSearch] = useState('');
   const [results, setResults] = useState<BrainSearchHit[] | null>(null);
+  // Which conversations have their scheduled-job branch open. Local to this mount and keyed by session
+  // id: navigation state, not something to persist or sync across devices.
+  const [openJobs, setOpenJobs] = useState<ReadonlySet<string>>(() => new Set<string>());
   const [renameFor, setRenameFor] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string; active: boolean } | null>(null);
   const [deletePending, setDeletePending] = useState(false);
@@ -242,7 +198,6 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
   const deleteTargetRef = useRef<typeof deleteTarget>(null);
   const deletePendingRef = useRef(false);
   const deleteOpRef = useRef(0);
-  const dropdownRef = useRef<HTMLDivElement>(null);
   const [renameValue, setRenameValue] = useState('');
 
   // Debounced conversation search: ≥2 chars queries the daemon; anything shorter restores the list.
@@ -258,8 +213,9 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
     return () => { stale = true; clearTimeout(timer); };
   }, [search]);
 
-  // A drawer/dropdown dismisses itself after an action; the persistent rail stays put.
-  const dismiss = () => { if (variant !== 'rail') onClose?.(); };
+  // Opening something hands the conversation to the chat surface behind the switcher, so the switcher
+  // gets out of the way rather than covering what was just loaded.
+  const dismiss = () => onNavigate?.();
 
   const openSession = (opts: { session?: string; fresh?: boolean }) => {
     setSearch('');
@@ -365,45 +321,105 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
   ];
 
   const q = search.trim();
-  const listScroll = variant === 'dropdown' ? 'flex flex-col' : 'flex min-h-0 flex-1 flex-col overflow-y-auto';
+  const listScroll = 'flex min-h-0 flex-1 flex-col overflow-y-auto';
+
+  // The recurring jobs organized under THIS caller's conversations. The endpoint already bounds `mine` by
+  // the personal session list; the render below still only asks the map for sessions that list holds, so
+  // a shared platform room can never appear here as a conversation the sidebar does not otherwise show.
+  const jobLinks = useConversationJobLinks('mine');
+  const jobsByConversation = useMemo(() => groupJobLinks(jobLinks.data?.links ?? []), [jobLinks.data]);
+  const jobsFailed = jobLinks.data?.status === 'error' || jobLinks.isError;
+
+  /** Conversations whose SCHEDULES answer the query, each listed once with the jobs that matched.
+   *  Additive: the transcript hits above are untouched, and a conversation that answered there can still
+   *  appear here for a different reason — its schedule, which no transcript snippet would ever mention. */
+  const jobSearchGroups = useMemo(() => {
+    const needle = q.toLowerCase();
+    if (needle.length < 2) return [];
+    const groups: { session: { id: string; title?: string }; jobs: ConversationJobLink[] }[] = [];
+    for (const session of sessions.data ?? []) {
+      const matched = (jobsByConversation.get(session.id) ?? []).filter((link) => link.name.toLowerCase().includes(needle));
+      if (matched.length > 0) groups.push({ session, jobs: matched });
+    }
+    return groups;
+  }, [q, sessions.data, jobsByConversation]);
+
+  /** The collapsed schedules of one conversation, under its row. Radix owns the disclosure contract here
+   *  — `aria-expanded`, the trigger/content wiring, Enter and Space, and handing focus back to the
+   *  trigger when the branch that held it closes. The trigger is a SIBLING of the conversation row's
+   *  button, never inside it: opening a branch and opening a conversation are different acts, and a
+   *  control nested in another control is invalid markup. */
+  const jobBranch = (sessionId: string, title: string, jobs: readonly ConversationJobLink[]): ReactNode => {
+    const open = openJobs.has(sessionId);
+    return (
+      <Collapsible
+        open={open}
+        onOpenChange={(next) => setOpenJobs((current) => {
+          const updated = new Set(current);
+          if (next) updated.add(sessionId); else updated.delete(sessionId);
+          return updated;
+        })}
+      >
+        <CollapsibleTrigger asChild>
+          <button
+            type="button"
+            aria-label={t.scheduledJobs.toggle.replace('{title}', title)}
+            className="flex w-full min-w-0 items-center gap-1 rounded-md py-1 pl-7 pr-2 text-left text-tiny text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+          >
+            <ChevronRight size={11} aria-hidden className={`shrink-0 transition-transform motion-reduce:transition-none ${open ? 'rotate-90' : ''}`} />
+            <span className="truncate">{t.scheduledJobs.branch}</span>
+            <span className="font-mono tabular-nums">{jobs.length}</span>
+          </button>
+        </CollapsibleTrigger>
+        <CollapsibleContent>
+          {/* The border is the only hierarchy mark, and the indent is a fixed step rather than a per-level
+              one — this list is one level deep and stays legible on a 288px drawer. */}
+          <SidebarMenuSub className="ml-4 border-l border-sidebar-border pl-2">
+            {jobs.map((link) => (
+              <SidebarMenuSubItem key={link.jobId}>
+                <SidebarMenuSubButton asChild size="sm" className="rounded-md px-2 py-1">
+                  <Link
+                    href={link.href}
+                    onClick={dismiss}
+                    aria-label={scheduledJobName(link, t.scheduledJobs)}
+                    className="min-w-0"
+                  >
+                    <ScheduledJobLink link={link} labels={t.scheduledJobs} />
+                  </Link>
+                </SidebarMenuSubButton>
+              </SidebarMenuSubItem>
+            ))}
+          </SidebarMenuSub>
+        </CollapsibleContent>
+      </Collapsible>
+    );
+  };
 
   const body = (
     <div className="flex min-h-0 flex-1 flex-col">
       {homeLink ? (
         <Link
           href="/dash"
-          onClick={onClose}
+          onClick={dismiss}
           className="flex items-center gap-2 border-b border-border px-2 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <ArrowLeft size={16} aria-hidden />
           <span className="truncate">{t.nav.dashboard}</span>
         </Link>
       ) : null}
-      {variant !== 'dropdown' ? (
-        <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{t.chat.historyTitle}</span>
-          <button
-            type="button"
-            onClick={() => openSession({ fresh: true })}
-            aria-label={t.brainChat.newChat}
-            title={t.brainChat.newChat}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <Plus size={16} aria-hidden />
-          </button>
-          {variant === 'drawer' ? (
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label={t.advisor.close}
-              title={t.advisor.close}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >
-              <X size={16} aria-hidden />
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+      {/* The host modal owns the title and the close control; what belongs to the LIST is starting a new
+          conversation, which is the one action here that is not about an existing row. */}
+      <div className="flex items-center justify-end gap-1 border-b border-border px-2 py-1.5">
+        <button
+          type="button"
+          onClick={() => openSession({ fresh: true })}
+          aria-label={t.brainChat.newChat}
+          title={t.brainChat.newChat}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <Plus size={16} aria-hidden />
+        </button>
+      </div>
 
       {/* Fulltext search across the caller's conversations; a live query swaps the list for hits. */}
       <div className="m-1 flex items-center gap-1.5 rounded-md border border-border bg-background px-2">
@@ -413,20 +429,20 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
           onChange={(e) => setSearch(e.target.value)}
           placeholder={t.brainChat.searchPlaceholder}
           aria-label={t.brainChat.searchPlaceholder}
-          // One owner for both overlay variants. Each is a Radix surface whose focus policy runs after
-          // mount and anchors on the surface itself unless a control asks for the focus by name — so it
-          // asks, and `onOpenAutoFocus` on either surface honours it. A bare `autoFocus` here would be
-          // overruled by that policy a tick later, which is why neither variant uses one.
-          data-autofocus={variant === 'rail' ? undefined : ''}
+          // The host modal is a Radix surface whose focus policy runs after mount and anchors on the
+          // surface itself unless a control asks for the focus by name — so this one asks, and the
+          // modal's `onOpenAutoFocus` honours it. A bare `autoFocus` would be overruled a tick later.
+          data-autofocus=""
           className="h-8 min-h-0 border-0 bg-transparent px-0 py-1.5 shadow-none placeholder:text-muted-foreground focus-visible:ring-0"
         />
       </div>
 
       <div className={`${listScroll} px-1 pb-1`}>
         {q.length >= 2 ? (
-          results === null ? null : results.length === 0 ? (
+          results === null ? null : results.length === 0 && jobSearchGroups.length === 0 ? (
             <p className="px-2 py-2 text-xs text-muted-foreground">{t.brainChat.searchEmpty}</p>
           ) : (
+            <>
             <SidebarMenu>
               {results.map((h, i) => {
                 const when = formatTaskTime(h.ts, Date.now(), locale);
@@ -469,6 +485,36 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
                 );
               })}
             </SidebarMenu>
+            {/* Schedules whose NAME answers the query, grouped once under the conversation they are filed
+                in and placed after the transcript hits — those keep their snippets and their order, and a
+                conversation with three matching snippets still contributes exactly one group here. */}
+            {jobSearchGroups.length > 0 ? (
+              <div className="mt-1 border-t border-sidebar-border pt-1">
+                <p className="px-2 py-1 text-tiny text-muted-foreground">{t.scheduledJobs.branch}</p>
+                {jobSearchGroups.map((group) => (
+                  <div key={group.session.id}>
+                    <p className="truncate px-2 text-tiny text-muted-foreground">{group.session.title || t.brainChat.untitled}</p>
+                    <SidebarMenuSub className="ml-4 border-l border-sidebar-border pl-2">
+                      {group.jobs.map((link) => (
+                        <SidebarMenuSubItem key={link.jobId}>
+                          <SidebarMenuSubButton asChild size="sm" className="rounded-md px-2 py-1">
+                            <Link
+                              href={link.href}
+                              onClick={dismiss}
+                              aria-label={scheduledJobName(link, t.scheduledJobs)}
+                              className="min-w-0"
+                            >
+                              <ScheduledJobLink link={link} labels={t.scheduledJobs} />
+                            </Link>
+                          </SidebarMenuSubButton>
+                        </SidebarMenuSubItem>
+                      ))}
+                    </SidebarMenuSub>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+            </>
           )
         ) : sessions.isLoading && !sessions.data ? null : (sessions.data ?? []).length === 0 ? (
           <p className="px-2 py-2 text-xs text-muted-foreground">{t.chat.emptyHistory}</p>
@@ -476,6 +522,7 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
           <SidebarMenu>
             {(sessions.data ?? []).map((s) => {
               const unread = s.activity?.unread === true;
+              const jobs = jobsByConversation.get(s.id) ?? [];
               return (
                 <SidebarMenuItem key={s.id} className="group relative">
                   {renameFor === s.id ? (
@@ -498,56 +545,62 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
                     </div>
                   ) : (
                     <>
-                      <ActivityRow activity={s.activity} labels={activityLabels}>
-                        {({ indicator, rowProps }) => (
-                          <SidebarMenuButton
-                            asChild
-                            isActive={s.active}
-                            className="h-auto min-h-12 items-start rounded-md px-2 py-1.5 pr-10"
-                          >
-                            <button
-                              type="button"
-                              onClick={() => openSession({ session: s.id })}
-                              aria-current={s.active ? 'page' : undefined}
-                              className="text-left"
-                              {...rowProps}
+                      {/* The row and its action menu share one positioned box, so the absolutely placed
+                          menu centres on the ROW rather than on the row plus whatever branch hangs
+                          under it. */}
+                      <div className="relative">
+                        <ActivityRow activity={s.activity} labels={activityLabels}>
+                          {({ indicator, rowProps }) => (
+                            <SidebarMenuButton
+                              asChild
+                              isActive={s.active}
+                              className="h-auto min-h-12 items-start rounded-md px-2 py-1.5 pr-10"
                             >
-                              {indicator}
-                              <span className="flex min-w-0 flex-1 flex-col">
-                                <span className={`truncate text-sm text-foreground ${unread ? 'font-semibold' : 'font-normal'}`}>
-                                  {s.title || t.brainChat.untitled}
+                              <button
+                                type="button"
+                                onClick={() => openSession({ session: s.id })}
+                                aria-current={s.active ? 'page' : undefined}
+                                className="text-left"
+                                {...rowProps}
+                              >
+                                {indicator}
+                                <span className="flex min-w-0 flex-1 flex-col">
+                                  <span className={`truncate text-sm text-foreground ${unread ? 'font-semibold' : 'font-normal'}`}>
+                                    {s.title || t.brainChat.untitled}
+                                  </span>
+                                  <span
+                                    className="truncate font-mono text-tiny text-muted-foreground"
+                                    title={brainModelQualifiedLabel({ provider: s.provider ?? '', model: s.model })}
+                                  >
+                                    {brainModelLabel({ model: s.model })}
+                                  </span>
                                 </span>
-                                <span
-                                  className="truncate font-mono text-tiny text-muted-foreground"
-                                  title={brainModelQualifiedLabel({ provider: s.provider ?? '', model: s.model })}
-                                >
-                                  {brainModelLabel({ model: s.model })}
-                                </span>
-                              </span>
-                              {unread ? <SidebarMenuBadge aria-hidden data-unread className="mt-1.5 size-1.5 rounded-full bg-primary" /> : null}
-                            </button>
-                          </SidebarMenuButton>
-                        )}
-                      </ActivityRow>
-                      {/* Centred by a flex box spanning the row, never by `top-1/2 -translate-y-1/2`.
-                          A transform CREATES A STACKING CONTEXT, and this element is the ancestor of the
-                          row's action menu: inside one, the menu's `overlay-layer-menu` z-index can only
-                          rank against its own siblings, so the panel ranked as this anchor does — a
-                          positioned element with z-index auto, painted in tree order. Every row BELOW
-                          this one then painted over the open menu, straight across Rename, Branch,
-                          Export and Delete. The geometry here is identical; what changes is that the
-                          menu's layer is free to reach the surface it belongs to. */}
-                      <div className="absolute inset-y-0 right-1 flex items-center">
-                        <ActionMenu
-                          label={`${s.title || t.brainChat.untitled}: ${t.chat.moreActions}`}
-                          items={actionItems(s)}
-                          trigger={<MoreVertical size={14} aria-hidden />}
-                          // Rename, branch, export and delete are reachable ONLY through this button, so it
-                          // cannot be a hover affordance. Touch and keyboard always reveal it; fine pointers keep
-                          // the quiet row treatment until hover, focus or Radix's open state.
-                          triggerClassName="overlay-touch-target flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100"
-                        />
+                                {unread ? <SidebarMenuBadge aria-hidden data-unread className="mt-1.5 size-1.5 rounded-full bg-primary" /> : null}
+                              </button>
+                            </SidebarMenuButton>
+                          )}
+                        </ActivityRow>
+                        {/* Centred by a flex box spanning the row, never by `top-1/2 -translate-y-1/2`.
+                            A transform CREATES A STACKING CONTEXT, and this element is the ancestor of the
+                            row's action menu: inside one, the menu's `overlay-layer-menu` z-index can only
+                            rank against its own siblings, so the panel ranked as this anchor does — a
+                            positioned element with z-index auto, painted in tree order. Every row BELOW
+                            this one then painted over the open menu, straight across Rename, Branch,
+                            Export and Delete. The geometry here is identical; what changes is that the
+                            menu's layer is free to reach the surface it belongs to. */}
+                        <div className="absolute inset-y-0 right-1 flex items-center">
+                          <ActionMenu
+                            label={`${s.title || t.brainChat.untitled}: ${t.chat.moreActions}`}
+                            items={actionItems(s)}
+                            trigger={<MoreVertical size={14} aria-hidden />}
+                            // Rename, branch, export and delete are reachable ONLY through this button, so it
+                            // cannot be a hover affordance. Touch and keyboard always reveal it; fine pointers keep
+                            // the quiet row treatment until hover, focus or Radix's open state.
+                            triggerClassName="overlay-touch-target flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100"
+                          />
+                        </div>
                       </div>
+                      {jobs.length > 0 ? jobBranch(s.id, s.title || t.brainChat.untitled, jobs) : null}
                     </>
                   )}
                 </SidebarMenuItem>
@@ -555,21 +608,12 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
             })}
           </SidebarMenu>
         )}
+        {/* A failed read is said out loud, once, under the list. A cron plugin that is absent, disabled or
+            not granted answers `unavailable` and shows nothing at all — but a read that FAILED must not
+            be presented as "no conversation has a schedule". */}
+        {jobsFailed ? <p role="status" className="px-2 py-1 text-tiny text-muted-foreground">{t.scheduledJobs.error}</p> : null}
       </div>
 
-      {onOpenRegister ? (
-        <button
-          type="button"
-          onClick={() => { dismiss(); onOpenRegister(); }}
-          className="flex shrink-0 items-center gap-2 border-t border-border px-2 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        >
-          <Library size={15} aria-hidden />
-          <span className="flex min-w-0 flex-col">
-            <span className="truncate">{t.chat.openRegister}</span>
-            <span className="truncate text-tiny text-muted-foreground">{t.chat.registerHint}</span>
-          </span>
-        </button>
-      ) : null}
       <ConfirmDialog
         open={deleteTarget !== null}
         title={t.brainChat.deleteChatConfirmTitle}
@@ -582,35 +626,5 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
     </div>
   );
 
-  if (variant === 'dropdown') {
-    // The dock's picker is a real `Popover`, so Escape, an outside press, the trigger's `aria-expanded`
-    // and handing focus back to that trigger on close are all the primitive's. The Root and the Trigger
-    // are the dock's (BrainChatSurface): the conversation title IS the trigger, and Radix cannot anchor
-    // to, or return focus to, a button it was never given. This side owns only the panel and where focus
-    // lands on the way IN — the search field, which asks for it with `[data-autofocus]`.
-    return (
-      <PopoverContent
-        ref={dropdownRef}
-        align="start"
-        sideOffset={6}
-        className="flex max-h-72 w-[min(22rem,calc(100vw-2rem))] flex-col overflow-y-auto p-1"
-        onOpenAutoFocus={(event) => {
-          event.preventDefault();
-          if (dropdownRef.current) focusOverlaySurface(dropdownRef.current);
-        }}
-      >
-        {body}
-      </PopoverContent>
-    );
-  }
-
-  if (variant === 'drawer') {
-    // Mounted only while open: a closed drawer keeps no focusable controls in the DOM (no tabbing into an
-    // off-screen panel, no autofocus popping the mobile keyboard on page load). Escape and the backdrop
-    // close it; focus lands in the search input on open.
-    if (!open) return null;
-    return <HistoryDrawer label={t.chat.openHistory} onClose={onClose}>{body}</HistoryDrawer>;
-  }
-
-  return <aside aria-label={t.chat.historyTitle} className={`min-h-0 flex-col border-r border-border ${className ?? ''}`}>{body}</aside>;
+  return body;
 }

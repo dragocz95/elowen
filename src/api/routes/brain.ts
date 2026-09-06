@@ -5,6 +5,7 @@ import { brainStartSchema, brainRenameSchema, brainActivityReadSchema } from '..
 import { readChatImage, isStoredChatImageName } from '../../brain/chatImages.js';
 import { chatFileDisposition, chatFilesDir, isStoredChatFileName, readChatFile } from '../../brain/chatFiles.js';
 import { logger } from '../../shared/logger.js';
+import { isPluginAllowedForUser } from '../../shared/pluginAccess.js';
 import { UsageService, type ProviderUsage } from '../../brain/providerUsage.js';
 import { codexUsageSource } from '../../brain/openaiCodexUsage.js';
 import { kimiUsageSource } from '../../brain/kimiUsage.js';
@@ -30,6 +31,51 @@ function sessionPageOpts(rawLimit?: string, rawOffset?: string): { limit?: numbe
   if (rawLimit !== undefined) opts.limit = clamp(rawLimit);
   if (rawOffset !== undefined) opts.offset = clamp(rawOffset);
   return opts;
+}
+
+/** One navigation row of GET /brain/conversation-links. Mirrors ConversationJobLink in web/lib/types.ts. */
+interface ConversationJobLink {
+  jobId: string;
+  conversationId: string;
+  name: string;
+  enabled: boolean;
+  scope: 'personal' | 'instance';
+  href: string;
+}
+
+/** Turn what the cron plugin contributed into rows core is willing to serialize.
+ *
+ *  Three things are re-decided here rather than trusted. The conversation must be one of the ids core
+ *  itself authorized — a link naming anything else would announce that a conversation exists and hang a
+ *  branch on a row the caller never asked about. Job visibility is re-applied, so an ordinary account
+ *  sees only its own jobs and never an instance job's name, which is instance configuration. And the
+ *  destination is BUILT here from the job id, so a plugin can only ever point a row at the cron editor on
+ *  this same origin. A malformed entry is dropped rather than rendered. */
+function toConversationJobLinks(
+  contributed: unknown,
+  requester: { id: number; admin: boolean },
+  authorized: ReadonlySet<string>,
+): ConversationJobLink[] {
+  if (!Array.isArray(contributed)) return [];
+  const out: ConversationJobLink[] = [];
+  for (const raw of contributed) {
+    const entry = raw as Partial<Record<'jobId' | 'conversationId' | 'name' | 'enabled' | 'ownerUserId', unknown>>;
+    const jobId = typeof entry?.jobId === 'string' ? entry.jobId.trim() : '';
+    const conversationId = typeof entry?.conversationId === 'string' ? entry.conversationId : '';
+    const name = typeof entry?.name === 'string' ? entry.name.trim() : '';
+    if (!jobId || !name || !authorized.has(conversationId)) continue;
+    const ownerUserId = typeof entry.ownerUserId === 'number' ? entry.ownerUserId : null;
+    if (!requester.admin && ownerUserId !== requester.id) continue;
+    out.push({
+      jobId,
+      conversationId,
+      name,
+      enabled: entry.enabled === true,
+      scope: ownerUserId === null ? 'instance' : 'personal',
+      href: `/p/cronjob?job=${encodeURIComponent(jobId)}`,
+    });
+  }
+  return out;
 }
 
 /** Per-user embedded brain (the new advisor engine): status / start / send / live event stream.
@@ -160,6 +206,52 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   // The register spans every account, so its per-row delete does too ('any').
   app.delete('/brain/managed-sessions/:id', withBrain((c, brain) =>
     c.json({ deleted: brain.deleteManagedSession(c.get('user').id, c.req.param('id')!, 'any') }), { admin: true }));
+
+  /** The scheduled-job branches under a conversation listing. ONE read per listing, never per row.
+   *
+   *  `?scope=all` answers for the admin register and needs an administrator; the default `mine` answers
+   *  for the caller's OWN conversation list — the actual personal sidebar roots, deliberately not the
+   *  wider set a job may be attached to, so a shared platform target never appears among someone's
+   *  personal navigation. Either way the plugin is handed only ids core already authorized.
+   *
+   *  The response distinguishes three states so a client never has to guess (see ConversationLinksResponse
+   *  in web/lib/types.ts). `unavailable` covers every "there is nothing to ask" case at once: the cron
+   *  plugin disabled or uninstalled, an installed version too old to carry the optional navigation method,
+   *  or an account without the grant. A genuine failure is logged and reported as `error` — never as a
+   *  confirmed empty list, which would quietly claim the user has no scheduled jobs. */
+  app.get('/brain/conversation-links', withBrain(async (c, brain) => {
+    const user = c.get('user');
+    const all = c.req.query('scope') === 'all';
+    if (all && !user?.is_admin) return c.json({ error: 'forbidden' }, 403);
+    let registry;
+    try { registry = await d.plugins?.get(); }
+    catch (e) {
+      logger('brain-conversation-links').error(`plugin registry unavailable: ${(e as Error).message}`);
+      return c.json({ status: 'error', links: [] });
+    }
+    // The GRANT is checked against whichever plugin actually owns the cron control, so core never has to
+    // hardcode a plugin package name to gate its own route on.
+    const owner = registry?.controlOwner.get('cron');
+    const control = registry?.control('cron');
+    const granted = !!owner && !!registry
+      && isPluginAllowedForUser(user, { name: owner, userGrantable: registry.userGrantable.has(owner) });
+    if (!control?.conversationLinks || !granted) return c.json({ status: 'unavailable', links: [] });
+
+    const conversationIds = all
+      ? brain.listManagedSessions(user.id).map((s) => s.id)
+      : brain.listSessions(user.id).map((s) => s.id);
+    let contributed: unknown;
+    try {
+      contributed = control.conversationLinks({
+        requesterUserId: user.id, requesterIsAdmin: !!user.is_admin, conversationIds,
+      });
+    } catch (e) {
+      logger('brain-conversation-links').error(`cron link read failed: ${(e as Error).message}`);
+      return c.json({ status: 'error', links: [] });
+    }
+    const links = toConversationJobLinks(contributed, { id: user.id, admin: !!user.is_admin }, new Set(conversationIds));
+    return c.json({ status: 'available', links });
+  }));
 
   // Background processes (terminal plugin's `Bash(run_in_background:true)` children) — the panel next to
   // the todos lists them, reads output for the modal, and kills on demand. Restricted to whoever operates

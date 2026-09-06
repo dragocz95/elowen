@@ -393,7 +393,6 @@ export const en = {
     viewInChat: 'View history in web chat',
     exportHtml: 'Download as HTML',
     exportJsonl: 'Download as JSONL',
-    viewAll: 'All',
     viewMine: 'Just mine',
     deleteAll: 'Delete all',
     deleted: 'Session deleted',
@@ -402,8 +401,22 @@ export const en = {
     confirmDeleteTitle: 'Delete this session?',
     confirmDeleteDesc: 'Its whole conversation history will be permanently removed. This cannot be undone.',
     confirmDeleteAllTitle: 'Delete every session?',
-    confirmDeleteAllDesc: 'Every conversation — chat, CLI and channels — will be permanently removed. This cannot be undone.',
     confirmDeleteAllEveryoneDesc: 'Every conversation of every account will be permanently deleted, including channel and task sessions. This cannot be undone.',
+    subAgents: 'Sub-agents',
+    subAgentsToggle: 'Sub-agents of {title}',
+  },
+  /** The collapsed recurring-job branches, shared by the chat sidebar and the conversation register.
+   *  Grouping only: opening one of these rows opens the schedule's editor and runs nothing. */
+  scheduledJobs: {
+    branch: 'Scheduled jobs',
+    toggle: 'Scheduled jobs of {title}',
+    /** The register's ROOT disclosure when the conversation delegated nothing: it uncovers the branch
+     *  above and nothing else, so it must not be named after sub-agents that do not exist. */
+    branchToggle: 'Schedules filed under {title}',
+    open: 'Open the schedule: {name}',
+    active: 'Active',
+    paused: 'Paused',
+    error: 'Scheduled jobs could not be loaded',
   },
   dashboard: {
     greetingMorning: 'Good morning',

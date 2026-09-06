@@ -216,6 +216,9 @@ function invalidatePluginViews(qc: ReturnType<typeof useQueryClient>) {
   void qc.invalidateQueries({ queryKey: ['plugins'] });
   void qc.invalidateQueries({ queryKey: QUERY_KEYS.brainCommands });
   void qc.invalidateQueries({ queryKey: QUERY_KEYS.pluginUi });
+  // Installing, updating, removing or restoring a plugin can be the cron plugin itself, which decides
+  // whether the scheduled-job branches exist at all — a stale `unavailable` would hide every branch.
+  void qc.invalidateQueries({ queryKey: QUERY_KEYS.brainConversationLinks });
 }
 /** Install a registry plugin into the user plugin dir (enabled by default). Applies live via hot-reload. */
 export function useInstallPlugin() {
@@ -247,12 +250,19 @@ export function useRestorePlugin() {
  *  page would use to delete jobs added meanwhile by the scheduler or the brain's cron tools. */
 export function useSaveCronJob() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (job: CronJob) => elowenClient.saveCronJob(job), onSuccess: () => qc.invalidateQueries({ queryKey: ['cron-jobs'] }) });
+  return useMutation({ mutationFn: (job: CronJob) => elowenClient.saveCronJob(job), onSuccess: () => invalidateCronViews(qc) });
 }
 /** Delete ONE cron job. */
 export function useDeleteCronJob() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (id: string) => elowenClient.deleteCronJob(id), onSuccess: () => qc.invalidateQueries({ queryKey: ['cron-jobs'] }) });
+  return useMutation({ mutationFn: (id: string) => elowenClient.deleteCronJob(id), onSuccess: () => invalidateCronViews(qc) });
+}
+/** The editor is not the only place a job appears: renaming it, pausing it or moving it to another
+ *  conversation also changes the collapsed navigation branches in the chat sidebar and in the register,
+ *  and those read a different endpoint. Whichever surface saves refreshes both. */
+function invalidateCronViews(qc: ReturnType<typeof useQueryClient>) {
+  void qc.invalidateQueries({ queryKey: ['cron-jobs'] });
+  void qc.invalidateQueries({ queryKey: QUERY_KEYS.brainConversationLinks });
 }
 /** Create (or overwrite) a user skill of the skills plugin. Applies live via plugin hot-reload. */
 export function useCreatePluginSkill() {

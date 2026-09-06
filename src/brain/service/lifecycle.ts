@@ -164,7 +164,8 @@ export class ConversationLifecycle {
    *  conversation open in another terminal belongs to that terminal. "No stored messages" is NOT "nothing
    *  happening": a turn can be in flight, parked on an AskUserQuestion, or driving a goal without having
    *  written a row yet, which is exactly why the live check is here. An unspoken conversation has had no
-   *  turn, so it owns no processes, goals or parked questions to clean up. */
+   *  turn, so it owns no processes, goals or parked questions to clean up. Neither is one that was
+   *  cleared or explicitly named — the same two exceptions the listings apply. */
   dropIfUnspoken(sessionId: string): void {
     if (isNonUserSession(sessionId)) return;
     const row = this.d.store.getSession(sessionId);
@@ -174,6 +175,11 @@ export class ConversationLifecycle {
     // and the clear destroyed the very messages this check reads. `cleared_at` is what still says it was
     // used, so it is kept exactly like a spoken-in one (see brain_sessions.cleared_at).
     if (row.cleared_at) return;
+    // A NAMED conversation is not a shell either. An owner conversation is auto-titled at its first
+    // settled turn, by which point it has a message, so a title on a message-less row can only come from
+    // an explicit rename — including the organizational root a person creates to group recurring jobs
+    // under. Sweeping it would delete something deliberately made. Same rule as unspokenSessionIds.
+    if (row.title) return;
     if (!this.d.attachments.availableForDefaultStart(sessionId)) return;   // a client is sitting in it
     if (this.d.sessions.has(sessionId)) return;                            // still live — not ours to remove
     this.d.store.deleteSession(sessionId);
