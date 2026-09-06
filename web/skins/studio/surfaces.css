@@ -626,9 +626,10 @@
    `minmax(0, 20rem)` is a ceiling and not a fixed width: a record whose control is a single switch keeps
    its track narrow and gives the room back to the text, while everything wider than 20rem is held at
    20rem so the column edge stays put. A record with no control at all resolves the track to 0.
-   The status track before it is the trailing band's first slot (see the base stylesheet): sized by the
-   widest status the card carries and free to shrink rather than overflow, so a pill sits directly left
-   of its control instead of sharing the control's room and dragging that row's switch out of line. */
+   The status track before it belongs to STACKED records only (see the base stylesheet): an inline
+   record's status reads on its label's line, so a card without a stacked record resolves that track to
+   0. The column gap on either side of the collapsed track stays — a grid gap does not collapse with an
+   empty track — which simply widens the space between label and control by one gap on such a card. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .settings-row),
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__column {
   grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 20rem) auto;
@@ -668,13 +669,9 @@
   border-color: var(--studio-line);
   box-shadow: none;
 }
-/* A record's name is the scale's card-title step, which the shared stylesheet already sets. What is left
-   here is the LAYOUT of the name and its help mark, which is Studio's and not the scale's. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__title {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.375rem;
-}
+/* The record's name, its help mark and its short status share one line — the shared stylesheet lays that
+   line out for every skin now, since the status has to sit on it wherever the surface renders. Studio's
+   own copy of the same three declarations is gone: two sheets describing one line is how the two drift. */
 /* The status line takes the scale's meta step from the shared stylesheet; the reading measure is Studio's. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__status {
   max-width: min(100%, 68ch);
@@ -692,7 +689,8 @@
   /* THE BAND RELEASES WITH THE TRACKS. Studio drops to two columns here, so there is no third and fourth
      track left for the trailing band to subgrid — the slots would spill into implicit columns and the
      card would grow a phantom right edge. The cell is the right-aligned flex line again, which is the
-     same reading order (status, control, actions) without the shared columns. */
+     same reading order (a stacked record's status, then control, then actions) without the shared
+     columns; an inline record's status is on its label line and never enters this cell. */
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing] .settings-row__trailing {
     display: flex;
     grid-template-columns: none;

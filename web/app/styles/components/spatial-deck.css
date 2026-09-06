@@ -116,13 +116,13 @@
    subgrid, so each status sits under the previous status and each action under the previous action. Let
    the records size their own tracks instead and a wider action ("Restart the daemon" beside "Restart
    the web") drags that row's whole split sideways — which is exactly how these read before.
-   FOUR tracks, because the trailing band is three named slots and not one flex line: label, then
-   [status][control][actions]. The status used to share the control's track through a flex box, so the
-   only row in a card carrying a status pill pushed its own switch sideways while every neighbouring
-   switch stayed put — the trailing side lined up nowhere. Giving status its own shared track is what
-   puts every switch in ONE column and every action against ONE right edge.
-   `minmax(0, auto)` on the status track: sized by the widest status in the card, but allowed to shrink
-   below its min-content instead of overflowing the card when a record carries a long one. */
+   FOUR tracks: label, then [status][control][actions]. An INLINE record uses three of them — its status
+   reads on the label's line, so its band is the control and the actions, and both keep the one column
+   every other record's control and actions keep. The status track is the STACKED record's, whose status
+   is a block of several values (a provider's endpoint, model count and badges) that cannot sit on a
+   label's baseline; a card with no stacked record resolves that track to zero.
+   `minmax(0, auto)` on it: sized by the widest status the card carries, but allowed to shrink below its
+   min-content instead of overflowing the card when a record carries a long one. */
 .settings-group__body:has(> .settings-row),
 .settings-group__column {
   display: grid;
@@ -214,19 +214,26 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
    a synthesised weight between Inter's 500 and 600 — a value no variable axis stop lands on and no
    heading elsewhere in the app used — and it is what made a record name read heavier than the section
    heading above it on some platforms and lighter on others. */
-.settings-row__title { display: block; color: var(--color-foreground); font-size: var(--text-card-title); font-weight: var(--text-card-title--font-weight); letter-spacing: var(--tracking-ui); line-height: var(--text-card-title--line-height); }
+.settings-row__title { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 0.4rem; color: var(--color-foreground); font-size: var(--text-card-title); font-weight: var(--text-card-title--font-weight); letter-spacing: var(--tracking-ui); line-height: var(--text-card-title--line-height); }
 .settings-row__description { margin-top: 0.16rem; color: var(--color-muted-foreground); font-size: var(--text-meta); font-weight: var(--text-meta--font-weight); letter-spacing: var(--tracking-ui); line-height: var(--text-meta--line-height); }
 .settings-row__status { margin-top: 0.3rem; color: var(--color-muted-foreground); font-size: var(--text-meta); font-weight: var(--text-meta--font-weight); letter-spacing: var(--tracking-ui); line-height: var(--text-meta--line-height); }
+/* THE SHORT STATUS READS WITH THE LABEL. An inline record's status states something about the SETTING —
+   "Today's recap is ready", a model name, a count — so it belongs to the record's name and not to the
+   trailing side. Held in a track of its own it sat halfway between the name and the control, and a card
+   in which one record carried a pill read as scattered rather than as a table. On the label's line it is
+   one phrase with the name, the trailing side is only [control][actions], and every switch in the card
+   keeps the one column the band gives it. It wraps under the label rather than overflowing when the
+   label track gets narrow; `min-width: 0` is what lets a truncating child (a model id) shrink instead. */
+.settings-row__title > .settings-row__status { margin-top: 0; min-width: 0; }
 /* One trailing cell owns status, control and actions, so every row has the same two logical columns even
    when a record carries more than one trailing value. It spans the status/control/action tracks of the
    shared subgrid; skins may retune the tracks without changing the DOM contract. */
 .settings-row__trailing { display: flex; min-width: 0; grid-column: 2 / -1; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.5rem 0.75rem; }
-/* THE TRAILING BAND. On a wide card a record's trailing cell is a SUBGRID of the three trailing tracks
-   rather than a flex line. That is the difference between a card that lines up and the one this replaced:
-   flex sizes each row from its own content, so the single record carrying a status pill pushed its own
-   switch left while every switch above it stayed where it was, and a record with a trailing action ended
-   somewhere else again. Sharing the tracks puts every status in one column, every switch in one column
-   and every action against one right edge, without a single call site having to know about it.
+/* THE TRAILING BAND. On a wide card a record's trailing cell takes the three trailing tracks rather than
+   being a flex line of its own. That is the difference between a card that lines up and the one this
+   replaced: flex sizes each row from its own content, so a record with a trailing action ended somewhere
+   else again. Sharing the tracks puts every switch in one column and every action against one right
+   edge, without a single call site having to know about it.
    BOTH layouts take the band. `stack` is about what a record does when the card gets NARROW — it is the
    opt-out for a record carrying several trailing values that cannot share a phone's value column — and a
    stacked record on a wide card has exactly the three slots every other record has. Excluding it was what
@@ -249,22 +256,11 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
 .settings-row[data-trailing] .settings-row__trailing > .settings-row__status { grid-column: 2; }
 .settings-row[data-trailing] .settings-row__trailing > .settings-row__control { grid-column: 3; }
 .settings-row[data-trailing] .settings-row__trailing > .settings-row__actions { grid-column: 4; justify-self: end; }
-/* An inline record's slots are scalars, so they hug the middle of the band: the status ends where the
-   control begins and the control ends at its track's edge, which is how a bare switch lands in the same
+/* An inline record's control ends at its track's edge, which is how a bare switch lands in the same
    column as the switch above it while a select or an input still fills the track through its own
-   full-width class. A stacked record's status is a BLOCK — an endpoint over a model count over a badge
-   row — and keeps the whole track to lay that out in. */
-.settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__status { justify-self: end; }
+   full-width class. Its STATUS is not here at all: it reads on the label's line (see the title rule
+   above), so an inline record's band is [control][actions] and nothing sizes the status track. */
 .settings-row[data-trailing='inline'] .settings-row__trailing .settings-row__control { display: flex; align-items: center; justify-content: flex-end; gap: 0.5rem; }
-/* A record with NO control reaches its status across the empty control column. The reading still ENDS
-   where every switch in the card begins, so it keeps the band's alignment while sitting directly beside
-   its own action instead of stranded a full column away from it. */
-.settings-row[data-trailing='inline'] .settings-row__trailing:not(:has(> .settings-row__control)) > .settings-row__status { grid-column: 2 / 4; }
-/* The short status is atomic — often a Badge — so it must keep its min-content width. Shrinking this
-   wrapper clipped "Configured" inside the badge while the control beside it still owned a generous flex
-   basis. The control is the elastic part of an inline record; multi-value rows that need full-width bands
-   declare `stack` instead. */
-.settings-row[data-trailing='inline'] .settings-row__trailing .settings-row__status { flex: none; min-width: max-content; }
 .settings-row__trailing .settings-row__status { margin-top: 0; white-space: nowrap; }
 .settings-row__trailing .settings-row__control { min-width: 0; flex: 1 1 10rem; }
 .settings-row__trailing .settings-row__actions { display: flex; flex: 0 1 auto; align-items: center; justify-content: flex-end; gap: 0.5rem; }
@@ -373,8 +369,9 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
 @container workspace-shell (width < 38.75rem) {
   /* THE TWO-LINE BAND. The stack collapses to a single track, and the records borrowing it through
      subgrid collapse with it — overriding the record alone would lose to the more specific subgrid rule.
-     A record is then two lines: its label and help, then everything trailing. There is no third line,
-     because an inline record's trailing cell does not wrap at any width (see the rule above). */
+     A record is then two lines: its label, help and short status, then everything trailing. There is no
+     third line, because an inline record's trailing cell does not wrap at any width (see the rule above);
+     a record whose only trailing value was a status has no second line at all. */
   .settings-group__body:has(> .settings-row), .settings-group__column { grid-template-columns: 1fr; }
   .settings-row { grid-template-columns: 1fr; gap: 0.6rem; }
   /* One track: release the pinned columns, or each slot would open an implicit column of its own. */

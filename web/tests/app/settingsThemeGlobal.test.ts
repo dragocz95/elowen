@@ -130,13 +130,32 @@ describe('settings row layout contract', () => {
       const rule = block(core, `.settings-row[data-trailing] .settings-row__trailing > .settings-row__${slot} {`);
       expect(rule, `${slot} must be placed explicitly`).toMatch(new RegExp(`grid-column:\\s*${column}`));
     }
-    // An inline record's slots are scalars and hug the middle of the band; the control fills its own track
-    // so a select still spans it while a bare switch lands on the column's edge.
-    expect(block(core, ".settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__status {")).toMatch(/justify-self:\s*end/);
+    // An inline record's control ends at its own track's edge, so a bare switch lands on the column edge
+    // every switch above it lands on while a select still spans the track through its full-width class.
     expect(block(core, '.settings-row[data-trailing] .settings-row__trailing > .settings-row__actions {')).toMatch(/justify-self:\s*end/);
     expect(block(core, ".settings-row[data-trailing='inline'] .settings-row__trailing .settings-row__control {")).toMatch(/justify-content:\s*flex-end/);
-    // A record with no control reaches its reading across the empty column instead of stranding it there.
-    expect(core).toContain(".settings-row[data-trailing='inline'] .settings-row__trailing:not(:has(> .settings-row__control)) > .settings-row__status { grid-column: 2 / 4; }");
+  });
+
+  /** WHERE THE SHORT STATUS READS. An inline record's status is a reading about the setting, so it sits on
+   *  the label's own line — one flex line of name, help mark and status. The band rules that used to place
+   *  it in a middle track are GONE rather than merely unused: a second placement for the same slot is how
+   *  a pill ends up floating between a record's name and its switch again. The status TRACK stays, because
+   *  a stacked record's block status still occupies it. */
+  it("reads an inline record's status on the label line, with no middle track left to strand it in", () => {
+    const title = block(core, '\n.settings-row__title {');
+    expect(title).toMatch(/display:\s*flex/);
+    expect(title).toMatch(/align-items:\s*center/);
+    expect(title).toMatch(/flex-wrap:\s*wrap/);
+    expect(title).toMatch(/gap:\s*0\.4rem/);
+    expect(block(core, '.settings-row__title > .settings-row__status {')).toMatch(/margin-top:\s*0/);
+
+    for (const dead of [
+      ".settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__status",
+      ':not(:has(> .settings-row__control)) > .settings-row__status',
+    ]) expect(core, `${dead} must not survive the move`).not.toContain(dead);
+
+    // Studio states the record's typography, never a second copy of the label line's layout.
+    expect(studio).not.toMatch(/\.settings-row__title \{[^}]*display:/);
   });
 
   /** One track cannot be subgridded into three. Both sheets have to hand the band back to flex where they
@@ -163,10 +182,11 @@ describe('settings row layout contract', () => {
     expect(block(block(studio, PHONE), '.settings-row[data-trailing] .settings-row__label,')).toMatch(/grid-column:\s*1/);
   });
 
-  it('keeps a short status badge at its min-content width instead of clipping its label', () => {
-    const status = block(core, ".settings-row[data-trailing='inline'] .settings-row__trailing .settings-row__status {");
-    expect(status).toMatch(/flex:\s*none/);
-    expect(status).toMatch(/min-width:\s*max-content/);
+  it('keeps a status readable rather than clipping it inside its badge', () => {
+    // The label-line status shrinks its own children (a model id truncates) and never hides overflow
+    // itself, which is what clipped "Configured" inside its badge the last time this was tuned.
+    const status = block(core, '.settings-row__title > .settings-row__status {');
+    expect(status).toMatch(/min-width:\s*0/);
     expect(status).not.toMatch(/overflow:\s*hidden/);
   });
 
