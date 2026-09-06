@@ -24,7 +24,6 @@ const DEFAULT_GLOB_MAX = 100;
 /** How many files a traversal may visit before it gives up. Shared by Glob and Search's rg-less
  *  fallback so both report the same bound with the same wording. */
 const WALK_CAP = 10_000;
-const DEFAULT_GREP_MAX_MATCHES = 200;
 const execFileP = promisify(execFile);
 const RIPGREP_REQUIRED = 'Error: ripgrep (rg) is required for content search. Install ripgrep and retry (Ubuntu/Debian: apt install ripgrep; macOS: brew install ripgrep).';
 const commandMissing = (error) => error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT';
@@ -907,7 +906,7 @@ async function rgSearch(abs, root, queryText, include, mode, maxMatches) {
  *  Cached per process — the set only changes when the rg binary itself does. */
 let rgTypeNames = null;
 async function assertKnownType(type, root) {
-  if (!rgTypeNames) {
+  if (!rgTypeNames?.size) {
     const { stdout } = await execFileP('rg', ['--type-list'], { cwd: root, encoding: 'utf8', timeout: SEARCH_TIMEOUT_MS, maxBuffer: 1_000_000 });
     rgTypeNames = new Set(stdout.split('\n').map((l) => l.split(':')[0].trim()).filter(Boolean));
   }
@@ -933,6 +932,10 @@ async function rgGrep(target, root, pattern, opts = {}) {
   // without it rg drops the line body entirely. This is the ONLY per-line length bound for Grep — a
   // second truncateLine pass over the formatted row would cut rg's marker back off.
   args.push('--max-columns', String(RESULT_LINE_MAX), '--max-columns-preview');
+  // `offset` pages a match set that a SECOND rg process produces, so the order of that set must be the
+  // same in both runs. Ripgrep searches files in parallel and emits them in completion order, which
+  // differs run to run — without this, page 2 would repeat some results and silently skip others.
+  args.push('--sort', 'path');
   if (caseInsensitive) args.push('-i');
   if (outputMode === 'files_with_matches') {
     args.push('--files-with-matches');
@@ -963,7 +966,8 @@ async function rgGrep(target, root, pattern, opts = {}) {
   const effHead = headLimit === 0 ? Infinity : (headLimit ?? Infinity); // 0 → unlimited
   const cap = Math.min(effHead, maxMatches ?? Infinity);
   // Order the WHOLE match set before paging, so `offset` walks one stable sequence: page 2 must continue
-  // page 1, not re-rank a different subset (files_with_matches is mtime-ordered across all matches).
+  // page 1, not re-rank a different subset (files_with_matches is mtime-ordered across all matches; the
+  // sort is stable, so rg's `--sort path` order breaks ties the same way on every page).
   const ordered = outputMode === 'files_with_matches'
     ? raw.map((abs) => ({ abs, mtime: mtimeOf(abs) })).sort((a, b) => b.mtime - a.mtime).map((f) => relative(root, f.abs) || f.abs)
     : raw.map((line) => outputMode === 'count' ? relativizeCountLine(line, root) : relativizeContentLine(line, root));
@@ -973,10 +977,9 @@ async function rgGrep(target, root, pattern, opts = {}) {
 
 export function register(ctx) {
   const readCap = Math.min(Math.max(Number(ctx.config.readCap) || DEFAULT_MAX, 20_000), 500_000);
+  // One bound for both Search's match cap and Grep's page size — one config key, one clamp. Resolved
+  // here because Grep's description quotes the number to the model as its declared default head cap.
   const searchMaxMatches = Math.min(Math.max(Number(ctx.config.searchMaxMatches) || DEFAULT_SEARCH_MAX_MATCHES, 50), 1000);
-  // Grep's page size, resolved here because its description quotes the number to the model as the
-  // declared default head cap. Same config key and clamp as Search's — one knob, one bound.
-  const grepMax = Math.min(Math.max(Number(ctx.config.searchMaxMatches) || DEFAULT_GREP_MAX_MATCHES, 50), 1000);
   // Resolved BEFORE the tool is defined, because the Read description below quotes this cap to the model.
   // The bounds MUST mirror the manifest's: the server stores plugin config unvalidated, so this clamp is
   // the only one there is.
@@ -1253,7 +1256,7 @@ export function register(ctx) {
       'Search file names or UTF-8 file contents within an accessible repository path.',
       'Use for codebase discovery before reading or editing files. Prefer content mode for symbols/text and files mode for path/name lookup. Always use this tool for content or name search — never grep, rg or find through Bash.',
       'Input path must be an accessible directory or file. Output is grouped matches with line numbers and is capped; details.truncated indicates more specific searches are needed.',
-      'Matching is always case-insensitive here, in both modes and with or without ripgrep. When case matters, use Grep, whose -i flag makes case folding explicit.',
+      'Matching is always case-insensitive here, on every path that returns results. When case matters, use Grep, whose -i flag makes case folding explicit.',
     ].join(' '),
     parameters: Type.Object({
       path: Type.String({ description: 'Absolute path to search within' }),
@@ -1438,8 +1441,8 @@ export function register(ctx) {
       'Use context lines (-A/-B/-C) to show surrounding lines in content mode.',
       'For multiline patterns (crossing line boundaries), set multiline: true.',
       'Matching is case-sensitive unless you pass -i; the sibling Search tool always matches case-insensitively, so use Grep when case matters.',
-      `Returns at most ${grepMax} results per call; when more exist the result says which offset continues the listing, so page through with offset instead of re-running a broader search.`,
-      `Result lines are cut at ${RESULT_LINE_MAX} columns and carry ripgrep's own "[... omitted end of long line]" marker, so one minified line cannot fill the page.`,
+      `Returns at most ${searchMaxMatches} results per call; when more exist the result says which offset continues the listing, so page through with offset instead of re-running a broader search.`,
+      `Matching lines are cut at ${RESULT_LINE_MAX} columns and carry ripgrep's own "[... omitted end of long line]" marker, so one minified line cannot fill the page.`,
     ].join(' '),
     parameters: Type.Object({
       pattern: Type.String({ description: 'The regular expression pattern to search for in file contents' }),
@@ -1454,7 +1457,7 @@ export function register(ctx) {
       '-C': Type.Optional(Type.Number({ description: 'Lines to show before and after each match (content mode only).' })),
       '-i': Type.Optional(Type.Boolean({ description: 'Case-insensitive search (rg -i). Defaults to false.' })),
       multiline: Type.Optional(Type.Boolean({ description: 'Enable multiline matching for patterns crossing line boundaries.' })),
-      head_limit: Type.Optional(Type.Integer({ minimum: 0, description: `Max number of result lines to return. Defaults to ${grepMax}; 0 removes the head limit but the ${grepMax} cap still applies.` })),
+      head_limit: Type.Optional(Type.Integer({ minimum: 0, description: `Max number of result lines to return. Defaults to ${searchMaxMatches}; 0 removes the head limit but the ${searchMaxMatches} cap still applies.` })),
       offset: Type.Optional(Type.Integer({ minimum: 0, description: 'Skip this many results before the page returned, for continuing a truncated listing. Defaults to 0.' })),
     }),
     execute: async (_id, p) => {
@@ -1489,7 +1492,7 @@ export function register(ctx) {
             multiline: p.multiline === true,
             headLimit: p.head_limit,
             offset,
-            maxMatches: grepMax,
+            maxMatches: searchMaxMatches,
           });
           lines = r.lines;
           truncated = r.truncated;
@@ -1498,20 +1501,24 @@ export function register(ctx) {
           if (!commandMissing(error)) throw error;
           return ok('Grep', RIPGREP_REQUIRED, { ok: false, path: root, pattern: p.pattern, outputMode });
         }
-        // No per-line truncateLine here: rg's --max-columns already bounds every row and appends the
-        // marker, and a second pass would cut that marker off again.
-        let text = lines.join('\n') || 'No matches found.';
-        // Say out loud which slice of the match set this is, and — when more remains — the exact offset
-        // that continues it, the way Read's footer does. `offset` counts RESULTS from 0, so the next page
-        // starts at the number of results already shown, not at that plus one.
-        const lastShown = offset + lines.length;
-        if (!lines.length && total > 0) {
-          text = `No more results — offset ${offset} is past the ${total} matches found.`;
-        } else if (lines.length && (truncated || offset > 0)) {
+        // Content rows are already bounded by rg's --max-columns and carry its marker, so re-cutting them
+        // here would only chop that marker off. --max-columns does NOT apply to the other two modes, whose
+        // rows are file paths, so those keep the explicit bound.
+        const rows = outputMode === 'content' ? lines : lines.map((l) => truncateLine(l, RESULT_LINE_MAX).text);
+        let text = rows.join('\n') || 'No matches found.';
+        // Say out loud which slice of the result set this is, and — when more remains — the exact offset
+        // that continues it. Counted in RESULT ROWS, which is what `offset` skips: in content mode with
+        // -A/-B/-C a row may be a context line, so "results" is not the same as "matches". Unlike Read's
+        // 1-based line offset, this offset counts rows already shown, so the next page starts AT that
+        // number, not at that plus one.
+        const lastShown = offset + rows.length;
+        if (!rows.length && total > 0) {
+          text = `No more results — offset ${offset} is past the ${total} results found.`;
+        } else if (rows.length && (truncated || offset > 0)) {
           text += `\n\n[Showing results ${offset + 1}-${lastShown} of ${total}.${truncated ? ` Use offset=${lastShown} to continue.` : ''}]`;
         }
         return ok('Grep', text, {
-          ...pathMeta(root), pattern: p.pattern, outputMode, matches: lines.length, total, offset, truncated,
+          ...pathMeta(root), pattern: p.pattern, outputMode, matches: rows.length, total, offset, truncated,
         });
       } catch (e) { return fail('Grep', safeError(e)); }
     },
