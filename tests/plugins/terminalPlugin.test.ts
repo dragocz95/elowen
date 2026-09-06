@@ -1,9 +1,10 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { assertPathAllowed } from '../../src/plugins/pathGuard.js';
 import { createWorkspacePathView } from '../../src/plugins/pathView.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
@@ -592,6 +593,116 @@ describe('terminal plugin — configurable outputCap', () => {
     expect(output.description).toMatch(/whole retained buffer/i);
     expect(output.description).toMatch(/tail/i);
     expect(output.description).not.toMatch(/whole buffer from process start/i);
+  });
+});
+
+// A truncated result used to be the only copy of the run: the middle was dropped and unrecoverable. The
+// complete output now goes to the host's tool-result spill store — the same directory the context cleaner
+// uses, so the session can Read it back and deleting the conversation removes it.
+describe('terminal plugin — the full output of a truncated foreground run', () => {
+  let dir: string;
+  let home: string;
+  let previousHome: string | undefined;
+  beforeAll(() => {
+    dir = tmpDir('term-spill');
+    // The spill root is derived from HOME (dataDir). Point it at a temp dir so the test writes nowhere
+    // near the real instance's tool-results, and restore it before any later describe runs.
+    home = tmpDir('term-spill-home');
+    previousHome = process.env.HOME;
+    process.env.HOME = home;
+  });
+  afterAll(() => {
+    if (previousHome === undefined) delete process.env.HOME;
+    else process.env.HOME = previousHome;
+  });
+
+  const cappedReg = () => loadPlugins({
+    dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log,
+    config: { terminal: { outputCap: 10_000 } },
+  });
+  const bigOutput = (n: number) => `node -e "process.stdout.write('a'.repeat(${n}))"`;
+  const savedPath = (text: string): string => {
+    const match = /saved to (\S+\.txt)/.exec(text);
+    if (!match) throw new Error(`no stored path in the result: ${text.slice(0, 400)}`);
+    return match[1];
+  };
+  const spillRoot = () => join(home, '.config', 'elowen', 'tool-results');
+  const spillDirs = () => (existsSync(spillRoot()) ? readdirSync(spillRoot()).sort() : []);
+
+  it('stores the whole output, names it with its size, and keeps the inline excerpt inside the cap', async () => {
+    const reg = await cappedReg();
+    // Deliberately long: the stored path goes INTO the truncation banner, so the excerpt's budget has to
+    // pay for it. Budgeting only the fixed banner reserve lands within a byte of the cap for a short id
+    // and overshoots it here, which is what makes the cap assertion below pin that subtraction.
+    const sessionId = `brain-terminal-spill-over-${'x'.repeat(60)}`;
+    // Over the inline cap, under the rolling buffer's own 2× limit — the range where the run is
+    // reproduced byte for byte instead of losing its middle.
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: bigOutput(15_000) }), { identity: owner, sessionId });
+    const text = res.content[0].text;
+
+    expect(text).toContain('…[truncated');
+    const stored = savedPath(text);
+    // The middle is no longer lost: every byte the run produced is in the file, not just the two ends.
+    expect(readFileSync(stored, 'utf8')).toBe('a'.repeat(15_000));
+    expect(text).toContain('full output (14.6KB)');
+    expect(text).toMatch(/read it with the Read tool/);
+    expect(Buffer.byteLength(text, 'utf8')).toBeLessThanOrEqual(10_000);
+  });
+
+  // The promise the banner makes — "read it with the Read tool" — only holds if the ordinary path guard
+  // admits that exact path for THIS conversation and no other.
+  it('lands under the spill root the owning session may read, and no other session may', async () => {
+    const reg = await cappedReg();
+    const sessionId = 'brain-terminal-spill-guard';
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: bigOutput(30_000) }), { identity: owner, sessionId });
+    const stored = savedPath(res.content[0].text);
+
+    expect(stored.startsWith(realpathSync(join(spillRoot(), sessionId)) + '/')).toBe(true);
+    expect(runWithPolicy(userPolicy([dir]), () => assertPathAllowed(stored), { identity: owner, sessionId })).toBe(stored);
+    expect(() => runWithPolicy(userPolicy([dir]), () => assertPathAllowed(stored), { identity: owner, sessionId: 'brain-someone-else' }))
+      .toThrow(/not allowed/);
+  });
+
+  it('writes nothing when the result fits inline', async () => {
+    const reg = await cappedReg();
+    const sessionId = 'brain-terminal-spill-under';
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: bigOutput(5_000) }), { identity: owner, sessionId });
+
+    expect(res.content[0].text).not.toContain('…[truncated');
+    expect(res.content[0].text).not.toContain('saved to');
+    expect(existsSync(join(spillRoot(), sessionId))).toBe(false);
+  });
+
+  // Past twice the cap the rolling buffer has already dropped bytes mid-run, so the file is everything
+  // that survived rather than everything the process wrote — and it says so instead of claiming to be the
+  // full output.
+  it('calls the stored file retained, not full, once the mid-run buffer has dropped bytes', async () => {
+    const reg = await cappedReg();
+    const sessionId = 'brain-terminal-spill-huge';
+    const command = 'node -e "process.stdout.write(\'FIRST-LINE\\n\' + \'x\'.repeat(300000) + \'\\nLAST-LINE\\n\')"';
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command }), { identity: owner, sessionId });
+    const text = res.content[0].text;
+
+    expect(text).toContain('retained output (');
+    expect(text).not.toContain('full output (');
+    const contents = readFileSync(savedPath(text), 'utf8');
+    expect(contents).toContain('FIRST-LINE');
+    expect(contents).toContain('LAST-LINE');
+    expect(contents).toContain('was dropped from the middle of this output while the process ran');
+    // Far more than the inline excerpt could carry — the point of storing it at all.
+    expect(contents.length).toBeGreaterThan(19_000);
+  });
+
+  // Worker and cron runs own no conversation, so there is no spill directory to write into. The run must
+  // still report what it did.
+  it('still returns a truncated result outside a prompt turn, without storing anything', async () => {
+    const reg = await cappedReg();
+    const before = spillDirs();
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: bigOutput(15_000) }), { identity: owner });
+
+    expect(res.content[0].text).toContain('…[truncated');
+    expect(res.content[0].text).not.toContain('saved to');
+    expect(spillDirs()).toEqual(before); // no conversation, so no new spill directory
   });
 });
 

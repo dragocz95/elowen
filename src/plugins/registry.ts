@@ -15,7 +15,9 @@ import type { PluginSecretBag } from '../shared/pluginSecrets.js';
 import { commandsWithPlugins, isReservedCommandName, type PluginSlashCommand, type SlashSurface } from '../brain/slashCommands.js';
 import type { PluginManifest } from './manifest.js';
 import { assertPathAllowed, allowedRoots, defaultCwd, displayPath, isAllAccess, currentAccess, pathStateKey, sanitizePathOutput } from './pathGuard.js';
-import { currentIdentity, currentContributionUserId, currentAccountUserId, currentDeliveryTarget, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentSessionId } from './policyContext.js';
+import { currentIdentity, currentContributionUserId, currentAccountUserId, currentDeliveryTarget, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentPathView, currentSessionId } from './policyContext.js';
+import { persistToolOutputSpill } from '../brain/session/toolResultClearing.js';
+import { sessionToolResultSpillDir } from '../shared/paths.js';
 import { bindingRef, resolveDelegatedWorkspace } from '../brain/workspaceScope.js';
 import { processRegistry } from '../brain/processRegistry.js';
 import { subagentSessionId } from '../brain/sessionId.js';
@@ -27,6 +29,11 @@ import { normalizeNotificationDestination } from './destinations.js';
 import { logger } from '../shared/logger.js';
 
 const log = logger('plugins');
+
+/** Largest complete tool output the host stores for one call. Well above what any bounded tool result
+ *  excerpts (the terminal plugin's cap is 60 kB by default) and far below anything that threatens the
+ *  data directory, so it bites only on a caller that has lost track of what it is writing. */
+const MAX_PERSISTED_TOOL_OUTPUT_BYTES = 8_000_000;
 
 /** Canonical JSON of a tool's declared surface, for deciding whether two accounts' same-named personal
  *  tools are the SAME tool. Keys are emitted in sorted order so two structurally identical schemas built
@@ -1400,6 +1407,28 @@ export class PluginRegistry {
       displayPath,
       pathStateKey,
       sanitizePathOutput,
+      // The spill DIRECTORY comes from the host's own turn scope, never from the plugin: the caller names
+      // only its tool call and the text, so it can no more write into another conversation's spills than
+      // it could name one. Sessionless (worker/cron) turns own no directory and get null rather than a
+      // path outside any conversation's reach.
+      persistToolOutput: async ({ toolCallId, text }) => {
+        // The text is plugin-supplied and lands in the daemon's data directory, which nothing else
+        // bounds: one conversation could otherwise fill the disk one tool call at a time. Loud rather
+        // than truncated — a silently shortened file is a worse answer than none, because the excerpt
+        // that names it promises the COMPLETE output.
+        const bytes = Buffer.byteLength(text, 'utf8');
+        if (bytes > MAX_PERSISTED_TOOL_OUTPUT_BYTES) {
+          throw new Error(`tool output is ${bytes} bytes, above the ${MAX_PERSISTED_TOOL_OUTPUT_BYTES}-byte limit for a persisted tool output`);
+        }
+        const sessionId = currentSessionId();
+        if (!sessionId) return null;
+        // A workspace-confined turn has no name for this file: its logical filesystem is the worktree, so
+        // assertPathAllowed resolves through the path view and refuses every absolute path. Storing it
+        // would hand the model a path it cannot open — and one that names the daemon's data directory,
+        // which the workspace sanitiser has no prefix to redact. Nothing is stored instead.
+        if (currentPathView()) return null;
+        return persistToolOutputSpill(sessionToolResultSpillDir(process.env, sessionId), toolCallId, text);
+      },
       allowedRoots,
       defaultCwd,
       workDir: currentWorkDir,
