@@ -554,7 +554,9 @@ function readNotebook(raw, supportsImages, readCap) {
 const READ_STATE_MAX_SESSIONS = 64;
 const READ_STATE_MAX_FILES = 512;
 /** sessionId → (path-state key → authorization). Any successful Read of a file authorizes mutation, paged
- * or not; what the guard still enforces is that the bytes on disk are the ones that read hashed. */
+ * or not; what the guard still enforces is that the bytes on disk are the ones that read hashed.
+ * An entry is `{ hash, ours }`, and a text Read adds the `offset`/`limit` it returned — the one extra
+ * thing the dedup below needs, kept on the SAME entry so the hash stays the only authorization. */
 const readState = new Map();
 
 const hashOf = (buf) => createHash('sha256').update(buf).digest('hex');
@@ -591,14 +593,46 @@ export function markFileRead(sessionId, key, content, ours = false) {
   recordHash(sessionId, key, hashOf(content), ours);
 }
 
-/** Record what a text Read saw. A page of the file authorizes mutation just as a whole-file read does — the
- * hash is of the WHOLE file either way, so the staleness check keeps its teeth. Re-reading bytes we authored
- * keeps the `ours` marker: the formatter tolerance is about who wrote the file, not how often it was read. */
-function recordTextRead(sessionId, key, hash) {
+/** Record what a text Read saw, and which range it put in front of the model. A page of the file authorizes
+ * mutation just as a whole-file read does — the hash is of the WHOLE file either way, so the staleness check
+ * keeps its teeth. Re-reading bytes we authored keeps the `ours` marker: the formatter tolerance is about who
+ * wrote the file, not how often it was read. */
+function recordTextRead(sessionId, key, hash, offset, limit) {
   if (!sessionId) return;
   const files = sessionFiles(sessionId);
   const prior = files.get(key);
-  recordEntry(files, key, prior?.hash === hash ? prior : { hash, ours: false });
+  recordEntry(files, key, { hash, ours: prior?.hash === hash && prior.ours === true, offset, limit });
+}
+
+/** Claude Code's `file_unchanged` stub, verbatim (`src/tools/FileReadTool/prompt.ts:7-8`). */
+const FILE_UNCHANGED_STUB = 'File unchanged since last read. The content from the earlier Read tool_result '
+  + 'in this conversation is still current — refer to that instead of re-reading.';
+
+/** Whether this Read would hand back bytes an earlier Read already put in front of the model, so the stub
+ * above can stand in for them (`FileReadTool.ts:522-573`). Same conversation, same file, same range, and the
+ * same hash the guard already computes — nothing here decides authorization, it only chooses what to say.
+ *
+ * The range is what says a READ recorded this entry: a Write/Edit baseline, a PDF/image/notebook read and a
+ * transcript replay all record a hash without one, and none of them displayed this text. That is exactly the
+ * reference's `existingState.offset !== undefined` (`FileReadTool.ts:547-551`) — `ours` is a different
+ * question (who wrote the bytes, for Edit's formatter tolerance) and stays sticky across re-reads, so using
+ * it here would silence the dedup for every file the conversation has ever edited. */
+function readIsDuplicate(sessionId, key, hash, offset, limit) {
+  if (!sessionId) return false;
+  const entry = readState.get(sessionId)?.get(key);
+  return entry !== undefined && entry.hash === hash
+    && entry.offset === offset && entry.limit === limit;
+}
+
+/** Forget which range the entry displayed, keeping the hash that authorizes mutation. The stub points at an
+ * earlier tool_result the plugin cannot see the fate of: toolResultClearing replaces older Read results with
+ * placeholders and compaction drops them entirely. Dropping the range makes the NEXT identical Read send the
+ * content again, so a stub is never the only copy the model has, while an immediate re-read still dedups.
+ * Called only from the duplicate branch, where the session and the entry both exist. */
+function dropReadRange(sessionId, key) {
+  const files = sessionFiles(sessionId);
+  const prior = files.get(key);
+  recordEntry(files, key, { hash: prior.hash, ours: prior.ours });
 }
 
 /** Rebuild this session's authorization atomically from the visible transcript. Only successful Read results
@@ -1122,15 +1156,24 @@ export function register(ctx) {
         }
         const endShown = snapshot.selectedEnd;
         const truncated = endShown < total;
+        const sessionId = ctx.currentSessionId?.();
+        const key = statePath(abs);
+        const details = { ...pathMeta(abs), bytes: snapshot.totalBytes, truncated, contentHash: snapshot.contentHash };
+        // Re-reading the same range of a file that has not moved would send a second copy of content the
+        // earlier tool_result still carries. Point at that copy instead, once: dropping the range keeps the
+        // entry (a file read through the stub is still a file in use, and without that touch a busy
+        // conversation could age its own entry out from under the guard) while letting a third identical
+        // Read return the bytes again, in case the result the stub pointed at is no longer in the context.
+        if (readIsDuplicate(sessionId, key, snapshot.contentHash, start, p.limit)) {
+          dropReadRange(sessionId, key);
+          return ok('Read', FILE_UNCHANGED_STUB, details);
+        }
         let text = addLineNumbers(snapshot.content, start + 1);
         if (truncated) {
           text += `\n\n[Showing lines ${start + 1}-${endShown} of ${total}. Use offset=${endShown + 1} to continue.]`;
         }
-        recordTextRead(ctx.currentSessionId?.(), statePath(abs), snapshot.contentHash);
-        return ok('Read', text, {
-          ...pathMeta(abs), bytes: snapshot.totalBytes, truncated,
-          contentHash: snapshot.contentHash,
-        });
+        recordTextRead(sessionId, key, snapshot.contentHash, start, p.limit);
+        return ok('Read', text, details);
       } catch (e) { return fail('Read', safeError(e)); }
     },
   }), { workspaceSafe: true });
