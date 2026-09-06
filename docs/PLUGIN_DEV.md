@@ -470,8 +470,9 @@ A hook may also be a pure observer. Hook failures do not grant permission or blo
 
 `tools.call.after` is the only channel through which one plugin learns that another wrote a file; the `files` plugin broadcasts nothing of its own. A subscriber sees `{ tool, params, result }` after a permitted execute resolves:
 
-- Act on `tool === 'Edit'` or `tool === 'Write'`, and only when `result.details.ok === true`. A refused or failed Edit resolves with an error result instead of throwing, so the event fires for it too and `ok` is the only thing separating a real write from nothing having happened.
+- Act on `tool === 'Edit'` or `tool === 'Write'`, and only when `result.details.ok === true`. A failed or guard-refused Edit resolves with an error result instead of throwing, so the event fires for it too and `ok` is the only thing separating a real write from nothing having happened. A call the permission gate denied never reaches the hook at all.
 - Resolve the path with `ctx.assertPathAllowed(params.file_path)`. The hook runs inside the tool's turn scope, so a workspace-relative path resolves exactly as it did for the tool. `result.details.path` is a display path, not a filesystem path.
+- Do not assume the bytes on disk are final. Subscribers for one hook name run concurrently, and one of them may still rewrite the file — a formatter does exactly that. Prefer invalidating what you cached over capturing content here.
 - Do no slow work. The tool result waits for this hook, so notify or invalidate and return; anything that has to run long belongs behind a subsequent tool call.
 
 `tests/plugins/filesMutationObserver.test.ts` pins this payload contract.
