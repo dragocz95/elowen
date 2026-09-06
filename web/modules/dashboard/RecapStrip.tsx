@@ -39,7 +39,11 @@ export function RecapStrip({ recap }: { recap: DashRecap | undefined }) {
   // server-rendered first frame is the same variant the client hydrates — variant 1, as always.
   const [shown, setShown] = useState<{ cur: number; prev: number | null }>({ cur: 0, prev: null });
   const [paused, setPaused] = useState(false);
-  const [held, setHeld] = useState(false);
+  // Hover and focus hold the rotation INDEPENDENTLY: the pointer may leave while a control inside the
+  // strip still holds keyboard focus, and the other way around — one shared boolean would restart the
+  // timer whenever either of them ended.
+  const [hoverHeld, setHoverHeld] = useState(false);
+  const [focusHeld, setFocusHeld] = useState(false);
   const [tabHidden, setTabHidden] = useState(false);
 
   // The rotation batch. A daemon older than the batch serves no `recaps`, so the strip derives its
@@ -79,12 +83,12 @@ export function RecapStrip({ recap }: { recap: DashRecap | undefined }) {
   // CSS anyway and the timer would only churn content they did not ask to change. Manual stepping
   // stays available in every mode.
   useEffect(() => {
-    if (count < 2 || paused || held || tabHidden || !crossfade) return;
+    if (count < 2 || paused || hoverHeld || focusHeld || tabHidden || !crossfade) return;
     const id = setInterval(() => {
       setShown((s) => ({ cur: (s.cur + 1) % count, prev: s.cur }));
     }, ROTATE_MS);
     return () => clearInterval(id);
-  }, [count, paused, held, tabHidden, crossfade]);
+  }, [count, paused, hoverHeld, focusHeld, tabHidden, crossfade]);
 
   if (!recap?.enabled) return null;
 
@@ -108,16 +112,34 @@ export function RecapStrip({ recap }: { recap: DashRecap | undefined }) {
     if (e.key === 'ArrowLeft') { e.preventDefault(); goTo((idx - 1 + count) % count); }
   };
 
-  // One variant layer: the sentence and the pill row, exactly the approved v3 shape. The outgoing
-  // layer is stacked into the same grid cell so the box never changes size mid-fade — and it is inert
-  // and aria-hidden, so nothing inside it can take focus or reach a reader mid-fade.
-  const layer = (variant: DashRecapVariant | undefined, leaving: boolean) => {
+  // The variant fading out right now (normalized, like `idx`).
+  const leavingIdx = shown.prev !== null ? ((shown.prev % count) + count) % count : null;
+
+  // One variant layer: the sentence and the pill row, exactly the approved v3 shape.
+  //
+  // ALL variants are stacked into the SAME grid cell, so the strip's box is as tall as the tallest
+  // variant at every moment: the visible one, the one fading out, and the not-shown ones "parked"
+  // (`invisible`, inert, aria-hidden — out of the layout flow only visually, never from the box's
+  // height). Without the parked layers a longer previous variant would collapse the box the moment
+  // its fade ended, and everything below the strip would jump.
+  //
+  // The current layer carries a per-variant key, so every switch REMOUNTS it and its fade-in
+  // animation restarts — rapid back/next during a crossfade always plays a fresh animation instead of
+  // recycling the same element's already-spent one. The class itself is only on mid-crossfade: the
+  // first (server-rendered) paint must not fade in, and the class must not sit on a static frame.
+  const layer = (variant: DashRecapVariant | undefined, mode: 'current' | 'leaving' | 'parked', key: string) => {
     const line = variant?.summary ? emphasize(variant.summary) : fallbackSentence;
     const steps = (variant?.suggestions ?? []).slice(0, 3);
     return (
       <div
-        className={`[grid-area:1/1] ${leaving ? 'recap-variant-out' : 'recap-variant-in'}`}
-        {...(leaving ? { inert: true, 'aria-hidden': true } : {})}
+        key={key}
+        className={[
+          '[grid-area:1/1]',
+          mode === 'leaving' ? 'recap-variant-out' : '',
+          mode === 'current' && leavingIdx !== null ? 'recap-variant-in' : '',
+          mode === 'parked' ? 'invisible' : '',
+        ].filter(Boolean).join(' ')}
+        {...(mode !== 'current' ? { inert: true, 'aria-hidden': true } : {})}
       >
         {line ? (
           <p className="mx-auto max-w-[34rem] text-sm leading-relaxed text-muted-foreground">{line}</p>
@@ -155,16 +177,21 @@ export function RecapStrip({ recap }: { recap: DashRecap | undefined }) {
     <section
       aria-label={t.dashboard.recap.label}
       className="mx-auto mt-10 w-full max-w-2xl text-center"
-      onMouseEnter={() => setHeld(true)}
-      onMouseLeave={() => setHeld(false)}
-      onFocus={() => setHeld(true)}
-      onBlur={() => setHeld(false)}
+      onMouseEnter={() => setHoverHeld(true)}
+      onMouseLeave={() => setHoverHeld(false)}
+      onFocus={() => setFocusHeld(true)}
+      // focusout bubbles here from every control inside, so `relatedTarget` decides: focus that moved
+      // to ANOTHER element inside the strip is not a leave — only a blur to outside (or nowhere) is.
+      onBlur={(e) => {
+        if (!(e.currentTarget as HTMLElement).contains(e.relatedTarget as Node | null)) setFocusHeld(false);
+      }}
     >
       {/* The swap is silence on purpose: with no live region the reader hears the strip only when they
           navigate to it, never one variant after another read out over the timer. */}
       <div aria-live="off" className="grid">
-        {current !== undefined && shown.prev !== null ? layer(variants[shown.prev % count], true) : null}
-        {layer(current, false)}
+        {current !== undefined && leavingIdx !== null ? layer(variants[leavingIdx], 'leaving', `out-${leavingIdx}`) : null}
+        {layer(current, 'current', `in-${idx}`)}
+        {variants.map((v, i) => (i !== idx && i !== leavingIdx ? layer(v, 'parked', `parked-${i}`) : null))}
       </div>
       {count > 1 ? (
         <div role="group" aria-label={t.dashboard.recap.rotation} onKeyDown={onKey}

@@ -7,7 +7,7 @@ import { sanitizePayload } from '../store/dashDigestStore.js';
 export interface DigestSessionInput { id: string; title: string }
 
 /** Everything the digest model gets to see, assembled server-side from the stores — generation never
- *  opens a brain session or conversation of any kind (Filip's explicit requirement, 31 Aug 2026). */
+ *  opens a brain session or conversation of any kind. */
 export interface DigestInput {
   /** Display name of the user the digest is for. */
   userName: string;
@@ -30,9 +30,9 @@ export interface DigestInput {
 const MESSAGE_CHARS = 200;
 const MEMORY_CHARS = 200;
 
-/** How many recap variants one generation writes when the operator has not chosen a count. Filip
- *  asked for ~5-10; 5 fills the rotation with distinct tellings of the same day without asking the
- *  cheap model for a longer reply than it writes well. */
+/** How many recap variants one generation writes when the operator has not chosen a count. Five fills
+ *  the rotation with distinct tellings of the same day without asking the cheap model for a longer
+ *  reply than it writes well. */
 const DIGEST_RECAP_VARIANTS = 5;
 
 /** Build the instruction prompt. English instructions with a hard same-language rule, like the

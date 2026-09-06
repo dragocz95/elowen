@@ -75,8 +75,8 @@ export interface DashboardBlock {
  *  than yesterday's material can justify; below one the digest would never generate at all. */
 export const DIGEST_PER_DAY_BOUNDS = { min: 1, max: 24 } as const;
 
-/** Bounds for {@link DashboardBlock.digestVariants}. Filip asked for ~5-10; below one there is nothing
- *  to rotate and the store's cap discards everything past ten anyway. */
+/** Bounds for {@link DashboardBlock.digestVariants}. Below one there is nothing to rotate, and the
+ *  store's cap discards everything past ten anyway. */
 export const DIGEST_VARIANTS_BOUNDS = { min: 1, max: 10 } as const;
 
 /** Shape-check a stored/patched dashboard block field-by-field: for read() the fallback is the

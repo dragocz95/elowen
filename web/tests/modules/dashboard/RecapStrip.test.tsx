@@ -94,11 +94,18 @@ describe('RecapStrip rotation', () => {
     expect(group.parentElement?.querySelector('[aria-live="off"]')).not.toBeNull();
     expect(screen.getByText('1 / 3')).toBeInTheDocument();
     expect(container.querySelectorAll('[aria-hidden="true"]')).not.toHaveLength(0);
+    // The WHOLE batch is parked in the same grid cell from the first paint, so the strip reserves the
+    // tallest variant's height and nothing below it jumps when a longer variant fades out.
+    expect(screen.getByText('Telling number 2 of the day.')).toBeInTheDocument();
+    expect(screen.getByText('Telling number 3 of the day.')).toBeInTheDocument();
+    // The first paint is NOT animated: the server-rendered frame is visible immediately, no fade-in.
+    const firstLayer = screen.getByText('Telling number 1 of the day.').closest('[class*="grid-area"]');
+    expect(firstLayer).not.toHaveClass('recap-variant-in');
   });
 
   it('advances by itself every 12 seconds and cleans its timers on unmount', () => {
     vi.useFakeTimers();
-    const { unmount } = draw(BATCH);
+    const { unmount, container } = draw(BATCH);
     act(() => { vi.advanceTimersByTime(12_000); });
     expect(screen.getByText('Telling number 2 of the day.')).toBeInTheDocument();
     expect(screen.getByText('2 / 3')).toBeInTheDocument();
@@ -107,7 +114,13 @@ describe('RecapStrip rotation', () => {
     expect(leaving).not.toBeNull();
     expect(leaving).toHaveAttribute('inert');
     act(() => { vi.advanceTimersByTime(700); });
-    expect(screen.queryByText('Telling number 1 of the day.')).toBeNull();
+    // The fade is over, but variant 1's PARKED layer remains (hidden, inert) so the box keeps the
+    // batch's full height instead of collapsing down to the current variant's.
+    expect(container.querySelector('.recap-variant-out')).toBeNull();
+    const parked = screen.getByText('Telling number 1 of the day.').closest('[class*="grid-area"]');
+    expect(parked).toHaveClass('invisible');
+    expect(parked).toHaveAttribute('inert');
+    expect(parked).toHaveAttribute('aria-hidden', 'true');
     // Wraps around after the last variant.
     act(() => { vi.advanceTimersByTime(12_000 * 2); });
     expect(screen.getByText('Telling number 1 of the day.')).toBeInTheDocument();
@@ -129,6 +142,61 @@ describe('RecapStrip rotation', () => {
     expect(screen.getByText('3 / 3')).toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole('group', { name: en.dashboard.recap.rotation }), { key: 'ArrowRight' });
     expect(screen.getByText('Telling number 1 of the day.')).toBeInTheDocument();
+  });
+
+  it('the crossfade element is remounted on every switch, so the animation never gets recycled', () => {
+    const { container } = draw(BATCH);
+    const visibleLayer = () =>
+      Array.from(container.querySelectorAll('[class*="grid-area"]')).find((n) => n.getAttribute('aria-hidden') !== 'true')!;
+    const first = visibleLayer();
+    expect(first).toHaveTextContent('Telling number 1 of the day.');
+    expect(first).not.toHaveClass('recap-variant-in');
+    fireEvent.click(screen.getByRole('button', { name: en.dashboard.recap.next }));
+    const second = visibleLayer();
+    expect(second).toHaveClass('recap-variant-in');
+    expect(second).not.toBe(first); // a fresh node each switch → the CSS animation restarts
+    fireEvent.click(screen.getByRole('button', { name: en.dashboard.recap.prev }));
+    const back = visibleLayer();
+    expect(back).toHaveTextContent('Telling number 1 of the day.');
+    expect(back).toHaveClass('recap-variant-in');
+    expect(back).not.toBe(first); // even returning to a variant remounts it: no recycled animation
+  });
+
+  it('rapid next/back during a crossfade keeps one leaving layer and one copy of every variant', () => {
+    const { container } = draw(BATCH);
+    fireEvent.click(screen.getByRole('button', { name: en.dashboard.recap.next }));
+    fireEvent.click(screen.getByRole('button', { name: en.dashboard.recap.next }));
+    expect(screen.getByText('3 / 3')).toBeInTheDocument();
+    expect(screen.getByText('Telling number 3 of the day.')).toBeInTheDocument();
+    // Exactly ONE leaving layer, carrying the variant we just came from — the earlier fade is replaced.
+    expect(container.querySelectorAll('.recap-variant-out')).toHaveLength(1);
+    expect(container.querySelector('.recap-variant-out')).toHaveTextContent('Telling number 2 of the day.');
+    // Every variant exists exactly once: visible, leaving, or parked — nothing duplicated, nothing lost.
+    for (const n of [1, 2, 3]) {
+      expect(screen.getAllByText(`Telling number ${n} of the day.`)).toHaveLength(1);
+    }
+  });
+
+  it('hover and keyboard focus hold the rotation independently, with the blur boundary inside the strip', () => {
+    vi.useFakeTimers();
+    const { container } = draw(BATCH);
+    const section = container.querySelector('section')!;
+    const pill = screen.getByRole('button', { name: /Step 1/ });
+    fireEvent.mouseEnter(section);
+    fireEvent.focus(pill);
+    // The pointer leaves while keyboard focus stays inside: the rotation must KEEP holding.
+    fireEvent.mouseLeave(section);
+    act(() => { vi.advanceTimersByTime(24_000); });
+    expect(screen.getByText('Telling number 1 of the day.')).toBeInTheDocument();
+    // Focus moving WITHIN the strip (pill → control) keeps holding too.
+    const control = screen.getByRole('button', { name: en.dashboard.recap.prev });
+    fireEvent.blur(pill, { relatedTarget: control });
+    act(() => { vi.advanceTimersByTime(12_000); });
+    expect(screen.getByText('Telling number 1 of the day.')).toBeInTheDocument();
+    // Focus leaving the strip entirely releases the hold.
+    fireEvent.blur(control, { relatedTarget: null });
+    act(() => { vi.advanceTimersByTime(12_000); });
+    expect(screen.getByText('Telling number 2 of the day.')).toBeInTheDocument();
   });
 
   it('the pause button holds the rotation until resumed', () => {
@@ -182,12 +250,16 @@ describe('RecapStrip rotation', () => {
       addEventListener: () => {}, removeEventListener: () => {}, dispatchEvent: () => false,
       addListener: () => {}, removeListener: () => {},
     } as unknown as MediaQueryList));
-    draw(BATCH);
+    const { container } = draw(BATCH);
     act(() => { vi.advanceTimersByTime(60_000); });
     expect(screen.getByText('Telling number 1 of the day.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: en.dashboard.recap.next }));
     expect(screen.getByText('Telling number 2 of the day.')).toBeInTheDocument();
-    // No crossfade under reduced motion: the outgoing variant is dropped in the same commit.
-    expect(screen.queryByText('Telling number 1 of the day.')).toBeNull();
+    // Instant swap: no leaving layer is ever mounted, and variant 1 survives only as its parked copy.
+    expect(container.querySelector('.recap-variant-out')).toBeNull();
+    expect(
+      screen.getAllByText('Telling number 1 of the day.')
+        .every((n) => n.closest('[aria-hidden="true"]') !== null),
+    ).toBe(true);
   });
 });
