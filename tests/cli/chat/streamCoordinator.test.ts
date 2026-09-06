@@ -1354,12 +1354,13 @@ describe('StreamCoordinator — parent snapshot hydration', () => {
     } as unknown as BrainClient;
     const ac = new AbortController();
     const rt = state([{ role: 'assistant', text: 'hi' }], { workMode: 'build' });
-    rt.conversationTitle = 'titled'; // skip the first-turn refreshMeta title branch
+    rt.conversationTitle = 'titled';
     rt.streamAc = ac;
     const onTurnActive = vi.fn();
     const onTurnSettled = vi.fn();
+    const refreshMeta = vi.fn(async () => {});
     const stream = new StreamCoordinator(
-      rt, { client }, actions({ onTurnActive, onTurnSettled }),
+      rt, { client }, actions({ onTurnActive, onTurnSettled, refreshMeta }),
       { launchAsk: () => {}, openPlanDecision: () => {} } as unknown as Flows,
       new SnapshotHydrator<BrainEvent>(), new HydrationNoticeOwner(),
     );
@@ -1371,6 +1372,7 @@ describe('StreamCoordinator — parent snapshot hydration', () => {
 
     onFrame({ type: 'idle', model: 'm' });
     expect(onTurnSettled).toHaveBeenCalledTimes(1);
+    expect(refreshMeta).toHaveBeenCalledOnce();
     ac.abort();
   });
 });
@@ -1928,12 +1930,12 @@ describe('StreamCoordinator — background title announcement', () => {
     onEvent({ type: 'user', text: 'poradíš mi s výběrem brzdových destiček?' });
     onEvent({ type: 'text', delta: 'jasně —' });
     onEvent({ type: 'idle' });
-    expect(refreshMeta).toHaveBeenCalledTimes(1); // the one-shot idle refresh landed the provisional
+    expect(refreshMeta).toHaveBeenCalledTimes(1); // idle refresh landed the provisional
     onEvent({ type: 'idle' });
-    expect(refreshMeta).toHaveBeenCalledTimes(1); // a replayed idle does not refetch: the gate is closed
+    expect(refreshMeta).toHaveBeenCalledTimes(2); // selection may change even after a title exists
 
     onEvent({ type: 'title', title: 'Výběr brzdových destiček' });
-    expect(refreshMeta).toHaveBeenCalledTimes(2); // the announcement is the only repair for a late title
+    expect(refreshMeta).toHaveBeenCalledTimes(3); // a late title still has its own notification
     // Metadata, not transcript: the event must not have grown a turn.
     expect(serialized(rt.transcript)).not.toContain('Výběr brzdových destiček');
     stream.stop();

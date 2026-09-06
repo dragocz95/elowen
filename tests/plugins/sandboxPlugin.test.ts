@@ -175,6 +175,7 @@ describe('sandbox plugin workspaces', () => {
   it('creates, binds and exposes a workspace root only for currently accessible Projects', async () => {
     const { registry, projectPath } = await setup();
     const created = await runAs(registry, projectPath, 1, 'brain-amy', 'SandboxCreateWorkspace', { projectId: 1, label: 'Feature Alpha', baseRef: 'main' });
+    await runAs(registry, projectPath, 1, 'brain-amy', 'SandboxUseWorkspace', { workspaceId: created.details.workspace.id });
     const workspace = created.details.workspace;
     expect(workspace.branch).toBe('elowen/u1/feature-alpha');
     expect(workspace.path.endsWith('/feature-alpha')).toBe(true);
@@ -202,6 +203,7 @@ describe('sandbox plugin workspaces', () => {
   it('commits only explicit paths and leaves unrelated changes in place', async () => {
     const { registry, projectPath, dataRoot } = await setup();
     const created = await runAs(registry, projectPath, 1, 'brain-commit', 'SandboxCreateWorkspace', { projectId: 1, label: 'Commit', baseRef: 'main' });
+    await runAs(registry, projectPath, 1, 'brain-commit', 'SandboxUseWorkspace', { workspaceId: created.details.workspace.id });
     const workspace = created.details.workspace;
     git(projectPath, 'config', '--unset', 'user.name');
     git(projectPath, 'config', '--unset', 'user.email');
@@ -234,6 +236,7 @@ describe('sandbox plugin workspaces', () => {
   it('marks Project workspaces orphaned without deleting local files', async () => {
     const { registry, projectPath } = await setup();
     const created = await runAs(registry, projectPath, 1, 'brain-orphan', 'SandboxCreateWorkspace', { projectId: 1, label: 'Orphan', baseRef: 'main' });
+    await runAs(registry, projectPath, 1, 'brain-orphan', 'SandboxUseWorkspace', { workspaceId: created.details.workspace.id });
     const workspace = created.details.workspace;
     const handler = registry.projectRemovedHandlers.find((entry) => entry.plugin === 'sandbox');
     expect(handler).toBeTruthy();
@@ -271,6 +274,7 @@ describe('sandbox plugin workspaces', () => {
     const outside = temp('outside');
     writeFileSync(join(outside, 'secret.txt'), 'secret\n');
     const created = await runAs(registry, projectPath, 1, 'brain-link', 'SandboxCreateWorkspace', { projectId: 1, label: 'Link', baseRef: 'main' });
+    await runAs(registry, projectPath, 1, 'brain-link', 'SandboxUseWorkspace', { workspaceId: created.details.workspace.id });
     const workspace = created.details.workspace;
     execFileSync('ln', ['-s', outside, join(workspace.path, 'escape')]);
     const result = await runAs(registry, workspace.path, 1, 'brain-link', 'SandboxCommit', { projectId: 1, paths: ['escape/secret.txt'], message: 'escape' });
@@ -838,6 +842,7 @@ describe('sandbox durable repository locks', () => {
     db.prepare("INSERT INTO brain_sessions (id, user_id) VALUES ('brain-amy-expired', 1)").run();
     const projectPath = projects[0]!.path;
     const workspace = (await runAs(registry, projectPath, 1, 'brain-amy-expired', 'SandboxCreateWorkspace', { projectId: 1, label: 'Stale', baseRef: 'main' })).details.workspace;
+    await runAs(registry, projectPath, 1, 'brain-amy-expired', 'SandboxUseWorkspace', { workspaceId: workspace.id });
     const lease = registry.control('sandbox')!.acquireDelegationLease({
       accountUserId: 1, workspace: { workspaceId: workspace.id, projectId: 1 },
     });
@@ -956,6 +961,7 @@ describe('sandbox durable repository locks', () => {
     const session = 'brain-child-lease';
     db.prepare('INSERT INTO brain_sessions (id,user_id) VALUES (?,1)').run(session);
     const workspace = (await runAs(registry, projectPath, 1, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Child lease', baseRef: 'main' })).details.workspace;
+    await runAs(registry, projectPath, 1, session, 'SandboxUseWorkspace', { workspaceId: workspace.id });
     const dataDir = join(dataRoot, 'sandbox');
     const home = ensureUserHome(dataDir, 1);
     const server = createServer();
@@ -1316,7 +1322,9 @@ describe('sandbox workspace selection follows the conversation, not the cwd', ()
     const { projects, turnPolicy, act, resolveTurn } = await twoProjects();
     const session = 'brain-switch-same';
     const first = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'First', baseRef: 'main' })).details.workspace;
+    await act(projects[0]!.path, session, 'SandboxUseWorkspace', { workspaceId: first.id });
     const second = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Second', baseRef: 'main' })).details.workspace;
+    await act(projects[0]!.path, session, 'SandboxUseWorkspace', { workspaceId: second.id });
     expect(first.path).not.toBe(second.path);
 
     const effective = resolveTurn(turnPolicy, projects[0]!.path, session);
@@ -1328,7 +1336,9 @@ describe('sandbox workspace selection follows the conversation, not the cwd', ()
     const { projects, turnPolicy, act, resolveTurn } = await twoProjects();
     const session = 'brain-switch-cross';
     const here = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Here', baseRef: 'main' })).details.workspace;
+    await act(projects[0]!.path, session, 'SandboxUseWorkspace', { workspaceId: here.id });
     const elsewhere = (await act(projects[1]!.path, session, 'SandboxCreateWorkspace', { projectId: 2, label: 'Elsewhere', baseRef: 'main' })).details.workspace;
+    await act(projects[1]!.path, session, 'SandboxUseWorkspace', { workspaceId: elsewhere.id });
 
     // The cwd is still project 1, whose own binding is intact — but the conversation's LAST switch was to
     // project 2, and that is where the next turn belongs.
@@ -1346,6 +1356,7 @@ describe('sandbox workspace selection follows the conversation, not the cwd', ()
     const { projects, act, resolveTurn } = await twoProjects();
     const session = 'brain-switch-noproject';
     const chosen = (await act(projects[1]!.path, session, 'SandboxCreateWorkspace', { projectId: 2, label: 'Chosen', baseRef: 'main' })).details.workspace;
+    await act(projects[1]!.path, session, 'SandboxUseWorkspace', { workspaceId: chosen.id });
     // An operator's cwd is frequently outside every registered Project, which leaves nothing to infer from.
     const outside = realpathSync(temp('outside-projects'));
 
@@ -1358,7 +1369,8 @@ describe('sandbox workspace selection follows the conversation, not the cwd', ()
   it('keeps the Policy re-validation: a revoked Project falls back to the base directory', async () => {
     const { projects, control, act, resolveTurn } = await twoProjects();
     const session = 'brain-switch-revoked';
-    await act(projects[1]!.path, session, 'SandboxCreateWorkspace', { projectId: 2, label: 'Revoked', baseRef: 'main' });
+    const selected = await act(projects[1]!.path, session, 'SandboxCreateWorkspace', { projectId: 2, label: 'Revoked', baseRef: 'main' });
+    await act(projects[1]!.path, session, 'SandboxUseWorkspace', { workspaceId: selected.details.workspace.id });
     // Project 2 is no longer assigned: its workspace root leaves allowedPaths with it, so the selected
     // path fails the final clientDir check and the turn keeps its registered directory.
     const narrowed = resolvePolicy({
@@ -1379,7 +1391,9 @@ describe('sandbox workspace selection follows the conversation, not the cwd', ()
     const { registry, projects, turnPolicy, act, resolveTurn } = await twoProjects(['sandbox', 'terminal']);
     const session = 'brain-switch-inflight';
     const started = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Started', baseRef: 'main' })).details.workspace;
+    await act(projects[0]!.path, session, 'SandboxUseWorkspace', { workspaceId: started.id });
     const later = (await act(projects[1]!.path, session, 'SandboxCreateWorkspace', { projectId: 2, label: 'Later', baseRef: 'main' })).details.workspace;
+    await act(projects[1]!.path, session, 'SandboxUseWorkspace', { workspaceId: later.id });
     await act(projects[0]!.path, session, 'SandboxUseWorkspace', { workspaceId: started.id });
 
     // The shell reports its cwd as the confined `/workspace` in either worktree, so the two are told apart
@@ -1442,6 +1456,7 @@ describe('sandbox releases a conversation back to its project', () => {
     const { projects, act, resolveTurn, release, bindings } = await bound();
     const session = 'brain-amy-release';
     const workspace = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Released', baseRef: 'main' })).details.workspace;
+    await act(projects[0]!.path, session, 'SandboxUseWorkspace', { workspaceId: workspace.id });
     expect(resolveTurn(projects[0]!.path, session).workDir).toBe(workspace.path);
 
     const response = await release({ sessionId: session });
@@ -1462,6 +1477,7 @@ describe('sandbox releases a conversation back to its project', () => {
     const { projects, act, release, db, registry } = await bound();
     const session = 'brain-amy-release';
     const workspace = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Kept', baseRef: 'main' })).details.workspace;
+    await act(projects[0]!.path, session, 'SandboxUseWorkspace', { workspaceId: workspace.id });
     writeFileSync(join(workspace.path, 'work-in-progress.txt'), 'still here\n');
 
     expect((await release({ sessionId: session })).status).toBe(200);
@@ -1480,6 +1496,7 @@ describe('sandbox releases a conversation back to its project', () => {
     const { projects, act, resolveTurn, release, bindings } = await bound();
     const session = 'brain-amy-release';
     const workspace = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Foreign', baseRef: 'main' })).details.workspace;
+    await act(projects[0]!.path, session, 'SandboxUseWorkspace', { workspaceId: workspace.id });
 
     // Bob naming Amy's conversation, and Amy naming Bob's: neither owns the other's, so both fail closed.
     for (const [body, auth] of [
@@ -1500,6 +1517,7 @@ describe('sandbox releases a conversation back to its project', () => {
     const { registry: leased } = { registry };
     const session = 'brain-amy-release';
     const workspace = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Busy', baseRef: 'main' })).details.workspace;
+    await act(projects[0]!.path, session, 'SandboxUseWorkspace', { workspaceId: workspace.id });
     // A real execution lease, minted the way a delegated turn mints one — the same row the removal guard
     // reads, so this is the plugin's own notion of "a process is using it".
     const lease = leased.control('sandbox')!.acquireDelegationLease({
@@ -1526,6 +1544,7 @@ describe('sandbox releases a conversation back to its project', () => {
     const { registry, projects, turnPolicy, act, resolveTurn, release } = await bound(['sandbox', 'terminal']);
     const session = 'brain-amy-release';
     const workspace = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Inflight', baseRef: 'main' })).details.workspace;
+    await act(projects[0]!.path, session, 'SandboxUseWorkspace', { workspaceId: workspace.id });
     writeFileSync(join(workspace.path, 'marker.txt'), 'workspace\n');
     writeFileSync(join(projects[0]!.path, 'marker.txt'), 'project\n');
 
@@ -1550,6 +1569,7 @@ describe('sandbox releases a conversation back to its project', () => {
     const { projects, control, turnPolicy, act, resolveTurn, bindings } = await bound();
     const session = 'brain-amy-release';
     const workspace = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Moved', baseRef: 'main' })).details.workspace;
+    await act(projects[0]!.path, session, 'SandboxUseWorkspace', { workspaceId: workspace.id });
     const move = (workDir: string) => releaseWorkspacesForMove({
       policy: turnPolicy, accountUserId: 1, sessionId: session, workDir,
       projects: { list: () => projects }, sandbox: control,
@@ -1577,6 +1597,7 @@ describe('sandbox releases a conversation back to its project', () => {
     const { registry, projects, control, turnPolicy, act, resolveTurn } = await bound();
     const session = 'brain-amy-release';
     const workspace = (await act(projects[0]!.path, session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Pinned', baseRef: 'main' })).details.workspace;
+    await act(projects[0]!.path, session, 'SandboxUseWorkspace', { workspaceId: workspace.id });
     const lease = registry.control('sandbox')!.acquireDelegationLease({
       accountUserId: 1, workspace: { workspaceId: workspace.id, projectId: 1 },
     });
@@ -1604,7 +1625,7 @@ describe('sandbox releases a conversation back to its project', () => {
 });
 
 /** The model's own way out of a binding. Until it existed the only non-destructive release was the web
- *  route, so an agent that had bound a workspace (SandboxCreateWorkspace = create + activate) could not
+ *  route, so an agent that had bound a workspace (SandboxUseWorkspace) could not
  *  hand the conversation back to its Project without a person clicking. Same operation, same guards:
  *  nothing is destroyed, a live process refuses, and a conversation the account does not own is refused. */
 describe('SandboxReleaseWorkspace tool', () => {
@@ -1641,7 +1662,9 @@ describe('SandboxReleaseWorkspace tool', () => {
     const { projects, act, resolveTurn, bindings } = await bound();
     const session = 'brain-amy-tool';
     const first = (await act(session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Tool one', baseRef: 'main' })).details.workspace;
+    await act(session, 'SandboxUseWorkspace', { workspaceId: first.id });
     const second = (await act(session, 'SandboxCreateWorkspace', { projectId: 2, label: 'Tool two', baseRef: 'main' }, projects[1]!.path)).details.workspace;
+    await act(session, 'SandboxUseWorkspace', { workspaceId: second.id });
     expect(bindings()).toHaveLength(2);
 
     const released = await act(session, 'SandboxReleaseWorkspace', {});
@@ -1662,8 +1685,10 @@ describe('SandboxReleaseWorkspace tool', () => {
   it('releases only the named Project when projectId is given', async () => {
     const { projects, act, bindings } = await bound();
     const session = 'brain-amy-tool';
-    await act(session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Keep', baseRef: 'main' });
+    const selected = await act(session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Keep', baseRef: 'main' });
+    await act(session, 'SandboxUseWorkspace', { workspaceId: selected.details.workspace.id });
     const dropped = (await act(session, 'SandboxCreateWorkspace', { projectId: 2, label: 'Drop', baseRef: 'main' }, projects[1]!.path)).details.workspace;
+    await act(session, 'SandboxUseWorkspace', { workspaceId: dropped.id });
 
     const released = await act(session, 'SandboxReleaseWorkspace', { projectId: 2 });
     expect(released.details).toMatchObject({ released: 1, workspaceIds: [dropped.id] });
@@ -1674,6 +1699,7 @@ describe('SandboxReleaseWorkspace tool', () => {
     const { registry, act, bindings } = await bound();
     const session = 'brain-amy-tool';
     const workspace = (await act(session, 'SandboxCreateWorkspace', { projectId: 1, label: 'Busy tool', baseRef: 'main' })).details.workspace;
+    await act(session, 'SandboxUseWorkspace', { workspaceId: workspace.id });
     const lease = registry.control('sandbox')!.acquireDelegationLease({
       accountUserId: 1, workspace: { workspaceId: workspace.id, projectId: 1 },
     });
@@ -1688,9 +1714,10 @@ describe('SandboxReleaseWorkspace tool', () => {
 
   it('refuses a conversation the account does not own and touches no binding', async () => {
     const { act, bindings } = await bound();
-    // Amy binds inside a room Bob owns (a create does not check the room's owner — it binds where it is
+    // Amy binds inside a room Bob owns (tool selection does not check the room's owner — it binds where it is
     // told), then asks to release it: the release is an ownership decision and fails closed.
-    await act('brain-bob-room', 'SandboxCreateWorkspace', { projectId: 1, label: 'Foreign room', baseRef: 'main' });
+    const selected = await act('brain-bob-room', 'SandboxCreateWorkspace', { projectId: 1, label: 'Foreign room', baseRef: 'main' });
+    await act('brain-bob-room', 'SandboxUseWorkspace', { workspaceId: selected.details.workspace.id });
     const refused = await act('brain-bob-room', 'SandboxReleaseWorkspace', {});
     expect(refused.details.ok).toBe(false);
     expect(refused.details.error.code).toBe('session_forbidden');
@@ -1714,6 +1741,7 @@ describe('sandbox release live revocation', () => {
       runWithPolicy(turnPolicy, () => tool(registry, name).execute('t', input), scope);
     for (const project of projects) {
       const created = await act('SandboxCreateWorkspace', { projectId: project.id, label: `Revoke ${project.id}`, baseRef: 'main' });
+      await act('SandboxUseWorkspace', { workspaceId: created.details.workspace.id });
       expect(created.details.workspace.projectId).toBe(project.id);
     }
     const bindings = () => db.prepare('SELECT project_id FROM p_sandbox_session_bindings WHERE session_id = ? ORDER BY project_id').all(sessionId);

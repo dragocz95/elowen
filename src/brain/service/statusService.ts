@@ -24,7 +24,7 @@ import type { PermissionApprovalService } from './permissionApproval.js';
 import type { BrainStreamSnapshot } from '../session/liveEventReplay.js';
 import { abortSessionWork } from '../session/abortSessionWork.js';
 import { gitBranch } from './gitBranch.js';
-import { clientDir, memoizedTurnWorkspace, turnWorkDir } from './workDir.js';
+import { clientDir, effectiveTurnWorkDir, turnWorkDir } from './workDir.js';
 import { realPathWithin } from '../../plugins/pathGuard.js';
 import { recoverablePartialTurnRows } from '../persistence.js';
 import type { KnownControls } from '../../plugins/api.js';
@@ -473,8 +473,8 @@ export class BrainStatusService {
     // Where the next turn actually runs — the resolver a turn uses, fed the same base directory it would
     // compute, so a bound Sandbox workspace shows here exactly when the turn would start inside it. The
     // account is the contribution owner of the live session, else the caller (the noteWorkDir rule).
-    // Memoized: this is a hot poll, and the answer costs a plugin lookup (see memoizedTurnWorkspace).
-    const effective = activeId ? memoizedTurnWorkspace({
+    // Resolve mutable selection fresh: a single post-turn refresh must observe a release immediately.
+    const effective = activeId ? effectiveTurnWorkDir({
       policy,
       baseWorkDir: turnWorkDir(policy, reported ?? undefined, this.d.projectPath),
       accountUserId: b?.contributionUserId ?? userId,

@@ -149,9 +149,8 @@ export class StreamCoordinator implements StreamCoordinatorPort {
         if (event.type === 'queue') { rt.queued = event.items; render('stream:queue'); return; }
         if (event.type === 'process') { rt.processes = event.processes; render('stream:process'); return; }
         if (event.type === 'goal') { rt.setGoal(event.goal); render('stream:goal'); return; }
-        // The background titler landed the generated conversation name — routinely AFTER the idle branch
-        // below took its one-shot title refresh (the provisional written at admission already satisfied
-        // it). Metadata, not transcript: refetch status so the header and the terminal tab pick the final
+        // The background titler can land after the idle metadata refresh. Refetch status so the header
+        // and the terminal tab pick the final
         // name up through the same path every other metadata change uses.
         if (event.type === 'title') {
           void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:title'); });
@@ -187,12 +186,9 @@ export class StreamCoordinator implements StreamCoordinatorPort {
         const repairTruncatedAtIdle = event.type === 'idle' && truncatedSnapshotPending;
         if (event.type === 'idle') {
           if (event.usage) rt.usage = event.usage;
-          // Turn settled: refresh the rail's rate limits (throttled to the daemon's usage-cache TTL) and
-          // stop the long-turn poll. The title branch's refreshMeta covers the first-turn case separately.
+          // Tools can change workspace selection even in an already named conversation.
           onTurnSettled();
-          if (!rt.conversationTitle) {
-            void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:idle-title'); });
-          }
+          void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:idle'); });
           // The decision follows an explicit ExitPlanMode call in the settled turn — prose that merely
           // quotes or discusses a plan can never raise it.
           // Deduplicated by call id inside, because `idle` is not a once-per-plan event: the live journal
