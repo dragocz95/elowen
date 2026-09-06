@@ -944,21 +944,24 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
           status={<span className="flex flex-wrap items-center gap-2">{risk}{error ? <span role="alert" className="text-destructive">{error}</span> : null}</span>}
           trailingLayout="stack"
           className={risk ? 'plugin-config-risk-row' : undefined}
+          // The credential is the control and the commit is an action. They used to share one box in the
+          // control slot, which put a button in the column the band reserves for values and left the
+          // record's actions column empty beside it.
           control={(
-            <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">
-              <Input
-                type="password"
-                aria-label={label}
-                value={secretDrafts[f.key] ?? ''}
-                onChange={(e) => setSecretDrafts((current) => ({ ...current, [f.key]: e.target.value }))}
-                placeholder={t.pluginCfg.secretReplacementPlaceholder}
-                autoComplete="off"
-                autoFocus={replacingSecrets.has(f.key)}
-              />
-              <Button type="button" variant="accent" className="h-8" disabled={saving || !(secretDrafts[f.key] ?? '').trim()} onClick={() => void commitSecret(f.key)}>
-                {saving ? t.common.saving : t.common.save}
-              </Button>
-            </div>
+            <Input
+              type="password"
+              aria-label={label}
+              value={secretDrafts[f.key] ?? ''}
+              onChange={(e) => setSecretDrafts((current) => ({ ...current, [f.key]: e.target.value }))}
+              placeholder={t.pluginCfg.secretReplacementPlaceholder}
+              autoComplete="off"
+              autoFocus={replacingSecrets.has(f.key)}
+            />
+          )}
+          actions={(
+            <Button type="button" variant="accent" className="h-8" disabled={saving || !(secretDrafts[f.key] ?? '').trim()} onClick={() => void commitSecret(f.key)}>
+              {saving ? t.common.saving : t.common.save}
+            </Button>
           )}
         />
       );
@@ -1011,11 +1014,23 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
   const isConnection = (f: PluginConfigField) => f.type === 'secret' || CONNECTION_KEYS.has(f.key);
   const connectionFields = visibleSchema.filter(isConnection);
   const behaviorFields = visibleSchema.filter((f) => !isConnection(f));
+  // A card folds and remembers the fold like every other titled settings card. The LAST card standing
+  // stays open by default, because a page whose only content is collapsed is a chevron on empty space.
+  const legacyGroupCount = (connectionFields.length ? 1 : 0) + (behaviorFields.length ? 1 : 0);
   const group = (key: string, Icon: LucideIcon, title: string, hint: string | undefined, fields: PluginConfigField[]) => {
     const rows = fieldRows(fields);
     if (rows.length === 0) return null;
     return (
-      <SettingsGroup key={key} className="plugin-card" title={title} description={hint} icon={Icon}>
+      <SettingsGroup
+        key={key}
+        className="plugin-card"
+        title={title}
+        description={hint}
+        icon={Icon}
+        collapsible
+        defaultOpen={legacyGroupCount === 1}
+        storageKey={`plugin.${name}.${mode}.${key}`}
+      >
         {rows}
       </SettingsGroup>
     );
@@ -1034,8 +1049,12 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
     }
   }
 
+  // A FRAGMENT, not a box. The cards below are section cards exactly like the ones on every core settings
+  // page, and they have to be SIBLINGS inside the enclosing `SettingsDocument` to get that page's gap. A
+  // wrapper div here made them one flex child of the document instead, which is how the plugin header card
+  // and "Behavior" ended up welded together inside a single bordered rectangle with no gap between them.
   return (
-    <div className="flex flex-col gap-4">
+    <>
       {visibleSchema.length === 0 && (detail.configSchema.length > 0 || mode !== 'behavior') ? null : visibleSchema.length === 0 ? (
         <SettingsGroup className="plugin-card" icon={SlidersHorizontal} title={t.pluginDetail.config}>
           <div className="settings-group__panel"><p className="text-sm text-muted-foreground">{t.pluginDetail.configEmpty}</p></div>
@@ -1055,6 +1074,11 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
               icon={sectionIcon(card.section)}
               title={card.section ? fieldLabel(card.section) : undefined}
               actions={hint ? <HelpTip align="left">{hint}</HelpTip> : undefined}
+              // A headerless leading card has no trigger to click, so it never folds. The rest do, and the
+              // last card standing stays open — a tab whose only content is collapsed shows nothing.
+              collapsible={Boolean(card.section)}
+              defaultOpen={sectionCards.length === 1}
+              storageKey={card.section ? `plugin.${name}.${mode}.${card.section.key}` : undefined}
             >
               {showPackageAction || rows.length > 0 ? (
                 <>
@@ -1073,7 +1097,6 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
           {behaviorFields.length ? group('behavior', SlidersHorizontal, t.pluginCfg.sectionBehavior, undefined, behaviorFields) : null}
         </>
       )}
-
-    </div>
+    </>
   );
 }

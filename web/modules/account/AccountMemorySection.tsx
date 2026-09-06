@@ -48,25 +48,22 @@ export function AccountMemorySection({ onSaveState }: { onSaveState?: (section: 
 
   return (
     <SpatialGroup columns={2}>
+      {/* THE SWITCH STANDS ALONE. Each record used to repeat its sentence beside the switch — "Recall from
+          memory after every message" next to a record already titled "Automatic recall" and already
+          carrying that very sentence behind its help mark. The caption was a third copy, and because it
+          sat inside the control slot it also pushed the switch out of the column every other switch on
+          the page sits in. The sentence stays where it belongs: on the help mark, and on the switch's
+          own accessible name. */}
       <SpatialRow title={t.accountMemory.recallTitle} rowId={rowAnchor('accountMemory.recallTitle')} icon={Search} description={t.help.memoryRecall}>
-        <label className="flex items-center gap-3 text-sm text-foreground">
-          <Toggle checked={autoRecall} onChange={setAutoRecall} label={t.accountMemory.recallToggle} />
-          <span>{t.accountMemory.recallToggle}</span>
-        </label>
+        <Toggle checked={autoRecall} onChange={setAutoRecall} label={t.accountMemory.recallToggle} />
       </SpatialRow>
 
       <SpatialRow title={t.accountMemory.liveRecallTitle} rowId={rowAnchor('accountMemory.liveRecallTitle')} icon={Search} description={t.help.memoryLiveRecall}>
-        <label className="flex items-center gap-3 text-sm text-foreground">
-          <Toggle checked={autoLiveRecall} onChange={setAutoLiveRecall} label={t.accountMemory.liveRecallToggle} />
-          <span>{t.accountMemory.liveRecallToggle}</span>
-        </label>
+        <Toggle checked={autoLiveRecall} onChange={setAutoLiveRecall} label={t.accountMemory.liveRecallToggle} />
       </SpatialRow>
 
       <SpatialRow title={t.accountMemory.saveTitle} rowId={rowAnchor('accountMemory.saveTitle')} icon={Save} description={t.help.memorySave}>
-        <label className="flex items-center gap-3 text-sm text-foreground">
-          <Toggle checked={autoSave} onChange={setAutoSave} label={t.accountMemory.saveToggle} />
-          <span>{t.accountMemory.saveToggle}</span>
-        </label>
+        <Toggle checked={autoSave} onChange={setAutoSave} label={t.accountMemory.saveToggle} />
       </SpatialRow>
     </SpatialGroup>
   );

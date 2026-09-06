@@ -583,36 +583,37 @@ export default function SettingsPage() {
                 <SettingsRow
                   label={brand.appName}
                   icon={Sparkles}
-                  actions={(
-                    <>
-                      {/* The badge IS the check button: it already states the answer, so a separate
-                          "check for updates" control next to it said the same thing twice. */}
-                      <button
-                        type="button"
-                        className="rounded-full transition-opacity hover:opacity-80 disabled:cursor-wait disabled:opacity-60"
-                        aria-label={t.settings.checkUpdates}
-                        title={t.settings.checkUpdates}
-                        disabled={system.isFetching}
-                        onClick={() => { void system.refetch(); }}
-                      >
-                        {updateBadge}
-                      </button>
-                      {system.data?.updateAvailable ? (
-                        <Button
-                          variant="ghost"
-                          size="sm"
-                          icon={RefreshCw}
-                          disabled={systemUpdate.isPending}
-                          onClick={() => systemUpdate.mutate(undefined, {
-                            onSuccess: () => toast(t.settings.updateStarted),
-                            onError: (e) => toast(String(e), 'error'),
-                          })}
-                        >
-                          {systemUpdate.isPending ? t.settings.updating : t.settings.updateNow}
-                        </Button>
-                      ) : null}
-                    </>
+                  // The badge IS the check button: it already states the answer, so a separate "check for
+                  // updates" control next to it said the same thing twice. It belongs in the STATUS slot
+                  // even so — being clickable does not make a verdict an action, and from the status
+                  // column it lines up with every other reading in the card instead of crowding the one
+                  // button the record actually offers.
+                  status={(
+                    <button
+                      type="button"
+                      className="rounded-full transition-opacity hover:opacity-80 disabled:cursor-wait disabled:opacity-60"
+                      aria-label={t.settings.checkUpdates}
+                      title={t.settings.checkUpdates}
+                      disabled={system.isFetching}
+                      onClick={() => { void system.refetch(); }}
+                    >
+                      {updateBadge}
+                    </button>
                   )}
+                  actions={system.data?.updateAvailable ? (
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      icon={RefreshCw}
+                      disabled={systemUpdate.isPending}
+                      onClick={() => systemUpdate.mutate(undefined, {
+                        onSuccess: () => toast(t.settings.updateStarted),
+                        onError: (e) => toast(String(e), 'error'),
+                      })}
+                    >
+                      {systemUpdate.isPending ? t.settings.updating : t.settings.updateNow}
+                    </Button>
+                  ) : undefined}
                 />
               );
               {/* Reporting only. Both restarts live in the deck hero, where they are reachable from every
@@ -740,7 +741,7 @@ export default function SettingsPage() {
                 </Modal>
               ) : null;
               const diagnosticsGroup = (
-                <SettingsGroup title={t.settings.systemDiagnostics} rowId={rowAnchor('settings.systemDiagnostics')} description={t.settings.systemSectionHint} icon={Gauge} className="settings-diagnostics">
+                <SettingsGroup title={t.settings.systemDiagnostics} rowId={rowAnchor('settings.systemDiagnostics')} description={t.settings.systemSectionHint} icon={Gauge} className="settings-diagnostics" collapsible storageKey="settings.systemDiagnostics">
                   <SystemDiagnostics
                     diagnostics={diagnostics}
                     t={t}

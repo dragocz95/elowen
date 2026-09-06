@@ -1,5 +1,6 @@
 import type { ReactNode } from 'react';
 import { vi } from 'vitest';
+import { fireEvent } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { LanguageProvider } from '../lib/i18n';
 import { ThemeProvider } from '../lib/useTheme';
@@ -39,6 +40,20 @@ export function watchMounts(selector: string): () => boolean {
     observer.disconnect();
     return mounted;
   };
+}
+
+/** Open every folded section card in a rendered surface.
+ *
+ *  Settings and account groups fold CLOSED by default, and a closed body carries `hidden`, which takes it
+ *  out of the accessibility tree — `getByRole` cannot see into it. A test that drives the records inside a
+ *  card therefore opens the card first, exactly as a reader does. The rows are always in the DOM
+ *  (`SettingsGroup` force-mounts its body), so this aligns the QUERY with the default rather than papering
+ *  over a regression; the tests that pin "closed by default" and "still mounted while closed" live in
+ *  tests/components/ui/SettingsSurface.test.tsx and deliberately do not call this. */
+export function openSettingsGroups(container: HTMLElement): void {
+  for (const trigger of container.querySelectorAll('.settings-group__trigger')) {
+    if (trigger.getAttribute('aria-expanded') === 'false') fireEvent.click(trigger);
+  }
 }
 
 export function createWrapper() {

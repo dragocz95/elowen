@@ -113,7 +113,9 @@ export function DashboardSection({ onSaveState, onOpenSection }: {
   };
 
   return (
-    <SettingsGroup title={t.settings.dashboardSection.title} icon={LayoutDashboard}>
+    // Foldable, but OPEN unless the reader has folded it: this card is the whole Recap page, and a page
+    // whose only content starts collapsed is a chevron on an empty screen.
+    <SettingsGroup title={t.settings.dashboardSection.title} icon={LayoutDashboard} collapsible defaultOpen storageKey="settings.dashboard">
       <SettingsRow
         label={t.settings.dashboardSection.recap}
         rowId={rowAnchor('settings.dashboardSection.recap')}

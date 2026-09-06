@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState } from 'react';
 import { render, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { UserPluginConfigDetail } from '../../../lib/types';
@@ -36,16 +36,9 @@ vi.mock('../../../lib/usePluginConfigDraft', () => ({
   }),
 }));
 vi.mock('../../../components/ui/AutoSaveStatus', () => ({ AutoSaveStatus: () => null }));
-vi.mock('../../../components/ui/SettingsSurface', () => ({
-  SettingsGroup: ({ title, description, children }: { title?: ReactNode; description?: ReactNode; children: ReactNode }) => (
-    <div>
-      <h2>{title}</h2>
-      <p data-testid="group-description">{description}</p>
-      {children}
-    </div>
-  ),
-}));
-vi.mock('../../../modules/settings/PluginConfigEditor', () => ({ PluginConfigEditor: () => <div>Editor</div> }));
+// The real primitives, because the composition IS what this file checks: the plugin's name card and the
+// sections it declares have to be siblings of one document, not a card nested inside a card.
+vi.mock('../../../modules/settings/PluginConfigEditor', () => ({ PluginConfigEditor: () => <div data-testid="editor">Editor</div> }));
 
 const detail: UserPluginConfigDetail = {
   name: 'github',
@@ -71,7 +64,7 @@ describe('UserPluginConfigSection heading', () => {
       <UserPluginConfigSection sectionId="plugin-user-config:github" detail={detail} onSaveStateAction={() => {}} />,
     );
     expect(screen.getByRole('heading', { name: 'GitHub' })).toBeInTheDocument();
-    expect(screen.getByTestId('group-description')).toHaveTextContent('GitHub configuration');
+    expect(screen.getByRole('heading', { name: 'GitHub' }).parentElement).toHaveTextContent('GitHub configuration');
   });
 
   it('falls back to the host caption for a plugin that ships no description', () => {
@@ -82,7 +75,28 @@ describe('UserPluginConfigSection heading', () => {
         onSaveStateAction={() => {}}
       />,
     );
-    expect(screen.getByTestId('group-description')).toHaveTextContent('Personal plugin configuration');
+    expect(screen.getByRole('heading', { name: 'GitHub' }).parentElement).toHaveTextContent('Personal plugin configuration');
+  });
+
+  /** THE COMPOSITION. A plugin's config page used to draw its header card and its sections glued inside
+   *  one bordered rectangle with no gap, because the editor was rendered as the header card's CHILDREN:
+   *  a group body has no padding of its own and the card clips what it holds, so the section's border
+   *  landed flush against the header's rule. They are siblings of one document now, exactly like the
+   *  cards of any core settings page. */
+  it('renders the name card and the config sections as siblings of one settings document', () => {
+    const { container } = render(
+      <UserPluginConfigSection sectionId="plugin-user-config:github" detail={detail} onSaveStateAction={() => {}} />,
+    );
+    const document_ = container.querySelector('[data-settings-document]');
+    expect(document_).toBeInTheDocument();
+
+    const header = container.querySelector('[data-settings-group]')!;
+    const editor = screen.getByTestId('editor');
+    expect(header.parentElement).toBe(document_);
+    expect(editor.parentElement).toBe(document_);
+    // The one thing that must never come back: a config section living inside the name card.
+    expect(header.contains(editor)).toBe(false);
+    expect(header.querySelector('.settings-group__body')).toBeNull();
   });
 });
 

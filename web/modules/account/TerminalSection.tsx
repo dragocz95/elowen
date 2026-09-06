@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { ALargeSmall, Brain, Eye, History, Palette, ScrollText, SquareTerminal, TextCursorInput, Timer, Type } from 'lucide-react';
 import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
+import { SettingsDocument } from '../../components/ui/SettingsSurface';
 import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
 import { Segmented } from '../../components/ui/Segmented';
 import { SelectMenu } from '../../components/ui/SelectMenu';
@@ -124,8 +125,10 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
   // whose records already have labels. Each control now sits opposite the label that names it, with the
   // value it reads in the record's status slot.
   return (
-    <div className="flex flex-col gap-4">
-      <SpatialGroup title={t.terminal.colorsTitle} rowId={rowAnchor('terminal.colorsTitle')} description={t.terminal.colorsHelp} icon={Palette}>
+    // The surface's own document, not a hand-rolled flex column: the gap between section cards is the
+    // settings surface's to state, and a second copy of it here is how these pages drifted before.
+    <SettingsDocument>
+      <SpatialGroup title={t.terminal.colorsTitle} rowId={rowAnchor('terminal.colorsTitle')} description={t.terminal.colorsHelp} icon={Palette} collapsible storageKey="terminal.colors">
         <SpatialRow
           title={t.terminal.themeMode}
           icon={Palette}
@@ -145,7 +148,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
         />
       </SpatialGroup>
 
-      <SpatialGroup title={t.terminal.fontTitle} rowId={rowAnchor('terminal.fontTitle')} icon={Type} columns={2}>
+      <SpatialGroup title={t.terminal.fontTitle} rowId={rowAnchor('terminal.fontTitle')} icon={Type} columns={2} collapsible storageKey="terminal.font">
         <SpatialRow
           title={t.terminal.fontSize}
           icon={ALargeSmall}
@@ -161,7 +164,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
         />
       </SpatialGroup>
 
-      <SpatialGroup title={t.terminal.cursorTitle} rowId={rowAnchor('terminal.cursorTitle')} icon={TextCursorInput} columns={2}>
+      <SpatialGroup title={t.terminal.cursorTitle} rowId={rowAnchor('terminal.cursorTitle')} icon={TextCursorInput} columns={2} collapsible storageKey="terminal.cursor">
         <SpatialRow
           title={t.terminal.cursorStyle}
           icon={TextCursorInput}
@@ -174,7 +177,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
         />
       </SpatialGroup>
 
-      <SpatialGroup title={t.terminal.historyTitle} rowId={rowAnchor('terminal.historyTitle')} description={t.terminal.scrollbackHelp} icon={ScrollText}>
+      <SpatialGroup title={t.terminal.historyTitle} rowId={rowAnchor('terminal.historyTitle')} description={t.terminal.scrollbackHelp} icon={ScrollText} collapsible storageKey="terminal.history">
         <SpatialRow
           title={t.terminal.scrollback}
           icon={ScrollText}
@@ -183,7 +186,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
         />
       </SpatialGroup>
 
-      <SpatialGroup title={t.terminal.cliTitle} icon={SquareTerminal}>
+      <SpatialGroup title={t.terminal.cliTitle} icon={SquareTerminal} collapsible storageKey="terminal.cli">
         <SpatialRow
           title={t.terminal.showThoughts}
           icon={Brain}
@@ -232,6 +235,6 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
           {colorsEditor}
         </WorkspaceDetailRail>
       ) : null}
-    </div>
+    </SettingsDocument>
   );
 }

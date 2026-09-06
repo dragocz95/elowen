@@ -3,7 +3,7 @@
 import { Settings2 } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
-import { SettingsGroup } from '../../components/ui/SettingsSurface';
+import { SettingsDocument, SettingsGroup } from '../../components/ui/SettingsSurface';
 import { useTranslation } from '../../lib/i18n';
 import { useSaveUserPluginConfig } from '../../lib/mutations';
 import type { UserPluginConfigDetail } from '../../lib/types';
@@ -34,7 +34,11 @@ export function UserPluginConfigSection({ sectionId, detail, onSaveStateAction }
   useEffect(() => { onSaveStateRef.current = onSaveStateAction; }, [onSaveStateAction]);
   useEffect(() => { onSaveStateRef.current(sectionId, draft.status, draft.retry); }, [draft.retry, draft.status, sectionId]);
   return (
-    <>
+    // The plugin's name card and the sections it declares are SIBLINGS in one document, exactly like the
+    // cards on any core settings page. Nesting the editor inside the name card is what welded the two into
+    // a single bordered rectangle: a group body has no padding of its own and the card clips its children,
+    // so the section card's border landed flush against the header's rule with no gap anywhere.
+    <SettingsDocument>
       <SettingsGroup
         title={userPluginConfigLabel(detail, locale)}
         description={userPluginConfigDescription(detail, locale) ?? t.account.personalPluginConfig}
@@ -48,19 +52,18 @@ export function UserPluginConfigSection({ sectionId, detail, onSaveStateAction }
             onMerge={draft.errorKind === 'conflict' ? () => draft.resolveConflict('merge') : undefined}
           />
         )}
-      >
-        <PluginConfigEditor
-          name={detail.name}
-          detail={editorDetail}
-          fieldLabel={fieldLabel}
-          fieldHint={fieldHint}
-          fieldOptions={fieldOptions}
-          riskText={(risk) => risk === 'high' ? t.pluginDetail.riskHigh : risk === 'medium' ? t.pluginDetail.riskMedium : t.pluginDetail.riskLow}
-          draft={draft}
-          mode="all"
-          showAppPackage={false}
-        />
-      </SettingsGroup>
-    </>
+      />
+      <PluginConfigEditor
+        name={detail.name}
+        detail={editorDetail}
+        fieldLabel={fieldLabel}
+        fieldHint={fieldHint}
+        fieldOptions={fieldOptions}
+        riskText={(risk) => risk === 'high' ? t.pluginDetail.riskHigh : risk === 'medium' ? t.pluginDetail.riskMedium : t.pluginDetail.riskLow}
+        draft={draft}
+        mode="all"
+        showAppPackage={false}
+      />
+    </SettingsDocument>
   );
 }

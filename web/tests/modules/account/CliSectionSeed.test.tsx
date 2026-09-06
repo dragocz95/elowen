@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ToastProvider } from '../../../components/ui/Toast';
-import { createWrapper } from '../../test-utils';
+import { createWrapper, openSettingsGroups } from '../../test-utils';
 import { en } from '../../../lib/i18n/dictionaries/en';
 import type { BrainModelOption, CliSettings, PermissionSettings } from '../../../lib/types';
 
@@ -35,7 +35,13 @@ const CLI: CliSettings = {
 };
 const PERMISSIONS: PermissionSettings = { tools: {}, bash: {}, yolo: false, unattendedAsks: 'allow' };
 
-const renderSection = () => render(<ToastProvider><CliSection /></ToastProvider>, { wrapper: createWrapper().wrapper });
+const renderSection = () => {
+  const result = render(<ToastProvider><CliSection /></ToastProvider>, { wrapper: createWrapper().wrapper });
+  // The account and settings cards fold closed; a closed body is out of the accessibility tree, so
+  // open them before driving the records inside, exactly as a reader would.
+  openSettingsGroups(result.container);
+  return result;
+};
 
 beforeEach(() => {
   state.cli = { ...CLI };

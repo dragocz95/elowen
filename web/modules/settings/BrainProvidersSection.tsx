@@ -594,6 +594,8 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
         title={t.brain.accounts}
         rowId={rowAnchor('brain.accounts')}
         density="compact"
+        collapsible
+        storageKey="brain.accounts"
         actions={restorableOauth.length > 0 ? (
           <ActionMenu
             align="right"
@@ -659,6 +661,8 @@ export function BrainProvidersSection({ config }: { config: ElowenConfig | undef
         title={t.brain.providers}
         rowId={rowAnchor('brain.providers')}
         density="compact"
+        collapsible
+        storageKey="brain.providers"
         actions={(
           <button
             type="button"

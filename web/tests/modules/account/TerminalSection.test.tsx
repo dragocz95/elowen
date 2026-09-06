@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { ToastProvider } from '../../../components/ui/Toast';
-import { createWrapper } from '../../test-utils';
+import { createWrapper, openSettingsGroups } from '../../test-utils';
 import { DARK_PALETTE } from '../../../components/terminal/palettes';
 import type { TerminalSettings } from '../../../lib/types';
 
@@ -23,7 +23,13 @@ vi.mock('../../../lib/queries', () => ({ useMyTerminalSettings: () => (state.err
 import { TerminalSection } from '../../../modules/account/TerminalSection';
 import { first } from '../../first.js';
 
-const renderSection = () => render(<ToastProvider><TerminalSection /></ToastProvider>, { wrapper: createWrapper().wrapper });
+const renderSection = () => {
+  const result = render(<ToastProvider><TerminalSection /></ToastProvider>, { wrapper: createWrapper().wrapper });
+  // The account and settings cards fold closed; a closed body is out of the accessibility tree, so
+  // open them before driving the records inside, exactly as a reader would.
+  openSettingsGroups(result.container);
+  return result;
+};
 const colorInputs = (c: HTMLElement) => c.querySelectorAll('input[type="color"]');
 
 beforeEach(() => { mutate.mockClear(); state.error = false; mocks.refetch.mockClear(); });

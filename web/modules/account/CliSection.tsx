@@ -8,6 +8,7 @@ import { Badge } from '../../components/ui/Badge';
 import { Button, buttonClassName } from '../../components/ui/Button';
 import { Segmented } from '../../components/ui/Segmented';
 import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
+import { SettingsDocument } from '../../components/ui/SettingsSurface';
 import { Toggle } from '../../components/ui/Toggle';
 import { ReasoningScale } from '../../components/ui/ReasoningScale';
 import { LoadingState, ErrorState } from '../../components/ui/states';
@@ -281,9 +282,11 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
   });
 
   return (
-    <div className="flex flex-col gap-4">
+    // `SettingsDocument` rather than a hand-rolled flex column: the gap between section cards belongs to
+    // the settings surface, and a second copy of it here is exactly how these two pages drifted before.
+    <SettingsDocument>
       {/* A role table reads top-down: one column, in the order the questions are asked. */}
-      <SpatialGroup title={t.settings.modelRoles.title} description={t.cli.modelRolesHint} icon={Boxes}>
+      <SpatialGroup title={t.settings.modelRoles.title} description={t.cli.modelRolesHint} icon={Boxes} collapsible storageKey="cli.modelRoles">
       <SpatialRow
         title={t.cli.primaryModelLabel}
         rowId={rowAnchor('cli.primaryModelLabel')}
@@ -401,7 +404,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
       ) : null}
       </SpatialGroup>
 
-      <SpatialGroup title={t.cli.chatRuntimeTitle} description={t.cli.chatRuntimeHint} icon={SlidersHorizontal} columns={2}>
+      <SpatialGroup title={t.cli.chatRuntimeTitle} description={t.cli.chatRuntimeHint} icon={SlidersHorizontal} columns={2} collapsible storageKey="cli.chatRuntime">
       {/* The percentage is the value this switch reads at, so it belongs in the record's status rather
           than crowding the control; the per-model overrides are the row's one action. */}
       <SpatialRow
@@ -492,6 +495,6 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
           onClose={() => setThresholdsOpen(false)}
         />
       ) : null}
-    </div>
+    </SettingsDocument>
   );
 }

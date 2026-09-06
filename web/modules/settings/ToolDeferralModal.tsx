@@ -172,15 +172,22 @@ export function ToolDeferralModal({ runtime, onSave, onSaved, onClose, presentat
     <Modal title={t.brain.toolLoading.title} description={t.brain.toolLoading.hint} icon={Boxes} size="xl" onClose={saving || saveError ? () => {} : onClose} closeDisabled={saving || saveError} presentation={presentation}>
       <ModalBody gap={4}>
         <SettingsGroup title={t.brain.toolLoading.globalTitle} description={t.brain.toolLoading.globalHint} icon={Boxes}>
-          <SettingsRow label={t.brain.toolLoading.enabled} description={t.brain.toolLoading.enabledHint} icon={Boxes}>
-            <Toggle checked={draft.enabled} onChange={(enabled) => setDraft((current) => ({ ...current, enabled }))} label={t.brain.toolLoading.enabled} />
-          </SettingsRow>
-          <SettingsRow label={t.brain.toolLoading.threshold} description={t.brain.toolLoading.thresholdHint} icon={Search}>
-            <div className="flex w-48 items-center gap-3">
-              <Slider value={draft.threshold} min={1} max={100} step={1} onChange={(threshold) => setDraft((current) => ({ ...current, threshold }))} aria-label={t.brain.toolLoading.threshold} />
-              <span className="w-7 text-right font-mono text-sm tabular-nums text-primary">{draft.threshold}</span>
-            </div>
-          </SettingsRow>
+          <SettingsRow
+            label={t.brain.toolLoading.enabled}
+            description={t.brain.toolLoading.enabledHint}
+            icon={Boxes}
+            control={<Toggle checked={draft.enabled} onChange={(enabled) => setDraft((current) => ({ ...current, enabled }))} label={t.brain.toolLoading.enabled} />}
+          />
+          {/* The figure is the record's STATUS, not part of its control: in the status slot it lands in the
+              band's status column with every other reading on the page, instead of riding inside the
+              slider's box and dragging the slider itself off the shared control column. */}
+          <SettingsRow
+            label={t.brain.toolLoading.threshold}
+            description={t.brain.toolLoading.thresholdHint}
+            icon={Search}
+            status={<span className="font-mono tabular-nums text-primary">{draft.threshold}</span>}
+            control={<div className="flex w-48 items-center"><Slider value={draft.threshold} min={1} max={100} step={1} onChange={(threshold) => setDraft((current) => ({ ...current, threshold }))} aria-label={t.brain.toolLoading.threshold} /></div>}
+          />
         </SettingsGroup>
 
         <div className="rounded-md border border-border bg-muted/40 px-3 py-2 text-xs text-muted-foreground" aria-label={t.brain.toolLoading.summary}>
@@ -227,15 +234,17 @@ export function ToolDeferralModal({ runtime, onSave, onSaved, onClose, presentat
                       label={tool.label}
                       description={tool.description}
                       status={<Badge tone={locked ? 'danger' : resolved.effective === 'deferred' ? 'accent' : undefined}>{reasonLabel(resolved.reason)}</Badge>}
-                    >
-                      {locked ? (
-                        <button type="button" disabled aria-label={`${tool.label}: ${reasonLabel(resolved.reason)}`} className="inline-flex h-9 items-center gap-1.5 rounded border border-border px-3 text-xs text-muted-foreground">
-                          <Lock size={13} aria-hidden />{reasonLabel(resolved.reason)}
+                      // The locked affordance says why it is locked through its accessible name only. It
+                      // used to print the reason inside the button as well, directly beside the badge that
+                      // had just said the same words — the same string twice in one band.
+                      control={locked ? (
+                        <button type="button" disabled aria-label={`${tool.label}: ${reasonLabel(resolved.reason)}`} className="inline-flex h-9 items-center justify-center rounded border border-border px-3 text-xs text-muted-foreground">
+                          <Lock size={13} aria-hidden />
                         </button>
                       ) : (
                         <Segmented options={options} value={mode} onChange={(next) => setToolMode(group.sourceId, tool.name, next as 'default' | ToolLoadingMode)} size="sm" aria-label={t.brain.toolLoading.toolMode.replace('{tool}', tool.label)} />
                       )}
-                    </SettingsRow>
+                    />
                   );
                 }) : null}
               </SettingsGroup>

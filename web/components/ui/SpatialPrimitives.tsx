@@ -12,18 +12,35 @@ import { SettingsGroup, SettingsRow } from './SettingsSurface';
  *  The import points at the settings module deliberately. That file is already the shared home of this
  *  surface — the plugin UI runtime hands those very components to plugin bundles — so lifting the markup
  *  into a third location would recreate the duplication this removed. */
-export function SpatialGroup({ title, description, icon, columns = 1, rowId, children, className = '' }: {
+export function SpatialGroup({ title, description, icon, actions, columns = 1, rowId, collapsible, defaultOpen, storageKey, children, className = '' }: {
   title?: string;
   description?: string;
   icon?: LucideIcon;
+  actions?: ReactNode;
   columns?: 1 | 2;
   /** Deep-link anchor — see {@link SettingsGroup}'s `rowId`. */
   rowId?: string;
+  /** Fold and remember the fold — see {@link SettingsGroup}. Forwarded rather than reimplemented, so the
+   *  account page and the settings page share one fold mechanism and one storage namespace. */
+  collapsible?: boolean;
+  defaultOpen?: boolean;
+  storageKey?: string;
   children: ReactNode;
   className?: string;
 }) {
   return (
-    <SettingsGroup title={title} description={description} icon={icon} columns={columns} rowId={rowId} className={className}>
+    <SettingsGroup
+      title={title}
+      description={description}
+      icon={icon}
+      actions={actions}
+      columns={columns}
+      rowId={rowId}
+      collapsible={collapsible}
+      defaultOpen={defaultOpen}
+      storageKey={storageKey}
+      className={className}
+    >
       {children}
     </SettingsGroup>
   );

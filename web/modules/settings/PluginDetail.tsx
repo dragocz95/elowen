@@ -21,7 +21,7 @@ import { PluginPermissionsPanel } from './PluginPermissionsPanel';
 import { PluginDataPanel } from './PluginDataPanel';
 import { PluginLogsPanel } from './PluginLogsPanel';
 import { usePluginConfigDraft } from '../../lib/usePluginConfigDraft';
-import { SettingsGroup, SettingsState, SettingsToolbar } from '../../components/ui/SettingsSurface';
+import { SettingsDocument, SettingsGroup, SettingsState, SettingsToolbar } from '../../components/ui/SettingsSurface';
 
 const CORE_TABS = ['setup', 'behavior', 'capabilities', 'activity', 'advanced'] as const;
 /** The workspace's own tabs, plus one per plugin-contributed section placed here. A contributed id is
@@ -176,73 +176,81 @@ function PluginWorkspace({ name, detail, contributions, logs, hookExecutions, ui
           <PluginHero name={name} detail={detail} description={pluginDescription} toolCount={toolCount} />
         </div>
       </SettingsGroup>
-      <SettingsGroup>
-        <SettingsToolbar>
-          <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div className="flex min-w-0 flex-1 overflow-hidden">
-              <Segmented
-                variant="line"
-                nowrap
-                value={tab}
-                onChange={changeTab}
-                options={sections.map(({ id, ...section }) => ({ value: id, ...section }))}
-                aria-label={t.pluginDetail.workspaceNav}
-              />
-            </div>
-            {saveStatus}
+      {/* NOT a card around the cards. Every tab below is a stack of section cards, and welding them into
+          one bordered box gave this page a card language no other settings page speaks — plus the hand-
+          rolled padding that box needed, because a group body has none of its own. The panels are stacks
+          in the enclosing document now, so a plugin's sections are separated exactly like Elowen AI's or
+          the account page's. The toolbar is a portal into the workspace lead and never drew inside the
+          box in the first place. */}
+      <SettingsToolbar>
+        <div className="flex min-w-0 flex-1 flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-1 overflow-hidden">
+            <Segmented
+              variant="line"
+              nowrap
+              value={tab}
+              onChange={changeTab}
+              options={sections.map(({ id, ...section }) => ({ value: id, ...section }))}
+              aria-label={t.pluginDetail.workspaceNav}
+            />
           </div>
-        </SettingsToolbar>
-        <div className="p-5 sm:p-6">
-          <WorkspacePanel id="setup" active={tab} visited={visitedTabs}>
-            <div className="flex min-w-0 flex-col gap-4">
-              {/* Above the checklist: the checklist answers "did I fill the fields in", this answers
-                  "does it actually work" — and a plugin can have every field set and still be dark. */}
-              <PluginStatusPanel name={name} />
-              <SettingsGroup
-                className="plugin-card"
-                icon={Check}
-                title={t.pluginDetail.setupChecklist}
-                description={t.pluginDetail.setupChecklistHint}
-                actions={<span className={`text-xs font-medium ${missingRequired.length ? 'text-warning' : 'text-success'}`}>{missingRequired.length ? t.pluginDetail.setupMissing.replace('{n}', String(missingRequired.length)) : t.pluginDetail.setupComplete}</span>}
-              >
-                <div className="settings-group__panel flex flex-wrap gap-2">
-                  {detail.configSchema.filter((field) => field.required).map((field) => {
-                    const missing = missingRequired.includes(field);
-                    return <span key={field.key} className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground">{missing ? <Circle size={10} className="text-warning" aria-hidden /> : <Check size={11} className="text-success" aria-hidden />}{fieldLabel(field)}</span>;
-                  })}
-                  {detail.configSchema.every((field) => !field.required) ? <span className="text-xs text-muted-foreground">{t.pluginDetail.setupNoRequired}</span> : null}
-                </div>
-              </SettingsGroup>
-              <PluginConfigEditor {...editorProps} mode="setup" />
-            </div>
-          </WorkspacePanel>
-
-          <WorkspacePanel id="behavior" active={tab} visited={visitedTabs}>
-            <PluginConfigEditor {...editorProps} mode="behavior" />
-          </WorkspacePanel>
-          <WorkspacePanel id="capabilities" active={tab} visited={visitedTabs}>
-            <div className="flex flex-col gap-4">
-              <PluginToolsPanel contributions={contributions} />
-              <PluginHooksPanel contributions={contributions} hookExecutions={hookExecutions} />
-              <PluginPermissionsPanel detail={detail} fieldLabel={fieldLabel} riskText={riskText} toolCount={toolCount} platformCount={platformCount} />
-            </div>
-          </WorkspacePanel>
-          <WorkspacePanel id="activity" active={tab} visited={visitedTabs}><PluginLogsPanel logs={logs} /></WorkspacePanel>
-          <WorkspacePanel id="advanced" active={tab} visited={visitedTabs}>
-            <div className="flex flex-col gap-4">
-              <PluginConfigEditor {...editorProps} mode="advanced" />
-              <PluginDataPanel name={name} summary={detail.data} />
-            </div>
-          </WorkspacePanel>
-          {/* Mounted lazily like every other tab: a plugin bundle is third-party code and must not be
-              fetched, let alone executed, because somebody opened the plugin's configuration form. */}
-          {detailSections.map((section) => (
-            <WorkspacePanel key={section.id} id={sectionTabId(section.id)} active={tab} visited={visitedTabs}>
-              {uiEntry ? <PluginSettingsSection entry={uiEntry} sectionId={section.id} onSaveState={sectionSaveHandlers.get(section.id)!} /> : null}
-            </WorkspacePanel>
-          ))}
+          {saveStatus}
         </div>
-      </SettingsGroup>
+      </SettingsToolbar>
+      <WorkspacePanel id="setup" active={tab} visited={visitedTabs}>
+        <SettingsDocument>
+          {/* Above the checklist: the checklist answers "did I fill the fields in", this answers
+              "does it actually work" — and a plugin can have every field set and still be dark. */}
+          <PluginStatusPanel name={name} />
+          <SettingsGroup
+            className="plugin-card"
+            icon={Check}
+            title={t.pluginDetail.setupChecklist}
+            description={t.pluginDetail.setupChecklistHint}
+            actions={<span className={`text-xs font-medium ${missingRequired.length ? 'text-warning' : 'text-success'}`}>{missingRequired.length ? t.pluginDetail.setupMissing.replace('{n}', String(missingRequired.length)) : t.pluginDetail.setupComplete}</span>}
+          >
+            <div className="settings-group__panel flex flex-wrap gap-2">
+              {detail.configSchema.filter((field) => field.required).map((field) => {
+                const missing = missingRequired.includes(field);
+                return <span key={field.key} className="inline-flex items-center gap-1.5 rounded-full border border-border px-2.5 py-1 text-xs text-muted-foreground">{missing ? <Circle size={10} className="text-warning" aria-hidden /> : <Check size={11} className="text-success" aria-hidden />}{fieldLabel(field)}</span>;
+              })}
+              {detail.configSchema.every((field) => !field.required) ? <span className="text-xs text-muted-foreground">{t.pluginDetail.setupNoRequired}</span> : null}
+            </div>
+          </SettingsGroup>
+          <PluginConfigEditor {...editorProps} mode="setup" />
+        </SettingsDocument>
+      </WorkspacePanel>
+
+      <WorkspacePanel id="behavior" active={tab} visited={visitedTabs}>
+        <SettingsDocument>
+          <PluginConfigEditor {...editorProps} mode="behavior" />
+        </SettingsDocument>
+      </WorkspacePanel>
+      <WorkspacePanel id="capabilities" active={tab} visited={visitedTabs}>
+        <SettingsDocument>
+          <PluginToolsPanel contributions={contributions} />
+          <PluginHooksPanel contributions={contributions} hookExecutions={hookExecutions} />
+          <PluginPermissionsPanel detail={detail} fieldLabel={fieldLabel} riskText={riskText} toolCount={toolCount} platformCount={platformCount} />
+        </SettingsDocument>
+      </WorkspacePanel>
+      <WorkspacePanel id="activity" active={tab} visited={visitedTabs}>
+        <SettingsDocument><PluginLogsPanel logs={logs} /></SettingsDocument>
+      </WorkspacePanel>
+      <WorkspacePanel id="advanced" active={tab} visited={visitedTabs}>
+        <SettingsDocument>
+          <PluginConfigEditor {...editorProps} mode="advanced" />
+          <PluginDataPanel name={name} summary={detail.data} />
+        </SettingsDocument>
+      </WorkspacePanel>
+      {/* Mounted lazily like every other tab: a plugin bundle is third-party code and must not be
+          fetched, let alone executed, because somebody opened the plugin's configuration form. */}
+      {detailSections.map((section) => (
+        <WorkspacePanel key={section.id} id={sectionTabId(section.id)} active={tab} visited={visitedTabs}>
+          <SettingsDocument>
+            {uiEntry ? <PluginSettingsSection entry={uiEntry} sectionId={section.id} onSaveState={sectionSaveHandlers.get(section.id)!} /> : null}
+          </SettingsDocument>
+        </WorkspacePanel>
+      ))}
     </>
   );
 }

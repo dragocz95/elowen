@@ -1115,7 +1115,7 @@ async function seedBrainSettings(seed: Seed): Promise<void> {
   });
 }
 
-// A phone rendering of Settings → Elowen AI, reported from an iPhone: in "Connected accounts (OAuth)" the
+// A phone rendering of Settings → Elowen AI, reported from an iPhone: in "Connected accounts" the
 // account name, the "Connected" badge, the usage window labels and their percentages were all drawn on
 // top of one another and the meters were not visible at all; in "Providers" the entry's own name and
 // endpoint were gone and only the type/key badges remained.
