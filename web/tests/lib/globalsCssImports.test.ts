@@ -1,10 +1,20 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import postcss from 'postcss';
+import tailwindcss from '@tailwindcss/postcss';
 
 const repoRoot = join(import.meta.dirname, '..', '..', '..');
 
 describe('global stylesheet imports', () => {
+  it('compiles the complete stylesheet including imported components', async () => {
+    const file = join(repoRoot, 'web', 'app', 'globals.css');
+    const result = await postcss([tailwindcss({ base: join(repoRoot, 'web') })])
+      .process(readFileSync(file, 'utf8'), { from: file });
+    expect(result.css).toContain('.settings-row');
+    expect(result.css).toContain('.recap-variant-in');
+  });
+
   // CSS ignores an @import that follows any other rule, so ONE rule above the import block drops tokens,
   // components, animations and skins from the build — the whole app renders unstyled while every
   // component test still passes and the build still succeeds. That is a real incident, not a hypothesis.

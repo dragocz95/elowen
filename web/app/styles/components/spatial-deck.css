@@ -231,7 +231,7 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
    opt-out for a record carrying several trailing values that cannot share a phone's value column — and a
    stacked record on a wide card has exactly the three slots every other record has. Excluding it was what
    left the one row with a badge, a switch and a button out of the very alignment it needed most. */
-   THE CELL DISSOLVES rather than becoming a grid of its own. A wrapper that is itself a subgrid is a
+/* THE CELL DISSOLVES rather than becoming a grid of its own. A wrapper that is itself a subgrid is a
    SECOND grid nested in the record, and a nested subgrid only shares the tracks it spans — measured on a
    1440px Recap card, the one row carrying "Regenerate now" opened an action column 270px wide that no
    other row had, and its switch sat at x≈897 while every other switch sat at x≈1170. `display: contents`
