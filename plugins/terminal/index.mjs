@@ -27,6 +27,16 @@ const MIN_TIMEOUT_S = 1;
 // service cgroup on restart anyway — the in-memory registry that addresses it does not survive either.
 const DEFAULT_BLOCK_S = 30;
 const MAX_BLOCK_S = 120;
+// How long a FOREGROUND run may hold the turn before it is moved to the background instead of being
+// killed at its deadline. Claude Code backgrounds at 15 s (BashTool.tsx:57); 30 s here for one reason: it
+// sits ABOVE the 20 s default timeout, so the rule is expressible in a sentence — a caller who did not
+// ask for a longer deadline sees exactly the behaviour it always had, and a caller who passed
+// `timeout` > 30 s gets its process preserved rather than killed. Anything at or under the default would
+// have quietly turned every slightly-slow command's RESULT into a process id.
+const AUTO_BACKGROUND_BUDGET_MS = 30_000;
+// Below this a `sleep` is pacing (rate limiting, a deliberate beat), at or above it it is a poll. Same
+// threshold as the reference, which blocks the same shape.
+const MIN_BLOCKED_SLEEP_S = 2;
 const DEFAULT_MAX_BG = 16;       // default concurrent background processes per session (cfg: maxBackgroundProcesses)
 const PROGRESS_THROTTLE_MS = 100;        // min gap between live-output pushes of a foreground run
 const PROGRESS_TAIL = 2_000;             // rolling TAIL of live output sent per push (never the whole buffer)
@@ -253,6 +263,21 @@ const isBlockingSelfRestart = (command) => allShellCommandWords(command).some((w
   if (remote) return false;
   return args.slice(restart + 1).some((unit) => unit === 'elowen-daemon' || unit === 'elowen-daemon.service');
 });
+
+/** The seconds of a leading `sleep N` that is a POLL rather than a pause, or null. Matches the reference's
+ *  shape (BashTool.tsx:322-337): the FIRST command of the line, bare `sleep` plus one integer argument, at
+ *  least MIN_BLOCKED_SLEEP_S. A fractional `sleep 0.5` is pacing and passes; a `sleep` further down the
+ *  line (`build && sleep 5 && check`) is part of somebody's script and is left alone.
+ *
+ *  Only foreground runs are checked — see the call site. A backgrounded sleep blocks nothing, and it is a
+ *  legitimate way to hold a process slot; the cost this refuses is a turn spent waiting. */
+const blockedSleepSeconds = (command) => {
+  const first = shellCommandWords(command)[0];
+  if (!first || first.length !== 2 || executableName(first[0]) !== 'sleep') return null;
+  if (!/^\d+$/u.test(first[1])) return null;
+  const seconds = Number(first[1]);
+  return seconds >= MIN_BLOCKED_SLEEP_S ? seconds : null;
+};
 
 /** Short process id shared by the foreground-detach and background spawn paths. */
 const newProcessId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
@@ -816,6 +841,25 @@ export function register(ctx) {
     };
   };
 
+  // THE one way a foreground run becomes a background job, shared by Ctrl+B (the `terminal` control) and
+  // by the blocking budget below. Both need the identical sequence — reserve a slot, remember how to
+  // release it, resolve the run's detach race — and a second copy of it is how one path would end up
+  // leaking a reservation or detaching a run that had already been killed.
+  //
+  // `reason` is recorded on the entry so the settled tool result can say WHY the command moved; it does
+  // not change what happens. Returns false when the run cannot be detached (already detached, no longer
+  // running, a direct-host launch on a platform where escaped descendants cannot be reaped, or the
+  // session's background slots are full) — in which case the run simply stays in the foreground.
+  const detachRun = (entry, reason) => {
+    if (entry.run.detached || !entry.run.running || !entry.run.canDetach) return false;
+    const releaseSlot = reserveBackgroundSlot(entry.sessionId, entry.accountUserId);
+    if (!releaseSlot) return false;
+    entry.releaseBackgroundSlot = releaseSlot;
+    entry.detachReason = reason;
+    entry.run.detach();
+    return true;
+  };
+
   // Also caps the rolling buffer kept for background processes (BgProcess.output trim above).
   const outputCap = Math.min(Math.max(Number(ctx.config.outputCap) || DEFAULT_MAX, 10_000), 500_000);
   // The bounds here MUST mirror the manifest's, because the server stores plugin config unvalidated —
@@ -866,6 +910,8 @@ export function register(ctx) {
       'Prefer the dedicated file tools (Read, Edit, Write, Search, ListDir) over cat, head, tail, sed, awk, echo, grep or rg. A shell read does NOT satisfy Edit/Write\'s read-before-write check, so reading a file with cat just forces a second Read before you can edit it — Read it directly. Reach for the shell when the task genuinely needs it: builds, tests, git, service inspection, process management.',
       'Quote paths that contain spaces, and create a file\'s parent directory (mkdir -p) before writing into a new location — Write refuses a missing directory.',
       `\`timeout\` is milliseconds, defaults to ${DEFAULT_TIMEOUT_MS}, and may not exceed ${MAX_TIMEOUT_MS}. The larger Elowen ceiling supports slow finite local builds without changing units.`,
+      `A foreground command whose \`timeout\` exceeds ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} is MOVED to the background at ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} instead of being killed at that deadline: the result then reports a process id, and ProcessOutput(id, block=true) waits for the rest. A command the user approved at a permission prompt is never moved on its own.`,
+      `Do not start a command with \`sleep N\` (N >= ${MIN_BLOCKED_SLEEP_S}) to wait for something — that is refused. Start the work with run_in_background=true and wait for it with ProcessOutput(id, block=true).`,
       'Pass run_in_background=true for detached work. Manage detached work with ListProcesses, ProcessOutput, and KillProcess. backgroundMode="service" marks a long-lived server or watcher.',
       'description is the live display context for the command. dangerouslyDisableSandbox=false is a no-op; true is always refused before any process is spawned.',
       `Output is capped at ~${Math.round(outputCap / 1000)} kB: past that only the BEGINNING and the END are returned, with the middle dropped and named in the result, so redirect a long build or test run to a file and grep it instead of re-running it.`,
@@ -893,8 +939,19 @@ export function register(ctx) {
         }
         const background = resolveBackground(p);
         const timeoutMs = resolveTimeoutMs(p);
+        // Read before anything awaits: it describes THIS call, and the answer must not depend on where in
+        // the execution the question happens to be asked.
+        const approvedByAsk = ctx.callApprovedByAsk();
         if (isBlockingSelfRestart(p.command)) {
           return ok('Error: refused a blocking restart of elowen-daemon from inside its own service. Run `elowen restart all` as a standalone Bash call; verify health only after the recovered turn resumes. Do not retry the blocking command.');
+        }
+        // A leading `sleep N` in the FOREGROUND is a poll: it spends the turn waiting for something the
+        // process tools can wait for properly. Background runs are untouched — see blockedSleepSeconds.
+        const sleepSeconds = background ? null : blockedSleepSeconds(p.command);
+        if (sleepSeconds !== null) {
+          return ok(`Error: refused a blocking \`sleep ${sleepSeconds}\` at the start of this command — a foreground sleep spends the turn waiting. `
+            + 'Start the work with run_in_background=true and wait for it with ProcessOutput(id, block=true), which returns the moment it finishes, '
+            + `or run the check command on its own. A deliberate pause shorter than ${MIN_BLOCKED_SLEEP_S}s is still allowed.`);
         }
         const cwd = guardCwd(p.cwd);
         const sessionCwdKey = cwdStateKey();
@@ -925,6 +982,9 @@ export function register(ctx) {
               accountUserId: foregroundAccountUserId,
               principal: foregroundAccountUserId !== null ? `elowen:${foregroundAccountUserId}` : null,
               releaseBackgroundSlot: null,
+              // Why the run left the foreground, once it has: 'manual' (Ctrl+B) or 'budget'. Only the
+              // wording of the settled result reads it.
+              detachReason: null,
             };
             foregroundRuns.set(id, foregroundEntry);
           }
@@ -937,7 +997,31 @@ export function register(ctx) {
             emitProcCard(fgSession, foregroundAccountUserId);
             ctx.processes.markExited(id);
           });
-          await Promise.race([execPromise, run.detachedPromise]);
+          // THE BLOCKING BUDGET. A caller that asked for a deadline longer than the budget wants the
+          // command to FINISH, not to be killed halfway — so at the budget the run moves to the
+          // background, keeping its output and its process, instead of dying at `timeout`. With the
+          // default 20 s deadline the budget is never reached and nothing about this call changes.
+          //
+          // Two runs are deliberately excluded. One the human just approved at an `ask` prompt: they
+          // agreed to watch this command run, and turning it into a detached process behind them is a
+          // different thing from what they said yes to (the timeout note below says so when it bites).
+          // And a sessionless worker/cron run, which has no conversation to background into — the same
+          // condition that already makes Ctrl+B unavailable there.
+          //
+          // The timer only detaches: that resolves the race below and the detached branch redraws the
+          // process card, exactly as it already does for Ctrl+B.
+          const budgetTimer = foregroundEntry && !approvedByAsk && timeoutMs > AUTO_BACKGROUND_BUDGET_MS
+            ? setTimeout(() => { detachRun(foregroundEntry, 'budget'); }, AUTO_BACKGROUND_BUDGET_MS)
+            : null;
+          budgetTimer?.unref?.();
+          try {
+            await Promise.race([execPromise, run.detachedPromise]);
+          } finally {
+            // The race has settled: either the run finished or it is already detached. A timer left armed
+            // past this point could detach a run whose tool call has returned — it holds `foregroundEntry`
+            // directly, so leaving `foregroundRuns` is not enough to stop it.
+            if (budgetTimer) clearTimeout(budgetTimer);
+          }
           if (run.detached) {
             foregroundRuns.delete(id);
             try {
@@ -946,7 +1030,14 @@ export function register(ctx) {
               foregroundEntry?.releaseBackgroundSlot?.();
             }
             emitProcCard(fgSession, foregroundAccountUserId);
-            return ok(`Moved to background as process ${id}: ${run.command}\n(cwd: ${run.cwd})\nStill running with no time limit; use ProcessOutput("${id}") to read its retained output.`);
+            // Same first line either way, so the id is found in one place. The budget adds why it moved
+            // and how to get the rest — a blocking read is what the caller actually wanted here, since
+            // they asked for a long deadline in order to see the command through.
+            const why = foregroundEntry?.detachReason === 'budget'
+              ? `\nIt passed the ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} blocking budget, so it was moved here instead of being killed at its ${durationLabel(timeoutMs)} timeout.`
+                + ` Call ProcessOutput("${id}", block=true) to wait for the rest of its output.`
+              : '';
+            return ok(`Moved to background as process ${id}: ${run.command}\n(cwd: ${run.cwd})\nStill running with no time limit; use ProcessOutput("${id}") to read its retained output.${why}`);
           }
           // Foreground completion: drop the registry entry WITHOUT a nudge, exactly as a non-backgrounded
           // command produced no lingering process before this change.
@@ -969,8 +1060,14 @@ export function register(ctx) {
           }
           // Name the deadline that actually applied so the model knows whether to re-run with a longer
           // `timeout` or move to the background; a bare kill (registry/session delete) reads as `[killed]`.
+          // An approved command is never auto-backgrounded, so when one times out past the budget the
+          // note says why it was killed rather than moved — otherwise the model sees the same command
+          // survive in one turn and die in the next with nothing to explain the difference.
+          const heldForApproval = approvedByAsk && timeoutMs > AUTO_BACKGROUND_BUDGET_MS
+            ? '; a command you approved is never moved to the background on its own'
+            : '';
           const note = cwdWarning + (run.timedOut
-            ? `[killed: timed out after ${durationLabel(timeoutMs)}]\n`
+            ? `[killed: timed out after ${durationLabel(timeoutMs)}${heldForApproval}]\n`
             : run.exitCode === null ? '[killed]\n' : '');
           // The `[exit N]` marker inside the text is framing for the MODEL; the display path reads the
           // exit code structurally from details (tone + status chip), so report it there as well. A
@@ -1092,13 +1189,8 @@ export function register(ctx) {
     detachForeground: ({ sessionId, principal }) => {
       let detached = 0;
       for (const entry of foregroundRuns.values()) {
-        if (entry.run.detached || !entry.run.running || !entry.run.canDetach) continue;
         if (entry.sessionId !== sessionId || entry.principal !== principal) continue;
-        const releaseSlot = reserveBackgroundSlot(entry.sessionId, entry.accountUserId);
-        if (!releaseSlot) continue;
-        entry.releaseBackgroundSlot = releaseSlot;
-        entry.run.detach();
-        detached += 1;
+        if (detachRun(entry, 'manual')) detached += 1;
       }
       return { detached };
     },

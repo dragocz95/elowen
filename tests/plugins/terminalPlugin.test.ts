@@ -6,7 +6,7 @@ import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createWorkspacePathView } from '../../src/plugins/pathView.js';
 import { loadPlugins } from '../../src/plugins/loader.js';
-import { runWithPolicy } from '../../src/plugins/policyContext.js';
+import { runWithApprovedCall, runWithPolicy } from '../../src/plugins/policyContext.js';
 import type { Policy } from '../../src/plugins/policy.js';
 import type { TurnIdentity } from '../../src/plugins/policyContext.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
@@ -51,6 +51,10 @@ const tmpDir = (tag: string): string => {
   allDirs.add(p);
   return p;
 };
+/** A command that just occupies the foreground for a while. `sleep N` with N >= 2 as the first command
+ *  of a line is refused as a polling pattern (see the sleep-rejection tests), so every test that needs a
+ *  long-running FOREGROUND process spells the wait out instead. Background runs may still use `sleep`. */
+const idle = (seconds: number): string => `node -e "setTimeout(() => {}, ${seconds * 1000})"`;
 const markerExecutable = (dir: string, name: string, marker: string): string => {
   const executable = join(dir, name);
   writeFileSync(executable, `#!/bin/sh\nprintf reached > ${JSON.stringify(marker)}\n`);
@@ -813,7 +817,7 @@ describe('terminal plugin — per-call Bash timeout', () => {
 
   it('interprets canonical timeout in milliseconds', async () => {
     const started = Date.now();
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: 'sleep 20', timeout: 100 }), { identity: owner });
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: idle(20), timeout: 100 }), { identity: owner });
     expect(res.content[0].text).toContain('[killed: timed out after 100ms]');
     expect(res.content[0].text).not.toContain('[exit null]');
     expect(Date.now() - started).toBeLessThan(10_000);
@@ -941,7 +945,7 @@ describe('terminal plugin — foreground detach (Ctrl+B backgrounds a running co
 
   it('detaching cancels the deadline: the command survives past its per-call timeout', async () => {
     const session = 'brain-fg-deadline';
-    const p = inSession(session, 'Bash', { command: 'sleep 10', timeout: 2_000 }); // would be killed at 2s
+    const p = inSession(session, 'Bash', { command: idle(10), timeout: 2_000 }); // would be killed at 2s
     await settle(500);
     expect(control().detachForeground({ sessionId: session, principal: 'elowen:1' })).toEqual({ detached: 1 });
     const res = await p;
@@ -989,7 +993,7 @@ describe('terminal plugin — foreground detach (Ctrl+B backgrounds a running co
 
   it('an in-flight foreground command does not consume a background slot', async () => {
     const session = 'brain-fg-cap';
-    const fg = inSession(session, 'Bash', { command: 'sleep 8' }); // foreground, in flight
+    const fg = inSession(session, 'Bash', { command: idle(8) }); // foreground, in flight
     await settle(200);
     expect(processRegistry.listForSession(session).some((x) => x.completionMode === 'foreground')).toBe(true);
     for (let i = 0; i < 16; i += 1) { // all MAX_BG slots still free — the foreground run is excluded
@@ -1060,7 +1064,7 @@ describe('terminal plugin — foreground kill (stop escalation)', () => {
     const session = 'brain-fgkill-basic';
     let nudged = 0;
     processRegistry.setExitListener(() => { nudged += 1; });
-    const p = inSession(session, 'Bash', { command: 'sleep 30' });
+    const p = inSession(session, 'Bash', { command: idle(30) });
     await settle(300); // spawned and registered as foreground
     expect(control().killForeground({ sessionId: session, principal: 'elowen:1' })).toEqual({ killed: 1 });
     const res = await p;
@@ -1075,7 +1079,7 @@ describe('terminal plugin — foreground kill (stop escalation)', () => {
 
   it('a double-fire before the run settles counts the kill once (already-aborted entries are skipped)', async () => {
     const session = 'brain-fgkill-twice';
-    const p = inSession(session, 'Bash', { command: 'sleep 30' });
+    const p = inSession(session, 'Bash', { command: idle(30) });
     await settle(300);
     expect(control().killForeground({ sessionId: session, principal: 'elowen:1' })).toEqual({ killed: 1 });
     // The abort is synchronous but the settle is not — the entry may still be in the map, already dying.
@@ -1099,7 +1103,7 @@ describe('terminal plugin — foreground kill (stop escalation)', () => {
     const bg = await inSession(session, 'Bash', { command: 'sleep 8', run_in_background: true });
     const bgId = /Started background process (\S+):/.exec(bg.content[0].text)?.[1];
     expect(bgId).toBeTruthy();
-    const p = inSession(session, 'Bash', { command: 'sleep 8' });
+    const p = inSession(session, 'Bash', { command: idle(8) });
     await settle(300);
     expect(control().detachForeground({ sessionId: session, principal: 'elowen:1' })).toEqual({ detached: 1 });
     await p; // the detach resolved the tool; the process itself keeps running as a job
@@ -1184,4 +1188,96 @@ describe('terminal plugin — ProcessOutput(block)', () => {
     await read;
     expect(Date.now() - started).toBeLessThan(10_000); // released on the kill, not after 120s
   }, 20_000);
+});
+
+// A foreground run holds the whole turn. Two rules bound that: a leading `sleep N` is refused outright
+// (the wait belongs to ProcessOutput, which can do it properly), and a run whose caller asked for a
+// deadline longer than the blocking budget is MOVED to the background at the budget rather than killed at
+// the deadline. Neither rule may touch a command the user approved at a permission prompt, and neither
+// changes anything for the ordinary 20 s default.
+describe('terminal plugin — blocking budget and sleep polling', () => {
+  let reg: PluginRegistry;
+  let dir: string;
+  const uidOwner: TurnIdentity = { platform: 'elowen', userId: '1', admin: true, owner: true, elowenUserId: 1 };
+  beforeAll(async () => {
+    reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log });
+    dir = tmpDir('term-budget');
+  });
+  const inSession = (sessionId: string, name: string, params: Record<string, unknown>) =>
+    runWithPolicy(userPolicy([dir]), () => runTool(reg, name, params), { identity: uidOwner, sessionId });
+  const approvedInSession = (sessionId: string, name: string, params: Record<string, unknown>) =>
+    runWithPolicy(userPolicy([dir]), () => runWithApprovedCall(() => runTool(reg, name, params)), { identity: uidOwner, sessionId });
+
+  it('refuses a leading `sleep N` in the foreground and names the blocking read instead', async () => {
+    const marker = join(dir, 'sleep-marker');
+    const res = await inSession('brain-sleep-block', 'Bash', { command: `sleep 5; touch ${JSON.stringify(marker)}` });
+    expect(res.content[0].text).toMatch(/refused a blocking `sleep 5`/);
+    expect(res.content[0].text).toContain('ProcessOutput(id, block=true)');
+    expect(existsSync(marker)).toBe(false); // refused BEFORE anything was spawned
+  }, 20_000);
+
+  it('leaves every sleep that is not a foreground poll alone', async () => {
+    const session = 'brain-sleep-ok';
+    // A short pause is pacing, not a poll.
+    expect((await inSession(session, 'Bash', { command: 'sleep 1; echo paced' })).content[0].text).toContain('paced');
+    // A fractional sleep is pacing too — the reference allows it for the same reason.
+    expect((await inSession(session, 'Bash', { command: 'sleep 2.5; echo fractional' })).content[0].text).toContain('fractional');
+    // Not the FIRST command: part of somebody's script, not a poll before it.
+    expect((await inSession(session, 'Bash', { command: 'echo first; sleep 5' , timeout: 1_000 })).content[0].text).toContain('first');
+    // Backgrounded: it blocks no turn, and it is a legitimate way to hold a process slot.
+    expect((await inSession(session, 'Bash', { command: 'sleep 20', run_in_background: true })).content[0].text)
+      .toMatch(/Started background process/);
+  }, 30_000);
+
+  it('leaves a run under the blocking budget exactly as it was', async () => {
+    const res = await inSession('brain-budget-under', 'Bash', { command: idle(20), timeout: 300 });
+    expect(res.content[0].text).toContain('[killed: timed out after 300ms]');
+    expect(res.content[0].text).not.toContain('Moved to background');
+    // No approval was involved, so the note must not mention one.
+    expect(res.content[0].text).not.toContain('never moved to the background');
+    expect(processRegistry.listForSession('brain-budget-under')).toHaveLength(0);
+  }, 20_000);
+
+  it('says why an APPROVED over-budget command was killed rather than moved', async () => {
+    // The clause only makes sense where the budget would otherwise have applied, so a short deadline must
+    // still produce the plain note.
+    const short = await approvedInSession('brain-budget-approved-short', 'Bash', { command: idle(20), timeout: 300 });
+    expect(short.content[0].text).toContain('[killed: timed out after 300ms]');
+    expect(short.content[0].text).not.toContain('never moved to the background');
+  }, 20_000);
+
+  // The one test that has to spend real wall-clock time: the budget is 30 s by construction (above the
+  // 20 s default timeout), and there is deliberately no knob to shorten it. Both halves run concurrently
+  // so the file pays for one budget, not two.
+  it('moves an over-budget run to the background, but never one the user approved', async () => {
+    const moved = 'brain-budget-moved';
+    const held = 'brain-budget-held';
+    // Prints immediately, then again well after the budget. Its 45 s deadline is what arms the budget.
+    const chatty = `node -e "console.log('early'); setTimeout(() => console.log('late'), 34000)"`;
+    const movedRun = inSession(moved, 'Bash', { command: chatty, timeout: 45_000 });
+    // Same shape, but approved at an ask prompt: it must stay in the foreground and die at its deadline.
+    const heldRun = approvedInSession(held, 'Bash', { command: idle(60), timeout: 33_000 });
+
+    const movedRes = await movedRun;
+    const text = movedRes.content[0].text;
+    const id = /Moved to background as process (\S+):/.exec(text)?.[1];
+    expect(id, text).toBeTruthy();
+    expect(text).toContain('passed the 30s blocking budget');
+    expect(text).toContain('45s timeout');
+    expect(text).toContain(`ProcessOutput("${id}", block=true)`);
+    // It really is an ordinary background job now, not a foreground run wearing a new label.
+    const listed = processRegistry.listForSession(moved).find((x) => x.id === id);
+    expect(listed?.completionMode).toBe('job');
+    expect(listed?.running).toBe(true);
+
+    // …and the REST of the output is still collectable, which is the whole point of moving instead of killing.
+    const rest = await inSession(moved, 'ProcessOutput', { id: id!, block: true, timeout: 30 });
+    expect(rest.content[0].text).toContain('late');
+    expect(rest.content[0].text).toContain('[exited 0]');
+
+    const heldText = (await heldRun).content[0].text;
+    expect(heldText).not.toContain('Moved to background');
+    expect(heldText).toContain('[killed: timed out after 33s; a command you approved is never moved to the background on its own]');
+    expect(processRegistry.listForSession(held)).toHaveLength(0);
+  }, 120_000);
 });
