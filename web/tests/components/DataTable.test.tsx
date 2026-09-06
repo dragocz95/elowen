@@ -251,6 +251,58 @@ describe('DataTableSortCell', () => {
   });
 });
 
+/** The register's density, measured off the reference dashboard. These are PINS: a number here changing
+ *  is a design decision, and the test is what makes it one instead of a side effect of a refactor. */
+describe('register density', () => {
+  it('sets a 40px single-line row, a 48px two-line one and a 41px header', () => {
+    const sheet = css('data-table.css');
+    expect(sheet).toMatch(/--data-table-row:\s*2\.5rem/);
+    // The two-line variant SURVIVES the tightening: a register that carries an avatar and a second line
+    // still has a rhythm of its own, it is just 48px rather than 68px.
+    expect(sheet).toMatch(/--data-table-row-tall:\s*3rem/);
+    expect(sheet).toMatch(/--data-table-row-header:\s*2\.5625rem/);
+    // Height comes from min-height alone, so a cell taller than the rhythm grows the row instead of
+    // being clipped by it.
+    expect(sheet).toMatch(/\.data-table-grid\s*\{[^}]*min-height:\s*var\(--data-table-row\)/);
+    expect(sheet).toMatch(/\[data-row-height='tall'\][^{]*\{\s*min-height:\s*var\(--data-table-row-tall\)/);
+  });
+
+  it('sets column names in sentence case at the body step, not as 10px uppercase labels', () => {
+    render(
+      <DataTable ariaLabel="Members" columns="minmax(0,1fr) 8rem">
+        <DataTableRow header>
+          <DataTableCell header lines={1}>Name</DataTableCell>
+          <DataTableSortCell active direction="asc" onSort={() => {}}>Updated</DataTableSortCell>
+        </DataTableRow>
+      </DataTable>,
+    );
+    const plain = screen.getByRole('columnheader', { name: 'Name' });
+    const sortable = screen.getByRole('button', { name: 'Updated' });
+    for (const element of [plain, sortable]) {
+      expect(element.className).toContain('text-sm');
+      expect(element.className).toContain('font-semibold');
+      // Uppercase erases the ascender/descender silhouette a word is recognised by; at 10px that is most
+      // of what a column name has left to be read with.
+      expect(element.className).not.toContain('uppercase');
+      expect(element.className).not.toContain('tracking-wider');
+      expect(element.className).not.toContain('text-[10px]');
+    }
+  });
+
+  it('draws the row hairline at the skin token\u2019s full strength', () => {
+    // Each skin already resolves --color-border to its own measured hairline. Diluting it to 70% made
+    // the only thing separating two rows in a zebra-less register too faint to see.
+    const { container } = render(
+      <DataTable ariaLabel="Members" columns="minmax(0,1fr)">
+        <DataTableRow><DataTableCell lines={1}>a</DataTableCell></DataTableRow>
+      </DataTable>,
+    );
+    expect(container.querySelector('[role="row"]')!.className).toContain('border-border');
+    expect(container.querySelector('[role="row"]')!.className).not.toContain('border-border/70');
+    expect(container.querySelector('[role="table"]')!.className).not.toContain('border-border/80');
+  });
+});
+
 /** The two defects below are invisible to a DOM test — jsdom applies no stylesheet — and both shipped to
  *  production unnoticed for exactly that reason. The stylesheet itself is the artefact worth pinning. */
 describe('register stylesheet', () => {

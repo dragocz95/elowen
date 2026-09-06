@@ -61,7 +61,7 @@ export function DataTable({ ariaLabel, columns, compactColumns = 'minmax(0,1fr)'
   }, []);
   const registry = useMemo<RowOpenRegistry>(() => ({ register, hasOpenRow }), [register, hasOpenRow]);
   return (
-    <div role="table" aria-label={ariaLabel} style={style} className={`@container overflow-x-clip rounded-lg border border-border/80 ${className}`} {...rest}>
+    <div role="table" aria-label={ariaLabel} style={style} className={`@container overflow-x-clip rounded-lg border border-border ${className}`} {...rest}>
       <RowOpenContext.Provider value={registry}>{children}</RowOpenContext.Provider>
     </div>
   );
@@ -112,7 +112,11 @@ export function DataTableRow({ children, header = false, selected = false, inter
       data-row-height={header ? undefined : height}
       // `.data-table-header` carries the sticky positioning itself; a `sticky` utility here would be
       // overridden by `.data-table-grid`'s own `position: relative` (see data-table.css).
-      className={`data-table-grid items-center gap-x-3 border-b border-border/70 px-4 last:border-b-0 ${header ? 'data-table-header' : `${interactive || onOpen ? 'interactive-row' : ''}`} ${selected ? 'bg-primary/[0.055]' : ''} ${className}`}
+      // The row hairline is the skin's `--color-border` at FULL strength, not a fraction of it. Each skin
+      // already resolves that token to its own measured hairline (studio-light #e4e4e7 ≈ oklch(0.922),
+      // studio-oled the equivalent dark step), so diluting it to 70% only made the rule too faint to
+      // separate two adjacent rows — the one job it has in a register with no zebra.
+      className={`data-table-grid items-center gap-x-3 border-b border-border px-4 last:border-b-0 ${header ? 'data-table-header' : `${interactive || onOpen ? 'interactive-row' : ''}`} ${selected ? 'bg-primary/[0.055]' : ''} ${className}`}
       {...rest}
     >
       {children}
@@ -174,7 +178,7 @@ export function DataTableSortCell({ children, active, direction, onSort, priorit
       <button
         type="button"
         onClick={onSort}
-        className={`-mx-1 flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wider transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 ${align === 'end' ? 'justify-end' : ''} ${active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+        className={`-mx-1 flex w-full items-center gap-1 rounded px-1 py-0.5 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 ${align === 'end' ? 'justify-end' : ''} ${active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
       >
         <span className="truncate">{children}</span>
         {/* The neutral arrow is VISIBLE, not revealed on hover. It was `opacity-0` until the pointer
@@ -221,7 +225,11 @@ export function DataTableCell({ children, header = false, priority = 'always', l
       // A truncated cell hides part of its own content, so the full value has to stay reachable. It can
       // only be recovered when the cell IS the text; a composed cell passes its own `title`.
       title={title ?? (lines === 1 && typeof children === 'string' ? children : undefined)}
-      className={`data-table-cell ${priority === 'wide' ? 'data-table-wide' : priority === 'mobile' ? 'data-table-mobile' : ''} min-w-0 ${header ? 'text-[10px] font-semibold uppercase tracking-wider text-muted-foreground' : ''} ${className}`}
+      // A column name is read, not decoded: 14px/600 in the writing system's own case. The 10px
+      // uppercase + tracking it replaces is the shape of a LABEL, and at that size it costs a reader
+      // roughly a third of the glyph information — capitals erase the ascender/descender silhouette a
+      // word is recognised by, which is why the reference dashboard sets its headers in sentence case.
+      className={`data-table-cell ${priority === 'wide' ? 'data-table-wide' : priority === 'mobile' ? 'data-table-mobile' : ''} min-w-0 ${header ? 'text-sm font-semibold text-muted-foreground' : ''} ${className}`}
       {...rest}
     >
       {labelHidden ? <span className="sr-only">{children}</span> : children}
