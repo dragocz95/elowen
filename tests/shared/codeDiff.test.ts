@@ -22,6 +22,13 @@ describe('langForPath', () => {
     expect(langForPath('Edit /tmp/demo/app.tsx')).toBe('tsx');
   });
 
+  it('does not resolve an extension through Object.prototype', () => {
+    // A plain lookup returns Object's own constructor here, and the caller then selects a "grammar"
+    // that is a function.
+    expect(langForPath('/tmp/weird.constructor')).toBeNull();
+    expect(langForPath('/tmp/weird.toString')).toBeNull();
+  });
+
   it('finds the FIRST known path token, ignoring a trailing parenthetical', () => {
     expect(langForPath('src/app.ts (+5 -2)')).toBe('typescript');
     expect(langForPath('Edit src/app.ts (+5 -2)')).toBe('typescript');

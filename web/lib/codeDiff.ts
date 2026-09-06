@@ -33,8 +33,10 @@ export function langForPath(path: string | null | undefined): string | null {
     if (/^(dockerfile|containerfile)$/i.test(base)) return 'dockerfile';
     const dot = base.lastIndexOf('.');
     if (dot <= 0 || dot === base.length - 1) continue;
-    const lang = EXT_TO_LANG[base.slice(dot + 1).toLowerCase()];
-    if (lang) return lang;
+    // `Object.hasOwn`, not a plain lookup: an extension of `constructor` or `toString` would otherwise
+    // resolve through Object's prototype and be returned as a language.
+    const ext = base.slice(dot + 1).toLowerCase();
+    if (Object.hasOwn(EXT_TO_LANG, ext)) return EXT_TO_LANG[ext]!;
   }
   return null;
 }
