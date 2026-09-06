@@ -765,6 +765,8 @@ export interface PluginReadinessCheck {
    *  fields, where a prose sentence invites a typo in the one place a typo stays silent. */
   fix?: { label: string; value: string }[];
 }
+/** What one registered readiness check yields per request: a row, several rows, or nothing. */
+export type PluginReadinessRows = PluginReadinessCheck | PluginReadinessCheck[] | null;
 
 /** One persisted activity-log row (see PluginContext.registerEventRowResolver). `label` is an optional
  * human-readable snapshot for a target whose stable audit key is not useful presentation on its own. */
@@ -1585,8 +1587,10 @@ export interface PluginContext {
   /** Contribute a row to GET /system/readiness — the onboarding "does each subsystem actually work"
    *  report. Runs on every readiness request while the plugin is enabled (a disabled plugin's checks
    *  disappear with it, which is itself the honest answer); return null to skip, and a throwing check
-   *  is dropped for that request. Keep it cheap and synchronous-ish: this rides a UI read. */
-  registerReadinessCheck(check: () => PluginReadinessCheck | null | Promise<PluginReadinessCheck | null>): void;
+   *  is dropped for that request. A check may return several rows at once — one per item of a report
+   *  whose length is only known at request time (a dependency probe), so a plugin never has to register
+   *  a fixed number of slots ahead of it. Keep it cheap and synchronous-ish: this rides a UI read. */
+  registerReadinessCheck(check: () => PluginReadinessRows | Promise<PluginReadinessRows>): void;
   /** Contribute a tool to the daemon's OWN /mcp server (see {@link PluginMcpTool}). STRICT
    *  deny-by-default: the name must be declared in the manifest's `provides.mcpTools` — the manifest
    *  stays the single audit surface for what a plugin exposes to connected MCP clients. The /mcp

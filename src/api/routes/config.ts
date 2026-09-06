@@ -361,8 +361,8 @@ export function registerConfigRoutes(app: ElowenApp, ctx: RouteContext): void {
     const registry = await d.plugins?.get();
     for (const { plugin, fn } of registry?.readinessChecks ?? []) {
       try {
-        const check = await fn();
-        if (check) checks.push({ ...check, plugin });
+        const result = await fn();
+        for (const check of Array.isArray(result) ? result : result ? [result] : []) checks.push({ ...check, plugin });
       } catch { /* a broken plugin check must not take down the readiness report */ }
     }
 

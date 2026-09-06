@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessCheck, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginChatArtifactRef, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginProjectIndicatorProvider, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginUiVisibility, PluginWebSocketRoute, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessRows, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginChatArtifactRef, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginProjectIndicatorProvider, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginUiVisibility, PluginWebSocketRoute, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import { webSocketTickets } from './wsTickets.js';
 import type { BrainInlineArtifact, PluginChatArtifact, PluginChatArtifactUpdate } from '../brain/events.js';
 import type { TmuxDriver } from '../tmux/types.js';
@@ -288,7 +288,7 @@ export class PluginRegistry {
   /** Batched Project-register indicators (see PluginContext.registerProjectIndicators). */
   readonly projectIndicatorProviders: { plugin: string; fn: PluginProjectIndicatorProvider }[] = [];
   /** First-run readiness rows (see PluginContext.registerReadinessCheck). */
-  readonly readinessChecks: { plugin: string; fn: () => PluginReadinessCheck | null | Promise<PluginReadinessCheck | null> }[] = [];
+  readonly readinessChecks: { plugin: string; fn: () => PluginReadinessRows | Promise<PluginReadinessRows> }[] = [];
   /** Tools contributed to the daemon's OWN /mcp server (see PluginContext.registerMcpTool). The /mcp
    *  handler composes core + these per request, so this list needs no cache invalidation on reload. */
   readonly mcpTools: { plugin: string; tool: PluginMcpTool }[] = [];

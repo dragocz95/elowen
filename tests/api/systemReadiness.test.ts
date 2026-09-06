@@ -99,6 +99,30 @@ describe('GET /system/readiness', () => {
     expect(row?.hint).toBe('Add this record.');
   });
 
+  /** A dependency probe yields as many rows as it has items, and that count is only known per request —
+   *  so one registered check may hand back the whole list instead of registering a fixed number of slots. */
+  it('spreads a check that returns several rows, each attributed to the plugin, in order', async () => {
+    const f = fixturePlugins([{
+      name: 'widgets',
+      register: "ctx.registerReadinessCheck(() => [{ id: 'widgets.podman', label: 'Podman', ok: true, detail: 'installed' },"
+        + " { id: 'widgets.crun', label: 'crun', ok: false, detail: 'missing' }]);",
+    }]);
+    fixtures.push(f);
+    const db = openDb(':memory:');
+    db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const app = createServer({
+      bus: new EventBus(), engine: null as never, spawn: null as never, tmux: null as never,
+      project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
+      clock: new FakeClock(0), config: new ConfigStore(db), projects: new ProjectStore(db),
+      plugins: f.provider, brain: { resolvableModel: () => 'kimi' } as never,
+    });
+    const { body } = await getChecks(app);
+    const rows = body.checks.filter((c) => c.plugin === 'widgets');
+    expect(rows.map((c) => [c.id, c.ok])).toEqual([['widgets.podman', true], ['widgets.crun', false]]);
+    const at = body.checks.findIndex((c) => c.id === 'widgets.podman');
+    expect(body.checks[at + 1]?.id).toBe('widgets.crun');
+  });
+
   it('drops the contributed row when no plugin is loaded — the rest keeps its order', async () => {
     const { app } = makeApp({ model: 'kimi', contributor: false });
     const { body } = await getChecks(app);
