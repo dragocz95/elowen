@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { SettingsGroup, SettingsRow } from '../../../components/ui/SettingsSurface';
 import { createWrapper } from '../../test-utils';
@@ -116,5 +116,92 @@ describe('SettingsGroup — collapsible', () => {
     expect(container.querySelector('[data-settings-group]')).not.toHaveAttribute('aria-expanded');
     expect(container.querySelector('.settings-group__body')).not.toHaveAttribute('hidden');
     expect(screen.getByRole('button', { name: 'Reset' })).toBeInTheDocument();
+  });
+});
+
+/** A REMEMBERED FOLD. `storageKey` is the one mechanism for it: it wraps the controlled `open` pair the
+ *  component already had, so no page keeps fold state of its own and no two pages can drift on how. */
+describe('SettingsGroup — remembered fold', () => {
+  const key = 'elowen.settings.fold.brain.providers';
+  beforeEach(() => localStorage.clear());
+
+  const renderGroup = () => render(
+    <SettingsGroup title="Providers" collapsible storageKey="brain.providers">
+      <SettingsRow label="Row" />
+    </SettingsGroup>,
+  );
+
+  it('still starts closed, and writes the reader’s choice under a namespaced key', () => {
+    const { container } = renderGroup();
+    expect(trigger(container)).toHaveAttribute('aria-expanded', 'false');
+    expect(localStorage.getItem(key)).toBeNull();
+
+    fireEvent.click(trigger(container));
+    expect(trigger(container)).toHaveAttribute('aria-expanded', 'true');
+    expect(localStorage.getItem(key)).toBe('open');
+
+    fireEvent.click(trigger(container));
+    expect(localStorage.getItem(key)).toBe('closed');
+  });
+
+  it('reopens a group the reader left open, across a full remount', () => {
+    const first = renderGroup();
+    fireEvent.click(trigger(first.container));
+    first.unmount();
+
+    const { container } = renderGroup();
+    expect(trigger(container)).toHaveAttribute('aria-expanded', 'true');
+    expect(container.querySelector('.settings-group__body')).not.toHaveAttribute('hidden');
+  });
+
+  it('keeps a group the reader closed shut even when the caller asks for defaultOpen', () => {
+    localStorage.setItem(key, 'closed');
+    const { container } = render(
+      <SettingsGroup title="Providers" collapsible defaultOpen storageKey="brain.providers">
+        <SettingsRow label="Row" />
+      </SettingsGroup>,
+    );
+    expect(trigger(container)).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  /** Two groups, two slots. A single shared key would have folding one card fold the other, which is the
+   *  failure a hand-rolled `useState` per page never even gets the chance to make. */
+  it('gives each group its own slot', () => {
+    const { container } = render(
+      <>
+        <SettingsGroup title="Providers" collapsible storageKey="brain.providers"><SettingsRow label="A" /></SettingsGroup>
+        <SettingsGroup title="Accounts" collapsible storageKey="brain.accounts"><SettingsRow label="B" /></SettingsGroup>
+      </>,
+    );
+    const triggers = [...container.querySelectorAll('.settings-group__trigger')] as HTMLButtonElement[];
+    fireEvent.click(triggers[0]!);
+
+    expect(localStorage.getItem(key)).toBe('open');
+    expect(localStorage.getItem('elowen.settings.fold.brain.accounts')).toBeNull();
+    expect(triggers[1]).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  /** A garbage value must not decide anything: `usePersistentState` validates on read, so a foreign or
+   *  stale slot falls back to the caller's default rather than leaving the card in a third state. */
+  it('ignores a stored value that is not a fold state', () => {
+    localStorage.setItem(key, 'sideways');
+    const { container } = renderGroup();
+    expect(trigger(container)).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  /** A remembered group is still a group a deep link can open: `useRowAnchor` clicks the trigger, and the
+   *  click arrives here as an ordinary open — which the group then remembers. */
+  it('opens from a programmatic trigger click, the way a row anchor unfolds it', () => {
+    const { container } = renderGroup();
+    const body = container.querySelector('.settings-group__body')!;
+    expect(body).toHaveAttribute('data-state', 'closed');
+
+    const fold = container.querySelector('[data-slot="collapsible-content"][data-state="closed"]')!;
+    const opener = container.querySelector(`[aria-controls="${fold.id}"][aria-expanded="false"]`) as HTMLButtonElement;
+    expect(opener).not.toBeNull();
+    fireEvent.click(opener);
+
+    expect(container.querySelector('.settings-group__body')).toHaveAttribute('data-state', 'open');
+    expect(localStorage.getItem(key)).toBe('open');
   });
 });

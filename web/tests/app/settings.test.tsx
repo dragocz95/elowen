@@ -287,6 +287,13 @@ describe('SettingsPage', () => {
     });
     await waitFor(() => expect(row).toHaveClass('row-flash'));
     expect(window.location.search).toBe('?cat=models');
+    // The row it names lives in a card that folds CLOSED and remembers its fold, so arriving at it has to
+    // unfold that card — a marked row inside a `hidden` body is a link that silently goes nowhere. The
+    // unfold is the reader's choice from then on, exactly as if they had clicked the header.
+    const group = row.closest('[data-settings-group]')!;
+    expect(group.querySelector('.settings-group__trigger')).toHaveAttribute('aria-expanded', 'true');
+    expect(group.querySelector('.settings-group__body')).not.toHaveAttribute('hidden');
+    expect(localStorage.getItem('elowen.settings.fold.settings.modelRoles')).toBe('open');
     unmount();
 
     window.history.replaceState(null, '', '/settings?cat=models&row=settings.rowThatMoved');

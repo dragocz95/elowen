@@ -741,7 +741,7 @@ export default function SettingsPage() {
                 </Modal>
               ) : null;
               const diagnosticsGroup = (
-                <SettingsGroup title={t.settings.systemDiagnostics} rowId={rowAnchor('settings.systemDiagnostics')} description={t.settings.systemSectionHint} icon={Gauge} className="settings-diagnostics">
+                <SettingsGroup title={t.settings.systemDiagnostics} rowId={rowAnchor('settings.systemDiagnostics')} description={t.settings.systemSectionHint} icon={Gauge} className="settings-diagnostics" collapsible storageKey="settings.systemDiagnostics">
                   <SystemDiagnostics
                     diagnostics={diagnostics}
                     t={t}

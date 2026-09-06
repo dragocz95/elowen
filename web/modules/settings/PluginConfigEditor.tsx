@@ -1014,11 +1014,23 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
   const isConnection = (f: PluginConfigField) => f.type === 'secret' || CONNECTION_KEYS.has(f.key);
   const connectionFields = visibleSchema.filter(isConnection);
   const behaviorFields = visibleSchema.filter((f) => !isConnection(f));
+  // A card folds and remembers the fold like every other titled settings card. The LAST card standing
+  // stays open by default, because a page whose only content is collapsed is a chevron on empty space.
+  const legacyGroupCount = (connectionFields.length ? 1 : 0) + (behaviorFields.length ? 1 : 0);
   const group = (key: string, Icon: LucideIcon, title: string, hint: string | undefined, fields: PluginConfigField[]) => {
     const rows = fieldRows(fields);
     if (rows.length === 0) return null;
     return (
-      <SettingsGroup key={key} className="plugin-card" title={title} description={hint} icon={Icon}>
+      <SettingsGroup
+        key={key}
+        className="plugin-card"
+        title={title}
+        description={hint}
+        icon={Icon}
+        collapsible
+        defaultOpen={legacyGroupCount === 1}
+        storageKey={`plugin.${name}.${mode}.${key}`}
+      >
         {rows}
       </SettingsGroup>
     );
@@ -1062,6 +1074,11 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
               icon={sectionIcon(card.section)}
               title={card.section ? fieldLabel(card.section) : undefined}
               actions={hint ? <HelpTip align="left">{hint}</HelpTip> : undefined}
+              // A headerless leading card has no trigger to click, so it never folds. The rest do, and the
+              // last card standing stays open — a tab whose only content is collapsed shows nothing.
+              collapsible={Boolean(card.section)}
+              defaultOpen={sectionCards.length === 1}
+              storageKey={card.section ? `plugin.${name}.${mode}.${card.section.key}` : undefined}
             >
               {showPackageAction || rows.length > 0 ? (
                 <>

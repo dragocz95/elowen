@@ -286,7 +286,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
     // the settings surface, and a second copy of it here is exactly how these two pages drifted before.
     <SettingsDocument>
       {/* A role table reads top-down: one column, in the order the questions are asked. */}
-      <SpatialGroup title={t.settings.modelRoles.title} description={t.cli.modelRolesHint} icon={Boxes}>
+      <SpatialGroup title={t.settings.modelRoles.title} description={t.cli.modelRolesHint} icon={Boxes} collapsible storageKey="cli.modelRoles">
       <SpatialRow
         title={t.cli.primaryModelLabel}
         rowId={rowAnchor('cli.primaryModelLabel')}
@@ -404,7 +404,7 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
       ) : null}
       </SpatialGroup>
 
-      <SpatialGroup title={t.cli.chatRuntimeTitle} description={t.cli.chatRuntimeHint} icon={SlidersHorizontal} columns={2}>
+      <SpatialGroup title={t.cli.chatRuntimeTitle} description={t.cli.chatRuntimeHint} icon={SlidersHorizontal} columns={2} collapsible storageKey="cli.chatRuntime">
       {/* The percentage is the value this switch reads at, so it belongs in the record's status rather
           than crowding the control; the per-model overrides are the row's one action. */}
       <SpatialRow

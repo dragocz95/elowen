@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, act, within } from '@testing-library/react';
 import { ToastProvider } from '../../../components/ui/Toast';
-import { createWrapper } from '../../test-utils';
+import { createWrapper, openSettingsGroups } from '../../test-utils';
 import { interpolate } from '../../../lib/i18n';
 import { en } from '../../../lib/i18n/dictionaries/en';
 import type { ElowenConfig } from '../../../lib/types';
@@ -122,7 +122,13 @@ vi.mock('../../../lib/elowenClient', async (importOriginal) => {
 import { BrainSection, modelPickerItems } from '../../../modules/settings/BrainSection';
 import { BrainProvidersSection } from '../../../modules/settings/BrainProvidersSection';
 
-const renderSection = () => render(<ToastProvider><BrainSection /></ToastProvider>, { wrapper: createWrapper().wrapper });
+const renderSection = () => {
+  const result = render(<ToastProvider><BrainSection /></ToastProvider>, { wrapper: createWrapper().wrapper });
+  // The account and settings cards fold closed; a closed body is out of the accessibility tree, so
+  // open them before driving the records inside, exactly as a reader would.
+  openSettingsGroups(result.container);
+  return result;
+};
 
 beforeEach(() => {
   saveProviders.mockReset();
@@ -188,9 +194,10 @@ describe('BrainSection — OAuth account model picker', () => {
       .mockImplementationOnce(() => new Promise((resolve) => { resolveInitial = resolve; }))
       .mockResolvedValue({ providers: [hostedProvider('openai')] });
 
-    const { rerender } = render(<ToastProvider><BrainProvidersSection config={CONFIG as unknown as ElowenConfig} /></ToastProvider>, { wrapper: createWrapper().wrapper });
+    const { rerender, container } = render(<ToastProvider><BrainProvidersSection config={CONFIG as unknown as ElowenConfig} /></ToastProvider>, { wrapper: createWrapper().wrapper });
     // A config save re-runs the status effect; its answer is the newer generation and must win.
     rerender(<ToastProvider><BrainProvidersSection config={{ ...CONFIG, brain: { ...CONFIG.brain, providers: [...(CONFIG.brain.providers as unknown[])] } } as unknown as ElowenConfig} /></ToastProvider>);
+    openSettingsGroups(container);
     fireEvent.click(await screen.findByRole('button', { name: `${en.brain.hostedSearchSettings}: OpenAI` }));
     const dialog = await screen.findByRole('dialog', { name: en.brain.hostedSearchTitle });
     expect(within(dialog).getByText(en.brain.hostedSearchActive)).toBeInTheDocument();

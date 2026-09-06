@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { ToastProvider } from '../../../components/ui/Toast';
-import { createWrapper } from '../../test-utils';
+import { createWrapper, openSettingsGroups } from '../../test-utils';
 import { en } from '../../../lib/i18n/dictionaries/en';
 import { interpolate } from '../../../lib/i18n';
 import type { CliSettings, PermissionSettings, BrainModelOption } from '../../../lib/types';
@@ -36,7 +36,13 @@ vi.mock('../../../lib/queries', async (importOriginal) => ({
 
 import { CliSection } from '../../../modules/account/CliSection';
 
-const renderSection = () => render(<ToastProvider><CliSection /></ToastProvider>, { wrapper: createWrapper().wrapper });
+const renderSection = () => {
+  const result = render(<ToastProvider><CliSection /></ToastProvider>, { wrapper: createWrapper().wrapper });
+  // The account and settings cards fold closed; a closed body is out of the accessibility tree, so
+  // open them before driving the records inside, exactly as a reader would.
+  openSettingsGroups(result.container);
+  return result;
+};
 const pick = (label: string) => screen.getByRole('button', { name: `${en.managePicker.manage}: ${label}` });
 
 beforeEach(() => {

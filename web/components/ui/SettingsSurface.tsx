@@ -1,13 +1,24 @@
 'use client';
-import { Children, Fragment, isValidElement, useId, useState, type ReactNode } from 'react';
+import { Children, Fragment, isValidElement, useCallback, useId, useState, type ReactNode } from 'react';
 import { ChevronRight } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { HelpTip } from './HelpTip';
 import { WorkspaceLeadPortal } from './WorkspaceShell';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from './shadcn/collapsible';
+import { usePersistentState } from '../../lib/usePersistentState';
 
 type SettingsTone = 'default' | 'danger';
 type SettingsDensity = 'comfortable' | 'compact';
+
+/** Where a remembered fold lives. ONE namespace for every settings and account surface, so a group is
+ *  identified by its own stable id and never by the page that happens to render it. Like every other UI
+ *  preference in this app (`elowen.settings.category`, `elowen.memory.tab`, the chat and dock keys) it is
+ *  per BROWSER rather than per user id: nothing here scopes a preference by account, and inventing a
+ *  second convention for this one switch would be the drift rather than the fix. */
+const GROUP_FOLD_PREFIX = 'elowen.settings.fold.';
+const FOLD_STATES = ['open', 'closed'] as const;
+type FoldState = (typeof FOLD_STATES)[number];
+export const settingsFoldKey = (storageKey: string) => `${GROUP_FOLD_PREFIX}${storageKey}`;
 
 /** A settings or account page is a STACK OF SECTION CARDS, not one long bordered document. The shell
  *  `control-surface-document` would otherwise draw around the whole stack is dropped in CSS, so each
@@ -29,8 +40,12 @@ export function SettingsDocument({ children, className = '' }: { children: React
  *  stay a sibling OUTSIDE it, so an action click can never toggle the group) and the chevron at its
  *  trailing edge states the fold. The body stays MOUNTED while closed — `hidden` on an always-rendered
  *  `CollapsibleContent forceMount` — so deep links and in-page search still find rows that are folded
- *  away, and a caller can force the group open through `open`/`onOpenChange`. */
-export function SettingsGroup({ title, description, icon: Icon, actions, tone = 'default', density = 'comfortable', columns = 1, rowId, collapsible = false, defaultOpen, open, onOpenChange, children, className = '' }: {
+ *  away, and a caller can force the group open through `open`/`onOpenChange`.
+ *
+ *  `storageKey` remembers the reader's own choice across reloads. It is the ONE mechanism for that: it
+ *  wraps the controlled `open`/`onOpenChange` pair the component already had, so no page keeps fold state
+ *  of its own and no two pages can drift on how they keep it. */
+export type SettingsGroupProps = {
   title?: string;
   description?: string;
   icon?: LucideIcon;
@@ -51,11 +66,40 @@ export function SettingsGroup({ title, description, icon: Icon, actions, tone = 
   /** Controlled fold state. Passing it disables the internal state, exactly like a controlled input. */
   open?: boolean;
   onOpenChange?: (open: boolean) => void;
+  /** A STABLE, locale-independent id under which this group's fold is remembered — `brain.providers`,
+   *  `terminal.colors`. Only meaningful together with `collapsible`, and ignored when the caller drives
+   *  `open` itself, because a controlled group already has an owner for that state. */
+  storageKey?: string;
   /** Optional: a group whose whole story fits in its header (a title, a figure, one action) renders as a
    *  single row. An empty body div would still contribute its own padding and read as a stray gap. */
   children?: ReactNode;
   className?: string;
-}) {
+};
+
+/** The dispatcher holds NO state of its own, which is what lets the persisted variant be a separate
+ *  component and still obey the rules of hooks. */
+export function SettingsGroup(props: SettingsGroupProps) {
+  if (props.collapsible && props.storageKey && props.open === undefined) {
+    return <PersistedSettingsGroup {...props} storageKey={props.storageKey} />;
+  }
+  return <SettingsGroupView {...props} />;
+}
+
+/** The remembered fold. `usePersistentState` is the app's one localStorage-backed state helper; it starts
+ *  from the fallback and rehydrates inside an effect, so the server and the first client paint agree and
+ *  a group that was left open simply opens a tick later. A deep link into a folded group still works
+ *  unchanged: `useRowAnchor` clicks the trigger, the click lands here as `onOpenChange(true)`, and the
+ *  group both opens and remembers that it did. */
+function PersistedSettingsGroup({ storageKey, defaultOpen, onOpenChange, ...rest }: SettingsGroupProps & { storageKey: string }) {
+  const [stored, setStored] = usePersistentState<FoldState>(settingsFoldKey(storageKey), defaultOpen ? 'open' : 'closed', FOLD_STATES);
+  const handleOpenChange = useCallback((next: boolean) => {
+    setStored(next ? 'open' : 'closed');
+    onOpenChange?.(next);
+  }, [onOpenChange, setStored]);
+  return <SettingsGroupView {...rest} collapsible open={stored === 'open'} onOpenChange={handleOpenChange} />;
+}
+
+function SettingsGroupView({ title, description, icon: Icon, actions, tone = 'default', density = 'comfortable', columns = 1, rowId, collapsible = false, defaultOpen, open, onOpenChange, children, className = '' }: SettingsGroupProps) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(defaultOpen ?? false);
   const isOpen = open ?? uncontrolledOpen;
   // Radix's trigger drops `aria-controls` while closed (its content is unmounted); ours is force-mounted

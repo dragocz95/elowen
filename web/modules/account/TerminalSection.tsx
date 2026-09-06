@@ -128,7 +128,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
     // The surface's own document, not a hand-rolled flex column: the gap between section cards is the
     // settings surface's to state, and a second copy of it here is how these pages drifted before.
     <SettingsDocument>
-      <SpatialGroup title={t.terminal.colorsTitle} rowId={rowAnchor('terminal.colorsTitle')} description={t.terminal.colorsHelp} icon={Palette}>
+      <SpatialGroup title={t.terminal.colorsTitle} rowId={rowAnchor('terminal.colorsTitle')} description={t.terminal.colorsHelp} icon={Palette} collapsible storageKey="terminal.colors">
         <SpatialRow
           title={t.terminal.themeMode}
           icon={Palette}
@@ -148,7 +148,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
         />
       </SpatialGroup>
 
-      <SpatialGroup title={t.terminal.fontTitle} rowId={rowAnchor('terminal.fontTitle')} icon={Type} columns={2}>
+      <SpatialGroup title={t.terminal.fontTitle} rowId={rowAnchor('terminal.fontTitle')} icon={Type} columns={2} collapsible storageKey="terminal.font">
         <SpatialRow
           title={t.terminal.fontSize}
           icon={ALargeSmall}
@@ -164,7 +164,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
         />
       </SpatialGroup>
 
-      <SpatialGroup title={t.terminal.cursorTitle} rowId={rowAnchor('terminal.cursorTitle')} icon={TextCursorInput} columns={2}>
+      <SpatialGroup title={t.terminal.cursorTitle} rowId={rowAnchor('terminal.cursorTitle')} icon={TextCursorInput} columns={2} collapsible storageKey="terminal.cursor">
         <SpatialRow
           title={t.terminal.cursorStyle}
           icon={TextCursorInput}
@@ -177,7 +177,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
         />
       </SpatialGroup>
 
-      <SpatialGroup title={t.terminal.historyTitle} rowId={rowAnchor('terminal.historyTitle')} description={t.terminal.scrollbackHelp} icon={ScrollText}>
+      <SpatialGroup title={t.terminal.historyTitle} rowId={rowAnchor('terminal.historyTitle')} description={t.terminal.scrollbackHelp} icon={ScrollText} collapsible storageKey="terminal.history">
         <SpatialRow
           title={t.terminal.scrollback}
           icon={ScrollText}
@@ -186,7 +186,7 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
         />
       </SpatialGroup>
 
-      <SpatialGroup title={t.terminal.cliTitle} icon={SquareTerminal}>
+      <SpatialGroup title={t.terminal.cliTitle} icon={SquareTerminal} collapsible storageKey="terminal.cli">
         <SpatialRow
           title={t.terminal.showThoughts}
           icon={Brain}
