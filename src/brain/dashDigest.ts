@@ -2,6 +2,7 @@ import type { InferenceClient } from '../inference/types.js';
 import type { Logger } from '../shared/logger.js';
 import type { DashDigestStore, DigestPayload } from '../store/dashDigestStore.js';
 import { sanitizePayload } from '../store/dashDigestStore.js';
+import { DIGEST_VARIANTS_BOUNDS } from '../store/configStore.js';
 
 /** What the generator reads about one of yesterday's conversations. */
 export interface DigestSessionInput { id: string; title: string }
@@ -35,12 +36,23 @@ const MEMORY_CHARS = 200;
  *  reply than it writes well. */
 const DIGEST_RECAP_VARIANTS = 5;
 
+/** The ONE source of truth for a generation's batch size: the admin's saved count, clamped to the
+ *  same bounds the config store enforces, or the default when unset. The prompt asks for exactly this
+ *  many variants AND the generator cuts the reply to it — so the setting sizes what is STORED, not
+ *  merely what is asked. */
+function normalizedRecapVariants(recapVariants: number | undefined): number {
+  const count = Math.round(recapVariants ?? Number.NaN);
+  return Number.isFinite(count)
+    ? Math.min(DIGEST_VARIANTS_BOUNDS.max, Math.max(DIGEST_VARIANTS_BOUNDS.min, count))
+    : DIGEST_RECAP_VARIANTS;
+}
+
 /** Build the instruction prompt. English instructions with a hard same-language rule, like the
  *  conversation titler: a Czech user gets a Czech dashboard without anyone configuring a locale.
- *  `recapVariants` is the admin's batch size (Settings → Recap); the store's cap bounds what arrives
- *  even if the caller skips clamping. */
+ *  `recapVariants` is the admin's batch size (Settings → Recap); normalized before use, so a
+ *  hand-rolled caller cannot push the ask outside the bounds either. */
 export function buildDigestPrompt(input: DigestInput, recapVariants: number = DIGEST_RECAP_VARIANTS): string {
-  const variantCount = Math.min(10, Math.max(1, Math.round(recapVariants) || DIGEST_RECAP_VARIANTS));
+  const variantCount = normalizedRecapVariants(recapVariants);
   const variantWord = variantCount === 1 ? 'variant' : 'variants';
   const lines: string[] = [
     `You are ${input.agentName}, the personal AI assistant behind this workspace. You are writing`,
@@ -167,6 +179,13 @@ export class DashDigestGenerator {
         return;
       }
       const payload = shapeDigestPayload(parsed);
+      // Nothing forces the reply to respect the ask: a sloppy model (or a legacy-shaped document)
+      // may deliver more variants than the admin saved. The stored batch is cut to the SAME
+      // normalized count the prompt asked for, so a 1-variant setting can never end up rotating. A
+      // short reply is kept as-is — missing variants are never invented. The legacy mirror already
+      // points at the first variant, which the cut preserves.
+      const wanted = normalizedRecapVariants(this.deps.recapVariants);
+      if (payload.recaps.length > wanted) payload.recaps = payload.recaps.slice(0, wanted);
       // A digest with neither summary nor a single action is a failed generation in substance,
       // whatever the transport said — serving it would blank the dashboard for the whole day.
       if (!payload.summary && !payload.pills.length && !payload.suggestions.length && !payload.greeting) {

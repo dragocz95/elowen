@@ -41,6 +41,9 @@ describe('buildDigestPrompt', () => {
     expect(buildDigestPrompt(INPUT, 3)).toMatch(/EXACTLY 3 recap variants/);
     expect(buildDigestPrompt(INPUT, 10)).toMatch(/EXACTLY 10 recap variants/);
     expect(buildDigestPrompt(INPUT, 1)).toMatch(/EXACTLY 1 recap variant\b/);
+    // The normalization is the ONE source both the prompt and the stored-batch cut share.
+    expect(buildDigestPrompt(INPUT, 0)).toMatch(/EXACTLY 1 recap variant\b/);
+    expect(buildDigestPrompt(INPUT, Number.NaN)).toMatch(/EXACTLY 5 recap variants/);
   });
 });
 
@@ -147,5 +150,47 @@ describe('DashDigestGenerator.run', () => {
     await gen.run(7, day, INPUT);
     expect(prompts).toHaveLength(1); // one batch = one inference call, whatever the count
     expect(prompts[0]).toMatch(/EXACTLY 3 recap variants/);
+  });
+
+  const replyWith = (n: number) => JSON.stringify({
+    greeting: 'Čau Filipe',
+    recaps: Array.from({ length: n }, (_, i) => ({
+      summary: `Znění číslo ${i + 1}.`,
+      suggestions: [{ label: `Krok ${i + 1}`, prompt: `Udělaj krok ${i + 1}` }],
+    })),
+  });
+
+  it('cuts the stored batch to the SAME normalized count the prompt asked for', async () => {
+    // The saved setting says 1, but the reply (a sloppy model, a legacy-shaped document) carries three
+    // usable variants: storing all three would rotate on a dashboard set to "no rotation".
+    const store = new DashDigestStore(openDb(':memory:'));
+    store.beginGeneration(7, day, { retryAfterMs: 1, staleAfterMs: 1, maxAttempts: 3 });
+    const client = { model: 'test-model', decide: () => Promise.resolve({ text: replyWith(3) }) };
+    const gen = new DashDigestGenerator({ store, inference: () => client, recapVariants: 1 });
+    await gen.run(7, day, INPUT);
+    const row = store.get(7, day);
+    expect(row?.status).toBe('ready');
+    expect(row?.payload.recaps).toHaveLength(1);
+    // The legacy mirror stays the FIRST variant — the head of the trimmed batch, nothing invented.
+    expect(row?.payload.summary).toBe('Znění číslo 1.');
+    expect(row?.payload.suggestions).toEqual([{ label: 'Krok 1', prompt: 'Udělaj krok 1' }]);
+  });
+
+  it('cuts an over-delivered reply to the default five at the same seam', async () => {
+    const store = new DashDigestStore(openDb(':memory:'));
+    store.beginGeneration(7, day, { retryAfterMs: 1, staleAfterMs: 1, maxAttempts: 3 });
+    const client = { model: 'test-model', decide: () => Promise.resolve({ text: replyWith(6) }) };
+    const gen = new DashDigestGenerator({ store, inference: () => client });
+    await gen.run(7, day, INPUT);
+    expect(store.get(7, day)?.payload.recaps).toHaveLength(5);
+  });
+
+  it('keeps a short reply short: missing variants are never invented', async () => {
+    const store = new DashDigestStore(openDb(':memory:'));
+    store.beginGeneration(7, day, { retryAfterMs: 1, staleAfterMs: 1, maxAttempts: 3 });
+    const client = { model: 'test-model', decide: () => Promise.resolve({ text: replyWith(2) }) };
+    const gen = new DashDigestGenerator({ store, inference: () => client, recapVariants: 5 });
+    await gen.run(7, day, INPUT);
+    expect(store.get(7, day)?.payload.recaps).toHaveLength(2);
   });
 });
