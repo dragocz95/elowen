@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { LanguageProvider } from '../../lib/i18n';
 import { dictionaries, type Locale } from '../../lib/i18n/dictionaries';
 import { Pager } from '../../components/ui/Pager';
@@ -49,6 +49,56 @@ describe('Pager', () => {
     expect(screen.getByRole('navigation', { name: 'Pagination' })).toBeInTheDocument();
     rerender(<Pager page={0} pageSize={10} total={30} onPageChange={vi.fn()} ariaLabel="Memories" />);
     expect(screen.getByRole('navigation', { name: 'Memories' })).toBeInTheDocument();
+  });
+
+  describe('rows per page', () => {
+    it('shows no select at all until a caller can act on the choice', () => {
+      // The brain session panel derives its page size from the height available; a select there would be
+      // a control that visibly does nothing, so the callback is what makes it appear.
+      render(<Pager page={0} pageSize={25} total={90} onPageChange={vi.fn()} />, { wrapper: wrapper() });
+      expect(screen.queryByRole('combobox', { name: 'Per page' })).toBeNull();
+    });
+
+    it('offers 25 / 50 / 100 and reports the chosen size as a number', async () => {
+      const onPageSizeChange = vi.fn();
+      render(
+        <Pager page={0} pageSize={25} total={90} onPageChange={vi.fn()} onPageSizeChange={onPageSizeChange} />,
+        { wrapper: wrapper() },
+      );
+      const trigger = screen.getByRole('combobox', { name: 'Per page' });
+      fireEvent.click(trigger);
+      const options = await screen.findAllByRole('option');
+      expect(options.map((option) => option.textContent)).toEqual(['25', '50', '100']);
+
+      fireEvent.click(screen.getByRole('option', { name: '50' }));
+      // The value crosses the seam as a NUMBER: a caller slices its rows with it, and '50' would make
+      // `page * pageSize` a string concatenation instead of an offset.
+      await waitFor(() => expect(onPageSizeChange).toHaveBeenCalledWith(50));
+      expect(onPageSizeChange.mock.calls[0]![0]).toBeTypeOf('number');
+    });
+
+    it('folds in a size the register is actually on, rather than lying about it', () => {
+      render(
+        <Pager page={0} pageSize={20} total={90} onPageChange={vi.fn()} onPageSizeChange={vi.fn()} />,
+        { wrapper: wrapper() },
+      );
+      // A register still on the old default must not show "25" over a table of twenty rows.
+      expect(screen.getByRole('combobox', { name: 'Per page' })).toHaveTextContent('20');
+    });
+
+    it.each(Object.keys(dictionaries) as Locale[])('names the control in %s', (locale) => {
+      render(
+        <Pager page={0} pageSize={25} total={90} onPageChange={vi.fn()} onPageSizeChange={vi.fn()} />,
+        { wrapper: wrapper(locale) },
+      );
+      const label = dictionaries[locale].pagination.perPage;
+      expect(screen.getByRole('combobox', { name: label })).toBeInTheDocument();
+      // The visible word repeats the accessible name, so it is hidden from the tree rather than read
+      // twice, and it collapses with the other labels on a narrow container.
+      const visible = screen.getAllByText(label).find((node) => node.getAttribute('aria-hidden') === 'true');
+      expect(visible, 'the visible label must be decorative').toBeDefined();
+      expect(visible).toHaveClass('@max-[24rem]:hidden');
+    });
   });
 
   // The bug this component exists for: at a 320px viewport the old inline pager laid the "next" button

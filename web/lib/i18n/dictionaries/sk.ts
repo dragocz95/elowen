@@ -252,6 +252,8 @@ export const sk = {
     outcomeOk: 'Úspech',
     outcomeFail: 'Zlyhalo',
     openColumn: 'Otvoriť',
+    selectColumn: 'Vybrať',
+    selectAllRows: 'Vybrať všetky riadky',
   },
   pagination: {
     label: 'Stránkovanie',
@@ -261,6 +263,7 @@ export const sk = {
     nextPage: 'Ďalšia strana',
     range: '{from}–{to} z {total}',
     pageLabel: 'Strana {page} z {pages}',
+    perPage: 'Na stránku',
   },
   auth: {
     signIn: 'Prihlásiť sa',

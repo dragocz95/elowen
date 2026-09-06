@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { CSSProperties, HTMLAttributes, ReactNode } from 'react';
 import { useLocaleSafe } from '../../lib/i18n/context';
 import { dictionaries } from '../../lib/i18n/dictionaries';
+import { Checkbox } from './shadcn/checkbox';
 
 type TableStyle = CSSProperties & {
   '--data-table-columns'?: string;
@@ -32,13 +33,39 @@ type RowOpenRegistry = {
 
 const RowOpenContext = createContext<RowOpenRegistry | null>(null);
 
+/** Row selection, when a register wants it. Opting in is the whole contract: a table that passes no
+ *  `selection` renders exactly what it did before, and no existing consumer changes.
+ *
+ *  The table is handed the SELECTION, not the rows. A register renders its own rows through its own
+ *  component, so the table can neither know which ids are on screen nor which of them are selected — it
+ *  has to be told both. `ids` is what select-all selects, which makes it the ids of the CURRENT PAGE
+ *  rather than of the whole register: a header checkbox that silently selected four thousand rows the
+ *  reader cannot see is the one behaviour a bulk action must never have.
+ *
+ *  `onSelectionChange` receives a NEW set. Mutating and re-sending the caller's own set would leave a
+ *  `useState` holding the same reference and drop the render. */
+export type DataTableSelection = {
+  /** Every selectable row currently rendered, in render order. Select-all is exactly this set. */
+  ids: readonly string[];
+  selected: ReadonlySet<string>;
+  onSelectionChange: (next: Set<string>) => void;
+  /** Overrides the accessible name of the header's select-all control. */
+  selectAllLabel?: string;
+};
+
+const SelectionContext = createContext<DataTableSelection | null>(null);
+
 /** Responsive register table. Wide-only cells disappear as a unit and the compact grid closes ranks. */
-export function DataTable({ ariaLabel, columns, compactColumns = 'minmax(0,1fr)', mobileColumns, children, className = '', ...rest }: {
+export function DataTable({ ariaLabel, columns, compactColumns = 'minmax(0,1fr)', mobileColumns, selection, children, className = '', ...rest }: {
   ariaLabel: string;
   columns: string;
   compactColumns?: string;
   /** The phone-only template. At <40rem, cells with priority="mobile" join the always-visible cells. */
   mobileColumns?: string;
+  /** Opt in to row selection. The register also has to render a `DataTableSelectCell` in its header row
+   *  and in each selectable row, and reserve a `2rem` leading track in every column template it passes —
+   *  the checkbox is a real column, not an overlay. */
+  selection?: DataTableSelection;
   children: ReactNode;
   className?: string;
 } & Omit<HTMLAttributes<HTMLDivElement>, 'children'>) {
@@ -61,9 +88,102 @@ export function DataTable({ ariaLabel, columns, compactColumns = 'minmax(0,1fr)'
   }, []);
   const registry = useMemo<RowOpenRegistry>(() => ({ register, hasOpenRow }), [register, hasOpenRow]);
   return (
-    <div role="table" aria-label={ariaLabel} style={style} className={`@container overflow-x-clip rounded-lg border border-border/80 ${className}`} {...rest}>
-      <RowOpenContext.Provider value={registry}>{children}</RowOpenContext.Provider>
+    <div role="table" aria-label={ariaLabel} style={style} className={`@container overflow-x-clip rounded-lg border border-border ${className}`} {...rest}>
+      <SelectionContext.Provider value={selection ?? null}>
+        <RowOpenContext.Provider value={registry}>{children}</RowOpenContext.Provider>
+      </SelectionContext.Provider>
     </div>
+  );
+}
+
+/** The selection column: a select-all in the header row, a row checkbox in every other.
+ *
+ *  It renders NOTHING at all when the table was given no `selection`, so a register can carry the cell
+ *  and turn selection on and off without its column template moving underneath it.
+ *
+ *  The header's three states are the whole reason this is a shared component. `indeterminate` is not
+ *  "half-checked" decoration: a filled box that means "some" and a filled box that means "all" are the
+ *  same picture, and the dash is what distinguishes them — see `shadcn/checkbox.tsx`, which paints it. */
+export type DataTableSelectCellProps = { className?: string } & (
+  /** The header's select-all. It needs no id and no label: it acts on every id the table was given, and
+   *  its name is the register's, not a row's. */
+  | { header: true; rowId?: never; label?: never }
+  /** A row's own checkbox. `rowId` and `label` are BOTH required, and the union is what enforces it: an
+   *  optional `rowId` renders a focusable control that is permanently unchecked and does nothing when
+   *  activated, and an optional `label` leaves it announced as a bare "checkbox". This is the same
+   *  discriminated-union device `DataTableRowOpen` below uses, for the same reason.
+   *
+   *  Being a discriminant, `header` wants a literal: `header={someBoolean}` satisfies neither arm. Branch
+   *  in the JSX — the header cell and a row cell take different props anyway. */
+  | { header?: false; rowId: string; label: string }
+);
+export function DataTableSelectCell({ className = '', ...props }: DataTableSelectCellProps) {
+  const selection = useContext(SelectionContext);
+  const locale = useLocaleSafe();
+  const common = dictionaries[locale].common;
+  if (!selection) return null;
+  const { ids, selected, onSelectionChange } = selection;
+
+  if (props.header) {
+    // "Some" is measured against the rows ON SCREEN, not against the selection as a whole: a page whose
+    // every row is selected reads as all, even when another page holds more.
+    const onPage = ids.filter((id) => selected.has(id)).length;
+    const state = onPage === 0 ? false : onPage === ids.length ? true : 'indeterminate';
+    return (
+      // The column's name is an `aria-label` rather than `labelHidden` text: `labelHidden` wraps the
+      // cell's WHOLE content in `sr-only`, which would take the checkbox off the screen with it.
+      <DataTableCell header lines="auto" aria-label={common.selectColumn} className={`flex items-center ${className}`}>
+        <Checkbox
+          checked={state}
+          aria-label={selection.selectAllLabel ?? common.selectAllRows}
+          // Indeterminate resolves toward selecting the rest, which is what a reader who has ticked three
+          // of twenty and reaches for the header means. Only a fully selected page clears.
+          onCheckedChange={() => {
+            const next = new Set(selected);
+            if (state === true) for (const id of ids) next.delete(id);
+            else for (const id of ids) next.add(id);
+            onSelectionChange(next);
+          }}
+        />
+      </DataTableCell>
+    );
+  }
+
+  const { rowId, label } = props;
+  // The union above already makes this unreachable for every TypeScript caller, but this component is
+  // published to plugin bundles (`lib/pluginUi.tsx`) and those are plain JavaScript that no compiler has
+  // read. Without the guard, a bundle omitting `rowId` puts `undefined` into the register's selection
+  // Set and hands it back through `onSelectionChange`.
+  if (typeof rowId !== 'string') return null;
+  return (
+    <DataTableCell
+      lines="auto"
+      className={`flex items-center ${className}`}
+      // The row-open overlay is a button stretched over the whole row, and a register may also carry its
+      // own row handlers. Ticking a checkbox is not opening the row, so the activation stops here.
+      //
+      // The keyboard needs saying as well as the pointer: a checkbox is reached with Space as often as
+      // with a click, and that keydown bubbles to whatever `onKeyDown` the register put on the row.
+      // Only the two keys the checkbox itself consumes are stopped, though — a register's roving arrow,
+      // Home and End navigation lives on the row precisely because a keystroke aimed at any cell reaches
+      // it there (see `modules/projects/ProjectsView.tsx`), and swallowing everything would strand the
+      // reader on whichever row they last ticked.
+      onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => {
+        if (event.key === ' ' || event.key === 'Enter') event.stopPropagation();
+      }}
+    >
+      <Checkbox
+        checked={selected.has(rowId)}
+        aria-label={label}
+        onCheckedChange={(next) => {
+          const updated = new Set(selected);
+          if (next === true) updated.add(rowId);
+          else updated.delete(rowId);
+          onSelectionChange(updated);
+        }}
+      />
+    </DataTableCell>
   );
 }
 
@@ -112,7 +232,11 @@ export function DataTableRow({ children, header = false, selected = false, inter
       data-row-height={header ? undefined : height}
       // `.data-table-header` carries the sticky positioning itself; a `sticky` utility here would be
       // overridden by `.data-table-grid`'s own `position: relative` (see data-table.css).
-      className={`data-table-grid items-center gap-x-3 border-b border-border/70 px-4 last:border-b-0 ${header ? 'data-table-header' : `${interactive || onOpen ? 'interactive-row' : ''}`} ${selected ? 'bg-primary/[0.055]' : ''} ${className}`}
+      // The row hairline is the skin's `--color-border` at FULL strength, not a fraction of it. Each skin
+      // already resolves that token to its own measured hairline (studio-light #e4e4e7 ≈ oklch(0.922),
+      // studio-oled the equivalent dark step), so diluting it to 70% only made the rule too faint to
+      // separate two adjacent rows — the one job it has in a register with no zebra.
+      className={`data-table-grid items-center gap-x-3 border-b border-border px-4 last:border-b-0 ${header ? 'data-table-header' : `${interactive || onOpen ? 'interactive-row' : ''}`} ${selected ? 'bg-primary/[0.055]' : ''} ${className}`}
       {...rest}
     >
       {children}
@@ -174,7 +298,7 @@ export function DataTableSortCell({ children, active, direction, onSort, priorit
       <button
         type="button"
         onClick={onSort}
-        className={`-mx-1 flex w-full items-center gap-1 rounded px-1 py-0.5 text-[10px] font-semibold uppercase tracking-wider transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 ${align === 'end' ? 'justify-end' : ''} ${active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
+        className={`-mx-1 flex w-full items-center gap-1 rounded px-1 py-0.5 text-sm font-semibold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 ${align === 'end' ? 'justify-end' : ''} ${active ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'}`}
       >
         <span className="truncate">{children}</span>
         {/* The neutral arrow is VISIBLE, not revealed on hover. It was `opacity-0` until the pointer
@@ -221,7 +345,11 @@ export function DataTableCell({ children, header = false, priority = 'always', l
       // A truncated cell hides part of its own content, so the full value has to stay reachable. It can
       // only be recovered when the cell IS the text; a composed cell passes its own `title`.
       title={title ?? (lines === 1 && typeof children === 'string' ? children : undefined)}
-      className={`data-table-cell ${priority === 'wide' ? 'data-table-wide' : priority === 'mobile' ? 'data-table-mobile' : ''} min-w-0 ${header ? 'text-[10px] font-semibold uppercase tracking-wider text-muted-foreground' : ''} ${className}`}
+      // A column name is read, not decoded: 14px/600 in the writing system's own case. The 10px
+      // uppercase + tracking it replaces is the shape of a LABEL, and at that size it costs a reader
+      // roughly a third of the glyph information — capitals erase the ascender/descender silhouette a
+      // word is recognised by, which is why the reference dashboard sets its headers in sentence case.
+      className={`data-table-cell ${priority === 'wide' ? 'data-table-wide' : priority === 'mobile' ? 'data-table-mobile' : ''} min-w-0 ${header ? 'text-sm font-semibold text-muted-foreground' : ''} ${className}`}
       {...rest}
     >
       {labelHidden ? <span className="sr-only">{children}</span> : children}

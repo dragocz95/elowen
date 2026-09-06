@@ -14,7 +14,6 @@ export function Toggle({ checked, onChange, label, disabled = false }: {
       onCheckedChange={onChange}
       aria-label={label}
       disabled={disabled}
-      style={{ transitionDuration: 'var(--motion-fast)' }}
     />
   );
 }

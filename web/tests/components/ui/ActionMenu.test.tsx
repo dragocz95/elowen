@@ -76,3 +76,81 @@ describe('ActionMenu', () => {
     expect(trigger).toHaveFocus();
   });
 });
+
+describe('ActionMenu kebab variant', () => {
+  const renderKebab = () => render(
+    <LanguageProvider>
+      <input aria-label="Filter" />
+      <ActionMenu variant="kebab" label="Row actions" items={rows} />
+    </LanguageProvider>,
+  );
+
+  it('does NOT open on hover, whatever the pointer is doing on its way past', async () => {
+    // The reason the variant exists. A register row is a thing the pointer crosses on its way somewhere
+    // else, and a panel that drops open under the cursor covers the rows below the one being read.
+    renderKebab();
+    const trigger = screen.getByRole('button', { name: 'Row actions' });
+    fireEvent.mouseEnter(trigger);
+    // Long enough to outlast the hover grace period the destructive variant opens within.
+    await new Promise((resolve) => setTimeout(resolve, 60));
+    expect(screen.queryByRole('menu')).toBeNull();
+  });
+
+  it('opens on click and keeps the whole keyboard contract', async () => {
+    renderKebab();
+    const trigger = screen.getByRole('button', { name: 'Row actions' });
+    fireEvent.pointerDown(trigger);
+    expect(await screen.findByRole('menu')).toBeInTheDocument();
+
+    // Click-only must not mean pointer-only: the menu-button pattern still answers the keyboard.
+    fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Open' }), { key: 'ArrowDown' });
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Edit' })).toHaveFocus());
+    fireEvent.keyDown(screen.getByRole('menuitem', { name: 'Edit' }), { key: 'Escape' });
+    await waitFor(() => expect(screen.queryByRole('menu')).toBeNull());
+    expect(trigger).toHaveFocus();
+  });
+
+  it('is a neutral 32×32 square, never the destructive fill', () => {
+    renderKebab();
+    const trigger = screen.getByRole('button', { name: 'Row actions' });
+    expect(trigger.className).toContain('h-8');
+    expect(trigger.className).toContain('w-8');
+    expect(trigger.className).toContain('rounded-md');
+    // A red button in every row shouts the one action a reader is least likely to want.
+    expect(trigger.className).not.toContain('bg-destructive');
+    expect(trigger.className).toContain('text-muted-foreground');
+  });
+
+  it('leaves the destructive default exactly as it was', async () => {
+    // The variant is an addition. Every existing caller passes nothing and must keep its red trigger and
+    // its hover behaviour.
+    renderMenu([{ label: 'Open', onSelect: vi.fn() }]);
+    const trigger = screen.getByRole('button', { name: 'Row actions' });
+    expect(trigger.className).toContain('bg-destructive');
+    fireEvent.mouseEnter(trigger);
+    expect(await screen.findByRole('menu')).toBeInTheDocument();
+  });
+
+  it('still lets a caller ask for hover explicitly', async () => {
+    render(
+      <LanguageProvider>
+        <ActionMenu variant="kebab" openOnHover label="Row actions" items={rows} />
+      </LanguageProvider>,
+    );
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'Row actions' }));
+    expect(await screen.findByRole('menu')).toBeInTheDocument();
+  });
+});
+
+describe('menu panel geometry', () => {
+  it('sets the panel at radius 10 with 6px of padding, and its rows at 32px', async () => {
+    renderMenu(rows);
+    fireEvent.mouseEnter(screen.getByRole('button', { name: 'Row actions' }));
+    const panel = await screen.findByRole('menu');
+    expect(panel.className).toContain('rounded-md');
+    expect(panel.className).toContain('p-1.5');
+    // 20px of line box plus 6px above and below. The previous 8px made a three-item menu 12px taller
+    // than the reference's without carrying any more information.
+    expect(screen.getByRole('menuitem', { name: 'Open' }).className).toContain('py-1.5');
+  });
+});

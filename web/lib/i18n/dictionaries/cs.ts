@@ -252,6 +252,8 @@ export const cs = {
     outcomeOk: 'Úspěch',
     outcomeFail: 'Selhalo',
     openColumn: 'Otevřít',
+    selectColumn: 'Vybrat',
+    selectAllRows: 'Vybrat všechny řádky',
   },
   pagination: {
     label: 'Stránkování',
@@ -261,6 +263,7 @@ export const cs = {
     nextPage: 'Další strana',
     range: '{from}–{to} z {total}',
     pageLabel: 'Strana {page} z {pages}',
+    perPage: 'Na stránku',
   },
   auth: {
     signIn: 'Přihlásit se',

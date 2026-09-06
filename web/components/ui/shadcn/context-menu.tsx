@@ -46,7 +46,11 @@ function ContextMenuSub({ ...props }: React.ComponentProps<typeof ContextMenuPri
 const menuPanel = cn(
   // `overlay-layer-menu` is the app's menu z-index band; the stacking order lives once in tokens.css.
   'overlay-layer-menu min-w-44 max-h-[60dvh] overflow-y-auto overflow-x-hidden',
-  'rounded-lg border border-border bg-popover p-1 text-xs text-popover-foreground shadow-[var(--shadow-card)]',
+  // Radius 10, matching `shadcn/dropdown-menu.tsx`. The two menu families are one thing to a reader — a
+  // panel of actions attached to what it was opened from — and a 12px context menu beside a 10px
+  // dropdown is a difference nothing means. The padding and the quieter shadow stay this file's own: a
+  // context menu is denser (`text-xs`) and opens at the pointer rather than off a trigger.
+  'rounded-md border border-border bg-popover p-1 text-xs text-popover-foreground shadow-[var(--shadow-card)]',
   'data-[state=open]:animate-fade-up',
 );
 

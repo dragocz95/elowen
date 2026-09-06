@@ -3,11 +3,16 @@
 /* The row rhythm of every register in the app. Declared here rather than in tokens.css on purpose: this
    is the table's own geometry, not part of the design vocabulary a skin or a plugin bundle compiles
    against. Height comes from min-height, never from padding, so an avatar row and a text row measure the
-   same; the padding only ever wins when a cell is genuinely taller than the rhythm. */
+   same; the padding only ever wins when a cell is genuinely taller than the rhythm.
+
+   The three numbers are the reference dashboard's, measured (plans/cloudflare-patterns-audit.md): a
+   single-line row is 40px, the deliberate two-line register is 48px, and the header sits one hairline
+   above the row rhythm at 41px. The previous 48/68 pair spent a third of a register's vertical budget on
+   air, which is what made a table of thirty records scroll where the reference shows them all. */
 .data-table-grid {
-  --data-table-row: 3rem;
-  --data-table-row-tall: 4.25rem;
-  --data-table-row-header: 2.5rem;
+  --data-table-row: 2.5rem;
+  --data-table-row-tall: 3rem;
+  --data-table-row-header: 2.5625rem;
 
   /* Containing block for the row-open overlay button. */
   position: relative;

@@ -23,8 +23,12 @@ import { apiErrorMessage } from '../../lib/elowenClient';
 /** Mirrors NAME_RE in the daemon's validation for both skills and sub-agents. */
 const NAME_RE = /^[a-z0-9][a-z0-9-]{1,63}$/;
 
-/** One page of entries — the same register size the built-in workspaces page at. */
-const PAGE_SIZE = 20;
+/** One page of entries until the reader chooses another size — the same register step the rest of the
+ *  app starts at. The choice is NOT persisted here, unlike the memory register: this component is a
+ *  shared editor two different asset pages mount, and it has no identity of its own to key a stored
+ *  preference on. Giving it one means a new public prop on a component that is part of the plugin ABI,
+ *  which is a decision worth making on its own rather than as a side effect of adding a select. */
+const DEFAULT_PAGE_SIZE = 25;
 
 type SourceFilter = 'all' | 'user' | 'builtin';
 
@@ -139,6 +143,10 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
   const [source, setSource] = useState<SourceFilter>('all');
   const [scope, setScope] = useState('all');
   const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  // Back to the first page: growing the window would otherwise land the reader on a page they never
+  // asked for, and shrinking it can leave the page past the end of the register.
+  const changePageSize = (next: number) => { setPageSize(next); setPage(0); };
 
   // The hero's add button only flips a flag; the blank form is this component's to own, and an edit
   // already in the drawer wins — the flag must not wipe what the user is typing.
@@ -160,9 +168,9 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
       return item.name.toLowerCase().includes(needle) || item.description.toLowerCase().includes(needle);
     });
   }, [items, search, source, scope, ownership]);
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const clampedPage = Math.min(page, pageCount - 1);
-  const pageItems = useMemo(() => filtered.slice(clampedPage * PAGE_SIZE, clampedPage * PAGE_SIZE + PAGE_SIZE), [filtered, clampedPage]);
+  const pageItems = useMemo(() => filtered.slice(clampedPage * pageSize, clampedPage * pageSize + pageSize), [filtered, clampedPage, pageSize]);
 
   if (isError) return <ControlSurfaceState tone="danger"><ErrorState message={t.common.daemonUnreachable} onRetry={() => query.refetch()} /></ControlSurfaceState>;
   if (isLoading || !data) return <ControlSurfaceState><LoadingState variant="cards" /></ControlSurfaceState>;
@@ -341,9 +349,10 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
 
               <Pager
                 page={clampedPage}
-                pageSize={PAGE_SIZE}
+                pageSize={pageSize}
                 total={filtered.length}
                 onPageChange={setPage}
+                onPageSizeChange={changePageSize}
                 ariaLabel={t.assetEditor.colName}
               />
             </div>

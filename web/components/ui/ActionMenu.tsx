@@ -1,6 +1,6 @@
 'use client';
 import { type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
-import { Trash2, type LucideIcon } from 'lucide-react';
+import { MoreHorizontal, Trash2, type LucideIcon } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import {
   DropdownMenu,
@@ -36,11 +36,16 @@ const CLOSE_DELAY_MS = 160;
 type OpenFocus = 'none' | 'default' | 'last';
 
 /**
- * Global hover/click action menu, composed from the shadcn/ui `DropdownMenu` parts in
- * `./shadcn/dropdown-menu.tsx`. Opens on hover (and click for touch), and stays open while the pointer
- * is over the trigger OR the menu — the panel is a DOM child of the wrapper, so moving down onto an
- * item never leaves it, and a short close delay covers the gap between the two. Default trigger is a
- * red trash icon. Reusable across destructive/contextual actions.
+ * Global action menu, composed from the shadcn/ui `DropdownMenu` parts in `./shadcn/dropdown-menu.tsx`.
+ *
+ * In its default `destructive` shape it opens on hover and stays open while the pointer is over the
+ * trigger OR the menu — the panel is a DOM child of the wrapper, so moving down onto an item never
+ * leaves it, and a short close delay covers the gap between the two. The trigger is a red trash icon.
+ *
+ * In the `kebab` shape it is the register's row-actions affordance: a neutral 32×32 square that opens on
+ * CLICK. Hover is wrong there and not merely a preference — a register row is a thing the pointer
+ * crosses on its way somewhere else, and a panel that appears under the cursor on the way past covers
+ * the rows below the one being read.
  *
  * The keyboard contract — roving arrows, Home/End, typeahead, Enter/Space, Escape — is Radix's, not
  * this file's. What stays here is the app's policy: hover-to-open with a grace period, ArrowUp opening
@@ -48,15 +53,46 @@ type OpenFocus = 'none' | 'default' | 'last';
  * is handed to plugin bundles through `window.ElowenUiRuntime.components`, so its props are a published
  * contract and did not change with the port.
  */
-export function ActionMenu({ items, label, trigger, triggerClassName, align = 'right', openOnHover = true }: {
+/** The trigger's shape.
+ *
+ *  `destructive` is the original: a filled red button for a menu whose whole content is one dangerous
+ *  action. `kebab` is the register variant — a 32×32 neutral square with the three dots, the row-actions
+ *  affordance the reference dashboard puts at the end of every row. A row is a thing to READ, and a red
+ *  button in each one shouts the single action the reader is least likely to want.
+ *
+ *  It is an enum rather than a `triggerClassName` string because the two are a pair with `openOnHover`:
+ *  a kebab in a register has to be click-only (see below), and a variant is what lets that default
+ *  follow the shape instead of every register remembering to pass both. */
+export type ActionMenuVariant = 'destructive' | 'kebab';
+
+const TRIGGER_CLASS: Record<ActionMenuVariant, string> = {
+  destructive: 'inline-flex h-8 w-8 items-center justify-center rounded-md bg-destructive text-destructive-foreground transition-colors hover:bg-destructive/85',
+  // 32×32, no fill at rest: quiet until the pointer is on it, then the same foreground wash every other
+  // neutral control in the app hovers to. It also stays filled while its menu is open, so the row the
+  // panel belongs to is obvious.
+  //
+  // `rounded-md` is 10px, where the reference measures 8. The app's radius scale has no 8 — it runs
+  // 6/10/12/16/20 — and this file may not reach past it for a one-off literal, so the control takes the
+  // nearest step and matches the panel it opens rather than introducing a sixth radius for 2px.
+  kebab: 'inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground data-[state=open]:bg-accent data-[state=open]:text-accent-foreground',
+};
+
+export function ActionMenu({ items, label, trigger, triggerClassName, align = 'right', variant = 'destructive', openOnHover }: {
   items: ActionMenuItem[];
   label?: string;
   trigger?: ReactNode;
-  /** Override the trigger button styling. Defaults to the red destructive-action look. */
+  /** Override the trigger button styling. Wins over `variant`. */
   triggerClassName?: string;
   align?: 'left' | 'right';
-  /** `false` makes the menu click/keyboard-only. For a trigger that sits in the reading path — a row
-   *  the pointer crosses on its way somewhere else — a hover-opened panel is an interruption, not help. */
+  /** The trigger's shape. Defaults to the red destructive button the component shipped with, so no
+   *  existing caller changes. */
+  variant?: ActionMenuVariant;
+  /** `false` makes the menu click/keyboard-only. For a trigger that sits in the reading path — a row the
+   *  pointer crosses on its way somewhere else — a hover-opened panel is an interruption, not help.
+   *
+   *  Left undefined it follows the variant: a `kebab` is a register affordance and is click-only,
+   *  everything else keeps the hover behaviour it has always had. A caller may still say either
+   *  explicitly, which is what makes this a default rather than a rule. */
   openOnHover?: boolean;
 }) {
   const [open, setOpen] = useState(false);
@@ -71,6 +107,7 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
   const restoreFocus = useRef(false);
   const { t } = useTranslation();
   const resolvedLabel = label ?? t.common.actions;
+  const hoverOpens = openOnHover ?? variant !== 'kebab';
 
   const cancelClose = useCallback(() => {
     if (closeTimer.current) { clearTimeout(closeTimer.current); closeTimer.current = null; }
@@ -91,8 +128,8 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
   return (
     <div
       className="relative"
-      onMouseEnter={openOnHover ? () => openMenu('none') : undefined}
-      onMouseLeave={openOnHover ? scheduleClose : undefined}
+      onMouseEnter={hoverOpens ? () => openMenu('none') : undefined}
+      onMouseLeave={hoverOpens ? scheduleClose : undefined}
     >
       <DropdownMenu
         open={open}
@@ -119,9 +156,9 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
             }
             if (['ArrowDown', 'Enter', ' '].includes(event.key)) openMenu('default');
           }}
-          className={triggerClassName ?? 'inline-flex h-8 w-8 items-center justify-center rounded-md bg-destructive text-destructive-foreground transition-colors hover:bg-destructive/85'}
+          className={triggerClassName ?? TRIGGER_CLASS[variant]}
         >
-          {trigger ?? <Trash2 size={15} aria-hidden />}
+          {trigger ?? (variant === 'kebab' ? <MoreHorizontal size={16} aria-hidden /> : <Trash2 size={15} aria-hidden />)}
         </DropdownMenuTrigger>
         <DropdownMenuContent
           ref={contentRef}

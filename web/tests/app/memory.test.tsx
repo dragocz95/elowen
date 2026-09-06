@@ -166,21 +166,42 @@ describe('MemoryPage', () => {
   });
 
   it('paginates a long list and pages through it', async () => {
-    const many = Array.from({ length: 25 }, (_, i) => ({
+    const many = Array.from({ length: 30 }, (_, i) => ({
       ...MEMORY, id: i + 1, body: `Memory ${String(i + 1).padStart(2, '0')}`,
       updated_at: `2026-01-01 00:00:${String(i + 1).padStart(2, '0')}`,
     }));
     server.use(http.get('*/api/memory', () => HttpResponse.json(many)));
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><MemoryPage /></ToastProvider></Wrapper>);
-    // Page 1 shows a 20-row window with a pager; the newest row is here, the oldest is not.
-    await waitFor(() => expect(screen.getByText('1–20 of 25')).toBeInTheDocument());
-    expect(screen.getByText('Memory 25')).toBeInTheDocument();
+    // Page 1 shows a 25-row window with a pager; the newest row is here, the oldest is not.
+    await waitFor(() => expect(screen.getByText('1–25 of 30')).toBeInTheDocument());
+    expect(screen.getByText('Memory 30')).toBeInTheDocument();
     expect(screen.queryByText('Memory 01')).not.toBeInTheDocument();
     // Next → the last 5 rows, incl. the oldest.
     fireEvent.click(screen.getByText('Next'));
-    await waitFor(() => expect(screen.getByText('21–25 of 25')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('26–30 of 30')).toBeInTheDocument());
     expect(screen.getByText('Memory 01')).toBeInTheDocument();
+  });
+
+  it('rewindows the register from the per-page select, and returns to the first page', async () => {
+    const many = Array.from({ length: 60 }, (_, i) => ({
+      ...MEMORY, id: i + 1, body: `Memory ${String(i + 1).padStart(2, '0')}`,
+      updated_at: `2026-01-01 00:00:${String(i + 1).padStart(2, '0')}`,
+    }));
+    server.use(http.get('*/api/memory', () => HttpResponse.json(many)));
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><MemoryPage /></ToastProvider></Wrapper>);
+    await waitFor(() => expect(screen.getByText('1–25 of 60')).toBeInTheDocument());
+
+    // Standing on page 3 when the window grows: staying on "page 3 of 2" is how a reader ends up on an
+    // empty table, so the choice takes them back to the top of the register.
+    fireEvent.click(screen.getByText('Next'));
+    await waitFor(() => expect(screen.getByText('26–50 of 60')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('combobox', { name: 'Per page' }));
+    fireEvent.click(await screen.findByRole('option', { name: '50' }));
+    await waitFor(() => expect(screen.getByText('1–50 of 60')).toBeInTheDocument());
+    expect(screen.getByText('Page 1 of 2')).toBeInTheDocument();
   });
 
   // The row used to BE a button wrapped around the body, so its accessible name was the whole record —

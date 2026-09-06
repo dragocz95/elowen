@@ -258,6 +258,17 @@
      turn the effect off by mixing to 100% and setting the blur to 0 without touching a component. */
   --shadow-lift: 0 1px 0 rgb(255 255 255 / 0.05), 0 24px 60px rgb(0 0 0 / 0.34);
   --glow-accent: 0 0 0 1px rgb(var(--primary-rgb) / 0.28), 0 0 30px rgb(var(--primary-rgb) / 0.18);
+
+  /* NOT a shadcn token. The resting depth of the ONE loud control on a page: a 1px ring in the brand
+     colour plus a short drop under it. The reference dashboard's primary button is not a flat rectangle
+     of blue — it has a defined edge and something beneath it, and that is most of why it reads as the
+     action rather than as a coloured label.
+
+     A separate token from `--glow-accent`, which is the FOCUS/ACTIVE halo and is therefore soft and
+     wide; this one is tight, opaque and always on. Composed from `--primary-rgb` so a white-label theme
+     retints it by moving that one variable, and each design states its own drop, because the value that
+     reads on a near-white page is a no-op on a true-black one. */
+  --shadow-primary: 0 0 0 1px rgb(var(--primary-rgb) / 0.9), 0 1px 2px rgb(0 0 0 / 0.4);
   --glass-surface: color-mix(in srgb, var(--color-card) 62%, transparent);
   --glass-border: color-mix(in srgb, var(--color-foreground) 10%, transparent);
   --glass-blur: 18px;

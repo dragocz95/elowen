@@ -146,6 +146,9 @@
      The mesh runs hotter than the inherited default for the same reason — 16% of ember reads over the
      built-in #070707 and is nearly nothing over this #03080a. */
   --shadow-lift: 0 0 0 1px rgb(252 252 254 / 0.09), 0 24px 64px rgb(0 0 0 / 0.72);
+  /* On this canvas the drop under a button is invisible, so the ring carries the whole statement and is
+     given full strength rather than the inherited 90%. */
+  --shadow-primary: 0 0 0 1px rgb(var(--primary-rgb) / 1);
   --glow-accent: 0 0 0 1px rgb(var(--primary-rgb) / 0.42), 0 0 32px rgb(var(--primary-rgb) / 0.24);
   --glass-surface: color-mix(in srgb, var(--color-card) 55%, transparent);
   --glass-border: color-mix(in srgb, var(--color-foreground) 12%, transparent);
