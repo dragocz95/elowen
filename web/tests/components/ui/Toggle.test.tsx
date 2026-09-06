@@ -1,6 +1,8 @@
 import { useState } from 'react';
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { readFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
 import { Toggle } from '../../../components/ui/Toggle';
 
 function pressSpace(control: HTMLElement): void {
@@ -75,8 +77,35 @@ describe('Switch geometry', () => {
       .querySelector<HTMLElement>('[data-slot="switch"]')!;
     expect(track.className).not.toContain('border-border');
     expect(track.className).not.toMatch(/(^|\s)border(\s|$)/);
-    // Losing the border took a focus edge with it, so the ring moves outside the track instead.
-    expect(track.className).toContain('focus-visible:ring-offset-2');
+    // …and it states no focus utilities either. base.css gives [role="switch"]:focus-visible a ring and
+    // is imported unlayered, so it outranks Tailwind's utilities layer — a focus-visible:ring-* class
+    // here would paint nothing while reading as if it did.
+    expect(track.className).not.toContain('focus-visible:ring');
+  });
+
+  it('draws the OFF track with a token that is not one of the surfaces it sits on', () => {
+    // The fill is the ONLY thing drawing the control now. `secondary` aliases --color-muted, a SURFACE:
+    // studio-oled resolves it to #080d0f, byte-identical to that skin's card, so an OFF switch on a card
+    // was a thumb floating on nothing.
+    const track = render(<Toggle checked={false} onChange={vi.fn()} label="Sonnet" />).container
+      .querySelector<HTMLElement>('[data-slot="switch"]')!;
+    expect(track.className).toContain('data-[state=unchecked]:bg-border');
+    expect(track.className).not.toContain('bg-secondary');
+  });
+
+  it('keeps the OFF track clear of every surface token, in both shipped designs', () => {
+    // A value check rather than a class check: the class only says which token, and the defect was the
+    // token resolving to the same colour as the surface behind it.
+    const read = (path: string) => readFileSync(join(resolve(process.cwd()), path), 'utf-8');
+    const valueOf = (css: string, token: string) => css.match(new RegExp(`${token}:\\s*([^;]+);`))?.[1]?.trim();
+    for (const skin of ['studio-light', 'studio-oled']) {
+      const css = read(`skins/${skin}/skin.css`);
+      const track = valueOf(css, '--color-border');
+      expect(track, `${skin} states no --color-border`).toBeDefined();
+      for (const surface of ['--color-card', '--color-muted', '--color-background']) {
+        expect(track, `${skin}: the OFF track is the same colour as ${surface}`).not.toBe(valueOf(css, surface));
+      }
+    }
   });
 
   it('moves the fill and the thumb on ONE clock, and never on a spring', () => {
@@ -85,18 +114,18 @@ describe('Switch geometry', () => {
     // Both halves of one movement. They used to run on different durations, so the colour arrived at the
     // new state while the thumb was still halfway across.
     for (const part of [track, thumbOf(container)]) {
+      // A token, not a literal: `data-effects='off'` sets --motion-base to 0ms, and a hard-coded 150ms
+      // would keep animating straight through it.
       expect(part.style.transitionDuration).toBe('var(--motion-base)');
-      // A token, not a literal: `data-effects='off'` and prefers-reduced-motion zero the token, and a
-      // hard-coded 150ms would keep animating straight through both.
+      // A spring overshoots, and a thumb that fills its track has nowhere to overshoot to.
       expect(part.style.transitionTimingFunction).toBe('var(--ease-standard)');
       expect(part.style.transitionTimingFunction).not.toContain('spring');
     }
   });
 
-  it('keeps the neutral OFF track and the primary ON track', () => {
-    const track = render(<Toggle checked={false} onChange={vi.fn()} label="Sonnet" />).container
+  it('paints the ON track with the brand fill', () => {
+    const track = render(<Toggle checked onChange={vi.fn()} label="Sonnet" />).container
       .querySelector<HTMLElement>('[data-slot="switch"]')!;
-    expect(track.className).toContain('data-[state=unchecked]:bg-secondary');
     expect(track.className).toContain('data-[state=checked]:bg-primary');
   });
 });

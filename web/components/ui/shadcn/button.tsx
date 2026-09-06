@@ -22,9 +22,10 @@ const buttonVariants = cva(
   // `box-shadow` joins the transition list because the `default` variant now rests on one; without it
   // the ring would snap while the fill faded, which is worse than either alone.
   //
-  // The duration is `--motion-instant` rather than a literal. A press is the one interaction that must
-  // feel like it already happened — the reference runs its buttons at 100ms — and a token is also what
-  // makes `data-effects='off'` and prefers-reduced-motion able to zero it.
+  // The duration is `--motion-instant`, the app's own fastest step, rather than the reference's literal
+  // 100ms: it resolves to 80ms and no skin retunes it. A press is the one interaction that has to feel
+  // like it already happened, so 20ms under is the right side to miss on — and a token is what lets
+  // `data-effects='off'` and prefers-reduced-motion zero it, which a literal would not.
   'inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md border text-sm font-medium ' +
     'transition-[color,background-color,border-color,box-shadow,transform] duration-[var(--motion-instant)] active:scale-[0.97] ' +
     'disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100 ' +

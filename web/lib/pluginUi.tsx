@@ -76,7 +76,7 @@ import { ModelCatalogField } from '../components/ui/ModelCatalogField';
 import { ChoiceField } from '../components/ui/ChoiceField';
 import { AutoSaveStatus } from '../components/ui/AutoSaveStatus';
 import { Checkbox } from '../components/ui/Checkbox';
-import { DataTable, DataTableCell, DataTableChevronCell, DataTableRow } from '../components/ui/DataTable';
+import { DataTable, DataTableCell, DataTableChevronCell, DataTableRow, DataTableSelectCell } from '../components/ui/DataTable';
 import { DateRangeFilter } from '../components/ui/DateRangeFilter';
 import { ExecutorPicker } from '../components/ui/ExecutorPicker';
 import { Spinner } from '../components/ui/states';
@@ -126,6 +126,11 @@ import { eventIcon } from './eventMeta';
  *
  * Mirrors the kit's constant; the literal-typed annotation keeps the two in lockstep — bumping the
  *  kit without updating this value is a type error, not a silent drift. */
+// NOT bumped for `DataTableSelectCell` below, deliberately. The version is a compatibility CEILING
+// (`entry.apiVersion <= host`), so a bundle that has not heard of the primitive is unaffected either
+// way, and one that DOES require it declares 17 and renders its placeholder against a host stamped 16 —
+// safe, not broken. The bump belongs with the kit release that publishes the new contract; raising it
+// here alone would tell bundles the host supports a version the published kit does not describe.
 export const PLUGIN_UI_API_VERSION: typeof KIT_API_VERSION = 16;
 export type { PluginPageProps, PluginUiRegistration };
 
@@ -282,7 +287,7 @@ export function ensurePluginUiRuntime(): void {
     react: React,
     reactDom: ReactDom,
     jsxRuntime: JsxRuntime,
-    // @platform-keep plugin-ui-primitives :: DataTable, DataTableRow, DataTableCell && PatchView && ProgressRibbon && LiveTail && WorkspaceShell, WorkspaceHero && Pager, RegisterSearch, DataTableChevronCell && WorkspaceTakeover
+    // @platform-keep plugin-ui-primitives :: DataTable, DataTableRow, DataTableCell, DataTableSelectCell && PatchView && ProgressRibbon && LiveTail && WorkspaceShell, WorkspaceHero && Pager, RegisterSearch, DataTableChevronCell && WorkspaceTakeover
     // Generic UI platform for future github/sandblox bundles; zero callers for any one primitive is expected.
     // Growing this list is cheap; shrinking it is a breaking change.
     // `ConstellationScope` left with the orbital settings rendering it existed to switch on, and
@@ -313,7 +318,9 @@ export function ensurePluginUiRuntime(): void {
       // closed summary are the SAME components the host draws for Discord and friends, so "looks the
       // same" is a fact about the code rather than a resemblance someone has to maintain by eye.
       LinkedAccountRow, SummaryChip,
-      Checkbox, DataTable, DataTableRow, DataTableCell, DateRangeFilter, ExecutorPicker,
+      // `DataTableSelectCell` ships WITH `DataTable`'s `selection` prop, not after it: a bundle that can
+      // turn selection on and cannot render the column has an API half of which does nothing.
+      Checkbox, DataTable, DataTableRow, DataTableCell, DataTableSelectCell, DateRangeFilter, ExecutorPicker,
       ProgressRibbon, PatchView, Spinner, MotionLayout, WorkspaceDetailRail,
       // The canonical page shell, published so a bundle stops reaching for the SpatialWorkspaceLayout
       // alias: the alias only ever built a `register` page, so a plugin whose surface is a settings deck

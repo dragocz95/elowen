@@ -381,9 +381,10 @@ describe('DataTable row selection', () => {
     expect([...(onChange.mock.calls[0]![0] as Set<string>)].sort()).toEqual(['a', 'b', 'c', 'z']);
   });
 
-  it('ticking a row neither opens it nor fires the row\u2019s own handler', () => {
+  it('ticking a row neither opens it nor fires the row\u2019s own handlers, by pointer OR keyboard', () => {
     const onOpen = vi.fn();
     const onClick = vi.fn();
+    const onKeyDown = vi.fn();
     const selected = new Set<string>();
     render(
       <LanguageProvider>
@@ -392,16 +393,22 @@ describe('DataTable row selection', () => {
           columns="2rem minmax(0,1fr)"
           selection={{ ids: ['a'], selected, onSelectionChange: () => {} }}
         >
-          <DataTableRow onOpen={onOpen} openLabel="Open member: a" onClick={onClick}>
+          <DataTableRow onOpen={onOpen} openLabel="Open member: a" onClick={onClick} onKeyDown={onKeyDown}>
             <DataTableSelectCell rowId="a" label="Select member: a" />
             <DataTableCell lines={1}>a</DataTableCell>
           </DataTableRow>
         </DataTable>
       </LanguageProvider>,
     );
-    fireEvent.click(screen.getByRole('checkbox', { name: 'Select member: a' }));
+    const box = screen.getByRole('checkbox', { name: 'Select member: a' });
+    fireEvent.click(box);
     expect(onOpen).not.toHaveBeenCalled();
     expect(onClick).not.toHaveBeenCalled();
+
+    // A checkbox is reached with the keyboard as often as with a pointer. Stopping only the click left
+    // Space firing the row's own navigation from inside the control that exists to avoid it.
+    fireEvent.keyDown(box, { key: ' ', code: 'Space' });
+    expect(onKeyDown).not.toHaveBeenCalled();
   });
 });
 

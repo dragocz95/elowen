@@ -104,22 +104,24 @@ export function DataTable({ ariaLabel, columns, compactColumns = 'minmax(0,1fr)'
  *  The header's three states are the whole reason this is a shared component. `indeterminate` is not
  *  "half-checked" decoration: a filled box that means "some" and a filled box that means "all" are the
  *  same picture, and the dash is what distinguishes them — see `shadcn/checkbox.tsx`, which paints it. */
-export function DataTableSelectCell({ header = false, rowId, label, className = '' }: {
-  header?: boolean;
-  /** The row this checkbox selects. Required off the header row, ignored on it. */
-  rowId?: string;
-  /** The row control's accessible name. Keep it short and specific — `Select memory: <title>` — for the
-   *  same reason `openLabel` exists: without it the name falls back to the row's own text. */
-  label?: string;
-  className?: string;
-}) {
+export type DataTableSelectCellProps = { className?: string } & (
+  /** The header's select-all. It needs no id and no label: it acts on every id the table was given, and
+   *  its name is the register's, not a row's. */
+  | { header: true; rowId?: never; label?: never }
+  /** A row's own checkbox. `rowId` and `label` are BOTH required, and the union is what enforces it: an
+   *  optional `rowId` renders a focusable control that is permanently unchecked and does nothing when
+   *  activated, and an optional `label` leaves it announced as a bare "checkbox". This is the same
+   *  discriminated-union device `DataTableRowOpen` below uses, for the same reason. */
+  | { header?: false; rowId: string; label: string }
+);
+export function DataTableSelectCell({ className = '', ...props }: DataTableSelectCellProps) {
   const selection = useContext(SelectionContext);
   const locale = useLocaleSafe();
   const common = dictionaries[locale].common;
   if (!selection) return null;
   const { ids, selected, onSelectionChange } = selection;
 
-  if (header) {
+  if (props.header) {
     // "Some" is measured against the rows ON SCREEN, not against the selection as a whole: a page whose
     // every row is selected reads as all, even when another page holds more.
     const onPage = ids.filter((id) => selected.has(id)).length;
@@ -144,19 +146,25 @@ export function DataTableSelectCell({ header = false, rowId, label, className = 
     );
   }
 
+  const { rowId, label } = props;
   return (
     <DataTableCell
       lines="auto"
       className={`flex items-center ${className}`}
-      // The row-open overlay is a button stretched over the whole row and a register may also carry its
-      // own row onClick. Ticking a checkbox is not opening the row, so the press stops here.
+      // The row-open overlay is a button stretched over the whole row, and a register may also carry its
+      // own row handlers. Ticking a checkbox is not opening the row, so the activation stops here.
+      //
+      // BOTH events, not just the click: a checkbox is reached with the keyboard as often as with a
+      // pointer, and Space on it bubbles a keydown to whatever `onKeyDown` the register put on the row.
+      // Stopping only the click left the keyboard path firing the row's navigation from inside the
+      // control that exists to avoid it.
       onClick={(event) => event.stopPropagation()}
+      onKeyDown={(event) => event.stopPropagation()}
     >
       <Checkbox
-        checked={rowId !== undefined && selected.has(rowId)}
+        checked={selected.has(rowId)}
         aria-label={label}
         onCheckedChange={(next) => {
-          if (rowId === undefined) return;
           const updated = new Set(selected);
           if (next === true) updated.add(rowId);
           else updated.delete(rowId);

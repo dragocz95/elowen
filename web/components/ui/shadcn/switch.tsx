@@ -14,15 +14,21 @@ import { cn } from '../../../lib/utils';
  *  in a large slot. The reference has no edge at all: the track IS the shape, the thumb fills it, and
  *  the two states are told apart by the track's fill and the thumb's position.
  *
- *  Losing the border costs nothing structurally — it was never what made the control findable, since an
- *  OFF track is a filled neutral and not an outline. */
+ *  Losing the border means the FILL is now the only thing drawing the control, which is why the OFF
+ *  track had to move off the surface ramp and onto `--color-border` — see below. */
 const switchVariants = cva([
   'peer inline-flex h-[18px] w-9 shrink-0 items-center rounded-full outline-none transition-colors',
-  'data-[state=checked]:bg-primary data-[state=unchecked]:bg-secondary',
-  // The ring moves OUTSIDE the track now that there is no border. It used to be drawn half over a 1px
-  // accent edge; without that edge a 50%-alpha ring sitting directly on a saturated fill is most of the
-  // focus indicator gone, and the offset puts it back against the page where it reads on either state.
-  'focus-visible:ring-2 focus-visible:ring-ring/50 focus-visible:ring-offset-2 focus-visible:ring-offset-background',
+  // The OFF track is `border`, not `secondary`. With the edge gone the fill is the ONLY thing that draws
+  // the control, and `secondary` aliases `--color-muted`, which is a SURFACE: in studio-oled it is
+  // #080d0f, byte-identical to that skin's card, so an OFF switch on a card was a thumb floating on
+  // nothing, and on studio-light it was #f4f4f5 on white at about 1.05:1. `--color-border` is the token
+  // each design already tunes to be the faint-but-visible step away from its surfaces — studio-light
+  // resolves it to #e4e4e7, which is the reference's own oklch(0.922) track.
+  'data-[state=checked]:bg-primary data-[state=unchecked]:bg-border',
+  // No focus utilities here on purpose. `app/styles/base.css` gives `[role="switch"]:focus-visible` a
+  // box-shadow ring and is imported unlayered, so it outranks the whole of Tailwind's utilities layer —
+  // a `focus-visible:ring-*` class on this element paints nothing at all. That ring is already offset
+  // (1px of canvas, then 3px of brand), which is what makes losing the border cost no focus visibility.
   'disabled:cursor-not-allowed disabled:opacity-40',
 ]);
 
