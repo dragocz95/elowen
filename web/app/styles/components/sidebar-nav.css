@@ -35,13 +35,16 @@
    active row are never clipped by a neighbouring surface. The sheet is excluded: it belongs to the app's
    overlay layer and already carries `.overlay-layer-nav-drawer`, which assigns `--z-nav-drawer`. */
 .sidebar-nav:not([data-mode='drawer']) { z-index: 1; }
-/* NO rule down the column's outer edge, because the column and the page are the same ground: the
-   reference draws none, and this design now grounds both alike (owner decision, 5 Sep 2026 — 1:1 with
-   the reference dashboard). The declaration stays, painted from `--color-sidebar-rule`, which is
-   transparent in tokens.css: a design that does ground its column differently gives that token a colour
-   and gets the seam back without a stylesheet edit. It is NOT `--color-sidebar-border` — that one is the
-   column's internal hairline (the header rule, the footer rule, the search field's edge) and is still
-   drawn. */
+/* The rule down the column's outer edge, and it runs the WHOLE height — the border is on the column
+   itself, so it starts at the very top of the 58px header and ends under the footer, and the collapsed
+   rail keeps it because the width changes and the border does not. Owner decision, 6 Sep 2026: the
+   column is framed on its right the way the page is framed on top, so this line and the top bar's
+   hairline are one frame turning a corner. `--color-sidebar-rule` aliases `--color-sidebar-border` in
+   tokens.css for exactly that reason; a design that wants the column to melt into the canvas sets that
+   one token to `transparent` without a stylesheet edit.
+   The corner meets cleanly by GEOMETRY: the box is `border-box`, so the header's own `border-bottom`
+   spans the column's content width and stops AT this rule rather than crossing it, and the content's top
+   bar begins at the column's right edge because the shell lays the two side by side with no gap. */
 .sidebar-nav[data-side='left'] { border-right: 1px solid var(--color-sidebar-rule); }
 .sidebar-nav[data-side='right'] { border-left: 1px solid var(--color-sidebar-rule); }
 .sidebar-nav[data-mode='rail'] { width: var(--sidebar-width-icon); }
@@ -468,8 +471,8 @@
 .sidebar-nav__more { margin-inline-start: auto; }
 .sidebar-nav__collapse:hover,
 .sidebar-nav__more:hover { background: var(--color-sidebar-accent); color: var(--color-foreground); }
-/* The fold's edge target. Invisible until the pointer is on it: the column draws no outer rule at all
-   now, and a line that appeared there permanently would put one back. */
+/* The fold's edge target. Transparent until the pointer is on it, so the column's own outer rule is what
+   is seen at rest and the accent only answers the pointer. */
 .sidebar-nav__rail::after { background: transparent; transition: background-color var(--motion-fast) var(--ease-out); }
 .sidebar-nav__rail:hover::after { background: var(--color-primary); }
 

@@ -33,11 +33,12 @@
   --color-border: #e4e4e7;
   --color-border-strong: #d4d4d8;
 
-  /* The navigation column is the CANVAS ITSELF — the same #fbfbfb the page is grounded on, with no rule
-     down its outer edge (--color-sidebar-rule in tokens.css is transparent). Owner decision, 5 Sep 2026:
-     1:1 with the reference dashboard, where the column is not a panel laid on the page but a region of
-     it, and the only structure it carries is its own internal hairlines. The step this token used to
-     hold (#f7f7f8) was a panel the reference does not draw.
+  /* The navigation column is the CANVAS ITSELF — the same #fbfbfb the page is grounded on. It is not a
+     panel laid on the page: the only thing separating it is the hairline down its right edge, which
+     continues the top bar's line around the corner (--color-sidebar-rule in tokens.css aliases
+     --color-sidebar-border, so both halves of that frame are this one value; owner decision, 6 Sep 2026,
+     overriding the transparent outer edge of 5 Sep). The step this token used to hold (#f7f7f8) was a
+     panel the reference does not draw.
      The row fill is the measured reference value: oklch(0.965 0 0), written as the hex it resolves to
      because tests/lib/designTokens.test.ts has to evaluate this token to check contrast, and an oklch()
      literal is a colour it cannot resolve.
@@ -48,8 +49,8 @@
      column, 11.39:1 on the row fill). --color-sidebar-foreground is the column's QUIET ink, used by the
      group labels, and it is a NEUTRAL grey rather than the bluish --color-subtle-foreground: the
      reference's oklch(0.556 0 0), 4.58:1 on the column ground.
-     --color-sidebar-border stays the INTERNAL hairline — header, group seams, footer — and is unrelated
-     to the outer rule that is now gone. */
+     --color-sidebar-border is the column's ONE hairline: the header rule, the footer rule, the search
+     field's edge and — through --color-sidebar-rule — the frame down its right edge. */
   --color-sidebar: #fbfbfb;
   --color-sidebar-accent: #f3f3f3;
   --color-sidebar-accent-foreground: #333333;

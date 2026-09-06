@@ -32,9 +32,10 @@
   --color-border-strong: #3d3d42;
 
   /* The navigation column IS the canvas, as theirs is: the content's cards step UP from it, so a column
-     that stays at page level is the recessive surface. It carries no rule down its outer edge either
-     (--color-sidebar-rule in tokens.css is transparent) — owner decision, 5 Sep 2026: 1:1 with the
-     reference dashboard, where the column is a region of the page rather than a panel on it.
+     that stays at page level is the recessive surface. What separates it from the page is one hairline
+     down its right edge, continuing the top bar's line around the corner (--color-sidebar-rule in
+     tokens.css aliases --color-sidebar-border, so both halves of that frame are one value; owner
+     decision, 6 Sep 2026, overriding the transparent outer edge of 5 Sep).
      The row fill is the reference's dark active step (neutral-850, oklch(0.23 0 0)) rather than the card
      fill it borrowed before: an active row has to separate from a card sitting beside it, and #080d0f
      WAS the card fill. It keeps this design's cyan tint instead of the reference's flat neutral, so the
@@ -47,9 +48,9 @@
      ink is the reference's own oklch(0.985 0 0) (19.29:1 on the column, 16.51:1 on the fill), and
      --color-sidebar-foreground is the column's quiet ink for the group labels, a neutral grey at 6.23:1
      rather than the tinted --color-subtle-foreground.
-     --color-sidebar-border is the INTERNAL hairline only — header, group seams, footer — and is now the
-     reference's neutral rather than this palette's tinted --color-border-strong, which was carrying an
-     outer rule that no longer exists. */
+     --color-sidebar-border is the column's ONE hairline — header, group seams, footer, and through
+     --color-sidebar-rule the frame down its right edge — and it is the reference's neutral rather than
+     this palette's tinted --color-border-strong. */
   --color-sidebar: #03080a;
   --color-sidebar-accent: #161c1e;
   --color-sidebar-accent-foreground: #fafafa;
