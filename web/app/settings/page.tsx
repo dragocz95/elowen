@@ -585,9 +585,8 @@ export default function SettingsPage() {
                   icon={Sparkles}
                   // The badge IS the check button: it already states the answer, so a separate "check for
                   // updates" control next to it said the same thing twice. It belongs in the STATUS slot
-                  // even so — being clickable does not make a verdict an action, and from the status
-                  // column it lines up with every other reading in the card instead of crowding the one
-                  // button the record actually offers.
+                  // even so — being clickable does not make a verdict an action, and as a status it reads
+                  // with the record's own name instead of crowding the one button the record offers.
                   status={(
                     <button
                       type="button"

@@ -534,8 +534,10 @@ test('Studio pages share metrics, filters, title and actions in one calm order',
   await expect(app.locator('.settings-row__description')).toHaveCount(0);
   // THE TWO-LINE BAND. A phone gives a settings card ~358px, and the value column it used to hold there
   // was ~120px — enough for a switch and for nothing else, which is what crushed every picker and meter
-  // on this page. A record folds instead: its name and help on the first line, its control, status and
-  // actions together on the second. Two lines, never three, and nothing past the card's edge.
+  // on this page. A record folds instead: its name, help and short status on the first line, its control
+  // and actions together on the second. Two lines, never three, and nothing past the card's edge.
+  // A record whose whole trailing side was a short status has no band left to check and drops out of the
+  // selector below: its status reads on the label line, so the record is one line by construction.
   const rowBands = await app.locator('.settings-row:visible:has(.settings-row__trailing)').evaluateAll((rows) => rows.map((row) => {
     const label = row.querySelector<HTMLElement>('.settings-row__label')!.getBoundingClientRect();
     const trailing = row.querySelector<HTMLElement>('.settings-row__trailing')!.getBoundingClientRect();
@@ -1158,7 +1160,10 @@ for (const size of [{ width: 390, height: 844 }, { width: 320, height: 700 }]) {
         return rows.map((row) => {
           const rect = box(row);
           const title = row.querySelector<HTMLElement>('.settings-row__title');
-          const parts = [...row.querySelectorAll<HTMLElement>('.settings-row__status, .settings-row__control, .settings-row__actions')];
+          // The BAND's own parts. An inline record's status reads inside the title, so it is part of the
+          // record's name here rather than a trailing part that could be drawn over it — collecting it
+          // would make the collision predicate below true by construction on every record with a status.
+          const parts = [...row.querySelectorAll<HTMLElement>('.settings-row__trailing > *')];
           return {
             label: title?.textContent?.trim() ?? '',
             trailing: row.dataset.trailing ?? '',

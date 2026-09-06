@@ -369,8 +369,9 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
 @container workspace-shell (width < 38.75rem) {
   /* THE TWO-LINE BAND. The stack collapses to a single track, and the records borrowing it through
      subgrid collapse with it — overriding the record alone would lose to the more specific subgrid rule.
-     A record is then two lines: its label and help, then everything trailing. There is no third line,
-     because an inline record's trailing cell does not wrap at any width (see the rule above). */
+     A record is then two lines: its label, help and short status, then everything trailing. There is no
+     third line, because an inline record's trailing cell does not wrap at any width (see the rule above);
+     a record whose only trailing value was a status has no second line at all. */
   .settings-group__body:has(> .settings-row), .settings-group__column { grid-template-columns: 1fr; }
   .settings-row { grid-template-columns: 1fr; gap: 0.6rem; }
   /* One track: release the pinned columns, or each slot would open an implicit column of its own. */

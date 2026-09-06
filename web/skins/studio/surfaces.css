@@ -627,8 +627,9 @@
    its track narrow and gives the room back to the text, while everything wider than 20rem is held at
    20rem so the column edge stays put. A record with no control at all resolves the track to 0.
    The status track before it belongs to STACKED records only (see the base stylesheet): an inline
-   record's status reads on its label's line, so a card without a stacked record resolves that track to 0
-   and the control column starts where the label's own column ends. */
+   record's status reads on its label's line, so a card without a stacked record resolves that track to
+   0. The column gap on either side of the collapsed track stays — a grid gap does not collapse with an
+   empty track — which simply widens the space between label and control by one gap on such a card. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .settings-row),
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__column {
   grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 20rem) auto;
@@ -688,7 +689,8 @@
   /* THE BAND RELEASES WITH THE TRACKS. Studio drops to two columns here, so there is no third and fourth
      track left for the trailing band to subgrid — the slots would spill into implicit columns and the
      card would grow a phantom right edge. The cell is the right-aligned flex line again, which is the
-     same reading order (status, control, actions) without the shared columns. */
+     same reading order (a stacked record's status, then control, then actions) without the shared
+     columns; an inline record's status is on its label line and never enters this cell. */
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing] .settings-row__trailing {
     display: flex;
     grid-template-columns: none;
