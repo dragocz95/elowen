@@ -29,11 +29,18 @@ interface DashboardConfig {
   continueEnabled: boolean;
   /** How many times a day the digest may regenerate; 1 keeps it to a single run per user per day. */
   digestPerDay: number;
+  /** How many recap variants ONE generation writes, 1–10; absent on a daemon older than the batch. */
+  digestVariants?: number;
   digest: { providerId: string; model: string };
 }
 
 /** One agent-written clickable action (a quick-action pill or a recap suggestion). */
 interface DashAction { label: string; prompt: string }
+
+/** One telling of yesterday in the recap strip's rotation. All variants of a day come from the SAME
+ *  stored generation; a daemon older than the batch serves none and the strip derives its single
+ *  variant from the digest's own summary/suggestions. */
+export interface DashRecapVariant { summary?: string; suggestions?: DashAction[] }
 
 /** GET /dash/recap — the personalized dashboard surface, strictly per-caller. */
 export interface DashRecap {
@@ -48,6 +55,8 @@ export interface DashRecap {
     pills?: DashAction[];
     summary?: string;
     suggestions?: DashAction[];
+    /** The variant batch to rotate between client-side; variant 1 is always summary/suggestions. */
+    recaps?: DashRecapVariant[];
   };
 }
 
@@ -333,7 +342,7 @@ export interface ConfigPatch {
   /** Runtime knobs merged per-field by the daemon, like the brain limits above. */
   runtime?: { limits?: Partial<RuntimeLimits>; toolDeferralEnabled?: boolean; toolDeferralOverrides?: ToolDeferralOverrides; providerRequestCaptureEnabled?: boolean; memoryRetention?: Partial<MemoryRetentionConfig> };
   /** Dashboard personalization block, merged per-field by the daemon. */
-  dashboard?: { recapEnabled?: boolean; digestEnabled?: boolean; greetingEnabled?: boolean; pillsEnabled?: boolean; continueEnabled?: boolean; digestPerDay?: number; digest?: { providerId?: string; model?: string } };
+  dashboard?: { recapEnabled?: boolean; digestEnabled?: boolean; greetingEnabled?: boolean; pillsEnabled?: boolean; continueEnabled?: boolean; digestPerDay?: number; digestVariants?: number; digest?: { providerId?: string; model?: string } };
 }
 export interface UserPatch { is_admin?: boolean; name?: string; username?: string; allowed_execs?: string[]; disabled_tools?: string[]; allowed_tools?: string[]; granted_plugins?: string[] }
 export interface ProfilePatch { name?: string; email?: string; default_exec?: string }

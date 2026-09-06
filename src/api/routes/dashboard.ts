@@ -98,6 +98,9 @@ export function registerDashboardRoutes(app: ElowenApp, ctx: RouteContext): void
             store: d.dashDigests,
             inference: () => d.dashDigestInference?.() ?? null,
             logger: ctx.log,
+            // The saved batch size rides with THIS run; the refresh windows above stay the only thing
+            // that starts one, so changing the count here costs nothing until the next regular turn.
+            recapVariants: cfg.digestVariants,
           });
           void generator.run(userId, today, digestInput(userId, yesterday, today));
         }
@@ -106,6 +109,8 @@ export function registerDashboardRoutes(app: ElowenApp, ctx: RouteContext): void
       }
       // A refresh keeps serving the digest it is replacing: the window has elapsed, but yesterday's
       // recap is still true, and blanking the hero mid-day would be a worse answer than a stale one.
+      // `recaps` is the rotation batch the client cycles through client-side — every variant comes
+      // from the SAME stored generation, so switching variants never costs an inference call.
       digest = content
         ? {
             status: 'ready',
@@ -115,6 +120,7 @@ export function registerDashboardRoutes(app: ElowenApp, ctx: RouteContext): void
             ...(cfg.pillsEnabled && content.pills.length ? { pills: content.pills } : {}),
             ...(content.summary ? { summary: content.summary } : {}),
             ...(content.suggestions.length ? { suggestions: content.suggestions } : {}),
+            ...(content.recaps.length ? { recaps: content.recaps } : {}),
           }
         : { status: pending ? 'generating' : 'unavailable' };
     }

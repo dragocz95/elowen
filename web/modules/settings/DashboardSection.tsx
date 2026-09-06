@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Boxes, LayoutDashboard, MessageSquareQuote, RefreshCw, Repeat, Sparkles, SquareStack, Undo2 } from 'lucide-react';
+import { Boxes, Layers, LayoutDashboard, MessageSquareQuote, RefreshCw, Repeat, Sparkles, SquareStack, Undo2 } from 'lucide-react';
 import { useQueryClient } from '@tanstack/react-query';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -20,6 +20,10 @@ import { rowAnchor } from '../../lib/rowAnchors';
 /** Refresh rates offered for the digest. Presets rather than a free number: what matters is the shape
  *  of the day (once, twice, every few hours), and the daemon clamps anything outside 1–24 anyway. */
 const DIGEST_PER_DAY_CHOICES = [1, 2, 3, 4, 6, 8, 12, 24] as const;
+
+/** Recap variants offered per generation. The whole range the daemon stores (1–10): a plain count the
+ *  reader can point at, with 1 meaning "no rotation at all" rather than a broken strip. */
+const DIGEST_VARIANT_CHOICES = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10] as const;
 
 /** Settings → Recap: the personalized dashboard controls. What renders (recap strip, agent-written
  *  greeting and quick-action pills, continue pills) and how often the daily digest refreshes.
@@ -46,10 +50,12 @@ export function DashboardSection({ onSaveState, onOpenSection }: {
   const [pillsEnabled, setPillsEnabled] = useState(false);
   const [continueEnabled, setContinueEnabled] = useState(true);
   const [perDay, setPerDay] = useState(1);
+  const [variants, setVariants] = useState(5);
   const [seeded, setSeeded] = useState(false);
   const [regenerating, setRegenerating] = useState(false);
 
-  // Seed the form once from the persisted config; edits auto-persist shortly after.
+  // Seed the form once from the persisted config; edits auto-persist shortly after. `digestVariants`
+  // is absent on a daemon older than the batch — the 5-variant default is the generation's own.
   useEffect(() => {
     const block = config?.dashboard;
     if (block && !seeded) {
@@ -59,6 +65,7 @@ export function DashboardSection({ onSaveState, onOpenSection }: {
       setPillsEnabled(block.pillsEnabled);
       setContinueEnabled(block.continueEnabled);
       setPerDay(block.digestPerDay ?? 1);
+      setVariants(block.digestVariants ?? 5);
       setSeeded(true);
     }
   }, [config, seeded]);
@@ -70,6 +77,7 @@ export function DashboardSection({ onSaveState, onOpenSection }: {
       dashboard: {
         recapEnabled, digestEnabled, greetingEnabled, pillsEnabled, continueEnabled,
         digestPerDay: perDay,
+        digestVariants: variants,
       },
     });
     // The recap route reads config live; refetch so the dashboard reflects the change immediately.
@@ -77,7 +85,7 @@ export function DashboardSection({ onSaveState, onOpenSection }: {
     void queryClient.invalidateQueries({ queryKey: ['config'] });
   };
   const { status, retry } = useAutoSaveStatus(
-    [recapEnabled, digestEnabled, greetingEnabled, pillsEnabled, continueEnabled, perDay],
+    [recapEnabled, digestEnabled, greetingEnabled, pillsEnabled, continueEnabled, perDay, variants],
     save,
     { ready: seeded },
   );
@@ -154,6 +162,27 @@ export function DashboardSection({ onSaveState, onOpenSection }: {
             }))}
             value={String(perDay)}
             onChange={(next) => setPerDay(Number(next))}
+            picker="always"
+          />
+        }
+      />
+      {/* The batch SIZE, deliberately not the schedule: `perDay` above owns how OFTEN a generation may
+          run, this owns how many variants ONE run writes. The change lands at the next regular
+          generation — the windows above never start an extra paid run for a settings edit. */}
+      <SettingsRow
+        label={t.settings.dashboardSection.variants}
+        rowId={rowAnchor('settings.dashboardSection.variants')}
+        description={t.settings.dashboardSection.variantsDesc}
+        icon={Layers}
+        control={
+          <ChoiceField
+            title={t.settings.dashboardSection.variants}
+            options={DIGEST_VARIANT_CHOICES.map((n) => ({
+              value: String(n),
+              label: t.settings.dashboardSection.variantsOption.replace('{n}', String(n)),
+            }))}
+            value={String(variants)}
+            onChange={(next) => setVariants(Number(next))}
             picker="always"
           />
         }

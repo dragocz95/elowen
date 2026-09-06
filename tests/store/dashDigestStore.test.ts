@@ -29,8 +29,47 @@ describe('sanitizePayload', () => {
   });
 
   it('reads garbage as an empty payload, never a throw', () => {
-    expect(sanitizePayload(null)).toEqual({ greeting: '', ask: '', pills: [], summary: '', suggestions: [] });
-    expect(sanitizePayload('nonsense')).toEqual({ greeting: '', ask: '', pills: [], summary: '', suggestions: [] });
+    expect(sanitizePayload(null)).toEqual({ greeting: '', ask: '', pills: [], summary: '', suggestions: [], recaps: [] });
+    expect(sanitizePayload('nonsense')).toEqual({ greeting: '', ask: '', pills: [], summary: '', suggestions: [], recaps: [] });
+  });
+
+  it('carries the model\'s recap variants, caps them at ten and mirrors variant 1 to the legacy fields', () => {
+    const variants = Array.from({ length: 12 }, (_, i) => ({
+      summary: `Varianta ${i + 1}`,
+      suggestions: [{ label: `Štítek ${i + 1}`, prompt: `Výzva ${i + 1}` }],
+    }));
+    const p = sanitizePayload({ greeting: 'Čau', recaps: variants });
+    expect(p.recaps.length).toBe(10);
+    expect(p.recaps[0]).toEqual(variants[0]);
+    // The legacy one-variant readers (the route filter, older web builds) keep working untouched.
+    expect(p.summary).toBe('Varianta 1');
+    expect(p.suggestions).toEqual([{ label: 'Štítek 1', prompt: 'Výzva 1' }]);
+  });
+
+  it('drops unusable and duplicate variants instead of rotating empty or identical content', () => {
+    const p = sanitizePayload({
+      recaps: [
+        'garbage',
+        { summary: '', suggestions: [] },
+        { summary: 'Skutečná práce', suggestions: [{ label: 'A', prompt: 'a' }] },
+        { summary: 'Skutečná práce', suggestions: [{ label: 'A', prompt: 'a' }] },
+        { summary: '', suggestions: [{ label: 'Jen krok', prompt: 'b' }] },
+        { summary: 'a'.repeat(1000), suggestions: [{ label: 'b'.repeat(100), prompt: 'p'.repeat(1000) }] },
+      ],
+    });
+    expect(p.recaps).toEqual([
+      { summary: 'Skutečná práce', suggestions: [{ label: 'A', prompt: 'a' }] },
+      { summary: '', suggestions: [{ label: 'Jen krok', prompt: 'b' }] },
+      { summary: 'a'.repeat(400), suggestions: [{ label: 'b'.repeat(40), prompt: 'p'.repeat(500) }] },
+    ]);
+  });
+
+  it('derives one recap variant from a legacy payload that has no recaps field at all', () => {
+    const p = sanitizePayload({ greeting: 'Čau', summary: 'Včera **dashboard**.', suggestions: [{ label: 'Test', prompt: 'Dokonči' }] });
+    expect(p.recaps).toEqual([{ summary: 'Včera **dashboard**.', suggestions: [{ label: 'Test', prompt: 'Dokonči' }] }]);
+    // Legacy fields survive verbatim so an old web build keeps rendering the same sentence.
+    expect(p.summary).toBe('Včera **dashboard**.');
+    expect(p.suggestions).toEqual([{ label: 'Test', prompt: 'Dokonči' }]);
   });
 });
 
