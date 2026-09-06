@@ -176,6 +176,9 @@
      The mesh is the airy one: the blue signal at 7%/5% tints the top of the hero the way daylight would
      and never becomes a coloured panel behind the greeting. */
   --shadow-lift: 0 2px 4px rgb(9 9 11 / 0.04), 0 12px 28px rgb(9 9 11 / 0.08);
+  /* The primary button's ring, at the reference's own weight: a full-strength brand edge and a 6% drop.
+     The inherited 40% black drop would put a bruise under the one control the page is built around. */
+  --shadow-primary: 0 0 0 1px rgb(var(--primary-rgb) / 1), 0 1px 2px rgb(9 9 11 / 0.06);
   --glow-accent: 0 0 0 1px rgb(var(--primary-rgb) / 0.4), 0 4px 18px rgb(var(--primary-rgb) / 0.14);
   --glass-surface: color-mix(in srgb, var(--color-background) 72%, transparent);
   --glass-border: color-mix(in srgb, var(--color-foreground) 9%, transparent);

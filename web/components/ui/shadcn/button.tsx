@@ -19,14 +19,24 @@ const buttonVariants = cva(
   // The border lives in the base rather than in the filled variants: every variant then reserves the
   // same 1px, so a ghost button and a filled one are exactly the same height and swapping between them
   // does not move the row. Variants only choose the border's COLOUR.
+  // `box-shadow` joins the transition list because the `default` variant now rests on one; without it
+  // the ring would snap while the fill faded, which is worse than either alone.
+  //
+  // The duration is `--motion-instant` rather than a literal. A press is the one interaction that must
+  // feel like it already happened — the reference runs its buttons at 100ms — and a token is also what
+  // makes `data-effects='off'` and prefers-reduced-motion able to zero it.
   'inline-flex shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-md border text-sm font-medium ' +
-    'transition-[color,background-color,border-color,transform] duration-150 active:scale-[0.97] ' +
+    'transition-[color,background-color,border-color,box-shadow,transform] duration-[var(--motion-instant)] active:scale-[0.97] ' +
     'disabled:cursor-not-allowed disabled:opacity-40 disabled:active:scale-100 ' +
     '[&_svg]:pointer-events-none [&_svg]:shrink-0',
   {
     variants: {
       variant: {
-        default: 'border-primary bg-primary text-primary-foreground hover:bg-primary/90',
+        // The one loud control on a page rests on `--shadow-primary`: a 1px brand ring and a short drop,
+        // stated per design because a drop that reads on a near-white page is a no-op on a true-black
+        // one. It is what makes the primary read as the ACTION rather than as a coloured label, and it
+        // is a token rather than a baked shadow so a white-label theme retints it with `--primary-rgb`.
+        default: 'border-primary bg-primary text-primary-foreground shadow-[var(--shadow-primary)] hover:bg-primary/90',
         secondary: 'border-border bg-secondary text-secondary-foreground hover:border-border-strong hover:bg-secondary/80',
         destructive: 'border-destructive bg-destructive text-destructive-foreground hover:bg-destructive/90',
         outline: 'border-border bg-transparent text-muted-foreground hover:bg-accent hover:text-accent-foreground',
