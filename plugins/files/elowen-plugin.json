@@ -69,7 +69,7 @@
       "step": 10,
       "placeholder": "200",
       "default": 200,
-      "hint": "Max number of matches Search returns before truncating."
+      "hint": "Max number of matches Search returns before truncating, and the number of results one Grep page returns."
     },
     {
       "key": "globMax",

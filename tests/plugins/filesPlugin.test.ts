@@ -573,7 +573,8 @@ describe('files plugin — Grep', () => {
     const limited = await runWithPolicy(userPolicy([many]), () => runTool(reg2, 'Grep', { path: many, pattern: 'needle', head_limit: 5 }));
     expect(detailsOf(limited).matches).toBe(5);
     expect(detailsOf(limited).truncated).toBe(true);
-    expect(textOf(limited)).toContain('pagination');
+    // The notice states the REAL total and the offset that continues the listing, like Read's footer.
+    expect(textOf(limited)).toContain('[Showing results 1-5 of 20. Use offset=5 to continue.]');
     const unlimited = await runWithPolicy(userPolicy([many]), () => runTool(reg2, 'Grep', { path: many, pattern: 'needle', head_limit: 0 }));
     expect(detailsOf(unlimited).matches).toBe(20); // 0 = unlimited, NOT "return nothing"
     expect(detailsOf(unlimited).truncated).toBe(false);
@@ -586,6 +587,119 @@ describe('files plugin — Grep', () => {
     expect(detailsOf(withMl).matches).toBeGreaterThan(0);
     const withoutMl = await runWithPolicy(userPolicy([ml]), () => runTool(reg2, 'Grep', { path: ml, pattern: 'foo.*bar' }));
     expect(detailsOf(withoutMl).matches).toBe(0); // single-line by default
+  });
+
+  it('matches case-sensitively by default and folds case only with -i', async () => {
+    const cs = tmpDir('grep-case');
+    writeFileSync(join(cs, 'c.txt'), 'Needle upper\nneedle lower\nNEEDLE shout\n');
+    // A second file whose ONLY match is uppercase, so a file count of 1 vs 2 tells the two modes apart.
+    writeFileSync(join(cs, 'd.txt'), 'NEEDLE only\n');
+    const sensitive = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Grep', { path: cs, pattern: 'needle' }));
+    expect(detailsOf(sensitive).matches).toBe(1); // ripgrep's default: only the lowercase line
+    expect(textOf(sensitive)).toContain('needle lower');
+    expect(textOf(sensitive)).not.toContain('Needle upper');
+    const folded = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Grep', { path: cs, pattern: 'needle', '-i': true }));
+    expect(detailsOf(folded).matches).toBe(4);
+    // The flag reaches rg in every output mode, not just content.
+    const files = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Grep', { path: cs, pattern: 'needle', output_mode: 'files_with_matches' }));
+    expect(detailsOf(files).matches).toBe(1); // only c.txt has a lowercase match
+    const foldedFiles = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Grep', { path: cs, pattern: 'needle', output_mode: 'files_with_matches', '-i': true }));
+    expect(detailsOf(foldedFiles).matches).toBe(2);
+    const foldedCount = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Grep', { path: cs, pattern: 'zzz|NEEDLE', output_mode: 'count', '-i': true }));
+    expect(textOf(foldedCount)).toContain('c.txt:3');
+    // Search is the discovery tool and stays case-insensitive on the same input — one documented rule each.
+    const search = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Search', { path: cs, query: 'needle' }));
+    expect(detailsOf(search).matches).toBe(4);
+  });
+
+  it('offset pages through a truncated listing and reaches the tail without gaps or repeats', async () => {
+    const many = tmpDir('grep-offset');
+    writeFileSync(join(many, 'many.txt'), Array.from({ length: 20 }, (_, i) => `needle ${i}`).join('\n'));
+    const page = async (offset: number) => runWithPolicy(userPolicy([many]), () => runTool(reg2, 'Grep', { path: many, pattern: 'needle', head_limit: 8, offset }));
+    const p1 = await page(0);
+    const p2 = await page(8);
+    const p3 = await page(16);
+    expect(textOf(p1)).toContain('[Showing results 1-8 of 20. Use offset=8 to continue.]');
+    expect(textOf(p2)).toContain('[Showing results 9-16 of 20. Use offset=16 to continue.]');
+    // The last page reaches the tail: it reports its range but must NOT invite another (empty) page.
+    expect(detailsOf(p3).truncated).toBe(false);
+    expect(textOf(p3)).toContain('[Showing results 17-20 of 20.]');
+    expect(textOf(p3)).not.toContain('Use offset=');
+    const rows = [p1, p2, p3].flatMap((r) => textOf(r).split('\n\n')[0].split('\n'));
+    expect(rows).toHaveLength(20);
+    expect(new Set(rows).size).toBe(20); // continuous, no overlap between pages
+    // Paging past the end says so instead of claiming the pattern was never found.
+    const past = await page(40);
+    expect(textOf(past)).toBe('No more results — offset 40 is past the 20 results found.');
+  });
+
+  it('pages a MULTI-FILE search without repeating or dropping results across runs', async () => {
+    // Each page is a fresh rg process, and rg searches files in parallel: without a deterministic sort
+    // its output order differs run to run, so page 2 of run B repeats some rows of page 1 of run A and
+    // skips others. One file cannot show this — the ordering that moves is the order of FILES.
+    const tree = tmpDir('grep-multifile');
+    for (let f = 0; f < 40; f += 1) {
+      writeFileSync(join(tree, `f${String(f).padStart(2, '0')}.txt`), 'needle a\nneedle b\nneedle c\n');
+    }
+    const rows: string[] = [];
+    for (let offset = 0; offset < 120; offset += 20) {
+      const res = await runWithPolicy(userPolicy([tree]), () => runTool(reg2, 'Grep', { path: tree, pattern: 'needle', head_limit: 20, offset }));
+      rows.push(...textOf(res).split('\n\n')[0].split('\n'));
+      expect(detailsOf(res).total).toBe(120);
+    }
+    expect(rows).toHaveLength(120);
+    expect(new Set(rows).size).toBe(120); // every row exactly once: no overlap, nothing skipped
+    // Stronger than "no duplicates": the sequence is the one path order, so pages are reproducible.
+    const expected = Array.from({ length: 40 }, (_, f) => ['a', 'b', 'c'].map((l, i) => `f${String(f).padStart(2, '0')}.txt:${i + 1}:needle ${l}`)).flat();
+    expect(rows).toEqual(expected);
+  });
+
+  it('type filters by ripgrep file type and rejects a type ripgrep does not know', async () => {
+    const t = tmpDir('grep-type');
+    writeFileSync(join(t, 'a.ts'), 'const needle = 1;\n');
+    writeFileSync(join(t, 'b.py'), 'needle = 1\n');
+    const py = await runWithPolicy(userPolicy([t]), () => runTool(reg2, 'Grep', { path: t, pattern: 'needle', type: 'py' }));
+    expect(textOf(py)).toContain('b.py');
+    expect(textOf(py)).not.toContain('a.ts');
+    const bogus = await runWithPolicy(userPolicy([t]), () => runTool(reg2, 'Grep', { path: t, pattern: 'needle', type: 'notatype' }));
+    expect(detailsOf(bogus).ok).toBe(false);
+    expect(textOf(bogus)).toContain('--type-list');
+  });
+
+  it('caps a very long line at 500 columns and keeps ripgrep own truncation marker', async () => {
+    const wide = tmpDir('grep-wide');
+    writeFileSync(join(wide, 'min.js'), `${'A'.repeat(900)} needle tail\n`);
+    const res = await runWithPolicy(userPolicy([wide]), () => runTool(reg2, 'Grep', { path: wide, pattern: 'needle' }));
+    const row = textOf(res).split('\n')[0];
+    expect(row).toContain('[... omitted end of long line]'); // rg says the line was cut, we do not re-cut it
+    expect(row).not.toContain('tail'); // everything past the 500th column is gone, the prefix stays
+    expect(row.length).toBeLessThan(600); // one minified line cannot fill the page
+  });
+
+  it('declares its default result cap in the description and applies it without head_limit', async () => {
+    const big = tmpDir('grep-default-cap');
+    writeFileSync(join(big, 'big.txt'), Array.from({ length: 250 }, (_, i) => `needle ${i}`).join('\n'));
+    const res = await runWithPolicy(userPolicy([big]), () => runTool(reg2, 'Grep', { path: big, pattern: 'needle' }));
+    expect(detailsOf(res).matches).toBe(200); // DEFAULT_SEARCH_MAX_MATCHES, shared with Search
+    expect(textOf(res)).toContain('[Showing results 1-200 of 250. Use offset=200 to continue.]');
+    const description = (reg2.tools.find((t) => t.name === 'Grep') as unknown as { description: string }).description;
+    expect(description).toContain('at most 200 results per call'); // the model is told the number
+    expect(description).toContain('unless you pass -i'); // and that matching is case-sensitive by default
+  });
+
+  it('bounds a very long path in the modes rg --max-columns does not cover', async () => {
+    const deep = tmpDir('grep-long-path');
+    // --max-columns bounds MATCHING LINES; a files_with_matches / count row is a path, so it needs the
+    // explicit bound that content mode gets from rg.
+    let nested = deep;
+    for (let i = 0; i < 16; i += 1) { nested = join(nested, 'directory-with-a-deliberately-long-name'); }
+    mkdirSync(nested, { recursive: true });
+    writeFileSync(join(nested, 'f.txt'), 'needle\n');
+    expect(nested.length - deep.length).toBeGreaterThan(500); // the row really is over the bound
+    for (const mode of ['files_with_matches', 'count'] as const) {
+      const res = await runWithPolicy(userPolicy([deep]), () => runTool(reg2, 'Grep', { path: deep, pattern: 'needle', output_mode: mode }));
+      expect(textOf(res).split('\n')[0]).toContain('... [truncated]');
+    }
   });
 
   it('fails content searches closed when rg is unavailable but keeps filename search safe', async () => {

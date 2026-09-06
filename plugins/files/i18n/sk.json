@@ -11,7 +11,7 @@
     },
     "searchMaxMatches": {
       "label": "Maximálny počet zhôd vyhľadávania",
-      "hint": "Maximálny počet zhôd, ktoré Search vráti pred orezaním."
+      "hint": "Maximálny počet zhôd, ktoré Search vráti pred orezaním, a počet výsledkov na jednu stránku nástroja Grep."
     },
     "globMax": {
       "label": "Glob max výsledkov",

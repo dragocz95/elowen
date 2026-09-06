@@ -11,7 +11,7 @@
     },
     "searchMaxMatches": {
       "label": "Limit shod ve vyhledávání",
-      "hint": "Maximální počet shod, které Search vrátí před oříznutím."
+      "hint": "Maximální počet shod, které Search vrátí před oříznutím, a počet výsledků na jednu stránku nástroje Grep."
     },
     "globMax": {
       "label": "Glob max výsledků",
