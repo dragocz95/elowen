@@ -555,7 +555,9 @@ function readNotebook(raw, supportsImages, readCap) {
 const READ_STATE_MAX_SESSIONS = 64;
 const READ_STATE_MAX_FILES = 512;
 /** sessionId → (path-state key → authorization). Any successful Read of a file authorizes mutation, paged
- * or not; what the guard still enforces is that the bytes on disk are the ones that read hashed. */
+ * or not; what the guard still enforces is that the bytes on disk are the ones that read hashed.
+ * An entry is `{ hash, ours }`, and a text Read adds the `offset`/`limit` it returned — the one extra
+ * thing the dedup below needs, kept on the SAME entry so the hash stays the only authorization. */
 const readState = new Map();
 
 const hashOf = (buf) => createHash('sha256').update(buf).digest('hex');
@@ -592,14 +594,33 @@ export function markFileRead(sessionId, key, content, ours = false) {
   recordHash(sessionId, key, hashOf(content), ours);
 }
 
-/** Record what a text Read saw. A page of the file authorizes mutation just as a whole-file read does — the
- * hash is of the WHOLE file either way, so the staleness check keeps its teeth. Re-reading bytes we authored
- * keeps the `ours` marker: the formatter tolerance is about who wrote the file, not how often it was read. */
-function recordTextRead(sessionId, key, hash) {
+/** Record what a text Read saw, and which range it put in front of the model. A page of the file authorizes
+ * mutation just as a whole-file read does — the hash is of the WHOLE file either way, so the staleness check
+ * keeps its teeth. Re-reading bytes we authored keeps the `ours` marker: the formatter tolerance is about who
+ * wrote the file, not how often it was read. */
+function recordTextRead(sessionId, key, hash, offset, limit) {
   if (!sessionId) return;
   const files = sessionFiles(sessionId);
   const prior = files.get(key);
-  recordEntry(files, key, prior?.hash === hash ? prior : { hash, ours: false });
+  recordEntry(files, key, { hash, ours: prior?.hash === hash && prior.ours === true, offset, limit });
+}
+
+/** Claude Code's `file_unchanged` stub, verbatim (`src/tools/FileReadTool/prompt.ts:7-8`). */
+const FILE_UNCHANGED_STUB = 'File unchanged since last read. The content from the earlier Read tool_result '
+  + 'in this conversation is still current — refer to that instead of re-reading.';
+
+/** Whether this Read would hand back bytes the model provably still has, so the stub above can stand in for
+ * them (`FileReadTool.ts:522-573`). Same conversation, same file, same range, and the same hash the guard
+ * already computes — nothing here decides authorization, it only chooses what to say.
+ *
+ * A baseline WE authored never qualifies, even once a later Read has re-recorded its range: `ours` marks
+ * bytes that reached the model as a diff, not as file content, and the reference skips its own writes for
+ * the same reason. */
+function readIsDuplicate(sessionId, key, hash, offset, limit) {
+  if (!sessionId) return false;
+  const entry = readState.get(sessionId)?.get(key);
+  return entry !== undefined && entry.ours !== true && entry.hash === hash
+    && entry.offset === offset && entry.limit === limit;
 }
 
 /** Rebuild this session's authorization atomically from the visible transcript. Only successful Read results
@@ -1090,15 +1111,22 @@ export function register(ctx) {
         }
         const endShown = snapshot.selectedEnd;
         const truncated = endShown < total;
+        const sessionId = ctx.currentSessionId?.();
+        const key = statePath(abs);
+        const details = { ...pathMeta(abs), bytes: snapshot.totalBytes, truncated, contentHash: snapshot.contentHash };
+        // Re-reading the same range of a file that has not moved would send a second copy of content the
+        // earlier tool_result still carries. Point at that copy instead — and record the read anyway, so a
+        // stub is worth exactly as much to the guard as the full read it replaces.
+        if (readIsDuplicate(sessionId, key, snapshot.contentHash, start, p.limit)) {
+          recordTextRead(sessionId, key, snapshot.contentHash, start, p.limit);
+          return ok('Read', FILE_UNCHANGED_STUB, details);
+        }
         let text = addLineNumbers(snapshot.content, start + 1);
         if (truncated) {
           text += `\n\n[Showing lines ${start + 1}-${endShown} of ${total}. Use offset=${endShown + 1} to continue.]`;
         }
-        recordTextRead(ctx.currentSessionId?.(), statePath(abs), snapshot.contentHash);
-        return ok('Read', text, {
-          ...pathMeta(abs), bytes: snapshot.totalBytes, truncated,
-          contentHash: snapshot.contentHash,
-        });
+        recordTextRead(sessionId, key, snapshot.contentHash, start, p.limit);
+        return ok('Read', text, details);
       } catch (e) { return fail('Read', safeError(e)); }
     },
   }), { workspaceSafe: true });
