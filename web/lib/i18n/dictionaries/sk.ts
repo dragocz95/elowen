@@ -261,6 +261,7 @@ export const sk = {
     nextPage: 'Ďalšia strana',
     range: '{from}–{to} z {total}',
     pageLabel: 'Strana {page} z {pages}',
+    perPage: 'Na stránku',
   },
   auth: {
     signIn: 'Prihlásiť sa',

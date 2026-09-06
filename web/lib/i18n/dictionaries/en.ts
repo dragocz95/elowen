@@ -281,6 +281,9 @@ export const en = {
     nextPage: 'Next page',
     range: '{from}–{to} of {total}',
     pageLabel: 'Page {page} of {pages}',
+    // The rows-per-page select. It is both the visible label and the accessible name: a bare "25"
+    // standing beside a page count reads as a second page number.
+    perPage: 'Per page',
   },
   auth: {
     signIn: 'Sign in',

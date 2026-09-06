@@ -21,6 +21,7 @@ import { WorkspaceShell } from '../../components/ui/WorkspaceShell';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
 import type { PageFilterField } from '../../components/ui/PageFilters';
 import { Pager } from '../../components/ui/Pager';
+import { usePageSize } from '../../lib/usePageSize';
 import { RegisterSearch } from '../../components/ui/RegisterSearch';
 import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState } from '../../components/ui/ControlSurface';
 import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
@@ -48,7 +49,8 @@ const STATUS_VALUES: readonly StatusFilter[] = ['active', 'archived', 'deleted',
 const LAYOUT_VALUES: readonly Layout[] = ['flat', 'grouped'];
 const SORT_KEYS: readonly SortKey[] = ['updated', 'used', 'importance', 'vitality'];
 const SORT_DIRECTIONS: readonly ('asc' | 'desc')[] = ['asc', 'desc'];
-const PAGE_SIZE = 20;
+/** The register's page size until the reader chooses another one. */
+const DEFAULT_PAGE_SIZE = 25;
 
 /** States one NARROWING toolbar filter as the discriminated union `PageFilters` requires, so a field
  *  that is removing rows always carries both its chip wording and its undo. Written once here because
@@ -99,8 +101,14 @@ export function MemoryView() {
   // Flat (paginated) vs grouped-by-category display of the list; persisted like the tab/status filters.
   const [layout, setLayout] = usePersistentState<Layout>('elowen.memory.layout', 'flat', LAYOUT_VALUES);
   // The page number deliberately does NOT persist: landing on page 7 after a reload is disorienting,
-  // and it is reset on every filter change anyway.
+  // and it is reset on every filter change anyway. How MANY rows a page holds does persist — that is a
+  // preference about the register, not a position inside it.
   const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = usePageSize('memory', DEFAULT_PAGE_SIZE);
+  // Growing the window while standing on page 7 would land the reader somewhere they never asked to be,
+  // and shrinking it can leave the page past the end. The first page is the one answer that is right for
+  // both, and it matches what the range text then says.
+  const changePageSize = (next: number) => { setPageSize(next); setPage(0); };
   const [sortKey, setSortKey] = usePersistentState<SortKey>('elowen.memory.sortKey', 'updated', SORT_KEYS);
   const [sortDirection, setSortDirection] = usePersistentState<'asc' | 'desc'>(
     'elowen.memory.sortDirection', 'desc', SORT_DIRECTIONS,
@@ -165,9 +173,9 @@ export function MemoryView() {
     if (!categories.data || !/^\d+$/.test(categoryFilter)) return;
     if (!categories.data.some((category) => String(category.id) === categoryFilter)) setCategoryFilter('all');
   }, [categories.data, categoryFilter, setCategoryFilter]);
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const clampedPage = Math.min(page, pageCount - 1);
-  const pageItems = useMemo(() => filtered.slice(clampedPage * PAGE_SIZE, clampedPage * PAGE_SIZE + PAGE_SIZE), [filtered, clampedPage]);
+  const pageItems = useMemo(() => filtered.slice(clampedPage * pageSize, clampedPage * pageSize + pageSize), [filtered, clampedPage, pageSize]);
 
   // Grouped view: bucket the page's rows by category in first-appearance order (the page is already sorted
   // by recency), so the uncategorized bucket sits wherever it first shows up. Each section carries its
@@ -501,9 +509,10 @@ export function MemoryView() {
                 {filtered.length > 0 ? (
                   <Pager
                     page={clampedPage}
-                    pageSize={PAGE_SIZE}
+                    pageSize={pageSize}
                     total={filtered.length}
                     onPageChange={setPage}
+                    onPageSizeChange={changePageSize}
                     ariaLabel={t.page.memory}
                   />
                 ) : null}
