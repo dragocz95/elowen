@@ -154,6 +154,23 @@ const waitUntil = async (check: () => boolean, timeoutMs = 5_000) => {
 };
 
 describe('sandbox plugin workspaces', () => {
+  it.each(['SandboxUseWorkspace', 'SandboxReleaseWorkspace'])('refuses %s in an explicitly pinned child without changing bindings', async (name) => {
+    const { registry, projectPath, db } = await setup();
+    db.prepare("INSERT INTO brain_sessions (id, user_id) VALUES ('pinned-child', 1)").run();
+    const assigned = (await runAs(registry, projectPath, 1, 'parent', 'SandboxCreateWorkspace', { projectId: 1, label: 'Assigned', baseRef: 'main' })).details.workspace;
+    const other = (await runAs(registry, projectPath, 1, 'parent', 'SandboxCreateWorkspace', { projectId: 1, label: 'Other', baseRef: 'main' })).details.workspace;
+    await runAs(registry, projectPath, 1, 'parent', 'SandboxUseWorkspace', { workspaceId: assigned.id });
+    const before = db.prepare('SELECT * FROM p_sandbox_session_bindings').all();
+    const result = await runWithPolicy(policy(projectPath),
+      () => tool(registry, name).execute('pinned-operation', name === 'SandboxUseWorkspace' ? { workspaceId: other.id } : {}),
+      { contributionUserId: 1, sessionId: 'pinned-child', workDir: assigned.path,
+        pathView: createWorkspacePathView({ workspaceId: assigned.id, projectId: 1, accountUserId: 1, path: assigned.path }) });
+    expect(result.details.ok).toBe(false);
+    expect(result.details.error.code).toBe('workspace_pinned');
+    expect(result.details).not.toHaveProperty('metadataChanged');
+    expect(db.prepare('SELECT * FROM p_sandbox_session_bindings').all()).toEqual(before);
+  });
+
   it('renders fresh sandbox context from the turn cwd, including inherited children and release', async () => {
     const { registry, projectPath, db } = await setup();
     db.prepare("INSERT INTO brain_sessions (id, user_id) VALUES ('brain-context', 1)").run();
