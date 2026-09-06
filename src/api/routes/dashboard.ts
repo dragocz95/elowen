@@ -120,7 +120,12 @@ export function registerDashboardRoutes(app: ElowenApp, ctx: RouteContext): void
             ...(cfg.pillsEnabled && content.pills.length ? { pills: content.pills } : {}),
             ...(content.summary ? { summary: content.summary } : {}),
             ...(content.suggestions.length ? { suggestions: content.suggestions } : {}),
-            ...(content.recaps.length ? { recaps: content.recaps } : {}),
+            ...(content.recaps.length ? { recaps: content.recaps.map((variant) => ({
+              ...(cfg.greetingEnabled ? { greeting: variant.greeting, ask: variant.ask } : {}),
+              ...(cfg.pillsEnabled ? { pills: variant.pills } : {}),
+              summary: variant.summary,
+              suggestions: variant.suggestions,
+            })) } : {}),
           }
         : { status: pending ? 'generating' : 'unavailable' };
     }

@@ -13,6 +13,7 @@ import { useTranslation } from '../../lib/i18n';
 import { useBrand } from '../../lib/brand';
 import { useDashRecap, useMe, usePulse, useSystemReadiness } from '../../lib/queries';
 import { RecapStrip } from './RecapStrip';
+import { useRecapRotation } from './useRecapRotation';
 import { formatCost, formatTokens } from '../../lib/format';
 import { usePresence } from './usePresence';
 import type { DashRecap } from '../../lib/types';
@@ -80,7 +81,8 @@ export function DashboardView({ recapSeed = null }: { recapSeed?: DashRecap | nu
   // static time-of-day line and the agent-written pills replace the static quick actions — each with
   // the static content as its fallback, so a missing/erroring recap leaves today's page untouched.
   const recap = useDashRecap(recapSeed).data;
-  const digest = recap?.digest?.status === 'ready' ? recap.digest : undefined;
+  const rotation = useRecapRotation(recap);
+  const digest = rotation.current;
   const agentGreeting = digest?.greeting?.trim() || null;
   // Written by the agent so it lands in the user's own language and register — the dictionary's line is
   // the fallback, and it follows the INTERFACE locale, which is not necessarily what the user writes in.
@@ -148,7 +150,7 @@ export function DashboardView({ recapSeed = null }: { recapSeed?: DashRecap | nu
       {/* `dash-hero` adds nothing to the layout — it is the hook the accent atmosphere hangs off
           (app/styles/components/dash-bento.css), drawn as a pseudo-element behind the greeting so the
           light bleeds past the section's own box without the section gaining a background. */}
-      <section aria-labelledby="dash-greeting" className="dash-hero mx-auto w-full max-w-3xl px-4 pt-10 text-center sm:px-0 sm:pt-[clamp(3.5rem,13dvh,9rem)]">
+      <section aria-labelledby="dash-greeting" {...rotation.interactionProps} className="dash-hero mx-auto w-full max-w-3xl px-4 pt-10 text-center sm:px-0 sm:pt-[clamp(3.5rem,13dvh,9rem)]">
         <MotionReveal>
           {/* The ember period is the page's signature and is drawn HERE, never by the model — the
               agent-written greeting arrives with trailing punctuation already stripped. */}
@@ -183,7 +185,7 @@ export function DashboardView({ recapSeed = null }: { recapSeed?: DashRecap | nu
         </MotionReveal>
 
         <MotionReveal delay={0.2}>
-          <RecapStrip recap={recap} />
+          <RecapStrip recap={recap} rotation={rotation} />
         </MotionReveal>
 
         <MotionReveal delay={0.28}>

@@ -37,10 +37,15 @@ interface DashboardConfig {
 /** One agent-written clickable action (a quick-action pill or a recap suggestion). */
 interface DashAction { label: string; prompt: string }
 
-/** One telling of yesterday in the recap strip's rotation. All variants of a day come from the SAME
- *  stored generation; a daemon older than the batch serves none and the strip derives its single
- *  variant from the digest's own summary/suggestions. */
-export interface DashRecapVariant { summary?: string; suggestions?: DashAction[] }
+/** One complete personalized dashboard in the rotation. Earlier saved batches omit per-variant hero
+ *  fields; those inherit the top-level greeting/question/pills without a paid regeneration. */
+export interface DashRecapVariant {
+  greeting?: string;
+  ask?: string;
+  pills?: DashAction[];
+  summary?: string;
+  suggestions?: DashAction[];
+}
 
 /** GET /dash/recap — the personalized dashboard surface, strictly per-caller. */
 export interface DashRecap {

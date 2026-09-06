@@ -8,6 +8,18 @@ const DAY = '2026-08-31';
 function store() { return new DashDigestStore(openDb(':memory:')); }
 
 describe('sanitizePayload', () => {
+  it('stores the entire personalized dashboard per variant and mirrors the first one', () => {
+    const recaps = [1, 2].map((n) => ({
+      greeting: `Greeting ${n}`, ask: `Question ${n}?`,
+      pills: [{ label: `Action ${n}`, prompt: `Run ${n}` }],
+      summary: `Summary ${n}`, suggestions: [{ label: `Next ${n}`, prompt: `Continue ${n}` }],
+    }));
+    const payload = sanitizePayload({ greeting: 'Old greeting', recaps });
+    expect(payload.recaps).toEqual(recaps);
+    expect(payload).toMatchObject(recaps[0]!);
+    expect(sanitizePayload(payload)).toEqual(payload);
+  });
+
   it('clamps every field and strips the greeting punctuation the UI draws itself', () => {
     const p = sanitizePayload({
       greeting: '  Čau Filipe!  ',
@@ -40,7 +52,7 @@ describe('sanitizePayload', () => {
     }));
     const p = sanitizePayload({ greeting: 'Čau', recaps: variants });
     expect(p.recaps.length).toBe(10);
-    expect(p.recaps[0]).toEqual(variants[0]);
+    expect(p.recaps[0]).toEqual({ greeting: 'Čau', ask: '', pills: [], ...variants[0] });
     // The legacy one-variant readers (the route filter, older web builds) keep working untouched.
     expect(p.summary).toBe('Varianta 1');
     expect(p.suggestions).toEqual([{ label: 'Štítek 1', prompt: 'Výzva 1' }]);
@@ -58,15 +70,15 @@ describe('sanitizePayload', () => {
       ],
     });
     expect(p.recaps).toEqual([
-      { summary: 'Skutečná práce', suggestions: [{ label: 'A', prompt: 'a' }] },
-      { summary: '', suggestions: [{ label: 'Jen krok', prompt: 'b' }] },
-      { summary: 'a'.repeat(400), suggestions: [{ label: 'b'.repeat(40), prompt: 'p'.repeat(500) }] },
+      { greeting: '', ask: '', pills: [], summary: 'Skutečná práce', suggestions: [{ label: 'A', prompt: 'a' }] },
+      { greeting: '', ask: '', pills: [], summary: '', suggestions: [{ label: 'Jen krok', prompt: 'b' }] },
+      { greeting: '', ask: '', pills: [], summary: 'a'.repeat(400), suggestions: [{ label: 'b'.repeat(40), prompt: 'p'.repeat(500) }] },
     ]);
   });
 
   it('derives one recap variant from a legacy payload that has no recaps field at all', () => {
     const p = sanitizePayload({ greeting: 'Čau', summary: 'Včera **dashboard**.', suggestions: [{ label: 'Test', prompt: 'Dokonči' }] });
-    expect(p.recaps).toEqual([{ summary: 'Včera **dashboard**.', suggestions: [{ label: 'Test', prompt: 'Dokonči' }] }]);
+    expect(p.recaps).toEqual([{ greeting: 'Čau', ask: '', pills: [], summary: 'Včera **dashboard**.', suggestions: [{ label: 'Test', prompt: 'Dokonči' }] }]);
     // Legacy fields survive verbatim so an old web build keeps rendering the same sentence.
     expect(p.summary).toBe('Včera **dashboard**.');
     expect(p.suggestions).toEqual([{ label: 'Test', prompt: 'Dokonči' }]);

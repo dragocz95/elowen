@@ -121,7 +121,23 @@ describe('GET /dash/recap', () => {
     expect(third.digest?.greeting).toBe('Čau Filipe');
     expect(third.digest?.ask).toBe('Na čem dneska začneme?');
     expect(third.digest?.pills).toEqual([{ label: 'Deploy', prompt: 'Nasaď recap pás' }]);
+    expect(third.digest?.recaps?.[1]).toMatchObject({
+      greeting: 'Čau Filipe', ask: 'Na čem dneska začneme?',
+      pills: [{ label: 'Deploy', prompt: 'Nasaď recap pás' }],
+    });
     expect(calls()).toBe(1);
+  });
+
+  it('preserves explicitly empty hero fields without borrowing the first variant', async () => {
+    const { app, config, adminTok } = setup({ reply: JSON.stringify({ recaps: [
+      { greeting: 'First greeting', ask: 'First question?', pills: [{ label: 'First action', prompt: 'First prompt' }], summary: 'First summary', suggestions: [] },
+      { greeting: '', ask: '', pills: [], summary: 'Second summary', suggestions: [] },
+    ] }) });
+    config.update({ dashboard: { greetingEnabled: true, pillsEnabled: true } });
+    await getRecap(app, adminTok);
+    await settle();
+    const result = await getRecap(app, adminTok);
+    expect(result.digest?.recaps?.[1]).toEqual({ greeting: '', ask: '', pills: [], summary: 'Second summary', suggestions: [] });
   });
 
   it('refreshes within the day only once the configured window elapsed, still serving the old digest', async () => {

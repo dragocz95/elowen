@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { act, fireEvent, render, screen, cleanup } from '@testing-library/react';
 import { RecapStrip } from '../../../modules/dashboard/RecapStrip';
+import { useRecapRotation } from '../../../modules/dashboard/useRecapRotation';
 import { createWrapper } from '../../test-utils';
 import { consumePendingBrainComposer, consumePendingBrainSession } from '../../../lib/brainDock';
 import { en } from '../../../lib/i18n/dictionaries/en';
@@ -20,9 +21,16 @@ const READY: DashRecap = {
   },
 };
 
+function RotationHost({ recap }: { recap: DashRecap | undefined }) {
+  const rotation = useRecapRotation(recap);
+  return <div {...rotation.interactionProps}><RecapStrip recap={recap} rotation={rotation} /></div>;
+}
+
 function draw(recap: DashRecap | undefined) {
   const { wrapper: Wrapper } = createWrapper();
-  return render(<Wrapper><RecapStrip recap={recap} /></Wrapper>);
+  const view = render(<Wrapper><RotationHost recap={recap} /></Wrapper>);
+  // Assert the strip's content, not the test host that now owns the shared interaction boundary.
+  return { ...view, container: view.container.firstElementChild as HTMLElement };
 }
 
 describe('RecapStrip', () => {

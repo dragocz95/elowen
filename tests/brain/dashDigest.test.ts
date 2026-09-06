@@ -31,7 +31,8 @@ describe('buildDigestPrompt', () => {
 
   it('asks for a batch of recap variants in the SAME single JSON reply', () => {
     const p = buildDigestPrompt(INPUT);
-    expect(p).toContain('"recaps": [{"summary": string, "suggestions": [{"label": string, "prompt": string}]}]');
+    expect(p).toContain('"recaps": [{"greeting": string, "ask": string, "pills": [{"label": string, "prompt": string}], "summary": string, "suggestions": [{"label": string, "prompt": string}]}]');
+    expect(p).toContain('Vary the headline, question and quick actions too');
     expect(p).toMatch(/EXACTLY 5 recap variants/);
     // The variants must rotate around the same real activity — never invented filler to fill the batch.
     expect(p).toMatch(/same real (activity|threads)/i);
@@ -83,7 +84,7 @@ describe('shapeDigestPayload', () => {
 
   it('accepts a legacy-shaped reply without recaps and still yields one variant', () => {
     const p = shapeDigestPayload({ summary: 'Včera **dashboard**.', suggestions: [{ label: 'Test', prompt: 'Dokonči test' }] });
-    expect(p.recaps).toEqual([{ summary: 'Včera **dashboard**.', suggestions: [{ label: 'Test', prompt: 'Dokonči test' }] }]);
+    expect(p.recaps).toEqual([{ greeting: '', ask: '', pills: [], summary: 'Včera **dashboard**.', suggestions: [{ label: 'Test', prompt: 'Dokonči test' }] }]);
   });
 });
 
@@ -99,6 +100,24 @@ describe('DashDigestGenerator.run', () => {
     return { store, gen: new DashDigestGenerator({ store, inference: () => client }) };
   }
 
+  it('persists distinct complete variants from a single model response', async () => {
+    const recaps = [1, 2].map((n) => ({
+      greeting: `**Greeting** ${n}!`, ask: `**Question** ${n}?`,
+      pills: [{ label: `**Action** ${n}`, prompt: `Run ${n}` }],
+      summary: `Summary **${n}**`, suggestions: [{ label: `**Next** ${n}`, prompt: `Continue ${n}` }],
+    }));
+    const { store, gen } = claimed(JSON.stringify({ recaps }));
+    await gen.run(7, day, INPUT);
+    const payload = store.get(7, day)!.payload;
+    expect(payload.recaps).toEqual([1, 2].map((n) => ({
+      greeting: `Greeting ${n}`, ask: `Question ${n}?`,
+      pills: [{ label: `Action ${n}`, prompt: `Run ${n}` }],
+      summary: `Summary **${n}**`, suggestions: [{ label: `Next ${n}`, prompt: `Continue ${n}` }],
+    })));
+    expect(payload.greeting).toBe('Greeting 1');
+    expect(payload.pills).toEqual(payload.recaps[0]!.pills);
+  });
+
   it('persists a valid reply as today\'s ready payload', async () => {
     const { store, gen } = claimed(JSON.stringify({
       greeting: 'Čau Filipe!', pills: [{ label: 'Deploy', prompt: 'Nasaď' }],
@@ -113,8 +132,8 @@ describe('DashDigestGenerator.run', () => {
     expect(row?.payload.greeting).toBe('Čau Filipe');
     expect(row?.payload.pills).toEqual([{ label: 'Deploy', prompt: 'Nasaď' }]);
     expect(row?.payload.recaps).toEqual([
-      { summary: 'Včera **dashboard**.', suggestions: [{ label: 'Test', prompt: 'Dokonči test' }] },
-      { summary: 'Včera ceny.', suggestions: [{ label: 'Ceník', prompt: 'Otevři ceník' }] },
+      { greeting: 'Čau Filipe', ask: '', pills: [{ label: 'Deploy', prompt: 'Nasaď' }], summary: 'Včera **dashboard**.', suggestions: [{ label: 'Test', prompt: 'Dokonči test' }] },
+      { greeting: 'Čau Filipe', ask: '', pills: [{ label: 'Deploy', prompt: 'Nasaď' }], summary: 'Včera ceny.', suggestions: [{ label: 'Ceník', prompt: 'Otevři ceník' }] },
     ]);
   });
 
