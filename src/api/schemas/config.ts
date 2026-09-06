@@ -162,6 +162,7 @@ export const configPatchSchema = z.object({
     pillsEnabled: z.boolean().optional(),
     continueEnabled: z.boolean().optional(),
     digestPerDay: z.number().int().min(1).max(24).optional(),
+    digestVariants: z.number().int().min(1).max(10).optional(),
     digest: z.object({
       providerId: z.string().optional(),
       model: z.string().optional(),

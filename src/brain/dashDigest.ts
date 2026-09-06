@@ -30,14 +30,18 @@ export interface DigestInput {
 const MESSAGE_CHARS = 200;
 const MEMORY_CHARS = 200;
 
-/** How many recap variants one generation writes. Filip asked for ~5-10; 5 fills the rotation with
- *  distinct tellings of the same day without asking the cheap model for a longer reply than it writes
- *  well. A plain constant, not a setting — the dashboard has no knob for this on purpose. */
-export const DIGEST_RECAP_VARIANTS = 5;
+/** How many recap variants one generation writes when the operator has not chosen a count. Filip
+ *  asked for ~5-10; 5 fills the rotation with distinct tellings of the same day without asking the
+ *  cheap model for a longer reply than it writes well. */
+const DIGEST_RECAP_VARIANTS = 5;
 
 /** Build the instruction prompt. English instructions with a hard same-language rule, like the
- *  conversation titler: a Czech user gets a Czech dashboard without anyone configuring a locale. */
-export function buildDigestPrompt(input: DigestInput): string {
+ *  conversation titler: a Czech user gets a Czech dashboard without anyone configuring a locale.
+ *  `recapVariants` is the admin's batch size (Settings → Recap); the store's cap bounds what arrives
+ *  even if the caller skips clamping. */
+export function buildDigestPrompt(input: DigestInput, recapVariants: number = DIGEST_RECAP_VARIANTS): string {
+  const variantCount = Math.min(10, Math.max(1, Math.round(recapVariants) || DIGEST_RECAP_VARIANTS));
+  const variantWord = variantCount === 1 ? 'variant' : 'variants';
   const lines: string[] = [
     `You are ${input.agentName}, the personal AI assistant behind this workspace. You are writing`,
     `today's personalized dashboard for ${input.userName}: the greeting headline, the standing question`,
@@ -68,7 +72,7 @@ export function buildDigestPrompt(input: DigestInput): string {
     '  that clicking the button types into the chat, phrased as the user would ask it. Cover DIFFERENT',
     '  intents — continue unfinished work, check the status of something, review or summarize, start',
     '  the next piece — never several buttons that all orbit one topic.',
-    `- "recaps": EXACTLY ${DIGEST_RECAP_VARIANTS} recap variants of yesterday, one JSON object each. The dashboard`,
+    `- "recaps": EXACTLY ${variantCount} recap ${variantWord} of yesterday, one JSON object each. The dashboard`,
     '  rotates between them, so they must all be the same KIND of text: "summary" is 1-2 sentences',
     '  telling the user what they worked on yesterday, addressed to them, and you may wrap 1-3 key',
     '  phrases in **bold**; "suggestions" is up to 3 concrete next steps continuing yesterday\'s',
@@ -144,6 +148,10 @@ export class DashDigestGenerator {
     store: DashDigestStore;
     inference: () => InferenceClient | null;
     logger?: Logger;
+    /** The admin's recap-variant batch size (Settings → Recap); omitted = the 5-variant default.
+     *  Read once per run, so a saved change lands at the NEXT regular generation — never as an
+     *  immediate paid re-run. */
+    recapVariants?: number;
   }) {}
 
   /** Run generation for a row already claimed via store.beginGeneration. */
@@ -151,7 +159,7 @@ export class DashDigestGenerator {
     const inf = this.deps.inference();
     if (!inf) { this.deps.store.fail(userId, day); return; }
     try {
-      const { text } = await inf.decide(buildDigestPrompt(input));
+      const { text } = await inf.decide(buildDigestPrompt(input, this.deps.recapVariants));
       const parsed = parseDigestReply(text);
       if (!parsed) {
         this.deps.logger?.warn?.('dash digest reply was not JSON', { userId, model: inf.model });

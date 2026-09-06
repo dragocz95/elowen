@@ -98,6 +98,9 @@ export function registerDashboardRoutes(app: ElowenApp, ctx: RouteContext): void
             store: d.dashDigests,
             inference: () => d.dashDigestInference?.() ?? null,
             logger: ctx.log,
+            // The saved batch size rides with THIS run; the refresh windows above stay the only thing
+            // that starts one, so changing the count here costs nothing until the next regular turn.
+            recapVariants: cfg.digestVariants,
           });
           void generator.run(userId, today, digestInput(userId, yesterday, today));
         }

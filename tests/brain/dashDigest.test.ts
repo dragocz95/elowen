@@ -36,6 +36,12 @@ describe('buildDigestPrompt', () => {
     // The variants must rotate around the same real activity — never invented filler to fill the batch.
     expect(p).toMatch(/same real (activity|threads)/i);
   });
+
+  it('writes exactly the configured variant count, 5 by default', () => {
+    expect(buildDigestPrompt(INPUT, 3)).toMatch(/EXACTLY 3 recap variants/);
+    expect(buildDigestPrompt(INPUT, 10)).toMatch(/EXACTLY 10 recap variants/);
+    expect(buildDigestPrompt(INPUT, 1)).toMatch(/EXACTLY 1 recap variant\b/);
+  });
 });
 
 describe('parseDigestReply', () => {
@@ -124,5 +130,22 @@ describe('DashDigestGenerator.run', () => {
     const { store, gen } = claimed(null);
     await gen.run(7, day, INPUT);
     expect(store.get(7, day)?.status).toBe('failed');
+  });
+
+  it('hands the configured variant count to the ONE prompt it sends', async () => {
+    const store = new DashDigestStore(openDb(':memory:'));
+    store.beginGeneration(7, day, { retryAfterMs: 1, staleAfterMs: 1, maxAttempts: 3 });
+    const prompts: string[] = [];
+    const client = {
+      model: 'test-model',
+      decide: (prompt: string) => {
+        prompts.push(prompt);
+        return Promise.resolve({ text: JSON.stringify({ recaps: [{ summary: 'Včera ceny.', suggestions: [] }] }) });
+      },
+    };
+    const gen = new DashDigestGenerator({ store, inference: () => client, recapVariants: 3 });
+    await gen.run(7, day, INPUT);
+    expect(prompts).toHaveLength(1); // one batch = one inference call, whatever the count
+    expect(prompts[0]).toMatch(/EXACTLY 3 recap variants/);
   });
 });

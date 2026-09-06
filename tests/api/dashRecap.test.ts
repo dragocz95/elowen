@@ -36,9 +36,10 @@ function setup(opts: { reply?: string; sessions?: boolean } = {}) {
   const config = new ConfigStore(db);
   const dashDigests = new DashDigestStore(db);
   let calls = 0;
+  const prompts: string[] = [];
   const inference = {
     model: 'test-model',
-    decide: () => { calls += 1; return Promise.resolve({ text: opts.reply ?? REPLY }); },
+    decide: (prompt: string) => { calls += 1; prompts.push(prompt); return Promise.resolve({ text: opts.reply ?? REPLY }); },
   };
   // The admin has a yesterday (one conversation + usage); bob has nothing at all.
   const sessions = opts.sessions === false ? [] : [
@@ -61,7 +62,7 @@ function setup(opts: { reply?: string; sessions?: boolean } = {}) {
     dashDigests, dashDigestInference: () => inference,
   });
   return {
-    app, config, dashDigests, users, calls: () => calls, db,
+    app, config, dashDigests, users, calls: () => calls, prompts: () => prompts, db,
     adminTok: users.issueToken(admin.id), bobTok: users.issueToken(bob.id), adminId: admin.id,
   };
 }
@@ -186,6 +187,37 @@ describe('GET /dash/recap', () => {
     const r = await getRecap(app, adminTok);
     expect(r.continue).toEqual([]);
     expect(r.yesterday?.turns).toBe(14);
+  });
+
+  it('asks the model for 5 recap variants by default, and for the saved count once configured', async () => {
+    const { app, adminTok, prompts } = setup();
+    await getRecap(app, adminTok);
+    await settle();
+    expect(prompts()[0]).toMatch(/EXACTLY 5 recap variants/);
+
+    // The saved count reaches the generator at the NEXT regular generation — no immediate paid run:
+    // a fresh digest inside its window still costs nothing, whatever the setting says.
+    expect((await getRecap(app, adminTok)).digest?.status).toBe('ready');
+    expect(prompts().length).toBe(1);
+
+    const { app: app2, adminTok: tok2, prompts: prompts2, config } = setup();
+    config.update({ dashboard: { digestVariants: 3 } });
+    await getRecap(app2, tok2);
+    await settle();
+    expect(prompts2()[0]).toMatch(/EXACTLY 3 recap variants/);
+    // Per-BATCH, never the per-day frequency: digestPerDay is untouched by this field.
+    expect(config.get().dashboard.digestPerDay).toBe(1);
+  });
+
+  it('clamps the stored variant count into 1–10 and keeps it distinct from digestPerDay', () => {
+    const { config } = setup();
+    expect(config.get().dashboard.digestVariants).toBe(5);
+    expect(config.update({ dashboard: { digestVariants: 99 } }).dashboard.digestVariants).toBe(10);
+    expect(config.update({ dashboard: { digestVariants: 0 } }).dashboard.digestVariants).toBe(1);
+    expect(config.update({ dashboard: { digestVariants: 2.6 } }).dashboard.digestVariants).toBe(3);
+    // A sibling patch without the field preserves it, exactly like every other dashboard field.
+    expect(config.update({ dashboard: { digestPerDay: 4 } }).dashboard.digestVariants).toBe(3);
+    expect(config.get().dashboard.digestPerDay).toBe(4);
   });
 
   it('serves a legacy one-variant row as recaps of one, with no migration and no new inference', async () => {
