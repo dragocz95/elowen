@@ -96,6 +96,16 @@ describe('destructiveWarningId — the informational pattern table', () => {
     for (const input of inputs) destructiveWarningId([input]);
     expect(Date.now() - started).toBeLessThan(100);
   });
+
+  it('scans a bounded NUMBER of candidates, so a segment-heavy command cannot multiply the table', () => {
+    // Every simple command contributes a canonical candidate, so the count is as attacker-controlled as
+    // the length. The first candidate is the raw command, which is what the chain anchors need.
+    const many = ['rm -rf /srv; '.concat('echo a; '.repeat(5_000)), ...Array.from({ length: 5_000 }, () => 'echo a')];
+    const started = Date.now();
+    expect(destructiveWarningId(many)).toBe('rmRecursiveForce'); // found in the raw command, not by scanning all 5000
+    expect(destructiveWarningId([...Array.from({ length: 5_000 }, () => 'echo a'), 'rm -rf /srv'])).toBeNull();
+    expect(Date.now() - started).toBeLessThan(100);
+  });
 });
 
 describe('destructive warning i18n', () => {
@@ -108,6 +118,13 @@ describe('destructive warning i18n', () => {
     }
     // The sentence the note is interpolated into must exist in all three too.
     for (const dict of [en, cs, sk]) expect(dict.brainChat.approvalWarningNote).toContain('{note}');
+  });
+
+  it('says the same thing in the CLI and in the web, word for word', () => {
+    // The daemon appends DESTRUCTIVE_WARNING_NOTES to the question the CLI prints verbatim, while the web
+    // renders the id through its own dictionary. Two English wordings for one id would mean the same
+    // approval prompt reads differently depending on where the human happens to be standing.
+    expect(en.brainChat.approvalWarnings).toEqual(DESTRUCTIVE_WARNING_NOTES);
   });
 });
 

@@ -110,6 +110,12 @@ export const DESTRUCTIVE_WARNING_NOTES: Record<DestructiveWarningId, string> = {
  *  and the operator is shown the first 200 characters of it anyway. */
 const MAX_SCANNED_CHARS = 2_000;
 
+/** How many candidates are scanned at all. `MAX_SCANNED_CHARS` bounds one candidate, this bounds their
+ *  NUMBER: the canonical form of every simple command is a candidate, so a thousand-segment one-liner
+ *  would otherwise multiply the whole table by a thousand on the event loop. The first candidate is the
+ *  raw command, which alone catches the chained shapes the anchors are written for. */
+const MAX_SCANNED_CANDIDATES = 64;
+
 /** The id of the first destructive shape any candidate matches, or null. Table order decides — the more
  *  specific tier of a family is tried against every candidate before the milder one.
  *
@@ -119,7 +125,8 @@ const MAX_SCANNED_CHARS = 2_000;
  *  are recognised as the `rm -rf` they are. The canonicalisation is the permission gate's own, not a
  *  second table of shell wrappers. */
 export function destructiveWarningId(candidates: readonly string[]): DestructiveWarningId | null {
-  const scanned = candidates.map((c) => (c.length > MAX_SCANNED_CHARS ? c.slice(0, MAX_SCANNED_CHARS) : c));
+  const scanned = candidates.slice(0, MAX_SCANNED_CANDIDATES)
+    .map((c) => (c.length > MAX_SCANNED_CHARS ? c.slice(0, MAX_SCANNED_CHARS) : c));
   for (const { id, pattern } of DESTRUCTIVE_PATTERNS) {
     if (scanned.some((candidate) => pattern.test(candidate))) return id;
   }

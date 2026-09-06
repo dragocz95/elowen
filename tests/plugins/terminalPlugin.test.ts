@@ -17,7 +17,7 @@ const log = { info() {}, warn() {}, error() {} };
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const userPolicy = (roots: string[]): Policy => ({ allowedProjectIds: new Set([1]), allowedPaths: () => roots });
 const adminPolicy: Policy = { allowedProjectIds: 'all', allowedPaths: () => [] };
-const owner: TurnIdentity = { platform: 'elowen', userId: '1', admin: true, owner: true };
+const owner: TurnIdentity = { platform: 'elowen', userId: '1', admin: true, owner: true, conversation: 'own' };
 const terminalModule = await import(resolve(repoRoot, 'plugins/terminal/index.mjs')) as {
   mapReportedCwd(reported: string, prepared: { workspace?: { path: string } | null }, assertAllowed: (path: string) => string, workspacePathView?: boolean): string;
 };
@@ -866,7 +866,7 @@ describe('terminal plugin — foreground detach (Ctrl+B backgrounds a running co
   let dir: string;
   // A real operator identity carries elowenUserId; the plugin captures principal `elowen:<id>` at spawn,
   // which is what the daemon's detach control matches on.
-  const uidOwner: TurnIdentity = { platform: 'elowen', userId: '1', admin: true, owner: true, elowenUserId: 1 };
+  const uidOwner: TurnIdentity = { platform: 'elowen', userId: '1', admin: true, owner: true, elowenUserId: 1, conversation: 'own' };
   beforeAll(async () => {
     reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log });
     dir = tmpDir('term-detach');
@@ -1041,7 +1041,7 @@ describe('terminal plugin — foreground detach (Ctrl+B backgrounds a running co
 describe('terminal plugin — foreground kill (stop escalation)', () => {
   let reg: PluginRegistry;
   let dir: string;
-  const uidOwner: TurnIdentity = { platform: 'elowen', userId: '1', admin: true, owner: true, elowenUserId: 1 };
+  const uidOwner: TurnIdentity = { platform: 'elowen', userId: '1', admin: true, owner: true, elowenUserId: 1, conversation: 'own' };
   beforeAll(async () => {
     reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log });
     dir = tmpDir('term-kill');
@@ -1198,22 +1198,39 @@ describe('terminal plugin — ProcessOutput(block)', () => {
 describe('terminal plugin — blocking budget and sleep polling', () => {
   let reg: PluginRegistry;
   let dir: string;
-  const uidOwner: TurnIdentity = { platform: 'elowen', userId: '1', admin: true, owner: true, elowenUserId: 1 };
+  const uidOwner: TurnIdentity = { platform: 'elowen', userId: '1', admin: true, owner: true, elowenUserId: 1, conversation: 'own' };
   beforeAll(async () => {
     reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['terminal'], logger: log });
     dir = tmpDir('term-budget');
   });
+  // A sub-agent or workflow node: a turn with no conversation of its own, whose caller sees only the
+  // final answer and can never be handed a process id to read later.
+  const delegated: TurnIdentity = { platform: 'subagent', userId: 'subagent', admin: true, owner: true, conversation: 'delegated' };
   const inSession = (sessionId: string, name: string, params: Record<string, unknown>) =>
     runWithPolicy(userPolicy([dir]), () => runTool(reg, name, params), { identity: uidOwner, sessionId });
+  const inDelegatedSession = (sessionId: string, name: string, params: Record<string, unknown>) =>
+    runWithPolicy(userPolicy([dir]), () => runTool(reg, name, params), { identity: delegated, sessionId, contributionUserId: 1 });
   const approvedInSession = (sessionId: string, name: string, params: Record<string, unknown>) =>
     runWithPolicy(userPolicy([dir]), () => runWithApprovedCall(() => runTool(reg, name, params)), { identity: uidOwner, sessionId });
 
-  it('refuses a leading `sleep N` in the foreground and names the blocking read instead', async () => {
-    const marker = join(dir, 'sleep-marker');
-    const res = await inSession('brain-sleep-block', 'Bash', { command: `sleep 5; touch ${JSON.stringify(marker)}` });
-    expect(res.content[0].text).toMatch(/refused a leading sleep of 5s/);
+  it('refuses a bare `sleep N` in the foreground and names the blocking read instead', async () => {
+    const res = await inSession('brain-sleep-block', 'Bash', { command: 'sleep 30' });
+    expect(res.content[0].text).toMatch(/refused a bare sleep of 30s/);
     expect(res.content[0].text).toContain('ProcessOutput(id, block=true)');
-    expect(existsSync(marker)).toBe(false); // refused BEFORE anything was spawned
+    expect(processRegistry.listForSession('brain-sleep-block')).toHaveLength(0); // refused BEFORE anything was spawned
+  }, 20_000);
+
+  // The command that waits and then READS is the polling idiom this codebase itself documents for a long
+  // run started as a transient unit. It ends the turn with output, so refusing it taught nothing and cost
+  // the agent its result.
+  it('allows a sleep that is followed by the command it is waiting for', async () => {
+    const marker = join(dir, 'sleep-then-read');
+    writeFileSync(marker, 'build finished\n');
+    const res = await inSession('brain-sleep-then-read', 'Bash', {
+      command: `sleep 2; cat ${JSON.stringify(marker)}`,
+    });
+    expect(res.content[0].text).not.toMatch(/refused a bare sleep/);
+    expect(res.content[0].text).toContain('build finished');
   }, 20_000);
 
   it('judges the DURATION, not the spelling, so the honest form is not the only one refused', async () => {
@@ -1221,7 +1238,7 @@ describe('terminal plugin — blocking budget and sleep polling', () => {
     // exists to teach, so every resolvable spelling of "wait two seconds or more" is refused alike.
     for (const command of ['sleep 5m', 'sleep 2.0', 'sleep 1h', '/bin/sleep 30']) {
       const res = await inSession('brain-sleep-units', 'Bash', { command });
-      expect(res.content[0].text, command).toMatch(/refused a leading sleep/);
+      expect(res.content[0].text, command).toMatch(/refused a bare sleep/);
     }
   }, 20_000);
 
@@ -1236,8 +1253,8 @@ describe('terminal plugin — blocking budget and sleep polling', () => {
     expect((await inSession(session, 'Bash', { command: 'WAIT=1; sleep $WAIT; echo variable' })).content[0].text).toContain('variable');
     // The readiness-wait shape the refusal message itself recommends has to be allowed.
     expect((await inSession(session, 'Bash', { command: 'until [ -e /nonexistent ]; do sleep 1; done', timeout: 1_000 })).content[0].text)
-      .not.toMatch(/refused a leading sleep/);
-    // Not the FIRST command: part of somebody's script, not a poll before it.
+      .not.toMatch(/refused a bare sleep/);
+    // Not the only command: part of somebody's script, not a turn spent on nothing.
     expect((await inSession(session, 'Bash', { command: 'echo first; sleep 5' , timeout: 1_000 })).content[0].text).toContain('first');
     // Backgrounded: it blocks no turn, and it is a legitimate way to hold a process slot.
     expect((await inSession(session, 'Bash', { command: 'sleep 20', run_in_background: true })).content[0].text)
@@ -1297,14 +1314,18 @@ describe('terminal plugin — blocking budget and sleep polling', () => {
   // The one test that has to spend real wall-clock time: the budget is 30 s by construction (above the
   // 20 s default timeout), and there is deliberately no knob to shorten it. Both halves run concurrently
   // so the file pays for one budget, not two.
-  it('moves an over-budget run to the background, but never one the user approved', async () => {
+  it('moves an over-budget run to the background, but never one the user approved or a delegated one', async () => {
     const moved = 'brain-budget-moved';
     const held = 'brain-budget-held';
+    const child = 'brain-budget-delegated';
     // Prints immediately, then again well after the budget. Its 45 s deadline is what arms the budget.
     const chatty = `node -e "console.log('early'); setTimeout(() => console.log('late'), 34000)"`;
     const movedRun = inSession(moved, 'Bash', { command: chatty, timeout: 45_000 });
     // Same shape, but approved at an ask prompt: it must stay in the foreground and die at its deadline.
     const heldRun = approvedInSession(held, 'Bash', { command: idle(60), timeout: 33_000 });
+    // Same shape again, from a sub-agent or workflow node. Its caller reads the final answer and nothing
+    // else, so a process id in place of the test output is the result thrown away.
+    const childRun = inDelegatedSession(child, 'Bash', { command: chatty, timeout: 45_000 });
 
     const movedRes = await movedRun;
     const text = movedRes.content[0].text;
@@ -1327,5 +1348,12 @@ describe('terminal plugin — blocking budget and sleep polling', () => {
     expect(heldText).not.toContain('Moved to background');
     expect(heldText).toContain('[killed: timed out after 33s; a command you approved is never moved to the background on its own]');
     expect(processRegistry.listForSession(held)).toHaveLength(0);
+
+    // The delegated run stayed in the foreground and came back with what it was waiting for.
+    const childText = (await childRun).content[0].text;
+    expect(childText).not.toContain('Moved to background');
+    expect(childText).toContain('late');
+    expect(childText).toContain('[exit 0]');
+    expect(processRegistry.listForSession(child)).toHaveLength(0);
   }, 120_000);
 });

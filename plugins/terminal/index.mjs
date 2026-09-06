@@ -34,6 +34,13 @@ const MAX_BLOCK_S = 120;
 // `timeout` > 30 s gets its process preserved rather than killed. Anything at or under the default would
 // have quietly turned every slightly-slow command's RESULT into a process id.
 const AUTO_BACKGROUND_BUDGET_MS = 30_000;
+// …and WHERE that trade makes sense. Handing back a process id instead of the result only helps someone
+// who can ask for the rest: a person in their own chat, who sees the process card and can read the run
+// later. A delegated turn — a sub-agent or a workflow node — reports one final answer to its parent and is
+// never asked a follow-up, so turning its `vitest` or build call into a process id throws the output away.
+// A shared room is excluded for the same reason its process card is (see emitProcCard): the run belongs to
+// one writer among several, so it keeps the plain deadline it had before this budget existed.
+const AUTO_BACKGROUND_CONVERSATIONS = new Set(['own', 'direct']);
 // Below this a `sleep` is pacing (rate limiting, a deliberate beat), at or above it it is a poll. Same
 // threshold as the reference, which blocks the same shape.
 const MIN_BLOCKED_SLEEP_S = 2;
@@ -268,20 +275,24 @@ const isBlockingSelfRestart = (command) => allShellCommandWords(command).some((w
  *  understand the argument rather than assume every wait is spelled in bare seconds. */
 const SLEEP_UNIT_SECONDS = { s: 1, m: 60, h: 3_600, d: 86_400 };
 
-/** The duration in seconds of a leading `sleep` that is a POLL rather than a pause, or null. Follows the
- *  reference's shape (BashTool.tsx:322-337) — the FIRST command of the line, bare `sleep` plus one
- *  argument — and then judges the DURATION: anything from MIN_BLOCKED_SLEEP_S upward is a poll, whatever
- *  unit it is written in. The reference tests the spelling instead, which passes `sleep 5m` and `sleep
- *  2.0` while refusing `sleep 2`; a rule that only catches the honest spelling teaches evasion.
+/** The duration in seconds of a `sleep` that is a POLL rather than a pause, or null. Narrower than the
+ *  reference's shape (BashTool.tsx:322-337), which refuses any line STARTING with a sleep: here the whole
+ *  command has to be bare `sleep` plus one argument, so `sleep 19; tail /tmp/build.log` — the way an agent
+ *  reads back a run it started — is left alone. It then judges the DURATION: anything from
+ *  MIN_BLOCKED_SLEEP_S upward is a poll, whatever unit it is written in. The reference tests the spelling
+ *  instead, which passes `sleep 5m` and `sleep 2.0` while refusing `sleep 2`; a rule that only catches the
+ *  honest spelling teaches evasion.
  *
  *  A duration this cannot resolve (`sleep $WAIT`, `sleep "$@"`) is left alone: guessing at an unexpanded
- *  variable would refuse commands on a hunch. So is a `sleep` further down the line
- *  (`build && sleep 5 && check`) — that is part of somebody's script, not a wait before it.
+ *  variable would refuse commands on a hunch. So is a `sleep` in a line that goes on to do something
+ *  (`build && sleep 5 && check`): that is a pause inside somebody's script, and the turn still ends with a
+ *  RESULT. Only a line whose entire content is the sleep spends the turn on nothing else.
  *
  *  Only foreground runs are checked — see the call site. A backgrounded sleep blocks nothing, and it is a
  *  legitimate way to hold a process slot; the cost this refuses is a turn spent waiting. */
 const blockedSleepSeconds = (command) => {
-  const first = shellCommandWords(command)[0];
+  const commands = shellCommandWords(command);
+  const first = commands.length === 1 ? commands[0] : undefined;
   if (!first || first.length !== 2 || executableName(first[0]) !== 'sleep') return null;
   const match = /^(\d+(?:\.\d+)?)([smhd])?$/u.exec(first[1]);
   if (!match) return null;
@@ -925,8 +936,8 @@ export function register(ctx) {
       'Prefer the dedicated file tools (Read, Edit, Write, Search, ListDir) over cat, head, tail, sed, awk, echo, grep or rg. A shell read does NOT satisfy Edit/Write\'s read-before-write check, so reading a file with cat just forces a second Read before you can edit it — Read it directly. Reach for the shell when the task genuinely needs it: builds, tests, git, service inspection, process management.',
       'Quote paths that contain spaces, and create a file\'s parent directory (mkdir -p) before writing into a new location — Write refuses a missing directory.',
       `\`timeout\` is milliseconds, defaults to ${DEFAULT_TIMEOUT_MS}, and may not exceed ${MAX_TIMEOUT_MS}. The larger Elowen ceiling supports slow finite local builds without changing units.`,
-      `A foreground command whose \`timeout\` exceeds ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} is normally MOVED to the background at ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} instead of being killed at that deadline: the result then reports a process id, and ProcessOutput(id, block=true) waits for the rest. It is not moved when the user approved it at a permission prompt, or when this conversation's background slots are full — then the deadline still applies and the result says so.`,
-      `Do not start a command with \`sleep N\` (N >= ${MIN_BLOCKED_SLEEP_S}) to wait for something — that is refused. Start the work with run_in_background=true and wait for it with ProcessOutput(id, block=true).`,
+      `A foreground command whose \`timeout\` exceeds ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} is normally MOVED to the background at ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} instead of being killed at that deadline: the result then reports a process id, and ProcessOutput(id, block=true) waits for the rest. It is not moved when the user approved it at a permission prompt, when this conversation's background slots are full, or when the turn is not an interactive chat of its own (a sub-agent or workflow node, whose caller needs the output rather than a process id) — then the deadline still applies and the result says so.`,
+      `Do not send a bare \`sleep N\` (N >= ${MIN_BLOCKED_SLEEP_S}) as the whole command to wait for something — that is refused. Start the work with run_in_background=true and wait for it with ProcessOutput(id, block=true).`,
       'Pass run_in_background=true for detached work. Manage detached work with ListProcesses, ProcessOutput, and KillProcess. backgroundMode="service" marks a long-lived server or watcher.',
       'description is the live display context for the command. dangerouslyDisableSandbox=false is a no-op; true is always refused before any process is spawned.',
       `Output is capped at ~${Math.round(outputCap / 1000)} kB: past that only the BEGINNING and the END are returned, with the middle dropped and named in the result, so redirect a long build or test run to a file and grep it instead of re-running it.`,
@@ -957,17 +968,18 @@ export function register(ctx) {
         // Read before anything awaits: it describes THIS call, and the answer must not depend on where in
         // the execution the question happens to be asked.
         const approvedByAsk = ctx.callApprovedByAsk();
+        const interactiveConversation = AUTO_BACKGROUND_CONVERSATIONS.has(ctx.currentIdentity?.()?.conversation);
         if (isBlockingSelfRestart(p.command)) {
           return ok('Error: refused a blocking restart of elowen-daemon from inside its own service. Run `elowen restart all` as a standalone Bash call; verify health only after the recovered turn resumes. Do not retry the blocking command.');
         }
-        // A leading `sleep N` in the FOREGROUND is a poll: it spends the turn waiting for something the
+        // A bare `sleep N` in the FOREGROUND is a poll: it spends the turn waiting for something the
         // process tools can wait for properly. Background runs are untouched — see blockedSleepSeconds.
         const sleepSeconds = background ? null : blockedSleepSeconds(p.command);
         if (sleepSeconds !== null) {
-          return ok(`Error: refused a leading sleep of ${durationLabel(sleepSeconds * 1000)} — a foreground sleep spends the turn waiting. `
+          return ok(`Error: refused a bare sleep of ${durationLabel(sleepSeconds * 1000)} — a foreground sleep that does nothing else spends the turn waiting. `
             + 'To wait for work you started: run it with run_in_background=true and read it with ProcessOutput(id, block=true), which returns the moment it exits. '
             + 'To wait for something to become READY (a server accepting connections, a file appearing), put the retry inside the command — '
-            + '`until curl -sf http://127.0.0.1:3000 >/dev/null; do sleep 1; done` is fine, because the sleep is not what the command starts with. '
+            + '`until curl -sf http://127.0.0.1:3000 >/dev/null; do sleep 1; done` is fine, and so is `sleep 19; tail /tmp/build.log`, because the command goes on to produce a result. '
             + `A deliberate pause shorter than ${MIN_BLOCKED_SLEEP_S}s is also still allowed.`);
         }
         const cwd = guardCwd(p.cwd);
@@ -1019,11 +1031,12 @@ export function register(ctx) {
           // background, keeping its output and its process, instead of dying at `timeout`. With the
           // default 20 s deadline the budget is never reached and nothing about this call changes.
           //
-          // Two runs are deliberately excluded. One the human just approved at an `ask` prompt: they
+          // Three runs are deliberately excluded. One the human just approved at an `ask` prompt: they
           // agreed to watch this command run, and turning it into a detached process behind them is a
           // different thing from what they said yes to (the timeout note below says so when it bites).
-          // And a sessionless worker/cron run, which has no conversation to background into — the same
-          // condition that already makes Ctrl+B unavailable there.
+          // A sessionless worker/cron run, which has no conversation to background into — the same
+          // condition that already makes Ctrl+B unavailable there. And any turn that is not an
+          // interactive chat of its own: see AUTO_BACKGROUND_CONVERSATIONS.
           //
           // The timer only detaches: that resolves the race below and the detached branch redraws the
           // process card, exactly as it already does for Ctrl+B.
@@ -1031,7 +1044,7 @@ export function register(ctx) {
           // The callback is the one place in this file that reaches the process registry from OUTSIDE the
           // tool call's try/catch, and an uncaught throw in a timer takes the daemon down. Failing to
           // detach costs the run nothing worse than the deadline it already had.
-          const budgetTimer = foregroundEntry && !approvedByAsk && timeoutMs > AUTO_BACKGROUND_BUDGET_MS
+          const budgetTimer = foregroundEntry && !approvedByAsk && interactiveConversation && timeoutMs > AUTO_BACKGROUND_BUDGET_MS
             ? setTimeout(() => {
               try { detachRun(foregroundEntry, 'budget'); }
               catch (error) { ctx.logger.warn(`terminal: auto-background failed for ${id}: ${error instanceof Error ? error.message : String(error)}`); }
