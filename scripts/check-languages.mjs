@@ -113,6 +113,7 @@ const DYNAMIC_NAMESPACES = [
   'brain.toolLoading.reason', // ToolDeferralModal: t.brain.toolLoading.reason[reason]
   'brain.retention',   // MemoryRetentionModal: t.brain.retention[field.key] + t.brain.retention[`${field.key}Hint`]
   'brain.types',       // BrainSection: t.brain.types[type] — daemon-driven provider type set
+  'brainChat.approvalWarnings', // AskQuestionCard: t.brainChat.approvalWarnings[wording.warning] — DestructiveWarningId from the wire
   'nav',               // useShellNavigation/TopBar: t.nav[world.id] / t.nav[module.id]
   'page',              // CommandPalette: t.page[m.id]
   'plugins',           // PluginsSection: t.plugins[CATEGORY_META[c].key]
