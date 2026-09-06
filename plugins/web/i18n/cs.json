@@ -21,6 +21,10 @@
     "maxResults": {
       "label": "Počet výsledků vyhledávání",
       "hint": "Kolik výsledků WebSearch vrátí. Výchozí hodnota je 5."
+    },
+    "preapprovedHosts": {
+      "label": "Hosté s dokumentací",
+      "hint": "Stránky z těchto hostů vrací WebFetch jako Markdown místo shrnutí modelem. Přesná jména hostů, nebo „*.example.com“ pro všechny subdomény. Síťový přístup se tím nerozšiřuje: ověření DNS, kontrola adres i pravidla přesměrování platí pro všechny hosty stejně. Uvádějte pouze hosty, jejichž obsah je důvěryhodná dokumentace."
     }
   }
 }

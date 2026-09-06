@@ -21,6 +21,10 @@
     "maxResults": {
       "label": "Počet výsledkov vyhľadávania",
       "hint": "Koľko výsledkov WebSearch vráti (predvolene 5)."
+    },
+    "preapprovedHosts": {
+      "label": "Hostitelia s dokumentáciou",
+      "hint": "Stránky z týchto hostiteľov vracia WebFetch ako Markdown namiesto zhrnutia modelom. Presné mená hostiteľov, alebo „*.example.com“ pre všetky subdomény. Sieťový prístup sa tým nerozširuje: overenie DNS, kontrola adries aj pravidlá presmerovania platia pre všetkých hostiteľov rovnako. Uvádzajte len hostiteľov, ktorých obsah je dôveryhodná dokumentácia."
     }
   }
 }

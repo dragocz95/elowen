@@ -11,8 +11,8 @@ const MAX_FETCH_BYTES = 10_000_000;
 const MAX_MARKDOWN_CHARS = 100_000;
 const MAX_PROMPT_CHARS = 10_000;
 const MAX_REDIRECTS = 3;
-const MAX_CACHE_ENTRIES = 32;
-const MAX_CACHE_BYTES = 2_000_000;
+const MAX_CACHE_ENTRIES = 256;
+const MAX_CACHE_BYTES = 50_000_000;
 const SNIPPET_CHARS = 300;
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
 const fail = (e) => ok(`Error: ${e instanceof Error ? e.message : String(e)}`);
@@ -184,10 +184,11 @@ async function fetchUncached(startUrl, signal, transport) {
     const type = res.headers['content-type'] ?? '';
     const body = await responseText(res);
     const converted = type.toLowerCase().includes('html') ? htmlToMarkdown(body) : body;
-    const markdown = converted.length > MAX_MARKDOWN_CHARS
+    const truncated = converted.length > MAX_MARKDOWN_CHARS;
+    const markdown = truncated
       ? `${converted.slice(0, MAX_MARKDOWN_CHARS)}\n\n[Content truncated]`
       : converted;
-    return { kind: 'page', url: url.toString(), markdown, cacheBytes: Buffer.byteLength(markdown) };
+    return { kind: 'page', url: url.toString(), markdown, truncated, cacheBytes: Buffer.byteLength(markdown) };
   }
 }
 
@@ -289,6 +290,105 @@ function buildInferencePrompt(markdown, question) {
   ].join('\n');
 }
 
+/** The one host-name reader in this plugin: parses a bare host, applies URL punycode so an IDN entry
+ * matches what `normalizeFetchUrl` produces, and returns null for anything that is not a plain host. */
+function parseHostName(rawHost) {
+  if (!rawHost || /[/:?#@\[\]*]/.test(rawHost)) return null;
+  let parsed;
+  try { parsed = new URL(`https://${rawHost}`); } catch { return null; }
+  const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
+  if (!host || parsed.port || parsed.pathname !== '/'
+    || !host.split('.').every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label))) return null;
+  return host;
+}
+
+/** Documentation hosts whose fetched page is handed back verbatim instead of being summarized by the
+ * WebFetch inference step. Modelled on Claude Code's `WebFetchTool/preapproved.ts`, and its warning
+ * applies here unchanged: this list is NOT a network policy and must never widen one. Every entry still
+ * goes through the host transport's DNS validation, socket pinning and non-global-address refusal, and
+ * through the same HTTPS upgrade and redirect rules as any other URL. WebFetch asks for no permission
+ * today, so the only thing an entry changes is that the page text reaches the model unsummarized —
+ * which is also why the list should only name hosts whose content is trusted as documentation. */
+export const DEFAULT_PREAPPROVED_HOSTS = [
+  'platform.claude.com',
+  'code.claude.com',
+  'modelcontextprotocol.io',
+  'developer.mozilla.org',
+  'docs.python.org',
+  'doc.rust-lang.org',
+  'go.dev',
+  'pkg.go.dev',
+  'www.typescriptlang.org',
+  'nodejs.org',
+  'bun.sh',
+  'docs.oracle.com',
+  'learn.microsoft.com',
+  'en.cppreference.com',
+  'docs.swift.org',
+  'kotlinlang.org',
+  'ruby-doc.org',
+  'www.php.net',
+  'react.dev',
+  'reactnative.dev',
+  'vuejs.org',
+  'angular.io',
+  'nextjs.org',
+  'expressjs.com',
+  'tailwindcss.com',
+  'www.npmjs.com',
+  'raw.githubusercontent.com',
+  'docs.djangoproject.com',
+  'fastapi.tiangolo.com',
+  'pandas.pydata.org',
+  'numpy.org',
+  '*.palletsprojects.com',
+  '*.readthedocs.io',
+  'developer.apple.com',
+  'developer.android.com',
+  'docs.flutter.dev',
+  'www.postgresql.org',
+  'dev.mysql.com',
+  'www.sqlite.org',
+  'redis.io',
+  'graphql.org',
+  'prisma.io',
+  'docs.aws.amazon.com',
+  'cloud.google.com',
+  'kubernetes.io',
+  'www.docker.com',
+  'git-scm.com',
+  'nginx.org',
+];
+
+/** Exact host names, or a `*.` prefix for every subdomain of one. No patterns beyond that: a
+ * free-form expression here would be a second, weaker host matcher next to the search filters. */
+export function parsePreapprovedHosts(value, onInvalid) {
+  if (value !== undefined && !Array.isArray(value)) {
+    onInvalid?.('preapprovedHosts must be a list of host names — using the built-in documentation hosts');
+  }
+  const entries = Array.isArray(value) ? value : DEFAULT_PREAPPROVED_HOSTS;
+  const exact = new Set();
+  const suffixes = new Set();
+  for (const entry of entries) {
+    const raw = typeof entry === 'string' ? entry.trim().toLowerCase().replace(/\.$/, '') : '';
+    const wildcard = raw.startsWith('*.');
+    const host = parseHostName(wildcard ? raw.slice(2) : raw);
+    if (!host) {
+      onInvalid?.(`preapprovedHosts entry ${JSON.stringify(entry)} is not a host name or "*." host suffix — ignored`);
+      continue;
+    }
+    if (wildcard) suffixes.add(`.${host}`);
+    else exact.add(host);
+  }
+  return { exact, suffixes: [...suffixes] };
+}
+
+export function isPreapprovedHost(hostname, list) {
+  const host = String(hostname).toLowerCase().replace(/\.$/, '');
+  if (list.exact.has(host)) return true;
+  return list.suffixes.some((suffix) => host.endsWith(suffix));
+}
+
 function normalizeDomainList(value, field) {
   if (value === undefined) return [];
   if (!Array.isArray(value)) throw new Error(`${field} must be an array of host names`);
@@ -298,12 +398,8 @@ function normalizeDomainList(value, field) {
     if (!rawHost || /[/:?#@\[\]]/.test(rawHost) || rawHost.includes('*')) {
       throw new Error(`${field} accepts host names only, without schemes, ports, paths, or wildcards`);
     }
-    let parsed;
-    try { parsed = new URL(`https://${rawHost}`); } catch { throw new Error(`${field} contains an invalid host name`); }
-    const host = parsed.hostname.toLowerCase().replace(/\.$/, '');
-    if (!host || parsed.port || parsed.pathname !== '/' || !host.split('.').every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label))) {
-      throw new Error(`${field} contains an invalid host name`);
-    }
+    const host = parseHostName(rawHost);
+    if (!host) throw new Error(`${field} contains an invalid host name`);
     return host;
   });
   return [...new Set(normalized)];
@@ -401,6 +497,7 @@ export function normalizeMaxResults(value) {
 
 export function register(ctx) {
   const maxResults = normalizeMaxResults(ctx.config.maxResults);
+  const preapproved = parsePreapprovedHosts(ctx.config.preapprovedHosts, (message) => ctx.logger.warn(message));
   const publicHttp = ctx.host.publicHttp();
 
   ctx.registerTool(defineTool({
@@ -436,7 +533,7 @@ export function register(ctx) {
 
   ctx.registerTool(defineTool({
     name: 'WebFetch', label: 'Fetch web page',
-    description: 'Fetches a public URL, converts HTML to Markdown, and answers prompt against it through a host-owned inference route. HTTP is upgraded to HTTPS. Same-host redirects are followed after validating and pinning every hop; cross-host redirects are returned for a new explicit call. URL content is cached for 15 minutes within bounded memory. Non-global addresses are refused.',
+    description: 'Fetches a public URL, converts HTML to Markdown, and answers prompt against it through a host-owned inference route. Pages from configured documentation hosts are returned as Markdown without that inference step, so prompt is then only a statement of intent. HTTP is upgraded to HTTPS. Same-host redirects are followed after validating and pinning every hop; cross-host redirects are returned for a new explicit call. URL content is cached for 15 minutes within bounded memory. Non-global addresses are refused.',
     parameters: Type.Object({
       url: Type.String({ format: 'uri', maxLength: 2000, description: 'Fully formed public http(s) URL.' }),
       prompt: Type.String({ minLength: 1, maxLength: MAX_PROMPT_CHARS, description: 'What information to extract from the page.' }),
@@ -446,6 +543,11 @@ export function register(ctx) {
         if (typeof p.prompt !== 'string' || !p.prompt.trim()) throw new Error('prompt is required');
         const fetched = await cachedFetch(p.url, signal, publicHttp);
         if (fetched.kind === 'redirect') return ok(fetched.text);
+        // A configured documentation host answers from the page itself. Truncated pages still go through
+        // inference: a cut-off page is where a summary earns its cost, not where raw text is worth 100k chars.
+        if (!fetched.truncated && isPreapprovedHost(new URL(fetched.url).hostname, preapproved)) {
+          return ok(fetched.markdown, { url: fetched.url, preapproved: true });
+        }
         const inference = ctx.host.defaultInference();
         if (!inference) throw new Error('no host-owned inference route is available for WebFetch');
         const result = await inference.decide(buildInferencePrompt(fetched.markdown, p.prompt), { signal });
