@@ -252,6 +252,8 @@ export const sk = {
     outcomeOk: 'Úspech',
     outcomeFail: 'Zlyhalo',
     openColumn: 'Otvoriť',
+    selectColumn: 'Vybrať',
+    selectAllRows: 'Vybrať všetky riadky',
   },
   pagination: {
     label: 'Stránkovanie',

@@ -268,6 +268,10 @@ export const en = {
     // Names the register column that holds a row's open control. It is read by assistive technology
     // only — the column itself paints as the trailing chevron.
     openColumn: 'Open',
+    // Names the register column that holds the row checkboxes, for assistive technology only — the
+    // column paints as the checkbox itself. `selectAllRows` is the header control's own name.
+    selectColumn: 'Select',
+    selectAllRows: 'Select all rows',
   },
   // The one pagination vocabulary of the app. Every register footer reads from here, so a locale says
   // "previous" with a single word instead of the four competing ones the copy-pasted pagers drifted into.

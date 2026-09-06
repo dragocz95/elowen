@@ -1,8 +1,10 @@
 import { describe, it, expect, vi } from 'vitest';
-import { render, screen, fireEvent } from '@testing-library/react';
+import { cleanup, render, screen, fireEvent } from '@testing-library/react';
 import { readFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
-import { DataTable, DataTableCell, DataTableChevronCell, DataTableRow, DataTableSortCell } from '../../components/ui/DataTable';
+import { useState } from 'react';
+import { LanguageProvider } from '../../lib/i18n';
+import { DataTable, DataTableCell, DataTableChevronCell, DataTableRow, DataTableSelectCell, DataTableSortCell } from '../../components/ui/DataTable';
 
 /** Cells of one row, in DOM order — the same thing a screen reader counts to decide what column it is
  *  announcing. `aria-hidden` cells are excluded on purpose: they are not in the accessibility tree
@@ -248,6 +250,158 @@ describe('DataTableSortCell', () => {
     );
     fireEvent.click(screen.getByRole('button', { name: 'Updated' }));
     expect(onSort).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('DataTable row selection', () => {
+  /** A register that has opted in: three rows, the header, and a caller holding the set. */
+  function Register({ initial = [], ids = ['a', 'b', 'c'], onChange }: {
+    initial?: string[];
+    ids?: string[];
+    onChange?: (next: Set<string>) => void;
+  }) {
+    const [selected, setSelected] = useState<Set<string>>(new Set(initial));
+    return (
+      <LanguageProvider>
+        <DataTable
+          ariaLabel="Members"
+          columns="2rem minmax(0,1fr)"
+          selection={{
+            ids,
+            selected,
+            onSelectionChange: (next) => { setSelected(next); onChange?.(next); },
+          }}
+        >
+          <DataTableRow header>
+            <DataTableSelectCell header />
+            <DataTableCell header lines={1}>Name</DataTableCell>
+          </DataTableRow>
+          {ids.map((id) => (
+            <DataTableRow key={id}>
+              <DataTableSelectCell rowId={id} label={`Select member: ${id}`} />
+              <DataTableCell lines={1}>{id}</DataTableCell>
+            </DataTableRow>
+          ))}
+        </DataTable>
+      </LanguageProvider>
+    );
+  }
+
+  it('renders nothing at all for a register that did not opt in', () => {
+    // The whole point of the opt-in: an existing consumer that never heard of selection must render
+    // exactly what it did before, cells included, or every column template in the app moves.
+    render(
+      <LanguageProvider>
+        <DataTable ariaLabel="Sessions" columns="minmax(0,1fr)">
+          <DataTableRow header>
+            <DataTableSelectCell header />
+            <DataTableCell header lines={1}>Name</DataTableCell>
+          </DataTableRow>
+        </DataTable>
+      </LanguageProvider>,
+    );
+    expect(screen.queryByRole('checkbox')).toBeNull();
+    expect(screen.getAllByRole('columnheader')).toHaveLength(1);
+  });
+
+  it('names the column and each row control, so neither is announced as a bare checkbox', () => {
+    render(<Register />);
+    expect(screen.getByRole('columnheader', { name: 'Select' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Select all rows' })).toBeInTheDocument();
+    expect(screen.getByRole('checkbox', { name: 'Select member: b' })).toBeInTheDocument();
+  });
+
+  it('reports a new Set, never the caller\u2019s own one mutated in place', () => {
+    const onChange = vi.fn();
+    // The set the TABLE was handed, held here so the identity of what comes back can be compared to it.
+    const held = new Set<string>(['a']);
+    render(
+      <LanguageProvider>
+        <DataTable ariaLabel="Members" columns="2rem minmax(0,1fr)" selection={{ ids: ['a', 'b'], selected: held, onSelectionChange: onChange }}>
+          <DataTableRow>
+            <DataTableSelectCell rowId="b" label="Select member: b" />
+            <DataTableCell lines={1}>b</DataTableCell>
+          </DataTableRow>
+        </DataTable>
+      </LanguageProvider>,
+    );
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select member: b' }));
+    expect(onChange).toHaveBeenCalledTimes(1);
+    const next = onChange.mock.calls[0]![0] as Set<string>;
+    expect([...next].sort()).toEqual(['a', 'b']);
+    // A set mutated and re-sent leaves a `useState` holding the same reference, and React drops the
+    // render — the row would tick in the DOM and never again reflect the state it came from.
+    expect(next).not.toBe(held);
+    expect([...held]).toEqual(['a']);
+  });
+
+  it('shows the header as indeterminate for a partial selection, and as checked for a full one', () => {
+    const partial = render(<Register initial={['b']} />);
+    const all = screen.getByRole('checkbox', { name: 'Select all rows' });
+    // The dash and the tick share a filled box, so `mixed` is the ONLY thing telling the two apart.
+    expect(all).toHaveAttribute('data-state', 'indeterminate');
+    expect(all).toHaveAttribute('aria-checked', 'mixed');
+    partial.unmount();
+
+    // A fresh mount rather than a rerender: `initial` seeds the caller's state once, so re-rendering the
+    // same component with another one would assert against the selection the first mount still holds.
+    render(<Register initial={['a', 'b', 'c']} />);
+    expect(screen.getByRole('checkbox', { name: 'Select all rows' })).toHaveAttribute('data-state', 'checked');
+
+    // Nothing selected is the third state, and it must not be confused with either of the other two.
+    cleanup();
+    render(<Register />);
+    expect(screen.getByRole('checkbox', { name: 'Select all rows' })).toHaveAttribute('data-state', 'unchecked');
+  });
+
+  it('select-all from empty and from partial selects the page; only a full page clears it', () => {
+    const { unmount } = render(<Register />);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows' }));
+    for (const id of ['a', 'b', 'c']) {
+      expect(screen.getByRole('checkbox', { name: `Select member: ${id}` })).toBeChecked();
+    }
+    // A full page clears.
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows' }));
+    expect(screen.getByRole('checkbox', { name: 'Select member: a' })).not.toBeChecked();
+    unmount();
+
+    // …and a PARTIAL one resolves toward selecting the rest, which is what a reader who has ticked one
+    // of three and then reaches for the header means.
+    render(<Register initial={['b']} />);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows' }));
+    expect(screen.getByRole('checkbox', { name: 'Select member: a' })).toBeChecked();
+    expect(screen.getByRole('checkbox', { name: 'Select member: c' })).toBeChecked();
+  });
+
+  it('select-all touches only the rows on screen, and leaves a selection from elsewhere alone', () => {
+    const onChange = vi.fn();
+    // 'z' is selected but not rendered — a row from another page of the same register.
+    render(<Register initial={['z']} onChange={onChange} />);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select all rows' }));
+    expect([...(onChange.mock.calls[0]![0] as Set<string>)].sort()).toEqual(['a', 'b', 'c', 'z']);
+  });
+
+  it('ticking a row neither opens it nor fires the row\u2019s own handler', () => {
+    const onOpen = vi.fn();
+    const onClick = vi.fn();
+    const selected = new Set<string>();
+    render(
+      <LanguageProvider>
+        <DataTable
+          ariaLabel="Members"
+          columns="2rem minmax(0,1fr)"
+          selection={{ ids: ['a'], selected, onSelectionChange: () => {} }}
+        >
+          <DataTableRow onOpen={onOpen} openLabel="Open member: a" onClick={onClick}>
+            <DataTableSelectCell rowId="a" label="Select member: a" />
+            <DataTableCell lines={1}>a</DataTableCell>
+          </DataTableRow>
+        </DataTable>
+      </LanguageProvider>,
+    );
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Select member: a' }));
+    expect(onOpen).not.toHaveBeenCalled();
+    expect(onClick).not.toHaveBeenCalled();
   });
 });
 

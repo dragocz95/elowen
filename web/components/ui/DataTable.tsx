@@ -3,6 +3,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { CSSProperties, HTMLAttributes, ReactNode } from 'react';
 import { useLocaleSafe } from '../../lib/i18n/context';
 import { dictionaries } from '../../lib/i18n/dictionaries';
+import { Checkbox } from './shadcn/checkbox';
 
 type TableStyle = CSSProperties & {
   '--data-table-columns'?: string;
@@ -32,13 +33,39 @@ type RowOpenRegistry = {
 
 const RowOpenContext = createContext<RowOpenRegistry | null>(null);
 
+/** Row selection, when a register wants it. Opting in is the whole contract: a table that passes no
+ *  `selection` renders exactly what it did before, and no existing consumer changes.
+ *
+ *  The table is handed the SELECTION, not the rows. A register renders its own rows through its own
+ *  component, so the table can neither know which ids are on screen nor which of them are selected — it
+ *  has to be told both. `ids` is what select-all selects, which makes it the ids of the CURRENT PAGE
+ *  rather than of the whole register: a header checkbox that silently selected four thousand rows the
+ *  reader cannot see is the one behaviour a bulk action must never have.
+ *
+ *  `onSelectionChange` receives a NEW set. Mutating and re-sending the caller's own set would leave a
+ *  `useState` holding the same reference and drop the render. */
+export type DataTableSelection = {
+  /** Every selectable row currently rendered, in render order. Select-all is exactly this set. */
+  ids: readonly string[];
+  selected: ReadonlySet<string>;
+  onSelectionChange: (next: Set<string>) => void;
+  /** Overrides the accessible name of the header's select-all control. */
+  selectAllLabel?: string;
+};
+
+const SelectionContext = createContext<DataTableSelection | null>(null);
+
 /** Responsive register table. Wide-only cells disappear as a unit and the compact grid closes ranks. */
-export function DataTable({ ariaLabel, columns, compactColumns = 'minmax(0,1fr)', mobileColumns, children, className = '', ...rest }: {
+export function DataTable({ ariaLabel, columns, compactColumns = 'minmax(0,1fr)', mobileColumns, selection, children, className = '', ...rest }: {
   ariaLabel: string;
   columns: string;
   compactColumns?: string;
   /** The phone-only template. At <40rem, cells with priority="mobile" join the always-visible cells. */
   mobileColumns?: string;
+  /** Opt in to row selection. The register also has to render a `DataTableSelectCell` in its header row
+   *  and in each selectable row, and reserve a `2rem` leading track in every column template it passes —
+   *  the checkbox is a real column, not an overlay. */
+  selection?: DataTableSelection;
   children: ReactNode;
   className?: string;
 } & Omit<HTMLAttributes<HTMLDivElement>, 'children'>) {
@@ -62,8 +89,81 @@ export function DataTable({ ariaLabel, columns, compactColumns = 'minmax(0,1fr)'
   const registry = useMemo<RowOpenRegistry>(() => ({ register, hasOpenRow }), [register, hasOpenRow]);
   return (
     <div role="table" aria-label={ariaLabel} style={style} className={`@container overflow-x-clip rounded-lg border border-border ${className}`} {...rest}>
-      <RowOpenContext.Provider value={registry}>{children}</RowOpenContext.Provider>
+      <SelectionContext.Provider value={selection ?? null}>
+        <RowOpenContext.Provider value={registry}>{children}</RowOpenContext.Provider>
+      </SelectionContext.Provider>
     </div>
+  );
+}
+
+/** The selection column: a select-all in the header row, a row checkbox in every other.
+ *
+ *  It renders NOTHING at all when the table was given no `selection`, so a register can carry the cell
+ *  and turn selection on and off without its column template moving underneath it.
+ *
+ *  The header's three states are the whole reason this is a shared component. `indeterminate` is not
+ *  "half-checked" decoration: a filled box that means "some" and a filled box that means "all" are the
+ *  same picture, and the dash is what distinguishes them — see `shadcn/checkbox.tsx`, which paints it. */
+export function DataTableSelectCell({ header = false, rowId, label, className = '' }: {
+  header?: boolean;
+  /** The row this checkbox selects. Required off the header row, ignored on it. */
+  rowId?: string;
+  /** The row control's accessible name. Keep it short and specific — `Select memory: <title>` — for the
+   *  same reason `openLabel` exists: without it the name falls back to the row's own text. */
+  label?: string;
+  className?: string;
+}) {
+  const selection = useContext(SelectionContext);
+  const locale = useLocaleSafe();
+  const common = dictionaries[locale].common;
+  if (!selection) return null;
+  const { ids, selected, onSelectionChange } = selection;
+
+  if (header) {
+    // "Some" is measured against the rows ON SCREEN, not against the selection as a whole: a page whose
+    // every row is selected reads as all, even when another page holds more.
+    const onPage = ids.filter((id) => selected.has(id)).length;
+    const state = onPage === 0 ? false : onPage === ids.length ? true : 'indeterminate';
+    return (
+      // The column's name is an `aria-label` rather than `labelHidden` text: `labelHidden` wraps the
+      // cell's WHOLE content in `sr-only`, which would take the checkbox off the screen with it.
+      <DataTableCell header lines="auto" aria-label={common.selectColumn} className={`flex items-center ${className}`}>
+        <Checkbox
+          checked={state}
+          aria-label={selection.selectAllLabel ?? common.selectAllRows}
+          // Indeterminate resolves toward selecting the rest, which is what a reader who has ticked three
+          // of twenty and reaches for the header means. Only a fully selected page clears.
+          onCheckedChange={() => {
+            const next = new Set(selected);
+            if (state === true) for (const id of ids) next.delete(id);
+            else for (const id of ids) next.add(id);
+            onSelectionChange(next);
+          }}
+        />
+      </DataTableCell>
+    );
+  }
+
+  return (
+    <DataTableCell
+      lines="auto"
+      className={`flex items-center ${className}`}
+      // The row-open overlay is a button stretched over the whole row and a register may also carry its
+      // own row onClick. Ticking a checkbox is not opening the row, so the press stops here.
+      onClick={(event) => event.stopPropagation()}
+    >
+      <Checkbox
+        checked={rowId !== undefined && selected.has(rowId)}
+        aria-label={label}
+        onCheckedChange={(next) => {
+          if (rowId === undefined) return;
+          const updated = new Set(selected);
+          if (next === true) updated.add(rowId);
+          else updated.delete(rowId);
+          onSelectionChange(updated);
+        }}
+      />
+    </DataTableCell>
   );
 }
 
