@@ -648,8 +648,15 @@ function truncateBlock(content, maxBytes, describe) {
  *  The reported total mixes sanitised surviving bytes with unsanitised discarded ones, so it is a size
  *  estimate rather than an exact byte count of what the process wrote. Naming a slightly imprecise total
  *  is still far better than the previous behaviour, which reported the size of whatever survived and
- *  called it the size of the run. */
-function formatRunResult(command, cwd, out, exitCode, note, outputCap, dropped = 0) {
+ *  called it the size of the run.
+ *
+ *  `persistFullOutput` is called exactly when this format is about to withhold something — the caller
+ *  writes the run's whole output to the host's tool-result spill store and hands back `{path, bytes}` (or
+ *  null when it could not), which the banner names so the excerpt stops being the only copy. Awaiting it
+ *  here rather than at the call site keeps ONE decision about whether anything is lost: `willTruncate`
+ *  below is the same comparison the cut makes, so no file is ever written for a result that turns out to
+ *  fit. */
+async function formatRunResult(command, cwd, out, exitCode, note, outputCap, dropped = 0, persistFullOutput = null) {
   const exit = typeof exitCode === 'number' ? `[exit ${exitCode}]` : '';
   const rawHeader = `$ ${command}\n(cwd: ${cwd})\n${note}`;
   // Reserve a useful output body before bounding pathological command/cwd text. Without this first cut, a
@@ -670,11 +677,23 @@ function formatRunResult(command, cwd, out, exitCode, note, outputCap, dropped =
   // this truncation exists to keep. Both defaults are 60 kB, so budgeting only the output meant every
   // truncated command overshot by the length of its own echo and banner and got its tail deleted by the
   // spill: the feature defeated itself under the settings almost everyone runs.
-  const budget = outputCap
+  const spendable = outputCap
     - Buffer.byteLength(header, 'utf8')
     - Buffer.byteLength(exit, 'utf8')
-    - TRUNCATION_BANNER_RESERVE
     - 1;
+  // Whether this result will withhold anything, decided BEFORE the cut so the stored path can be part of
+  // the banner the cut is budgeted against. It is exactly the cut's own condition: the buffer already lost
+  // bytes mid-run, or the output does not fit the budget a bannerless result would get. A file is
+  // therefore written for every truncated result and for no untruncated one.
+  const willTruncate = dropped > 0 || Buffer.byteLength(out, 'utf8') > spendable - TRUNCATION_BANNER_RESERVE;
+  const spill = willTruncate && persistFullOutput ? await persistFullOutput() : null;
+  // `retained`, not `full`, once the rolling buffer has already dropped bytes mid-run: the file then holds
+  // everything that survived plus the notice naming the loss, and calling that the full output would be
+  // the exact dishonesty this banner exists to avoid.
+  const saved = spill
+    ? `; ${dropped > 0 ? 'retained' : 'full'} output (${formatSize(spill.bytes)}) saved to ${spill.path} — read it with the Read tool, offset/limit for a slice`
+    : '';
+  const budget = spendable - TRUNCATION_BANNER_RESERVE - Buffer.byteLength(saved, 'utf8');
   const t = truncateMiddle(out, { maxBytes: budget });
   const lost = t.totalBytes - t.keptBytes + dropped;
   let body = t.head;
@@ -683,7 +702,7 @@ function formatRunResult(command, cwd, out, exitCode, note, outputCap, dropped =
     const kept = t.truncated
       ? `; kept ${formatSize(headBytes)} head + ${formatSize(t.keptBytes - headBytes)} tail`
       : '';
-    const banner = `…[truncated: dropped ${formatSize(lost)} of ${formatSize(t.totalBytes + dropped)}${kept}]`;
+    const banner = `…[truncated: dropped ${formatSize(lost)} of ${formatSize(t.totalBytes + dropped)}${kept}${saved}]`;
     // The head may not end in a newline (a byte-offset cut through a long line), and the banner has to
     // start on its own line or the model reads it as part of the output.
     const lead = t.head.endsWith('\n') || t.head.length === 0 ? '' : '\n';
@@ -868,7 +887,7 @@ export function register(ctx) {
       `\`timeout\` is milliseconds, defaults to ${DEFAULT_TIMEOUT_MS}, and may not exceed ${MAX_TIMEOUT_MS}. The larger Elowen ceiling supports slow finite local builds without changing units.`,
       'Pass run_in_background=true for detached work. Manage detached work with ListProcesses, ProcessOutput, and KillProcess. backgroundMode="service" marks a long-lived server or watcher.',
       'description is the live display context for the command. dangerouslyDisableSandbox=false is a no-op; true is always refused before any process is spawned.',
-      `Output is capped at ~${Math.round(outputCap / 1000)} kB: past that only the BEGINNING and the END are returned, with the middle dropped and named in the result, so redirect a long build or test run to a file and grep it instead of re-running it.`,
+      `Inline output is capped at ~${Math.round(outputCap / 1000)} kB: past that the result carries the BEGINNING and the END, and the complete output is saved to a file whose path the result names — read it with the Read tool (offset/limit) instead of re-running the command.`,
       'A denied or blocked command means a permission rule stopped it — adjust the approach, do not retry it verbatim. Keep secrets out of command lines and output.',
     ].join(' '),
     parameters: Type.Object({
@@ -886,7 +905,7 @@ export function register(ctx) {
         description: 'Elowen extension: job waits for collection; service is a long-lived server or watcher',
       })),
     }, { additionalProperties: false }),
-    execute: async (_id, p, _signal, onUpdate) => {
+    execute: async (toolCallId, p, _signal, onUpdate) => {
       try {
         if (p.dangerouslyDisableSandbox === true) {
           return ok('Error: sandbox bypass was refused before spawning the command. dangerouslyDisableSandbox=true is not supported.');
@@ -975,7 +994,22 @@ export function register(ctx) {
           // The `[exit N]` marker inside the text is framing for the MODEL; the display path reads the
           // exit code structurally from details (tone + status chip), so report it there as well. A
           // killed run has no exit code (null) and its note already says why.
-          const res = ok(formatRunResult(run.command, run.cwd, run.sanitizeOutput(run.output), run.exitCode, note, outputCap, run.dropped));
+          // A truncated result stops being the only copy: the whole retained output goes to the host's
+          // tool-result spill store and the banner names the file. Best effort — a store that has no
+          // conversation to write into (worker/cron) returns null, and a failed write must cost the note,
+          // never the command's result, so the run still reports what it did.
+          const persistFullOutput = async () => {
+            try {
+              return await ctx.persistToolOutput({
+                toolCallId,
+                text: withDropNotice(run, run.sanitizeOutput(run.output)),
+              });
+            } catch (error) {
+              ctx.logger.warn(`failed to persist the full output of ${id}`, error);
+              return null;
+            }
+          };
+          const res = ok(await formatRunResult(run.command, run.cwd, run.sanitizeOutput(run.output), run.exitCode, note, outputCap, run.dropped, persistFullOutput));
           if (typeof run.exitCode === 'number') res.details.exitCode = run.exitCode;
           return res;
         }
