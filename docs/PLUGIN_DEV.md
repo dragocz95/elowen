@@ -252,7 +252,7 @@ const spill = await ctx.persistToolOutput({ toolCallId, text: fullOutput });
 const note = spill ? `full output saved to ${spill.path} (${spill.bytes} bytes) — read it with the Read tool` : '';
 ```
 
-`toolCallId` is the first argument PI passes to a tool's `execute`. The text lands in the host's existing tool-result spill directory for the current conversation, so the session Reads it back through the ordinary path guard and it is removed when that conversation is cleared or deleted. Do not build a second store or a plugin-private directory for this. The call resolves `null` outside a prompt turn (worker and cron runs own no conversation), so handle that instead of assuming a path.
+`toolCallId` is the first argument PI passes to a tool's `execute`. The text lands in the host's existing tool-result spill directory for the current conversation, so the session Reads it back through the ordinary path guard and it is removed when that conversation is cleared or deleted. Do not build a second store or a plugin-private directory for this. The call resolves `null` whenever no readable path can be produced: outside a prompt turn, inside a workspace-confined turn, and when a different file already occupies the name. Handle that instead of assuming a path.
 
 ### Secrets
 

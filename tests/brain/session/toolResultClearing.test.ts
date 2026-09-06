@@ -1247,17 +1247,16 @@ describe('persistToolOutputSpill', () => {
   it('writes the complete text into the spill dir, creating it, and reports its byte size', async () => {
     const dir = spillDir();
     const text = 'á'.repeat(5000); // 10 000 bytes, so the count is not the character count
-    const { path, bytes } = await persistToolOutputSpill(dir, 'call-1', text);
+    const stored = await persistToolOutputSpill(dir, 'call-1', text);
 
-    expect(path).toBe(join(dir, 'call-1.v1-output-10000.txt'));
-    expect(bytes).toBe(10_000);
-    expect(readFileSync(path, 'utf8')).toBe(text);
+    expect(stored).toEqual({ path: join(dir, 'call-1.v1-output-10000.txt'), bytes: 10_000 });
+    expect(readFileSync(stored!.path, 'utf8')).toBe(text);
   });
 
   it('fs-encodes the toolCallId so a hostile id cannot escape the spill dir', async () => {
     const dir = spillDir();
-    const { path } = await persistToolOutputSpill(dir, '../escape', 'x');
-    expect(path).toBe(join(dir, '..%2Fescape.v1-output-1.txt'));
+    const stored = await persistToolOutputSpill(dir, '../escape', 'x');
+    expect(stored?.path).toBe(join(dir, '..%2Fescape.v1-output-1.txt'));
   });
 
   // A persisted full output is NOT the spill of the result the model received (that result carries an
@@ -1266,18 +1265,25 @@ describe('persistToolOutputSpill', () => {
   // the wrong byte count.
   it('is named outside the latch descriptor grammar', async () => {
     const dir = spillDir();
-    const { path } = await persistToolOutputSpill(dir, 'c', 'hello');
-    expect(parseSpillDescriptor(path.slice(path.lastIndexOf('/') + 1), 'c')).toBeNull();
+    const stored = await persistToolOutputSpill(dir, 'c', 'hello');
+    const name = stored!.path.slice(stored!.path.lastIndexOf('/') + 1);
+    expect(parseSpillDescriptor(name, 'c')).toBeNull();
   });
 
-  // Same id AND same size is only reachable through a reused sequential toolCallId; refusing the write
-  // would cost the caller its "saved to" note to protect a file that is almost certainly identical.
-  it('overwrites its own earlier file rather than failing the caller', async () => {
+  // A toolCallId is not unique on its own — sequential styles reset every turn — so a later call can land
+  // on an existing name whose bytes are a DIFFERENT output of the same size. Overwriting would swap the
+  // content under a path an earlier result still tells the model to read.
+  it('never overwrites a different output already at its path', async () => {
     const dir = spillDir();
     const first = await persistToolOutputSpill(dir, 'call-1', 'aaaaa');
-    const second = await persistToolOutputSpill(dir, 'call-1', 'bbbbb');
-    expect(second.path).toBe(first.path);
-    expect(readFileSync(second.path, 'utf8')).toBe('bbbbb');
+    expect(await persistToolOutputSpill(dir, 'call-1', 'bbbbb')).toBeNull();
+    expect(readFileSync(first!.path, 'utf8')).toBe('aaaaa');
+  });
+
+  it('adopts an identical file instead of failing the caller', async () => {
+    const dir = spillDir();
+    const first = await persistToolOutputSpill(dir, 'call-1', 'aaaaa');
+    expect(await persistToolOutputSpill(dir, 'call-1', 'aaaaa')).toEqual(first);
   });
 });
 

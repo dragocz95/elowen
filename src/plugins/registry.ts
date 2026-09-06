@@ -15,7 +15,7 @@ import type { PluginSecretBag } from '../shared/pluginSecrets.js';
 import { commandsWithPlugins, isReservedCommandName, type PluginSlashCommand, type SlashSurface } from '../brain/slashCommands.js';
 import type { PluginManifest } from './manifest.js';
 import { assertPathAllowed, allowedRoots, defaultCwd, displayPath, isAllAccess, currentAccess, pathStateKey, sanitizePathOutput } from './pathGuard.js';
-import { currentIdentity, currentContributionUserId, currentAccountUserId, currentDeliveryTarget, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentSessionId } from './policyContext.js';
+import { currentIdentity, currentContributionUserId, currentAccountUserId, currentDeliveryTarget, currentElicitor, currentCardEmitter, currentSubagentEmitter, currentSubagentCompletionEmitter, currentWorkflowEmitter, currentWorkflowCompletionEmitter, currentTurnModel, currentWorkDir, currentPathView, currentSessionId } from './policyContext.js';
 import { persistToolOutputSpill } from '../brain/session/toolResultClearing.js';
 import { sessionToolResultSpillDir } from '../shared/paths.js';
 import { bindingRef, resolveDelegatedWorkspace } from '../brain/workspaceScope.js';
@@ -1409,6 +1409,11 @@ export class PluginRegistry {
       persistToolOutput: async ({ toolCallId, text }) => {
         const sessionId = currentSessionId();
         if (!sessionId) return null;
+        // A workspace-confined turn has no name for this file: its logical filesystem is the worktree, so
+        // assertPathAllowed resolves through the path view and refuses every absolute path. Storing it
+        // would hand the model a path it cannot open — and one that names the daemon's data directory,
+        // which the workspace sanitiser has no prefix to redact. Nothing is stored instead.
+        if (currentPathView()) return null;
         return persistToolOutputSpill(sessionToolResultSpillDir(process.env, sessionId), toolCallId, text);
       },
       allowedRoots,

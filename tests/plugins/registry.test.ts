@@ -1,10 +1,14 @@
 import { describe, it, expect, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 // @ts-expect-error — plain .mjs plugin module, no types
 import { controlCommandsFrom } from '../../packages/plugin-shared/chatCommands.mjs';
 import { PluginRegistry } from '../../src/plugins/registry.js';
+import { createWorkspacePathView } from '../../src/plugins/pathView.js';
+import { runWithPolicy } from '../../src/plugins/policyContext.js';
+import { assertPathAllowed } from '../../src/plugins/pathGuard.js';
+import type { Policy } from '../../src/plugins/policy.js';
 import type { PluginSkill } from '../../src/plugins/api.js';
 import type { EmbeddingConfig } from '../../src/embeddings/embeddingService.js';
 import { DEFAULT_BRAIN_LIMITS } from '../../src/store/configStore.js';
@@ -738,6 +742,56 @@ describe('PluginRegistry', () => {
       expect(await reg.notificationDestinations()).toEqual([]);
       expect(warns.some((warning) => warning.includes('not declared'))).toBe(true);
       expect(warns.some((warning) => warning.includes('malformed row'))).toBe(true);
+    });
+  });
+
+  // The store a plugin reaches for output too large to return inline. The scope is the HOST's: the plugin
+  // names its tool call and nothing else, so it can neither pick a conversation nor be handed a path the
+  // turn is unable to read back.
+  describe('persistToolOutput', () => {
+    const scoped = <T>(fn: () => T, opts: { sessionId?: string; pathView?: ReturnType<typeof createWorkspacePathView> }): T => {
+      const policy: Policy = { allowedProjectIds: new Set([1]), allowedPaths: () => [] };
+      return runWithPolicy(policy, fn, { identity: { platform: 'elowen', userId: '1', admin: false }, ...opts });
+    };
+    const withHome = async (fn: (home: string) => Promise<void>): Promise<void> => {
+      const home = mkdtempSync(join(tmpdir(), 'elowen-persist-output-'));
+      const previous = process.env.HOME;
+      process.env.HOME = home;
+      try { await fn(home); }
+      finally {
+        if (previous === undefined) delete process.env.HOME;
+        else process.env.HOME = previous;
+        rmSync(home, { recursive: true, force: true });
+      }
+    };
+
+    it('stores under the calling conversation and hands back a path that conversation may read', async () => {
+      await withHome(async (home) => {
+        const ctx = new PluginRegistry().contextFor('demo', {}, noopLog);
+        const stored = await scoped(() => ctx.persistToolOutput({ toolCallId: 'call-9', text: 'full output' }), { sessionId: 'brain-p-1' });
+
+        expect(stored?.path).toBe(join(home, '.config', 'elowen', 'tool-results', 'brain-p-1', 'call-9.v1-output-11.txt'));
+        expect(readFileSync(stored!.path, 'utf8')).toBe('full output');
+        expect(scoped(() => assertPathAllowed(stored!.path), { sessionId: 'brain-p-1' })).toBe(stored!.path);
+        expect(() => scoped(() => assertPathAllowed(stored!.path), { sessionId: 'brain-p-2' })).toThrow(/not allowed/);
+      });
+    });
+
+    it('stores nothing outside a prompt turn, or in a workspace-confined one that could not read it back', async () => {
+      await withHome(async (home) => {
+        const ctx = new PluginRegistry().contextFor('demo', {}, noopLog);
+        const workspace = realpathSync(mkdtempSync(join(tmpdir(), 'elowen-persist-ws-')));
+        const pathView = createWorkspacePathView({ accountUserId: 1, workspaceId: 'ws_1', projectId: 1, path: workspace });
+        try {
+          expect(await scoped(() => ctx.persistToolOutput({ toolCallId: 'c', text: 'x' }), {})).toBeNull();
+          // A workspace turn's logical filesystem admits no absolute path, so a stored path would name a
+          // file the model cannot open — and expose the daemon's data directory while doing it.
+          expect(await scoped(() => ctx.persistToolOutput({ toolCallId: 'c', text: 'x' }), { sessionId: 'brain-p-3', pathView })).toBeNull();
+          expect(existsSync(join(home, '.config', 'elowen', 'tool-results'))).toBe(false);
+        } finally {
+          rmSync(workspace, { recursive: true, force: true });
+        }
+      });
     });
   });
 });

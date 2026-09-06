@@ -176,20 +176,30 @@ function toolOutputSpillPath(spillDir: string, toolCallId: string, bytes: number
  *  clearing the conversation removes the whole directory with it. A second store would have to re-earn
  *  both.
  *
- *  Overwrites rather than the latch spills' write-once `wx`. Nothing here has to stay byte-stable: the
- *  file backs a path named in one inline result, not a placeholder the provider has cached. The only way
- *  to collide is a REUSED toolCallId (sequential `call_0` styles reset per turn) whose output is also
- *  byte-identical in size, and refusing that write would cost the caller its note to protect a file that
- *  is almost certainly identical. */
+ *  Write-once (`wx`) with the same EEXIST reconciliation the latch spills use, for the same reason: a
+ *  toolCallId is not unique on its own (sequential `call_0` styles reset every turn — see
+ *  {@link toolResultOccurrenceKey}), so a later call CAN land on an existing name, and only when its output
+ *  is byte-identical in size at that. Overwriting would then swap the content under a path an earlier
+ *  result still tells the model to read, with nothing marking the swap. Identical bytes are the same file
+ *  and are simply adopted; a genuine conflict returns null, and the caller keeps whatever it does when
+ *  nothing could be stored. */
 export async function persistToolOutputSpill(
   spillDir: string,
   toolCallId: string,
   text: string,
-): Promise<{ path: string; bytes: number }> {
+): Promise<{ path: string; bytes: number } | null> {
   const bytes = Buffer.byteLength(text, 'utf8');
   const path = toolOutputSpillPath(spillDir, toolCallId, bytes);
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, text);
+  try {
+    await writeFile(path, text, { flag: 'wx' });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
+    if (await readFile(path, 'utf8').catch(() => null) !== text) {
+      log.warn(`a different file already occupies the output spill path for ${toolCallId} — not storing this output`);
+      return null;
+    }
+  }
   return { path, bytes };
 }
 
