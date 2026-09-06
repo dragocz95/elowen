@@ -115,11 +115,18 @@
 /* THE ALIGNMENT RULE. A stack of records owns the column tracks and every record borrows them through
    subgrid, so each status sits under the previous status and each action under the previous action. Let
    the records size their own tracks instead and a wider action ("Restart the daemon" beside "Restart
-   the web") drags that row's whole split sideways — which is exactly how these read before. */
+   the web") drags that row's whole split sideways — which is exactly how these read before.
+   FOUR tracks, because the trailing band is three named slots and not one flex line: label, then
+   [status][control][actions]. The status used to share the control's track through a flex box, so the
+   only row in a card carrying a status pill pushed its own switch sideways while every neighbouring
+   switch stayed put — the trailing side lined up nowhere. Giving status its own shared track is what
+   puts every switch in ONE column and every action against ONE right edge.
+   `minmax(0, auto)` on the status track: sized by the widest status in the card, but allowed to shrink
+   below its min-content instead of overflowing the card when a record carries a long one. */
 .settings-group__body:has(> .settings-row),
 .settings-group__column {
   display: grid;
-  grid-template-columns: minmax(10rem, 1fr) minmax(0, 1.05fr) auto;
+  grid-template-columns: minmax(10rem, 1fr) minmax(0, auto) minmax(0, 1.05fr) auto;
   align-content: start;
 }
 /* Two stacks side by side. They are separate grids on purpose: each aligns within itself, and a tall
@@ -128,7 +135,7 @@
 .settings-group__column { min-width: 0; }
 .settings-group__column + .settings-group__column { border-left: 1px solid color-mix(in srgb, var(--color-foreground) 5.5%, transparent); }
 /* Half the width means half the room: the label track gives some of it back to the control. */
-.settings-group__column { grid-template-columns: minmax(8rem, 1fr) minmax(0, 0.85fr) auto; }
+.settings-group__column { grid-template-columns: minmax(8rem, 1fr) minmax(0, auto) minmax(0, 0.85fr) auto; }
 
 /* A padded body for grouped content that is a free block (pill lists, log tails, config field grids)
    rather than a stack of records — inset matched to the card header. */
@@ -137,7 +144,7 @@
    modifier only has to stop the header tint from fighting the rounded corner. */
 .settings-group.plugin-card > .settings-group__header { background: transparent; }
 
-/* Three tracks, because a record may carry BOTH a control and trailing actions (a connected account
+/* Four tracks, because a record may carry a status, a control AND trailing actions (a connected account
    shows its usage meters and a "Models" button). A two-track grid pushed the actions onto a second line
    and crushed the meters. The tracks come from the enclosing stack via subgrid — see the alignment rule
    above — so every record in a card shares one set of columns.
@@ -147,7 +154,7 @@
 .settings-row {
   position: relative;
   display: grid;
-  grid-template-columns: minmax(10rem, 1fr) minmax(0, 1.05fr) auto;
+  grid-template-columns: minmax(10rem, 1fr) minmax(0, auto) minmax(0, 1.05fr) auto;
   align-items: center;
   gap: 0.75rem 1rem;
   min-height: 2.75rem;
@@ -206,14 +213,33 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
 .settings-row__description { margin-top: 0.16rem; color: var(--color-muted-foreground); font-size: var(--text-meta); font-weight: var(--text-meta--font-weight); letter-spacing: var(--tracking-ui); line-height: var(--text-meta--line-height); }
 .settings-row__status { margin-top: 0.3rem; color: var(--color-muted-foreground); font-size: var(--text-meta); font-weight: var(--text-meta--font-weight); letter-spacing: var(--tracking-ui); line-height: var(--text-meta--line-height); }
 /* One trailing cell owns status, control and actions, so every row has the same two logical columns even
-   when a record carries more than one trailing value. It spans the control/action tracks of the shared
-   subgrid; skins may retune the tracks without changing the DOM contract. */
-.settings-row__trailing { display: flex; min-width: 0; grid-column: 2 / 4; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.5rem 0.75rem; }
-/* An INLINE record's trailing side is one line, here and at every width below. That is the whole
-   canonical anatomy: one control, a short status, at most two actions, and nothing that turns a record
-   into a two-row block on a wide card. `stack` keeps `wrap`, because a record that declared it is
-   carrying several values on purpose. */
-.settings-row[data-trailing='inline'] .settings-row__trailing { flex-wrap: nowrap; }
+   when a record carries more than one trailing value. It spans the status/control/action tracks of the
+   shared subgrid; skins may retune the tracks without changing the DOM contract. */
+.settings-row__trailing { display: flex; min-width: 0; grid-column: 2 / -1; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 0.5rem 0.75rem; }
+/* THE TRAILING BAND. An INLINE record's trailing side is one line, here and at every width below — and
+   on a wide card it is a SUBGRID of the three trailing tracks rather than a flex line. That is the
+   difference between a card that lines up and the one this replaced: flex sizes each row from its own
+   content, so the single record carrying a status pill pushed its own switch left while every switch
+   above it stayed where it was, and a record with a trailing action ended somewhere else again. Sharing
+   the tracks puts every status in one column, every switch in one column, and every action against one
+   right edge, without a single call site having to know about it.
+   `flex-wrap: nowrap` is not dead here: the phone fold below returns this cell to flex, and that is the
+   width at which an inline record must still refuse to become three lines. `stack` keeps the wrapping
+   flex line, because a record that declared it is carrying several values on purpose. */
+.settings-row[data-trailing='inline'] .settings-row__trailing {
+  display: grid;
+  grid-template-columns: subgrid;
+  align-items: center;
+  flex-wrap: nowrap;
+}
+/* The slots are placed EXPLICITLY. A record may omit any of the three, and auto-placement would then
+   slide its control into the status column — which is the misalignment this whole band exists to fix. */
+.settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__status { grid-column: 1; justify-self: end; }
+.settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__control { grid-column: 2; }
+.settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__actions { grid-column: 3; justify-self: end; }
+/* The control cell ends at its track's edge: a bare switch lands in the same column as the switch above
+   it, while a select or an input still fills the track through its own full-width class. */
+.settings-row[data-trailing='inline'] .settings-row__trailing .settings-row__control { display: flex; align-items: center; justify-content: flex-end; gap: 0.5rem; }
 /* The short status is atomic — often a Badge — so it must keep its min-content width. Shrinking this
    wrapper clipped "Configured" inside the badge while the control beside it still owned a generous flex
    basis. The control is the elastic part of an inline record; multi-value rows that need full-width bands
@@ -249,8 +275,8 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
 }
 /* Legacy direct slots retain their tracks for plugin bundles compiled against the earlier anatomy. The
    descendant specificity intentionally matches the phone reset below, whose later rule must release it. */
-.settings-row__control { min-width: 0; grid-column: 2; }
-.settings-row__actions { grid-column: 3; }
+.settings-row__control { min-width: 0; grid-column: 3; }
+.settings-row__actions { grid-column: 4; }
 
 /* A FINGER, not a pointer. The record's own rhythm is tuned for a cursor, and the controls it carries —
    a picker trigger, a segmented track, a switch, an action button — are all 32-36px tall by design. That
@@ -330,6 +356,15 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
   .settings-row__control, .settings-row__actions { grid-column: auto; }
   .settings-row__actions { justify-self: start; }
   .settings-row__trailing { width: 100%; grid-column: auto; justify-content: flex-start; }
+  /* THE BAND RELEASES. With one track left there is nothing to subgrid, so the trailing cell is the flex
+     line again — still one line for an inline record, and left-aligned under its own label rather than
+     right-aligned against an edge the label no longer reaches. Every placement the wide band set has to
+     be spelled out again here: these selectors are more specific than the reset above them. */
+  .settings-row[data-trailing='inline'] .settings-row__trailing { display: flex; grid-template-columns: none; }
+  .settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__status,
+  .settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__control,
+  .settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__actions { grid-column: auto; justify-self: auto; }
+  .settings-row[data-trailing='inline'] .settings-row__trailing .settings-row__control { justify-content: flex-start; }
   /* A record that declared `trailingLayout="stack"` carries SEVERAL trailing values (a connected
      account's meters, a provider entry's endpoint and badge set). Give each of them the row's whole
      width: a usage meter sized as a flex item of a shared value column resolves to zero and stops being

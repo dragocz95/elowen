@@ -625,10 +625,13 @@
    nothing lined up down the card.
    `minmax(0, 20rem)` is a ceiling and not a fixed width: a record whose control is a single switch keeps
    its track narrow and gives the room back to the text, while everything wider than 20rem is held at
-   20rem so the column edge stays put. A record with no control at all resolves the track to 0. */
+   20rem so the column edge stays put. A record with no control at all resolves the track to 0.
+   The status track before it is the trailing band's first slot (see the base stylesheet): sized by the
+   widest status the card carries and free to shrink rather than overflow, so a pill sits directly left
+   of its control instead of sharing the control's room and dragging that row's switch out of line. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .settings-row),
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__column {
-  grid-template-columns: minmax(0, 1fr) minmax(0, 20rem) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 20rem) auto;
 }
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row {
   gap: 0.75rem 1rem;
@@ -685,6 +688,20 @@
   }
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row__trailing {
     grid-column: 2;
+  }
+  /* THE BAND RELEASES WITH THE TRACKS. Studio drops to two columns here, so there is no third and fourth
+     track left for the trailing band to subgrid — the slots would spill into implicit columns and the
+     card would grow a phantom right edge. The cell is the right-aligned flex line again, which is the
+     same reading order (status, control, actions) without the shared columns. */
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='inline'] .settings-row__trailing {
+    display: flex;
+    grid-template-columns: none;
+  }
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__status,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__control,
+  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-row[data-trailing='inline'] .settings-row__trailing > .settings-row__actions {
+    grid-column: auto;
+    justify-self: auto;
   }
 }
 
