@@ -131,33 +131,44 @@ describe('SettingsGroup — remembered fold', () => {
     </SettingsGroup>,
   );
 
-  it('still starts closed, and writes the reader’s choice under a namespaced key', () => {
+  /** Owner decision (6 Sep 2026): a remembered group starts OPEN — the page reads fuller — and only the
+   *  reader's own click folds it. `defaultOpen={false}` is the explicit opt-out. */
+  it('starts open, and writes the reader’s choice under a namespaced key', () => {
     const { container } = renderGroup();
-    expect(trigger(container)).toHaveAttribute('aria-expanded', 'false');
+    expect(trigger(container)).toHaveAttribute('aria-expanded', 'true');
     expect(localStorage.getItem(key)).toBeNull();
 
     fireEvent.click(trigger(container));
-    expect(trigger(container)).toHaveAttribute('aria-expanded', 'true');
-    expect(localStorage.getItem(key)).toBe('open');
+    expect(trigger(container)).toHaveAttribute('aria-expanded', 'false');
+    expect(localStorage.getItem(key)).toBe('closed');
 
     fireEvent.click(trigger(container));
-    expect(localStorage.getItem(key)).toBe('closed');
+    expect(localStorage.getItem(key)).toBe('open');
   });
 
-  it('reopens a group the reader left open, across a full remount', () => {
+  it('keeps a group the reader closed shut, across a full remount', () => {
     const first = renderGroup();
     fireEvent.click(trigger(first.container));
     first.unmount();
 
     const { container } = renderGroup();
-    expect(trigger(container)).toHaveAttribute('aria-expanded', 'true');
-    expect(container.querySelector('.settings-group__body')).not.toHaveAttribute('hidden');
+    expect(trigger(container)).toHaveAttribute('aria-expanded', 'false');
+    expect(container.querySelector('.settings-group__body')).toHaveAttribute('hidden');
   });
 
-  it('keeps a group the reader closed shut even when the caller asks for defaultOpen', () => {
-    localStorage.setItem(key, 'closed');
+  it('reopens a group the reader left open even when the caller opts out with defaultOpen={false}', () => {
+    localStorage.setItem(key, 'open');
     const { container } = render(
-      <SettingsGroup title="Providers" collapsible defaultOpen storageKey="brain.providers">
+      <SettingsGroup title="Providers" collapsible defaultOpen={false} storageKey="brain.providers">
+        <SettingsRow label="Row" />
+      </SettingsGroup>,
+    );
+    expect(trigger(container)).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('starts closed only when the caller opts out', () => {
+    const { container } = render(
+      <SettingsGroup title="Providers" collapsible defaultOpen={false} storageKey="brain.providers">
         <SettingsRow label="Row" />
       </SettingsGroup>,
     );
@@ -176,9 +187,9 @@ describe('SettingsGroup — remembered fold', () => {
     const triggers = [...container.querySelectorAll('.settings-group__trigger')] as HTMLButtonElement[];
     fireEvent.click(triggers[0]!);
 
-    expect(localStorage.getItem(key)).toBe('open');
+    expect(localStorage.getItem(key)).toBe('closed');
     expect(localStorage.getItem('elowen.settings.fold.brain.accounts')).toBeNull();
-    expect(triggers[1]).toHaveAttribute('aria-expanded', 'false');
+    expect(triggers[1]).toHaveAttribute('aria-expanded', 'true');
   });
 
   /** A garbage value must not decide anything: `usePersistentState` validates on read, so a foreign or
@@ -186,12 +197,13 @@ describe('SettingsGroup — remembered fold', () => {
   it('ignores a stored value that is not a fold state', () => {
     localStorage.setItem(key, 'sideways');
     const { container } = renderGroup();
-    expect(trigger(container)).toHaveAttribute('aria-expanded', 'false');
+    expect(trigger(container)).toHaveAttribute('aria-expanded', 'true');
   });
 
   /** A remembered group is still a group a deep link can open: `useRowAnchor` clicks the trigger, and the
    *  click arrives here as an ordinary open — which the group then remembers. */
   it('opens from a programmatic trigger click, the way a row anchor unfolds it', () => {
+    localStorage.setItem(key, 'closed');
     const { container } = renderGroup();
     const body = container.querySelector('.settings-group__body')!;
     expect(body).toHaveAttribute('data-state', 'closed');

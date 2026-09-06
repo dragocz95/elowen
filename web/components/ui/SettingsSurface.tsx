@@ -67,7 +67,8 @@ export type SettingsGroupProps = {
   onOpenChange?: (open: boolean) => void;
   /** A STABLE, locale-independent id under which this group's fold is remembered — `brain.providers`,
    *  `terminal.colors`. Only meaningful together with `collapsible`, and ignored when the caller drives
-   *  `open` itself, because a controlled group already has an owner for that state. */
+   *  `open` itself, because a controlled group already has an owner for that state. A remembered group
+   *  starts open unless `defaultOpen={false}`. */
   storageKey?: string;
   /** Optional: a group whose whole story fits in its header (a title, a figure, one action) renders as a
    *  single row. An empty body div would still contribute its own padding and read as a stray gap. */
@@ -86,10 +87,12 @@ export function SettingsGroup(props: SettingsGroupProps) {
 
 /** The remembered fold. `usePersistentState` is the app's one localStorage-backed state helper; it starts
  *  from the fallback and rehydrates inside an effect, so the server and the first client paint agree and
- *  a group that was left open simply opens a tick later. A deep link into a folded group still works
- *  unchanged: `useRowAnchor` clicks the trigger, the click lands here as `onOpenChange(true)`, and the
- *  group both opens and remembers that it did. */
-function PersistedSettingsGroup({ storageKey, defaultOpen, onOpenChange, ...rest }: SettingsGroupProps & { storageKey: string }) {
+ *  a group that was left closed simply folds a tick later. A remembered group starts OPEN (owner decision,
+ *  6 Sep 2026: a page reads fuller when nothing is hidden until the reader hides it) — `defaultOpen={false}`
+ *  opts a group out. A deep link into a folded group still works unchanged: `useRowAnchor` clicks the
+ *  trigger, the click lands here as `onOpenChange(true)`, and the group both opens and remembers that it
+ *  did. */
+function PersistedSettingsGroup({ storageKey, defaultOpen = true, onOpenChange, ...rest }: SettingsGroupProps & { storageKey: string }) {
   const [stored, setStored] = usePersistentState<FoldState>(`${GROUP_FOLD_PREFIX}${storageKey}`, defaultOpen ? 'open' : 'closed', FOLD_STATES);
   const handleOpenChange = useCallback((next: boolean) => {
     setStored(next ? 'open' : 'closed');

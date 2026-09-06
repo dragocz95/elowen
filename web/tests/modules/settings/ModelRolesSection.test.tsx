@@ -52,13 +52,13 @@ import { ModelRolesSection } from '../../../modules/settings/ModelRolesSection';
 const renderSection = (onOpenSection?: (id: string) => void) =>
   render(<ToastProvider><ModelRolesSection onOpenSection={onOpenSection} /></ToastProvider>, { wrapper: createWrapper().wrapper });
 
-/** The group folds closed by default, and `getByRole` does not see into `hidden` content (it leaves the
- *  accessibility tree). Tests that drive the rows therefore OPEN the group first — that is the query
- *  being aligned with the new default, not a workaround for a regression: the rows themselves are always
- *  in the DOM (pinned by the "still in the DOM" test below). */
+/** A remembered group starts open (owner decision, 6 Sep 2026), and `getByRole` does not see into `hidden`
+ *  content. Tests that drive the rows make sure the group IS open — a no-op on a fresh render, a click when
+ *  an earlier test in the file folded it — so the rows are in the accessibility tree either way. */
 const openModelRolesGroup = (container: HTMLElement) => {
-  fireEvent.click(container.querySelector('.settings-group__trigger')!);
-  expect(container.querySelector('.settings-group__trigger')).toHaveAttribute('aria-expanded', 'true');
+  const trigger = container.querySelector('.settings-group__trigger')!;
+  if (trigger.getAttribute('aria-expanded') !== 'true') fireEvent.click(trigger);
+  expect(trigger).toHaveAttribute('aria-expanded', 'true');
 };
 
 const pick = (rowLabel: string) => screen.getByRole('button', { name: `${en.managePicker.manage}: ${rowLabel}` });
@@ -280,23 +280,28 @@ describe('Settings → Models — Model roles', () => {
  *  the group programmatically through the controlled props, which only works while the rows exist. */
 describe('Settings → Models — the collapsed group', () => {
   /** EIGHT rows: instance default, utility, digest, embedding provider/model/custom/dimensions, personal. */
-  it('starts collapsed with every row still in the DOM', () => {
+  it('starts open with every row in the DOM, and folds on the header trigger', () => {
     const { container } = renderSection();
     const group = container.querySelector('[data-settings-group]')!;
     const trigger = container.querySelector('.settings-group__trigger')!;
 
-    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    expect(trigger).toHaveAttribute('aria-expanded', 'true');
     expect(trigger).toHaveAttribute('type', 'button');
-    const body = group.querySelector('.settings-group__body')!;
-    expect(body).toHaveAttribute('hidden');
-    // Closed yet present: all eight records, with the summary carrying what the fold hides.
     expect(group.querySelectorAll('.settings-row')).toHaveLength(8);
     expect(group.querySelector('.settings-group__heading p')!.textContent).toBe(en.settings.modelRoles.hint);
+
+    fireEvent.click(trigger);
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    // Closed yet present: the rows stay in the DOM for deep links, only hidden from the accessibility tree.
+    expect(group.querySelector('.settings-group__body')).toHaveAttribute('hidden');
+    expect(group.querySelectorAll('.settings-row')).toHaveLength(8);
   });
 
-  it('opens on the header trigger and hands the rows back to the accessibility tree', () => {
+  it('reopens on the header trigger and hands the rows back to the accessibility tree', () => {
+    localStorage.setItem('elowen.settings.fold.settings.modelRoles', 'closed');
     const { container } = renderSection();
     const trigger = container.querySelector('.settings-group__trigger') as HTMLElement;
+    expect(trigger).toHaveAttribute('aria-expanded', 'false');
     fireEvent.click(trigger);
 
     expect(trigger).toHaveAttribute('aria-expanded', 'true');

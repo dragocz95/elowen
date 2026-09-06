@@ -276,6 +276,8 @@ describe('SettingsPage', () => {
       http.get('*/api/memory/embedding', () => HttpResponse.json({ configured: false, provider: '', model: '', dimensions: 1536 })),
       http.get('*/api/memory/categorization', () => HttpResponse.json({ configured: false, provider: '', model: '' })),
     );
+    // The reader folded the card earlier; the deep link still has to reach the row inside it.
+    localStorage.setItem('elowen.settings.fold.settings.modelRoles', 'closed');
     window.history.replaceState(null, '', '/settings?cat=models&row=settings.modelRoles.digest');
     const { wrapper: Wrapper } = createWrapper();
     const { container, unmount } = render(<Wrapper><ToastProvider><SettingsPage /></ToastProvider></Wrapper>);
@@ -287,8 +289,8 @@ describe('SettingsPage', () => {
     });
     await waitFor(() => expect(row).toHaveClass('row-flash'));
     expect(window.location.search).toBe('?cat=models');
-    // The row it names lives in a card that folds CLOSED and remembers its fold, so arriving at it has to
-    // unfold that card — a marked row inside a `hidden` body is a link that silently goes nowhere. The
+    // The row it names lives in a card the reader folded closed and that remembers its fold, so arriving at
+    // it has to unfold that card — a marked row inside a `hidden` body is a link that silently goes nowhere. The
     // unfold is the reader's choice from then on, exactly as if they had clicked the header.
     const group = row.closest('[data-settings-group]')!;
     expect(group.querySelector('.settings-group__trigger')).toHaveAttribute('aria-expanded', 'true');
