@@ -573,7 +573,8 @@ describe('files plugin — Grep', () => {
     const limited = await runWithPolicy(userPolicy([many]), () => runTool(reg2, 'Grep', { path: many, pattern: 'needle', head_limit: 5 }));
     expect(detailsOf(limited).matches).toBe(5);
     expect(detailsOf(limited).truncated).toBe(true);
-    expect(textOf(limited)).toContain('pagination');
+    // The notice states the REAL total and the offset that continues the listing, like Read's footer.
+    expect(textOf(limited)).toContain('[Showing results 1-5 of 20. Use offset=5 to continue.]');
     const unlimited = await runWithPolicy(userPolicy([many]), () => runTool(reg2, 'Grep', { path: many, pattern: 'needle', head_limit: 0 }));
     expect(detailsOf(unlimited).matches).toBe(20); // 0 = unlimited, NOT "return nothing"
     expect(detailsOf(unlimited).truncated).toBe(false);
@@ -586,6 +587,74 @@ describe('files plugin — Grep', () => {
     expect(detailsOf(withMl).matches).toBeGreaterThan(0);
     const withoutMl = await runWithPolicy(userPolicy([ml]), () => runTool(reg2, 'Grep', { path: ml, pattern: 'foo.*bar' }));
     expect(detailsOf(withoutMl).matches).toBe(0); // single-line by default
+  });
+
+  it('matches case-sensitively by default and folds case only with -i', async () => {
+    const cs = tmpDir('grep-case');
+    writeFileSync(join(cs, 'c.txt'), 'Needle upper\nneedle lower\nNEEDLE shout\n');
+    const sensitive = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Grep', { path: cs, pattern: 'needle' }));
+    expect(detailsOf(sensitive).matches).toBe(1); // ripgrep's default: only the lowercase line
+    expect(textOf(sensitive)).toContain('needle lower');
+    expect(textOf(sensitive)).not.toContain('Needle upper');
+    const folded = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Grep', { path: cs, pattern: 'needle', '-i': true }));
+    expect(detailsOf(folded).matches).toBe(3);
+    // Search is the discovery tool and stays case-insensitive on the same input — one documented rule each.
+    const search = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Search', { path: cs, query: 'needle' }));
+    expect(detailsOf(search).matches).toBe(3);
+  });
+
+  it('offset pages through a truncated listing and reaches the tail without gaps or repeats', async () => {
+    const many = tmpDir('grep-offset');
+    writeFileSync(join(many, 'many.txt'), Array.from({ length: 20 }, (_, i) => `needle ${i}`).join('\n'));
+    const page = async (offset: number) => runWithPolicy(userPolicy([many]), () => runTool(reg2, 'Grep', { path: many, pattern: 'needle', head_limit: 8, offset }));
+    const p1 = await page(0);
+    const p2 = await page(8);
+    const p3 = await page(16);
+    expect(textOf(p1)).toContain('[Showing results 1-8 of 20. Use offset=8 to continue.]');
+    expect(textOf(p2)).toContain('[Showing results 9-16 of 20. Use offset=16 to continue.]');
+    // The last page reaches the tail: it reports its range but must NOT invite another (empty) page.
+    expect(detailsOf(p3).truncated).toBe(false);
+    expect(textOf(p3)).toContain('[Showing results 17-20 of 20.]');
+    expect(textOf(p3)).not.toContain('Use offset=');
+    const rows = [p1, p2, p3].flatMap((r) => textOf(r).split('\n\n')[0].split('\n'));
+    expect(rows).toHaveLength(20);
+    expect(new Set(rows).size).toBe(20); // continuous, no overlap between pages
+    // Paging past the end says so instead of claiming the pattern was never found.
+    const past = await page(40);
+    expect(textOf(past)).toBe('No more results — offset 40 is past the 20 matches found.');
+  });
+
+  it('type filters by ripgrep file type and rejects a type ripgrep does not know', async () => {
+    const t = tmpDir('grep-type');
+    writeFileSync(join(t, 'a.ts'), 'const needle = 1;\n');
+    writeFileSync(join(t, 'b.py'), 'needle = 1\n');
+    const py = await runWithPolicy(userPolicy([t]), () => runTool(reg2, 'Grep', { path: t, pattern: 'needle', type: 'py' }));
+    expect(textOf(py)).toContain('b.py');
+    expect(textOf(py)).not.toContain('a.ts');
+    const bogus = await runWithPolicy(userPolicy([t]), () => runTool(reg2, 'Grep', { path: t, pattern: 'needle', type: 'notatype' }));
+    expect(detailsOf(bogus).ok).toBe(false);
+    expect(textOf(bogus)).toContain('--type-list');
+  });
+
+  it('caps a very long line at 500 columns and keeps ripgrep own truncation marker', async () => {
+    const wide = tmpDir('grep-wide');
+    writeFileSync(join(wide, 'min.js'), `${'A'.repeat(900)} needle tail\n`);
+    const res = await runWithPolicy(userPolicy([wide]), () => runTool(reg2, 'Grep', { path: wide, pattern: 'needle' }));
+    const row = textOf(res).split('\n')[0];
+    expect(row).toContain('[... omitted end of long line]'); // rg says the line was cut, we do not re-cut it
+    expect(row).not.toContain('tail'); // the 900-column prefix was dropped at the cap
+    expect(row.length).toBeLessThan(600); // one minified line cannot fill the page
+  });
+
+  it('declares its default result cap in the description and applies it without head_limit', async () => {
+    const big = tmpDir('grep-default-cap');
+    writeFileSync(join(big, 'big.txt'), Array.from({ length: 250 }, (_, i) => `needle ${i}`).join('\n'));
+    const res = await runWithPolicy(userPolicy([big]), () => runTool(reg2, 'Grep', { path: big, pattern: 'needle' }));
+    expect(detailsOf(res).matches).toBe(200); // DEFAULT_GREP_MAX_MATCHES
+    expect(textOf(res)).toContain('[Showing results 1-200 of 250. Use offset=200 to continue.]');
+    const description = (reg2.tools.find((t) => t.name === 'Grep') as unknown as { description: string }).description;
+    expect(description).toContain('at most 200 results per call'); // the model is told the number
+    expect(description).toContain('-i');
   });
 
   it('fails content searches closed when rg is unavailable but keeps filename search safe', async () => {
