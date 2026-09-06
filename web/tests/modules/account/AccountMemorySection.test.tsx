@@ -61,4 +61,22 @@ describe('AccountMemorySection', () => {
       autoLiveRecall: false, autoRecall: true, autoSave: true,
     }));
   });
+
+  /** THE SWITCH STANDS ALONE. Each record used to print its sentence again beside the switch, which is a
+   *  third copy of what the title and the help mark already say — and, because it sat inside the control
+   *  slot, it pushed every switch out of the column the trailing band puts them in. The sentence survives
+   *  as the switch's accessible name, so nothing is lost to a screen reader. */
+  it('carries no caption beside the switch, only the switch itself', () => {
+    const { container } = renderSection();
+    const controls = container.querySelectorAll('.settings-row__control');
+    expect(controls).toHaveLength(3);
+    for (const control of controls) {
+      expect(control.children).toHaveLength(1);
+      expect(control.firstElementChild).toHaveAttribute('role', 'switch');
+      expect(control.textContent).toBe('');
+    }
+    expect(screen.getByRole('switch', { name: 'Search memory after each message' })).toBeInTheDocument();
+    // The sentence is the switch's name, not a caption printed beside it.
+    expect(screen.queryByText('Search memory after each message')).not.toBeInTheDocument();
+  });
 });
