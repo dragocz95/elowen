@@ -18,7 +18,6 @@ type SettingsDensity = 'comfortable' | 'compact';
 const GROUP_FOLD_PREFIX = 'elowen.settings.fold.';
 const FOLD_STATES = ['open', 'closed'] as const;
 type FoldState = (typeof FOLD_STATES)[number];
-export const settingsFoldKey = (storageKey: string) => `${GROUP_FOLD_PREFIX}${storageKey}`;
 
 /** A settings or account page is a STACK OF SECTION CARDS, not one long bordered document. The shell
  *  `control-surface-document` would otherwise draw around the whole stack is dropped in CSS, so each
@@ -91,7 +90,7 @@ export function SettingsGroup(props: SettingsGroupProps) {
  *  unchanged: `useRowAnchor` clicks the trigger, the click lands here as `onOpenChange(true)`, and the
  *  group both opens and remembers that it did. */
 function PersistedSettingsGroup({ storageKey, defaultOpen, onOpenChange, ...rest }: SettingsGroupProps & { storageKey: string }) {
-  const [stored, setStored] = usePersistentState<FoldState>(settingsFoldKey(storageKey), defaultOpen ? 'open' : 'closed', FOLD_STATES);
+  const [stored, setStored] = usePersistentState<FoldState>(`${GROUP_FOLD_PREFIX}${storageKey}`, defaultOpen ? 'open' : 'closed', FOLD_STATES);
   const handleOpenChange = useCallback((next: boolean) => {
     setStored(next ? 'open' : 'closed');
     onOpenChange?.(next);
