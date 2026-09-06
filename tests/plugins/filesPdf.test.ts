@@ -171,7 +171,7 @@ describe('Read — PDF', () => {
     const write = await runWithPolicy(userPolicy([dir]), () => runTool(
       reg, 'Write', { file_path: scanned, content: 'clobber' },
     ), { sessionId });
-    expect(write.content[0].text).toMatch(/not been fully read|has not been read/i);
+    expect(write.content[0].text).toMatch(/File has not been read yet\. Read it first before writing to it\./);
     expect(readFileSync(scanned).subarray(0, 5).toString('ascii')).toBe('%PDF-');
   });
 

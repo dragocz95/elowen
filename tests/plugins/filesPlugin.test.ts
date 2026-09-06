@@ -74,11 +74,15 @@ describe('files plugin', () => {
   // The rename is only safe if the OLD shape fails loudly. An Edit that quietly reported success while
   // writing nothing is the failure mode worth a regression test: the agent would move on believing the
   // change landed.
-  it('describes only complete, model-visible reads as satisfying the modify guard', () => {
+  it('describes the guard as a read of the file plus unchanged bytes, not a whole-file read', () => {
     const descriptionOf = (name: string) => reg.tools.find((tool) => tool.name === name)?.description ?? '';
-    expect(descriptionOf('Read')).toContain('continue paged reads until the complete file has been visible');
-    expect(descriptionOf('Write')).toMatch(/partial or truncated Read.*does not count/);
-    expect(descriptionOf('Edit')).toMatch(/partial or truncated reads.*do not count/);
+    expect(descriptionOf('Read')).toContain('returns an error instead of a silent prefix');
+    expect(descriptionOf('Write')).toMatch(/read it in this conversation first, and it must not have changed on disk since/);
+    expect(descriptionOf('Edit')).toMatch(/read the file in this conversation before editing it/);
+    // The dropped whole-file requirement must not linger in the wording the model is trained on.
+    for (const name of ['Read', 'Write', 'Edit']) {
+      expect(descriptionOf(name)).not.toMatch(/complete file has been visible|complete content|partial or truncated/);
+    }
   });
 
   it('a call in the OLD parameter shape fails loudly instead of silently doing nothing', async () => {
@@ -129,7 +133,8 @@ describe('files plugin', () => {
     const f = join(dir, 'multi.txt');
     writeFileSync(f, 'dup\ndup\n');
     const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Edit', { file_path: f, old_string: 'dup', new_string: 'x' }));
-    expect(res.content[0].text).toMatch(/matches 2 times/);
+    expect(res.content[0].text).toContain('Found 2 matches of the string to replace, but replace_all is false.');
+    expect(res.content[0].text).toContain('\nString: dup');
     await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Edit', { file_path: f, old_string: 'dup', new_string: 'x', replace_all: true }));
     expect(readFileSync(f, 'utf-8')).toBe('x\nx\n');
   });
@@ -377,7 +382,9 @@ describe('files plugin — configurable readCap', () => {
   const stripLineNumbers = (text: string): string =>
     text.split('\n').map((l) => l.replace(/^\s*\d+\t/, '')).join('\n');
 
-  it('a configured readCap (min-clamped 20000) truncates a read that the default 100000 would not', async () => {
+  // The cap is a refusal, not a pair of scissors: a silent prefix is what makes a model edit against text
+  // it never saw. An explicit `limit` opts out of the cap entirely — the caller sized that page itself.
+  it('a configured readCap (min-clamped 20000) refuses a read the default 100000 would have returned', async () => {
     const reg = await loadPlugins({
       dirs: [join(repoRoot, 'plugins')], enabled: ['files'], logger: log,
       config: { files: { readCap: 20_000 } },
@@ -385,9 +392,11 @@ describe('files plugin — configurable readCap', () => {
     const f = join(dir, 'big1.txt');
     writeFileSync(f, 'a'.repeat(30_000));
     const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { file_path: f }));
-    const text = res.content[0].text;
-    expect(text).toContain('exceeds the'); // single overlong line: byte-limit hint, not line paging
-    expect(Buffer.byteLength(stripLineNumbers(text.slice(0, shownLength(text))))).toBe(20_000); // single-line file: byte-slice fallback keeps exactly the cap
+    expect(res.content[0].text).toContain('File content (29.3KB) exceeds maximum allowed size (19.5KB).');
+    expect((res as { details?: { ok?: boolean } }).details?.ok).toBe(false);
+
+    const paged = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { file_path: f, limit: 1 }));
+    expect(Buffer.byteLength(stripLineNumbers(paged.content[0].text))).toBe(30_000); // no byte cap under a limit
   });
 
   it('unset readCap reproduces the default 100000-byte cap exactly', async () => {
@@ -401,9 +410,9 @@ describe('files plugin — configurable readCap', () => {
     const over = join(dir, 'over.txt');
     writeFileSync(over, 'a'.repeat(150_000));
     const overRes = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { file_path: over }));
-    const text = overRes.content[0].text;
-    expect(text).toContain('exceeds the');
-    expect(Buffer.byteLength(stripLineNumbers(text.slice(0, shownLength(text))))).toBe(100_000);
+    expect(overRes.content[0].text).toContain('File content (146.5KB) exceeds maximum allowed size (97.7KB).');
+    expect(overRes.content[0].text).toContain('Use offset and limit parameters to read specific portions of the file');
+    expect((overRes as { details?: { ok?: boolean } }).details?.ok).toBe(false);
   });
 
   it('truncates line-aware: keeps whole lines within the cap, never a partial line', async () => {

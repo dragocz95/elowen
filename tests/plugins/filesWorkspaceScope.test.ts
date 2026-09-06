@@ -72,7 +72,7 @@ describe('Files tools in an explicit workspace PathView', () => {
     const refused = await scopedAt('ws_second', secondRoot, () => runTool(reg, 'Edit', {
       file_path: 'src/same.ts', old_string: 'value = 10', new_string: 'value = 11',
     }));
-    expect(refused.content[0]!.text).toContain('has not been read in this conversation');
+    expect(refused.content[0]!.text).toContain('File has not been read yet. Read it first before writing to it.');
     await scopedAt('ws_second', secondRoot, () => runTool(reg, 'Read', { file_path: 'src/same.ts' }));
     await scopedAt('ws_second', secondRoot, () => runTool(reg, 'Edit', {
       file_path: 'src/same.ts', old_string: 'value = 10', new_string: 'value = 11',

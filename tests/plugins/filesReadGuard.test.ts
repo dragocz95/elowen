@@ -53,7 +53,7 @@ describe('files plugin — read-before-modify guard', () => {
     const path = fixture('unread.txt', 'alpha\nbeta\n');
     const res = await inSession('Edit', { file_path: path, old_string: 'alpha', new_string: 'ALPHA' });
 
-    expect(res.content[0].text).toMatch(/has not been read in this conversation/);
+    expect(res.content[0].text).toMatch(/File has not been read yet\. Read it first before writing to it\./);
     expect(res.details).toMatchObject({ ok: false });
     expect(readFileSync(path, 'utf-8')).toBe('alpha\nbeta\n'); // untouched
   });
@@ -62,7 +62,7 @@ describe('files plugin — read-before-modify guard', () => {
     const path = fixture('unread-write.txt', 'precious\n');
     const res = await inSession('Write', { file_path: path, content: 'clobbered' });
 
-    expect(res.content[0].text).toMatch(/has not been read in this conversation/);
+    expect(res.content[0].text).toMatch(/File has not been read yet\. Read it first before writing to it\./);
     expect(readFileSync(path, 'utf-8')).toBe('precious\n'); // the whole point: nothing was lost
   });
 
@@ -98,7 +98,7 @@ describe('files plugin — read-before-modify guard', () => {
     writeFileSync(path, 'alpha\nbeta\nimportant new line\n'); // someone else wrote to it
 
     const stale = await inSession('Write', { file_path: path, content: 'alpha only' });
-    expect(stale.content[0].text).toMatch(/has changed on disk since you last read it/);
+    expect(stale.content[0].text).toMatch(/File has been modified since read, either by the user or by a linter\./);
     expect(readFileSync(path, 'utf-8')).toContain('important new line'); // not clobbered
 
     await inSession('Read', { file_path: path }); // the agent catches up…
@@ -112,7 +112,7 @@ describe('files plugin — read-before-modify guard', () => {
     writeFileSync(path, 'alpha\nbeta\nsomeone else was here\n');
 
     const res = await inSession('Edit', { file_path: path, old_string: 'alpha', new_string: 'ALPHA' });
-    expect(res.content[0].text).toMatch(/has changed on disk since you last read it/);
+    expect(res.content[0].text).toMatch(/File has been modified since read, either by the user or by a linter\./);
     expect(readFileSync(path, 'utf-8')).toContain('someone else was here');
   });
 
@@ -139,7 +139,7 @@ describe('files plugin — read-before-modify guard', () => {
 
       // The agent edits against what it THINKS it wrote (unformatted). That anchor no longer exists.
       const res = await inSession('Edit', { file_path: path, old_string: 'const a=1', new_string: 'const b=2' });
-      expect(res.content[0].text).toMatch(/old_string not found/);
+      expect(res.content[0].text).toMatch(/String to replace not found in file\./);
       expect(readFileSync(path, 'utf-8')).toBe('const a = 1;\n'); // unchanged
     });
 
@@ -150,7 +150,7 @@ describe('files plugin — read-before-modify guard', () => {
       writeFileSync(path, 'const a = 1;\n');
 
       const res = await inSession('Write', { file_path: path, content: 'const b=2' });
-      expect(res.content[0].text).toMatch(/has changed on disk since you last read it/);
+      expect(res.content[0].text).toMatch(/File has been modified since read, either by the user or by a linter\./);
       expect(readFileSync(path, 'utf-8')).toBe('const a = 1;\n');
     });
 
@@ -165,11 +165,11 @@ describe('files plugin — read-before-modify guard', () => {
       // The edit is allowed past the guard, then fails on its own anchor — the agent still has not seen
       // the current bytes.
       const failed = await inSession('Edit', { file_path: path, old_string: 'nothing like this', new_string: 'x' });
-      expect(failed.content[0].text).toMatch(/old_string not found/);
+      expect(failed.content[0].text).toMatch(/String to replace not found in file\./);
 
       // …so a blind overwrite must STILL be refused.
       const blind = await inSession('Write', { file_path: path, content: 'clobber' });
-      expect(blind.content[0].text).toMatch(/has changed on disk since you last read it/);
+      expect(blind.content[0].text).toMatch(/File has been modified since read, either by the user or by a linter\./);
       expect(readFileSync(path, 'utf-8')).toBe('const a = 1;\n');
     });
   });
@@ -180,30 +180,66 @@ describe('files plugin — read-before-modify guard', () => {
     expect(read.details).toMatchObject({ ok: false });
 
     const write = await inSession('Write', { file_path: path, content: 'clobber' });
-    expect(write.content[0].text).toMatch(/has not been read in this conversation/);
+    expect(write.content[0].text).toMatch(/File has not been read yet\. Read it first before writing to it\./);
     expect(readFileSync(path, 'utf-8')).toBe('precious\n');
   });
 
-  it('a truncated text Read does not authorize a full-file Write', async () => {
-    const path = fixture('partial-write.txt', 'one\ntwo\nthree\nfour\n');
-    const read = await inSession('Read', { file_path: path, limit: 2 });
+  // One page of a file authorizes mutation, as it does in Claude Code. The read hashes the WHOLE file
+  // either way, so the guard keeps the only thing it can actually detect: the bytes moving underneath us.
+  it('a paged text Read authorizes an Edit of a line it never displayed', async () => {
+    const path = fixture('paged-edit.txt', 'one\ntwo\nthree\nfour\n');
+    const read = await inSession('Read', { file_path: path, offset: 1, limit: 2 });
     expect(read.details).toMatchObject({ ok: true, truncated: true });
 
-    const write = await inSession('Write', { file_path: path, content: 'clobber' });
-    expect(write.content[0].text).toMatch(/not been fully read/i);
-    expect(readFileSync(path, 'utf-8')).toBe('one\ntwo\nthree\nfour\n');
+    const res = await inSession('Edit', { file_path: path, old_string: 'four', new_string: 'FOUR' });
+    expect(res.content[0].text).toContain('Edited');
+    expect(readFileSync(path, 'utf-8')).toBe('one\ntwo\nthree\nFOUR\n');
   });
 
-  it('paged text Reads authorize Edit only after their visible coverage is complete', async () => {
-    const path = fixture('paged-edit.txt', 'one\ntwo\nthree\nfour\n');
-    await inSession('Read', { file_path: path, offset: 1, limit: 2 });
-    const partial = await inSession('Edit', { file_path: path, old_string: 'four', new_string: 'FOUR' });
-    expect(partial.content[0].text).toMatch(/not been fully read/i);
+  it('a paged text Read authorizes a full-file Write, and still refuses one against moved bytes', async () => {
+    const path = fixture('partial-write.txt', 'one\ntwo\nthree\nfour\n');
+    await inSession('Read', { file_path: path, limit: 2 });
+    expect((await inSession('Write', { file_path: path, content: 'rewritten' })).content[0].text).toContain('Wrote');
 
-    await inSession('Read', { file_path: path, offset: 3, limit: 2 });
-    const complete = await inSession('Edit', { file_path: path, old_string: 'four', new_string: 'FOUR' });
-    expect(complete.content[0].text).toContain('Edited');
-    expect(readFileSync(path, 'utf-8')).toBe('one\ntwo\nthree\nFOUR\n');
+    const moved = fixture('partial-write-moved.txt', 'one\ntwo\nthree\nfour\n');
+    await inSession('Read', { file_path: moved, limit: 2 });
+    writeFileSync(moved, 'someone else was here\n');
+    const stale = await inSession('Write', { file_path: moved, content: 'clobber' });
+    expect(stale.content[0].text).toMatch(/File has been modified since read, either by the user or by a linter\./);
+    expect(readFileSync(moved, 'utf-8')).toBe('someone else was here\n');
+  });
+
+  // Handing back a silent prefix of an oversized file is how a model ends up editing against content it
+  // never saw. The read fails instead, and says how to ask for less.
+  describe('a text file larger than the read cap', () => {
+    // 1000 lines, ~195 KB — under the 2000-line page but well over the 97.7 KB byte cap.
+    const body = `${`${'x'.repeat(199)}\n`.repeat(999)}unique-tail\n`;
+    const oversized = () => fixture('oversized.txt', body);
+
+    it('is refused without an explicit limit, and does not authorize a Write', async () => {
+      const path = oversized();
+      const read = await inSession('Read', { file_path: path });
+      expect(read.details).toMatchObject({ ok: false });
+      expect(read.content[0].text).toMatch(
+        /File content \(195\.1KB\) exceeds maximum allowed size \(97\.7KB\)\. Use offset and limit parameters/,
+      );
+      expect(read.content[0].text).toContain('or search for specific content instead of reading the whole file.');
+
+      const write = await inSession('Write', { file_path: path, content: 'clobber' });
+      expect(write.content[0].text).toMatch(/File has not been read yet\. Read it first before writing to it\./);
+      expect(readFileSync(path, 'utf-8')).toBe(body);
+    });
+
+    it('is read in full under an explicit limit — the caller owns the size of the page it asked for', async () => {
+      const path = oversized();
+      const read = await inSession('Read', { file_path: path, limit: 1000 });
+      expect(read.details).toMatchObject({ ok: true, truncated: false });
+      expect(read.content[0].text).toContain('1000\tunique-tail');
+      expect(read.content[0].text).not.toContain('exceeds maximum allowed size');
+
+      const edit = await inSession('Edit', { file_path: path, old_string: 'unique-tail', new_string: 'edited-tail' });
+      expect(edit.content[0].text).toContain('Edited');
+    });
   });
 
   it('an image omitted from the model request does not count as having read the file', async () => {
@@ -218,7 +254,7 @@ describe('files plugin — read-before-modify guard', () => {
     expect(read.content).not.toContainEqual(expect.objectContaining({ type: 'image' }));
 
     const write = await inSession('Write', { file_path: path, content: 'clobber' });
-    expect(write.content[0].text).toMatch(/has not been read in this conversation/);
+    expect(write.content[0].text).toMatch(/File has not been read yet\. Read it first before writing to it\./);
     expect(readFileSync(path)).toEqual(png);
   });
 
@@ -238,7 +274,7 @@ describe('files plugin — read-before-modify guard', () => {
     expect(read.content).not.toContainEqual(expect.objectContaining({ type: 'image' }));
 
     const write = await inSession('Write', { file_path: path, content: 'clobber' });
-    expect(write.content[0].text).toMatch(/not been fully read|has not been read/i);
+    expect(write.content[0].text).toMatch(/File has not been read yet\. Read it first before writing to it\./);
     expect(readFileSync(path, 'utf-8')).toContain('image/png');
   });
 
@@ -250,7 +286,7 @@ describe('files plugin — read-before-modify guard', () => {
     expect(read.details).toMatchObject({ ok: false });
 
     const write = await inSession('Write', { file_path: pdf, content: 'clobber' });
-    expect(write.content[0].text).toMatch(/has not been read in this conversation/);
+    expect(write.content[0].text).toMatch(/File has not been read yet\. Read it first before writing to it\./);
     expect(readFileSync(pdf, 'utf-8')).toContain('not really a pdf');
   });
 
@@ -284,7 +320,7 @@ describe('files plugin — read-before-modify guard', () => {
     await inSession('Read', { file_path: path }, 'brain-other-session');
 
     const res = await inSession('Edit', { file_path: path, old_string: 'shared', new_string: 'stolen' });
-    expect(res.content[0].text).toMatch(/has not been read in this conversation/);
+    expect(res.content[0].text).toMatch(/File has not been read yet\. Read it first before writing to it\./);
     expect(readFileSync(path, 'utf-8')).toBe('shared\n');
   });
 
@@ -316,6 +352,21 @@ describe('files plugin — read-before-modify guard', () => {
       expect(readFileSync(path, 'utf-8')).toBe('ALPHA\nbeta\n');
     });
 
+    // The replay vouches on the hash the read carried, not on how much of the file it displayed — the same
+    // rule the live guard applies, so a restart cannot make a paged read worth less than it was.
+    it('replays a paged read too', async () => {
+      const path = fixture('restart-paged.txt', 'one\ntwo\nthree\nfour\n');
+      const read = await inSession('Read', { file_path: path, offset: 1, limit: 2 });
+      expect(read.details?.contentHash).toEqual(expect.any(String));
+
+      const revived = `${session}-revived`;
+      await afterSpawn(revived, [toolResult(read.details)]);
+
+      const res = await inSession('Edit', { file_path: path, old_string: 'four', new_string: 'FOUR' }, revived);
+      expect(res.details).toMatchObject({ ok: true });
+      expect(readFileSync(path, 'utf-8')).toBe('one\ntwo\nthree\nFOUR\n');
+    });
+
     it('still refuses when the file moved while the daemon was down', async () => {
       const path = fixture('restart-changed.txt', 'alpha\n');
       const read = await inSession('Read', { file_path: path });
@@ -324,7 +375,7 @@ describe('files plugin — read-before-modify guard', () => {
       await afterSpawn(revived, [toolResult(read.details)]);
 
       const res = await inSession('Edit', { file_path: path, old_string: 'someone', new_string: 'X' }, revived);
-      expect(res.content[0].text).toMatch(/has changed on disk since you last read it/);
+      expect(res.content[0].text).toMatch(/File has been modified since read, either by the user or by a linter\./);
       expect(readFileSync(path, 'utf-8')).toBe('someone else wrote this\n');
     });
 
@@ -336,7 +387,7 @@ describe('files plugin — read-before-modify guard', () => {
       await afterSpawn(session, []);
 
       const res = await inSession('Edit', { file_path: path, old_string: 'alpha', new_string: 'X' });
-      expect(res.content[0].text).toMatch(/has not been read in this conversation/);
+      expect(res.content[0].text).toMatch(/File has not been read yet\. Read it first before writing to it\./);
     });
 
     it('atomically replaces stale session state with only visible successful full Read results', async () => {
@@ -350,9 +401,9 @@ describe('files plugin — read-before-modify guard', () => {
       await afterSpawn(session, [toolResult(authored.details), toolResult(visibleRead.details)]);
 
       expect((await inSession('Write', { file_path: removed, content: 'clobber' })).content[0].text)
-        .toMatch(/has not been read in this conversation/);
+        .toMatch(/File has not been read yet\. Read it first before writing to it\./);
       expect((await inSession('Write', { file_path: authoredPath, content: 'clobber' })).content[0].text)
-        .toMatch(/has not been read in this conversation/);
+        .toMatch(/File has not been read yet\. Read it first before writing to it\./);
       expect((await inSession('Edit', { file_path: visible, old_string: 'visible', new_string: 'VISIBLE' })).content[0].text)
         .toContain('Edited');
     });
@@ -365,7 +416,7 @@ describe('files plugin — read-before-modify guard', () => {
       await afterSpawn(revived, [toolResult(write.details)]);
 
       const res = await inSession('Edit', { file_path: path, old_string: 'two', new_string: 'TWO' }, revived);
-      expect(res.content[0].text).toMatch(/has not been read in this conversation/);
+      expect(res.content[0].text).toMatch(/File has not been read yet\. Read it first before writing to it\./);
     });
 
     it('replays in order, so the newest result for a file is the one that counts', async () => {
