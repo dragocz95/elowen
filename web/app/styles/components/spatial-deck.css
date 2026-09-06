@@ -167,6 +167,11 @@
    collapse it to a single column. The declaration above stays as the standalone and no-subgrid case. */
 .settings-group__body:has(> .settings-row) > .settings-row,
 .settings-group__column > .settings-row { grid-column: 1 / -1; grid-template-columns: subgrid; }
+/* A free block between records (the DNS record cards a plugin shows under its gateway check, an inline
+   error) spans the stack too. Left to auto-placement it lands in the LABEL track alone and renders at
+   roughly half the card — the four tracks exist for records, not for whatever a body happens to hold. */
+.settings-group__body:has(> .settings-row) > :not(.settings-row),
+.settings-group__column > :not(.settings-row) { grid-column: 1 / -1; padding: 0.8rem 0.95rem; }
 .settings-row:last-child { border-bottom: 0; }
 .settings-group[data-density="compact"] .settings-row { padding-block: 0.6rem; }
 /* The accent edge is the row's whole hover story: it marks WHICH record has the pointer without
