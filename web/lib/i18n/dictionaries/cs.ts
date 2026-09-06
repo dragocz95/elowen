@@ -1348,7 +1348,7 @@ export const cs = {
     pickModelsTitle: "Modely - {provider}",
     pickModelsHint: "Vyberte, které modely tohoto účtu bude {agentName} nabízet. Žádný výběr = celý katalog.",
     modelsUnavailable: 'Již není v katalogu',
-    accounts: 'Připojené účty (OAuth)',
+    accounts: 'Připojené účty',
     hideAccount: 'Skrýt účet',
     addAccount: 'Přidat účet',
     usageWeekly: 'týdně',

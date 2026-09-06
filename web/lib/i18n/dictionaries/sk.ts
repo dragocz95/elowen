@@ -1343,7 +1343,7 @@ export const sk = {
     pickModelsTitle: "Modely - {provider}",
     pickModelsHint: "Vyberte, ktoré modely tohto účtu bude {agentName} ponúkať. Žiadny výber = celý katalóg.",
     modelsUnavailable: 'Už nie je v katalógu',
-    accounts: 'Pripojené účty (OAuth)',
+    accounts: 'Pripojené účty',
     hideAccount: 'Skryť účet',
     addAccount: 'Pridať účet',
     usageWeekly: 'týždenne',

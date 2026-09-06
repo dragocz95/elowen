@@ -1377,7 +1377,7 @@ export const en = {
     pickModelsTitle: "Models - {provider}",
     pickModelsHint: "Choose which models {agentName} can offer from this account. No selection uses the full catalog.",
     modelsUnavailable: 'No longer in the catalog',
-    accounts: 'Connected accounts (OAuth)',
+    accounts: 'Connected accounts',
     hideAccount: 'Hide account',
     addAccount: 'Add account',
     usageWeekly: 'weekly',
