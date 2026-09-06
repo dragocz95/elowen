@@ -86,7 +86,7 @@
         "react.dev",
         "reactnative.dev",
         "vuejs.org",
-        "angular.io",
+        "angular.dev",
         "nextjs.org",
         "expressjs.com",
         "tailwindcss.com",
@@ -108,7 +108,7 @@
         "docs.aws.amazon.com",
         "cloud.google.com",
         "kubernetes.io",
-        "www.docker.com",
+        "docs.docker.com",
         "git-scm.com",
         "nginx.org"
       ],

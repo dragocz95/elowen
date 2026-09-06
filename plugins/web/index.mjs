@@ -10,8 +10,11 @@ const FETCH_CACHE_TTL_MS = 15 * 60_000;
 const MAX_FETCH_BYTES = 10_000_000;
 const MAX_MARKDOWN_CHARS = 100_000;
 const MAX_PROMPT_CHARS = 10_000;
-/** Largest page a preapproved host may return verbatim. Mirrors the daemon's default inline tool-result
- * budget: a bigger result is spilled to a file the model has to read back, which is worse than a summary. */
+/** Largest page a preapproved host may return verbatim: above this the summary it replaces is the better
+ * answer, because the host spills an oversized tool result to a file the model then has to read back.
+ * A fixed bound, not a mirror — the host's own inline budget is operator-tunable (60 000 bytes by
+ * default, 30 000 at the floor) and no plugin API exposes it, so this sits below the default with
+ * headroom. An operator who tunes that budget under this value can still have a raw page spilled. */
 const MAX_INLINE_RESULT_BYTES = 50_000;
 const MAX_REDIRECTS = 3;
 const MAX_CACHE_ENTRIES = 256;
@@ -317,8 +320,9 @@ function parseHostName(rawHost) {
  * through the same HTTPS upgrade and redirect rules as any other URL. WebFetch asks for no permission
  * today, so an entry changes exactly one thing — and that thing is not free: the inference step is also
  * where page text is framed as untrusted data (`buildInferencePrompt`), so a listed host's content
- * reaches the model as ordinary text. Only hosts whose pages are published documentation belong here,
- * never hosts serving arbitrary user content. */
+ * reaches the model as ordinary text. Only hosts whose PRIMARY content is published documentation belong
+ * here, never hosts whose content is user-submitted. Host granularity is as fine as this gets: several
+ * of these publish user comments on subpages, which a host list cannot exclude. */
 export const DEFAULT_PREAPPROVED_HOSTS = [
   'platform.claude.com',
   'code.claude.com',
@@ -341,7 +345,7 @@ export const DEFAULT_PREAPPROVED_HOSTS = [
   'react.dev',
   'reactnative.dev',
   'vuejs.org',
-  'angular.io',
+  'angular.dev',
   'nextjs.org',
   'expressjs.com',
   'tailwindcss.com',
@@ -363,7 +367,7 @@ export const DEFAULT_PREAPPROVED_HOSTS = [
   'docs.aws.amazon.com',
   'cloud.google.com',
   'kubernetes.io',
-  'www.docker.com',
+  'docs.docker.com',
   'git-scm.com',
   'nginx.org',
 ];
@@ -371,18 +375,20 @@ export const DEFAULT_PREAPPROVED_HOSTS = [
 /** Exact host names, or a `*.` prefix for every subdomain of one. No patterns beyond that: a
  * free-form expression here would be a second, weaker host matcher next to the search filters. */
 export function parsePreapprovedHosts(value, onInvalid) {
-  if (value !== undefined && !Array.isArray(value)) {
-    onInvalid?.('preapprovedHosts must be a list of host names — using the built-in documentation hosts');
-  }
-  const entries = Array.isArray(value) ? value : DEFAULT_PREAPPROVED_HOSTS;
   const exact = new Set();
   const suffixes = new Set();
-  for (const entry of entries) {
+  // A stored value that is not a list can only come from a hand-edited config. Treating it as "unset"
+  // would answer a broken setting by granting the widest list there is, so it grants nothing instead.
+  if (value !== undefined && !Array.isArray(value)) {
+    onInvalid('preapprovedHosts must be a list of host names — no host is treated as documentation until it is');
+    return { exact, suffixes: [] };
+  }
+  for (const entry of value ?? DEFAULT_PREAPPROVED_HOSTS) {
     const raw = typeof entry === 'string' ? entry.trim().toLowerCase().replace(/\.$/, '') : '';
     const wildcard = raw.startsWith('*.');
     const host = parseHostName(wildcard ? raw.slice(2) : raw);
     if (!host) {
-      onInvalid?.(`preapprovedHosts entry ${JSON.stringify(entry)} is not a host name or "*." host suffix — ignored`);
+      onInvalid(`preapprovedHosts entry ${JSON.stringify(entry)} is not a host name or "*." host suffix — ignored`);
       continue;
     }
     if (wildcard) suffixes.add(`.${host}`);

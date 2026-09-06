@@ -666,18 +666,36 @@ describe('web plugin WebFetch preapproved documentation hosts', () => {
 
   it('summarizes a listed page too large to stay inline instead of spilling it', async () => {
     // The daemon spills a single tool result over its inline budget to a file the model then has to read
-    // back, so above that size the summary is the cheaper answer. 50 000 bytes is the boundary.
+    // back, so above that size the summary is the cheaper answer. The boundary is 50 000 BYTES: the
+    // multi-byte page below is only 16 667 characters and must still be summarized.
+    const bodies: Record<string, string> = {
+      fits: 'y'.repeat(50_000),
+      big: 'y'.repeat(50_001),
+      wide: '\u4e00'.repeat(16_667),
+    };
     const { fetchTool, inferenceCalls } = await mount({}, undefined, async (url) => new Response(
-      'y'.repeat(String(url).endsWith('/big') ? 50_001 : 50_000),
-      { status: 200, headers: { 'content-type': 'text/plain' } },
+      bodies[String(url).split('/').pop()!], { status: 200, headers: { 'content-type': 'text/plain' } },
     ));
 
     const fits = await fetchTool.execute('a', { url: 'https://docs.python.org/fits', prompt: 'Anything' });
     const big = await fetchTool.execute('b', { url: 'https://docs.python.org/big', prompt: 'Anything' });
+    const wide = await fetchTool.execute('c', { url: 'https://docs.python.org/wide', prompt: 'Anything' });
 
-    expect(textOf(fits)).toBe('y'.repeat(50_000));
+    expect(textOf(fits)).toBe(bodies.fits);
     expect(textOf(big)).toBe('INFERRED: yes');
+    expect(textOf(wide)).toBe('INFERRED: yes');
+    expect(inferenceCalls).toHaveLength(2);
+  });
+
+  it('treats a config value that is not a list as granting nothing', async () => {
+    const { fetchTool, inferenceCalls, warnings } = await mount(
+      { preapprovedHosts: 'docs.python.org' }, undefined, docsPage,
+    );
+
+    await fetchTool.execute('f', { url: 'https://docs.python.org/3/library/os.html', prompt: 'Anything' });
+
     expect(inferenceCalls).toHaveLength(1);
+    expect(warnings).toEqual([expect.stringContaining('must be a list of host names')]);
   });
 
   it('ships the same seed list in the plugin and in the manifest default', async () => {
