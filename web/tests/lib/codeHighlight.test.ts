@@ -75,6 +75,30 @@ describe('highlightCode', () => {
     expect(kindOf(highlightCode('.row { padding: 0.5rem 1rem; }', 'css'), '0.5rem')).toBe('number');
   });
 
+  it('does not read a protocol-relative URL as a CSS comment', () => {
+    // CSS has no line comment. Registering `//` swallowed the rest of any declaration holding a URL.
+    const tokens = highlightCode('  background: url(https://cdn.example.com/a.png);', 'css');
+    expect(tokens.some((t) => t.kind === 'comment')).toBe(false);
+    expect(highlightCode('/* real css comment */', 'css').at(0)?.kind).toBe('comment');
+  });
+
+  it('leaves an apostrophe in a YAML scalar alone', () => {
+    const tokens = highlightCode("  description: it's fine", 'yaml');
+    expect(tokens.some((t) => t.kind === 'string')).toBe(false);
+    expect(kindOf(highlightCode('  name: "web"', 'yaml'), '"web"')).toBe('string');
+  });
+
+  it('gives up on a row too long to be code anyone reads', () => {
+    // A minified bundle or a base64 blob would otherwise become a DOM node every few characters.
+    const huge = `const x = "${'a'.repeat(2100)}";`;
+    expect(highlightCode(huge, 'typescript')).toEqual([{ text: huge, kind: 'plain' }]);
+  });
+
+  it('does not resolve a language id through Object.prototype', () => {
+    expect(highlightCode('const a = 1;', 'constructor')).toEqual([{ text: 'const a = 1;', kind: 'plain' }]);
+    expect(highlightCode('const a = 1;', 'toString')).toEqual([{ text: 'const a = 1;', kind: 'plain' }]);
+  });
+
   it('merges neighbouring fragments of one kind into a single token', () => {
     // The renderer emits one span per token; a per-character token list would be a DOM node per glyph.
     const tokens = highlightCode('const a = 1;', 'typescript');

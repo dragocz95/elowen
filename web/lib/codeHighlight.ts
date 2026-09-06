@@ -99,13 +99,16 @@ register(['json', 'jsonc'], {
 
 register(['yaml', 'toml', 'ini'], {
   line: ['#'],
-  quotes: ['"', "'"],
+  // Double quotes only: an apostrophe in a plain scalar (`name: it's fine`) is far more common in these
+  // files than a single-quoted string, and reading it as a quote paints the rest of the row yellow.
+  quotes: ['"'],
   ident: CSS_IDENT,
   keywords: set('true false null yes no on off'),
 });
 
 register(['css'], {
-  line: ['//'],
+  // CSS has NO line comment: `//` inside `url(https://…)` would swallow the rest of the declaration.
+  line: [],
   block: ['/*', '*/'],
   quotes: ['"', "'"],
   ident: CSS_IDENT,
@@ -155,11 +158,17 @@ function classify(word: string, spec: LangSpec, next: string): CodeTokenKind {
   return 'plain';
 }
 
+/** Past this many characters a row is not code anyone reads — a minified bundle, a base64 blob, a
+ *  generated lockfile line. Colouring it would cost a DOM node every few characters for no gain. */
+const MAX_HIGHLIGHT_LENGTH = 2000;
+
 /** Split one line of source into coloured fragments. `lang` is a shiki language id; an unknown or null
  *  one yields a single plain token, which renders exactly like the unhighlighted CLI fallback. */
 export function highlightCode(line: string, lang: string | null | undefined): CodeToken[] {
-  const spec = lang ? SPECS[lang] : undefined;
-  if (!spec || !line) return line ? [{ text: line, kind: 'plain' }] : [];
+  // `Object.hasOwn`, not a plain lookup: a language id of `constructor` or `toString` would otherwise
+  // return something off Object's prototype and be used as a spec.
+  const spec = lang && Object.hasOwn(SPECS, lang) ? SPECS[lang] : undefined;
+  if (!spec || !line || line.length > MAX_HIGHLIGHT_LENGTH) return line ? [{ text: line, kind: 'plain' }] : [];
   const out: CodeToken[] = [];
   const push = (text: string, kind: CodeTokenKind): void => {
     if (!text) return;
