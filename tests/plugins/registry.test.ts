@@ -777,6 +777,21 @@ describe('PluginRegistry', () => {
       });
     });
 
+    // Nothing else bounds this directory, and the excerpt that names the file promises the COMPLETE
+    // output — so an oversized text is refused loudly rather than stored short.
+    it('refuses a text above the size ceiling and writes nothing', async () => {
+      await withHome(async (home) => {
+        const ctx = new PluginRegistry().contextFor('demo', {}, noopLog);
+        const scope = { sessionId: 'brain-p-big' };
+        const atCeiling = 'x'.repeat(8_000_000);
+
+        expect((await scoped(() => ctx.persistToolOutput({ toolCallId: 'ok', text: atCeiling }), scope))?.bytes).toBe(8_000_000);
+        await expect(scoped(() => ctx.persistToolOutput({ toolCallId: 'too-big', text: `${atCeiling}x` }), scope))
+          .rejects.toThrow(/8000001 bytes, above the 8000000-byte limit/);
+        expect(existsSync(join(home, '.config', 'elowen', 'tool-results', 'brain-p-big', 'too-big.v1-output-8000001.txt'))).toBe(false);
+      });
+    });
+
     it('stores nothing outside a prompt turn, or in a workspace-confined one that could not read it back', async () => {
       await withHome(async (home) => {
         const ctx = new PluginRegistry().contextFor('demo', {}, noopLog);

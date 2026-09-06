@@ -1640,7 +1640,8 @@ export interface PluginContext {
    *  write through `assertPathAllowed`. Resolves null when nothing readable can be stored — outside a
    *  prompt turn (worker/cron runs own no conversation), inside a workspace-confined turn (whose logical
    *  filesystem admits no absolute path), and when a different file already occupies the name. The caller
-   *  keeps whatever it does without a stored path. Rejects only on a real write failure. */
+   *  keeps whatever it does without a stored path. Rejects on a real write failure, and on a `text` above
+   *  the host's size ceiling — bounding what it produces is the caller's job, not this store's. */
   persistToolOutput(input: { toolCallId: string; text: string }): Promise<{ path: string; bytes: number } | null>;
   /** The repo roots the current session may operate in (empty for an admin's all-access). Used to default
    *  a tool's working directory. */

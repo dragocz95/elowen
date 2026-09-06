@@ -30,6 +30,11 @@ import { logger } from '../shared/logger.js';
 
 const log = logger('plugins');
 
+/** Largest complete tool output the host stores for one call. Well above what any bounded tool result
+ *  excerpts (the terminal plugin's cap is 60 kB by default) and far below anything that threatens the
+ *  data directory, so it bites only on a caller that has lost track of what it is writing. */
+const MAX_PERSISTED_TOOL_OUTPUT_BYTES = 8_000_000;
+
 /** Canonical JSON of a tool's declared surface, for deciding whether two accounts' same-named personal
  *  tools are the SAME tool. Keys are emitted in sorted order so two structurally identical schemas built
  *  from different objects compare equal. Symbol-keyed TypeBox metadata is invisible to JSON, which is
@@ -1407,6 +1412,14 @@ export class PluginRegistry {
       // it could name one. Sessionless (worker/cron) turns own no directory and get null rather than a
       // path outside any conversation's reach.
       persistToolOutput: async ({ toolCallId, text }) => {
+        // The text is plugin-supplied and lands in the daemon's data directory, which nothing else
+        // bounds: one conversation could otherwise fill the disk one tool call at a time. Loud rather
+        // than truncated — a silently shortened file is a worse answer than none, because the excerpt
+        // that names it promises the COMPLETE output.
+        const bytes = Buffer.byteLength(text, 'utf8');
+        if (bytes > MAX_PERSISTED_TOOL_OUTPUT_BYTES) {
+          throw new Error(`tool output is ${bytes} bytes, above the ${MAX_PERSISTED_TOOL_OUTPUT_BYTES}-byte limit for a persisted tool output`);
+        }
         const sessionId = currentSessionId();
         if (!sessionId) return null;
         // A workspace-confined turn has no name for this file: its logical filesystem is the worktree, so
