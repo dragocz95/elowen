@@ -23,7 +23,8 @@
       "ignore": [
         "tests/e2e/**",
         "playwright.config.ts",
-        "lib/chatPresentation.ts"
+        "lib/chatPresentation.ts",
+        "lib/codeDiff.ts"
       ],
       "playwright": false
     },

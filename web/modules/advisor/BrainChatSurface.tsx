@@ -4,6 +4,8 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, ExternalLink, Compass, Hammer, Workflow, type LucideIcon } from 'lucide-react';
 import { toolGlyph } from '../../lib/toolGlyph';
+import { langForPath, parseDiffRow } from '../../lib/codeDiff';
+import { highlightCode, type CodeTokenKind } from '../../lib/codeHighlight';
 import { usePersistentState } from '../../lib/usePersistentState';
 import { interpolate, plural, useTranslation } from '../../lib/i18n';
 import { useBrand } from '../../lib/brand';
@@ -73,43 +75,103 @@ function TextSegment({ text, className = '' }: { text: string; className?: strin
 const DIFF_MAX_ROWS = 60;
 /** How many trailing lines of a running command's live output tail to show (mirror of the CLI). */
 const PROGRESS_TAIL_ROWS = 8;
-/** A diff row is `-   12 text` (current pi-compatible format), `  12 - text` (legacy stored rows),
- *  or a bare unified `-text`/`+text`. */
-const DIFF_SIGN = /^([+-])\s*\d+ |^\s*\d+ ([-+ ]) |^([-+])/;
 
-/** An edit's display diff, Claude-Code style: a coloured left gutter per row (added green, removed red,
- *  context muted), no frame and no horizontal scroll — long lines wrap under the gutter so nothing is
- *  clipped or hidden behind a scrollbar.
+/** One Tailwind utility per syntax category. Spelled out rather than composed, because Tailwind's source
+ *  scanner only emits a utility it can SEE — a `text-code-${kind}` template would compile to nothing. */
+const CODE_TOKEN_CLASS: Record<CodeTokenKind, string> = {
+  plain: 'text-code-plain',
+  keyword: 'text-code-keyword',
+  string: 'text-code-string',
+  number: 'text-code-number',
+  comment: 'text-code-comment',
+  type: 'text-code-type',
+  function: 'text-code-function',
+  punct: 'text-code-punct',
+};
+
+/** One row of a display diff, laid out the way the CLI paints it: a line-number column, the `+`/`-`
+ *  marker, then the source — the whole row carrying its add/delete tint rather than a left border.
+ *
+ *  Added and context rows are syntax-coloured; a removed row never is. That is the CLI's rule (and Claude
+ *  Code's before it): a dark Monokai token on the red ground is unreadable, so a delete renders plain.
+ *  The gutter is unselectable, so copying a diff yields the source and not a column of line numbers, and
+ *  it is hidden from assistive technology — a screen reader gets the same information as a spoken word
+ *  instead, because a row's `+` used to be part of the text it read out. A long line wraps under the
+ *  gutter instead of scrolling sideways.
+ *
+ *  Memoized: a streaming turn re-renders its whole transcript several times a second, and every one of
+ *  those renders would otherwise re-parse and re-lex every visible row of every diff in it. */
+const DiffRowView = memo(function DiffRowView({ row, lang, digits, added, removed }: {
+  row: string;
+  lang: string | null;
+  digits: number;
+  added: string;
+  removed: string;
+}) {
+  const parsed = parseDiffRow(row);
+  // Not a diff row at all — a hunk header or a summary line the daemon put in the block.
+  if (!parsed) return <div className="whitespace-pre-wrap break-words px-2 text-code-comment">{row || ' '}</div>;
+  const { sign, num, text } = parsed;
+  const tint = sign === '+' ? 'bg-diff-add' : sign === '-' ? 'bg-diff-del' : '';
+  // The CLI colours the WHOLE gutter by the row's kind — line number included — not just the marker.
+  const gutter = sign === '+' ? 'text-diff-add-marker' : sign === '-' ? 'text-diff-del-marker' : 'text-diff-gutter';
+  const tokens = sign === '-' ? null : highlightCode(text, lang);
+  return (
+    <div data-diff-sign={sign} className={`flex gap-2 px-2 ${tint}`}>
+      {/* The number column is as wide as the widest number in THIS diff (`ch` is one monospace advance),
+          so every row's source starts at the same column without reserving space nobody uses. */}
+      <span aria-hidden style={{ width: `${digits}ch` }} className={`shrink-0 select-none text-right tabular-nums ${gutter}`}>{num}</span>
+      <span aria-hidden className={`shrink-0 select-none ${gutter}`}>{sign === ' ' ? '\u00a0' : sign}</span>
+      {sign === ' ' ? null : <span className="sr-only">{sign === '+' ? added : removed}</span>}
+      <span
+        data-testid="chat-diff-code"
+        className={`min-w-0 flex-1 whitespace-pre-wrap break-words ${sign === '-' ? 'text-diff-del-foreground' : 'text-code-plain'}`}
+      >
+        {tokens
+          ? tokens.map((token, i) => <span key={i} className={CODE_TOKEN_CLASS[token.kind]}>{token.text}</span>)
+          : text || '\u00a0'}
+      </span>
+    </div>
+  );
+});
+
+/** An edit's display diff, rendered as the CLI renders it: syntax-highlighted source on a code canvas,
+ *  with the whole row tinted green or red and a line-number gutter, so the same edit reads the same in
+ *  the terminal and in the browser. The grammar comes from the tool's own file path, exactly as the CLI
+ *  picks one.
  *
  *  A diff longer than the preview folds behind the shared expander instead of being cut off for good: the
  *  rest of an edit is exactly what a reader checking the change needs, and the transcript is the only
  *  place it is shown. Expanded, the block scrolls within its own bounded height rather than growing
  *  without limit, so a thousand-line edit still cannot take over the viewport on a phone. */
-function DiffBlock({ diff }: { diff: string }) {
+function DiffBlock({ diff, path }: { diff: string; path?: string }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const bodyId = useId();
-  const lines = diff.replace(/\n+$/, '').split('\n');
+  const lang = useMemo(() => langForPath(path), [path]);
+  // One pass over the diff per change of it: the rows, and the widest line number in the WHOLE diff
+  // (folded rows included, so unfolding never shifts the source sideways).
+  const { lines, digits } = useMemo(() => {
+    const rows = diff.replace(/\n+$/, '').split('\n');
+    return { lines: rows, digits: rows.reduce((widest, l) => Math.max(widest, parseDiffRow(l)?.num.length ?? 0), 2) };
+  }, [diff]);
   const hiddenRows = Math.max(0, lines.length - DIFF_MAX_ROWS);
   return (
-    <div className="my-1 overflow-hidden rounded-md bg-muted/40 py-1">
-      <div
-        id={bodyId}
-        data-testid="chat-diff"
-        className={expanded ? 'max-h-[60dvh] overflow-y-auto' : ''}
-        // A scrollable region has to be reachable by keyboard alone, and it only scrolls when expanded.
-        tabIndex={expanded ? 0 : undefined}
-        role={expanded ? 'group' : undefined}
-        aria-label={expanded ? t.brainChat.diffLabel : undefined}
-      >
-        {(expanded ? lines : lines.slice(0, DIFF_MAX_ROWS)).map((l, i) => {
-          const m = DIFF_SIGN.exec(l);
-          const sign = m?.[1] ?? m?.[2] ?? m?.[3];
-          const cls = sign === '+' ? 'border-success/50 bg-success/10 text-success'
-            : sign === '-' ? 'border-destructive/50 bg-destructive/10 text-destructive'
-            : 'border-transparent text-muted-foreground';
-          return <div key={i} className={`whitespace-pre-wrap break-words border-l-2 px-2 ${cls}`}>{l || ' '}</div>;
-        })}
+    <div className="my-1">
+      <div className="overflow-hidden rounded-md bg-diff-canvas py-1">
+        <div
+          id={bodyId}
+          data-testid="chat-diff"
+          className={expanded ? 'max-h-[60dvh] overflow-y-auto' : ''}
+          // A scrollable region has to be reachable by keyboard alone, and it only scrolls when expanded.
+          tabIndex={expanded ? 0 : undefined}
+          role={expanded ? 'group' : undefined}
+          aria-label={expanded ? t.brainChat.diffLabel : undefined}
+        >
+          {(expanded ? lines : lines.slice(0, DIFF_MAX_ROWS)).map((l, i) => (
+            <DiffRowView key={i} row={l} lang={lang} digits={digits} added={t.brainChat.diffRowAdded} removed={t.brainChat.diffRowRemoved} />
+          ))}
+        </div>
       </div>
       {hiddenRows > 0 ? (
         <div className="px-2 pt-1">
@@ -417,7 +479,7 @@ function ToolPills({ tools, full, live }: { tools: ToolItem[]; full?: boolean; l
               <ChevronRight size={11} aria-hidden className={`chat-tool__chev shrink-0 opacity-40 ${full ? '' : 'ml-auto'}`} />
             </summary>
             <div className="pb-0.5">
-              {tool.diff ? <DiffBlock diff={tool.diff} /> : null}
+              {tool.diff ? <DiffBlock diff={tool.diff} path={tool.detail} /> : null}
               {/* A folded run of identical FAILURES keeps every member: the rows read alike, but each one
                   names the path it refused, so the expanded block lists them all. */}
               {group.members

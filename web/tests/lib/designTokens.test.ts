@@ -267,6 +267,40 @@ describe('text contrast', () => {
   });
 });
 
+/** The diff block composites a syntax palette over a tinted row, which is the one place in the app where
+ *  a foreground and its ground are BOTH decorative choices — a saturated row tint eats the colours it
+ *  carries, and neither half looks wrong on its own. The CLI's flat ANSI backgrounds put Monokai's
+ *  keyword at 2.1:1 on an added line; tokens.css mixes them into the code canvas precisely so this gate
+ *  can hold, and the gate is what stops a later "make it look more like the terminal" from undoing it. */
+describe('diff code palette', () => {
+  const CODE_TOKENS = ['plain', 'keyword', 'string', 'number', 'comment', 'type', 'function', 'punct']
+    .map((kind) => `--color-code-${kind}`);
+  const GROUNDS = ['--color-diff-canvas', '--color-diff-add', '--color-diff-del'] as const;
+  /** Syntax colour is a distinction WITHIN readable code, not the thing that makes it readable, so the
+   *  bar is WCAG's non-text/large-text step rather than 4.5:1 — Monokai's comment grey is dim by design
+   *  and would fail a normal-text bar on every ground including the terminal's. */
+  const CODE_MIN = 3;
+
+  it.each([null, ...SKINS])('design "%s" keeps every code token legible on every diff row', (skin) => {
+    const tokens = palette(skin);
+    const hex = (token: string) => {
+      const resolved = resolveColour(tokens[token] ?? '', tokens);
+      expect(resolved, `${skin ?? 'default'}: ${token} must resolve to a literal colour`).toMatch(HEX_COLOUR);
+      return resolved!;
+    };
+    for (const ground of GROUNDS) {
+      for (const token of [...CODE_TOKENS, '--color-diff-gutter']) {
+        const ratio = contrast(hex(token), hex(ground));
+        expect(ratio, `${skin ?? 'default'}: ${token} on ${ground} is ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(CODE_MIN);
+      }
+    }
+    // Removed code is rendered plain (never highlighted), and its marker column has to stay visible.
+    expect(contrast(hex('--color-diff-del-foreground'), hex('--color-diff-del'))).toBeGreaterThanOrEqual(AA_NORMAL_TEXT);
+    expect(contrast(hex('--color-diff-del-marker'), hex('--color-diff-del'))).toBeGreaterThanOrEqual(CODE_MIN);
+    expect(contrast(hex('--color-diff-add-marker'), hex('--color-diff-add'))).toBeGreaterThanOrEqual(CODE_MIN);
+  });
+});
+
 describe('Studio conversation role colours', () => {
   it('keeps user turns blue with white text in both Light and Dark', () => {
     const light = declarations(skinCss('studio-light'));

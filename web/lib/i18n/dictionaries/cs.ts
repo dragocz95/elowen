@@ -1705,6 +1705,8 @@ export const cs = {
     diffLabel: 'Rozdíl změny',
     diffExpand: 'Zobrazit zbývajících {n} řádků rozdílu',
     diffCollapse: 'Zobrazit méně řádků rozdílu',
+    diffRowAdded: 'přidaný řádek',
+    diffRowRemoved: 'odebraný řádek',
     cardFallback: 'Karta',
     eventModel: 'model',
     eventMode: 'režim',

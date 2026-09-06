@@ -9,6 +9,8 @@ import { highlightLine, wrapTokens } from './codeHighlight.js';
 import type { CodeToken } from './codeHighlight.js';
 import type { ToolOutputView } from '../../brain/messageView.js';
 import { TODO_CARD_ID, TODO_PREVIEW_ITEMS, todoPreviewItems } from '../../shared/chatPresentation.js';
+import { parseDiffRow } from '../../shared/codeDiff.js';
+import type { DiffRow } from '../../shared/codeDiff.js';
 import { formatDuration, formatK, padAnsi, terminalInlineText, terminalPlainText } from '../ui/text.js';
 
 /** opencode-style visual building blocks, hand-rolled on pi-tui's Component contract (render(width)
@@ -745,9 +747,6 @@ const DIFF_ADD = (t: string): string => ansi.sgr(GIT_ADD, t);
 /** A code/diff row on the block background. Painted, not merely opened: the row's own text resets its
  *  colour (the faint gutter, the dim source), and a bare background would end at the first of those. */
 const CODE_ROW = (t: string, width?: number): string => paintRow(CODE_BG, t, width ?? visibleWidth(t));
-const LEGACY_SIGN = /^\s*\d+ ([-+ ]) /;
-const PI_ROW = /^([-+ ])\s*(\d+) (.*)$/;
-const LEGACY_ROW = /^\s*(\d+) ([-+ ]) (.*)$/;
 
 /** A syntax-highlighted diff row: per-token foregrounds composited over the row's semantic (add/del/
  *  context) background. Every SGR re-opens the background because SGR has no stack — a bare reset
@@ -760,16 +759,8 @@ function paintTokenRow(gutter: string, gutterFg: string, parts: readonly CodeTok
   return `${head}${body}${pad}\x1b[0m`;
 }
 
-function diffLine(line: string, width?: number, lang?: string | null): string[] {
-  const pi = PI_ROW.exec(line);
-  const legacy = LEGACY_ROW.exec(line);
-  // A legacy row with a left-padded line number ('   2 - old') ALSO matches PI_ROW — but with a blank
-  // sign, which would strip its add/delete colouring and leak the real '-'/'+' into the rendered text.
-  // Prefer the legacy parse whenever PI's sign is meaningless (no PI match, or a blank PI sign).
-  const useLegacy = legacy != null && (pi == null || pi[1] === ' ');
-  const sign = (useLegacy ? legacy![2] : pi?.[1]) ?? ' ';
-  const num = (useLegacy ? legacy![1] : pi?.[2]) ?? '';
-  const text = (useLegacy ? legacy![3] : pi?.[3]) ?? line;
+function diffLine(row: DiffRow, width?: number, lang?: string | null): string[] {
+  const { sign, num, text } = row;
   const gutter = `${num.padStart(5)} ${sign}`;
   // Wrap the source under a fixed gutter instead of truncating it: continuation rows repeat the gutter
   // width as blanks, so an over-wide line stays fully readable and column-aligned. Row width is
@@ -813,8 +804,8 @@ function renderDiffRows(rows: readonly string[], maxLines = 60, rowWidth?: numbe
   // Cap on LOGICAL diff rows (so "+N more lines" stays a diff-line count), then wrap each shown row —
   // one over-wide source line can now expand into several visual rows without inflating that count.
   const rendered = rows.slice(0, maxLines).flatMap((l) => {
-    const s = PI_ROW.exec(l)?.[1] ?? LEGACY_SIGN.exec(l)?.[1];
-    return s === '+' || s === '-' || s === ' ' ? diffLine(l, rowWidth, lang) : [CODE_ROW(color.dim(l), rowWidth)];
+    const row = parseDiffRow(l);
+    return row ? diffLine(row, rowWidth, lang) : [CODE_ROW(color.dim(l), rowWidth)];
   });
   const shown = rendered.map((l) => `    ${l}`);
   if (rows.length > maxLines) shown.push(`    ${FAINTC(`… +${rows.length - maxLines} more lines`)}`);

@@ -45,7 +45,8 @@ afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; });
 afterAll(() => server.close());
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
-/** 80 rows, each individually identifiable — the preview shows 60, so 20 stay folded. */
+/** 80 rows, each individually identifiable — the preview shows 60, so 20 stay folded. A row is queried by
+ *  its SOURCE text: the sign and the line number are rendered as their own gutter columns. */
 const TOTAL_ROWS = 80;
 const PREVIEW_ROWS = 60;
 const LONG_DIFF = Array.from({ length: TOTAL_ROWS }, (_, i) => `+ ${i + 1} line ${i + 1} of the edit`).join('\n');
@@ -65,13 +66,16 @@ async function renderWithDiff(diff: string): Promise<void> {
 }
 
 const expander = (): HTMLElement => screen.getByRole('button', { name: /lines of the diff/ });
+/** The source column of every rendered row. A row's text is split into syntax spans, so it is read off
+ *  the code cell rather than queried as one string. */
+const sources = (): string[] => screen.getAllByTestId('chat-diff-code').map((cell) => cell.textContent ?? '');
 
 describe('a long diff in the transcript', () => {
   it('previews the first rows and folds the rest behind the expander', async () => {
     await renderWithDiff(LONG_DIFF);
 
-    expect(screen.getByText(`+ ${PREVIEW_ROWS} line ${PREVIEW_ROWS} of the edit`)).toBeInTheDocument();
-    expect(screen.queryByText(`+ ${TOTAL_ROWS} line ${TOTAL_ROWS} of the edit`)).toBeNull();
+    expect(sources()).toContain(`line ${PREVIEW_ROWS} of the edit`);
+    expect(sources()).not.toContain(`line ${TOTAL_ROWS} of the edit`);
     expect(expander()).toHaveTextContent(`+${TOTAL_ROWS - PREVIEW_ROWS} more`);
   });
 
@@ -79,12 +83,12 @@ describe('a long diff in the transcript', () => {
     await renderWithDiff(LONG_DIFF);
 
     fireEvent.click(expander());
-    expect(screen.getByText(`+ ${TOTAL_ROWS} line ${TOTAL_ROWS} of the edit`)).toBeInTheDocument();
+    expect(sources()).toContain(`line ${TOTAL_ROWS} of the edit`);
     // Bounded rather than unbounded: the whole edit is reachable, but by scrolling the block, not the page.
     expect(screen.getByTestId('chat-diff').className).toContain('overflow-y-auto');
 
     fireEvent.click(expander());
-    expect(screen.queryByText(`+ ${TOTAL_ROWS} line ${TOTAL_ROWS} of the edit`)).toBeNull();
+    expect(sources()).not.toContain(`line ${TOTAL_ROWS} of the edit`);
   });
 
   it('announces the toggle and the region it controls', async () => {
@@ -105,7 +109,7 @@ describe('a long diff in the transcript', () => {
   it('leaves a diff that fits without an expander at all', async () => {
     await renderWithDiff('+ 1 only line');
 
-    expect(screen.getByText('+ 1 only line')).toBeInTheDocument();
+    expect(sources()).toEqual(['only line']);
     expect(screen.queryByRole('button', { name: /lines of the diff/ })).toBeNull();
   });
 });
