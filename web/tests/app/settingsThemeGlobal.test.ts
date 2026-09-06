@@ -111,15 +111,22 @@ describe('settings row layout contract', () => {
 
     // The cell spans every trailing track it is given, so a skin may retune them without touching the DOM.
     expect(block(core, '\n.settings-row__trailing {')).toMatch(/grid-column:\s*2\s*\/\s*-1/);
+    // ONE grid owns the widths: the stack declares the four tracks and every record borrows them. Without
+    // this the records size their own columns and nothing lines up down the card.
+    expect(block(core, '.settings-group__column > .settings-row {')).toMatch(/grid-template-columns:\s*subgrid/);
 
     // Both layouts take the band. `stack` says what a record does when the card gets NARROW; on a wide
     // card it has the same three slots as everything else, and leaving it out was what kept the one row
     // with a badge, a switch and a button off the alignment it needed most.
-    const band = block(core, '.settings-row[data-trailing] .settings-row__trailing {');
-    expect(band).toMatch(/display:\s*grid/);
-    expect(band).toMatch(/grid-template-columns:\s*subgrid/);
+    // THE CELL DISSOLVES. A wrapper that is itself a subgrid is a SECOND grid, and a nested subgrid only
+    // shares the tracks it spans: measured on a 1440px Recap card, the one row carrying an action opened
+    // an action column no other row had and its own switch sat 273px to the left of every other switch.
+    // `display: contents` leaves exactly one grid sizing all four columns for every row at once, so the
+    // action column exists at the same width even in a row that has no action.
+    expect(block(core, '.settings-row[data-trailing] .settings-row__trailing {')).toMatch(/display:\s*contents/);
+    expect(core).not.toMatch(/\.settings-row__trailing \{[^}]*grid-template-columns:\s*subgrid/);
 
-    for (const [slot, column] of [['status', '1'], ['control', '2'], ['actions', '3']] as const) {
+    for (const [slot, column] of [['status', '2'], ['control', '3'], ['actions', '4']] as const) {
       const rule = block(core, `.settings-row[data-trailing] .settings-row__trailing > .settings-row__${slot} {`);
       expect(rule, `${slot} must be placed explicitly`).toMatch(new RegExp(`grid-column:\\s*${column}`));
     }
@@ -129,7 +136,7 @@ describe('settings row layout contract', () => {
     expect(block(core, '.settings-row[data-trailing] .settings-row__trailing > .settings-row__actions {')).toMatch(/justify-self:\s*end/);
     expect(block(core, ".settings-row[data-trailing='inline'] .settings-row__trailing .settings-row__control {")).toMatch(/justify-content:\s*flex-end/);
     // A record with no control reaches its reading across the empty column instead of stranding it there.
-    expect(core).toContain(".settings-row[data-trailing='inline'] .settings-row__trailing:not(:has(> .settings-row__control)) > .settings-row__status { grid-column: 1 / 3; }");
+    expect(core).toContain(".settings-row[data-trailing='inline'] .settings-row__trailing:not(:has(> .settings-row__control)) > .settings-row__status { grid-column: 2 / 4; }");
   });
 
   /** One track cannot be subgridded into three. Both sheets have to hand the band back to flex where they
