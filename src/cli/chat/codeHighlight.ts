@@ -6,6 +6,7 @@
  *  unhighlighted path, and the registered listener triggers one re-render once the grammar lands. */
 
 import { visibleWidth } from '@earendil-works/pi-tui';
+import { EXT_TO_LANG } from '../../shared/codeDiff.js';
 import { createHighlighterCore } from 'shiki/core';
 import type { HighlighterCore } from 'shiki/core';
 import { createJavaScriptRegexEngine } from 'shiki/engine/javascript';
@@ -62,20 +63,6 @@ const LANG_LOADERS: Record<string, () => Promise<unknown>> = {
   terraform: () => import('shiki/dist/langs/terraform.mjs'),
 };
 
-/** File extension (lowercase, no dot) → shiki language id. */
-const EXT_TO_LANG: Record<string, string> = {
-  ts: 'typescript', mts: 'typescript', cts: 'typescript',
-  tsx: 'tsx', js: 'javascript', mjs: 'javascript', cjs: 'javascript', jsx: 'jsx',
-  json: 'json', jsonc: 'jsonc', md: 'markdown', markdown: 'markdown', py: 'python',
-  rs: 'rust', go: 'go', css: 'css', html: 'html', htm: 'html', vue: 'vue', svelte: 'svelte',
-  sh: 'bash', bash: 'bash', zsh: 'bash',
-  yml: 'yaml', yaml: 'yaml', toml: 'toml', sql: 'sql',
-  java: 'java', c: 'c', h: 'c', cc: 'cpp', cpp: 'cpp', cxx: 'cpp', hpp: 'cpp',
-  cs: 'csharp', rb: 'ruby', php: 'php', swift: 'swift', kt: 'kotlin', kts: 'kotlin',
-  xml: 'xml', svg: 'xml', diff: 'diff', patch: 'diff',
-  lua: 'lua', r: 'r', ini: 'ini', cfg: 'ini', tf: 'terraform',
-};
-
 /** Markdown fence aliases → shiki language id (fence names differ from file extensions: `ts`, `py`…). */
 const FENCE_TO_LANG: Record<string, string> = {
   ts: 'typescript', tsx: 'tsx', js: 'javascript', jsx: 'jsx', mjs: 'javascript', cjs: 'javascript',
@@ -83,26 +70,6 @@ const FENCE_TO_LANG: Record<string, string> = {
   yml: 'yaml', rb: 'ruby', cs: 'csharp', kt: 'kotlin', docker: 'dockerfile',
   'c++': 'cpp', 'c#': 'csharp', golang: 'go', rs: 'rust',
 };
-
-/** The shiki language for a file path (a tool-call detail), or null when the extension is unknown —
- *  null keeps the plain unhighlighted rendering, which beats a wrong grammar. */
-export function langForPath(path: string | null | undefined): string | null {
-  if (!path) return null;
-  // Scan whitespace-separated tokens for the FIRST that names a known file: a tool detail like
-  // `src/app.ts (+5 -2)` carries the path first and a trailing parenthetical the naive last-token
-  // form would pick up instead. Strip surrounding punctuation/parentheses before mapping.
-  for (const raw of path.trim().split(/\s+/)) {
-    const token = raw.replace(/^[([{'"`]+/, '').replace(/[)\]}'"`,.;:]+$/, '');
-    const base = token.split('/').pop() ?? '';
-    if (!base) continue;
-    if (/^(dockerfile|containerfile)$/i.test(base)) return 'dockerfile';
-    const dot = base.lastIndexOf('.');
-    if (dot <= 0 || dot === base.length - 1) continue;
-    const lang = EXT_TO_LANG[base.slice(dot + 1).toLowerCase()];
-    if (lang) return lang;
-  }
-  return null;
-}
 
 /** The shiki language for a Markdown fence info string (`json`, `ts`, `python`…), or null. */
 export function langForFence(info: string | null | undefined): string | null {

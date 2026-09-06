@@ -1,42 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import { visibleWidth } from '@earendil-works/pi-tui';
 import {
-  ensureLang, highlightBlock, highlightLine, langForFence, langForPath, setCodeHighlightListener, wrapTokens,
+  ensureLang, highlightBlock, highlightLine, langForFence, setCodeHighlightListener, wrapTokens,
 } from '../../../src/cli/chat/codeHighlight.js';
 import type { CodeToken } from '../../../src/cli/chat/codeHighlight.js';
 import { diffBlock, framedDiffBlock } from '../../../src/cli/chat/components.js';
 
 const JS_ROW = '+ 12 const answer = 42 // the answer';
-
-describe('langForPath', () => {
-  it('maps common extensions to shiki languages', () => {
-    expect(langForPath('/tmp/demo/server.ts')).toBe('typescript');
-    expect(langForPath('/tmp/demo/server.mjs')).toBe('javascript');
-    expect(langForPath('a/b/c.py')).toBe('python');
-    expect(langForPath('compose.yml')).toBe('yaml');
-    expect(langForPath('/x/Dockerfile')).toBe('dockerfile');
-  });
-
-  it('returns null for missing or unknown extensions', () => {
-    expect(langForPath('/tmp/README')).toBeNull();
-    expect(langForPath('/tmp/.gitignore')).toBeNull();
-    expect(langForPath('/tmp/data.unknownext')).toBeNull();
-    expect(langForPath('')).toBeNull();
-    expect(langForPath(null)).toBeNull();
-  });
-
-  it('reads the last token of a tool detail line', () => {
-    expect(langForPath('Edit /tmp/demo/app.tsx')).toBe('tsx');
-  });
-
-  it('finds the FIRST known path token, ignoring a trailing parenthetical', () => {
-    expect(langForPath('src/app.ts (+5 -2)')).toBe('typescript');
-    expect(langForPath('Edit src/app.ts (+5 -2)')).toBe('typescript');
-    expect(langForPath('(src/main.py)')).toBe('python');
-    expect(langForPath('foo bar server.rs baz')).toBe('rust');
-    expect(langForPath('nothing here (+1 -1)')).toBeNull();
-  });
-});
 
 describe('langForFence', () => {
   it('maps fence names and aliases', () => {
