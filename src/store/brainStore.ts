@@ -1113,6 +1113,14 @@ export class BrainStore {
 
   /** The one user-facing transcript read model. Pending rows remain queryable through getMessages for crash
    *  recovery, but cannot consume a display window slot or shift the cursor shared by snapshot and paging. */
+  /** The newest settled assistant rows of a conversation, newest first, without loading the transcript.
+   *  A turn persists several assistant rows (tool-call steps before the reply), so a caller wanting the
+   *  reply text scans a few rather than trusting the last one. */
+  recentAssistantMessages(sessionId: string, limit: number): BrainMessageRow[] {
+    return this.db.prepare("SELECT * FROM brain_messages WHERE session_id = ? AND role = 'assistant' AND pending = 0 ORDER BY rowid DESC LIMIT ?")
+      .all(sessionId, limit) as BrainMessageRow[];
+  }
+
   getSettledMessages(sessionId: string): BrainMessageRow[] {
     return this.db.prepare('SELECT * FROM brain_messages WHERE session_id = ? AND pending = 0 ORDER BY rowid ASC')
       .all(sessionId) as BrainMessageRow[];

@@ -617,6 +617,12 @@ export interface PluginHostStores {
     mayUsePlugin(userId: number, plugin: string): boolean;
   };
   eventsRead?: { list(opts: { target?: string; type?: string }): { detail: string }[] };
+  /** What the agent last said in ONE conversation, and only to the account that owns it. A plugin holding a
+   *  per-account handle on a conversation (a browser session opened from a chat) can show the reply beside
+   *  it without ever seeing the transcript: ownership is checked here, the caller never gets rows. Null for
+   *  a foreign or unknown conversation as much as for one with no reply yet. Display text — reasoning
+   *  stripped, tool calls omitted; an assistant row that carried only tool calls is skipped. */
+  conversationsRead?: { lastAssistantText(sessionId: string, userId: number): { text: string; at: string } | null };
 }
 
 /** User-override-aware prompt rendering (the core PromptService): resolves a user's saved prompt
