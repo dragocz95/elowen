@@ -19,11 +19,9 @@ import {
 } from '../../lib/conversationTree';
 import { ScheduledJobLink, scheduledJobName } from './ScheduledJobLink';
 import type { ConversationJobLink } from '../../lib/types';
-import { usePersistentState } from '../../lib/usePersistentState';
 import { Avatar } from '../ui/Avatar';
 import { ModelIcon } from '../ui/ModelIcon';
 import { PlatformIcon } from '../ui/PlatformIcon';
-import { Segmented } from '../ui/Segmented';
 import { Pager } from '../ui/Pager';
 import { RegisterSearch } from '../ui/RegisterSearch';
 import { ConfirmDialog } from '../ui/ConfirmDialog';
@@ -92,24 +90,18 @@ const COLUMNS = 'minmax(0,1.2fr) minmax(0,2.4fr) minmax(0,1.2fr) 5.5rem 10rem 2.
 const COMPACT_COLUMNS = 'minmax(0,1fr) 2.25rem';
 const MOBILE_COLUMNS = 'minmax(0,1.6fr) minmax(0,1fr) 2.25rem';
 
-/** Full-width conversation register. A regular user sees only their own conversations; an admin
- *  defaults to every user's oversight view and can switch to their own. `afterOpen` lets a modal host
- *  (the conversation switcher) dismiss itself once a row hands the conversation to the chat surface.
- *
- *  `lockedView` is for a host that already owns that choice: the switcher shows this register as its
- *  administrator "All" beside the personal list, so a second all/mine control inside it would be the same
- *  decision asked twice. */
-export function BrainSessionsPanel({ afterOpen, lockedView }: { afterOpen?: () => void; lockedView?: 'all' } = {}) {
+/** The administrator's conversation register: every account's conversations, with delegated sessions
+ *  nested under the conversation that started them. It is one of the two views of the conversation
+ *  switcher, which owns that choice and shows the personal list itself — so this panel no longer carries
+ *  an all/mine control or a personal query of its own. `afterOpen` lets that host dismiss itself once a
+ *  row hands the conversation to the chat surface. */
+export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {}) {
   const { t, locale } = useTranslation();
   const { toast } = useToast();
   const qc = useQueryClient();
   const me = useMe();
   const isAdmin = me.data?.user?.is_admin ?? false;
   const myId = me.data?.user?.id;
-  const [adminView, setAdminView] = usePersistentState<'all' | 'mine'>('elowen.sessions.brainView', 'all', ['all', 'mine']);
-  // A non-admin only ever has their own; the toggle applies to admins, and a host that already made the
-  // choice takes it away entirely.
-  const view: 'all' | 'mine' = isAdmin ? (lockedView ?? adminView) : 'mine';
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [confirmAll, setConfirmAll] = useState(false);
   const [page, setPage] = useState(0);
@@ -130,16 +122,11 @@ export function BrainSessionsPanel({ afterOpen, lockedView }: { afterOpen?: () =
   // ordinary user never sees a foreign row, so the admin-only endpoint stays unasked for them.
   const users = useQuery({ queryKey: ['users'], queryFn: elowenClient.listUsers, enabled: isAdmin });
   const userById = useMemo(() => new Map((users.data ?? []).map((u) => [u.id, u])), [users.data]);
-  const managed = useQuery({ queryKey: ['brain-managed-sessions'], queryFn: elowenClient.brainManagedSessions, enabled: isAdmin && view === 'all' });
-  const own = useQuery({ queryKey: ['brain-sessions'], queryFn: elowenClient.brainSessions, enabled: view === 'mine' });
-  const q = view === 'all' ? managed : own;
-  // The recurring jobs organized under these conversations, scoped to the list being shown. Read once for
-  // the whole register — search has to see every link before the roots are paged.
-  const jobLinks = useConversationJobLinks(view === 'all' ? 'all' : 'mine');
-  // Own sessions carry no kind/tokens — they're always continuable conversations.
-  const sessions: ConversationRow[] = useMemo(() => (view === 'all'
-    ? (managed.data ?? [])
-    : (own.data ?? []).map((s) => ({ ...s, kind: 'conversation' as const }))), [view, managed.data, own.data]);
+  const q = useQuery({ queryKey: ['brain-managed-sessions'], queryFn: elowenClient.brainManagedSessions, enabled: isAdmin });
+  // The recurring jobs organized under these conversations. Read once for the whole register — search has
+  // to see every link before the roots are paged.
+  const jobLinks = useConversationJobLinks('all');
+  const sessions: ConversationRow[] = useMemo(() => q.data ?? [], [q.data]);
   const jobsByConversation = useMemo(() => groupJobLinks(jobLinks.data?.links ?? []), [jobLinks.data]);
   // The forest is built BEFORE filtering, sorting and pagination: a child has to find its parent among
   // every row the daemon sent, not only among the ones this page happens to show.
@@ -173,7 +160,7 @@ export function BrainSessionsPanel({ afterOpen, lockedView }: { afterOpen?: () =
     return next;
   });
 
-  useEffect(() => { setPage(0); }, [view, search, sort, direction]);
+  useEffect(() => { setPage(0); }, [search, sort, direction]);
 
   useLayoutEffect(() => {
     const box = scrollRef.current;
@@ -214,14 +201,13 @@ export function BrainSessionsPanel({ afterOpen, lockedView }: { afterOpen?: () =
     // Deleting conversations here also removes whatever job branches hung under them: the schedules
     // survive, but the daemon stops resolving their filing, so the navigation read is asked again.
     void qc.invalidateQueries({ queryKey: QUERY_KEYS.brainConversationLinks });
-    return qc.invalidateQueries({ queryKey: view === 'all' ? ['brain-managed-sessions'] : ['brain-sessions'] });
+    return qc.invalidateQueries({ queryKey: ['brain-managed-sessions'] });
   };
 
   const doDelete = async (id: string) => {
     setConfirmId(null);
     try {
-      if (view === 'all') await elowenClient.brainDeleteManagedSession(id);
-      else await elowenClient.brainDeleteSession(id);
+      await elowenClient.brainDeleteManagedSession(id);
       await refresh();
       toast(t.sessionsPanel.deleted, 'ok');
     } catch { toast(t.common.error, 'error'); }
@@ -233,9 +219,8 @@ export function BrainSessionsPanel({ afterOpen, lockedView }: { afterOpen?: () =
   const doDeleteAll = async () => {
     setConfirmAll(false);
     try {
-      // Delete what is on screen: the cross-account register wipes every account's history, the personal
-      // view only the caller's. Sending one of them regardless would make the button lie in the other.
-      const { deleted } = await elowenClient.brainDeleteAllManagedSessions(view === 'all' ? 'all' : undefined);
+      // Delete what is on screen, and this list is every account's — the endpoint is told so explicitly.
+      const { deleted } = await elowenClient.brainDeleteAllManagedSessions('all');
       await refresh();
       toast(`${t.sessionsPanel.deletedAll} (${deleted})`, 'ok');
     }
@@ -485,28 +470,17 @@ export function BrainSessionsPanel({ afterOpen, lockedView }: { afterOpen?: () =
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {/* The shared register search. Its predecessor here was a hand-built field pinned at `w-44`,
-              which could neither grow into a wide toolbar nor shrink out of the way of the view switch
-              and the bulk-delete button on a narrow one. */}
+              which could neither grow into a wide toolbar nor shrink out of the way of the bulk-delete
+              button on a narrow one. */}
           <RegisterSearch
             value={search}
             onChange={setSearch}
             label={t.sessionsPanel.searchLabel}
             placeholder={t.sessionsPanel.searchLabel}
           />
-          {isAdmin && !lockedView ? (
-            <Segmented
-              size="sm"
-              value={view}
-              onChange={(v) => setAdminView(v as 'all' | 'mine')}
-              aria-label={t.sessionsPanel.tab}
-              options={[{ value: 'all', label: t.sessionsPanel.viewAll }, { value: 'mine', label: t.sessionsPanel.viewMine }]}
-            />
-          ) : null}
-          {/* Admin-only, in BOTH views, and each deletes exactly what is listed under it — the endpoint is
-              told which. It used to appear only over the personal list, because back then it could only
-              ever delete the caller's own rows and above the register it would have deleted six of forty
-              without saying so. Ordinary users have no bulk delete at all: nobody asked for one, and a
-              non-admin must never be able to reach another account's history. */}
+          {/* It deletes exactly what is listed under it, and the endpoint is told so. Ordinary users have
+              no bulk delete at all: nobody asked for one, and a non-admin must never be able to reach
+              another account's history. */}
           {isAdmin && visible.length > 0 ? (
             <Button variant="danger" icon={Trash2} onClick={() => setConfirmAll(true)}>{t.sessionsPanel.deleteAll}</Button>
           ) : null}
@@ -568,8 +542,8 @@ export function BrainSessionsPanel({ afterOpen, lockedView }: { afterOpen?: () =
       <ConfirmDialog
         open={confirmAll}
         title={t.sessionsPanel.confirmDeleteAllTitle}
-        // Wiping the whole team's history is a different act from clearing your own, so it says so.
-        description={view === 'all' ? t.sessionsPanel.confirmDeleteAllEveryoneDesc : t.sessionsPanel.confirmDeleteAllDesc}
+        // This list is every account's, and wiping the whole team's history says so out loud.
+        description={t.sessionsPanel.confirmDeleteAllEveryoneDesc}
         confirmLabel={t.sessionsPanel.deleteAll}
         onConfirm={() => void doDeleteAll()}
         onClose={() => setConfirmAll(false)}

@@ -59,16 +59,22 @@ vi.mock('../../../lib/elowenClient', () => ({ elowenClient: client }));
  *  mounts it — there is no prop to pass, which is what makes a second switcher impossible. */
 function renderModal() {
   const { wrapper: Wrapper } = createWrapper();
-  const utils = render(
-    <Wrapper><ToastProvider><ConversationSwitcherModal /></ToastProvider></Wrapper>,
-  );
-  return { ...utils, onClose: ctrl.closeHistory };
+  const tree = () => <Wrapper><ToastProvider><ConversationSwitcherModal /></ToastProvider></Wrapper>;
+  const utils = render(tree());
+  /** Open and close it the only way the app can: through the controller the shell keeps mounted. A fresh
+   *  element each time, because React bails out of re-rendering an identical one. */
+  const setOpen = (next: boolean) => {
+    ctrl.value.historyOpen = next;
+    utils.rerender(tree());
+  };
+  return { ...utils, setOpen, onClose: ctrl.closeHistory };
 }
 
 const dialog = () => screen.findByRole('dialog', { name: /^(Conversations|Konverzace|Konverzácie)$/i });
 
 beforeEach(() => {
   admin.value = false;
+  ctrl.value.historyOpen = true;
   jobLinks.value = { status: 'available', links: [] };
   for (const fn of Object.values(client)) (fn as { mockClear: () => void }).mockClear();
   client.brainConversationLinks.mockImplementation(() => Promise.resolve(jobLinks.value));
@@ -135,6 +141,25 @@ describe('ConversationSwitcherModal', () => {
     await waitFor(() => expect(client.brainManagedSessions).toHaveBeenCalled());
     // One all/mine decision, made here — the register does not repeat it inside its own toolbar.
     expect(within(screen.getByTestId('brain-sessions-toolbar')).queryByRole('radio', { name: /Just mine|Jen moje|Len moje/i })).toBeNull();
+  });
+
+  // The shell keeps this modal mounted for the app's whole life, so anything it remembers between two
+  // openings is remembered forever. An administrator who last looked at the register must still arrive
+  // at their own conversations next time: that is what the switcher is for, and it is the common case.
+  it('opens on the personal list again after an administrator closed it on the register', async () => {
+    admin.value = true;
+    const { setOpen } = renderModal();
+    await dialog();
+    fireEvent.click(await screen.findByRole('radio', { name: /All conversations|Všechny konverzace|Všetky konverzácie/i }));
+    expect(await screen.findByTestId('brain-sessions-list')).toBeInTheDocument();
+
+    setOpen(false);
+    expect(screen.queryByRole('dialog', { name: /^(Conversations|Konverzace|Konverzácie)$/i })).toBeNull();
+
+    setOpen(true);
+    const reopened = await dialog();
+    expect(within(reopened).getByText('First')).toBeInTheDocument();
+    expect(screen.queryByTestId('brain-sessions-list')).toBeNull();
   });
 
   it('closes on Escape', async () => {

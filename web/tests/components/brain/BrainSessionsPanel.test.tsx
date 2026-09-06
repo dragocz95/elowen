@@ -7,8 +7,11 @@ import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
 
 // Moved from tests/pluginUi/agentsSessions.test.tsx when the register left the agents plugin's
-// Sessions page: the panel is core data and now renders from the Chat page's register modal.
-let admin = false;
+// Sessions page: the panel is core data and renders as the administrator's view of the conversation
+// switcher. It is admin-only now — the switcher shows the personal list itself and owns that choice —
+// so every case here reads it as the operator does. That a non-administrator never reaches it, and
+// never makes the cross-account request, is pinned at that boundary in the switcher's own test.
+let admin = true;
 const conversations = Array.from({ length: 13 }, (_, index) => ({
   id: `brain-${index + 1}`,
   title: `Conversation ${index + 1}`,
@@ -34,7 +37,7 @@ const server = setupServer(
   http.get('*/api/brain/conversation-links', () => HttpResponse.json(jobLinks)),
 );
 beforeEach(() => {
-  admin = false;
+  admin = true;
   managedOverride = null;
   jobLinks = { status: 'available', links: [] };
   localStorage.clear();
@@ -116,16 +119,12 @@ describe('BrainSessionsPanel (conversation register)', () => {
     expect(toolbar).toHaveClass('control-surface-toolbar');
     expect(screen.getByTestId('brain-sessions-list').closest('.control-surface-register')).toBeInTheDocument();
     expect(within(toolbar).getByRole('heading', { name: 'Conversations' })).toHaveClass('text-base');
-    expect(within(toolbar).getByRole('radio', { name: 'Just mine' })).toBeInTheDocument();
+    // No all/mine control here: the switcher above owns that choice and would be asking it twice.
+    expect(within(toolbar).queryByRole('radio')).toBeNull();
   });
 
-  // "Delete all" hits an endpoint that deletes only the CALLER's conversations. Over the cross-account
-  // view it would read as wiping the team's history and then quietly delete just the admin's own rows.
-  /** The button now stands over BOTH views, because it is told which rows to delete. It used to be
-   *  hidden over the register: back then the endpoint could only reach the caller's own conversations,
-   *  so above a cross-account list it would have deleted six of forty without saying so. */
-  it('offers Delete all in both admin views, and says so when it would wipe every account', async () => {
-    admin = true;
+  // "Delete all" hits an endpoint that deletes exactly what is listed, and this list is every account's.
+  it('offers Delete all and says that it would wipe every account', async () => {
     renderPanel();
     await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
 
@@ -135,12 +134,6 @@ describe('BrainSessionsPanel (conversation register)', () => {
     const wide = await screen.findByRole('alertdialog');
     expect(within(wide).getByText(/every account/i)).toBeInTheDocument();
     fireEvent.click(within(wide).getByRole('button', { name: 'Cancel' }));
-
-    fireEvent.click(screen.getByRole('radio', { name: 'Just mine' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Delete all' }));
-    // The personal view keeps the personal wording -- clearing your own history is a different act.
-    const mine = await screen.findByRole('alertdialog');
-    expect(within(mine).queryByText(/every account/i)).toBeNull();
   });
 });
 
