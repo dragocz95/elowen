@@ -10,6 +10,10 @@ import { cs } from '../../web/lib/i18n/dictionaries/cs.js';
 import { en } from '../../web/lib/i18n/dictionaries/en.js';
 import { sk } from '../../web/lib/i18n/dictionaries/sk.js';
 
+/** The table on its own, one candidate at a time. What `approvalQuestion` actually feeds it — the raw
+ *  command plus the canonical form of every simple command in it — is exercised further down. */
+const warn = (command: string) => destructiveWarningId([command]);
+
 describe('destructiveWarningId — the informational pattern table', () => {
   // One matching and one deliberately NON-matching command per id. The near-miss is the half that keeps
   // the table honest: a pattern that fires on `git checkout main` would put a data-loss warning on the
@@ -38,8 +42,8 @@ describe('destructiveWarningId — the informational pattern table', () => {
   ];
 
   it.each(cases)('flags %s and leaves its near-miss alone', (id, destructive, benign) => {
-    expect(destructiveWarningId(destructive)).toBe(id);
-    expect(destructiveWarningId(benign)).not.toBe(id);
+    expect(warn(destructive)).toBe(id);
+    expect(warn(benign)).not.toBe(id);
   });
 
   it('covers every declared id and every id has a note', () => {
@@ -48,20 +52,49 @@ describe('destructiveWarningId — the informational pattern table', () => {
 
   it('returns null for ordinary commands', () => {
     for (const command of ['ls -la', 'npm run build', 'git status --porcelain', 'echo hello', '']) {
-      expect(destructiveWarningId(command)).toBeNull();
+      expect(warn(command)).toBeNull();
     }
   });
 
   it('finds a destructive command hiding behind a chain or a newline', () => {
     // The raw command is what gets matched, so the `[;&|\n]` anchors still work. Collapsing whitespace
     // first would have turned the newline into a space and hidden the second command from `(^|[;&|\n])`.
-    expect(destructiveWarningId('cd build\nrm -rf .')).toBe('rmRecursiveForce');
-    expect(destructiveWarningId('npm test && git push --force')).toBe('gitForcePush');
+    expect(warn('cd build\nrm -rf .')).toBe('rmRecursiveForce');
+    expect(warn('npm test && git push --force')).toBe('gitForcePush');
   });
 
   it('prefers the most specific tier of a family', () => {
     // Order is load-bearing: `rm -rf` must not be reported as the milder `rm -r` or `rm -f`.
-    expect(destructiveWarningId('rm -rf build')).toBe('rmRecursiveForce');
+    expect(warn('rm -rf build')).toBe('rmRecursiveForce');
+  });
+
+  it('does not flag a command that merely NAMES a destructive program', () => {
+    // A note on `which mkfs.ext4` is worse than no note at all: it teaches the reader that the notes are
+    // noise, and the next one they skim is a real one.
+    for (const command of ['which mkfs.ext4', 'man 8 mkfs', 'ls -l /sbin/mkfs.ext4', 'echo mkfs is a thing']) {
+      expect(warn(command), command).toBeNull();
+    }
+  });
+
+  it('flags the two spellings that actually destroy a disk', () => {
+    expect(warn('cat image.img > /dev/sda')).toBe('deviceOverwrite');
+    expect(warn('dd if=/dev/zero of=/dev/sdb bs=1M')).toBe('deviceOverwrite');
+  });
+
+  it('matches a long adversarial command in bounded time', () => {
+    // The command is model-supplied and can arrive from a page or a repo file, and this runs
+    // synchronously on the daemon's only event loop. The obvious spelling of the fork-bomb pattern —
+    // several `[^}]*` runs inside the braces — took ~1s on this exact 3 kB input and >20s on 80 kB,
+    // holding every other session behind it.
+    const inputs = [
+      ':(){'.concat(':|:&'.repeat(20_000)),
+      'git clean '.concat('-'.repeat(20_000)),
+      'rm -'.concat('a'.repeat(20_000)),
+      'x'.repeat(200_000),
+    ];
+    const started = Date.now();
+    for (const input of inputs) destructiveWarningId([input]);
+    expect(Date.now() - started).toBeLessThan(100);
   });
 });
 
@@ -96,7 +129,7 @@ describe('the warning is informational — it changes no decision', () => {
     // `git stash list` is explicitly allow-listed; `git stash drop` carries a note. Neither the presence
     // of a note nor its absence may move the action away from what the RULES say.
     const rules = buildPermissionRuleset(sanitizePermissionSettings({ bash: { 'git stash drop*': 'allow' } }));
-    expect(destructiveWarningId('git stash drop')).toBe('gitStashDrop');
+    expect(warn('git stash drop')).toBe('gitStashDrop');
     expect(resolveToolPermission(rules, 'Bash', 'git stash drop').action).toBe('allow');
   });
 
@@ -107,6 +140,20 @@ describe('the warning is informational — it changes no decision', () => {
     expect(flagged.multiSelect).toBe(plain.multiSelect);
     expect(flagged.custom).toBe(plain.custom);
     expect(flagged.approval?.alwaysPattern).toBe('rm*');
+  });
+
+  it('sees through the shell wrappers the resolver already sees through', () => {
+    // `sudo rm -rf /srv/app` is the single command a human most needs named before pressing "Allow once",
+    // and matching the raw string alone misses it — the `rm` patterns anchor at the start of a command.
+    // The prompt therefore matches the gate's own canonical segment forms too, rather than growing a
+    // second list of shell wrappers here.
+    for (const command of ['sudo rm -rf /srv/app', 'env rm -rf /srv/app', '/bin/rm -rf /srv/app', 'nice rm -rf /srv/app']) {
+      const q = approvalQuestion({ tool: 'Bash', scope: 'bash', command, alwaysPattern: 'rm*' });
+      expect(q.approval?.warning, command).toBe('rmRecursiveForce');
+    }
+    // …and the raw command is still what the chained/newline anchors work on.
+    const chained = approvalQuestion({ tool: 'Bash', scope: 'bash', command: 'cd build\nsudo rm -rf .', alwaysPattern: 'cd*' });
+    expect(chained.approval?.warning).toBe('rmRecursiveForce');
   });
 
   it('carries the note in the English question and the id on the wire', () => {

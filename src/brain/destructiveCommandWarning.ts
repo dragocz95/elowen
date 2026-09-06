@@ -11,13 +11,21 @@ import type { DestructiveWarningId } from '../shared/wireContract.js';
  *  be a source of truth nobody configured and nobody could override.
  *
  *  Regexes are acceptable HERE, and only here, precisely because nothing hangs on a miss: an unmatched
- *  destructive command simply gets the prompt it would have got anyway. A false positive costs one extra
- *  sentence. Neither outcome can grant or withhold a permission, so the table is allowed to be a cheap
- *  heuristic instead of the shell parser the gate itself needs (splitBashSegments).
+ *  destructive command simply gets the prompt it would have got anyway, and a false positive costs one
+ *  extra sentence. Neither outcome can grant or withhold a permission. What the table does NOT do is
+ *  re-implement shell parsing: the candidates it is matched against come from the gate's own
+ *  `splitBashSegments` + `segmentMatchValues`, so there is one notion of "which program is this segment
+ *  really running" rather than a second list of wrappers living here.
  *
  *  Deliberately NOT here: path awareness. The reference keeps "is this rm aimed at something precious"
  *  in a separate check, and reproducing it would mean deciding which paths are precious — a policy
- *  question that belongs to the operator's rules, not to a note. */
+ *  question that belongs to the operator's rules, not to a note.
+ *
+ *  Two false positives are inherited from the reference and left as it tuned them: a SQL verb quoted
+ *  inside a search (`rg "DROP TABLE" migrations/`) and a git flag named in a commit message
+ *  (`git commit -m "stop passing --no-verify"`) both draw a note. Telling those apart needs quote-aware
+ *  parsing of an argument the shell has not expanded yet, and getting it half right would silence the
+ *  real `git commit -m 'x' --amend`. */
 interface DestructivePattern { id: DestructiveWarningId; pattern: RegExp }
 
 /** Ordered: the FIRST match wins, so the more specific shape of a family comes before the general one
@@ -52,11 +60,18 @@ const DESTRUCTIVE_PATTERNS: readonly DestructivePattern[] = [
   // Host and filesystem surgery. Not in the reference — its shell runs behind a different sandbox — but
   // these are the shapes an Elowen operator most needs named before they press "Allow once", because each
   // one is unrecoverable at the machine level rather than at the repository level.
-  { id: 'mkfs', pattern: /\bmkfs(?:\.\w+)?\s/ },
-  { id: 'deviceOverwrite', pattern: />\s*\/dev\/(?:sd[a-z]|nvme\d|hd[a-z]|vd[a-z]|mmcblk\d)/ },
+  //
+  // `mkfs` is anchored at COMMAND POSITION, unlike the reference's loose word matching: without that,
+  // `which mkfs.ext4` and `man 8 mkfs` both come back warning that the command may erase a filesystem.
+  { id: 'mkfs', pattern: /(?:^|[;&|\n]\s*)(?:\S*\/)?mkfs(?:\.\w+)?\s/ },
+  { id: 'deviceOverwrite', pattern: /(?:>\s*|\bof=)\/dev\/(?:sd[a-z]|nvme\d|hd[a-z]|vd[a-z]|mmcblk\d)/ },
   { id: 'chmodWorldWritable', pattern: /\bchmod\s+(?:-[a-zA-Z]*R[a-zA-Z]*\s+)?0?777\b/ },
-  { id: 'killEveryProcess', pattern: /\bkill\s+-(?:9|KILL)\s+-1\b/ },
-  { id: 'forkBomb', pattern: /:\s*\(\s*\)\s*\{[^}]*:\s*\|\s*:[^}]*&[^}]*\}\s*;\s*:/ },
+  { id: 'killEveryProcess', pattern: /\bkill\s+-(?:9|KILL)\s+(?:--\s+)?-1\b/ },
+  // ONE negated-class run, not three. The obvious spelling of this pattern — a `{…}` body described by
+  // several `[^}]*` runs around the `:|:&` — is catastrophically ambiguous: on a long string containing no
+  // `}` at all it backtracks super-cubically, and a 3 kB command measured just under a second on the
+  // daemon's single event loop. The body of a fork bomb is not worth describing in that much detail.
+  { id: 'forkBomb', pattern: /:\s*\(\s*\)\s*\{[^}]*\}\s*;\s*:/ },
 ];
 
 /** The English note each id renders as. It is what the CLI shows verbatim and what the daemon appends to
@@ -85,12 +100,28 @@ export const DESTRUCTIVE_WARNING_NOTES: Record<DestructiveWarningId, string> = {
   forkBomb: 'may exhaust the process table',
 };
 
-/** The id of the first destructive shape `command` matches, or null. Matched against the RAW command —
- *  several patterns anchor on `;`, `|`, `&` and newlines to find the start of a chained command, and a
- *  whitespace-collapsed copy has already lost the newlines. */
-export function destructiveWarningId(command: string): DestructiveWarningId | null {
+/** How much of one candidate the table is matched against.
+ *
+ *  The command is model-supplied and unbounded, and several patterns above pair a greedy negated class
+ *  with a literal that may never arrive — the shape whose worst case is quadratic or worse. Matching runs
+ *  synchronously on the daemon's only event loop, so an 80 kB command could hold every session and every
+ *  request behind it. Bounding the input is the general answer, and it costs nothing real: a destructive
+ *  command whose verb is two thousand characters in is not something a note was going to save anyone from,
+ *  and the operator is shown the first 200 characters of it anyway. */
+const MAX_SCANNED_CHARS = 2_000;
+
+/** The id of the first destructive shape any candidate matches, or null. Table order decides — the more
+ *  specific tier of a family is tried against every candidate before the milder one.
+ *
+ *  Candidates come from {@link approvalQuestion}: the RAW command (several patterns anchor on `;`, `|`,
+ *  `&` and newlines to find the start of a chained command, which a whitespace-collapsed copy has already
+ *  lost) plus the canonical form of each simple command in it, so `sudo rm -rf /srv` and `env rm -rf /srv`
+ *  are recognised as the `rm -rf` they are. The canonicalisation is the permission gate's own, not a
+ *  second table of shell wrappers. */
+export function destructiveWarningId(candidates: readonly string[]): DestructiveWarningId | null {
+  const scanned = candidates.map((c) => (c.length > MAX_SCANNED_CHARS ? c.slice(0, MAX_SCANNED_CHARS) : c));
   for (const { id, pattern } of DESTRUCTIVE_PATTERNS) {
-    if (pattern.test(command)) return id;
+    if (scanned.some((candidate) => pattern.test(candidate))) return id;
   }
   return null;
 }
