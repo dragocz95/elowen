@@ -25,15 +25,19 @@ const radioGroupVariants = cva('grid gap-3', {
     },
   },
   compoundVariants: [
+    // A CONNECTED CHOICE IS ONE TRACK. A horizontal segmented set that wraps stops reading as one
+    // control: the second line has no left edge to belong to, and in a settings record it broke out of
+    // the control column and past the card's right edge. The set stays on one line at every width; where
+    // it does not fit, the surface around it gives it the room (see `.settings-row` in spatial-deck.css)
+    // or `nowrap` turns the track into a scroller.
     {
       variant: ['default', 'line'],
-      nowrap: false,
-      className: 'flex-wrap',
+      className: 'flex-nowrap',
     },
     {
       variant: ['default', 'line'],
       nowrap: true,
-      className: 'flex-nowrap overflow-x-auto overflow-y-hidden overscroll-x-contain',
+      className: 'overflow-x-auto overflow-y-hidden overscroll-x-contain',
     },
   ],
 });

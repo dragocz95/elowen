@@ -17,6 +17,25 @@ describe('Segmented', () => {
     expect(active).toHaveClass('data-[state=checked]:text-foreground');
   });
 
+  /** A CONNECTED SET IS ONE TRACK. A wrapped segmented stops reading as one control — its second line
+   *  has no left edge to belong to — and inside a settings record it broke out of the control column and
+   *  drew past the card's right edge. The track holds its line whether or not the caller asked for the
+   *  scrolling treatment; only `nowrap` adds the scroller on top. */
+  it('never wraps its track, with or without the scrolling treatment', () => {
+    const plain = render(<Segmented options={opts} value="a" onChange={() => {}} aria-label="Plain" />);
+    const scrolling = render(<Segmented nowrap options={opts} value="a" onChange={() => {}} aria-label="Scrolling" />);
+
+    for (const name of ['Plain', 'Scrolling']) {
+      const track = screen.getByRole('radiogroup', { name });
+      expect(track).toHaveClass('flex-nowrap');
+      expect(track.className).not.toMatch(/(^|\s)flex-wrap(\s|$)/);
+    }
+    expect(screen.getByRole('radiogroup', { name: 'Plain' }).className).not.toContain('overflow-x-auto');
+    expect(screen.getByRole('radiogroup', { name: 'Scrolling' })).toHaveClass('overflow-x-auto');
+    plain.unmount();
+    scrolling.unmount();
+  });
+
   it('fires onChange with the clicked value', () => {
     const onChange = vi.fn();
     render(<Segmented options={opts} value="a" onChange={onChange} />);
