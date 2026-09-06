@@ -54,14 +54,55 @@ describe('SettingsRow anatomy', () => {
     expect(container.querySelector('.settings-row:nth-child(2) .settings-row__icon')).toHaveAttribute('data-icon-kind', 'glyph');
   });
 
-  it('puts status, control and actions in one trailing cell, in that order', () => {
+  /** THE STATUS READS WITH THE LABEL. An inline record's status states something about the SETTING, so it
+   *  is the label line's LAST child — directly after the name and its help mark — and not a slot in the
+   *  trailing band. Held in a band track of its own it floated between the name and the control, and the
+   *  single record in a card that carried a pill made the whole card read as scattered. */
+  it('reads an inline status on the label line, straight after the name and its help mark', () => {
+    const { wrapper } = createWrapper();
     const { container } = render(
-      <SettingsRow label="Executor" status={<span>Relay</span>} control={<button type="button">Pick</button>} actions={<button type="button">Reset</button>} />,
+      <SettingsRow label="Executor" description="What runs a turn" status={<span>Relay</span>} control={<button type="button">Pick</button>} actions={<button type="button">Reset</button>} />,
+      { wrapper },
     );
 
-    expect([...trailing(container).children].map((child) => child.className)).toEqual([
-      'settings-row__status', 'settings-row__control', 'settings-row__actions',
-    ]);
+    const title = [...container.querySelector('.settings-row__title')!.children];
+    expect(title).toHaveLength(3);
+    expect(title[0]).toHaveTextContent('Executor');
+    expect(title[1]).toContainElement(screen.getByRole('button', { name: /help/i }));
+    expect(title[2]).toHaveClass('settings-row__status');
+    expect(title[2]).toHaveTextContent('Relay');
+    expect(trailing(container).querySelector('.settings-row__status')).toBeNull();
+  });
+
+  /** THE CONTROL KEEPS ONE COLUMN. jsdom measures no pixels, so the claim is pinned where it is decided:
+   *  the trailing cell opens with the control whether or not the record carries actions, and the
+   *  stylesheet places that cell in track 3 for every record (tests/app/settingsThemeGlobal.test.ts). A
+   *  record with a trailing action can therefore no longer pull its own switch out of the column its
+   *  neighbours' switches sit in — which is exactly what the Recap card's digest row did. */
+  it('opens the trailing cell with the control, with and without trailing actions', () => {
+    const withActions = render(
+      <SettingsRow label="Recap" status={<span>Ready</span>} control={<button type="button">On</button>} actions={<button type="button">Regenerate</button>} />,
+    );
+    const withoutActions = render(
+      <SettingsRow label="Greeting" control={<button type="button">On</button>} />,
+    );
+
+    expect([...trailing(withActions.container).children].map((child) => child.className))
+      .toEqual(['settings-row__control', 'settings-row__actions']);
+    expect([...trailing(withoutActions.container).children].map((child) => child.className))
+      .toEqual(['settings-row__control']);
+  });
+
+  /** A stacked record is the one exception, and it keeps the band's status track: its status is a BLOCK
+   *  (a provider's endpoint over a model count over a badge row) that cannot sit on a label's baseline. */
+  it('keeps a stacked record\'s block status in the trailing band', () => {
+    const { container } = render(
+      <SettingsRow label="Relay" trailingLayout="stack" status={<span>https://example.test</span>} actions={<button type="button">Edit</button>} />,
+    );
+
+    expect(container.querySelector('.settings-row__title > .settings-row__status')).toBeNull();
+    expect([...trailing(container).children].map((child) => child.className))
+      .toEqual(['settings-row__status', 'settings-row__actions']);
   });
 
   /** `children` is the published plugin ABI — every bundle handed `SettingsRow` through

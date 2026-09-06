@@ -203,10 +203,18 @@ function countSlots(node: ReactNode): number {
  *
  *  THE CONTRACT. A record is a label and ONE control, optionally a SHORT status and at most
  *  {@link MAX_ROW_ACTIONS} actions. On a wide card the whole thing is one grid row borrowed from the
- *  stack through subgrid; in a narrow container it folds to a two-line band — the label and its help on
- *  the first line, the control, status and actions together on a second line that does not wrap. There
+ *  stack through subgrid; in a narrow container it folds to a two-line band — the label, its help and its
+ *  status on the first line, the control and the actions on a second line that does not wrap. There
  *  is deliberately no third line: a record that needs one is carrying several values and should declare
  *  `trailingLayout="stack"`, which opts out of the band and gives each part the row's full width.
+ *
+ *  WHERE THE STATUS READS. An inline record's status is one SHORT reading about the setting — a state
+ *  pill, a count, the model a role resolves to. It belongs to the label, not to the trailing side: it
+ *  renders right after the help mark, on the label's own line. Given a track of its own it floated
+ *  halfway between the record's name and its control, which is what made a card carrying one pill read
+ *  as scattered. A STACKED record is the exception, because its status is a BLOCK — a provider's
+ *  endpoint over a model count over a badge row — that cannot sit on the label's baseline; that one
+ *  stays in the trailing band, and the band's status track exists for it.
  *
  *  Explanatory copy lives behind the shared HelpTip so the row remains scannable on a phone;
  *  `description` gives the short meaning and `hint` adds long-form or cautionary detail in the same
@@ -222,16 +230,17 @@ export function SettingsRow({ label, description, hint, icon: Icon, iconNode, co
   /** THE control of the record: one switch, one select, one picker. Canonical spelling of what used to
    *  be passed as `children`, which remains an alias below. */
   control?: ReactNode;
-  /** A SHORT trailing value — a state word, a count, a timestamp. It shares one line with the control
-   *  and the actions, so anything that needs to wrap belongs in `description`/`hint` instead. */
+  /** A SHORT reading of the record — a state word, a count, a timestamp. On an inline record it sits on
+   *  the label's line, right after the help mark; anything long enough to need its own block belongs in
+   *  `description`/`hint`, or in a record that declares `trailingLayout="stack"`. */
   status?: ReactNode;
   /** At most {@link MAX_ROW_ACTIONS} buttons. Development builds warn when a call site exceeds it
    *  rather than letting the row quietly overflow its line. */
   actions?: ReactNode;
   /** How much room the trailing side needs.
    *
-   *  `inline` is the default record: ONE compact value (a switch, a select, a short status) that sits
-   *  opposite its label, and the two-column table every settings card reads as.
+   *  `inline` is the default record: ONE compact control opposite its label, with its short status read
+   *  on the label's own line — the two-column table every settings card reads as.
    *
    *  `stack` is for a record whose trailing side is not one value but SEVERAL — a connected account
    *  carries a connection badge, a usage meter per rate-limit window and two buttons; a provider entry
@@ -255,6 +264,10 @@ export function SettingsRow({ label, description, hint, icon: Icon, iconNode, co
   className?: string;
 }) {
   const controlNode = control ?? children;
+  // ONE decision about where the status reads, taken from the layout the row already declares — see the
+  // contract above. An inline status joins the label line; a stacked one keeps the band's status track.
+  const labelStatus = trailingLayout === 'inline' ? status : undefined;
+  const bandStatus = trailingLayout === 'inline' ? undefined : status;
   if (process.env.NODE_ENV !== 'production' && countSlots(actions) > MAX_ROW_ACTIONS) {
     // eslint-disable-next-line no-console
     console.warn(`SettingsRow "${label}" carries more than ${MAX_ROW_ACTIONS} actions; move the extras into the section header.`);
@@ -273,12 +286,13 @@ export function SettingsRow({ label, description, hint, icon: Icon, iconNode, co
                 {hint ? <span className={`block ${description ? 'mt-2' : ''}`}>{hint}</span> : null}
               </HelpTip>
             ) : null}
+            {labelStatus ? <span className="settings-row__status">{labelStatus}</span> : null}
           </span>
         </div>
       </div>
-      {status || controlNode || actions ? (
+      {bandStatus || controlNode || actions ? (
         <div className="settings-row__trailing">
-          {status ? <div className="settings-row__status">{status}</div> : null}
+          {bandStatus ? <div className="settings-row__status">{bandStatus}</div> : null}
           {controlNode ? <div className="settings-row__control">{controlNode}</div> : null}
           {actions ? <div className="settings-row__actions">{actions}</div> : null}
         </div>

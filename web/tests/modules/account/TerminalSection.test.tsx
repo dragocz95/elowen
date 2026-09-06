@@ -139,14 +139,16 @@ describe('TerminalSection — the canonical record anatomy', () => {
     expect(screen.getByRole('switch', { name: 'Blink the cursor' })).toBeInTheDocument();
   });
 
-  it('reads a slider record\'s value from its status slot, ahead of the control', () => {
+  it('reads a slider record\'s value from its status slot, on the label\'s own line', () => {
     renderSection();
     const fontRow = screen.getByText('Size').closest('.settings-row') as HTMLElement;
 
     expect(within(fontRow).getByRole('slider', { name: 'Size' })).toBeInTheDocument();
     expect(fontRow.querySelector('.settings-row__status')).toHaveTextContent('16px');
+    // The value reads with the setting's name, not in a column between the name and the slider.
+    expect(fontRow.querySelector('.settings-row__title > .settings-row__status')).toHaveTextContent('16px');
     expect([...fontRow.querySelector('.settings-row__trailing')!.children].map((child) => child.className))
-      .toEqual(['settings-row__status', 'settings-row__control']);
+      .toEqual(['settings-row__control']);
   });
 
   // A split record has to remain the same SETTING it was inside the bundle: the switch that used to sit
