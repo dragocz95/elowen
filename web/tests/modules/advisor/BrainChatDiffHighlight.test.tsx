@@ -94,6 +94,16 @@ describe('a diff in the transcript', () => {
     expect(gutters).toEqual(['12', '+']);
   });
 
+  it('says in words what the marker column says in colour', async () => {
+    await renderDiff('src/total.ts (+2 -1)', TS_DIFF);
+    // The gutter is aria-hidden, so a screen reader would otherwise hear three identical rows: the
+    // sign used to be part of the row's text and has to stay part of what is announced.
+    const [context, removed, added] = rows() as [HTMLElement, HTMLElement, HTMLElement];
+    expect(added.querySelector('.sr-only')?.textContent).toBe('added line');
+    expect(removed.querySelector('.sr-only')?.textContent).toBe('removed line');
+    expect(context.querySelector('.sr-only')).toBeNull();
+  });
+
   it('syntax-colours added and context rows in the language of the edited file', async () => {
     await renderDiff('src/total.ts (+2 -1)', TS_DIFF);
     const [contextCell, , addedCell] = codeCells() as [HTMLElement, HTMLElement, HTMLElement];

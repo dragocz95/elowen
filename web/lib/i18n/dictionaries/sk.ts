@@ -1692,6 +1692,8 @@ export const sk = {
     diffLabel: 'Rozdiel zmeny',
     diffExpand: 'Zobraziť zvyšných {n} riadkov rozdielu',
     diffCollapse: 'Zobraziť menej riadkov rozdielu',
+    diffRowAdded: 'pridaný riadok',
+    diffRowRemoved: 'odobraný riadok',
     cardFallback: 'Karta',
     eventModel: 'model',
     eventMode: 'režim',

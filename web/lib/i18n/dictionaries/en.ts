@@ -1728,6 +1728,8 @@ export const en = {
     diffLabel: 'Change diff',
     diffExpand: 'Show the remaining {n} lines of the diff',
     diffCollapse: 'Show fewer lines of the diff',
+    diffRowAdded: 'added line',
+    diffRowRemoved: 'removed line',
     cardFallback: 'Card',
     eventModel: 'model',
     eventMode: 'mode',

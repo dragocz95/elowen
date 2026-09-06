@@ -94,22 +94,35 @@ const CODE_TOKEN_CLASS: Record<CodeTokenKind, string> = {
  *
  *  Added and context rows are syntax-coloured; a removed row never is. That is the CLI's rule (and Claude
  *  Code's before it): a dark Monokai token on the red ground is unreadable, so a delete renders plain.
- *  The gutter is `aria-hidden` and unselectable, so copying a diff yields the source and not a column of
- *  line numbers. A long line wraps under the gutter instead of scrolling sideways. */
-function DiffRowView({ row, lang, digits }: { row: string; lang: string | null; digits: number }) {
+ *  The gutter is unselectable, so copying a diff yields the source and not a column of line numbers, and
+ *  it is hidden from assistive technology — a screen reader gets the same information as a spoken word
+ *  instead, because a row's `+` used to be part of the text it read out. A long line wraps under the
+ *  gutter instead of scrolling sideways.
+ *
+ *  Memoized: a streaming turn re-renders its whole transcript several times a second, and every one of
+ *  those renders would otherwise re-parse and re-lex every visible row of every diff in it. */
+const DiffRowView = memo(function DiffRowView({ row, lang, digits, added, removed }: {
+  row: string;
+  lang: string | null;
+  digits: number;
+  added: string;
+  removed: string;
+}) {
   const parsed = parseDiffRow(row);
   // Not a diff row at all — a hunk header or a summary line the daemon put in the block.
   if (!parsed) return <div className="whitespace-pre-wrap break-words px-2 text-code-comment">{row || ' '}</div>;
   const { sign, num, text } = parsed;
   const tint = sign === '+' ? 'bg-diff-add' : sign === '-' ? 'bg-diff-del' : '';
-  const marker = sign === '+' ? 'text-diff-add-marker' : sign === '-' ? 'text-diff-del-marker' : 'text-diff-gutter';
+  // The CLI colours the WHOLE gutter by the row's kind — line number included — not just the marker.
+  const gutter = sign === '+' ? 'text-diff-add-marker' : sign === '-' ? 'text-diff-del-marker' : 'text-diff-gutter';
   const tokens = sign === '-' ? null : highlightCode(text, lang);
   return (
     <div data-diff-sign={sign} className={`flex gap-2 px-2 ${tint}`}>
       {/* The number column is as wide as the widest number in THIS diff (`ch` is one monospace advance),
           so every row's source starts at the same column without reserving space nobody uses. */}
-      <span aria-hidden style={{ width: `${digits}ch` }} className="shrink-0 select-none text-right tabular-nums text-diff-gutter">{num}</span>
-      <span aria-hidden className={`shrink-0 select-none ${marker}`}>{sign === ' ' ? '\u00a0' : sign}</span>
+      <span aria-hidden style={{ width: `${digits}ch` }} className={`shrink-0 select-none text-right tabular-nums ${gutter}`}>{num}</span>
+      <span aria-hidden className={`shrink-0 select-none ${gutter}`}>{sign === ' ' ? '\u00a0' : sign}</span>
+      {sign === ' ' ? null : <span className="sr-only">{sign === '+' ? added : removed}</span>}
       <span
         data-testid="chat-diff-code"
         className={`min-w-0 flex-1 whitespace-pre-wrap break-words ${sign === '-' ? 'text-diff-del-foreground' : 'text-code-plain'}`}
@@ -120,7 +133,7 @@ function DiffRowView({ row, lang, digits }: { row: string; lang: string | null; 
       </span>
     </div>
   );
-}
+});
 
 /** An edit's display diff, rendered as the CLI renders it: syntax-highlighted source on a code canvas,
  *  with the whole row tinted green or red and a line-number gutter, so the same edit reads the same in
@@ -135,14 +148,14 @@ function DiffBlock({ diff, path }: { diff: string; path?: string }) {
   const { t } = useTranslation();
   const [expanded, setExpanded] = useState(false);
   const bodyId = useId();
-  const lines = diff.replace(/\n+$/, '').split('\n');
-  const hiddenRows = Math.max(0, lines.length - DIFF_MAX_ROWS);
   const lang = useMemo(() => langForPath(path), [path]);
-  // The widest line number in the whole diff, folded rows included, so unfolding never shifts the source.
-  const digits = useMemo(
-    () => diff.split('\n').reduce((widest, l) => Math.max(widest, parseDiffRow(l)?.num.length ?? 0), 2),
-    [diff],
-  );
+  // One pass over the diff per change of it: the rows, and the widest line number in the WHOLE diff
+  // (folded rows included, so unfolding never shifts the source sideways).
+  const { lines, digits } = useMemo(() => {
+    const rows = diff.replace(/\n+$/, '').split('\n');
+    return { lines: rows, digits: rows.reduce((widest, l) => Math.max(widest, parseDiffRow(l)?.num.length ?? 0), 2) };
+  }, [diff]);
+  const hiddenRows = Math.max(0, lines.length - DIFF_MAX_ROWS);
   return (
     <div className="my-1">
       <div className="overflow-hidden rounded-md bg-diff-canvas py-1">
@@ -155,7 +168,9 @@ function DiffBlock({ diff, path }: { diff: string; path?: string }) {
           role={expanded ? 'group' : undefined}
           aria-label={expanded ? t.brainChat.diffLabel : undefined}
         >
-          {(expanded ? lines : lines.slice(0, DIFF_MAX_ROWS)).map((l, i) => <DiffRowView key={i} row={l} lang={lang} digits={digits} />)}
+          {(expanded ? lines : lines.slice(0, DIFF_MAX_ROWS)).map((l, i) => (
+            <DiffRowView key={i} row={l} lang={lang} digits={digits} added={t.brainChat.diffRowAdded} removed={t.brainChat.diffRowRemoved} />
+          ))}
         </div>
       </div>
       {hiddenRows > 0 ? (

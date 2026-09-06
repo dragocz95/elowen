@@ -164,7 +164,7 @@
      They stay a fixed dark canvas under every skin on purpose. Monokai is a dark palette — composited
      over a light row tint its tokens lose their contrast — and a diff is an artifact of the agent's
      work rather than a document surface, so it carries its own ground the way an embedded terminal
-     does. A skin that wants a paper diff overrides these eight and the code palette below; nothing
+     does. A skin that wants a paper diff overrides these seven and the code palette below; nothing
      else in the app reads them. */
   --color-diff-canvas: #0d0d10;
   /* The row tints are the CLI's own add/delete colours (ANSI-256 22 and 52) mixed into the canvas
