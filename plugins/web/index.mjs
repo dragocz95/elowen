@@ -10,6 +10,9 @@ const FETCH_CACHE_TTL_MS = 15 * 60_000;
 const MAX_FETCH_BYTES = 10_000_000;
 const MAX_MARKDOWN_CHARS = 100_000;
 const MAX_PROMPT_CHARS = 10_000;
+/** Largest page a preapproved host may return verbatim. Mirrors the daemon's default inline tool-result
+ * budget: a bigger result is spilled to a file the model has to read back, which is worse than a summary. */
+const MAX_INLINE_RESULT_BYTES = 50_000;
 const MAX_REDIRECTS = 3;
 const MAX_CACHE_ENTRIES = 256;
 const MAX_CACHE_BYTES = 50_000_000;
@@ -184,11 +187,10 @@ async function fetchUncached(startUrl, signal, transport) {
     const type = res.headers['content-type'] ?? '';
     const body = await responseText(res);
     const converted = type.toLowerCase().includes('html') ? htmlToMarkdown(body) : body;
-    const truncated = converted.length > MAX_MARKDOWN_CHARS;
-    const markdown = truncated
+    const markdown = converted.length > MAX_MARKDOWN_CHARS
       ? `${converted.slice(0, MAX_MARKDOWN_CHARS)}\n\n[Content truncated]`
       : converted;
-    return { kind: 'page', url: url.toString(), markdown, truncated, cacheBytes: Buffer.byteLength(markdown) };
+    return { kind: 'page', url: url.toString(), markdown, cacheBytes: Buffer.byteLength(markdown) };
   }
 }
 
@@ -213,11 +215,15 @@ function removeCacheEntry(key, entry) {
   }
 }
 
-function trimFetchCache(now, protectedEntry) {
+/** `headroom` is how many entries the caller is about to add: trimming to `MAX_CACHE_ENTRIES - headroom`
+ * is what makes the entry ceiling recycle. Without it the ceiling could only ever be reached, never
+ * exceeded, so the count condition never fired and a full cache stopped admitting anything until its
+ * entries aged out. */
+function trimFetchCache(now, protectedEntry, headroom = 0) {
   for (const [key, entry] of fetchCache) {
     if (entry.expiresAt <= now) removeCacheEntry(key, entry);
   }
-  while (fetchCache.size > MAX_CACHE_ENTRIES || fetchCacheBytes > MAX_CACHE_BYTES) {
+  while (fetchCache.size + headroom > MAX_CACHE_ENTRIES || fetchCacheBytes > MAX_CACHE_BYTES) {
     const candidate = [...fetchCache].find(([, entry]) => !entry.pending && entry !== protectedEntry);
     if (!candidate) break;
     removeCacheEntry(candidate[0], candidate[1]);
@@ -247,8 +253,10 @@ function cachedFetch(rawUrl, signal, transport) {
     bytes: 0,
     timer: undefined,
   };
-  // Do not let a burst of distinct pending URLs grow the cache beyond its entry ceiling. The request still
-  // runs and remains abortable, but is deliberately not retained or coalesced when every slot is busy.
+  // Evict the oldest completed entry to make room for this one. A burst of distinct PENDING URLs cannot be
+  // evicted, so once every slot is in flight the request is deliberately not retained or coalesced: it
+  // still runs and remains abortable, it just does not grow the cache beyond its entry ceiling.
+  trimFetchCache(now, undefined, 1);
   const retained = fetchCache.size < MAX_CACHE_ENTRIES;
   if (retained) fetchCache.set(key, entry);
   promise.then(
@@ -307,8 +315,10 @@ function parseHostName(rawHost) {
  * applies here unchanged: this list is NOT a network policy and must never widen one. Every entry still
  * goes through the host transport's DNS validation, socket pinning and non-global-address refusal, and
  * through the same HTTPS upgrade and redirect rules as any other URL. WebFetch asks for no permission
- * today, so the only thing an entry changes is that the page text reaches the model unsummarized —
- * which is also why the list should only name hosts whose content is trusted as documentation. */
+ * today, so an entry changes exactly one thing — and that thing is not free: the inference step is also
+ * where page text is framed as untrusted data (`buildInferencePrompt`), so a listed host's content
+ * reaches the model as ordinary text. Only hosts whose pages are published documentation belong here,
+ * never hosts serving arbitrary user content. */
 export const DEFAULT_PREAPPROVED_HOSTS = [
   'platform.claude.com',
   'code.claude.com',
@@ -335,14 +345,12 @@ export const DEFAULT_PREAPPROVED_HOSTS = [
   'nextjs.org',
   'expressjs.com',
   'tailwindcss.com',
-  'www.npmjs.com',
-  'raw.githubusercontent.com',
   'docs.djangoproject.com',
   'fastapi.tiangolo.com',
   'pandas.pydata.org',
   'numpy.org',
   '*.palletsprojects.com',
-  '*.readthedocs.io',
+  'requests.readthedocs.io',
   'developer.apple.com',
   'developer.android.com',
   'docs.flutter.dev',
@@ -543,9 +551,11 @@ export function register(ctx) {
         if (typeof p.prompt !== 'string' || !p.prompt.trim()) throw new Error('prompt is required');
         const fetched = await cachedFetch(p.url, signal, publicHttp);
         if (fetched.kind === 'redirect') return ok(fetched.text);
-        // A configured documentation host answers from the page itself. Truncated pages still go through
-        // inference: a cut-off page is where a summary earns its cost, not where raw text is worth 100k chars.
-        if (!fetched.truncated && isPreapprovedHost(new URL(fetched.url).hostname, preapproved)) {
+        // A configured documentation host answers from the page itself, as long as the page still fits in
+        // the model's context: the host spills a single tool result above its inline budget to disk, and a
+        // page the model has to read back costs more than the summary it replaced.
+        if (fetched.cacheBytes <= MAX_INLINE_RESULT_BYTES
+          && isPreapprovedHost(new URL(fetched.url).hostname, preapproved)) {
           return ok(fetched.markdown, { url: fetched.url, preapproved: true });
         }
         const inference = ctx.host.defaultInference();

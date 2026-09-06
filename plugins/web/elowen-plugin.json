@@ -90,14 +90,12 @@
         "nextjs.org",
         "expressjs.com",
         "tailwindcss.com",
-        "www.npmjs.com",
-        "raw.githubusercontent.com",
         "docs.djangoproject.com",
         "fastapi.tiangolo.com",
         "pandas.pydata.org",
         "numpy.org",
         "*.palletsprojects.com",
-        "*.readthedocs.io",
+        "requests.readthedocs.io",
         "developer.apple.com",
         "developer.android.com",
         "docs.flutter.dev",
@@ -114,7 +112,7 @@
         "git-scm.com",
         "nginx.org"
       ],
-      "hint": "WebFetch returns pages from these hosts as Markdown instead of summarizing them through a model. Exact host names, or \"*.example.com\" for every subdomain. This does not widen network access: DNS validation, address checks and redirect rules apply to every host equally. List only hosts whose content is trusted as documentation."
+      "hint": "WebFetch returns pages from these hosts as Markdown instead of summarizing them through a model; a page too large to stay in context is summarized anyway. Exact host names, or \"*.example.com\" for every subdomain. This does not widen network access: DNS validation, address checks and redirect rules apply to every host equally. The summarizing step is also what frames page text as untrusted data, so list only published documentation, never hosts that serve user-submitted content."
     }
   ],
   "icons": {

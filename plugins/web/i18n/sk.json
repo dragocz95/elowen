@@ -24,7 +24,7 @@
     },
     "preapprovedHosts": {
       "label": "Hostitelia s dokumentáciou",
-      "hint": "Stránky z týchto hostiteľov vracia WebFetch ako Markdown namiesto zhrnutia modelom. Presné mená hostiteľov, alebo „*.example.com“ pre všetky subdomény. Sieťový prístup sa tým nerozširuje: overenie DNS, kontrola adries aj pravidlá presmerovania platia pre všetkých hostiteľov rovnako. Uvádzajte len hostiteľov, ktorých obsah je dôveryhodná dokumentácia."
+      "hint": "Stránky z týchto hostiteľov vracia WebFetch ako Markdown namiesto zhrnutia modelom; stránka príliš veľká na kontext sa zhrnie aj tak. Presné mená hostiteľov, alebo „*.example.com“ pre všetky subdomény. Sieťový prístup sa tým nerozširuje: overenie DNS, kontrola adries aj pravidlá presmerovania platia pre všetkých hostiteľov rovnako. Krok zhrnutia zároveň označuje obsah stránky za nedôveryhodné dáta, preto uvádzajte len publikovanú dokumentáciu, nikdy hostiteľov s obsahom od používateľov."
     }
   }
 }

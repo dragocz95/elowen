@@ -24,7 +24,7 @@
     },
     "preapprovedHosts": {
       "label": "Hosté s dokumentací",
-      "hint": "Stránky z těchto hostů vrací WebFetch jako Markdown místo shrnutí modelem. Přesná jména hostů, nebo „*.example.com“ pro všechny subdomény. Síťový přístup se tím nerozšiřuje: ověření DNS, kontrola adres i pravidla přesměrování platí pro všechny hosty stejně. Uvádějte pouze hosty, jejichž obsah je důvěryhodná dokumentace."
+      "hint": "Stránky z těchto hostů vrací WebFetch jako Markdown místo shrnutí modelem; stránka příliš velká na kontext se shrne i tak. Přesná jména hostů, nebo „*.example.com“ pro všechny subdomény. Síťový přístup se tím nerozšiřuje: ověření DNS, kontrola adres i pravidla přesměrování platí pro všechny hosty stejně. Krok shrnutí zároveň označuje obsah stránky za nedůvěryhodná data, proto uvádějte pouze publikovanou dokumentaci, nikdy hosty s obsahem od uživatelů."
     }
   }
 }

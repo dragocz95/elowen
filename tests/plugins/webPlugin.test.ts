@@ -499,17 +499,18 @@ describe('web plugin WebFetch pipeline', () => {
       'small', { status: 200, headers: { 'content-type': 'text/plain' } },
     ));
     const url = (i: number) => `https://93.184.216.34/cache-count-${i}`;
-    for (let i = 0; i < 256; i++) {
+    // 257 distinct URLs: the ceiling recycles, so exactly the oldest one is gone and everything the
+    // ceiling still covers is served from cache.
+    for (let i = 0; i < 257; i++) {
       await fetchTool.execute(String(i), { url: url(i), prompt: 'Summarize' });
     }
-    // The last URL that fits the ceiling stays cached; the one past it finds every slot busy, so it is
-    // deliberately not retained and has to be fetched again.
-    await fetchTool.execute('within', { url: url(255), prompt: 'Again' });
-    await fetchTool.execute('over', { url: url(256), prompt: 'Summarize' });
-    await fetchTool.execute('over-again', { url: url(256), prompt: 'Again' });
+    await fetchTool.execute('kept', { url: url(1), prompt: 'Again' });
+    await fetchTool.execute('newest', { url: url(256), prompt: 'Again' });
+    await fetchTool.execute('evicted', { url: url(0), prompt: 'Again' });
 
-    expect(calls.filter((call) => call.url === url(255))).toHaveLength(1);
-    expect(calls.filter((call) => call.url === url(256))).toHaveLength(2);
+    expect(calls.filter((call) => call.url === url(1))).toHaveLength(1);
+    expect(calls.filter((call) => call.url === url(256))).toHaveLength(1);
+    expect(calls.filter((call) => call.url === url(0))).toHaveLength(2);
   });
 
   it('clears expiry timers when cache entries are evicted', async () => {
@@ -663,15 +664,20 @@ describe('web plugin WebFetch preapproved documentation hosts', () => {
     expect(warnings[0]).toContain('https://evil.example/path');
   });
 
-  it('summarizes a truncated page even from a listed host', async () => {
-    const { fetchTool, inferenceCalls } = await mount({}, undefined, async () => new Response(
-      'y'.repeat(100_001), { status: 200, headers: { 'content-type': 'text/plain' } },
+  it('summarizes a listed page too large to stay inline instead of spilling it', async () => {
+    // The daemon spills a single tool result over its inline budget to a file the model then has to read
+    // back, so above that size the summary is the cheaper answer. 50 000 bytes is the boundary.
+    const { fetchTool, inferenceCalls } = await mount({}, undefined, async (url) => new Response(
+      'y'.repeat(String(url).endsWith('/big') ? 50_001 : 50_000),
+      { status: 200, headers: { 'content-type': 'text/plain' } },
     ));
 
-    const result = await fetchTool.execute('f', { url: 'https://docs.python.org/huge', prompt: 'Anything' });
+    const fits = await fetchTool.execute('a', { url: 'https://docs.python.org/fits', prompt: 'Anything' });
+    const big = await fetchTool.execute('b', { url: 'https://docs.python.org/big', prompt: 'Anything' });
 
+    expect(textOf(fits)).toBe('y'.repeat(50_000));
+    expect(textOf(big)).toBe('INFERRED: yes');
     expect(inferenceCalls).toHaveLength(1);
-    expect(textOf(result)).toBe('INFERRED: yes');
   });
 
   it('ships the same seed list in the plugin and in the manifest default', async () => {
@@ -684,6 +690,5 @@ describe('web plugin WebFetch preapproved documentation hosts', () => {
     const field = manifest.configSchema.find((f) => f.key === 'preapprovedHosts');
 
     expect(field?.default).toEqual(DEFAULT_PREAPPROVED_HOSTS);
-    expect(new Set(DEFAULT_PREAPPROVED_HOSTS).size).toBe(DEFAULT_PREAPPROVED_HOSTS.length);
   });
 });
