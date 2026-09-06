@@ -136,10 +136,10 @@ export function DashboardSection({ onSaveState, onOpenSection }: {
         rowId={rowAnchor('settings.dashboardSection.digest')}
         description={t.settings.dashboardSection.digestDesc}
         icon={Sparkles}
-        // Three trailing values (state badge, regenerate action, switch) do not share a phone's value
-        // column: an `inline` record keeps them on ONE non-wrapping line at every width, so the badge and
-        // the button overran the label. Same shape and same declaration as the embedding provider record.
-        trailingLayout="stack"
+        // An ordinary inline record: the state badge reads on the label's line, which leaves the switch
+        // and the Regenerate button as the two trailing values every other record here carries. It was
+        // declared `stack` while the badge still needed a column of its own, and that opt-out is what
+        // left this row's switch a full column left of every other switch in the card.
         status={statusBadge}
         actions={
           <Button variant="ghost" size="sm" icon={RefreshCw} disabled={regenerating || !digestEnabled} onClick={onRegenerate}>
