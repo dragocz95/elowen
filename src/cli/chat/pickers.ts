@@ -631,7 +631,11 @@ export function createPickers(
   const useSandboxWorkspace = (workspace: SandboxWorkspaceView): void => {
     const sessionId = client.boundSession;
     if (!sessionId) { rt.notice = color.error('no active conversation to bind a workspace to'); render(); return; }
-    runSession(() => client.sandboxUseWorkspace({ workspaceId: workspace.id, sessionId, projectId: workspace.projectId }), (bound) => {
+    runSession(async () => {
+      const bound = await client.sandboxUseWorkspace({ workspaceId: workspace.id, sessionId, projectId: workspace.projectId });
+      await refreshMeta();
+      return bound;
+    }, (bound) => {
       // The route just wrote the binding the daemon reads to place the turn, so the path it answers with
       // IS the new working directory. Report it rather than asserting anything locally.
       rt.notice = color.success(`working directory: ${bound.path}`);
@@ -645,7 +649,11 @@ export function createPickers(
   const releaseSandboxWorkspaces = (): void => {
     const sessionId = client.boundSession;
     if (!sessionId) { rt.notice = color.error('no active conversation to return to its project'); render(); return; }
-    runSession(() => client.sandboxReleaseWorkspaces(sessionId), (result) => {
+    runSession(async () => {
+      const result = await client.sandboxReleaseWorkspaces(sessionId);
+      await refreshMeta();
+      return result;
+    }, (result) => {
       rt.notice = result.released > 0
         ? color.success('this conversation works in its project directory again — the workspace is kept')
         : color.dim('this conversation already works in its project directory');
@@ -702,11 +710,13 @@ export function createPickers(
           label: 'Use in this conversation',
           description: active ? 'already the active workspace here' : `work in ${workspace.branch} from now on`,
         },
+        ...(active ? [{ value: '__release', label: 'Disconnect from this conversation', description: 'return the parent conversation to its project; keep the workspace and its files' }] : []),
         { value: '__delete', label: 'Delete', description: 'clean workspaces only — never discards work' },
       ],
       onPick: (value) => {
         if (value === '__back') openSandboxModal();
         else if (value === '__use') useSandboxWorkspace(workspace);
+        else if (value === '__release') releaseSandboxWorkspaces();
         else confirmDeleteSandboxWorkspace(workspace);
       },
     });
@@ -755,24 +765,24 @@ export function createPickers(
   };
 
   const openSandboxModal = (): void => {
-    runSession(() => client.sandboxOverview(), (overview) => {
+    runSession(() => Promise.all([client.sandboxOverview(), client.status()]), ([overview, status]) => {
+      rt.workspace = status.project?.workspace ?? null;
+      const currentId = rt.workspace?.workspaceId;
       const projectName = (id: number): string => overview.projects.find((project) => project.id === id)?.slug ?? `project ${id}`;
       const activeHere = (workspace: SandboxWorkspaceView): boolean =>
         !!client.boundSession && workspace.bindings.some((binding) => binding.sessionId === client.boundSession);
+      const rows = overview.workspaces.map((workspace) => ({
+        value: workspace.id,
+        label: `${workspace.id === currentId ? '▸ ' : ''}${workspace.label}`,
+        description: `${workspace.id === currentId ? 'Current workspace · ' : ''}${projectName(workspace.projectId)} · ${workspace.branch} · ${sandboxStateSummary(workspace)}`,
+      }));
       openPicker({
         tui, editor, title: 'Sandbox workspaces',
-        // Refreshing the list and returning to the project are commands ABOUT this modal, not workspaces
-        // to open — as rows they read like two more worktrees to manage. They are keys instead, the way
-        // /sessions and /skills already expose their non-row actions, and the footer names them. Creating
-        // stays a row: it opens a flow of its own and belongs where the list of things one can end up
-        // with is.
         items: [
+          ...rows.filter((row) => row.value === currentId),
+          ...(overview.workspaces.some(activeHere) ? [{ value: '__release', label: 'Disconnect from this conversation', description: 'return the parent conversation to its project; keep all workspaces and files' }] : []),
           { value: '__create', label: '+ New workspace', description: 'create a Git worktree — this conversation stays where it is until you switch it' },
-          ...overview.workspaces.map((workspace) => ({
-            value: workspace.id,
-            label: `${activeHere(workspace) ? '▸ ' : ''}${workspace.label}`,
-            description: `${projectName(workspace.projectId)} · ${workspace.branch} · ${sandboxStateSummary(workspace)}`,
-          })),
+          ...rows.filter((row) => row.value !== currentId),
         ],
         footer: 'enter manage · type filter · ctrl+r refresh · ctrl+p return to project · esc close',
         onInput: (data, _selected, close) => {
@@ -793,6 +803,7 @@ export function createPickers(
         },
         onPick: (value) => {
           if (value === '__create') { createSandboxWorkspace(overview); return; }
+          if (value === '__release') { releaseSandboxWorkspaces(); return; }
           const workspace = overview.workspaces.find((entry) => entry.id === value);
           if (workspace) openSandboxActions(workspace, activeHere(workspace));
         },

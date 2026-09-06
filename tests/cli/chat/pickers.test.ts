@@ -212,7 +212,7 @@ describe('picker application lifetime', () => {
     const pickers = createPickers(
       state,
       {
-        client: { boundSession: 'brain-1', sandboxOverview, sandboxRemovalPreview, sandboxRemoveWorkspace },
+        client: { boundSession: 'brain-1', status: async () => ({}), sandboxOverview, sandboxRemovalPreview, sandboxRemoveWorkspace },
         tui, editor: {}, termSettings: null, cwdLabel: '', branchLabel: '', commandDefs: [], lifetime,
       } as never,
       { render: vi.fn(), refreshMeta: async () => {} },
@@ -280,6 +280,7 @@ describe('picker application lifetime', () => {
         client: {
           // A conversation IS open — the case in which the CLI used to bind on create.
           boundSession: 'brain-1',
+          status: async () => ({}),
           sandboxOverview: async () => ({
             projects: [{ id: 4, slug: 'demo', path: '/var/www/demo', defaultRef: 'develop' }],
             sessions: [], workspaces: [],
@@ -342,6 +343,7 @@ describe('picker application lifetime', () => {
       {
         client: {
           boundSession: 'brain-1',
+          status: async () => ({}),
           sandboxOverview: async () => ({
             projects: [{ id: 7, slug: 'bare', path: '/var/www/bare', defaultRef: null }],
             sessions: [], workspaces: [],
@@ -386,7 +388,7 @@ describe('picker application lifetime', () => {
    *  The web half of this parity is asserted in web/tests/modules/advisor/SandboxModal.test.tsx
    *  ("returns this conversation to its project directory through the conversation id"), which pins the
    *  identical payload — the conversation id and nothing else. */
-  it('returns this conversation to its project directory and reports a refusal, matching the web drawer', async () => {
+  it.each(['workspace', 'list'])('disconnects the parent through the %s action and preserves refusals', async (surface) => {
     initTheme();
     const lifetime = new ChatApplicationLifetime<'metadata'>();
     let modal: { handleInput(data: string): void; render(width: number): string[] } | null = null;
@@ -406,6 +408,7 @@ describe('picker application lifetime', () => {
       files: [], uniqueCommits: 0, activeProcesses: 0,
       bindings: [{ sessionId: 'brain-1', updatedAt: '2026-09-01' }],
     };
+    const refreshMeta = vi.fn(async () => {});
     const sandboxReleaseWorkspaces = vi.fn(async () => ({ released: 1 }));
     const state = new ChatState({ transcript: new TranscriptModel() });
     const pickers = createPickers(
@@ -413,6 +416,7 @@ describe('picker application lifetime', () => {
       {
         client: {
           boundSession: 'brain-1',
+          status: async () => ({ project: { workspace: { workspaceId: bound.id, label: bound.label, path: bound.path, branch: bound.branch, confined: true } } }),
           sandboxOverview: async () => ({
             projects: [{ id: 1, slug: 'demo', path: '/var/www/demo', defaultRef: 'main' }],
             sessions: [], workspaces: [bound],
@@ -421,7 +425,7 @@ describe('picker application lifetime', () => {
         },
         tui, editor: {}, termSettings: null, cwdLabel: '', branchLabel: '', commandDefs: [], lifetime,
       } as never,
-      { render: vi.fn(), refreshMeta: async () => {} },
+      { render: vi.fn(), refreshMeta },
       {} as never,
       { reshowPanel: vi.fn(), reloadKeymap: vi.fn() },
     );
@@ -430,17 +434,25 @@ describe('picker application lifetime', () => {
 
     pickers.openSandboxModal();
     await settle();
-    // Advertised in the footer, not as a row: the list is worktrees, and a command about the list reading
-    // like one more worktree to open is exactly the confusion this replaced.
+    // The current workspace opens first, and disconnect is visible rather than only a footer shortcut.
     expect(plain()).toContain('ctrl+p return to project');
-    expect(plain()).not.toContain('Return to project');
+    expect(plain()).toContain('Disconnect from this conversation');
+    expect(plain()).toContain('Current workspace');
 
-    modal!.handleInput('\x10'); // ctrl+p
+    if (surface === 'workspace') {
+      modal!.handleInput('\r'); // the current workspace is selected first
+      await settle();
+      expect(plain()).toContain('Workspace Feature Alpha');
+      expect(plain()).toContain('Disconnect from this conversation');
+    }
+    modal!.handleInput('Disconnect');
+    modal!.handleInput('\r');
     await settle();
 
     // The conversation id is the whole payload: no workspace is named, so nothing can be destroyed.
     expect(sandboxReleaseWorkspaces).toHaveBeenCalledTimes(1);
     expect(sandboxReleaseWorkspaces.mock.calls[0]![0]).toBe('brain-1');
+    expect(refreshMeta).toHaveBeenCalledOnce();
     expect(state.notice).toContain('project directory again');
     expect(state.notice).toContain('the workspace is kept');
 
@@ -492,7 +504,7 @@ describe('picker application lifetime', () => {
     const pickers = createPickers(
       state,
       {
-        client: { boundSession: 'brain-1', sandboxOverview, sandboxReleaseWorkspaces },
+        client: { boundSession: 'brain-1', status: async () => ({}), sandboxOverview, sandboxReleaseWorkspaces },
         tui, editor: {}, termSettings: null, cwdLabel: '', branchLabel: '', commandDefs: [], lifetime,
       } as never,
       { render: vi.fn(), refreshMeta: async () => {} },
