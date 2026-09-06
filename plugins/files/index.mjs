@@ -625,6 +625,17 @@ function readIsDuplicate(sessionId, key, hash, offset, limit) {
     && entry.offset === offset && entry.limit === limit;
 }
 
+/** Forget which range the entry displayed, keeping the hash that authorizes mutation. The stub points at an
+ * earlier tool_result the plugin cannot see the fate of: toolResultClearing replaces older Read results with
+ * placeholders and compaction drops them entirely. Dropping the range makes the NEXT identical Read send the
+ * content again, so a stub is never the only copy the model has, while an immediate re-read still dedups.
+ * Called only from the duplicate branch, where the session and the entry both exist. */
+function dropReadRange(sessionId, key) {
+  const files = sessionFiles(sessionId);
+  const prior = files.get(key);
+  recordEntry(files, key, { hash: prior.hash, ours: prior.ours });
+}
+
 /** Rebuild this session's authorization atomically from the visible transcript. Only successful Read results
  * vouch, and only those carrying the hash of the bytes the model saw. Write/Edit results contain diffs, not
  * the baseline, so they never authorize a later blind overwrite. */
@@ -1117,11 +1128,12 @@ export function register(ctx) {
         const key = statePath(abs);
         const details = { ...pathMeta(abs), bytes: snapshot.totalBytes, truncated, contentHash: snapshot.contentHash };
         // Re-reading the same range of a file that has not moved would send a second copy of content the
-        // earlier tool_result still carries. Point at that copy instead. The record call writes the same
-        // entry back, for its LRU effect alone: a file read through the stub is still a file in use, and
-        // without the touch a busy conversation could age its own entry out from under the guard.
+        // earlier tool_result still carries. Point at that copy instead, once: dropping the range keeps the
+        // entry (a file read through the stub is still a file in use, and without that touch a busy
+        // conversation could age its own entry out from under the guard) while letting a third identical
+        // Read return the bytes again, in case the result the stub pointed at is no longer in the context.
         if (readIsDuplicate(sessionId, key, snapshot.contentHash, start, p.limit)) {
-          recordTextRead(sessionId, key, snapshot.contentHash, start, p.limit);
+          dropReadRange(sessionId, key);
           return ok('Read', FILE_UNCHANGED_STUB, details);
         }
         let text = addLineNumbers(snapshot.content, start + 1);

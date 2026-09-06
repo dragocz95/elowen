@@ -64,6 +64,24 @@ describe('files plugin — Read dedup of an unchanged range', () => {
     expect(second.details).toMatchObject({ ok: true, tool: 'Read', contentHash: first.details?.contentHash });
   });
 
+  // The stub points at a tool_result the plugin cannot see the fate of: older Read results are replaced by
+  // placeholders and compaction drops them. So the stub stands in exactly once — a third identical Read
+  // sends the bytes again rather than leaving the model with a pointer to something that may be gone.
+  it('sends the content again on the third identical Read, and still authorizes a mutation', async () => {
+    const path = fixture('thrice.txt', 'alpha\nbeta\n');
+    expect((await inSession('Read', { file_path: path })).content[0].text).toContain('alpha');
+    expect((await inSession('Read', { file_path: path })).content[0].text).toBe(STUB);
+
+    const third = await inSession('Read', { file_path: path });
+    expect(third.content[0].text).toContain('alpha');
+
+    // …and the fourth dedups against the third, so the stub is not disabled, only bounded.
+    expect((await inSession('Read', { file_path: path })).content[0].text).toBe(STUB);
+
+    const edit = await inSession('Edit', { file_path: path, old_string: 'beta', new_string: 'BETA' });
+    expect(edit.content[0].text).toContain('Edited');
+  });
+
   it('sends the full page when the requested range differs from the last one', async () => {
     const path = fixture('ranges.txt', 'one\ntwo\nthree\nfour\n');
     await inSession('Read', { file_path: path, offset: 1, limit: 2 });
