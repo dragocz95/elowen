@@ -112,7 +112,7 @@ describe('files plugin — host tool validation', () => {
     const write = await runWithPolicy(userPolicy([dir]), () => writeTool.execute(
       'write-after-invalid-read', { file_path: path, content: 'clobber' },
     ), { sessionId });
-    expect(textOf(write)).toMatch(/has not been read in this conversation/);
+    expect(textOf(write)).toMatch(/File has not been read yet\. Read it first before writing to it\./);
     expect(readFileSync(path, 'utf-8')).toBe('precious\n');
   });
 
