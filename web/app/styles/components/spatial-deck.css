@@ -226,19 +226,24 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
    opt-out for a record carrying several trailing values that cannot share a phone's value column — and a
    stacked record on a wide card has exactly the three slots every other record has. Excluding it was what
    left the one row with a badge, a switch and a button out of the very alignment it needed most. */
-.settings-row[data-trailing] .settings-row__trailing {
-  display: grid;
-  grid-template-columns: subgrid;
-  align-items: center;
-}
+   THE CELL DISSOLVES rather than becoming a grid of its own. A wrapper that is itself a subgrid is a
+   SECOND grid nested in the record, and a nested subgrid only shares the tracks it spans — measured on a
+   1440px Recap card, the one row carrying "Regenerate now" opened an action column 270px wide that no
+   other row had, and its switch sat at x≈897 while every other switch sat at x≈1170. `display: contents`
+   removes the box entirely: status, control and actions become direct items of the record, the record is
+   a subgrid of the card's stack, and there is exactly ONE grid deciding all four column widths for every
+   row at once. That is what makes the actions column exist, at the same width, even in a row with no
+   action — so a switch never slides right to fill it. */
+.settings-row[data-trailing] .settings-row__trailing { display: contents; }
 /* `flex-wrap: nowrap` is not dead: the phone fold below returns this cell to flex, and that is the width
    at which an inline record must still refuse to become three lines. */
 .settings-row[data-trailing='inline'] .settings-row__trailing { flex-wrap: nowrap; }
-/* The slots are placed EXPLICITLY. A record may omit any of the three, and auto-placement would then
-   slide its control into the status column — which is the misalignment this whole band exists to fix. */
-.settings-row[data-trailing] .settings-row__trailing > .settings-row__status { grid-column: 1; }
-.settings-row[data-trailing] .settings-row__trailing > .settings-row__control { grid-column: 2; }
-.settings-row[data-trailing] .settings-row__trailing > .settings-row__actions { grid-column: 3; justify-self: end; }
+/* The slots are placed EXPLICITLY, in the RECORD's own tracks. A record may omit any of the three, and
+   auto-placement would then slide its control into the status column — which is the misalignment this
+   whole band exists to fix. */
+.settings-row[data-trailing] .settings-row__trailing > .settings-row__status { grid-column: 2; }
+.settings-row[data-trailing] .settings-row__trailing > .settings-row__control { grid-column: 3; }
+.settings-row[data-trailing] .settings-row__trailing > .settings-row__actions { grid-column: 4; justify-self: end; }
 /* An inline record's slots are scalars, so they hug the middle of the band: the status ends where the
    control begins and the control ends at its track's edge, which is how a bare switch lands in the same
    column as the switch above it while a select or an input still fills the track through its own
@@ -249,7 +254,7 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
 /* A record with NO control reaches its status across the empty control column. The reading still ENDS
    where every switch in the card begins, so it keeps the band's alignment while sitting directly beside
    its own action instead of stranded a full column away from it. */
-.settings-row[data-trailing='inline'] .settings-row__trailing:not(:has(> .settings-row__control)) > .settings-row__status { grid-column: 1 / 3; }
+.settings-row[data-trailing='inline'] .settings-row__trailing:not(:has(> .settings-row__control)) > .settings-row__status { grid-column: 2 / 4; }
 /* The short status is atomic — often a Badge — so it must keep its min-content width. Shrinking this
    wrapper clipped "Configured" inside the badge while the control beside it still owned a generous flex
    basis. The control is the elastic part of an inline record; multi-value rows that need full-width bands
