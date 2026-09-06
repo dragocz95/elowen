@@ -54,3 +54,49 @@ describe('Toggle', () => {
     expect(onChange).toHaveBeenNthCalledWith(2, false);
   });
 });
+
+/** Geometry PINS, measured off the reference dashboard. A number here changing is a design decision. */
+describe('Switch geometry', () => {
+  const thumbOf = (container: HTMLElement) => container.querySelector<HTMLElement>('[data-slot="switch-thumb"]')!;
+
+  it('fills the track with the thumb: 36×18 track, 18px thumb, 18px of travel', () => {
+    const { container } = render(<Toggle checked={false} onChange={vi.fn()} label="Sonnet" />);
+    const track = screen.getByRole('switch');
+    expect(track.className).toContain('h-[18px]');
+    expect(track.className).toContain('w-9');
+    // A thumb the full height of the track reads as the track's own moving half. The old 14px one, inset
+    // inside a 1px border, read as a dot rattling around in a slot.
+    expect(thumbOf(container).className).toContain('size-[18px]');
+    expect(thumbOf(container).className).toContain('data-[state=checked]:translate-x-[18px]');
+  });
+
+  it('carries no border, so the thumb CAN be the full track height', () => {
+    const track = render(<Toggle checked={false} onChange={vi.fn()} label="Sonnet" />).container
+      .querySelector<HTMLElement>('[data-slot="switch"]')!;
+    expect(track.className).not.toContain('border-border');
+    expect(track.className).not.toMatch(/(^|\s)border(\s|$)/);
+    // Losing the border took a focus edge with it, so the ring moves outside the track instead.
+    expect(track.className).toContain('focus-visible:ring-offset-2');
+  });
+
+  it('moves the fill and the thumb on ONE clock, and never on a spring', () => {
+    const { container } = render(<Toggle checked onChange={vi.fn()} label="Sonnet" />);
+    const track = container.querySelector<HTMLElement>('[data-slot="switch"]')!;
+    // Both halves of one movement. They used to run on different durations, so the colour arrived at the
+    // new state while the thumb was still halfway across.
+    for (const part of [track, thumbOf(container)]) {
+      expect(part.style.transitionDuration).toBe('var(--motion-base)');
+      // A token, not a literal: `data-effects='off'` and prefers-reduced-motion zero the token, and a
+      // hard-coded 150ms would keep animating straight through both.
+      expect(part.style.transitionTimingFunction).toBe('var(--ease-standard)');
+      expect(part.style.transitionTimingFunction).not.toContain('spring');
+    }
+  });
+
+  it('keeps the neutral OFF track and the primary ON track', () => {
+    const track = render(<Toggle checked={false} onChange={vi.fn()} label="Sonnet" />).container
+      .querySelector<HTMLElement>('[data-slot="switch"]')!;
+    expect(track.className).toContain('data-[state=unchecked]:bg-secondary');
+    expect(track.className).toContain('data-[state=checked]:bg-primary');
+  });
+});
