@@ -8,6 +8,7 @@ import { Badge } from '../../components/ui/Badge';
 import { Button, buttonClassName } from '../../components/ui/Button';
 import { Segmented } from '../../components/ui/Segmented';
 import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
+import { SettingsDocument } from '../../components/ui/SettingsSurface';
 import { Toggle } from '../../components/ui/Toggle';
 import { ReasoningScale } from '../../components/ui/ReasoningScale';
 import { LoadingState, ErrorState } from '../../components/ui/states';
@@ -281,7 +282,9 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
   });
 
   return (
-    <div className="flex flex-col gap-4">
+    // `SettingsDocument` rather than a hand-rolled flex column: the gap between section cards belongs to
+    // the settings surface, and a second copy of it here is exactly how these two pages drifted before.
+    <SettingsDocument>
       {/* A role table reads top-down: one column, in the order the questions are asked. */}
       <SpatialGroup title={t.settings.modelRoles.title} description={t.cli.modelRolesHint} icon={Boxes}>
       <SpatialRow
@@ -492,6 +495,6 @@ export function CliSection({ onSaveState }: { onSaveState?: (section: string, st
           onClose={() => setThresholdsOpen(false)}
         />
       ) : null}
-    </div>
+    </SettingsDocument>
   );
 }

@@ -2,6 +2,7 @@
 import { useState, useEffect } from 'react';
 import { ALargeSmall, Brain, Eye, History, Palette, ScrollText, SquareTerminal, TextCursorInput, Timer, Type } from 'lucide-react';
 import { SpatialGroup, SpatialRow } from '../../components/ui/SpatialPrimitives';
+import { SettingsDocument } from '../../components/ui/SettingsSurface';
 import { WorkspaceDetailRail } from '../../components/ui/WorkspacePrimitives';
 import { Segmented } from '../../components/ui/Segmented';
 import { SelectMenu } from '../../components/ui/SelectMenu';
@@ -124,7 +125,9 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
   // whose records already have labels. Each control now sits opposite the label that names it, with the
   // value it reads in the record's status slot.
   return (
-    <div className="flex flex-col gap-4">
+    // The surface's own document, not a hand-rolled flex column: the gap between section cards is the
+    // settings surface's to state, and a second copy of it here is how these pages drifted before.
+    <SettingsDocument>
       <SpatialGroup title={t.terminal.colorsTitle} rowId={rowAnchor('terminal.colorsTitle')} description={t.terminal.colorsHelp} icon={Palette}>
         <SpatialRow
           title={t.terminal.themeMode}
@@ -232,6 +235,6 @@ export function TerminalSection({ onSaveState }: { onSaveState?: (section: strin
           {colorsEditor}
         </WorkspaceDetailRail>
       ) : null}
-    </div>
+    </SettingsDocument>
   );
 }

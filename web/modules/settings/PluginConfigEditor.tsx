@@ -1037,8 +1037,12 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
     }
   }
 
+  // A FRAGMENT, not a box. The cards below are section cards exactly like the ones on every core settings
+  // page, and they have to be SIBLINGS inside the enclosing `SettingsDocument` to get that page's gap. A
+  // wrapper div here made them one flex child of the document instead, which is how the plugin header card
+  // and "Behavior" ended up welded together inside a single bordered rectangle with no gap between them.
   return (
-    <div className="flex flex-col gap-4">
+    <>
       {visibleSchema.length === 0 && (detail.configSchema.length > 0 || mode !== 'behavior') ? null : visibleSchema.length === 0 ? (
         <SettingsGroup className="plugin-card" icon={SlidersHorizontal} title={t.pluginDetail.config}>
           <div className="settings-group__panel"><p className="text-sm text-muted-foreground">{t.pluginDetail.configEmpty}</p></div>
@@ -1076,7 +1080,6 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
           {behaviorFields.length ? group('behavior', SlidersHorizontal, t.pluginCfg.sectionBehavior, undefined, behaviorFields) : null}
         </>
       )}
-
-    </div>
+    </>
   );
 }

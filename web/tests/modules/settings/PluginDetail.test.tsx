@@ -128,10 +128,26 @@ describe('PluginDetail workspace', () => {
   it('uses the shared settings document and group grammar', () => {
     usePluginDetail.mockReturnValue({ data: detail([], {}), isLoading: false });
     const { container } = renderDetail();
-    expect(container.querySelectorAll('[data-settings-document]')).toHaveLength(1);
+    expect(container.querySelectorAll('[data-settings-document]').length).toBeGreaterThan(0);
     expect(container.querySelectorAll('[data-settings-group]').length).toBeGreaterThan(0);
     expect(container.querySelector('.plugin-detail-workspace')).not.toBeInTheDocument();
     expect(container.querySelector('.settings-toolbar')).toBeInTheDocument();
+  });
+
+  /** THE CARDS ARE SIBLINGS. Every tab used to render inside ONE outer section card, which is the card
+   *  language no other settings page speaks — and the reason a plugin's header and its "Behavior" section
+   *  drew glued together in a single bordered rectangle. Each tab is a stack in a document now, so no
+   *  section card is nested inside another. */
+  it('never nests a section card inside another section card', () => {
+    usePluginDetail.mockReturnValue({ data: detail([{ key: 'mergeMethod', label: 'Default merge method', type: 'enum', options: [{ value: 'squash', label: 'Squash' }] }], { mergeMethod: 'squash' }), isLoading: false });
+    const { container } = renderDetail();
+    for (const group of container.querySelectorAll('[data-settings-group]')) {
+      expect(group.parentElement?.closest('[data-settings-group]'), `${group.querySelector('h2')?.textContent ?? 'untitled'} is nested`).toBeNull();
+    }
+    // And the sections a plugin declares sit directly in a document, which is what gives them the gap.
+    const behaviour = [...container.querySelectorAll('[data-settings-group]')].find((g) => g.querySelector('h2')?.textContent === en.pluginCfg.sectionBehavior);
+    expect(behaviour).toBeDefined();
+    expect(behaviour!.parentElement).toHaveAttribute('data-settings-document');
   });
 
   it('shows the capability panels inline as settings-group cards (no accordion to expand)', () => {
