@@ -194,6 +194,44 @@ describe('DashboardView — agent-written hero', () => {
     expect(screen.getByRole('button', { name: /Finish tests/ })).toBeInTheDocument();
   });
 
+  it('switches the headline, question, quick-action prompts and summary together', async () => {
+    const recaps = [1, 2].map((n) => ({
+      greeting: `Personal headline ${n}`, ask: `Personal question ${n}?`,
+      pills: [{ label: `Personal action ${n}`, prompt: `Run personal action ${n}` }],
+      summary: `Personal summary ${n}`, suggestions: [{ label: `Next ${n}`, prompt: `Continue ${n}` }],
+    }));
+    dashRecap = { ...ready, digest: { ...ready.digest, ...recaps[0], recaps } };
+    mount(dashRecap as unknown as DashRecap);
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Personal headline 1.');
+    const composer = screen.getByPlaceholderText(en.dashboard.composerPlaceholder);
+    fireEvent.change(composer, { target: { value: 'Keep this draft' } });
+    fireEvent.click(screen.getByRole('button', { name: en.dashboard.recap.next }));
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Personal headline 2.');
+    expect(screen.getByText('Personal question 2?')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Personal action 2' })).toBeInTheDocument();
+    expect(screen.getByText('Personal summary 2')).toBeInTheDocument();
+    expect(composer).toHaveValue('Keep this draft');
+    fireEvent.click(screen.getByRole('button', { name: 'Personal action 2' }));
+    expect(consumePendingBrainComposer()).toBe('Run personal action 2');
+    fireEvent.click(screen.getByRole('button', { name: en.dashboard.recap.prev }));
+    expect(screen.getByRole('heading', { level: 1 })).toHaveTextContent('Personal headline 1.');
+  });
+
+  it('uses normal fallbacks for explicitly empty fields in another variant', async () => {
+    const seed: DashRecap = { ...ready, digest: { ...ready.digest, status: 'ready', recaps: [
+      ready.digest,
+      { greeting: '', ask: '', pills: [], summary: 'Another recap', suggestions: [] },
+    ] } };
+    dashRecap = seed as unknown as Record<string, unknown>;
+    mount(seed);
+    fireEvent.click(screen.getByRole('button', { name: en.dashboard.recap.next }));
+    expect(screen.getByRole('heading', { level: 1 })).not.toHaveTextContent(ready.digest.greeting);
+    expect(screen.getByText(en.dashboard.heroAsk)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: en.dashboard.pillSummary })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Deploy recap' })).toBeNull();
+    await waitFor(() => expect(screen.getByText('Another recap')).toBeInTheDocument());
+  });
+
   it('renders the seeded greeting on the FIRST frame, never the time-of-day fallback', () => {
     // The /dash route prefetches the recap on the server and hands it in as the seed. Asserted
     // synchronously — no findBy, no waitFor, no flush — because any frame that still reads the

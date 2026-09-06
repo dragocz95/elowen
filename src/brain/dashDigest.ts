@@ -60,7 +60,9 @@ export function buildDigestPrompt(input: DigestInput, recapVariants: number = DI
     'under it, the quick-action pills, and a batch of recap variants for the recap strip.',
     '',
     'Reply with ONLY a JSON object (no code fence, no commentary) of exactly this shape:',
-    `{"greeting": string, "ask": string, "pills": [{"label": string, "prompt": string}], "recaps": [{"summary": string, "suggestions": [{"label": string, "prompt": string}]}]}`,
+    `{"recaps": [{"greeting": string, "ask": string, "pills": [{"label": string, "prompt": string}], "summary": string, "suggestions": [{"label": string, "prompt": string}]}]}`,
+    'Each recap is a COMPLETE dashboard: its own headline, question, quick actions, summary and next steps.',
+    'All five fields switch together. Vary the headline, question and quick actions too, not only the summary.',
     '',
     'Rules:',
     '- Write EVERYTHING in the language the USER writes in — read their own messages below and match',
@@ -140,16 +142,14 @@ export function parseDigestReply(raw: string): unknown | null {
 export function shapeDigestPayload(raw: unknown): DigestPayload {
   const payload = sanitizePayload(raw);
   const plain = (s: string): string => s.replace(/\*\*/g, '').replace(/\s+/g, ' ').trim();
-  const recaps = payload.recaps.map((r) => ({ ...r, suggestions: r.suggestions.map((s) => ({ ...s, label: plain(s.label) })) }));
-  return {
-    ...payload,
-    greeting: plain(payload.greeting),
-    ask: plain(payload.ask),
-    pills: payload.pills.map((p) => ({ ...p, label: plain(p.label) })),
-    recaps,
-    // Keep the legacy mirror in step with the flattened batch.
-    suggestions: recaps[0]?.suggestions ?? [],
-  };
+  const recaps = payload.recaps.map((r) => ({
+    ...r,
+    greeting: plain(r.greeting),
+    ask: plain(r.ask),
+    pills: r.pills.map((p) => ({ ...p, label: plain(p.label) })),
+    suggestions: r.suggestions.map((s) => ({ ...s, label: plain(s.label) })),
+  }));
+  return { ...payload, ...recaps[0], recaps };
 }
 
 /** Generates + persists one user's daily dashboard digest with ONE cheap background inference.

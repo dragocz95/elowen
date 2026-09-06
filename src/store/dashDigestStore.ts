@@ -3,17 +3,23 @@ import type { Db } from './db.js';
 /** One clickable item the agent wrote: a short label and the ready-to-send composer prompt behind it. */
 export interface DigestAction { label: string; prompt: string }
 
-/** One recap variant for the dashboard strip: the same day, the same rules, a different telling. The
- *  client rotates these; generation produces the whole batch in ONE inference call. */
-export interface DigestRecapVariant { summary: string; suggestions: DigestAction[] }
+/** One complete dashboard variant: headline, question, quick actions and recap rotate together.
+ *  Generation produces the whole batch in ONE inference call. */
+export interface DigestRecapVariant {
+  greeting: string;
+  ask: string;
+  pills: DigestAction[];
+  summary: string;
+  suggestions: DigestAction[];
+}
 
 /** The validated content of one daily digest. Every field is optional at the source (the model may
  *  return a partial document) and the WEB decides what renders via the admin toggles — generation
  *  always stores the full document so flipping a toggle on later costs no new inference.
  *
- *  `recaps` is the batch the strip rotates. Rows written before the batch existed have no such field;
- *  `sanitizePayload` derives the single variant from the legacy summary/suggestions on every READ, so
- *  real stored data keeps serving unchanged — no migration, no forced regeneration. */
+ *  `recaps` is the batch the dashboard rotates. Earlier rows carry the hero only at the top level,
+ *  or have no batch at all. Reads normalize those shapes without rewriting the saved data or forcing
+ *  regeneration. Top-level display fields mirror the first complete variant for existing consumers. */
 export interface DigestPayload {
   /** Hero headline greeting, no trailing punctuation (the UI appends the ember period). */
   greeting: string;
@@ -61,16 +67,23 @@ function actions(v: unknown, max: number): DigestAction[] {
   return out;
 }
 
-function recaps(v: unknown): DigestRecapVariant[] {
+function recaps(v: unknown, legacy: DigestRecapVariant): DigestRecapVariant[] {
   if (!Array.isArray(v)) return [];
   const out: DigestRecapVariant[] = [];
   const seen = new Set<string>();
   for (const item of v) {
     if (typeof item !== 'object' || item === null) continue;
     const doc = item as Record<string, unknown>;
-    const variant = { summary: str(doc.summary, CAPS.summary), suggestions: actions(doc.suggestions, CAPS.suggestions) };
-    // A variant with neither half would render as a blank rotation step — drop it, as with actions.
-    if (!variant.summary && !variant.suggestions.length) continue;
+    const variant = {
+      // Earlier batches stored the hero once. Only missing fields inherit it; explicitly empty ones
+      // remain empty, so a malformed new field cannot accidentally select a different variant's text.
+      greeting: doc.greeting === undefined ? legacy.greeting : str(doc.greeting, CAPS.greeting).replace(/[.。!?…]+$/u, '').trim(),
+      ask: doc.ask === undefined ? legacy.ask : str(doc.ask, CAPS.ask),
+      pills: doc.pills === undefined ? legacy.pills : actions(doc.pills, CAPS.pills),
+      summary: str(doc.summary, CAPS.summary),
+      suggestions: actions(doc.suggestions, CAPS.suggestions),
+    };
+    if (!variant.summary && !variant.suggestions.length && !variant.greeting && !variant.ask && !variant.pills.length) continue;
     // Two word-for-word identical variants would rotate to the same sentence, which reads as a glitch.
     const key = JSON.stringify(variant);
     if (seen.has(key)) continue;
@@ -87,22 +100,17 @@ function recaps(v: unknown): DigestRecapVariant[] {
  *  mirrored back into the legacy fields, so both readers see the same first recap. */
 export function sanitizePayload(raw: unknown): DigestPayload {
   const doc = (typeof raw === 'object' && raw !== null ? raw : {}) as Record<string, unknown>;
-  const legacySummary = str(doc.summary, CAPS.summary);
-  const legacySuggestions = actions(doc.suggestions, CAPS.suggestions);
-  const batch = recaps(doc.recaps);
-  const variants = batch.length
-    ? batch
-    : legacySummary || legacySuggestions.length ? [{ summary: legacySummary, suggestions: legacySuggestions }] : [];
-  return {
-    // Trailing punctuation is stripped so the UI-drawn ember period never doubles up.
+  const legacy: DigestRecapVariant = {
     greeting: str(doc.greeting, CAPS.greeting).replace(/[.。!?…]+$/u, '').trim(),
-    // The ask KEEPS its punctuation: it is a question, and the ember period belongs to the greeting alone.
     ask: str(doc.ask, CAPS.ask),
     pills: actions(doc.pills, CAPS.pills),
-    summary: variants[0]?.summary ?? '',
-    suggestions: variants[0]?.suggestions ?? [],
-    recaps: variants,
+    summary: str(doc.summary, CAPS.summary),
+    suggestions: actions(doc.suggestions, CAPS.suggestions),
   };
+  const batch = recaps(doc.recaps, legacy);
+  const variants = batch.length ? batch
+    : legacy.summary || legacy.suggestions.length || legacy.greeting || legacy.ask || legacy.pills.length ? [legacy] : [];
+  return { ...(variants[0] ?? legacy), recaps: variants };
 }
 
 /** How long digests are kept. The dashboard only ever reads today's row; the tail exists purely so an
