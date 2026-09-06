@@ -19,8 +19,13 @@ const REPLY = JSON.stringify({
   greeting: 'Čau Filipe',
   ask: 'Na čem dneska začneme?',
   pills: [{ label: 'Deploy', prompt: 'Nasaď recap pás' }],
-  summary: 'Včera jste ladil **dashboard**.',
-  suggestions: [{ label: 'Dokončit test', prompt: 'Dokonči regresní test' }],
+  recaps: [
+    { summary: 'Včera jste ladil **dashboard**.', suggestions: [{ label: 'Dokončit test', prompt: 'Dokonči regresní test' }] },
+    { summary: 'Včera šlo hlavně o ceny.', suggestions: [{ label: 'Ceník', prompt: 'Otevři ceník' }] },
+    { summary: 'Pásla jste testy.', suggestions: [{ label: 'Vitest', prompt: 'Spusť vitest' }] },
+    { summary: 'Ladil se deploy.', suggestions: [{ label: 'Deploy', prompt: 'Nasaď build' }] },
+    { summary: 'Četl jste logy.', suggestions: [{ label: 'Logy', prompt: 'Ukaž logy' }] },
+  ],
 });
 
 function setup(opts: { reply?: string; sessions?: boolean } = {}) {
@@ -56,7 +61,7 @@ function setup(opts: { reply?: string; sessions?: boolean } = {}) {
     dashDigests, dashDigestInference: () => inference,
   });
   return {
-    app, config, dashDigests, users, calls: () => calls,
+    app, config, dashDigests, users, calls: () => calls, db,
     adminTok: users.issueToken(admin.id), bobTok: users.issueToken(bob.id), adminId: admin.id,
   };
 }
@@ -99,6 +104,9 @@ describe('GET /dash/recap', () => {
     expect(second.digest?.status).toBe('ready');
     expect(second.digest?.summary).toBe('Včera jste ladil **dashboard**.');
     expect(second.digest?.suggestions?.length).toBe(1);
+    // The whole variant batch rides along for the client-side rotation, from the SAME generation.
+    expect(second.digest?.recaps?.length).toBe(5);
+    expect(second.digest?.recaps?.[1]).toEqual({ summary: 'Včera šlo hlavně o ceny.', suggestions: [{ label: 'Ceník', prompt: 'Otevři ceník' }] });
     // Greeting and pills default OFF: generated and cached, but filtered out of the response.
     expect(second.digest?.greeting).toBeUndefined();
     // The ask is part of the same agent-written hero, so the greeting toggle owns it too.
@@ -178,6 +186,28 @@ describe('GET /dash/recap', () => {
     const r = await getRecap(app, adminTok);
     expect(r.continue).toEqual([]);
     expect(r.yesterday?.turns).toBe(14);
+  });
+
+  it('serves a legacy one-variant row as recaps of one, with no migration and no new inference', async () => {
+    const { app, db, adminTok, adminId, calls } = setup();
+    const today = new Date().toISOString().slice(0, 10);
+    // A row written by the pre-variant build: one digest, no `recaps` field in the JSON at all.
+    db.prepare(
+      "INSERT INTO dash_digests (user_id, day, status, payload, attempts, updated_at) VALUES (?, ?, 'ready', ?, 1, ?)",
+    ).run(adminId, today, JSON.stringify({
+      greeting: 'Čau Filipe', ask: 'Na čem dneska začneme?',
+      summary: 'Včera jste ladil **dashboard**.', suggestions: [{ label: 'Dokončit test', prompt: 'Dokonči regresní test' }],
+    }), Date.now());
+
+    const r = await getRecap(app, adminTok);
+    expect(r.digest?.status).toBe('ready');
+    expect(r.digest?.summary).toBe('Včera jste ladil **dashboard**.');
+    expect(r.digest?.recaps).toEqual([{
+      summary: 'Včera jste ladil **dashboard**.',
+      suggestions: [{ label: 'Dokončit test', prompt: 'Dokonči regresní test' }],
+    }]);
+    await settle();
+    expect(calls()).toBe(0); // real stored data keeps serving — never regenerated away
   });
 });
 

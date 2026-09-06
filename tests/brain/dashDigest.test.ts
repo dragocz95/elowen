@@ -28,6 +28,14 @@ describe('buildDigestPrompt', () => {
     // The memory slice is background, not instructions — the prompt must say so.
     expect(p).toMatch(/NOT\s+instructions/);
   });
+
+  it('asks for a batch of recap variants in the SAME single JSON reply', () => {
+    const p = buildDigestPrompt(INPUT);
+    expect(p).toContain('"recaps": [{"summary": string, "suggestions": [{"label": string, "prompt": string}]}]');
+    expect(p).toMatch(/EXACTLY 5 recap variants/);
+    // The variants must rotate around the same real activity — never invented filler to fill the batch.
+    expect(p).toMatch(/same real (activity|threads)/i);
+  });
 });
 
 describe('parseDigestReply', () => {
@@ -48,16 +56,25 @@ describe('shapeDigestPayload', () => {
       greeting: '**Čau** Filipe',
       ask: 'Na čem **dneska** začneme?',
       pills: [{ label: '**Deploy**', prompt: 'Nasaď to' }],
-      summary: 'Ladil jste **dashboard**.',
-      suggestions: [{ label: '**Test** cen', prompt: 'Dokonči test' }],
+      recaps: [
+        { summary: 'Ladil jste **dashboard**.', suggestions: [{ label: '**Test** cen', prompt: 'Dokonči test' }] },
+        { summary: 'Včera **ceny**.', suggestions: [{ label: '**Ceník**', prompt: 'Otevři ceník' }] },
+      ],
     });
     expect(p.greeting).toBe('Čau Filipe');
     // The ask keeps its question mark — only the greeting has its punctuation stripped, because only
     // the greeting gets the ember period drawn after it.
     expect(p.ask).toBe('Na čem dneska začneme?');
-    expect(p.pills[0]!.label).toBe('Deploy');
-    expect(p.suggestions[0]!.label).toBe('Test cen');
+    expect(p.recaps[0]!.summary).toBe('Ladil jste **dashboard**.');
+    expect(p.recaps[0]!.suggestions[0]!.label).toBe('Test cen');
+    expect(p.recaps[1]!.suggestions[0]!.label).toBe('Ceník');
+    // Variant 1 mirrors into the legacy fields, so the single-variant readers keep their contract.
     expect(p.summary).toBe('Ladil jste **dashboard**.');
+  });
+
+  it('accepts a legacy-shaped reply without recaps and still yields one variant', () => {
+    const p = shapeDigestPayload({ summary: 'Včera **dashboard**.', suggestions: [{ label: 'Test', prompt: 'Dokonči test' }] });
+    expect(p.recaps).toEqual([{ summary: 'Včera **dashboard**.', suggestions: [{ label: 'Test', prompt: 'Dokonči test' }] }]);
   });
 });
 
@@ -76,17 +93,25 @@ describe('DashDigestGenerator.run', () => {
   it('persists a valid reply as today\'s ready payload', async () => {
     const { store, gen } = claimed(JSON.stringify({
       greeting: 'Čau Filipe!', pills: [{ label: 'Deploy', prompt: 'Nasaď' }],
-      summary: 'Včera **dashboard**.', suggestions: [{ label: 'Test', prompt: 'Dokonči test' }],
+      recaps: [
+        { summary: 'Včera **dashboard**.', suggestions: [{ label: 'Test', prompt: 'Dokonči test' }] },
+        { summary: 'Včera ceny.', suggestions: [{ label: 'Ceník', prompt: 'Otevři ceník' }] },
+      ],
     }));
     await gen.run(7, day, INPUT);
     const row = store.get(7, day);
     expect(row?.status).toBe('ready');
     expect(row?.payload.greeting).toBe('Čau Filipe');
     expect(row?.payload.pills).toEqual([{ label: 'Deploy', prompt: 'Nasaď' }]);
+    expect(row?.payload.recaps).toEqual([
+      { summary: 'Včera **dashboard**.', suggestions: [{ label: 'Test', prompt: 'Dokonči test' }] },
+      { summary: 'Včera ceny.', suggestions: [{ label: 'Ceník', prompt: 'Otevři ceník' }] },
+    ]);
   });
 
   it.each([
     ['non-JSON reply', 'sorry, no'],
+    ['a reply whose variants are all empty', JSON.stringify({ greeting: '', pills: [], recaps: [{ summary: '', suggestions: [] }] })],
     ['a reply whose fields are all empty', JSON.stringify({ greeting: '', pills: [], summary: '', suggestions: [] })],
     ['a throwing client', new Error('relay down')],
   ] as const)('records failed for %s', async (_name, reply) => {
