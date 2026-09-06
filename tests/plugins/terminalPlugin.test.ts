@@ -627,10 +627,14 @@ describe('terminal plugin — the full output of a truncated foreground run', ()
     return match[1];
   };
   const spillRoot = () => join(home, '.config', 'elowen', 'tool-results');
+  const spillDirs = () => (existsSync(spillRoot()) ? readdirSync(spillRoot()).sort() : []);
 
   it('stores the whole output, names it with its size, and keeps the inline excerpt inside the cap', async () => {
     const reg = await cappedReg();
-    const sessionId = 'brain-terminal-spill-over';
+    // Deliberately long: the stored path goes INTO the truncation banner, so the excerpt's budget has to
+    // pay for it. Budgeting only the fixed banner reserve lands within a byte of the cap for a short id
+    // and overshoots it here, which is what makes the cap assertion below pin that subtraction.
+    const sessionId = `brain-terminal-spill-over-${'x'.repeat(60)}`;
     // Over the inline cap, under the rolling buffer's own 2× limit — the range where the run is
     // reproduced byte for byte instead of losing its middle.
     const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: bigOutput(15_000) }), { identity: owner, sessionId });
@@ -693,12 +697,12 @@ describe('terminal plugin — the full output of a truncated foreground run', ()
   // still report what it did.
   it('still returns a truncated result outside a prompt turn, without storing anything', async () => {
     const reg = await cappedReg();
-    const before = readdirSync(spillRoot()).sort();
+    const before = spillDirs();
     const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Bash', { command: bigOutput(15_000) }), { identity: owner });
 
     expect(res.content[0].text).toContain('…[truncated');
     expect(res.content[0].text).not.toContain('saved to');
-    expect(readdirSync(spillRoot()).sort()).toEqual(before); // no conversation, so no new spill directory
+    expect(spillDirs()).toEqual(before); // no conversation, so no new spill directory
   });
 });
 

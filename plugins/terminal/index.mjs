@@ -887,7 +887,7 @@ export function register(ctx) {
       `\`timeout\` is milliseconds, defaults to ${DEFAULT_TIMEOUT_MS}, and may not exceed ${MAX_TIMEOUT_MS}. The larger Elowen ceiling supports slow finite local builds without changing units.`,
       'Pass run_in_background=true for detached work. Manage detached work with ListProcesses, ProcessOutput, and KillProcess. backgroundMode="service" marks a long-lived server or watcher.',
       'description is the live display context for the command. dangerouslyDisableSandbox=false is a no-op; true is always refused before any process is spawned.',
-      `Inline output is capped at ~${Math.round(outputCap / 1000)} kB: past that the result carries the BEGINNING and the END, and the complete output is saved to a file whose path the result names — read it with the Read tool (offset/limit) instead of re-running the command.`,
+      `Inline output is capped at ~${Math.round(outputCap / 1000)} kB: past that the result carries the BEGINNING and the END, and the retained output is saved to a file the result names when one could be written — read it with the Read tool (offset/limit) rather than re-running the command. For a run far larger than the cap, redirect it to a file of your own and grep that instead.`,
       'A denied or blocked command means a permission rule stopped it — adjust the approach, do not retry it verbatim. Keep secrets out of command lines and output.',
     ].join(' '),
     parameters: Type.Object({
@@ -998,18 +998,16 @@ export function register(ctx) {
           // tool-result spill store and the banner names the file. Best effort — a store that has no
           // conversation to write into (worker/cron) returns null, and a failed write must cost the note,
           // never the command's result, so the run still reports what it did.
+          const visible = run.sanitizeOutput(run.output);
           const persistFullOutput = async () => {
             try {
-              return await ctx.persistToolOutput({
-                toolCallId,
-                text: withDropNotice(run, run.sanitizeOutput(run.output)),
-              });
+              return await ctx.persistToolOutput({ toolCallId, text: withDropNotice(run, visible) });
             } catch (error) {
               ctx.logger.warn(`failed to persist the full output of ${id}`, error);
               return null;
             }
           };
-          const res = ok(await formatRunResult(run.command, run.cwd, run.sanitizeOutput(run.output), run.exitCode, note, outputCap, run.dropped, persistFullOutput));
+          const res = ok(await formatRunResult(run.command, run.cwd, visible, run.exitCode, note, outputCap, run.dropped, persistFullOutput));
           if (typeof run.exitCode === 'number') res.details.exitCode = run.exitCode;
           return res;
         }
