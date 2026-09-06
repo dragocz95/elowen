@@ -96,7 +96,7 @@ const CODE_TOKEN_CLASS: Record<CodeTokenKind, string> = {
  *  Code's before it): a dark Monokai token on the red ground is unreadable, so a delete renders plain.
  *  The gutter is `aria-hidden` and unselectable, so copying a diff yields the source and not a column of
  *  line numbers. A long line wraps under the gutter instead of scrolling sideways. */
-function DiffRowView({ row, lang }: { row: string; lang: string | null }) {
+function DiffRowView({ row, lang, digits }: { row: string; lang: string | null; digits: number }) {
   const parsed = parseDiffRow(row);
   // Not a diff row at all — a hunk header or a summary line the daemon put in the block.
   if (!parsed) return <div className="whitespace-pre-wrap break-words px-2 text-code-comment">{row || ' '}</div>;
@@ -106,7 +106,9 @@ function DiffRowView({ row, lang }: { row: string; lang: string | null }) {
   const tokens = sign === '-' ? null : highlightCode(text, lang);
   return (
     <div data-diff-sign={sign} className={`flex gap-2 px-2 ${tint}`}>
-      <span aria-hidden className="w-7 shrink-0 select-none text-right tabular-nums text-diff-gutter">{num}</span>
+      {/* The number column is as wide as the widest number in THIS diff (`ch` is one monospace advance),
+          so every row's source starts at the same column without reserving space nobody uses. */}
+      <span aria-hidden style={{ width: `${digits}ch` }} className="shrink-0 select-none text-right tabular-nums text-diff-gutter">{num}</span>
       <span aria-hidden className={`shrink-0 select-none ${marker}`}>{sign === ' ' ? '\u00a0' : sign}</span>
       <span
         data-testid="chat-diff-code"
@@ -136,6 +138,11 @@ function DiffBlock({ diff, path }: { diff: string; path?: string }) {
   const lines = diff.replace(/\n+$/, '').split('\n');
   const hiddenRows = Math.max(0, lines.length - DIFF_MAX_ROWS);
   const lang = useMemo(() => langForPath(path), [path]);
+  // The widest line number in the whole diff, folded rows included, so unfolding never shifts the source.
+  const digits = useMemo(
+    () => diff.split('\n').reduce((widest, l) => Math.max(widest, parseDiffRow(l)?.num.length ?? 0), 2),
+    [diff],
+  );
   return (
     <div className="my-1">
       <div className="overflow-hidden rounded-md bg-diff-canvas py-1">
@@ -148,7 +155,7 @@ function DiffBlock({ diff, path }: { diff: string; path?: string }) {
           role={expanded ? 'group' : undefined}
           aria-label={expanded ? t.brainChat.diffLabel : undefined}
         >
-          {(expanded ? lines : lines.slice(0, DIFF_MAX_ROWS)).map((l, i) => <DiffRowView key={i} row={l} lang={lang} />)}
+          {(expanded ? lines : lines.slice(0, DIFF_MAX_ROWS)).map((l, i) => <DiffRowView key={i} row={l} lang={lang} digits={digits} />)}
         </div>
       </div>
       {hiddenRows > 0 ? (
