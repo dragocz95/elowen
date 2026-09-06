@@ -1,11 +1,9 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { useState } from 'react';
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
-import { Popover, PopoverTrigger } from '../../../components/ui/shadcn/popover';
 import type { BrainActivityView } from '../../../lib/types';
-import { ChatHistoryRail } from '../../../modules/advisor/ChatHistoryRail';
+import { ConversationHistoryPanel } from '../../../modules/advisor/ConversationHistoryPanel';
 
 type TestSession = {
   id: string;
@@ -46,27 +44,13 @@ const client = vi.hoisted(() => ({
 vi.mock('../../../modules/advisor/BrainChatProvider', () => ({ useBrainChat: () => ctrl.value }));
 vi.mock('../../../lib/elowenClient', () => ({ elowenClient: client }));
 
-/** The dropdown is a `PopoverContent`, so it mounts the way the dock mounts it: inside a `Popover` whose
- *  trigger is the conversation name. That trigger is what Escape and an outside press hand focus back to,
- *  so a test that dropped it would be testing a shape the app does not render. */
-function DropdownHarness({ onClose }: { onClose?: () => void }) {
-  const [open, setOpen] = useState(true);
-  return (
-    <Popover open={open} onOpenChange={(next) => { setOpen(next); if (!next) onClose?.(); }}>
-      <PopoverTrigger asChild>
-        <button type="button">Conversation</button>
-      </PopoverTrigger>
-      <ChatHistoryRail variant="dropdown" onClose={() => { setOpen(false); onClose?.(); }} />
-    </Popover>
-  );
-}
-
-function renderRail(variant: 'rail' | 'drawer' | 'dropdown') {
+/** The panel as its only host renders it: bare inside the shared switcher modal. The surface, Escape, the
+ *  focus trap and dismissal belong to that modal now and are pinned in its own test — what is pinned here
+ *  is the list itself, which is the part that used to be duplicated across three presentations. */
+function renderPanel(props: { onNavigate?: () => void; homeLink?: boolean } = {}) {
   const { wrapper: Wrapper, client: qc } = createWrapper();
   const utils = render(
-    <Wrapper><ToastProvider>
-      {variant === 'dropdown' ? <DropdownHarness /> : <ChatHistoryRail variant={variant} open />}
-    </ToastProvider></Wrapper>,
+    <Wrapper><ToastProvider><ConversationHistoryPanel {...props} /></ToastProvider></Wrapper>,
   );
   return { ...utils, qc };
 }
@@ -90,9 +74,9 @@ beforeEach(() => {
   client.brainConversationLinks.mockResolvedValue({ status: 'available', links: [] });
 });
 
-describe('ChatHistoryRail', () => {
+describe('ConversationHistoryPanel', () => {
   it('lists conversations with the bare structured model name', () => {
-    renderRail('rail');
+    renderPanel();
     expect(screen.getByText('First')).toBeInTheDocument();
     expect(screen.getByText('Second')).toBeInTheDocument();
     const model = screen.getByText('openai/gpt-5.6-sol');
@@ -100,16 +84,8 @@ describe('ChatHistoryRail', () => {
     expect(screen.queryByText('chatgpt-account/openai/gpt-5.6-sol')).toBeNull();
   });
 
-  it('mounts from the same component in all three variants', () => {
-    for (const variant of ['rail', 'drawer', 'dropdown'] as const) {
-      const { unmount } = renderRail(variant);
-      expect(screen.getByText('First')).toBeInTheDocument();
-      unmount();
-    }
-  });
-
   it('uses the shared Radix action-menu keyboard contract and returns focus on Escape', async () => {
-    renderRail('rail');
+    renderPanel();
     const trigger = screen.getAllByRole('button', { name: /More actions|Další akce/i })[0]!;
     trigger.focus();
     fireEvent.keyDown(trigger, { key: 'ArrowDown' });
@@ -124,7 +100,7 @@ describe('ChatHistoryRail', () => {
   });
 
   it('returns delete-confirm Cancel and Escape focus to the exact row action trigger', async () => {
-    renderRail('rail');
+    renderPanel();
     const trigger = screen.getAllByRole('button', { name: /More actions|Další akce/i })[1]!;
 
     fireEvent.click(trigger);
@@ -143,26 +119,26 @@ describe('ChatHistoryRail', () => {
   it('shows a back-to-dashboard link only when homeLink is set (phone /chat has no TopBar)', () => {
     const { wrapper: Wrapper } = createWrapper();
     const linkName = /Přehled|Dashboard|Prehľad/i;
-    const { rerender } = render(<Wrapper><ToastProvider><ChatHistoryRail variant="drawer" open /></ToastProvider></Wrapper>);
+    const { rerender } = render(<Wrapper><ToastProvider><ConversationHistoryPanel /></ToastProvider></Wrapper>);
     expect(screen.queryByRole('link', { name: linkName })).not.toBeInTheDocument();
-    rerender(<Wrapper><ToastProvider><ChatHistoryRail variant="drawer" open homeLink /></ToastProvider></Wrapper>);
+    rerender(<Wrapper><ToastProvider><ConversationHistoryPanel homeLink /></ToastProvider></Wrapper>);
     expect(screen.getByRole('link', { name: linkName })).toHaveAttribute('href', '/dash');
   });
 
   it('starts a new conversation via switchSession({ fresh: true })', () => {
-    renderRail('rail');
+    renderPanel();
     fireEvent.click(screen.getByRole('button', { name: /New chat|Nová konverzace/i }));
     expect(ctrl.switchSession).toHaveBeenCalledWith({ fresh: true });
   });
 
   it('switches to a picked conversation via switchSession({ session })', () => {
-    renderRail('rail');
+    renderPanel();
     fireEvent.click(screen.getByText('Second'));
     expect(ctrl.switchSession).toHaveBeenCalledWith({ session: 's2' });
   });
 
   it('confirms the concrete delete consequence before calling the controller', async () => {
-    renderRail('rail');
+    renderPanel();
     openRowMenu(1); // the second, non-active row
     fireEvent.click(screen.getByRole('menuitem', { name: /Delete conversation|Smazat konverzaci/i }));
     expect(ctrl.deleteSession).not.toHaveBeenCalled();
@@ -175,7 +151,7 @@ describe('ChatHistoryRail', () => {
 
   it('keeps the conversation and confirmation in place when deletion fails', async () => {
     ctrl.deleteSession.mockRejectedValueOnce(new Error('delete failed'));
-    renderRail('rail');
+    renderPanel();
     openRowMenu(0);
     fireEvent.click(screen.getByRole('menuitem', { name: /Delete conversation|Smazat konverzaci/i }));
     fireEvent.click(await screen.findByRole('button', { name: /Delete conversation|Smazat konverzaci/i }));
@@ -188,7 +164,7 @@ describe('ChatHistoryRail', () => {
   it('locks a pending delete, deduplicates confirmation, then settles before another session can open', async () => {
     let resolveDelete!: () => void;
     ctrl.deleteSession.mockImplementationOnce(() => new Promise<void>((resolve) => { resolveDelete = resolve; }));
-    const { container } = renderRail('rail');
+    const { container } = renderPanel();
 
     openRowMenu(0);
     fireEvent.click(screen.getByRole('menuitem', { name: /Delete conversation|Smazat konverzaci/i }));
@@ -220,7 +196,7 @@ describe('ChatHistoryRail', () => {
   });
 
   it('renames via brainRenameSession then invalidates the sessions query', async () => {
-    const { qc } = renderRail('rail');
+    const { qc } = renderPanel();
     const invalidate = vi.spyOn(qc, 'invalidateQueries');
     openRowMenu(0);
     fireEvent.click(screen.getByRole('menuitem', { name: /^Rename$|^Přejmenovat$/i }));
@@ -234,7 +210,7 @@ describe('ChatHistoryRail', () => {
 
   it('keeps a failed rename open and retries from the inline status', async () => {
     client.brainRenameSession.mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce({ id: 's1', title: 'Retried' });
-    renderRail('rail');
+    renderPanel();
     openRowMenu(0);
     fireEvent.click(screen.getByRole('menuitem', { name: /^Rename$|^Přejmenovat$/i }));
     const input = screen.getByRole('textbox', { name: /Conversation title|Název konverzace/i });
@@ -248,7 +224,7 @@ describe('ChatHistoryRail', () => {
   });
 
   it('cancels a rename on Escape without committing', () => {
-    renderRail('rail');
+    renderPanel();
     openRowMenu(0);
     fireEvent.click(screen.getByRole('menuitem', { name: /^Rename$|^Přejmenovat$/i }));
     const input = screen.getByRole('textbox', { name: /Conversation title|Název konverzace/i });
@@ -259,7 +235,7 @@ describe('ChatHistoryRail', () => {
   });
 
   it('exports a conversation as HTML and as JSONL', () => {
-    renderRail('rail');
+    renderPanel();
     openRowMenu(0);
     fireEvent.click(screen.getByRole('menuitem', { name: /Export as HTML|Exportovat jako HTML/i }));
     expect(client.brainExportSession).toHaveBeenCalledWith('s1', 'html');
@@ -269,7 +245,7 @@ describe('ChatHistoryRail', () => {
   });
 
   it('branches a conversation and opens the copy, leaving the source selected until then', async () => {
-    renderRail('rail');
+    renderPanel();
     openRowMenu(0);
     fireEvent.click(screen.getByRole('menuitem', { name: /Branch conversation|Větvit konverzaci|Vetviť konverzáciu/i }));
     await waitFor(() => expect(client.brainForkSession).toHaveBeenCalledWith('s1'));
@@ -277,67 +253,8 @@ describe('ChatHistoryRail', () => {
     await waitFor(() => expect(ctrl.switchSession).toHaveBeenCalledWith({ session: 's1-fork' }));
   });
 
-  // The drawer is the one variant that is a dialog, and it used to answer Escape from a React handler on
-  // its own layer — which reached it only because the search field happened to hold focus. Both halves
-  // are the primitive's now, so both are pinned: the field still takes focus on open, and Escape closes
-  // the drawer from anywhere inside it.
-  it('opens the drawer with focus in the search field and closes it on Escape', async () => {
-    const onClose = vi.fn();
-    const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><ChatHistoryRail variant="drawer" open onClose={onClose} /></ToastProvider></Wrapper>);
-
-    const search = screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i });
-    expect(search).toHaveFocus();
-
-    fireEvent.keyDown(search, { key: 'Escape' });
-    await waitFor(() => expect(onClose).toHaveBeenCalledTimes(1));
-  });
-
-  // The dock's picker used to be a bare absolutely-positioned div: no Escape, no outside dismissal, no
-  // way back to the trigger. It is a real `Popover` now, so all three are the primitive's and are pinned
-  // here rather than left to the next reader to rediscover.
-  it('mounts the dock picker as a real popover panel with the search field focused', async () => {
-    renderRail('dropdown');
-    const panel = document.querySelector('[data-slot="popover-content"]')!;
-    expect(panel).toBeTruthy();
-    await waitFor(() => {
-      expect(screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i })).toHaveFocus();
-    });
-    expect(screen.getByRole('button', { name: 'Conversation' })).toHaveAttribute('aria-expanded', 'true');
-  });
-
-  it('closes the dock picker on Escape and returns focus to the trigger', async () => {
-    const onClose = vi.fn();
-    const { wrapper: Wrapper } = createWrapper();
-    render(<Wrapper><ToastProvider><DropdownHarness onClose={onClose} /></ToastProvider></Wrapper>);
-    const trigger = screen.getByRole('button', { name: 'Conversation' });
-    const search = screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i });
-
-    fireEvent.keyDown(search, { key: 'Escape' });
-    await waitFor(() => expect(onClose).toHaveBeenCalled());
-    await waitFor(() => expect(document.querySelector('[data-slot="popover-content"]')).toBeNull());
-    await waitFor(() => expect(trigger).toHaveFocus());
-  });
-
-  /** Outside dismissal itself is asserted structurally, not behaviourally, and deliberately so: jsdom
-   *  does not drive Radix's `DismissableLayer` — a stock `Popover` with nothing but `defaultOpen` stays
-   *  open under a synthetic outside `pointerdown` here too, so a behavioural assertion would pass or
-   *  fail on the environment rather than on this component. What this pins is the thing that decides the
-   *  behaviour: the panel IS the shared `PopoverContent`, whose Radix backing `shadcnAdoption` pins in
-   *  turn. The press itself is verified in a real browser. */
-  it('renders the dock picker through the shared popover primitive that owns dismissal', () => {
-    renderRail('dropdown');
-    const panel = document.querySelector('[data-slot="popover-content"]')!;
-    expect(panel).toBeTruthy();
-    expect(panel).toHaveAttribute('data-state', 'open');
-    // The list lives INSIDE that panel — not beside it, which is how the old hand-rolled div escaped
-    // every dismissal the primitive provides.
-    expect(within(panel as HTMLElement).getByText('First')).toBeInTheDocument();
-    expect(within(panel as HTMLElement).getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i })).toBeInTheDocument();
-  });
-
   it('runs a fulltext search (≥2 chars) and highlights the match', async () => {
-    renderRail('rail');
+    renderPanel();
     fireEvent.change(screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i }), { target: { value: 'he' } });
     await waitFor(() => expect(client.brainSearch).toHaveBeenCalledWith('he'));
     expect(await screen.findByText('Hit session')).toBeInTheDocument();
@@ -348,7 +265,7 @@ describe('ChatHistoryRail', () => {
   it('carries the conversation activity state into search-result rows', async () => {
     ctrl.value.sessions.data[0]!.activity = { state: 'done', seq: 8, at: null, detail: 'Finished', unread: true };
     client.brainSearch.mockResolvedValueOnce([{ sessionId: 's1', sessionTitle: 'First', role: 'assistant', snippet: 'hello', ts: '2026-07-08T00:00:00Z' }]);
-    renderRail('rail');
+    renderPanel();
     fireEvent.change(screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i }), { target: { value: 'he' } });
     const result = await screen.findByText('First');
     expect(result).toHaveClass('font-semibold');
@@ -358,7 +275,7 @@ describe('ChatHistoryRail', () => {
   });
 
   it('uses the real shadcn menu anatomy for regular and search-result rows', async () => {
-    renderRail('rail');
+    renderPanel();
     expect(screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i })).toHaveAttribute('data-slot', 'input');
     const menu = document.querySelector('[data-slot="sidebar-menu"]')!;
     expect(menu).toHaveAttribute('data-slot', 'sidebar-menu');
@@ -374,7 +291,7 @@ describe('ChatHistoryRail', () => {
   });
 
   it('renders neutral activity without inventing a state icon', () => {
-    renderRail('rail');
+    renderPanel();
     const state = screen.getByText('First').closest('li')!.querySelector('[data-activity-state]')!;
     expect(state).toHaveAttribute('data-activity-state', 'idle');
     expect(state.querySelector('svg')).toBeNull();
@@ -383,7 +300,7 @@ describe('ChatHistoryRail', () => {
 
   it('renders working activity as a reduced-motion-safe green pulse', () => {
     ctrl.value.sessions.data[0]!.activity = { state: 'working', seq: 3, at: null, detail: 'Running', unread: false };
-    renderRail('rail');
+    renderPanel();
     const state = screen.getByText('First').closest('li')!.querySelector('[data-activity-state]')!;
     const icon = state.querySelector('svg')!;
     expect(state).toHaveAttribute('data-activity-state', 'working');
@@ -394,7 +311,7 @@ describe('ChatHistoryRail', () => {
 
   it('keeps a read done check and does not render an unread badge', () => {
     ctrl.value.sessions.data[0]!.activity = { state: 'done', seq: 4, at: null, detail: 'Finished', unread: false };
-    renderRail('rail');
+    renderPanel();
     const row = screen.getByText('First').closest('li')!;
     const state = row.querySelector('[data-activity-state]')!;
     expect(state).toHaveAttribute('data-activity-state', 'done');
@@ -404,7 +321,7 @@ describe('ChatHistoryRail', () => {
 
   it('renders a done unread result with a semibold title and an independent accent badge', () => {
     ctrl.value.sessions.data[0]!.activity = { state: 'done', seq: 5, at: null, detail: 'Finished', unread: true };
-    renderRail('rail');
+    renderPanel();
     const row = screen.getByText('First').closest('li')!;
     expect(screen.getByText('First')).toHaveClass('font-semibold');
     const badge = row.querySelector('[data-slot="sidebar-menu-badge"]')!;
@@ -420,7 +337,7 @@ describe('ChatHistoryRail', () => {
   // reveal the tip, and the floating panel is content no button is allowed to contain.
   it('exposes a bounded failed tooltip from the row itself, with no control nested in the row button', async () => {
     ctrl.value.sessions.data[0]!.activity = { state: 'failed', seq: 6, at: null, detail: 'The provider rejected the request.', unread: false };
-    renderRail('rail');
+    renderPanel();
     const row = screen.getByText('First').closest('li')!;
     const rowButton = screen.getByText('First').closest('button')!;
     expect(rowButton.querySelector('[tabindex="0"]')).toBeNull();
@@ -445,7 +362,7 @@ describe('ChatHistoryRail', () => {
 
   it('opens the same failure tip from row hover', async () => {
     ctrl.value.sessions.data[0]!.activity = { state: 'failed', seq: 6, at: null, detail: 'Connection refused.', unread: false };
-    renderRail('rail');
+    renderPanel();
     const rowButton = screen.getByText('First').closest('button')!;
 
     fireEvent.mouseEnter(rowButton);
@@ -457,7 +374,7 @@ describe('ChatHistoryRail', () => {
   // A row whose run did not fail carries no tip at all — no anchor, no panel, nothing describing it.
   it('adds no tooltip wiring to a row that did not fail', () => {
     ctrl.value.sessions.data[0]!.activity = { state: 'done', seq: 6, at: null, detail: 'Finished', unread: false };
-    renderRail('rail');
+    renderPanel();
     const row = screen.getByText('First').closest('li')!;
     const rowButton = screen.getByText('First').closest('button')!;
     expect(row.querySelector('[data-slot="tooltip-anchor"]')).toBeNull();
@@ -468,7 +385,7 @@ describe('ChatHistoryRail', () => {
 
   it('keeps failed unread state independent from the destructive tooltip', () => {
     ctrl.value.sessions.data[0]!.activity = { state: 'failed', seq: 7, at: null, detail: 'Failed to connect.', unread: true };
-    renderRail('rail');
+    renderPanel();
     const row = screen.getByText('First').closest('li')!;
     const state = row.querySelector('[data-activity-state]')!;
     expect(state.querySelector('svg')).toHaveClass('fill-destructive', 'text-destructive');
@@ -477,7 +394,7 @@ describe('ChatHistoryRail', () => {
   });
 
   it('keeps active selection, page current state, action keyboard access and touch-visible actions', async () => {
-    renderRail('rail');
+    renderPanel();
     const first = screen.getByText('First').closest('button')!;
     expect(first).toHaveAttribute('aria-current', 'page');
     expect(first).toHaveAttribute('data-active', 'true');
@@ -492,7 +409,7 @@ describe('ChatHistoryRail', () => {
 
 /** The recurring jobs filed under a conversation, as a collapsed branch under its row. Navigation only:
  *  a job row opens the schedule's own editor and nothing about the schedule changes. */
-describe('ChatHistoryRail — scheduled job branches', () => {
+describe('ConversationHistoryPanel — scheduled job branches', () => {
   const digest = { jobId: 'job-1', conversationId: 's1', name: 'Nightly digest', enabled: true, scope: 'personal', href: '/p/cronjob?job=job-1' };
   const report = { jobId: 'job-2', conversationId: 's1', name: 'Weekly report', enabled: false, scope: 'personal', href: '/p/cronjob?job=job-2' };
   const withLinks = (...links: Record<string, unknown>[]) =>
@@ -501,7 +418,7 @@ describe('ChatHistoryRail — scheduled job branches', () => {
 
   it('keeps the schedules folded away until the disclosure is opened', async () => {
     withLinks(digest, report);
-    renderRail('rail');
+    renderPanel();
     const trigger = await branch();
     expect(trigger).toHaveAttribute('aria-expanded', 'false');
     expect(within(trigger).getByText('2')).toBeInTheDocument();
@@ -521,27 +438,22 @@ describe('ChatHistoryRail — scheduled job branches', () => {
 
   it('separates the disclosure from opening the conversation', async () => {
     withLinks(digest);
-    renderRail('rail');
+    renderPanel();
     fireEvent.click(await branch());
     expect(ctrl.switchSession).not.toHaveBeenCalled();
     // The trigger is a sibling of the row button, never nested inside it.
     expect(screen.getByText('First').closest('button')!.querySelector('[data-slot="collapsible-trigger"]')).toBeNull();
   });
 
-  it('dismisses an overlay variant when a schedule is opened and leaves the rail mounted', async () => {
+  // Opening a schedule leaves the app on the cron editor, so the switcher covering it has to go — the
+  // panel says so once, through the host's callback, and never dismisses anything itself.
+  it('tells its host to close when a schedule is opened', async () => {
     withLinks(digest);
-    const onClose = vi.fn();
-    const { wrapper: Wrapper } = createWrapper();
-    const { unmount } = render(<Wrapper><ToastProvider><ChatHistoryRail variant="drawer" open onClose={onClose} /></ToastProvider></Wrapper>);
+    const onNavigate = vi.fn();
+    renderPanel({ onNavigate });
     fireEvent.click(await branch());
     fireEvent.click(await screen.findByRole('link', { name: /Nightly digest/ }));
-    expect(onClose).toHaveBeenCalledTimes(1);
-    unmount();
-
-    renderRail('rail');
-    fireEvent.click(await branch());
-    fireEvent.click(await screen.findByRole('link', { name: /Nightly digest/ }));
-    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(onNavigate).toHaveBeenCalledTimes(1);
   });
 
   it('adds job matches to the search without losing the transcript snippets', async () => {
@@ -550,7 +462,7 @@ describe('ChatHistoryRail — scheduled job branches', () => {
       { sessionId: 's1', sessionTitle: 'First', role: 'user', snippet: 'a digest of the day', ts: '2026-07-08T00:00:00Z' },
       { sessionId: 's1', sessionTitle: 'First', role: 'assistant', snippet: 'the digest again', ts: '2026-07-08T01:00:00Z' },
     ]);
-    renderRail('rail');
+    renderPanel();
     fireEvent.change(screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i }), { target: { value: 'digest' } });
 
     // The snippets survive, highlight and all — the match itself sits in its own <mark>, so the
@@ -568,7 +480,7 @@ describe('ChatHistoryRail — scheduled job branches', () => {
   it('never lists a conversation the sidebar does not hold', async () => {
     // A direct platform chat is an eligible cron target but is NOT in the personal conversation list.
     withLinks({ ...digest, conversationId: 'brain-ch-telegram-42', name: 'Channel digest' });
-    renderRail('rail');
+    renderPanel();
     await screen.findByText('First');
     expect(screen.queryByText('Channel digest')).toBeNull();
     expect(screen.queryByRole('button', { name: /Scheduled jobs of/ })).toBeNull();
@@ -580,13 +492,15 @@ describe('ChatHistoryRail — scheduled job branches', () => {
 
   it('says a job read failed instead of showing every conversation as unscheduled', async () => {
     client.brainConversationLinks.mockResolvedValue({ status: 'error', links: [] });
-    renderRail('rail');
-    expect(await screen.findByText('Scheduled jobs could not be loaded')).toBeInTheDocument();
+    renderPanel();
+    // A line that appears under a long list after the fact is missed by a reader who is not looking at
+    // it, so it is announced — the register says the same thing the same way.
+    expect(await screen.findByRole('status')).toHaveTextContent('Scheduled jobs could not be loaded');
   });
 
   it('shows nothing at all when the cron plugin cannot answer', async () => {
     client.brainConversationLinks.mockResolvedValue({ status: 'unavailable', links: [] });
-    renderRail('rail');
+    renderPanel();
     await screen.findByText('First');
     expect(screen.queryByText('Scheduled jobs could not be loaded')).toBeNull();
     expect(screen.queryByRole('button', { name: /Scheduled jobs of/ })).toBeNull();
@@ -605,12 +519,12 @@ describe('ChatHistoryRail — scheduled job branches', () => {
  *
  *  jsdom paints nothing, so what is pinned here is that cause: no element between the open panel and its
  *  row may create a stacking context. The paint order itself is verified in a real browser. */
-describe('ChatHistoryRail row menu — overlay stacking', () => {
+describe('ConversationHistoryPanel row menu — overlay stacking', () => {
   // Tailwind utilities that create a stacking context and would trap the panel's layer again.
   const TRAPS = /^(transform|transform-gpu|isolate|filter|opacity-\d|mix-blend-|backdrop-|will-change-|blur-|-?(translate|scale|rotate|skew)-)/;
 
   it('holds the action menu in an anchor that creates no stacking context', async () => {
-    renderRail('rail');
+    renderPanel();
     openRowMenu(0);
     const panel = await screen.findByRole('menu');
     expect(panel).toHaveClass('overlay-layer-menu');
@@ -627,7 +541,7 @@ describe('ChatHistoryRail row menu — overlay stacking', () => {
   });
 
   it('centres the action button on the row without a transform', () => {
-    renderRail('rail');
+    renderPanel();
     const anchor = screen.getAllByRole('button', { name: /More actions|Další akce/i })[0]!.closest('.absolute')!;
     expect(anchor).toHaveClass('inset-y-0', 'right-1', 'flex', 'items-center');
     expect(anchor.className).not.toMatch(/translate|top-1\/2/);

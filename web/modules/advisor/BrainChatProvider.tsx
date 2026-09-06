@@ -7,7 +7,7 @@ import { interpolate, useTranslation } from '../../lib/i18n';
 import { usePersistentState } from '../../lib/usePersistentState';
 import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { useToast } from '../../components/ui/Toast';
-import { useBrainSessions, useBrainCommands, useConfig } from '../../lib/queries';
+import { useBrainSessions, useBrainCommands, useConfig, QUERY_KEYS } from '../../lib/queries';
 import { elowenClient } from '../../lib/elowenClient';
 import type { AskAnswer, AskQuestion, BrainCard, BrainGoal, BrainInlineArtifact, BrainInlineArtifactEvent, BrainModelOption, BrainPendingPlan, BrainProject, BrainStatus, BrainStreamSnapshotFrame, BrainUsage, BrainWorkMode, McpServerStatus, SessionTask, SlashCommandDef, StatuslineConfig } from '../../lib/types';
 import { collectSubagents, collectWorkflows, emptyView, fromSnapshot, liveNarration, reduce, submittedPlan, upsertCard, type ChatTurn, type ChatView, type SubagentState, type TranscriptEvent, type WorkflowState } from '../../lib/transcript';
@@ -294,6 +294,13 @@ export interface BrainChatValue {
   /** The `/rename` dialog's open state (the surface renders the modal; the controller owns the write). */
   renameOpen: boolean;
   closeRename: () => void;
+  /** THE conversation switcher's open state. Every entry point — the /chat header, the dock's
+   *  conversation name — opens the one modal the shell mounts beside this provider: two surfaces share
+   *  this controller, and a per-surface switcher would be two lists of the same conversations. The
+   *  modal itself is not rendered here, because it reads this controller in turn. */
+  historyOpen: boolean;
+  openHistory: () => void;
+  closeHistory: () => void;
   /** Rename the bound conversation and refresh the conversation list. */
   renameSession: (title: string) => Promise<void>;
   /** The surface-filtered command catalog (`GET /brain/commands`) — the single source every menu reads. */
@@ -469,6 +476,8 @@ function useBrainChatController(): BrainChatValue {
   const planDecisions = useMemo(() => JSON.parse(planDecisionsRaw) as Record<string, string>, [planDecisionsRaw]);
   const planDecided = activeSessionId ? planDecisions[activeSessionId] ?? null : null;
   const [renameOpen, setRenameOpen] = useState(false);
+  // The conversation switcher, opened from every surface and rendered once by the provider below.
+  const [historyOpen, setHistoryOpen] = useState(false);
   // Lives on the controller (mounted once) rather than the surface, so the choice survives the dock's
   // Chat↔Terminál toggle and every route change, exactly like the transcript itself.
   const [thoughts, setThoughts] = usePersistentState<'show' | 'hide'>('elowen.chat.thoughts', 'show', THOUGHTS_VALUES);
@@ -978,6 +987,9 @@ function useBrainChatController(): BrainChatValue {
       throw error;
     }
     await qc.invalidateQueries({ queryKey: ['brain-sessions'] });
+    // A deleted conversation takes its collapsed job branch with it: the schedules stay, but the daemon
+    // no longer resolves their filing, so the navigation read has to be asked again.
+    void qc.invalidateQueries({ queryKey: QUERY_KEYS.brainConversationLinks });
     // Deleting the open conversation re-targets to the most recent remaining one (or a fresh state).
     if (wasActive) await connect();
   };
@@ -1349,6 +1361,7 @@ function useBrainChatController(): BrainChatValue {
     setShowThoughts: (v) => setThoughts(v ? 'show' : 'hide'),
     workMode, setWorkMode: runMode, planDecision, implementPlan, dismissPlan, planSubmitting,
     renameOpen, closeRename: () => setRenameOpen(false), renameSession,
+    historyOpen, openHistory: () => setHistoryOpen(true), closeHistory: () => setHistoryOpen(false),
     commands, runSlash: (cmd, argument) => void runSlash(cmd, argument),
     sessions,
   };

@@ -386,6 +386,7 @@ export const sk = {
   scheduledJobs: {
     branch: 'Naplánované úlohy',
     toggle: 'Naplánované úlohy konverzácie {title}',
+    branchToggle: 'Plány zaradené do konverzácie {title}',
     open: 'Otvoriť plán: {name}',
     active: 'Aktívne',
     paused: 'Pozastavené',

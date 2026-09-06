@@ -8,7 +8,7 @@ import { openBrainSession } from '../../lib/brainDock';
 import { localDateTime, formatTokens } from '../../lib/format';
 import { useTranslation } from '../../lib/i18n';
 import { useToast } from '../ui/Toast';
-import { useConversationJobLinks, useMe } from '../../lib/queries';
+import { useConversationJobLinks, useMe, QUERY_KEYS } from '../../lib/queries';
 import {
   buildConversationTree,
   filterConversationTree,
@@ -94,8 +94,12 @@ const MOBILE_COLUMNS = 'minmax(0,1.6fr) minmax(0,1fr) 2.25rem';
 
 /** Full-width conversation register. A regular user sees only their own conversations; an admin
  *  defaults to every user's oversight view and can switch to their own. `afterOpen` lets a modal host
- *  (the Chat page) dismiss itself once a row hands the conversation to the chat surface. */
-export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {}) {
+ *  (the conversation switcher) dismiss itself once a row hands the conversation to the chat surface.
+ *
+ *  `lockedView` is for a host that already owns that choice: the switcher shows this register as its
+ *  administrator "All" beside the personal list, so a second all/mine control inside it would be the same
+ *  decision asked twice. */
+export function BrainSessionsPanel({ afterOpen, lockedView }: { afterOpen?: () => void; lockedView?: 'all' } = {}) {
   const { t, locale } = useTranslation();
   const { toast } = useToast();
   const qc = useQueryClient();
@@ -103,8 +107,9 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
   const isAdmin = me.data?.user?.is_admin ?? false;
   const myId = me.data?.user?.id;
   const [adminView, setAdminView] = usePersistentState<'all' | 'mine'>('elowen.sessions.brainView', 'all', ['all', 'mine']);
-  // A non-admin only ever has their own; the toggle applies to admins.
-  const view: 'all' | 'mine' = isAdmin ? adminView : 'mine';
+  // A non-admin only ever has their own; the toggle applies to admins, and a host that already made the
+  // choice takes it away entirely.
+  const view: 'all' | 'mine' = isAdmin ? (lockedView ?? adminView) : 'mine';
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [confirmAll, setConfirmAll] = useState(false);
   const [page, setPage] = useState(0);
@@ -205,7 +210,12 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
     else { setSort(key); setDirection(DEFAULT_DIRECTION[key]); }
   };
 
-  const refresh = () => qc.invalidateQueries({ queryKey: view === 'all' ? ['brain-managed-sessions'] : ['brain-sessions'] });
+  const refresh = () => {
+    // Deleting conversations here also removes whatever job branches hung under them: the schedules
+    // survive, but the daemon stops resolving their filing, so the navigation read is asked again.
+    void qc.invalidateQueries({ queryKey: QUERY_KEYS.brainConversationLinks });
+    return qc.invalidateQueries({ queryKey: view === 'all' ? ['brain-managed-sessions'] : ['brain-sessions'] });
+  };
 
   const doDelete = async (id: string) => {
     setConfirmId(null);
@@ -274,6 +284,10 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
         : <span aria-hidden className="w-5 shrink-0" />;
     }
     const open = branchOpen(node.row.id);
+    // Named after what it actually uncovers. A conversation that delegated nothing has only its schedules
+    // branch below it, and the digit — which counts SESSIONS — is hidden there, so the tooltip explaining
+    // that digit goes with it.
+    const delegated = node.children.length > 0;
     const revealed = [
       ...(node.jobs.length > 0 ? [jobsRowDomId(node.row.id)] : []),
       ...node.children.map((child) => rowDomId(child.row.id)),
@@ -286,10 +300,11 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
         // Only while the rows exist: a closed branch is unmounted, and an IDREF pointing at nothing is
         // worse than no reference at all.
         aria-controls={open ? revealed.join(' ') : undefined}
-        aria-label={t.sessionsPanel.subAgentsToggle.replace('{title}', node.row.title || t.sessionsPanel.untitled)}
+        aria-label={(delegated ? t.sessionsPanel.subAgentsToggle : t.scheduledJobs.branchToggle)
+          .replace('{title}', node.row.title || t.sessionsPanel.untitled)}
         // What the bare number beside the chevron counts. The accessible name already says it; this is
         // for the pointer, which otherwise reads a digit with nothing attached to it.
-        title={t.sessionsPanel.subAgents}
+        title={delegated ? t.sessionsPanel.subAgents : undefined}
         className="flex shrink-0 items-center gap-0.5 rounded-md px-0.5 py-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
       >
         <ChevronRight size={12} aria-hidden className={`transition-transform motion-reduce:transition-none ${open ? 'rotate-90' : ''}`} />
@@ -478,7 +493,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
             label={t.sessionsPanel.searchLabel}
             placeholder={t.sessionsPanel.searchLabel}
           />
-          {isAdmin ? (
+          {isAdmin && !lockedView ? (
             <Segmented
               size="sm"
               value={view}

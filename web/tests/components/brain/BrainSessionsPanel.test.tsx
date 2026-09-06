@@ -355,12 +355,22 @@ describe('BrainSessionsPanel — scheduled job branches', () => {
     };
   });
 
+  // The disclosure is named after what it actually reveals. This conversation delegated nothing, so its
+  // chevron uncovers the schedules branch alone — which is exactly the shape of a conversation created to
+  // hold recurring jobs, and calling that "sub-agents" names something that is not there.
+  it('names the root disclosure after the schedules when nothing was delegated below', async () => {
+    renderPanel();
+    await screen.findByText('Planning');
+    expect(screen.queryByRole('button', { name: 'Sub-agents of Planning' })).toBeNull();
+    expect(screen.getByRole('button', { name: 'Schedules filed under Planning' })).toBeInTheDocument();
+  });
+
   it('files the schedules in their own collapsed branch and links each to its editor', async () => {
     renderPanel();
     await screen.findByText('Planning');
     expect(screen.queryByText('Scheduled jobs')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Sub-agents of Planning' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Schedules filed under Planning' }));
     const branch = await screen.findByRole('button', { name: 'Scheduled jobs of Planning' });
     expect(branch).toHaveAttribute('aria-expanded', 'false');
     expect(within(branch).getByText('2')).toBeInTheDocument();
@@ -402,6 +412,7 @@ describe('BrainSessionsPanel — scheduled job branches', () => {
     renderPanel();
     await screen.findByText('Planning');
     expect(screen.queryByText('Scheduled jobs could not be loaded')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Schedules filed under Planning' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Sub-agents of Planning' })).toBeNull();
   });
 });

@@ -129,10 +129,11 @@ export interface FilteredConversationTree {
 
 /** Narrow the forest to what the query matches, keeping every match reachable.
  *
- *  A node that matches ITSELF keeps its whole family, and its branch is left as the reader last set it —
- *  finding a conversation must not blow its sub-agents open. A node kept only because something below it
- *  matched is opened temporarily, so the match is on screen rather than hidden behind a chevron. Neither
- *  writes to the manual expansion state, which is what lets clearing the search restore it exactly. */
+ *  A node that matches ITSELF keeps its whole family, and being found is not on its own a reason to open
+ *  its branch — a title hit must not blow its sub-agents open. What opens a branch, here as anywhere, is a
+ *  match BELOW it: that one is uncovered temporarily, so it is on screen rather than hidden behind a
+ *  chevron. Neither writes to the manual expansion state, which is what lets clearing the search restore
+ *  it exactly. */
 export function filterConversationTree(
   roots: readonly ConversationTreeNode[],
   needle: string,

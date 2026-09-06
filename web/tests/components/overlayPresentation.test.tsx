@@ -131,7 +131,7 @@ describe('overlays resolve against the live viewport', () => {
  *  is scanned WHOLE — paint anywhere in it is paint on the overlay, whether it reaches the surface
  *  through a class, a constant or a style prop. A feature module that merely CONTAINS a drawer is scanned
  *  at the surface element itself, because the rest of the module legitimately paints things that are not
- *  overlay surfaces (`ChatHistoryRail` has a per-conversation menu of its own on `bg-card`, which is a
+ *  overlay surfaces (`TelemetryPanel` has controls of its own on `bg-card`, which are controls and not a
  *  menu and not a dialog), and a whole-file scan there would fail on paint this rule was never about.
  *  The narrowed form still pins the mutation that matters: surface paint written at the call site. */
 const OVERLAY_SHELLS: { path: string; surface?: string }[] = [
@@ -142,10 +142,11 @@ const OVERLAY_SHELLS: { path: string; surface?: string }[] = [
   { path: join('components', 'shell', 'CommandPalette.tsx') },
   { path: join('components', 'ui', 'shadcn', 'dialog.tsx') },
   { path: join('components', 'ui', 'shadcn', 'alert-dialog.tsx') },
-  // The two drawers that mount the shadcn surface directly instead of going through `Modal`. Both used
-  // to restate `bg-card shadow-xl` on it — inert, because `.overlay-surface` rides in the variant base
-  // and primitives.css is unlayered, but a standing invitation to "fix" the colour here next time.
-  { path: join('modules', 'advisor', 'ChatHistoryRail.tsx'), surface: 'DialogContent' },
+  // The drawer that mounts the shadcn surface directly instead of going through `Modal`. It used to
+  // restate `bg-card shadow-xl` on it — inert, because `.overlay-surface` rides in the variant base and
+  // primitives.css is unlayered, but a standing invitation to "fix" the colour here next time. The
+  // conversation history had a second one; that list is a panel inside the shared switcher modal now,
+  // so the surface it lives on is `Modal`'s and is covered by the entry at the top of this list.
   { path: join('modules', 'advisor', 'TelemetryPanel.tsx'), surface: 'DialogContent' },
 ];
 

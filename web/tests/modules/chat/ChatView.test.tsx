@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { describe, it, expect, vi, beforeAll, afterAll, afterEach, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
@@ -9,6 +9,7 @@ import { ToastProvider } from '../../../components/ui/Toast';
 import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
 import { BrainChat } from '../../../modules/advisor/BrainChat';
 import { ChatView } from '../../../modules/chat/ChatView';
+import { ConversationSwitcherModal } from '../../../modules/advisor/ConversationSwitcherModal';
 import { ChatRailSplit } from '../../../modules/advisor/ChatRailSplit';
 import { TelemetryRailProvider } from '../../../modules/advisor/telemetryRailState';
 import { useMobileViewport } from '../../../lib/useMobile';
@@ -44,6 +45,10 @@ const server = setupServer(
     { id: 'brain-2', title: 'Second chat', model: 'm2', updated_at: '2026-07-07', running: false, active: false },
   ])),
   http.get('*/api/brain/commands', () => HttpResponse.json({ commands: [] })),
+  // The switcher asks who is reading it: an administrator also gets the register beside the personal
+  // list. These cases are the ordinary account, which has the list alone.
+  http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 2, username: 'me', is_admin: false } })),
+  http.get('*/api/brain/conversation-links', () => HttpResponse.json({ status: 'available', links: [] })),
 );
 
 beforeAll(() => {
@@ -61,9 +66,17 @@ function ChatPage() {
   return <ChatRailSplit workspace={<ChatView />} docked={mobile === false} />;
 }
 
+/** The page as the SHELL mounts it. The conversation switcher is a sibling of the routed content, mounted
+ *  once beside the controller — the page itself carries no conversation list at all, which is exactly
+ *  what these cases are about, so leaving it out would test a shell the app does not render. */
 function renderChat(node: ReactNode) {
   const { wrapper: Wrapper } = createWrapper();
-  return render(<Wrapper><ToastProvider><BrainChatProvider><TelemetryRailProvider>{node}</TelemetryRailProvider></BrainChatProvider></ToastProvider></Wrapper>);
+  return render(
+    <Wrapper><ToastProvider><BrainChatProvider><TelemetryRailProvider>
+      {node}
+      <ConversationSwitcherModal />
+    </TelemetryRailProvider></BrainChatProvider></ToastProvider></Wrapper>,
+  );
 }
 
 describe('ChatView (/chat page)', () => {
@@ -93,31 +106,57 @@ describe('ChatView (/chat page)', () => {
     await waitFor(() => expect(FakeES.instances.length).toBe(1));
   });
 
-  it('opens the history drawer from the conversation name in the toolbar', async () => {
+  /** The page mounts NO conversation list of its own any more. There is one switcher, the modal the
+   *  controller owns, and the conversation's name in the toolbar is what opens it. */
+  const switcher = () => screen.findByRole('dialog', { name: /^(Conversations|Konverzace|Konverzácie)$/i });
+  const openSwitcher = async () => {
+    fireEvent.click(screen.getByRole('button', { name: /Conversation history|Historie konverzací/i }));
+    return switcher();
+  };
+
+  it('opens the one conversation switcher from the conversation name in the toolbar', async () => {
     renderChat(<ChatView />);
     await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
-    // Drawer closed: its dialog is aria-hidden and not in the a11y tree.
-    expect(screen.queryByRole('dialog', { name: /Conversation history|Historie konverzací/i })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: /Conversation history|Historie konverzací/i }));
-    expect(screen.getByRole('dialog', { name: /Conversation history|Historie konverzací/i })).toBeInTheDocument();
+    // Closed: no list of conversations is on screen, and there is no rail holding a second one.
+    expect(screen.queryByRole('dialog', { name: /^(Conversations|Konverzace|Konverzácie)$/i })).toBeNull();
+    expect(screen.queryByText('Second chat')).toBeNull();
+    // Exactly one control opens it, and it is the conversation's own name.
+    expect(screen.getAllByRole('button', { name: /Conversation history|Historie konverzací/i })).toHaveLength(1);
+
+    const modal = await openSwitcher();
+    expect(within(modal).getByText('Second chat')).toBeInTheDocument();
   });
 
-  it('opens the conversation register from the history drawer and hands a row to the page surface', async () => {
+  it('hands a picked conversation to the page surface and closes the switcher', async () => {
     renderChat(<ChatView />);
     await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
-    fireEvent.click(screen.getByRole('button', { name: /Conversation history|Historie konverzací/i }));
+    const modal = await openSwitcher();
 
-    // The drawer's footer entry opens the full register (BrainSessionsPanel) as a modal and dismisses
-    // the drawer — the register is core data and must stay reachable without the agents plugin.
-    fireEvent.click(screen.getByRole('button', { name: /All conversations|Všechny konverzace/i }));
-    const modal = await screen.findByRole('dialog', { name: /All conversations|Všechny konverzace/i });
-    expect(screen.queryByRole('dialog', { name: /Conversation history|Historie konverzací/i })).toBeNull();
-    expect(await screen.findByTestId('brain-sessions-list')).toBeInTheDocument();
-
-    // Opening a row loads it into THIS page's surface, so the modal dismisses itself.
-    fireEvent.click(await screen.findByRole('button', { name: /Open in web chat: Second chat/i }));
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: /All conversations|Všechny konverzace/i })).toBeNull());
+    fireEvent.click(within(modal).getByText('Second chat'));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: /^(Conversations|Konverzace|Konverzácie)$/i })).toBeNull());
     expect(modal).not.toBeInTheDocument();
+  });
+
+  /** The switcher carries the personal list and, for an administrator, the register beside it: six
+   *  columns, a search, a pager and nested confirmations. The automatic first-level rule would hand that
+   *  a right-hand drawer, which is a peek from the side, so this one surface is a wide centered window
+   *  instead — and the whole screen on a phone, which is what the shared rule answers there anyway. */
+  it('is a wide centered window on a roomy screen', async () => {
+    renderChat(<ChatView />);
+    await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
+    expect(await openSwitcher()).toHaveAttribute('data-presentation', 'center');
+  });
+
+  it('takes the whole screen on a phone', async () => {
+    const original = window.matchMedia;
+    window.matchMedia = (query: string) => ({ ...original(query), matches: /max-width/.test(query) });
+    try {
+      renderChat(<ChatView />);
+      await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
+      expect(await openSwitcher()).toHaveAttribute('data-presentation', 'fullscreen');
+    } finally {
+      window.matchMedia = original;
+    }
   });
 
   // The redesign replaced "hidden" with a real 52px stub, and that compact strip is what a desktop visit
@@ -179,7 +218,7 @@ describe('ChatView (/chat page)', () => {
     const scrollTo = vi.spyOn(HTMLElement.prototype, 'scrollTo');
     const { wrapper: Wrapper } = createWrapper();
     const { container } = render(
-      <Wrapper><ToastProvider><BrainChatProvider><main><ChatView /></main></BrainChatProvider></ToastProvider></Wrapper>,
+      <Wrapper><ToastProvider><BrainChatProvider><main><ChatView /></main><ConversationSwitcherModal /></BrainChatProvider></ToastProvider></Wrapper>,
     );
     await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
     const main = container.querySelector('main')!;

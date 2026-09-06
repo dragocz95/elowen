@@ -35,7 +35,6 @@ import { HelpModal } from './HelpModal';
 import { ModelModal } from './ModelModal';
 import { PlanDecisionModal } from './PlanDecisionModal';
 import { GoalStatusInline } from './GoalStatus';
-import { ChatHistoryRail } from './ChatHistoryRail';
 import { ModelPicker } from './ModelPicker';
 import { ProjectPicker } from './ProjectPicker';
 import { useBrainChat, useBrainChatInput } from './BrainChatProvider';
@@ -1362,13 +1361,13 @@ function ChatComposer({ variant, composerRef, pinToNewest }: {
 
 /** The presentational brain chat surface, driven entirely by the shared controller (BrainChatProvider)
  *  read from context. It owns NO network or session state: only pure view affordances (the picker-open
- *  toggle, the slash keyboard cursor, DOM refs + autoscroll) live here, so unmounting it (Chat↔Terminál
- *  toggle, route change) never tears down the stream, draft or transcript. The conversation list / search
- *  / rename / export / delete are the shared ChatHistoryRail. `variant` selects the dock (compact) look or
- *  the wide /chat (full) look; `onOpenHistory` opens the mobile history drawer in the full variant, and
- *  `onOpenTelemetry` the telemetry drawer — the host passes the latter only where the rail cannot be a
- *  column (a phone), so on desktop no button appears beside the permanently visible rail. */
-export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTelemetry, telemetryShown }: { variant?: 'compact' | 'full'; onOpenHistory?: () => void; onOpenTelemetry?: () => void; telemetryShown?: boolean }) {
+ *  slash keyboard cursor, DOM refs + autoscroll) live here, so unmounting it (Chat↔Terminál toggle, route
+ *  change) never tears down the stream, draft or transcript. The conversation list / search / rename /
+ *  export / delete are the shared switcher the provider mounts, which this surface only opens — both
+ *  variants through the same `openHistory`, so the dock and /chat can never disagree about which list is
+ *  the list. `variant` selects the dock (compact) look or the wide /chat (full) look; `onOpenTelemetry`
+ *  opens the telemetry drawer, passed only where the rail cannot be a column (a phone). */
+export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemetryShown }: { variant?: 'compact' | 'full'; onOpenTelemetry?: () => void; telemetryShown?: boolean }) {
   const { t } = useTranslation();
   const { toast } = useToast();
   const c = useBrainChat();
@@ -1380,7 +1379,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
     openReadOnly, exitReadOnly, onQueueRemove, onAnswer, sessions, activeSessionId, focusNonce,
     ensureAttached, loadOlder, hasMoreHistory, showThoughts,
     planDecision, implementPlan, dismissPlan, planSubmitting, renameOpen, closeRename, renameSession,
-    registerSurface,
+    registerSurface, openHistory,
   } = c;
 
   // Whichever plugin picker the controller currently has open, resolved through the surface's own
@@ -1412,7 +1411,6 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
     },
   } : null), [ask, t.brainChat.askWaiting]);
 
-  const [pickerOpen, setPickerOpen] = useState(false);
   // Whether the statusline row (model / context / tokens / cost) is shown is a per-device display choice —
   // it belongs to the screen you are on, not the user record. Collapsing it in-chat (a small chevron) is
   // the quick alternative to the statusline plugin's settings toggles.
@@ -1952,7 +1950,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
     };
   }, [variant, pinToNewest]);
 
-  const newChat = () => { setPickerOpen(false); void switchSession({ fresh: true }).catch(() => toast(t.brainChat.searchOpenError, 'error')); };
+  const newChat = () => { void switchSession({ fresh: true }).catch(() => toast(t.brainChat.searchOpenError, 'error')); };
 
   return (
     <div
@@ -1960,32 +1958,25 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
       className={`relative flex flex-col ${variant === 'full' ? 'chat-surface-full flex-1' : 'h-full min-h-0'}`}
       data-variant={variant}
     >
-      {/* Conversation bar. Compact (dock): title + picker dropdown + new chat. Full (/chat): a light
-          header — the shared history rail owns the session list, so here it is only the title, a mobile
-          drawer toggle and new chat. */}
+      {/* Conversation bar. Compact (dock): title + new chat. Full (/chat): a light header. Both open the
+          ONE conversation switcher the provider owns — the dock's own popover list is gone, because two
+          lists of the same conversations is what the switcher replaced. */}
       {variant === 'compact' ? (
         <div className="relative flex items-center gap-1 border-b border-border px-2 py-1.5">
-          {/* The conversation's name is the switcher here too, and it is a real `PopoverTrigger`: the
-              `aria-expanded` / `aria-controls` pair, Escape, the outside press and the focus that comes
-              back to this button on close are all Radix's, rather than four behaviours this bar would
-              otherwise have to write and keep in step. `Popover.Root` renders no element of its own, so
-              the trigger stays a plain flex item of the bar and the panel stays out of the flow. */}
-          <Popover open={pickerOpen} onOpenChange={setPickerOpen}>
-            <PopoverTrigger asChild>
-              {/* No `aria-label` here on purpose: the visible label IS the conversation title, and an
-                  override would replace it in the accessible name — hiding the one piece of information
-                  this control carries and leaving the spoken name unable to match what is on screen.
-                  The trigger's own `aria-expanded` / `aria-haspopup` already say that it discloses. */}
-              <button
-                type="button"
-                className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-foreground transition-colors hover:bg-accent"
-              >
-                <span className="truncate">{active?.title || t.brainChat.newChat}</span>
-                <ChevronDown size={14} className="shrink-0 text-muted-foreground" aria-hidden />
-              </button>
-            </PopoverTrigger>
-            <ChatHistoryRail variant="dropdown" onClose={() => setPickerOpen(false)} />
-          </Popover>
+          {/* The conversation's name is the switcher here too. `aria-label` is deliberately absent: the
+              visible label IS the conversation title, and an override would replace it in the accessible
+              name — hiding the one piece of information this control carries. `aria-haspopup="dialog"`
+              says what it opens, which is the shared modal rather than an anchored panel. */}
+          <button
+            type="button"
+            onClick={openHistory}
+            aria-haspopup="dialog"
+            data-testid="chat-dock-conversation-switcher"
+            className="flex min-w-0 flex-1 items-center gap-1.5 rounded-md px-2 py-1 text-left text-sm text-foreground transition-colors hover:bg-accent"
+          >
+            <span className="truncate">{active?.title || t.brainChat.newChat}</span>
+            <ChevronDown size={14} className="shrink-0 text-muted-foreground" aria-hidden />
+          </button>
           <ProjectPicker variant="compact" />
           <ModelPicker variant="compact" />
           <ReasoningButton onOpen={() => setReasoningOpen(true)} />
@@ -2007,21 +1998,20 @@ export function BrainChatSurface({ variant = 'compact', onOpenHistory, onOpenTel
               sticky bar. */}
           <div aria-hidden className="chat-page-toolbar__fade pointer-events-none absolute inset-x-0 top-full h-4 bg-gradient-to-b from-background to-transparent" />
           {/* The conversation's own name is the switcher: the one thing a reader looks for when they want
-              another conversation is the name of this one. It opens the shared history drawer (list,
-              search, rename, new) — no second list, no second control. */}
-          {onOpenHistory ? (
-            <button
-              type="button"
-              onClick={onOpenHistory}
-              aria-label={t.chat.openHistory}
-              title={t.chat.openHistory}
-              data-testid="chat-conversation-switcher"
-              className="chat-conversation-switcher flex h-8 min-w-0 max-w-[18rem] shrink items-center gap-1 rounded-md px-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-accent"
-            >
-              <span className="truncate">{active?.title || t.brainChat.newChat}</span>
-              <ChevronDown size={14} className="shrink-0 text-muted-foreground" aria-hidden />
-            </button>
-          ) : null}
+              another conversation is the name of this one. It opens the shared switcher (own list with
+              search, rename and schedules; the register for an administrator) — no second list. */}
+          <button
+            type="button"
+            onClick={openHistory}
+            aria-haspopup="dialog"
+            aria-label={t.chat.openHistory}
+            title={t.chat.openHistory}
+            data-testid="chat-conversation-switcher"
+            className="chat-conversation-switcher flex h-8 min-w-0 max-w-[18rem] shrink items-center gap-1 rounded-md px-2 text-left text-sm font-medium text-foreground transition-colors hover:bg-accent"
+          >
+            <span className="truncate">{active?.title || t.brainChat.newChat}</span>
+            <ChevronDown size={14} className="shrink-0 text-muted-foreground" aria-hidden />
+          </button>
           {/* On a phone the model picker folds into the ⋯ menu below; on desktop it stays inline. The
               work mode does not ride the toolbar any more: the composer's WorkModeSwitch is its single
               indicator and control on every surface. */}

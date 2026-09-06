@@ -412,6 +412,9 @@ export const en = {
   scheduledJobs: {
     branch: 'Scheduled jobs',
     toggle: 'Scheduled jobs of {title}',
+    /** The register's ROOT disclosure when the conversation delegated nothing: it uncovers the branch
+     *  above and nothing else, so it must not be named after sub-agents that do not exist. */
+    branchToggle: 'Schedules filed under {title}',
     open: 'Open the schedule: {name}',
     active: 'Active',
     paused: 'Paused',

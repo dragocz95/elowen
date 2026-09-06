@@ -2,14 +2,12 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, ChevronRight, Circle, Plus, Search, Trash2, X, MoreVertical, Pencil, Download, GitBranch, ArrowLeft, Library } from 'lucide-react';
+import { CheckCircle2, ChevronRight, Circle, Plus, Search, Trash2, MoreVertical, Pencil, Download, GitBranch, ArrowLeft } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useToast } from '../../components/ui/Toast';
 import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
-import { Dialog, DialogContent } from '../../components/ui/shadcn/dialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../components/ui/shadcn/collapsible';
-import { focusOverlaySurface, useReturnFocus } from '../../components/ui/overlayStack';
 import { elowenClient } from '../../lib/elowenClient';
 import { formatTaskTime } from '../../lib/format';
 import { groupJobLinks } from '../../lib/conversationTree';
@@ -30,7 +28,6 @@ import {
   SidebarMenuSubItem,
 } from '../../components/ui/shadcn/sidebar';
 import { Tooltip, TooltipAnchor, TooltipContent } from '../../components/ui/shadcn/tooltip';
-import { PopoverContent } from '../../components/ui/shadcn/popover';
 
 const ACTIVITY_STATES = ['idle', 'working', 'done', 'failed'] as const;
 type ActivityState = (typeof ACTIVITY_STATES)[number];
@@ -155,77 +152,26 @@ function Highlight({ text, query }: { text: string; query: string }) {
   );
 }
 
-/** The phone slide-over, on the shadcn `Dialog` (Radix): the dialog role, the focus trap, Escape and the
- *  layer order among several open overlays are Radix's, so this file no longer writes any of them.
+/** The caller's OWN conversations: the list, the fulltext search with its snippets, the activity and
+ *  unread marks, switch / new / rename / branch / export / delete, and the collapsed branch of recurring
+ *  jobs filed under each conversation.
  *
- *  It is the one overlay shape in the app that does NOT take `useOverlayIsolation`: that stack isolates
- *  the background by marking every OTHER child of <body> inert, which needs an overlay portalled to the
- *  body. This drawer renders inside the chat shell, so its own body-level ancestor is what would be
- *  marked — the drawer would disable itself. Radix's `aria-hidden` sweep walks the ancestor chain
- *  instead and reaches the same surfaces from in here. What the stack still owns and Radix cannot is
- *  where focus goes on the way out, because there is no `Dialog.Trigger` to hand it back to. */
-function HistoryDrawer({ label, onClose, children }: { label: string; onClose?: () => void; children: ReactNode }) {
-  const surfaceRef = useRef<HTMLDivElement>(null);
-  const { restoreFocus } = useReturnFocus();
-  return (
-    <Dialog open onOpenChange={(open) => { if (!open) onClose?.(); }}>
-      <div
-        className="overlay-layer-drawer fixed inset-0"
-        // Radix's modal content sets `pointer-events: none` on <body> and re-enables them on itself;
-        // this layer would inherit the block and the backdrop below would stop answering the click that
-        // dismisses the drawer. Opting back in is what `DialogOverlay` does for the same reason.
-        style={{ pointerEvents: 'auto' }}
-      >
-        <div className="absolute inset-0 bg-background/50" onClick={onClose} aria-hidden />
-        <DialogContent
-          ref={surfaceRef}
-          // A left rail, which none of the primitive's presentations describes; the geometry stays here.
-          // Only the geometry: `presentation={null}` drops the shape classes, but `.overlay-surface` is
-          // in the variant BASE and still paints the ground, the border colour and the raised shadow —
-          // so a `bg-card shadow-xl` written here was never what the reader saw, only a second answer to
-          // a question `primitives.css` had already settled.
-          presentation={null}
-          aria-label={label}
-          aria-describedby={undefined}
-          className="absolute inset-y-0 left-0 w-72 max-w-[85%] border-r border-border"
-          // The backdrop above already owns dismissal, and it is the only owner that knows a nested
-          // overlay's backdrop must not close its parent.
-          onInteractOutside={(event) => event.preventDefault()}
-          // Focus lands in the search input, which asks for it with `[data-autofocus]`; Radix would take
-          // the first control in the tab order (the dashboard link or "new chat") instead.
-          onOpenAutoFocus={(event) => {
-            event.preventDefault();
-            if (surfaceRef.current) focusOverlaySurface(surfaceRef.current);
-          }}
-          onCloseAutoFocus={(event) => {
-            event.preventDefault();
-            restoreFocus();
-          }}
-        >
-          {children}
-        </DialogContent>
-      </div>
-    </Dialog>
-  );
-}
-
-/** The single source for the conversation history: list + fulltext search + switch / new / rename /
- *  export / delete. Rendered three ways — the persistent left `rail` on /chat desktop, the mobile
- *  `drawer` slide-over, and the compact dock's `dropdown` popover — all off the one shared controller
- *  (BrainChatProvider) so there is never a second session list or a second mutation surface. Delete goes
- *  through the controller (it re-targets the active conversation); rename/export/search hit the client
- *  directly (pure metadata / read-only), mirroring Fáze 1's search split. */
-export function ChatHistoryRail({ variant, open = false, onClose, className, homeLink = false, onOpenRegister }: {
-  variant: 'rail' | 'drawer' | 'dropdown';
-  open?: boolean;
-  onClose?: () => void;
-  className?: string;
-  // On a phone /chat hides the global TopBar, so this drawer becomes the only way back to the app — it
-  // then shows a "← dashboard" link at its top. Off everywhere the TopBar still carries navigation.
+ *  It is a PANEL, not an overlay. The app has exactly one conversation switcher — the shared
+ *  `ConversationSwitcherModal` — and this is what it shows under "Just mine"; an administrator's "All"
+ *  is the register beside it. The persistent rail, the phone drawer and the dock's popover used to be
+ *  three presentations of this same list, which is the duplication that modal removes, so the surface,
+ *  its focus contract and its dismissal all belong to the modal now.
+ *
+ *  Everything here reads the ONE shared controller (BrainChatProvider), so there is never a second
+ *  session list or a second mutation surface. Delete goes through the controller (it re-targets the
+ *  active conversation); rename/branch/export/search hit the client directly (pure metadata /
+ *  read-only), mirroring Fáze 1's search split. */
+export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
+  /** Called once this panel has handed a conversation or a schedule on — the host modal closes on it. */
+  onNavigate?: () => void;
+  // On a phone /chat hides the global TopBar, so the switcher is also the way back to the rest of the
+  // app — it then carries a "← dashboard" link. Off where the TopBar still holds the navigation.
   homeLink?: boolean;
-  // The Chat page passes this to surface the full conversation register (channels + task agents, admin
-  // oversight, exports) as a modal; this list itself stays the caller's own conversations.
-  onOpenRegister?: () => void;
 }) {
   const { t, locale } = useTranslation();
   const { toast } = useToast();
@@ -252,7 +198,6 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
   const deleteTargetRef = useRef<typeof deleteTarget>(null);
   const deletePendingRef = useRef(false);
   const deleteOpRef = useRef(0);
-  const dropdownRef = useRef<HTMLDivElement>(null);
   const [renameValue, setRenameValue] = useState('');
 
   // Debounced conversation search: ≥2 chars queries the daemon; anything shorter restores the list.
@@ -268,8 +213,9 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
     return () => { stale = true; clearTimeout(timer); };
   }, [search]);
 
-  // A drawer/dropdown dismisses itself after an action; the persistent rail stays put.
-  const dismiss = () => { if (variant !== 'rail') onClose?.(); };
+  // Opening something hands the conversation to the chat surface behind the switcher, so the switcher
+  // gets out of the way rather than covering what was just loaded.
+  const dismiss = () => onNavigate?.();
 
   const openSession = (opts: { session?: string; fresh?: boolean }) => {
     setSearch('');
@@ -375,7 +321,7 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
   ];
 
   const q = search.trim();
-  const listScroll = variant === 'dropdown' ? 'flex flex-col' : 'flex min-h-0 flex-1 flex-col overflow-y-auto';
+  const listScroll = 'flex min-h-0 flex-1 flex-col overflow-y-auto';
 
   // The recurring jobs organized under THIS caller's conversations. The endpoint already bounds `mine` by
   // the personal session list; the render below still only asks the map for sessions that list holds, so
@@ -454,38 +400,26 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
       {homeLink ? (
         <Link
           href="/dash"
-          onClick={onClose}
+          onClick={dismiss}
           className="flex items-center gap-2 border-b border-border px-2 py-2 text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
         >
           <ArrowLeft size={16} aria-hidden />
           <span className="truncate">{t.nav.dashboard}</span>
         </Link>
       ) : null}
-      {variant !== 'dropdown' ? (
-        <div className="flex items-center gap-1 border-b border-border px-2 py-1.5">
-          <span className="min-w-0 flex-1 truncate text-sm font-medium text-foreground">{t.chat.historyTitle}</span>
-          <button
-            type="button"
-            onClick={() => openSession({ fresh: true })}
-            aria-label={t.brainChat.newChat}
-            title={t.brainChat.newChat}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-          >
-            <Plus size={16} aria-hidden />
-          </button>
-          {variant === 'drawer' ? (
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label={t.advisor.close}
-              title={t.advisor.close}
-              className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-            >
-              <X size={16} aria-hidden />
-            </button>
-          ) : null}
-        </div>
-      ) : null}
+      {/* The host modal owns the title and the close control; what belongs to the LIST is starting a new
+          conversation, which is the one action here that is not about an existing row. */}
+      <div className="flex items-center justify-end gap-1 border-b border-border px-2 py-1.5">
+        <button
+          type="button"
+          onClick={() => openSession({ fresh: true })}
+          aria-label={t.brainChat.newChat}
+          title={t.brainChat.newChat}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+        >
+          <Plus size={16} aria-hidden />
+        </button>
+      </div>
 
       {/* Fulltext search across the caller's conversations; a live query swaps the list for hits. */}
       <div className="m-1 flex items-center gap-1.5 rounded-md border border-border bg-background px-2">
@@ -495,11 +429,10 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
           onChange={(e) => setSearch(e.target.value)}
           placeholder={t.brainChat.searchPlaceholder}
           aria-label={t.brainChat.searchPlaceholder}
-          // One owner for both overlay variants. Each is a Radix surface whose focus policy runs after
-          // mount and anchors on the surface itself unless a control asks for the focus by name — so it
-          // asks, and `onOpenAutoFocus` on either surface honours it. A bare `autoFocus` here would be
-          // overruled by that policy a tick later, which is why neither variant uses one.
-          data-autofocus={variant === 'rail' ? undefined : ''}
+          // The host modal is a Radix surface whose focus policy runs after mount and anchors on the
+          // surface itself unless a control asks for the focus by name — so this one asks, and the
+          // modal's `onOpenAutoFocus` honours it. A bare `autoFocus` would be overruled a tick later.
+          data-autofocus=""
           className="h-8 min-h-0 border-0 bg-transparent px-0 py-1.5 shadow-none placeholder:text-muted-foreground focus-visible:ring-0"
         />
       </div>
@@ -678,22 +611,9 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
         {/* A failed read is said out loud, once, under the list. A cron plugin that is absent, disabled or
             not granted answers `unavailable` and shows nothing at all — but a read that FAILED must not
             be presented as "no conversation has a schedule". */}
-        {jobsFailed ? <p className="px-2 py-1 text-tiny text-muted-foreground">{t.scheduledJobs.error}</p> : null}
+        {jobsFailed ? <p role="status" className="px-2 py-1 text-tiny text-muted-foreground">{t.scheduledJobs.error}</p> : null}
       </div>
 
-      {onOpenRegister ? (
-        <button
-          type="button"
-          onClick={() => { dismiss(); onOpenRegister(); }}
-          className="flex shrink-0 items-center gap-2 border-t border-border px-2 py-2 text-left text-sm text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        >
-          <Library size={15} aria-hidden />
-          <span className="flex min-w-0 flex-col">
-            <span className="truncate">{t.chat.openRegister}</span>
-            <span className="truncate text-tiny text-muted-foreground">{t.chat.registerHint}</span>
-          </span>
-        </button>
-      ) : null}
       <ConfirmDialog
         open={deleteTarget !== null}
         title={t.brainChat.deleteChatConfirmTitle}
@@ -706,35 +626,5 @@ export function ChatHistoryRail({ variant, open = false, onClose, className, hom
     </div>
   );
 
-  if (variant === 'dropdown') {
-    // The dock's picker is a real `Popover`, so Escape, an outside press, the trigger's `aria-expanded`
-    // and handing focus back to that trigger on close are all the primitive's. The Root and the Trigger
-    // are the dock's (BrainChatSurface): the conversation title IS the trigger, and Radix cannot anchor
-    // to, or return focus to, a button it was never given. This side owns only the panel and where focus
-    // lands on the way IN — the search field, which asks for it with `[data-autofocus]`.
-    return (
-      <PopoverContent
-        ref={dropdownRef}
-        align="start"
-        sideOffset={6}
-        className="flex max-h-72 w-[min(22rem,calc(100vw-2rem))] flex-col overflow-y-auto p-1"
-        onOpenAutoFocus={(event) => {
-          event.preventDefault();
-          if (dropdownRef.current) focusOverlaySurface(dropdownRef.current);
-        }}
-      >
-        {body}
-      </PopoverContent>
-    );
-  }
-
-  if (variant === 'drawer') {
-    // Mounted only while open: a closed drawer keeps no focusable controls in the DOM (no tabbing into an
-    // off-screen panel, no autofocus popping the mobile keyboard on page load). Escape and the backdrop
-    // close it; focus lands in the search input on open.
-    if (!open) return null;
-    return <HistoryDrawer label={t.chat.openHistory} onClose={onClose}>{body}</HistoryDrawer>;
-  }
-
-  return <aside aria-label={t.chat.historyTitle} className={`min-h-0 flex-col border-r border-border ${className ?? ''}`}>{body}</aside>;
+  return body;
 }
