@@ -1211,17 +1211,32 @@ describe('terminal plugin — blocking budget and sleep polling', () => {
   it('refuses a leading `sleep N` in the foreground and names the blocking read instead', async () => {
     const marker = join(dir, 'sleep-marker');
     const res = await inSession('brain-sleep-block', 'Bash', { command: `sleep 5; touch ${JSON.stringify(marker)}` });
-    expect(res.content[0].text).toMatch(/refused a blocking `sleep 5`/);
+    expect(res.content[0].text).toMatch(/refused a leading sleep of 5s/);
     expect(res.content[0].text).toContain('ProcessOutput(id, block=true)');
     expect(existsSync(marker)).toBe(false); // refused BEFORE anything was spawned
+  }, 20_000);
+
+  it('judges the DURATION, not the spelling, so the honest form is not the only one refused', async () => {
+    // A rule that catches `sleep 5` and waves through `sleep 5m` teaches evasion instead of the habit it
+    // exists to teach, so every resolvable spelling of "wait two seconds or more" is refused alike.
+    for (const command of ['sleep 5m', 'sleep 2.0', 'sleep 1h', '/bin/sleep 30']) {
+      const res = await inSession('brain-sleep-units', 'Bash', { command });
+      expect(res.content[0].text, command).toMatch(/refused a leading sleep/);
+    }
   }, 20_000);
 
   it('leaves every sleep that is not a foreground poll alone', async () => {
     const session = 'brain-sleep-ok';
     // A short pause is pacing, not a poll.
     expect((await inSession(session, 'Bash', { command: 'sleep 1; echo paced' })).content[0].text).toContain('paced');
-    // A fractional sleep is pacing too — the reference allows it for the same reason.
-    expect((await inSession(session, 'Bash', { command: 'sleep 2.5; echo fractional' })).content[0].text).toContain('fractional');
+    // Under the threshold however it is spelled.
+    expect((await inSession(session, 'Bash', { command: 'sleep 1.5; echo fractional' })).content[0].text).toContain('fractional');
+    // An unexpanded variable is not a duration this can resolve, and refusing on a hunch is worse than
+    // missing one — the shell has not substituted anything yet.
+    expect((await inSession(session, 'Bash', { command: 'WAIT=1; sleep $WAIT; echo variable' })).content[0].text).toContain('variable');
+    // The readiness-wait shape the refusal message itself recommends has to be allowed.
+    expect((await inSession(session, 'Bash', { command: 'until [ -e /nonexistent ]; do sleep 1; done', timeout: 1_000 })).content[0].text)
+      .not.toMatch(/refused a leading sleep/);
     // Not the FIRST command: part of somebody's script, not a poll before it.
     expect((await inSession(session, 'Bash', { command: 'echo first; sleep 5' , timeout: 1_000 })).content[0].text).toContain('first');
     // Backgrounded: it blocks no turn, and it is a legitimate way to hold a process slot.
@@ -1236,6 +1251,39 @@ describe('terminal plugin — blocking budget and sleep polling', () => {
     // No approval was involved, so the note must not mention one.
     expect(res.content[0].text).not.toContain('never moved to the background');
     expect(processRegistry.listForSession('brain-budget-under')).toHaveLength(0);
+  }, 20_000);
+
+  it('never detaches a run whose kill is already in flight', async () => {
+    // The window this closes: a killed run keeps `exitCode === null` (that is what makes it read as
+    // `[killed]` rather than `[exit N]`), so it still looks RUNNING for the whole SIGKILL-to-settle
+    // window. A detach landing in that window — from the budget timer, or from a Ctrl+B pressed at the
+    // same moment — would reserve a background slot and report the command the user had just stopped as
+    // "moved to background". Driven through the control here because it is the same detachRun guard and
+    // does not cost a 30s budget to reach.
+    const session = 'brain-budget-killrace';
+    const control = reg.controls.get('terminal') as unknown as {
+      detachForeground: (i: { sessionId: string; principal: string }) => { detached: number };
+      killForeground: (i: { sessionId: string; principal: string }) => { killed: number };
+    };
+    const p = inSession(session, 'Bash', { command: idle(30), timeout: 45_000 });
+    await new Promise((r) => setTimeout(r, 400));
+    expect(control.killForeground({ sessionId: session, principal: 'elowen:1' })).toEqual({ killed: 1 });
+    expect(control.detachForeground({ sessionId: session, principal: 'elowen:1' })).toEqual({ detached: 0 });
+    const res = await p;
+    expect(res.content[0].text).toContain('[killed]');
+    expect(res.content[0].text).not.toContain('Moved to background');
+    expect(processRegistry.listForSession(session)).toHaveLength(0);
+  }, 30_000);
+
+  it('lets a fast command with a long timeout finish in the foreground and leaves nothing behind', async () => {
+    // The budget is armed here (45s > 30s) but must never fire: the run settles in well under a second,
+    // the timer is cleared, and the result is an ordinary foreground completion.
+    const session = 'brain-budget-fast';
+    const res = await inSession(session, 'Bash', { command: 'echo quick', timeout: 45_000 });
+    expect(res.content[0].text).toContain('quick');
+    expect(res.content[0].text).toContain('[exit 0]');
+    expect(res.content[0].text).not.toContain('Moved to background');
+    expect(processRegistry.listForSession(session)).toHaveLength(0);
   }, 20_000);
 
   it('says why an APPROVED over-budget command was killed rather than moved', async () => {

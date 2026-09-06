@@ -264,18 +264,28 @@ const isBlockingSelfRestart = (command) => allShellCommandWords(command).some((w
   return args.slice(restart + 1).some((unit) => unit === 'elowen-daemon' || unit === 'elowen-daemon.service');
 });
 
-/** The seconds of a leading `sleep N` that is a POLL rather than a pause, or null. Matches the reference's
- *  shape (BashTool.tsx:322-337): the FIRST command of the line, bare `sleep` plus one integer argument, at
- *  least MIN_BLOCKED_SLEEP_S. A fractional `sleep 0.5` is pacing and passes; a `sleep` further down the
- *  line (`build && sleep 5 && check`) is part of somebody's script and is left alone.
+/** GNU sleep's suffixes, in seconds. `sleep 5m` blocks a turn for five minutes, so the check has to
+ *  understand the argument rather than assume every wait is spelled in bare seconds. */
+const SLEEP_UNIT_SECONDS = { s: 1, m: 60, h: 3_600, d: 86_400 };
+
+/** The duration in seconds of a leading `sleep` that is a POLL rather than a pause, or null. Follows the
+ *  reference's shape (BashTool.tsx:322-337) — the FIRST command of the line, bare `sleep` plus one
+ *  argument — and then judges the DURATION: anything from MIN_BLOCKED_SLEEP_S upward is a poll, whatever
+ *  unit it is written in. The reference tests the spelling instead, which passes `sleep 5m` and `sleep
+ *  2.0` while refusing `sleep 2`; a rule that only catches the honest spelling teaches evasion.
+ *
+ *  A duration this cannot resolve (`sleep $WAIT`, `sleep "$@"`) is left alone: guessing at an unexpanded
+ *  variable would refuse commands on a hunch. So is a `sleep` further down the line
+ *  (`build && sleep 5 && check`) — that is part of somebody's script, not a wait before it.
  *
  *  Only foreground runs are checked — see the call site. A backgrounded sleep blocks nothing, and it is a
  *  legitimate way to hold a process slot; the cost this refuses is a turn spent waiting. */
 const blockedSleepSeconds = (command) => {
   const first = shellCommandWords(command)[0];
   if (!first || first.length !== 2 || executableName(first[0]) !== 'sleep') return null;
-  if (!/^\d+$/u.test(first[1])) return null;
-  const seconds = Number(first[1]);
+  const match = /^(\d+(?:\.\d+)?)([smhd])?$/u.exec(first[1]);
+  if (!match) return null;
+  const seconds = Number(match[1]) * (match[2] ? SLEEP_UNIT_SECONDS[match[2]] : 1);
   return seconds >= MIN_BLOCKED_SLEEP_S ? seconds : null;
 };
 
@@ -851,7 +861,12 @@ export function register(ctx) {
   // running, a direct-host launch on a platform where escaped descendants cannot be reaped, or the
   // session's background slots are full) — in which case the run simply stays in the foreground.
   const detachRun = (entry, reason) => {
-    if (entry.run.detached || !entry.run.running || !entry.run.canDetach) return false;
+    // `killed` is checked separately from `running`, and it is load-bearing. A killed run keeps
+    // `exitCode === null` on purpose (that is what makes it read as `[killed]` rather than `[exit N]`), so
+    // `running` stays TRUE for the whole SIGKILL-to-settle window — long enough for a budget timer firing
+    // in the same moment to reserve a slot and report a command the user had just stopped as "moved to
+    // background". killForeground already refuses an entry whose kill is in flight; so does this now.
+    if (entry.run.detached || entry.run.killed || !entry.run.running || !entry.run.canDetach) return false;
     const releaseSlot = reserveBackgroundSlot(entry.sessionId, entry.accountUserId);
     if (!releaseSlot) return false;
     entry.releaseBackgroundSlot = releaseSlot;
@@ -910,7 +925,7 @@ export function register(ctx) {
       'Prefer the dedicated file tools (Read, Edit, Write, Search, ListDir) over cat, head, tail, sed, awk, echo, grep or rg. A shell read does NOT satisfy Edit/Write\'s read-before-write check, so reading a file with cat just forces a second Read before you can edit it — Read it directly. Reach for the shell when the task genuinely needs it: builds, tests, git, service inspection, process management.',
       'Quote paths that contain spaces, and create a file\'s parent directory (mkdir -p) before writing into a new location — Write refuses a missing directory.',
       `\`timeout\` is milliseconds, defaults to ${DEFAULT_TIMEOUT_MS}, and may not exceed ${MAX_TIMEOUT_MS}. The larger Elowen ceiling supports slow finite local builds without changing units.`,
-      `A foreground command whose \`timeout\` exceeds ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} is MOVED to the background at ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} instead of being killed at that deadline: the result then reports a process id, and ProcessOutput(id, block=true) waits for the rest. A command the user approved at a permission prompt is never moved on its own.`,
+      `A foreground command whose \`timeout\` exceeds ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} is normally MOVED to the background at ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} instead of being killed at that deadline: the result then reports a process id, and ProcessOutput(id, block=true) waits for the rest. It is not moved when the user approved it at a permission prompt, or when this conversation's background slots are full — then the deadline still applies and the result says so.`,
       `Do not start a command with \`sleep N\` (N >= ${MIN_BLOCKED_SLEEP_S}) to wait for something — that is refused. Start the work with run_in_background=true and wait for it with ProcessOutput(id, block=true).`,
       'Pass run_in_background=true for detached work. Manage detached work with ListProcesses, ProcessOutput, and KillProcess. backgroundMode="service" marks a long-lived server or watcher.',
       'description is the live display context for the command. dangerouslyDisableSandbox=false is a no-op; true is always refused before any process is spawned.',
@@ -922,7 +937,7 @@ export function register(ctx) {
       timeout: Type.Optional(Type.Number({
         minimum: MIN_TIMEOUT_MS,
         maximum: MAX_TIMEOUT_MS,
-        description: `Optional timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}, max ${MAX_TIMEOUT_MS})`,
+        description: `Optional timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}, max ${MAX_TIMEOUT_MS}). Above ${AUTO_BACKGROUND_BUDGET_MS} it is not a kill deadline: the run is normally moved to the background at ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} and then continues with no time limit.`,
       })),
       description: Type.Optional(Type.String({ description: 'Clear, concise active-voice description of what the command does. Use 5-10 words for simple commands; add enough context for piped commands or obscure flags. Describe the action directly without labels such as "complex" or "risky".' })),
       run_in_background: Type.Optional(Type.Boolean({ description: 'Run the command in the background' })),
@@ -949,9 +964,11 @@ export function register(ctx) {
         // process tools can wait for properly. Background runs are untouched — see blockedSleepSeconds.
         const sleepSeconds = background ? null : blockedSleepSeconds(p.command);
         if (sleepSeconds !== null) {
-          return ok(`Error: refused a blocking \`sleep ${sleepSeconds}\` at the start of this command — a foreground sleep spends the turn waiting. `
-            + 'Start the work with run_in_background=true and wait for it with ProcessOutput(id, block=true), which returns the moment it finishes, '
-            + `or run the check command on its own. A deliberate pause shorter than ${MIN_BLOCKED_SLEEP_S}s is still allowed.`);
+          return ok(`Error: refused a leading sleep of ${durationLabel(sleepSeconds * 1000)} — a foreground sleep spends the turn waiting. `
+            + 'To wait for work you started: run it with run_in_background=true and read it with ProcessOutput(id, block=true), which returns the moment it exits. '
+            + 'To wait for something to become READY (a server accepting connections, a file appearing), put the retry inside the command — '
+            + '`until curl -sf http://127.0.0.1:3000 >/dev/null; do sleep 1; done` is fine, because the sleep is not what the command starts with. '
+            + `A deliberate pause shorter than ${MIN_BLOCKED_SLEEP_S}s is also still allowed.`);
         }
         const cwd = guardCwd(p.cwd);
         const sessionCwdKey = cwdStateKey();
@@ -1010,8 +1027,15 @@ export function register(ctx) {
           //
           // The timer only detaches: that resolves the race below and the detached branch redraws the
           // process card, exactly as it already does for Ctrl+B.
+          //
+          // The callback is the one place in this file that reaches the process registry from OUTSIDE the
+          // tool call's try/catch, and an uncaught throw in a timer takes the daemon down. Failing to
+          // detach costs the run nothing worse than the deadline it already had.
           const budgetTimer = foregroundEntry && !approvedByAsk && timeoutMs > AUTO_BACKGROUND_BUDGET_MS
-            ? setTimeout(() => { detachRun(foregroundEntry, 'budget'); }, AUTO_BACKGROUND_BUDGET_MS)
+            ? setTimeout(() => {
+              try { detachRun(foregroundEntry, 'budget'); }
+              catch (error) { ctx.logger.warn(`terminal: auto-background failed for ${id}: ${error instanceof Error ? error.message : String(error)}`); }
+            }, AUTO_BACKGROUND_BUDGET_MS)
             : null;
           budgetTimer?.unref?.();
           try {
