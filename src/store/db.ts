@@ -104,6 +104,7 @@ function migrate(db: Db): void {
   makeProjectIdsMonotonic(db);
   dropBrainTerminals(db);
   backfillClearedToolResultRows(db);
+  convergeLegacyClearedToolResults(db);
 }
 
 /** Run `apply` in an IMMEDIATE transaction, retrying while another process holds the write lock.
@@ -1098,6 +1099,118 @@ function backfillClearedToolResultRows(db: Db): void {
     }
     if (fromRows + fromFiles > 0) {
       console.warn(`database migration: converged ${fromRows + fromFiles} cleared tool-result row(s) on the placeholder already sent (${fromRows} from latch rows, ${fromFiles} from spill files)`);
+    }
+  });
+}
+
+/** The key a cleared tool result carries in its own `details`, FROZEN here for the same reason the v1
+ *  placeholder wording is: a migration must write the shape its own format version promised, and a later
+ *  rename in the runtime must not silently reinterpret rows this pass already converged. */
+const V1_CLEARED_DETAIL = 'clearedToolResult';
+
+/** How far past a legacy latch row's own write time an occurrence may be stamped and still be the
+ *  occurrence that row was written for. A spill row is written within seconds of the clearing, while a
+ *  REUSED tool call id is minted after a compaction that itself happened later — well past this window. */
+const V1_LEGACY_ROW_SLACK_MS = 120_000;
+
+/** A row's SQLite UTC 'YYYY-MM-DD HH:MM:SS' as epoch ms; 0 when missing or unparsable, which makes the
+ *  heuristic below match only timestamp-less occurrences — the conservative reading. */
+function v1SqliteUtcMs(value: string | undefined): number {
+  if (!value) return 0;
+  const ms = Date.parse(value.includes('T') || value.includes('Z') ? value : `${value.replace(' ', 'T')}Z`);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+/** v19 — retire the last two things only the runtime latch could do.
+ *
+ *  Clearing now writes the placeholder and a structural marker into the transcript row at the moment it
+ *  decides, so nothing reads `brain_tool_result_spills` any more. Two cohorts of rows would otherwise be
+ *  left behind by that removal:
+ *
+ *  · Latch rows written BEFORE occurrence keying (`occurred_at = 0`). Only the runtime's created-at
+ *    heuristic could ever say which occurrence they meant, and that heuristic is gone, so this pass makes
+ *    the same judgement once and writes the result into the row: among the occurrences of that tool call
+ *    id stamped no later than the latch row itself (plus slack), the byte-exact one wins and otherwise the
+ *    first. The spill file must exist, because the placeholder tells the model to read it.
+ *  · Rows the runtime already converged, which carry the placeholder text but no marker. Without one, a
+ *    build that recognises a cleared result only by its size would spill a multi-byte preview placeholder
+ *    a second time and nest one inside the other. Stamping the marker is what closes that.
+ *
+ *  The table itself is deliberately NOT dropped here. The previous build restores its latch from these
+ *  rows, so dropping them while a rollback is still possible would make that build re-send every cleared
+ *  result whole. A later migration drops it once this one has soaked. Note that `schema.sql` recreates the
+ *  table on every open, so after the drop it comes back empty, forever, and nothing reads it.
+ *
+ *  Idempotent: a row that already says what this pass would write re-serializes to the same bytes and is
+ *  skipped, and a database with no such table is a no-op. */
+function convergeLegacyClearedToolResults(db: Db): void {
+  runOnce(db, 19, () => {
+    const table = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'brain_tool_result_spills'").get();
+    if (!table) return;
+    const latches = db.prepare(
+      `SELECT session_id, tool_call_id, occurred_at, mode, bytes, preview, path, placeholder, created_at
+         FROM brain_tool_result_spills ORDER BY rowid ASC`
+    ).all() as {
+      session_id: string; tool_call_id: string; occurred_at: number; mode: string; bytes: number;
+      preview: string | null; path: string; placeholder: string | null; created_at: string;
+    }[];
+    if (latches.length === 0) return;
+    const bySession = new Map<string, typeof latches>();
+    for (const row of latches) {
+      const list = bySession.get(row.session_id);
+      if (list) list.push(row);
+      else bySession.set(row.session_id, [row]);
+    }
+    const update = db.prepare('UPDATE brain_messages SET content = ? WHERE session_id = ? AND id = ?');
+    let converged = 0;
+    let marked = 0;
+    /** Write the placeholder and the marker into one row, unless it already says exactly that. */
+    const write = (sessionId: string, row: ClearableRow, placeholder: string, latch: typeof latches[number]): boolean => {
+      const details = row.message.details;
+      const base = details && typeof details === 'object' && !Array.isArray(details) ? details as Record<string, unknown> : {};
+      const serialized = JSON.stringify({
+        ...row.message,
+        content: [{ type: 'text', text: placeholder }],
+        details: { ...base, [V1_CLEARED_DETAIL]: { mode: latch.mode === 'preview' ? 'preview' : 'time', bytes: latch.bytes, path: latch.path } },
+      });
+      if (serialized === row.content) return false;
+      update.run(serialized, sessionId, row.id);
+      row.content = serialized;
+      row.message = JSON.parse(serialized) as Record<string, unknown>;
+      return true;
+    };
+    for (const [sessionId, rows] of bySession) {
+      const parsed = toolResultRowsOf(db, sessionId);
+      if (parsed.length === 0) continue;
+      const claimed = new Set<string>();
+      // Exact rows first, so a legacy row can never claim an occurrence an exact one owns. The file has
+      // to be there in both branches: the placeholder's whole job is to tell the model where to read it.
+      for (const latch of rows) {
+        if (latch.occurred_at === 0 || latch.placeholder === null) continue;
+        if (!existsSync(latch.path)) continue;
+        const target = parsed.find((row) => row.toolCallId === latch.tool_call_id && row.occurredAt === latch.occurred_at);
+        if (!target || claimed.has(target.id)) continue;
+        claimed.add(target.id);
+        if (write(sessionId, target, latch.placeholder, latch)) marked += 1;
+      }
+      for (const latch of rows) {
+        if (latch.occurred_at !== 0) continue;
+        if (!existsSync(latch.path)) continue;
+        const writtenAt = v1SqliteUtcMs(latch.created_at);
+        const candidates = parsed.filter((row) => row.toolCallId === latch.tool_call_id
+          && !claimed.has(row.id)
+          && row.occurredAt <= writtenAt + V1_LEGACY_ROW_SLACK_MS);
+        const target = candidates.find((row) => v1ToolResultText(row.message.content).length === latch.bytes)
+          ?? candidates[0];
+        if (!target) continue;
+        claimed.add(target.id);
+        const preview = latch.mode === 'preview' ? latch.preview ?? '' : undefined;
+        const placeholder = latch.placeholder ?? v1ClearedPlaceholder(latch.path, latch.bytes, preview);
+        if (write(sessionId, target, placeholder, latch)) converged += 1;
+      }
+    }
+    if (converged + marked > 0) {
+      console.warn(`database migration: converged ${converged} legacy cleared tool-result row(s) and marked ${marked} already-cleared row(s)`);
     }
   });
 }

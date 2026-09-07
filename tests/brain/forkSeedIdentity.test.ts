@@ -12,6 +12,8 @@ import {
   restoreAnthropicHostedReplay,
   verifyAnthropicHostedReplay,
 } from '../../src/brain/session/anthropicHostedToolReplay.js';
+import { clearColdToolResults } from '../../src/brain/session/coldToolResultClearing.js';
+import { providerPayloadHarness } from '../helpers/providerPayloads.js';
 
 /** A fork child must start from what its parent's next request WOULD send, byte for byte. That is a
  *  stronger claim than "the same rows": between the stored rows and the wire sit the transforms this
@@ -103,11 +105,9 @@ describe('the transcript a fork inherits', () => {
       role: 'toolResult', toolCallId: 'call-bash', toolName: 'Bash', isError: false,
       timestamp: 2_200, content: [{ type: 'text', text: OUTPUT }],
     });
-    store.recordClearedToolResult('s-parent', {
-      toolCallId: 'call-bash', occurredAt: 2_200, mode: 'preview', bytes: 50_007,
-      preview: OUTPUT.slice(0, 20), path: '/data/tool-results/s-parent/call-bash.v1-preview-50007.txt',
-      placeholder: PLACEHOLDER,
-    });
+    store.clearToolResultRows('s-parent', [{
+      toolCallId: 'call-bash', occurredAt: 2_200, placeholder: PLACEHOLDER,
+    }]);
   });
 
   const seed = (): ForkMessage[] => forkSeedMessages(storedContextMessages(store, 's-parent') as ForkMessage[], 9_000);
@@ -169,6 +169,61 @@ describe('the transcript a fork inherits', () => {
     });
     expect(seed().some((message) => message.toolCallId === 'call-gone')).toBe(false);
     expect(store.getMessages('s-parent').some((r) => r.content.includes('call-gone'))).toBe(true);
+  });
+});
+
+/** The gap the previous version of this file left open: it compared the seed with a REHYDRATION, which is
+ *  a second reading of the same rows and therefore agrees with them by construction. What a fork actually
+ *  promises is that the child starts from what the PARENT'S NEXT REQUEST would send — and the two can only
+ *  be equal if every transform that shortens the parent's context has already written itself into the
+ *  rows.
+ *
+ *  RED BEFORE THE CHANGE: clearing ran on the egress copy, so the parent's next request carried a
+ *  placeholder that the seed knew nothing about until a separate row rewrite happened to have landed. */
+describe('a fork seeded after a cold turn start', () => {
+  const BIG = 'x'.repeat(9_000);
+
+  const seedRow = (store: BrainStore, id: string, message: unknown): void => {
+    store.appendMessage({ id, sessionId: 's-live', parentId: null, role: (message as { role: string }).role, content: message });
+  };
+
+  it('is exactly what the parent’s next request sends', async () => {
+    const store = new BrainStore(openDb(':memory:'));
+    store.createSession({ id: 's-live', userId: 7, model: 'anthropic/big' });
+    const messages = [
+      { role: 'user', content: [{ type: 'text', text: 'one' }], timestamp: 1_000 },
+      { role: 'assistant', timestamp: 1_050, content: [{ type: 'toolCall', id: 'call-a', name: 'Bash', arguments: {} }] },
+      { role: 'toolResult', toolCallId: 'call-a', toolName: 'Bash', isError: false, timestamp: 1_100, details: {}, content: [{ type: 'text', text: BIG }] },
+      { role: 'user', content: [{ type: 'text', text: 'two' }], timestamp: 2_000 },
+    ];
+    messages.forEach((message, index) => seedRow(store, `m${index}`, message));
+
+    const harness = await providerPayloadHarness();
+    for (const message of messages) harness.session.messages.push(message as never);
+
+    await clearColdToolResults(
+      {
+        store,
+        sessions: {
+          get: () => ({ session: { isStreaming: false, getSteeringMessages: () => [], getFollowUpMessages: () => [] } }),
+          isParentAborting: () => false, hasPendingAbort: () => false, hasActiveChildren: () => false,
+        },
+        elicitation: { pendingForSession: () => null },
+      },
+      { session: harness.session as never, sessionId: 's-live', lastRequestCacheTtlMs: 60 * 60_000 },
+      { spillDir: '/tmp/fork-seed-spill', now: () => Date.now() + 2 * 60 * 60_000, writeSpill: async () => {} },
+    );
+
+    const payload = (await harness.prompt('three'))[0]!;
+    const seeded = forkSeedMessages(storedContextMessages(store, 's-live') as ForkMessage[], 9_000);
+    // The harness flattens each message's blocks into one text block, so comparing that text compares the
+    // bytes the provider would receive. The parent's request carries the new prompt on top of the seed.
+    const flatten = (content: unknown): string => (Array.isArray(content) ? content : [])
+      .map((block) => (block as { text?: string }).text ?? '').join('');
+    expect(seeded.map((message) => flatten(message.content)))
+      .toEqual(payload.messages.slice(0, seeded.length).map((message) => flatten(message.content)));
+    expect(JSON.stringify(seeded)).not.toContain(BIG);
+    expect(JSON.stringify(seeded)).toContain('Older tool result cleared');
   });
 });
 

@@ -24,10 +24,6 @@ function seedConversation(store: BrainStore, sessionId: string): void {
   store.appendPendingMessage({ id: `${sessionId}-p1`, sessionId, role: 'assistant', content: { role: 'assistant', content: 'half a sentence' } });
   store.appendSessionEvent(sessionId, 'model', 'gpt-5.5');
   store.upsertCard(sessionId, { id: 'todo', title: 'Plan', items: [{ text: 'ship it', status: 'pending' }], pinned: true });
-  store.upsertToolResultSpill(sessionId, {
-    toolCallId: 'call-1', occurredAt: 1, mode: 'preview', bytes: 12, preview: 'output',
-    path: join(toolResultSpillDir(process.env, store.spillNamespace(sessionId)), 'call-1.txt'), placeholder: '[cleared]',
-  });
   seedPlan(sessionId, '1. read the code\n2. change it');
 }
 
@@ -56,7 +52,6 @@ describe('BrainStore.clearSessionHistory', () => {
     expect(store.pendingMessages(SESSION)).toEqual([]);
     expect(store.getSessionEvents(SESSION)).toEqual([]);
     expect(store.getCards(SESSION)).toEqual([]);
-    expect(store.toolResultSpills(SESSION)).toEqual([]);
     expect(store.lastMessageAt(SESSION)).toBeUndefined();
     expect(rehydrate(store, SESSION, home).buildSessionContext().messages).toEqual([]);
   });
@@ -102,7 +97,6 @@ describe('BrainStore.clearSessionHistory', () => {
     expect(store.pendingMessages(OTHER)).toHaveLength(1);
     expect(store.getSessionEvents(OTHER)).toHaveLength(1);
     expect(store.getCards(OTHER)).toHaveLength(1);
-    expect(store.toolResultSpills(OTHER)).toHaveLength(1);
     expect(readPlan(OTHER)).toContain('read the code');
   });
 

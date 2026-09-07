@@ -27,6 +27,7 @@ import { hasActiveNativeCompactionCheck } from '../session/compactionCheckCoordi
 import { queuedWithPending } from '../session/queueMirror.js';
 import { cacheTtlMs } from '../session/cacheTiming.js';
 import { maybeColdStartCompaction, type ColdStartCompactionDeps } from '../session/coldStartCompaction.js';
+import { clearColdToolResults, type ColdToolResultClearingDeps } from '../session/coldToolResultClearing.js';
 import { openTurn, settleTurn, type TurnActivityFeed, type TurnOriginPin } from '../session/turnSettled.js';
 import type { SubagentCompletion, WorkflowCompletion } from '../events.js';
 import { randomUUID } from 'node:crypto';
@@ -584,9 +585,10 @@ export class BrainTurnRunner {
     live.replay.publish({ type: 'queue', items: queuedWithPending(live) });
   }
 
-  /** The shared cold-start compaction trigger, given the registries it consults — see
-   *  {@link maybeColdStartCompaction}. The channel service calls the same function with its own. */
-  private coldCompactionDeps(): ColdStartCompactionDeps {
+  /** The registries and store reads both cold-turn-start triggers consult — see
+   *  {@link maybeColdStartCompaction} and {@link clearColdToolResults}. The channel service builds the
+   *  same shape from its own dependencies. */
+  private coldCompactionDeps(): ColdStartCompactionDeps & ColdToolResultClearingDeps {
     return { store: this.d.store, sessions: this.d.sessions, elicitation: this.d.elicitation };
   }
 
@@ -774,6 +776,10 @@ export class BrainTurnRunner {
       // First turn after the prompt cache expired: shrink the context BEFORE the provider re-caches it
       // (see maybeColdStartCompaction). Runs before admission so the user's new message is never part
       // of what gets summarized — it follows the compacted context instead.
+      //
+      // Clearing first, on purpose: it is lossless (the full output stays on disk, named by the
+      // placeholder) and it shrinks what the summarization then has to read and pay for.
+      await clearColdToolResults(this.coldCompactionDeps(), live);
       await maybeColdStartCompaction(this.coldCompactionDeps(), live);
 
       // Lock acquired means the compaction that was blocking this turn has released: the message is running

@@ -370,12 +370,12 @@ tool result larger than a per-tool threshold (`maxResultSizeChars`, defaulting v
 `DEFAULT_MAX_RESULT_SIZE_CHARS`) to disk, replacing it in the model-facing content with a wrapped preview +
 file path (`buildLargeToolResultMessage`) the model can re-read with the Read tool.
 
-**Elowen.** `toolResultClearing.ts` (`src/brain/session/toolResultClearing.ts:12-97`) implements essentially
-the same mechanism — spill-to-disk-with-preview above `SPILL_MAX_RESULT_BYTES` (`= 50_000`, comment at line
-53: "50 000 is Claude Code's DEFAULT_MAX_RESULT_SIZE_CHARS") plus `SPILL_PREVIEW_CHARS` (`= 2000`, "matches
-Claude Code's preview budget," line 69) — and *additionally* a time-based clearing trigger for old,
-already-seen results once the prompt cache has gone cold anyway (lines 12-41), which Claude Code's version
-doesn't describe.
+**Elowen.** `toolResultClearing.ts` implements essentially the same mechanism — spill-to-disk-with-preview
+above `SPILL_MAX_RESULT_BYTES` (`= 50_000`, "Claude Code's DEFAULT_MAX_RESULT_SIZE_CHARS") plus
+`SPILL_PREVIEW_CHARS` (`= 2000`, "matches Claude Code's preview budget"), decided in `afterToolCall` so the
+placeholder reaches the stored transcript without any rewrite — and *additionally* a time-based clearing
+trigger for old, already-seen results once the prompt cache has gone cold anyway
+(`coldToolResultClearing.ts`), which Claude Code's version doesn't describe.
 
 **Verdict: SKIP — already adopted, and extended.** This finding exists mainly to confirm the port was done
 correctly (thresholds and preview size match) and to note Elowen went one step further with the idle/cache-

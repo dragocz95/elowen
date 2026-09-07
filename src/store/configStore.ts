@@ -395,7 +395,7 @@ const BRAIN_LIMIT_BOUNDS: Record<keyof BrainLimits, [min: number, max: number]> 
   toolResultInlineBytes: band('toolResultInlineBytes'),
   // Plain ±50% rule (100 000–300 000). The floor is what matters: it stays above the per-result ceiling
   // (90 000), so a group can always hold one full-size inline result and the aggregate layer can never be
-  // tuned into spilling every result it sees. selectBudgetedToolResults re-floors it at the value in force.
+  // tuned into spilling every result it sees. `groupBudgetBytes` re-floors it at the value in force.
   toolResultGroupBudgetBytes: band('toolResultGroupBudgetBytes'),
   // Exempt from the ±50% rule: 0 must NOT be reachable — it would trip the breaker before a session ever
   // attempted a compaction, i.e. silently mean "never compact automatically", which is the one outcome
