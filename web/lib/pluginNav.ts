@@ -45,6 +45,7 @@ export function pluginNavEntries(listing: PluginUiListing[]): NavEntry[] {
       // the first page's, which then reads as if that page stood over its siblings.
       label: p.label ?? first.label,
       icon: pluginLucideIcon(first.icon),
+      ...(p.badge ? { badge: p.badge } : {}),
       activeRoutes: [base],
       subItems: pages.length > 1
         ? pages.map((page, i) => ({

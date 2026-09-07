@@ -3,9 +3,19 @@
 All notable changes to Elowen are documented here. The format loosely follows
 [Keep a Changelog](https://keepachangelog.com/); the daemon version is the root `package.json` version.
 
+This file is the full technical log. The notes users read in the app are the curated Markdown entries in
+`plugins/changelog/entries/`, which ship with the build — see "Writing a changelog entry" in
+`docs/PLUGIN_DEV.md`.
+
 ## [Unreleased]
 
 ### Added
+
+- Added a bundled release-notes page. Elowen now ships its own changelog as Markdown inside the
+  `changelog` plugin, so an update carries the new notes to every instance, and each account sees an
+  unread count on the navigation entry until it opens the page.
+- Plugins can put a count on their own entry in the main navigation with `ctx.registerNavBadge`, resolved
+  server-side in the `/plugins/ui` listing the menu is already built from.
 
 - Added a core-owned published-sites environment readiness and provisioning control. It reports a detailed
   fixed dependency checklist and lets an authenticated Sites admin install only the audited rootless Podman

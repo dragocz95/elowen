@@ -576,6 +576,14 @@ The host consumes the initial seed without writing it, serializes saves, collaps
 
 The host serves the bundle and stylesheet at content-hashed same-origin URLs and lists available plugin UI through `GET /plugins/ui`. Browser pages mount under `/p/<plugin>/...`. A plugin with `web.adminOnly` has both navigation and assets hidden from non-admin accounts.
 
+A plugin whose world should wear a count in the main navigation registers a probe:
+
+```javascript
+ctx.registerNavBadge(({ userId, isAdmin }) => unreadFor(userId) || null);
+```
+
+The probe is synchronous and runs on every `/plugins/ui` request, so it must answer from state the plugin already holds and must never reach the network. Return `null` or `0` for no badge; the field is then absent from the listing entirely, because a row permanently wearing a `0` is noise. A probe that throws loses its own badge and is warned, leaving the rest of the listing untouched. Feature-detect with `typeof ctx.registerNavBadge === 'function'` when the plugin must also load on an older daemon.
+
 The host web application is prebuilt. If the plugin needs Tailwind utility classes not already present in the host CSS, ship the plugin stylesheet. The generated sheet contains utilities inside `@layer utilities`, has no preflight, and uses host design tokens. Do not rely on a development-only host build to generate plugin classes.
 
 ## Platform adapters
@@ -630,6 +638,37 @@ Keep these version axes separate:
 - A plugin's manifest `version` is that plugin's own release version. Bump it whenever its installed bytes change, so reload cache-busting and marketplace update detection see the new build. It does not need to match the daemon version.
 - `apiVersion` is the plugin API breaking-change axis and is currently `"1"`; `requiresCore` is a minimum daemon version for additive host APIs. `requiresSharedApi` is the exact shared-helper contract, currently `3`.
 - `web.requiresApiVersion` is the host browser-runtime compatibility ceiling, currently `12`; it must not be used to signal removals.
+
+### Writing a changelog entry
+
+Release notes ship WITH the product. `CHANGELOG.md` stays the repository's full technical log; the notes users read live in the bundled `changelog` plugin, one Markdown file per release under `plugins/changelog/entries/<version>.md`. `npm run build` copies `plugins/` into `dist/`, so the entry an instance shows is the one that build shipped and an update brings the new notes with it. Nothing is authored per instance.
+
+Add a file named after the version, with front matter and a body:
+
+```markdown
+---
+version: 0.28.34
+date: 2026-09-14
+title: What this release gives the reader
+tags: [Chat, Plugins]
+pinned: false
+---
+
+A paragraph naming the change in the reader's terms.
+
+### Added
+
+- One line per change, written for somebody using Elowen rather than building it.
+
+![What the recap looks like](assets/0.28.34/recap.png)
+```
+
+Rules the parser and the page rely on:
+
+- `version` is required and is what the file sorts and addresses by; an entry without one is skipped with a warning. `date` is ISO `YYYY-MM-DD`. `title`, `tags` and `pinned` are optional; a pinned entry sits above the rest, everything else is newest first.
+- Images go in `plugins/changelog/entries/assets/<version>/` and are referenced by that relative path. The page rewrites the source onto the plugin's own asset route, which serves `png`, `jpg`, `jpeg`, `gif` and `webp` only. SVG is refused on purpose: it is a script-carrying document.
+- The body is ordinary Markdown, rendered in the browser and sanitized before it reaches the page. Write prose and lists; an entry may carry a short how-to with screenshots.
+- Each account gets an unread marker: every release newer than the version that account last opened the page at counts toward the badge on the navigation entry. Adding a file is all it takes for that to happen.
 
 A release build copies bundled plugins into `dist/plugins/` and emits browser bundles from `web-src/`. Registry-owned plugins release in `elowen-plugins` and are not published as part of the main npm package. Keep registry catalog metadata and the plugin manifest aligned, but treat the manifest as authoritative for installed version and capabilities. Do not describe a release as published or pushed unless the corresponding remote operation actually completed.
 

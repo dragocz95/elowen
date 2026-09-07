@@ -1,0 +1,25 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "isolatedModules": true,
+    "verbatimModuleSyntax": true,
+    // React types come from the ui-kit's own dependency (root node_modules); marked and dompurify ship
+    // theirs with the web app. All TYPES only — at build time esbuild shims react to the host runtime
+    // and resolves the rest from web/node_modules (see scripts/build-plugins-web.mjs).
+    "paths": {
+      "react": ["../../../node_modules/@types/react"],
+      "react/jsx-runtime": ["../../../node_modules/@types/react/jsx-runtime"],
+      "react-dom": ["../../../node_modules/@types/react-dom"],
+      "marked": ["../../../web/node_modules/marked/lib/marked.d.ts"],
+      "dompurify": ["../../../web/node_modules/dompurify/dist/purify.cjs.d.ts"]
+    }
+  },
+  "include": ["./**/*.ts", "./**/*.tsx"]
+}

@@ -91,6 +91,8 @@
   "ignoreDependencies": [
     "@types/react",
     "lucide-react",
+    "marked",
+    "dompurify",
     "botframework-connector",
     "grammy",
     "baileys",

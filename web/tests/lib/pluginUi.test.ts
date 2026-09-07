@@ -274,6 +274,14 @@ describe('pluginNavEntries', () => {
     expect(multi[0]!.subItems?.map((s) => s.href)).toEqual(['/p/demo', '/p/demo/detail']);
   });
 
+  it('carries the listing badge onto the entry, and leaves an entry without one bare', () => {
+    // The count is resolved server-side by the plugin's own registerNavBadge probe and rides along in
+    // /plugins/ui, so the rail draws it with no request — and no query — of its own.
+    const [withBadge] = pluginNavEntries([{ ...listing([{ label: 'Demo', route: '' }])[0]!, badge: 4 }]);
+    expect(withBadge!.badge).toBe(4);
+    expect(pluginNavEntries(listing([{ label: 'Demo', route: '' }]))[0]!.badge).toBeUndefined();
+  });
+
   it('gives a settings-only plugin its own world pointing at the standalone settings page', () => {
     // Skills, Cron and Sub-agents contribute a Settings section and no nav page. The host route serves
     // that section as a real page, so the sidebar must offer it instead of hiding the plugin.

@@ -194,6 +194,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // The project editor was previously core, so existing installs retain it once; later operator
   // disables remain authoritative through the persisted marker.
   if (opts.migrate !== false) config.migrateEditorPlugin();
+  // The release notes ship with the product, so an existing install is switched on once — an upgrade is
+  // exactly when nobody goes looking in Settings for the page that explains it.
+  if (opts.migrate !== false) config.migrateChangelogPlugin();
   const users = new UserStore(db);
   if (opts.bootstrap != null) {
     if (users.count() === 0) {

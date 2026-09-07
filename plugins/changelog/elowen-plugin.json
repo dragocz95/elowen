@@ -1,0 +1,47 @@
+{
+  "name": "changelog",
+  "version": "0.1.0",
+  "apiVersion": "1",
+  "requiresCore": "0.28.33",
+  "description": "Show the release notes that shipped with this Elowen version, with an unread marker per account.",
+  "entry": "index.mjs",
+  "capabilities": {
+    "reads": [
+      "db"
+    ]
+  },
+  "provides": {
+    "apiRoutes": [
+      "entries",
+      "seen",
+      "asset"
+    ]
+  },
+  "web": {
+    "entry": "web/index.js",
+    "css": "web/index.css",
+    "requiresApiVersion": 16,
+    "navKind": "infrastructure",
+    "nav": [
+      {
+        "label": "What's new",
+        "icon": "Sparkles",
+        "route": ""
+      }
+    ],
+    "strings": {
+      "title": "What's new",
+      "description": "Release notes for the Elowen version installed here, newest first.",
+      "metricReleases": "Releases",
+      "metricUnread": "Unread",
+      "unreadSeparator": "New since your last visit",
+      "pinned": "Pinned",
+      "unread": "New",
+      "empty": "This Elowen version ships no release notes yet.",
+      "loading": "Loading release notes…",
+      "loadFailed": "Release notes could not be loaded.",
+      "expand": "Show release {version}",
+      "collapse": "Hide release {version}"
+    }
+  }
+}

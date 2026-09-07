@@ -1,0 +1,22 @@
+{
+  "description": "Zobrazuje poznámky k vydání dodané s touto verzí Elowenu, s vyznačením nepřečtených položek pro každý účet.",
+  "web": {
+    "nav": {
+      "": "Novinky"
+    },
+    "strings": {
+      "title": "Novinky",
+      "description": "Poznámky k vydání nainstalované verze Elowenu, od nejnovější.",
+      "metricReleases": "Vydání",
+      "metricUnread": "Nepřečtené",
+      "unreadSeparator": "Nové od vaší poslední návštěvy",
+      "pinned": "Připnuto",
+      "unread": "Nové",
+      "empty": "Tato verze Elowenu zatím nedodává žádné poznámky k vydání.",
+      "loading": "Načítání poznámek k vydání…",
+      "loadFailed": "Poznámky k vydání se nepodařilo načíst.",
+      "expand": "Zobrazit vydání {version}",
+      "collapse": "Skrýt vydání {version}"
+    }
+  }
+}

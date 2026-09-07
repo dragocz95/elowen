@@ -448,6 +448,9 @@ export interface PluginUiListing {
    *  needs any other one has to bring it. Absent for a plugin (or a daemon) that ships none. */
   cssUrl?: string;
   apiVersion: number;
+  /** How many of the plugin's things are waiting for THIS account, resolved server-side by the plugin's
+   *  own `registerNavBadge` probe. Always positive; absent for no badge (and from any older daemon). */
+  badge?: number;
   /** Name of the plugin's world in the main navigation (manifest `web.label`, localized). Absent = the
    *  world borrows its first page's name. */
   label?: string;

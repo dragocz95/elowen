@@ -1,7 +1,22 @@
 import { readFileSync, existsSync } from 'node:fs';
 import { isPluginAllowedForUser } from '../../shared/pluginAccess.js';
 import type { ElowenApp, RouteContext } from '../context.js';
-import type { PluginUiVisibility, PluginWebUi } from '../../plugins/api.js';
+import type { PluginNavBadge, PluginUiVisibility, PluginWebUi } from '../../plugins/api.js';
+
+/** The count this plugin's world wears in the main navigation, or undefined for none. Zero is not a
+ *  badge, and a probe that throws drops its own badge and is warned — the same rule the visibility probe
+ *  gets, for the same reason: one plugin answering badly must not break everybody's menu. */
+function navBadgeOf(probe: PluginNavBadge | undefined, plugin: string, userId: number | null, admin: boolean, warn?: (m: string) => void): number | undefined {
+  if (!probe) return undefined;
+  let count: number | null;
+  try {
+    count = probe({ userId, isAdmin: admin });
+  } catch (error) {
+    warn?.(`plugin "${plugin}" nav badge probe failed: ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
+  }
+  return typeof count === 'number' && Number.isFinite(count) && count > 0 ? Math.floor(count) : undefined;
+}
 
 /** Which of this plugin's account/project panels the account may see, or null for "no opinion". A probe
  *  that throws hides that plugin's panels and is warned: one plugin answering badly must not empty
@@ -60,17 +75,21 @@ export function registerPluginUiRoutes(app: ElowenApp, ctx: RouteContext): void 
     const visible = [...(registry?.webUi.values() ?? [])].filter((w) =>
       (!w.adminOnly || user?.is_admin === true)
       && isPluginAllowedForUser(user, { name: w.plugin, userGrantable: registry?.userGrantable.has(w.plugin) }));
-    return c.json(visible.map((w) => ({
-      name: w.plugin,
-      url: `/plugins/${w.plugin}/web/${w.hash}.js`,
-      // The plugin's own stylesheet, when it ships one. Absent for every plugin that does not, so an
-      // older plugin (and an older listing consumer) is untouched.
-      ...(w.cssHash ? { cssUrl: `/plugins/${w.plugin}/web/${w.cssHash}.css` } : {}),
-      apiVersion: w.requiresApiVersion,
-      ...localized(w, lang, user?.is_admin === true, visibilityOf(
-        registry?.uiVisibility.get(w.plugin), w.plugin, user?.id ?? null, user?.is_admin === true, (m) => ctx.log.warn(m),
-      )),
-    })));
+    return c.json(visible.map((w) => {
+      const badge = navBadgeOf(registry?.navBadge.get(w.plugin), w.plugin, user?.id ?? null, user?.is_admin === true, (m) => ctx.log.warn(m));
+      return {
+        name: w.plugin,
+        url: `/plugins/${w.plugin}/web/${w.hash}.js`,
+        // The plugin's own stylesheet, when it ships one. Absent for every plugin that does not, so an
+        // older plugin (and an older listing consumer) is untouched.
+        ...(w.cssHash ? { cssUrl: `/plugins/${w.plugin}/web/${w.cssHash}.css` } : {}),
+        apiVersion: w.requiresApiVersion,
+        ...(badge === undefined ? {} : { badge }),
+        ...localized(w, lang, user?.is_admin === true, visibilityOf(
+          registry?.uiVisibility.get(w.plugin), w.plugin, user?.id ?? null, user?.is_admin === true, (m) => ctx.log.warn(m),
+        )),
+      };
+    }));
   });
 
   // The built ESM bundle, and the plugin's own stylesheet when it ships one. Both URLs embed the
