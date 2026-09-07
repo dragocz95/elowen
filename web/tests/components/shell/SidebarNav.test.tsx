@@ -42,7 +42,9 @@ function mount(
   client.setQueryData(['health'], { ok: true, version: '0.26.0' });
   client.setQueryData(['my-nav-settings'], navLayout);
   client.setQueryData(['plugin-ui', 'en'], [
-    { name: 'skills', title: 'Skills', nav: [{ label: 'Skills', icon: 'BookOpen', route: '' }], settings: [] },
+    // `badge` is what the plugin's own registerNavBadge probe answered for this account (see the
+    // /plugins/ui listing); the row below is where the reader actually sees it.
+    { name: 'skills', title: 'Skills', nav: [{ label: 'Skills', icon: 'BookOpen', route: '' }], settings: [], badge: 3 },
     {
       name: 'work',
       title: 'Work',
@@ -75,6 +77,16 @@ describe('SidebarNav destinations', () => {
     expect(screen.getByRole('link', { name: 'Memory' })).toHaveAttribute('href', '/memory');
     // A plugin with one page is a destination; the icon it declared is what the row draws.
     expect(screen.getByRole('link', { name: 'Skills' })).toHaveAttribute('href', '/p/skills');
+  });
+
+  it('draws a plugin count on its row, and no badge on a plugin that answered none', () => {
+    mount();
+    const skills = screen.getByRole('link', { name: 'Skills' });
+    expect(skills.querySelector('.sidebar-nav__badge')!.textContent).toBe('3');
+    // The count is also in the hover hint, which is the only place it is announced: the chip itself is
+    // aria-hidden, exactly like the shell's own live counters.
+    expect(skills).toHaveAttribute('title', 'Skills · 3');
+    expect(screen.getByRole('link', { name: 'Home' }).querySelector('.sidebar-nav__badge')).toBeNull();
   });
 
   it('groups the column the way the reference does, account last and set apart by air', () => {

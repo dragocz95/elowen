@@ -374,7 +374,10 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
     const active = entryIsActive(entry, pathname);
     const currentPage = active && entry.href !== undefined && route.currentHref === entry.href;
     const Icon = entry.icon;
-    const badge = entry.id ? counters[entry.id] : undefined;
+    // A plugin's own count travels on the entry (see NavEntry.badge); the shell's live counters win
+    // where both exist, because those are the ones a SSE signal keeps moving.
+    const badge = (entry.id ? counters[entry.id] : undefined)
+      ?? (entry.badge ? { count: entry.badge, title: String(entry.badge), live: false } : undefined);
     const hint = badge ? `${entry.label} · ${badge.title}` : entry.label;
     return (
       <SidebarMenuButton asChild isActive={active} className="sidebar-nav__item" tooltip={hint}>

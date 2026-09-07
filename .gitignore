@@ -45,3 +45,4 @@ web-dist/
 plugins/subagent/web/
 plugins/sandbox/web/
 plugins/msteams/web/
+plugins/changelog/web/

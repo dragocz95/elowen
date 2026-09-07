@@ -164,6 +164,34 @@ describe('plugin browser UI routes', () => {
     expect(hers[0]!.account.map((p) => p.id)).toEqual(['probe-account']);
   });
 
+  it('carries a plugin nav badge per account, and omits it for zero, null and a throwing probe', async () => {
+    // The badge is the count a plugin's world wears in the main navigation. It is resolved HERE, in the
+    // listing the menu is already built from, so it costs the browser no request of its own.
+    const listing = async (registerBody: string) => {
+      const { app, token, deps } = await makeTestApp({ extra: { plugins: probePluginProvider(registerBody) } });
+      const amy = deps.users.create('amy', 'pw');
+      const read = async (t: string) => (await (await app.request('/plugins/ui', auth(t))).json() as { name: string; badge?: number }[])[0]!;
+      return { admin: await read(token), user: await read(deps.users.issueToken(amy.id)) };
+    };
+
+    const perUser = await listing('ctx.registerNavBadge((req) => (req.isAdmin ? 3 : 0));');
+    expect(perUser.admin.badge).toBe(3);
+    // Zero is not a badge: a row permanently wearing a "0" is noise, so the field is absent entirely.
+    expect('badge' in perUser.user).toBe(false);
+
+    const none = await listing('ctx.registerNavBadge(() => null);');
+    expect('badge' in none.admin).toBe(false);
+
+    // A probe that throws loses its own badge and nothing else — the listing still serves the plugin.
+    const broken = await listing("ctx.registerNavBadge(() => { throw new Error('badge exploded'); });");
+    expect(broken.admin.name).toBe('probe');
+    expect('badge' in broken.admin).toBe(false);
+
+    // A plugin registering none is untouched, which is every plugin that shipped before this existed.
+    const silent = await listing('');
+    expect('badge' in silent.admin).toBe(false);
+  });
+
   it('hides the panels of a plugin whose visibility probe throws, without breaking the listing', async () => {
     // One plugin answering badly must not empty everybody's menu, and a panel whose owner just failed is
     // the wrong thing to show: fail closed for that plugin, keep serving everyone else.

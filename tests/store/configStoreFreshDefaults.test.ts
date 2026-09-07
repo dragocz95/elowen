@@ -8,6 +8,10 @@ import { ConfigStore } from '../../src/store/configStore.js';
  *  useful (files, sandbox, terminal, askuser, runtime-context, subagent, elowen-docs, statusline, mcp, lsp). Every entry is checked against its own manifest below, so this list can never
  *  silently drift from what actually ships on.
  *
+ *  changelog qualifies for the same reason mcp does — its page is explicitly `infrastructure`, telling the
+ *  reader what the product itself just changed rather than opening a workflow world of its own — and it
+ *  needs nothing configured: the release notes it serves ship inside the plugin.
+ *
  *  elowen-docs qualifies despite reading embeddings: the manual it searches ships with the install, and
  *  with no embedding model configured it ranks by keyword instead of failing — so it still answers "how
  *  do I set this up?" on the fresh install where nothing is set up yet. lsp qualifies the same way: a
@@ -15,7 +19,7 @@ import { ConfigStore } from '../../src/store/configStore.js';
  *
  *  Extensions that carry no daemon dependency are not here at all — they ship from the plugin registry,
  *  so a fresh install does not have them on disk to enable. */
-const SAFE_DEFAULT_PLUGINS = ['files', 'sandbox', 'terminal', 'askuser', 'runtime-context', 'subagent', 'elowen-docs', 'statusline', 'mcp'];
+const SAFE_DEFAULT_PLUGINS = ['files', 'sandbox', 'terminal', 'askuser', 'runtime-context', 'subagent', 'elowen-docs', 'statusline', 'mcp', 'changelog'];
 
 interface Manifest {
   configSchema?: { key: string; required?: boolean }[];
@@ -163,6 +167,44 @@ describe('existing installs transfer Terminal isolation to Sandbox', () => {
     const upgraded = new ConfigStore(db);
     upgraded.migrateSandboxPlugin();
     expect(upgraded.get().plugins.enabled).toEqual(['files']);
+  });
+});
+
+/** The release notes are the one new default an upgrade may switch on by itself: their entire purpose is
+ *  to explain the upgrade that just happened, and nobody goes to Settings to find that out. */
+describe('existing installs receive the bundled release notes once', () => {
+  const existing = (enabled: string[], extra: Record<string, unknown> = {}) => {
+    const db = openDb(':memory:');
+    db.prepare('INSERT INTO settings (id, data) VALUES (1, ?)').run(JSON.stringify({
+      allowedExecs: ['sonnet'], plugins: { enabled, removed: [], config: {} }, ...extra,
+    }));
+    return new ConfigStore(db);
+  };
+
+  it('appends changelog to a pre-existing install and leaves its other choices alone', () => {
+    const cfg = existing(['files', 'terminal']);
+    cfg.migrateChangelogPlugin();
+    expect(cfg.get().plugins.enabled).toEqual(['files', 'terminal', 'changelog']);
+  });
+
+  it('runs once: a later disable stands', () => {
+    const cfg = existing(['files']);
+    cfg.migrateChangelogPlugin();
+    cfg.update({ plugins: { enabled: ['files'], removed: [] } });
+    cfg.migrateChangelogPlugin();
+    expect(cfg.get().plugins.enabled).toEqual(['files']);
+  });
+
+  it('does not duplicate the entry for an install that already has it', () => {
+    const cfg = existing(['files', 'changelog']);
+    cfg.migrateChangelogPlugin();
+    expect(cfg.get().plugins.enabled).toEqual(['files', 'changelog']);
+  });
+
+  it('is a no-op on a fresh install, which already has it', () => {
+    const cfg = new ConfigStore(openDb(':memory:'));
+    cfg.migrateChangelogPlugin();
+    expect(cfg.get().plugins.enabled).toEqual(SAFE_DEFAULT_PLUGINS);
   });
 });
 

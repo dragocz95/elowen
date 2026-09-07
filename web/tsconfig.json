@@ -33,6 +33,12 @@
       "lucide-react": [
         "./node_modules/lucide-react"
       ],
+      "marked": [
+        "./node_modules/marked"
+      ],
+      "dompurify": [
+        "./node_modules/dompurify"
+      ],
       "react": [
         "./node_modules/@types/react"
       ],

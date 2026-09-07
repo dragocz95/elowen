@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessRows, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginChatArtifactRef, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginProjectIndicatorProvider, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginUiVisibility, PluginWebSocketRoute, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessRows, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginChatArtifactRef, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginNavBadge, PluginProjectIndicatorProvider, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginUiVisibility, PluginWebSocketRoute, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import { webSocketTickets } from './wsTickets.js';
 import type { BrainInlineArtifact, PluginChatArtifact, PluginChatArtifactUpdate } from '../brain/events.js';
 import type { TmuxDriver } from '../tmux/types.js';
@@ -302,6 +302,9 @@ export class PluginRegistry {
   /** Per-account visibility probes (ctx.registerUiVisibility), keyed by the plugin that registered one.
    *  Absent = every panel that plugin declares is visible to everyone who may see the plugin at all. */
   readonly uiVisibility = new Map<string, PluginUiVisibility>();
+  /** Main-navigation badge providers (ctx.registerNavBadge), keyed by the plugin that registered one.
+   *  Absent = that plugin's world wears no count. */
+  readonly navBadge = new Map<string, PluginNavBadge>();
   readonly controls = new Map<string, PluginControl>();
   /** For a control BUILT ON another one, the key of that dependency (`registerControl(…, {requires})`).
    *  Resolution consults it live, so a control whose domain has no owner is unreachable rather than
@@ -436,6 +439,7 @@ export class PluginRegistry {
     this.busSubscriptions.push(...other.busSubscriptions);
     for (const [k, v] of other.webUi) this.webUi.set(k, v);
     for (const [k, v] of other.uiVisibility) this.uiVisibility.set(k, v);
+    for (const [k, v] of other.navBadge) this.navBadge.set(k, v);
     for (const name of other.webAdminOnly) this.webAdminOnly.add(name);
     for (const p of other.promptEntries) {
       const prior = this.promptSources.get(p.entry.name);
@@ -1021,6 +1025,10 @@ export class PluginRegistry {
       registerUiVisibility: (fn) => {
         if (typeof fn !== 'function') { scoped.warn('registerUiVisibility refused: not a function'); return; }
         this.uiVisibility.set(name, fn);
+      },
+      registerNavBadge: (fn) => {
+        if (typeof fn !== 'function') { scoped.warn('registerNavBadge refused: not a function'); return; }
+        this.navBadge.set(name, fn);
       },
       registerControl: (key, control, opts) => {
         const clean = key.trim();

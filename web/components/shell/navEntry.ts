@@ -17,6 +17,9 @@ export interface NavEntry {
   href?: string;
   label: string;
   icon: LucideIcon;
+  /** A count the entry wears, supplied by whoever built it — a plugin's own `registerNavBadge`, carried
+   *  through the /plugins/ui listing. The shell's own live counters win where both exist. */
+  badge?: number;
   activeRoutes?: readonly string[];
   subItems?: readonly NavSubEntry[];
 }

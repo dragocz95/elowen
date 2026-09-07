@@ -898,6 +898,13 @@ export interface PluginWebUi {
 export type PluginUiVisibility = (req: { userId: number | null; isAdmin: boolean }) =>
   { account?: readonly string[]; project?: readonly string[] } | null;
 
+/** How many of this plugin's things are waiting for the account right now — the number its world wears
+ *  in the main navigation. `null` (or 0) means no badge at all: a row permanently wearing a "0" is noise.
+ *
+ *  Deliberately SYNCHRONOUS for the same reason as {@link PluginUiVisibility}: it is answered on every
+ *  /plugins/ui listing, i.e. on every page load, so it must come from state the plugin already holds. */
+export type PluginNavBadge = (req: { userId: number | null; isAdmin: boolean }) => number | null;
+
 /** A long-running background worker a plugin contributes — sweepers, watchers, pollers. The host
  *  owns the lifecycle: started after boot reconcile on a full daemon start (never in a sub-agent
  *  runner), stopped and restarted around a plugin reload, and abandoned at process exit (the daemon
@@ -1559,6 +1566,13 @@ export interface PluginContext {
    *  A probe that throws is treated as "hide this plugin's panels" and warned, never as a reason to fail
    *  the listing: one plugin's bad probe must not empty everybody's menu. */
   registerUiVisibility(fn: PluginUiVisibility): void;
+  /** Put a count on THIS plugin's entry in the main navigation — unread items, pending approvals. The
+   *  number is resolved server-side in the same listing the menu is built from, so it costs the browser
+   *  no request of its own and a plugin never has to reach the shell.
+   *
+   *  A probe that throws is warned and drops that plugin's badge, never fails the listing. Callers may
+   *  feature-detect an older daemon with `typeof ctx.registerNavBadge === 'function'`. */
+  registerNavBadge(fn: PluginNavBadge): void;
   /** Resolve ANOTHER plugin's registered control — the one supported way one plugin reaches a capability
    *  a sibling owns. Gated by `reads:['controls']`.
    *
