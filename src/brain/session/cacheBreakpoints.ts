@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import { hashCanonical } from './cacheWatch.js';
+import { FORK_BOILERPLATE_TAG, FORK_PLACEHOLDER_RESULT } from './forkPrefix.js';
 
 /** A SECOND, trailing prompt-cache breakpoint, so a wide fan-out cannot cost the whole conversation.
  *
@@ -121,6 +122,61 @@ function currentMarker(messages: readonly unknown[]): { value: unknown; messageI
   return undefined;
 }
 
+/** The text of a block, whether the provider shape carries it directly or nests it one level (a
+ *  `tool_result` holds an array of blocks). Only used to recognise the fork boundary below. */
+function blockText(block: Block): string {
+  if (typeof block.text === 'string') return block.text;
+  const nested = block.content;
+  if (typeof nested === 'string') return nested;
+  if (!Array.isArray(nested)) return '';
+  return nested.map((item) => (typeof record(item)?.text === 'string' ? record(item)!.text as string : '')).join('');
+}
+
+/** Whether this is the message that carries a fork child's directive. The boilerplate tag is matched
+ *  anywhere in the text rather than at its start, because the child's own per-turn context frame is
+ *  prepended into the same block before the payload leaves. */
+function isForkDirective(message: unknown): boolean {
+  const blocks = blocksOf(message);
+  if (!blocks || record(message)?.role !== 'user') return false;
+  return blocks.some((block) => block.type === 'text' && blockText(block).includes(`<${FORK_BOILERPLATE_TAG}>`));
+}
+
+/** Whether this message is one of the stand-in results a fork answers the parent's open tool calls with.
+ *  Every block has to be one: a message that mixes them with anything else is not the fork's own. */
+function isForkPlaceholder(message: unknown): boolean {
+  const blocks = blocksOf(message);
+  if (!blocks || blocks.length === 0 || record(message)?.role !== 'user') return false;
+  return blocks.every((block) => block.type === 'tool_result' && blockText(block) === FORK_PLACEHOLDER_RESULT);
+}
+
+/** The last message a FORK child inherited from its parent, or undefined when this payload is not a
+ *  fork's opening request.
+ *
+ *  A fork child exists to read a prefix its PARENT wrote, and the parent's own last request marked its
+ *  last user message. The child appends the placeholder results and its directive behind that message, so
+ *  pi-ai's single moving mark lands on the directive instead and the position the parent actually wrote is
+ *  left unmarked — with no previous request of its own, this module has nothing remembered to re-mark
+ *  either. Stepping back over the fork's own additions lands exactly on the parent's marked position, and
+ *  it is the ONE case where the position can be named without having observed the request that wrote it:
+ *  the boundary is this module's own construction, not a guess about what the payload happens to contain.
+ *
+ *  Deliberately narrow: it recognises the boundary by the fork's own constant blocks, so an ordinary
+ *  session's first request finds nothing here and is left untouched. */
+function forkInheritedTail(messages: readonly unknown[], markedIndex: number): number | undefined {
+  if (!isForkDirective(messages[markedIndex])) return undefined;
+  for (let index = markedIndex - 1; index >= 0; index -= 1) {
+    const message = messages[index];
+    if (record(message)?.role !== 'user' || isForkPlaceholder(message) || isForkDirective(message)) continue;
+    // The parent's trailing assistant message and pi-ai's own system entries sit between the boundary and
+    // the parent's last user message; only the latter can carry a marker, and only it is where the
+    // parent's own mark sat.
+    const blocks = blocksOf(message);
+    const last = blocks?.[blocks.length - 1];
+    return last && typeof last.type === 'string' && MARKABLE.has(last.type) ? index : undefined;
+  }
+  return undefined;
+}
+
 /** Where the previous SUCCESSFUL request's marked message sat, identified by the hash of the whole
  *  canonical prefix ending there (system + tools + messages 0..index). Cumulative on purpose — see the
  *  module comment's refinement 2: Anthropic keys cache entries by cumulative prefix, so a message-local
@@ -132,6 +188,24 @@ interface PreviousWrite { index: number; prefixHash: string }
  *  work cacheWatch already spends hashing its payload snapshot). */
 function chainHash(prefix: string, segment: string): string {
   return createHash('sha256').update(prefix).update(segment).digest('hex');
+}
+
+/** Put the marker pi-ai used on the last message a fork child inherited from its parent. No-op when the
+ *  payload is not a fork's opening request, when the four-slot budget is already spent, or when the
+ *  position already carries one. Shares both guards with the remembered-position path below, so neither
+ *  can produce a fifth breakpoint the provider would reject. */
+function markInherited(
+  object: Record<string, unknown>,
+  messages: readonly unknown[],
+  marker: { value: unknown; messageIndex: number },
+): void {
+  const inherited = forkInheritedTail(messages, marker.messageIndex);
+  if (inherited === undefined) return;
+  if (countBreakpoints(object) >= BREAKPOINT_MAX) return;
+  const blocks = blocksOf(messages[inherited]);
+  const last = blocks?.[blocks.length - 1];
+  if (!last || last.cache_control !== undefined) return;
+  last.cache_control = marker.value;
 }
 
 export interface TrailingCacheBreakpoint {
@@ -151,6 +225,9 @@ export function createTrailingCacheBreakpoint(): TrailingCacheBreakpoint {
   let confirmed: PreviousWrite | undefined;
   /** The position the in-flight request marked, awaiting its outcome. */
   let candidate: PreviousWrite | undefined;
+  /** No request of this session has been seen yet, so the fork boundary below is still the opening one.
+   *  After that the remembered position is a real observation and always the better answer. */
+  let first = true;
   return {
     request(payload) {
       candidate = undefined;
@@ -178,7 +255,16 @@ export function createTrailingCacheBreakpoint(): TrailingCacheBreakpoint {
         if (remembered && index === remembered.index && chain === remembered.prefixHash) stillThere = true;
       }
       candidate = { index: marker.messageIndex, prefixHash: chain };
-      if (!remembered || !stillThere) return payload;
+      const opening = first;
+      first = false;
+      if (!remembered || !stillThere) {
+        // A fork's OPENING request has nothing remembered — and is the one request that most needs the
+        // second breakpoint, because the position its parent wrote is now several messages behind pi-ai's
+        // single moving mark. Mark it explicitly; every later request of this child has its own
+        // observation to use and takes the path above.
+        if (opening && !remembered) markInherited(object, messages, marker);
+        return payload;
+      }
       // A retry (nothing appended) re-marks the same position pi-ai already marks; nothing to add.
       if (remembered.index >= marker.messageIndex) return payload;
       if (countBreakpoints(object) >= BREAKPOINT_MAX) return payload;

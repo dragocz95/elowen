@@ -28,6 +28,32 @@ describe('fork scope tool policies', () => {
     for (const name of FORK_EXECUTE_DENIES) expect(visible).not.toContain(name);
   });
 
+  /** The production path, which the assertion above missed: NOBODY calls the visibility policy with an
+   *  empty deny list. Both spawn paths compute the EXECUTION policy first and hand its deny set down as
+   *  `currentDenied` — the runner's request builder and the daemon's own continuation — so the fork names
+   *  came straight back in and were filtered out of the tool block after all.
+   *
+   *  RED BEFORE THE FIX: measured on a production fork whose child advertised 169 schemas where its parent
+   *  sent 175. The six missing ones are exactly this list, and the first of them sits eleventh in the
+   *  block, so the provider re-billed every schema and every message behind it: the child read back 18532
+   *  tokens where its parent had just read 162130. Reverting the subtraction in
+   *  `delegatedVisibilityToolPolicy` fails this test. */
+  it('advertises them even when the caller passes the execution policy back in', () => {
+    const forked = scope({ fork: true });
+    const executed = delegatedToolPolicy(forked);
+    const visible = denies(delegatedVisibilityToolPolicy(forked, executed?.deny ?? []));
+    for (const name of FORK_EXECUTE_DENIES) expect(visible).not.toContain(name);
+  });
+
+  it('advertises them even when the CAPTURED scope already carries them', () => {
+    const forked = scope({ fork: true, toolPolicy: { deny: [...FORK_EXECUTE_DENIES] } });
+    for (const name of FORK_EXECUTE_DENIES) {
+      expect(denies(delegatedVisibilityToolPolicy(forked))).not.toContain(name);
+      // …while the execution half still refuses every one of them.
+      expect(denies(delegatedToolPolicy(forked))).toContain(name);
+    }
+  });
+
   it('leaves an ordinary child with one policy for both halves', () => {
     const ordinary = scope();
     expect(denies(delegatedVisibilityToolPolicy(ordinary))).toEqual(denies(delegatedToolPolicy(ordinary)));

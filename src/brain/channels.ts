@@ -523,6 +523,25 @@ const samePromptAppend = (actual: string[] | undefined, expected: string[] | und
   (actual?.length ?? 0) === (expected?.length ?? 0)
   && (actual ?? []).every((chunk, index) => chunk === expected?.[index]);
 
+/** Whether a fork child runs the same route as its parent, for the fork-cache verdict only.
+ *
+ *  Reads the parent from its LIVE record first and its durable row second, because the spawn that has to
+ *  answer this commonly happens in a runner process where no live record exists. Naming no model at all
+ *  means the child inherits the parent's, which always matches. A parent whose provider is unknown is
+ *  compared on the model id alone: an unmeasured provider must not manufacture a mismatch, exactly as an
+ *  unmeasured one on the CHILD's side must not manufacture a match. */
+export function forkSameModel(
+  selection: { provider?: string; model?: string } | undefined,
+  live: { model?: string; providerId?: string } | undefined,
+  row: { model?: string; provider?: string } | undefined,
+): boolean {
+  if (!selection?.model) return true;
+  const parentModel = live?.model ?? row?.model;
+  if (!parentModel || selection.model !== parentModel) return false;
+  const parentProvider = live?.providerId || row?.provider || '';
+  return parentProvider === '' || selection.provider === parentProvider;
+}
+
 /** Platform channel conversations (Discord threads, …): one session per channel — keyed by the
  *  channel, NOT the Elowen user — run with the caller-resolved Policy (role → projects) plus optional
  *  role prompt fragments. Persisted like any brain conversation (`brain-ch-<id>`), owned by
@@ -579,6 +598,20 @@ export class ChannelSessionService {
    *  log line. */
   private parentForkHistory(parentSessionId: string): ForkMessage[] {
     return storedContextMessages(this.d.store, parentSessionId) as ForkMessage[];
+  }
+
+  /** How big the parent's warm prefix was, for the fork's own log line — off its LIVE record when this
+   *  process holds one, else off its durable rows.
+   *
+   *  The fallback is the whole point. A delegated spawn commonly lands in a RUNNER process, where the
+   *  parent has no live record at all, and the reading then came back 0 for every production fork: the
+   *  line reported `parentPrefix≈0` and the verdict blamed a prefix nobody had measured. The durable
+   *  assistant rows carry the same `usage` the live messages do, so both readings answer the same
+   *  question — one of them just survives the process boundary. */
+  private parentPrefixTokens(parent: LiveBrain | undefined, parentSessionId: string | undefined): number {
+    const live = forkParentPrefixTokens((parent?.session.messages ?? []) as unknown as ForkMessage[]);
+    if (live > 0 || !parentSessionId) return live;
+    return forkParentPrefixTokens(this.parentForkHistory(parentSessionId));
   }
 
   /** A child can only execute under the immutable scope minted by its original delegate call. This is
@@ -875,7 +908,7 @@ export class ChannelSessionService {
           childSessionId: sessionId,
           parentSessionId,
           cacheRead: 0, cacheWrite: 0, input: 0,
-          parentPrefix: forkParentPrefixTokens((forkParent?.session.messages ?? []) as unknown as ForkMessage[]),
+          parentPrefix: this.parentPrefixTokens(forkParent, parentSessionId),
           sameModel: true,
           providerCaches: false,
           failure: `refused: seed unavailable (${reason})`,
@@ -906,15 +939,21 @@ export class ChannelSessionService {
           ...(forkChild && parentSessionId ? {
             forkCache: {
               parentSessionId,
-              parentPrefix: forkParentPrefixTokens((forkParent?.session.messages ?? []) as unknown as ForkMessage[]),
+              parentPrefix: this.parentPrefixTokens(forkParent, parentSessionId),
               // A prompt cache belongs to one model at ONE provider: two config entries commonly expose the
               // same model id (an OpenAI-compatible relay next to the vendor), and a fork across them shares
               // nothing. Comparing the id alone reported those as same-model, so the verdict blamed a
               // "prefix mismatch" for a miss that was really a different route. Same rule as the delegate
               // plugin's own cross-model notice, including that an unnamed provider is not assumed to be the
               // parent's. No model named at all = the child inherits the parent's, which always matches.
-              sameModel: !opts.model?.model
-                || (opts.model.model === forkParent?.model && opts.model.provider === forkParent?.providerId),
+              //
+              // Read off the LIVE record when there is one, else off the durable row. Without the fallback
+              // a spawn in a runner process compared the caller's model against `undefined` and every such
+              // fork was reported as "different model" — measured in production on a fork whose parent and
+              // child both ran claude-fable-5-1, which sent the reader looking for a routing bug that was
+              // not there. A parent whose provider is unknown (a legacy row) is compared on the model id
+              // alone rather than being declared a mismatch nobody observed.
+              sameModel: forkSameModel(opts.model, forkParent, forkParentRow),
               // For the size guard's refusal, which has to name what this conversation is running on. The
               // live record first, then the durable row — a delegated turn commonly runs in the runner,
               // where the parent has no live record at all, and a refusal that cannot name the parent
