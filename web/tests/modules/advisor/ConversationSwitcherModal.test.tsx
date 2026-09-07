@@ -162,6 +162,33 @@ describe('ConversationSwitcherModal', () => {
     expect(screen.queryByTestId('brain-sessions-list')).toBeNull();
   });
 
+  // The shared dialog header is ONE row: icon, title, actions, close. Two sentence-long labels do not fit
+  // beside a title on a phone — the switch took the row and the list's own name was clipped to a letter.
+  it('moves the view switch out of the header and above the list on a phone', async () => {
+    admin.value = true;
+    const original = window.matchMedia;
+    window.matchMedia = (query: string) => ({ ...original(query), matches: /max-width/.test(query) });
+    try {
+      renderModal();
+      const modal = await dialog();
+      const register = await within(modal).findByRole('radio', { name: /All conversations|Všechny konverzace|Všetky konverzácie/i });
+      expect(register.closest('[data-slot="dialog-header"]')).toBeNull();
+      // Still the same one control: choosing the register from its new place works exactly as before.
+      fireEvent.click(register);
+      expect(await screen.findByTestId('brain-sessions-list')).toBeInTheDocument();
+    } finally {
+      window.matchMedia = original;
+    }
+  });
+
+  it('keeps the view switch in the header where the row has room for it', async () => {
+    admin.value = true;
+    renderModal();
+    const modal = await dialog();
+    const register = await within(modal).findByRole('radio', { name: /All conversations|Všechny konverzace|Všetky konverzácie/i });
+    expect(register.closest('[data-slot="dialog-header"]')).not.toBeNull();
+  });
+
   it('closes on Escape', async () => {
     const { onClose } = renderModal();
     const modal = await dialog();
