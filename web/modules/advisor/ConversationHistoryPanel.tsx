@@ -2,13 +2,14 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, ChevronRight, Circle, Plus, Search, Trash2, MoreVertical, Pencil, Download, GitBranch, ArrowLeft } from 'lucide-react';
+import { CheckCircle2, ChevronRight, Circle, Clock, Plus, Search, Trash2, MoreVertical, Pencil, Download, GitBranch, ArrowLeft } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useToast } from '../../components/ui/Toast';
 import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../components/ui/shadcn/collapsible';
 import { elowenClient } from '../../lib/elowenClient';
+import { openBrainComposer, openBrainSession } from '../../lib/brainDock';
 import { formatTaskTime } from '../../lib/format';
 import { groupJobLinks } from '../../lib/conversationTree';
 import { useConversationJobLinks } from '../../lib/queries';
@@ -37,6 +38,8 @@ type ActivityLabels = {
   idle: string;
   working: string;
   done: string;
+  /** What a finished SCHEDULE says instead of the plain "completed" — see `ActivityStatus`. */
+  doneScheduled: string;
   failed: string;
   unread: string;
 };
@@ -49,19 +52,25 @@ function activityStateOf(activity?: ActivityView): ActivityState {
  *  here renders INSIDE the row's <button>, where none of those would be legal. `anchored` only marks the
  *  dot as the point `ActivityRow`'s tip is positioned against; a Radix anchor contributes a bare <span>
  *  and no behaviour of its own. */
-function ActivityStatus({ state, unread, labels, anchored = false }: {
+function ActivityStatus({ state, scheduled, unread, labels, anchored = false }: {
   state: ActivityState;
+  /** The settled turn was run by a SCHEDULE, not asked for by the reader. A finished job wears the clock
+   *  the schedules themselves wear, because a tick reads as "your answer is ready" and this is not one.
+   *  Only the completed state distinguishes them: a failed run is a failed run whoever started it. */
+  scheduled: boolean;
   unread: boolean;
   labels: ActivityLabels;
   anchored?: boolean;
 }) {
-  const stateLabel = labels[state];
+  const stateLabel = state === 'done' && scheduled ? labels.doneScheduled : labels[state];
   const accessibleLabel = unread ? `${stateLabel}, ${labels.unread}` : stateLabel;
 
   const icon = state === 'working' ? (
     <Circle size={8} aria-hidden className="animate-pulse fill-success text-success motion-reduce:animate-none" />
   ) : state === 'done' ? (
-    <CheckCircle2 size={14} aria-hidden className="text-success" />
+    scheduled
+      ? <Clock size={14} aria-hidden className="text-success" />
+      : <CheckCircle2 size={14} aria-hidden className="text-success" />
   ) : state === 'failed' ? (
     <Circle size={8} aria-hidden className="fill-destructive text-destructive" />
   ) : null;
@@ -108,7 +117,15 @@ function ActivityRow({ activity, labels, children }: {
   const unread = activity?.unread === true;
   const failed = state === 'failed';
   const detail = activity?.detail?.trim();
-  const indicator = <ActivityStatus state={state} unread={unread} labels={labels} anchored={failed} />;
+  const indicator = (
+    <ActivityStatus
+      state={state}
+      scheduled={activity?.automation === 'scheduled'}
+      unread={unread}
+      labels={labels}
+      anchored={failed}
+    />
+  );
 
   // The `Tooltip` root is rendered whatever the state; only its CONTENT and the row's hover wiring are
   // gated on failure. Returning a Fragment for one state and a Tooltip for another would put a different
@@ -181,6 +198,7 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
     idle: t.chat.activityIdle,
     working: t.chat.activityWorking,
     done: t.chat.activityDone,
+    doneScheduled: t.chat.activityDoneScheduled,
     failed: t.chat.activityFailed,
     unread: t.chat.activityUnread,
   };
@@ -217,10 +235,21 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
   // gets out of the way rather than covering what was just loaded.
   const dismiss = () => onNavigate?.();
 
+  // Opening a conversation must also BRING THE CHAT ON SCREEN. Switching the controller alone only works
+  // where a chat surface already is: from the dock over a plugin page — or on a phone, where the dock is
+  // no surface at all — picking a conversation left the reader on the page they were on, looking at the
+  // settings they opened the switcher over. `openBrainSession` is the app's one request for that (the
+  // register's rows use it too): the shell reveals the dock or routes to /chat, and the controller loads
+  // the conversation and reports its own failure. On /chat it resolves to a plain switch.
   const openSession = (opts: { session?: string; fresh?: boolean }) => {
     setSearch('');
     dismiss();
-    void switchSession(opts).catch(() => toast(t.brainChat.searchOpenError, 'error'));
+    if (opts.session) { openBrainSession(opts.session, true); return; }
+    // A new conversation has no id to request. Switch first, then ask for the live conversation with an
+    // empty composer draft — the same event the launcher raises, which reveals the chat and focuses it.
+    void switchSession(opts)
+      .then(() => openBrainComposer())
+      .catch(() => toast(t.brainChat.searchOpenError, 'error'));
   };
 
   // A rename resolves exactly once. Enter and blur commit; Escape cancels. The guard stops the blur that

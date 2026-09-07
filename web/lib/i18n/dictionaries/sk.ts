@@ -1789,6 +1789,7 @@ export const sk = {
     activityIdle: 'Bez nedávnej aktivity',
     activityWorking: 'Prebieha práca',
     activityDone: 'Dokončené',
+    activityDoneScheduled: 'Naplánovaná úloha dokončená',
     activityFailed: 'Beh zlyhal',
     activityUnread: 'Neprečítaný výsledok',
   },

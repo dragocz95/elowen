@@ -3,6 +3,7 @@ import { render, screen, fireEvent, waitFor, within } from '@testing-library/rea
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
 import type { BrainActivityView } from '../../../lib/types';
+import { BRAIN_COMPOSE_EVENT, BRAIN_OPEN_EVENT, type BrainOpenRequest } from '../../../lib/brainDock';
 import { ConversationHistoryPanel } from '../../../modules/advisor/ConversationHistoryPanel';
 
 type TestSession = {
@@ -125,16 +126,28 @@ describe('ConversationHistoryPanel', () => {
     expect(screen.getByRole('link', { name: linkName })).toHaveAttribute('href', '/dash');
   });
 
-  it('starts a new conversation via switchSession({ fresh: true })', () => {
+  it('starts a new conversation via switchSession({ fresh: true }) and asks for the chat surface', async () => {
+    const composed = vi.fn();
+    window.addEventListener(BRAIN_COMPOSE_EVENT, composed);
     renderPanel();
     fireEvent.click(screen.getByRole('button', { name: /New chat|Nová konverzace/i }));
     expect(ctrl.switchSession).toHaveBeenCalledWith({ fresh: true });
+    await waitFor(() => expect(composed).toHaveBeenCalled());
+    window.removeEventListener(BRAIN_COMPOSE_EVENT, composed);
   });
 
-  it('switches to a picked conversation via switchSession({ session })', () => {
+  // Opening a conversation has to bring the CHAT on screen, not merely rebind the controller. Raised from
+  // the dock over a plugin page — or on a phone, which has no dock at all — a bare switch left the reader
+  // looking at the settings page they opened the switcher over, with the conversation loaded behind it.
+  it('opens a picked conversation through the shared open-in-chat request', () => {
+    const opened = vi.fn();
+    window.addEventListener(BRAIN_OPEN_EVENT, opened);
     renderPanel();
     fireEvent.click(screen.getByText('Second'));
-    expect(ctrl.switchSession).toHaveBeenCalledWith({ session: 's2' });
+    expect(opened).toHaveBeenCalled();
+    expect((opened.mock.calls[0]![0] as CustomEvent<BrainOpenRequest>).detail)
+      .toEqual({ sessionId: 's2', continuable: true });
+    window.removeEventListener(BRAIN_OPEN_EVENT, opened);
   });
 
   it('confirms the concrete delete consequence before calling the controller', async () => {
@@ -245,12 +258,16 @@ describe('ConversationHistoryPanel', () => {
   });
 
   it('branches a conversation and opens the copy, leaving the source selected until then', async () => {
+    const opened = vi.fn();
+    window.addEventListener(BRAIN_OPEN_EVENT, opened);
     renderPanel();
     openRowMenu(0);
     fireEvent.click(screen.getByRole('menuitem', { name: /Branch conversation|Větvit konverzaci|Vetviť konverzáciu/i }));
     await waitFor(() => expect(client.brainForkSession).toHaveBeenCalledWith('s1'));
     // The user lands in the NEW conversation — never back in the one they branched off.
-    await waitFor(() => expect(ctrl.switchSession).toHaveBeenCalledWith({ session: 's1-fork' }));
+    await waitFor(() => expect((opened.mock.calls.at(-1)?.[0] as CustomEvent<BrainOpenRequest>).detail)
+      .toEqual({ sessionId: 's1-fork', continuable: true }));
+    window.removeEventListener(BRAIN_OPEN_EVENT, opened);
   });
 
   it('runs a fulltext search (≥2 chars) and highlights the match', async () => {
@@ -317,6 +334,19 @@ describe('ConversationHistoryPanel', () => {
     expect(state).toHaveAttribute('data-activity-state', 'done');
     expect(state.querySelector('svg')).toHaveClass('text-success');
     expect(row.querySelector('[data-slot="sidebar-menu-badge"]')).toBeNull();
+  });
+
+  // A tick reads as "the answer you asked for is ready". A schedule firing into a conversation produces
+  // neither a question nor a reader waiting on it, so a finished job wears the clock its schedules wear
+  // and says so out loud. Only the completed state differs: a failed run is a failed run either way.
+  it('marks a completed SCHEDULED turn with the job clock instead of the done check', () => {
+    ctrl.value.sessions.data[0]!.activity = { state: 'done', seq: 9, at: null, detail: 'Digest sent', automation: 'scheduled', unread: true };
+    renderPanel();
+    const row = screen.getByText('First').closest('li')!;
+    const state = row.querySelector('[data-activity-state]')!;
+    expect(state).toHaveAttribute('data-activity-state', 'done');
+    expect(state.querySelector('svg')).toHaveClass('lucide-clock', 'text-success');
+    expect(within(row).getByText('Scheduled job completed, Unread result')).toBeInTheDocument();
   });
 
   it('renders a done unread result with a semibold title and an independent accent badge', () => {

@@ -1794,6 +1794,7 @@ export const cs = {
     activityIdle: 'Bez nedávné aktivity',
     activityWorking: 'Probíhá práce',
     activityDone: 'Dokončeno',
+    activityDoneScheduled: 'Naplánovaná úloha dokončena',
     activityFailed: 'Běh selhal',
     activityUnread: 'Nepřečtený výsledek',
   },

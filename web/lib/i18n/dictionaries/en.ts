@@ -1831,6 +1831,7 @@ export const en = {
     activityIdle: 'No recent activity',
     activityWorking: 'Working',
     activityDone: 'Completed',
+    activityDoneScheduled: 'Scheduled job completed',
     activityFailed: 'Run failed',
     activityUnread: 'Unread result',
   },
