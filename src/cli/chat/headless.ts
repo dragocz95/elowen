@@ -25,7 +25,7 @@ export interface HeadlessOpts {
 
 const USAGE = [
   'usage: elowen run "<prompt>"   |   elowen -p "<prompt>"',
-  '  --model <id> --provider <id>   pick the model for this run',
+  '  --model <provider/model>       pick the model for this run (or --model <id> --provider <id>)',
   '  -c | --resume <id> | --new     continue the active conversation (DEFAULT), a specific one, or start fresh',
   '  --mode plan|build|workflow     plan hides mutating tools · workflow orchestrates a DAG (--plan shorthand)',
   '  --goal "<text>" [--max-turns N]  run an autonomous persistent goal until it settles',

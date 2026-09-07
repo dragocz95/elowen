@@ -58,7 +58,7 @@ CHAT
                                     --session <id>                resume a specific conversation
   run "<prompt>"                  non-interactive Elowen: run one turn/slash/goal, stream it, exit
   -p, --print "<prompt>"          alias for \`run\` (claude-style)
-                                    --model/--provider <id>   pick the model for this run
+                                    --model <provider/model>  pick the model for this run (or --model/--provider <id>)
                                     -c | --resume <id> | --new    continue active (default) / specific / fresh
                                     --list                        list conversations (ids for --resume)
                                     --mode plan|build|workflow    plan hides mutating tools · workflow orchestrates a DAG

@@ -5,6 +5,7 @@ import { logger } from '../../shared/logger.js';
 import type { ElowenApp, ElowenContext } from '../context.js';
 import { clientOrigin } from '../clientIp.js';
 import { PLATFORM_SURFACES } from '../../shared/platformIdentity.js';
+import { parseElowenExec } from '../../shared/execs.js';
 import type { BrainRouteContext, BrainService } from './brainRouteContext.js';
 
 /** Normalize a client-supplied `/compact <text>` instruction: require a string, trim, drop empty, and cap
@@ -13,6 +14,17 @@ function compactInstruction(v: unknown): string | undefined {
   if (typeof v !== 'string') return undefined;
   const trimmed = v.trim();
   return trimmed ? trimmed.slice(0, 2000) : undefined;
+}
+
+/** A `provider/model` spec sent as a bare `model` is split at its first slash when — and only when —
+ *  the prefix is a configured provider id (a provider id never contains a slash, a model id may). */
+export function splitCanonicalModelSpec(
+  sel: { provider?: string; model?: string }, providerIds: readonly string[],
+): { provider?: string; model?: string } {
+  if (sel.provider || !sel.model) return sel;
+  const parsed = parseElowenExec(sel.model);
+  if (!parsed || !providerIds.includes(parsed.provider)) return sel;
+  return { provider: parsed.provider, model: parsed.model };
 }
 
 /** The `POST /brain/command` body: `name` selects the command and the remaining fields are per-command,
@@ -200,9 +212,16 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
   // Switch the active conversation (or the caller's explicit `session`) to another configured model (the
   // /model picker). The session respawns in place under the same id — open SSE taps survive the respawn
   // and every attached client reconciles via the pushed `session-event`, so no client reopens its stream.
+  //
+  // A `model` sent WITHOUT a provider may be the canonical `<provider>/<model>` spec every other surface
+  // uses (`elowen run --model anthropic/claude-x`, `/model anthropic/claude-x`). Left whole, the resolver
+  // reads it as a bare model id on the FIRST configured provider and ships e.g. `anthropic/claude-x` to
+  // Azure as a deployment name. The split happens only when the prefix names a configured provider, so a
+  // model id that itself contains a slash keeps working on the default provider.
   app.post('/brain/model', withBrain(async (c, brain) => {
     const { session, ...sel } = await parseBody(c, brainModelSchema);
-    try { return c.json(await brain.switchModel(c.get('user').id, sel, session)); }
+    const selection = splitCanonicalModelSpec(sel, d.config.brainProviders().map((p) => p.id));
+    try { return c.json(await brain.switchModel(c.get('user').id, selection, session)); }
     catch (e) { return c.json({ error: (e as Error).message }, 409); }
   }));
 

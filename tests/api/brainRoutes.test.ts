@@ -43,6 +43,7 @@ function fakeBrain() {
   const acceptedSendFailures: { session: string; message: string }[] = [];
   const turnRequests: Omit<TurnRequest, 'onAdmitted'>[] = [];
   const bindContextCalls: { id: number; channel: string; session: string }[] = [];
+  const switchModelCalls: { id: number; sel: { provider?: string; model?: string }; session?: string }[] = [];
   let bindContextError: Error | null = null;
   let subagentPreflightError: Error | null = null;
   let sendBeforeAdmissionError: Error | null = null;
@@ -322,6 +323,11 @@ function fakeBrain() {
       bindContextCalls.push({ id, channel, session });
       if (bindContextError) throw bindContextError;
       return { title: `title-of-${session}` };
+    },
+    switchModelCalls,
+    switchModel: async (id: number, sel: { provider?: string; model?: string }, session?: string) => {
+      switchModelCalls.push({ id, sel, session });
+      return { model: sel.model ?? '' };
     },
   };
 }
@@ -1353,6 +1359,39 @@ describe('GET /brain/models allow-list', () => {
       legacyExec: 'elowen:relay/kimi', exec: 'relay/kimi',
     });
     for (const m of models) expect(m.exec).not.toBe(m.legacyExec);
+  });
+
+  // `elowen run --model anthropic/claude-x` and `/model anthropic/claude-x` send the canonical spec as a
+  // bare `model`. Read whole, it became a model id on the FIRST provider and left for Azure as the
+  // deployment `anthropic/claude-x` (seen in production as DeploymentNotFound for every such switch).
+  it('POST /brain/model splits a canonical provider/model spec, but only on a configured provider', async () => {
+    const db = openPluginTablesDb(':memory:');
+    db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
+    const users = new UserStore(db);
+    const admin = users.create('admin', 'pw');
+    const config = new ConfigStore(db);
+    config.update({ brain: { providers: [
+      { id: 'azure', label: 'Azure', type: 'openai', baseUrl: 'http://x', models: ['deployment'], apiKey: 'k' },
+      { id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://y', models: ['ollama/kimi'], apiKey: 'k' },
+    ] } } as never);
+    const brain = fakeBrain();
+    const app = createServer({
+      bus: new EventBus(),
+      engine: null as never, spawn: null as never, tmux: null as never,
+      project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
+      clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
+      brain: brain as never,
+    });
+    const tok = users.issueToken(admin.id);
+
+    expect((await app.request('/brain/model', post(tok, { model: 'relay/ollama/kimi' }))).status).toBe(200);
+    expect((await app.request('/brain/model', post(tok, { model: 'ollama/kimi' }))).status).toBe(200);
+    expect((await app.request('/brain/model', post(tok, { provider: 'relay', model: 'azure/deployment' }))).status).toBe(200);
+    expect(brain.switchModelCalls.map((call) => call.sel)).toEqual([
+      { provider: 'relay', model: 'ollama/kimi' }, // the prefix names a provider: split at the first slash
+      { model: 'ollama/kimi' }, // no configured provider called `ollama`: a bare model id on the default provider
+      { provider: 'relay', model: 'azure/deployment' }, // an explicit provider is never second-guessed
+    ]);
   });
 
   it('a non-admin sees every configured brain model (not global-bounded), narrowed only by their personal list', async () => {
