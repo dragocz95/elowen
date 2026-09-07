@@ -44,6 +44,22 @@ survive a daemon restart mid-turn without discarding the turn's tool calls (`sch
 exact durability problem Claude Code's re-append hack works around, solved by writing progress continuously
 instead of racing a good copy into a tail window.
 
+**Wire frames on a user row.** A user row stores the person's clean text, and — when the turn wrapped that
+text in anything before sending it — a `wireFrames` field beside it holding the lead, the trail and, where
+the model-facing text differed, the text itself (`projectTurnWireFrames`). Rehydration puts the frames back
+so the request is reproduced from the store byte for byte instead of being composed a second time, which is
+what keeps a respawn or a fork from moving the prompt-cache entry it is trying to reuse. Everything that
+reads a row as the person's words — the transcript, the export, the titler, the curator — keeps reading the
+clean text and never the frames.
+
+**Privacy note for shared rooms.** The frames are whatever went out with that turn, so on a shared channel
+a verified writer's recalled memories are stamped onto the room's own row and persist there for as long as
+the row does. Clean-text readers are unaffected, but anything that reads a raw row — database inspection, a
+future export or API surface that forwards stored content verbatim — sees one participant's recalled context
+inside a room others can read. Treat `wireFrames` as request material rather than transcript content when
+exposing rows anywhere new. Byte-identical rehydration also applies to text turns only: a turn whose stored
+content is a block array (an image turn) comes back without frames.
+
 **Verdict: SKIP** (priority: n/a). Elowen's SQL-backed model is not merely "different", it is strictly better
 for its architecture: one writer, one file (the DB), transactional updates, no size-cap reader special case.
 
