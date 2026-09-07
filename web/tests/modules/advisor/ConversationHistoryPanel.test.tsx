@@ -472,6 +472,18 @@ describe('ConversationHistoryPanel — scheduled job branches', () => {
     expect(trigger).toHaveAttribute('aria-controls');
   });
 
+  /** A schedule is drawn as a branch of the conversation above it, not as a row that merely starts
+   *  further right — and the trunk stops at the LAST one, which is what closes the group. */
+  it('draws each schedule as a branch of its conversation and closes the trunk on the last', async () => {
+    withLinks(digest, report);
+    renderPanel();
+    fireEvent.click(await branch());
+
+    await screen.findByText('Nightly digest');
+    const guides = document.querySelectorAll('[data-tree-guide]');
+    expect(Array.from(guides).map((g) => g.getAttribute('data-tree-guide'))).toEqual(['branch', 'last']);
+  });
+
   // Following a schedule is meant to land in the transcript its runs produced, which is where a reader who
   // clicks a job from a conversation list is going. Only a schedule the daemon could not place that way —
   // one that has never fired — keeps pointing at the schedule's own editor.

@@ -21,6 +21,7 @@ import {
 import { useConversationJobLinks } from '../../lib/queries';
 import { useMeasuredPageSize } from '../../lib/useMeasuredPageSize';
 import { ScheduledJobLink, scheduledJobName } from '../../components/brain/ScheduledJobLink';
+import { TreeGuide } from '../../components/brain/TreeGuide';
 import type { BrainSearchHit, BrainSessionInfo, ConversationJobLink } from '../../lib/types';
 import { useBrainChat } from './BrainChatProvider';
 import { brainModelLabel, brainModelQualifiedLabel } from '../../lib/modelProvider';
@@ -132,9 +133,7 @@ const COLUMNS = '2.25rem minmax(0,1.2fr) minmax(0,2.4fr) 5.5rem 10rem 2.25rem';
 const COMPACT_COLUMNS = '2.25rem minmax(0,1fr) 2.25rem';
 const MOBILE_COLUMNS = '2.25rem minmax(0,1.6fr) minmax(0,1fr) 2.25rem';
 
-/** How far the schedules under a conversation are shifted, and one shared empty set for "nothing is
- *  expanded" so an unfiltered render keeps the same identities. */
-const INDENT_STEP = 16;
+/** One shared empty set for "nothing is expanded", so an unfiltered render keeps the same identities. */
 const EMPTY_IDS: ReadonlySet<string> = new Set<string>();
 
 /** The caller's OWN conversations: the register's table, the fulltext search with its snippets, the
@@ -517,15 +516,21 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
    *  job from a conversation list is going. Only where the daemon could not name that transcript — a job
    *  that has never fired, or one whose runs land somewhere this account may not read — does the row fall
    *  back to the schedule's own editor, which is what it always used to open. */
-  const jobRow = (node: ConversationTreeNode, link: ConversationJobLink): ReactNode => {
+  const jobRow = (node: ConversationTreeNode, link: ConversationJobLink, last: boolean): ReactNode => {
     const label = scheduledJobName(link, t.scheduledJobs);
-    const cellClass = 'flex w-full min-w-0 items-center gap-1.5 rounded-md text-left text-xs text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70';
+    const cellClass = 'flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left text-xs text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70';
     const run = link.run;
     return (
       <DataTableRow key={`${node.row.id}:job:${link.jobId}`} id={jobRowDomId(node.row.id, link.jobId)} data-tree-row="job">
-        <DataTableCell lines={1}>{null}</DataTableCell>
-        <DataTableCell priority="mobile" lines={1}>{null}</DataTableCell>
-        <DataTableCell lines="auto" style={{ paddingInlineStart: INDENT_STEP }}>
+        {/* ONE cell across the whole row, so the branch is drawn from the register's left edge: a
+            schedule hangs off the conversation above it and does not pretend to have a state, a model
+            or a token total of its own.
+
+            The flex lives on the CELL rather than on a wrapper inside it. The cell is a grid item and
+            does stretch to the row, but a percentage height inside it resolves against `auto` and left
+            the trunk as tall as its own text; `self-stretch` on the guide is what fills the row. */}
+        <DataTableCell lines="auto" className="flex items-stretch gap-1.5 self-stretch" style={{ gridColumn: '1 / -1' }}>
+          <TreeGuide last={last} />
           {run ? (
             <button
               type="button"
@@ -541,9 +546,6 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
             </Link>
           )}
         </DataTableCell>
-        <DataTableCell priority="wide" lines={1}>{null}</DataTableCell>
-        <DataTableCell priority="wide" lines={1}>{null}</DataTableCell>
-        <DataTableCell lines="auto">{null}</DataTableCell>
       </DataTableRow>
     );
   };
@@ -551,7 +553,7 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
   const renderNode = (node: ConversationTreeNode): ReactNode[] => {
     const out: ReactNode[] = [conversationRow(node)];
     if (node.jobs.length > 0 && jobBranchOpen(node.row.id)) {
-      for (const link of node.jobs) out.push(jobRow(node, link));
+      node.jobs.forEach((link, i) => out.push(jobRow(node, link, i === node.jobs.length - 1)));
     }
     return out;
   };

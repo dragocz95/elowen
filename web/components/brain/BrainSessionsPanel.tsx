@@ -18,6 +18,7 @@ import {
   type ConversationTreeNode,
 } from '../../lib/conversationTree';
 import { ScheduledJobLink, scheduledJobName } from './ScheduledJobLink';
+import { TreeGuide } from './TreeGuide';
 import type { ConversationJobLink } from '../../lib/types';
 import { Avatar } from '../ui/Avatar';
 import { ModelIcon } from '../ui/ModelIcon';
@@ -357,8 +358,16 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
     const open = jobBranchOpen(node.row.id);
     return (
       <DataTableRow key={`${node.row.id}:jobs`} id={jobsRowDomId(node.row.id)} data-tree-row="jobs">
-        <DataTableCell priority="mobile" lines={1}>{null}</DataTableCell>
-        <DataTableCell lines="auto" style={indentOf(node.depth + 1)}>
+        {/* ONE cell across the whole row: the branch and its schedules are drawn from the register's
+            left edge, so they read as hanging off the conversation above instead of as rows that happen
+            to start further right. They have no owner, no model and no token total to show anyway.
+
+            The flex lives on the CELL rather than on a wrapper inside it: the cell is a grid item and
+            stretches to the row, but a percentage height inside it resolves against `auto`, which left
+            the trunk as tall as its own text. `self-stretch` on the guide is what fills the row. */}
+        <DataTableCell lines="auto" className="flex items-stretch gap-1.5 self-stretch" style={{ gridColumn: '1 / -1', paddingInlineStart: indentOf(node.depth).paddingInlineStart }}>
+          {/* Closed, the branch is the end of the tree here: nothing below it hangs off this trunk. */}
+          <TreeGuide last={!open} />
           <button
             type="button"
             onClick={() => toggle(setOpenJobBranches)(node.row.id)}
@@ -372,10 +381,6 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
             <span className="font-mono text-tiny tabular-nums">{node.jobs.length}</span>
           </button>
         </DataTableCell>
-        <DataTableCell priority="wide" lines={1}>{null}</DataTableCell>
-        <DataTableCell priority="wide" lines={1}>{null}</DataTableCell>
-        <DataTableCell priority="wide" lines={1}>{null}</DataTableCell>
-        <DataTableCell lines="auto">{null}</DataTableCell>
       </DataTableRow>
     );
   };
@@ -383,14 +388,16 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
   /** One schedule. Following it opens the conversation the job's runs actually landed in — reading that
    *  transcript changes nothing about when the job runs or where its result goes. Where the daemon could
    *  not name one (a schedule that has never fired) the row falls back to the job's own editor. */
-  const jobRow = (node: ConversationTreeNode, link: ConversationJobLink): ReactNode => {
+  const jobRow = (node: ConversationTreeNode, link: ConversationJobLink, last: boolean): ReactNode => {
     const jobLabel = scheduledJobName(link, t.scheduledJobs);
-    const jobClass = 'flex w-full min-w-0 items-center gap-1.5 rounded-md text-left text-xs text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70';
+    const jobClass = 'flex min-w-0 flex-1 items-center gap-1.5 rounded-md text-left text-xs text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70';
     const run = link.run;
     return (
     <DataTableRow key={`${node.row.id}:job:${link.jobId}`} id={`${jobsRowDomId(node.row.id)}-${encodeURIComponent(link.jobId)}`} data-tree-row="job">
-      <DataTableCell priority="mobile" lines={1}>{null}</DataTableCell>
-      <DataTableCell lines="auto" style={indentOf(node.depth + 2)}>
+      <DataTableCell lines="auto" className="flex items-stretch gap-1.5 self-stretch" style={{ gridColumn: '1 / -1', paddingInlineStart: indentOf(node.depth).paddingInlineStart }}>
+        {/* The trunk of the branch this schedule hangs under, then its own connector. */}
+        <TreeGuide last={false} />
+        <TreeGuide last={last} />
         {run ? (
           <button
             type="button"
@@ -406,10 +413,6 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
           </Link>
         )}
       </DataTableCell>
-      <DataTableCell priority="wide" lines={1}>{null}</DataTableCell>
-      <DataTableCell priority="wide" lines={1}>{null}</DataTableCell>
-      <DataTableCell priority="wide" lines={1}>{null}</DataTableCell>
-      <DataTableCell lines="auto">{null}</DataTableCell>
     </DataTableRow>
     );
   };
@@ -422,7 +425,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
     if (!branchOpen(node.row.id)) return rows;
     if (node.jobs.length > 0) {
       rows.push(jobsBranchRow(node));
-      if (jobBranchOpen(node.row.id)) for (const link of node.jobs) rows.push(jobRow(node, link));
+      if (jobBranchOpen(node.row.id)) node.jobs.forEach((link, i) => rows.push(jobRow(node, link, i === node.jobs.length - 1)));
     }
     for (const child of node.children) rows.push(...renderNode(child));
     return rows;
