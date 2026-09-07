@@ -390,14 +390,18 @@ export function register(ctx) {
       + 'user explicitly asked to run a sub-agent on a different model, or when a delegation was refused '
       + 'because the model you named is not configured; by default a sub-agent inherits your own model and '
       + 'you should not pass `model` at all. It takes no arguments and returns one line per configured '
-      + 'model with its provider label, or a note that none are configured. This is a read-only lookup of '
+      + 'model with its provider label and, where the model has one, the reasoning levels its `thinkingLevel` '
+      + 'accepts — or a note that none are configured. This is a read-only lookup of '
       + 'what this Elowen instance has wired up — it does not switch YOUR model, change any setting, or say '
       + 'anything about pricing or availability at the provider.',
     parameters: Type.Object({}),
     execute: async () => {
       const list = await ctx.listModels().catch(() => []);
       return ok(list.length
-        ? list.map((m) => `${m.provider}/${m.model}${m.providerLabel ? ` (${m.providerLabel})` : ''}`).join('\n')
+        // The ladder belongs on this line: it is the only place a caller can learn which thinkingLevel a
+        // model accepts, and the alternative is discovering it from a refusal after guessing.
+        ? list.map((m) => `${m.provider}/${m.model}${m.providerLabel ? ` (${m.providerLabel})` : ''}`
+          + `${m.reasoningLevels?.length ? ` — reasoning: ${m.reasoningLevels.join(', ')}` : ''}`).join('\n')
         : 'No models configured.');
     },
   }));
@@ -436,7 +440,7 @@ export function register(ctx) {
         description: 'Run the sub-agent on a DIFFERENT model — pass this ONLY when the user explicitly asked for it. '
           + 'Value from DelegateModels ("provider/model" or a bare model id). Omit it to inherit your own model.',
       })),
-      thinkingLevel: Type.Optional(Type.String({ description: THINKING_LEVEL_HINT })),
+      thinkingLevel: Type.Optional(Type.String({ minLength: 1, description: THINKING_LEVEL_HINT })),
       background: Type.Optional(Type.Boolean({
         description: 'Start asynchronously and return a stable job id immediately. Omit or false to wait for the result.',
       })),

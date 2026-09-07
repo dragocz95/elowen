@@ -387,11 +387,18 @@ export function promoteDelegatedScope(
   return { scope: promoted };
 }
 
-/** Semantically compare canonical durable scopes without trusting caller object identity or array order. */
+/** Semantically compare the AUTHORITY of two canonical durable scopes, without trusting caller object
+ *  identity or array order. `thinkingLevel` is deliberately excluded: it is reasoning effort, not
+ *  permission, and this comparison gates whether a child may run at all. A workflow node re-prompted into
+ *  its existing session mints its scope fresh from live access, so counting the level would have made
+ *  every node of a workflow interrupted BEFORE the level was captured unrunnable after the upgrade — the
+ *  stored row has no level, the rebuilt one does. Nothing here may widen access either way. */
 export function sameDelegatedExecutionScope(a: DelegatedExecutionScope, b: DelegatedExecutionScope): boolean {
   const left = normalizeDelegatedExecutionScope(a);
   const right = normalizeDelegatedExecutionScope(b);
-  return !!left && !!right && JSON.stringify(left) === JSON.stringify(right);
+  if (!left || !right) return false;
+  const authority = ({ thinkingLevel: _level, ...rest }: DelegatedExecutionScope) => rest;
+  return JSON.stringify(authority(left)) === JSON.stringify(authority(right));
 }
 
 /** Add an account-level deny-list to an inherited scope. This only narrows access; an old deny remains

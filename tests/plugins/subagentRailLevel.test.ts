@@ -37,11 +37,12 @@ describe('subagent plugin — the rail entry reports the level the child runs on
   const delegate = async (
     turnModel: { provider?: string; model: string; thinkingLevel?: string } | undefined,
     args: Record<string, unknown> = {},
+    listModels: () => Promise<typeof catalog> = async () => catalog,
   ) => {
     const reg = await loadPlugins({
       dirs: [join(repoRoot, 'plugins')], enabled: ['subagent'], dataRoot,
       logger: { info() {}, warn() {}, error() {} },
-      listModels: async () => catalog,
+      listModels,
     });
     const platform = reg.platforms.find((p) => p.name === 'subagent');
     if (!platform) throw new Error('subagent platform not registered');
@@ -62,7 +63,7 @@ describe('subagent plugin — the rail entry reports the level the child runs on
       () => executor.execute('call-1', { task: 'a task', ...args }),
       { identity: owner, sessionId: 'brain-1', model: turnModel, emitSubagent: (u) => updates.push(u) },
     );
-    return { updates, text: result.content[0]?.text ?? '', tool: executor };
+    return { updates, text: result.content[0]?.text ?? '', tool: executor, reg };
   };
 
   // Mutation: drop `thinkingLevel` from the plugin's progress payload and every update reports undefined.
@@ -118,6 +119,22 @@ describe('subagent plugin — the rail entry reports the level the child runs on
     expect(text).toContain('reports no reasoning levels');
   });
 
+  /** The catalog is fetched LIVE from the provider and degrades to an empty list when that request fails,
+   *  so "not in the catalog" is not evidence about the model. Refusing there would let a provider blip
+   *  reject a level the model does support — and fail a workflow node resumed at boot over it. The level
+   *  is handed on instead, exactly as an inherited one is, and the child's own layer clamps it. */
+  it('honours the level when the model catalog cannot be read at all', async () => {
+    const { updates: seen, text } = await delegate(
+      { provider: 'anthropic', model: 'claude-opus-5', thinkingLevel: 'low' },
+      { thinkingLevel: 'high' },
+      async () => { throw new Error('models endpoint unreachable'); },
+    );
+
+    expect(text).not.toContain('thinkingLevel');
+    expect(seen.every((u) => u.thinkingLevel === 'high')).toBe(true);
+    expect(seen.length).toBeGreaterThan(0);
+  });
+
   /** The level is validated against the model this delegation resolves to, not the parent's — otherwise a
    *  cross-model delegation would be checked against a ladder the child never runs on. */
   it('validates the level against an explicitly chosen child model', async () => {
@@ -140,5 +157,20 @@ describe('subagent plugin — the rail entry reports the level the child runs on
     expect(description).toMatch(/design|debug/i);
     expect(description).toMatch(/time and tokens/i);
     expect(description).toMatch(/inherit/i);
+  });
+
+  /** The description sends the caller to DelegateModels for a model's valid levels, so that listing has to
+   *  actually carry them — otherwise the only way to learn a ladder is to guess and read the refusal. */
+  it('prints each model’s reasoning ladder in the model listing', async () => {
+    const { reg } = await delegate({ provider: 'anthropic', model: 'claude-opus-5' });
+    const models = reg.tools.find((t) => t.name === 'DelegateModels') as unknown as {
+      execute: (id: string, p: unknown) => Promise<{ content: { text: string }[] }>;
+    };
+    const text = (await models.execute('call-models', {})).content[0]?.text ?? '';
+
+    expect(text).toContain('anthropic/claude-opus-5 (Anthropic) — reasoning: low, medium, high');
+    // A model without a ladder stays a plain line rather than growing an empty one.
+    expect(text).toContain('openai/chat-only (OpenAI)');
+    expect(text).not.toMatch(/chat-only.*reasoning/);
   });
 });

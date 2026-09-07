@@ -11,8 +11,8 @@ export const THINKING_LEVEL_HINT = 'Reasoning effort for THIS sub-agent, chosen 
   + 'output. Use a medium level for ordinary implementation against a clear spec. Use a high level for '
   + 'design decisions, debugging a failure whose cause is unknown, security-sensitive review, or '
   + 'reconciling requirements that conflict. Higher levels cost noticeably more time and tokens, so do '
-  + 'not raise it "to be safe". Values come from the ladder of the model the sub-agent runs on '
-  + '(DelegateModels-listed models expose their own levels, typically low/medium/high); an unsupported '
+  + 'not raise it "to be safe". Values come from the ladder of the model the sub-agent runs on, which '
+  + 'DelegateModels prints per model (typically low/medium/high); an unsupported '
   + 'value is refused and tells you which levels that model has. Omit it to inherit the reasoning level '
   + 'of your own turn, which is the default and usually right.';
 
@@ -38,9 +38,14 @@ export function resolveThinkingLevel(requested, inherited, model, models) {
   const want = typeof requested === 'string' ? requested.trim() : '';
   if (!want) return { level: inherited };
   const named = model?.model ? `${model.provider ? `${model.provider}/` : ''}${model.model}` : 'the sub-agent model';
-  const entry = models.find((m) => m.provider === model?.provider && m.model === model?.model);
+  const entry = model?.model ? models.find((m) => m.provider === model.provider && m.model === model.model) : undefined;
+  // Only a model we actually FOUND in the catalog can refuse a level. An entry we cannot look up says
+  // nothing about the model: the catalog is fetched live from the provider and degrades to an empty list
+  // when that request fails, and a workflow node resumed at boot goes through exactly this path. Refusing
+  // there would turn a provider blip into a failed node over a level the model may well support. With no
+  // entry we hand the level on and let PI clamp it, which is what the inherited path has always done.
   const levels = entry?.reasoningLevels ?? [];
-  if (!levels.includes(want)) {
+  if (entry && !levels.includes(want)) {
     return {
       error: levels.length
         ? `thinkingLevel "${want}" is not available on ${named}. Its reasoning levels are: ${levels.join(', ')}.`
