@@ -56,7 +56,7 @@ describe('BrainSection limits — collapsed into a drawer', () => {
     // not a section with its own heading.
     expect(screen.queryByRole('slider', { name: 'Sub-agent context' })).toBeNull();
     expect(screen.queryByText('Sub-agents')).toBeNull();
-    expect(screen.getByRole('switch', { name: 'Fork parent context' })).toBeTruthy();
+    expect(screen.getByRole('switch', { name: 'Share conversation context' })).toBeTruthy();
     fireEvent.keyDown(screen.getByRole('slider', { name: 'Memory recall — count' }), { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('slider', { name: 'Memory recall — count' })).toBeNull());
   });
@@ -66,7 +66,7 @@ describe('BrainSection limits — collapsed into a drawer', () => {
   it('saves the fork default from the limits list', async () => {
     renderBrain();
     fireEvent.click(await screen.findByRole('button', { name: 'Edit limits' }));
-    fireEvent.click(screen.getByRole('switch', { name: 'Fork parent context' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Share conversation context' }));
     await waitFor(() => expect((putBody as { brain?: { forkParentContext?: boolean } })?.brain?.forkParentContext).toBe(true));
   });
 

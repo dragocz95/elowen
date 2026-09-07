@@ -1219,8 +1219,8 @@ export const sk = {
     maxSteps: "Max krokov",
     maxStepsHint: "Najvyšší počet kôl s modelom pre jednu požiadavku. Chráni pred zacyklením. Rozsah 100–1 000 po 100, predvolené 200.",
     subagents: {
-      forkParentContext: "Fork kontextu rodiča",
-      forkParentContextHint: "Ak volanie Delegate neurčí inak, spustí sa subagent ako FORK tejto konverzácie: rovnaký systémový prompt, rovnaké nástroje a celá história, takže poskytovateľ prečíta uloženú cache namiesto toho, aby prefix účtoval znova. Cache je zdieľaná len dokiaľ dieťa nič nezužuje, takže forknutý subagent nemôže dostať vlastnú sadu nástrojov, režim len na čítanie, typ subagenta ani workspace, a iný model nezdieľa cache vôbec.",
+      forkParentContext: "Zdieľať kontext konverzácie",
+      forkParentContextHint: "Ak volanie Delegate neurčí inak, spustí sa subagent s touto konverzáciou: rovnaký systémový prompt, rovnaké nástroje a celá história, takže poskytovateľ prečíta uloženú cache namiesto toho, aby prefix účtoval znova. Cache je zdieľaná len dokiaľ dieťa nič nezužuje, takže takýto subagent nemôže dostať vlastnú sadu nástrojov, režim len na čítanie, typ subagenta ani workspace, a iný model nezdieľa cache vôbec.",
     },
     limits: {
       title: "Limity",
