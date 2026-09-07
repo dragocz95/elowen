@@ -5,6 +5,11 @@ import { rehydrate, storedContextMessages } from '../../src/brain/persistence.js
 import { forkSeedMessages, type ForkMessage } from '../../src/brain/session/forkPrefix.js';
 import { HISTORY_IMAGE_PLACEHOLDER } from '../../src/brain/session/historyImageStripping.js';
 import { createToolSearchHandle, seedActivatedFromHistory } from '../../src/brain/toolSearch/toolSearchTool.js';
+import {
+  anthropicHostedReplayMetadata,
+  restoreAnthropicHostedReplay,
+  verifyAnthropicHostedReplay,
+} from '../../src/brain/session/anthropicHostedToolReplay.js';
 
 /** A fork child must start from what its parent's next request WOULD send, byte for byte. That is a
  *  stronger claim than "the same rows": between the stored rows and the wire sit the transforms this
@@ -22,6 +27,18 @@ import { createToolSearchHandle, seedActivatedFromHistory } from '../../src/brai
  *  cleared result came back at full size, the externalized image came back as an image block, and an
  *  orphaned tool result came back to be rejected by the provider. Reverting `parentForkHistory` to that
  *  reading fails the first three assertions here. */
+
+/** One parent turn in which Anthropic's SERVER-side search pulled a deferred tool in. The reference names
+ *  `WorkflowStart`, which is exactly the name the deployed 400 named. */
+const HOSTED_CONTENT = [
+  { type: 'server_tool_use', id: 'srvtoolu_1', name: 'tool_search_tool_bm25', input: { query: 'workflow' } },
+  {
+    type: 'tool_search_tool_result',
+    tool_use_id: 'srvtoolu_1',
+    content: { type: 'tool_search_tool_search_result', tool_references: [{ type: 'tool_reference', tool_name: 'WorkflowStart' }] },
+  },
+  { type: 'text', text: 'searched' },
+];
 
 const OUTPUT = 'x'.repeat(50_007);
 const PLACEHOLDER = '[Large tool result (50007 bytes) saved to disk instead of the context. '
@@ -121,6 +138,16 @@ describe('the transcript a fork inherits', () => {
     expect([...handle.activated]).toEqual(['WorkflowStart']);
   });
 
+  it('carries the parent’s hosted-search replay metadata, which the child replays verbatim', () => {
+    append('assistant', {
+      role: 'assistant', timestamp: 2_300, content: [{ type: 'text', text: 'searched' }],
+      anthropicHostedToolReplay: { v: 1, content: HOSTED_CONTENT },
+    });
+    const replayed = seed().find((message) => (message as { anthropicHostedToolReplay?: unknown }).anthropicHostedToolReplay);
+    expect(replayed).toBeDefined();
+    expect(anthropicHostedReplayMetadata(replayed as never)?.content).toEqual(HOSTED_CONTENT);
+  });
+
   it('drops a tool result whose call the compaction cut, which the raw rows would hand to the provider', () => {
     append('toolResult', {
       role: 'toolResult', toolCallId: 'call-gone', toolName: 'Read', isError: false,
@@ -128,5 +155,60 @@ describe('the transcript a fork inherits', () => {
     });
     expect(seed().some((message) => message.toolCallId === 'call-gone')).toBe(false);
     expect(store.getMessages('s-parent').some((r) => r.content.includes('call-gone'))).toBe(true);
+  });
+});
+
+/** The other half of the same contract: the inherited transcript reaches the child intact (above), and the
+ *  child's OWN request has to remain valid once that transcript is replayed into it.
+ *
+ *  A hosted-search result is server-owned content replayed byte for byte, but the tools block is not
+ *  replayed with it — every session assembles its own, and a fork child's is narrowed by its delegated
+ *  visibility policy and by whatever its account may still reach. When the replayed reference names a tool
+ *  the child's request does not carry, Anthropic refuses the whole request with
+ *  `Tool reference '<name>' not found in available tools`, and the child cannot take a single turn.
+ *
+ *  RED BEFORE THE FIX: restore copied `meta.content` into the payload unconditionally, so the second test
+ *  below found the dangling reference still in the request (and `verifyAnthropicHostedReplay` then demanded
+ *  it stay there). */
+describe('a hosted-search reference replayed into a fork child', () => {
+  const MODEL = 'claude-x';
+
+  const payload = (toolNames: readonly string[]): Record<string, unknown> => ({
+    model: MODEL,
+    tools: [
+      { type: 'tool_search_tool_bm25_20251119', name: 'tool_search_tool_bm25' },
+      ...toolNames.map((name) => ({ name, input_schema: { type: 'object' }, defer_loading: true })),
+    ],
+    messages: [{ role: 'assistant', content: [{ type: 'text', text: 'searched' }] }],
+  });
+
+  const context = [{ role: 'assistant', content: [{ type: 'text', text: 'searched' }], anthropicHostedToolReplay: { v: 1, content: HOSTED_CONTENT } }];
+
+  const referencesOf = (restored: unknown): unknown[] => {
+    const message = (restored as { messages: { content: Record<string, unknown>[] }[] }).messages[0]!;
+    const result = message.content.find((block) => block.type === 'tool_search_tool_result')!;
+    return (result.content as { tool_references: unknown[] }).tool_references;
+  };
+
+  it('is replayed verbatim when the child’s request carries the tool', () => {
+    const request = payload(['WorkflowStart', 'Read']);
+    const restored = restoreAnthropicHostedReplay(request, context, MODEL);
+    expect(referencesOf(restored)).toEqual([{ type: 'tool_reference', tool_name: 'WorkflowStart' }]);
+    expect(verifyAnthropicHostedReplay(restored, context, MODEL)).toBe(true);
+  });
+
+  it('is dropped, and named, when the child’s request does not carry the tool', () => {
+    const dropped: string[][] = [];
+    const request = payload(['Read']);
+    const restored = restoreAnthropicHostedReplay(request, context, MODEL, (names) => { dropped.push([...names]); });
+    expect(referencesOf(restored)).toEqual([]);
+    expect(dropped).toEqual([['WorkflowStart']]);
+    // The result BLOCK itself must survive: Anthropic requires every server_tool_use to keep its pair.
+    const content = (restored as { messages: { content: Record<string, unknown>[] }[] }).messages[0]!.content;
+    expect(content.map((block) => block.type))
+      .toEqual(['server_tool_use', 'tool_search_tool_result', 'text']);
+    // …and the request that leaves must still pass the pre-flight check, or the repair would only move the
+    // failure from the provider to the transport.
+    expect(verifyAnthropicHostedReplay(restored, context, MODEL)).toBe(true);
   });
 });

@@ -14,6 +14,15 @@ const SIGNATURE_A = 'signed-thinking-a';
 const SIGNATURE_B = 'signed-thinking-b';
 const MODEL = { id: 'claude-opus-5', provider: 'anthropic', api: 'anthropic-messages' } as const;
 
+/** The tool block a request replaying these fixtures actually carries. It names every tool their
+ *  hosted-search results reference: Anthropic validates a replayed `tool_reference` against this array, so
+ *  a request offering none of them could not carry the reference either — restore drops it instead of
+ *  sending a reference the provider will refuse the whole request over. */
+const REQUEST_TOOLS = [
+  { name: 'DocsSearch', input_schema: { type: 'object' } },
+  { name: 'Bash', input_schema: { type: 'object' } },
+];
+
 const rawContent = () => [
   { type: 'text', text: 'Searching.' },
   { type: 'thinking', thinking: 'first', signature: SIGNATURE_A },
@@ -199,7 +208,7 @@ describe('Anthropic hosted tool-search replay', () => {
     const payload = {
       model: 'claude-opus-5',
       messages: [{ role: 'assistant', content: [{ type: 'redacted_thinking', data: 'redacted-thinking' }] }],
-      tools: [],
+      tools: REQUEST_TOOLS,
     };
     const restored = restoreAnthropicHostedReplay(payload, [stored], 'claude-opus-5') as typeof payload;
     expect(restored.messages[0]?.content).toEqual(multiplePairsContent);
@@ -276,7 +285,7 @@ describe('Anthropic hosted tool-search replay', () => {
     const payload = {
       model: 'claude-opus-5',
       messages: [wireAssistant(), { role: 'user', content: [{ type: 'tool_result', tool_use_id: 'toolu_docs', content: 'result' }] }],
-      tools: [],
+      tools: REQUEST_TOOLS,
     };
     const before = structuredClone(payload);
     const restored = restoreAnthropicHostedReplay(payload, [assistant()], 'claude-opus-5') as typeof payload;
@@ -296,7 +305,7 @@ describe('Anthropic hosted tool-search replay', () => {
     raw.content[0] = { type: 'text', text: brokenText };
     const stored = assistant(raw);
     stored.content[0] = { type: 'text', text: brokenText };
-    const payload = { model: 'claude-opus-5', messages: [wireAssistant()], tools: [] };
+    const payload = { model: 'claude-opus-5', messages: [wireAssistant()], tools: REQUEST_TOOLS };
     (payload.messages[0]!.content[0] as { text: string }).text = 'Searching.';
     expect((restoreAnthropicHostedReplay(payload, [stored], 'claude-opus-5') as typeof payload).messages[0]?.content).toEqual(raw.content);
   });
