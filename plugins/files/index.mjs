@@ -3,7 +3,7 @@
 // react, not thrown, matching how the Elowen* tools surface API errors.
 import { defineTool, withFileMutationQueue, truncateHead, truncateLine, formatSize, generateDiffString, generateUnifiedPatch, resizeImage, formatDimensionNote } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, writeFileSync, readdirSync, statSync, mkdtempSync, rmSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, mkdirSync, openSync, readFileSync, readSync, writeFileSync, readdirSync, statSync, mkdtempSync, rmSync } from 'node:fs';
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
@@ -65,6 +65,30 @@ const fail = (tool, e, details = {}) => ok(tool, `Error: ${e instanceof Error ? 
   error: { message: e instanceof Error ? e.message : String(e) },
   ...details,
 });
+
+// ── Error delivery channel ───────────────────────────────────────────────────
+// ONE rule, and this is the place it is written down: the web and mcp plugins carry the same helper with
+// a pointer back here, because bundled plugins cannot import each other.
+//
+// THROW a failure the model cannot fix by calling differently — a transport or host fault: a network or
+// DNS/socket error, an origin or search backend answering 5xx, ripgrep crashing or being killed, an MCP
+// transport dying. The host turns a throw into a tool result flagged `is_error`, keeping the thrown
+// message as the result text (its `details` are dropped), which is what makes a failure look like a
+// failure in the UI and in the transcript instead of reading like an answer.
+//
+// RETURN TEXT for everything the model CAN act on itself: bad arguments, a path or resource that is not
+// there, a policy refusal, an HTTP 4xx the origin answered with content. Those are answers, not faults,
+// and throwing them would spend a turn painting a red banner over ordinary guidance.
+const TRANSPORT_FAILURE = Symbol.for('elowen.transportFailure');
+/** Tag `error` as a transport/host fault so the tool rethrows it instead of flattening it to text. */
+export function markTransportFailure(error) {
+  const wrapped = error instanceof Error ? error : new Error(String(error));
+  wrapped[TRANSPORT_FAILURE] = true;
+  return wrapped;
+}
+export function isTransportFailure(error) {
+  return Boolean(error && typeof error === 'object' && error[TRANSPORT_FAILURE] === true);
+}
 
 /** Slice `text` to at most `maxBytes` UTF-8 bytes without splitting a multi-byte character. */
 function sliceBytes(text, maxBytes) {
@@ -654,6 +678,14 @@ function recordTextRead(sessionId, key, hash, offset, limit) {
   recordEntry(files, key, { hash, ours: prior?.hash === hash && prior.ours === true, offset, limit });
 }
 
+/** The reference's two non-content Read outcomes, verbatim (`FileReadTool.ts:706-707`). Neither is an
+ * error: the file is there, it just has nothing to show for this request, and saying so as a warning is
+ * what stops a model retrying the same read as though it had failed. */
+const EMPTY_FILE_REMINDER = '<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>';
+const overOffsetReminder = (startLine, totalLines) =>
+  `<system-reminder>Warning: the file exists but is shorter than the provided offset (${startLine}). `
+  + `The file has ${totalLines} lines.</system-reminder>`;
+
 /** Claude Code's `file_unchanged` stub, verbatim (`src/tools/FileReadTool/prompt.ts:7-8`). */
 const FILE_UNCHANGED_STUB = 'File unchanged since last read. The content from the earlier Read tool_result '
   + 'in this conversation is still current — refer to that instead of re-reading.';
@@ -830,11 +862,6 @@ function readTextSnapshot(abs, start, requestedLines, readCap, expectedProbe) {
   }
 }
 
-function safeRegex(query) {
-  try { return new RegExp(query, 'i'); }
-  catch { return new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i'); }
-}
-
 function safeRegexSource(query) {
   try { new RegExp(query); return query; }
   catch { return String(query).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'); }
@@ -878,6 +905,14 @@ function relativizePathPrefix(line, root) {
 
 /** A killed rg is a timeout, not a search that found nothing: say which bound was hit and what to narrow,
  *  otherwise the caller reads the generic failure as "no matches here" and moves on. */
+/** ripgrep DYING rather than answering: killed by a signal (our own timeout, or a crash) or an exec-level
+ *  failure with no exit status at all. An ordinary `rg` exit 2 — a bad pattern, an unreadable path — is
+ *  ripgrep ANSWERING, which the caller can act on, so it stays a text result. */
+export function ripgrepDied(error) {
+  if (!error || typeof error !== 'object') return false;
+  return error.killed === true || typeof error.signal === 'string' || error.code === 'ETIMEDOUT';
+}
+
 export function grepTimeoutError(error) {
   const killed = error && typeof error === 'object'
     && (error.killed === true || error.signal === 'SIGTERM' || error.code === 'ETIMEDOUT');
@@ -1008,28 +1043,10 @@ function walkFiles(root, limit = 5000) {
 
 /** Ripgrep collects the WHOLE match set and this trims it, so `total` is the real number of matches —
  *  reported so the caller can say "showing N of M" rather than guessing from a full page. */
-async function rgSearch(abs, root, queryText, include, mode, maxMatches) {
+async function rgSearch(abs, root, queryText, include, maxMatches) {
   const ignoreGlobs = [...SKIP_DIRS].map((d) => `!${d}/**`);
-  if (mode === 'files') {
-    const args = ['--files', ...ignoreGlobs.flatMap((g) => ['--glob', g]), ...(include ? ['--glob', include] : []), abs];
-    try {
-      const { stdout } = await execFileP('rg', args, { cwd: root, encoding: 'utf8', timeout: SEARCH_TIMEOUT_MS, maxBuffer: 1_000_000 });
-      const query = safeRegex(queryText);
-      const all = stdout.split('\n').filter(Boolean)
-        .map((p) => relative(root, p.startsWith('/') ? p : join(root, p)) || p)
-        .filter((p) => query.test(p));
-      return { lines: all.slice(0, maxMatches), total: all.length };
-    } catch (e) {
-      // rg exits 1 on "no files matched" just like content mode — that's a real empty result, NOT an
-      // rg-unavailable signal. Without this the caller would treat it as a miss and fall back to the JS
-      // walk (which ignores .gitignore), surfacing gitignored files rg deliberately skipped.
-      if (e && typeof e === 'object' && 'code' in e && e.code === 1) return { lines: [], total: 0 };
-      throw e;
-    }
-  }
   // `-i` is deliberate and fixed, not an oversight next to Grep's opt-in `-i`: Search is the discovery
-  // entry point and folds case on ALL three of its paths (rg content, rg --files + safeRegex, and the
-  // rg-less walk), so its behaviour is one rule the model can state. Grep is the precise ripgrep tool and
+  // entry point and its behaviour is one rule the model can state. Grep is the precise ripgrep tool and
   // keeps ripgrep's case-sensitive default. Making this a flag would either break every existing caller
   // (default false) or leave two tools with opposite defaults for the same flag.
   const args = [
@@ -1052,6 +1069,10 @@ async function rgSearch(abs, root, queryText, include, mode, maxMatches) {
     return { lines: all.slice(0, maxMatches), total: all.length };
   } catch (e) {
     if (e && typeof e === 'object' && 'code' in e && e.code === 1) return { lines: [], total: 0 };
+    // A missing rg is answered with the install note; a crash or a kill is a host fault the caller
+    // rethrows; an ordinary rg error exit is ripgrep answering, and stays a readable result.
+    if (commandMissing(e)) throw e;
+    if (ripgrepDied(e)) throw markTransportFailure(grepTimeoutError(e) ?? e);
     throw e;
   }
 }
@@ -1123,8 +1144,10 @@ async function rgGrep(target, root, pattern, opts = {}) {
   } catch (e) {
     // rg exits 1 on "no matches" (same as content mode) — a real empty result, not an rg-missing signal.
     if (e && typeof e === 'object' && 'code' in e && e.code === 1) return { lines: [], truncated: false, total: 0 };
-    const timeout = grepTimeoutError(e);
-    if (timeout) throw timeout;
+    // A missing rg is answered with the install note; a crash or a kill is a host fault the caller
+    // rethrows; an ordinary rg error exit is ripgrep answering, and stays a readable result.
+    if (commandMissing(e)) throw e;
+    if (ripgrepDied(e)) throw markTransportFailure(grepTimeoutError(e) ?? e);
     throw e;
   }
   const raw = stdout.split('\n').filter(Boolean);
@@ -1192,7 +1215,7 @@ export function register(ctx) {
     description: [
       'Read a UTF-8 text file, an image, a PDF, or a Jupyter notebook within the accessible repositories.',
       'This is the right tool when you need exact source text, config, logs or docs before editing. For broad discovery across the codebase, use Search or ListDir first.',
-      'The path must be absolute. Missing files, directories, empty files, and invalid ranges return an error and do not count as reading the file. Text reads return at most 2000 lines by default. For a large file use offset and limit to read only the part you need; offsets 0 and 1 both start at the first line. A read without an explicit limit whose text would exceed the read cap returns an error instead of a silent prefix — re-read it with offset and limit.',
+      'The path must be absolute. Missing files, directories and invalid arguments return an error and do not count as reading the file. An existing empty file comes back as a system-reminder warning and does count as having read it; an offset past the end of the file comes back as a system-reminder warning naming the real line count and does NOT, because it showed you nothing. Text reads return at most 2000 lines by default. For a large file use offset and limit to read only the part you need; offsets 0 and 1 both start at the first line. A read without an explicit limit whose text would exceed the read cap returns an error instead of a silent prefix — re-read it with offset and limit.',
       'Text results use cat -n format: line number + tab + content.',
       'Images (jpg/png/gif/webp/bmp) come back as an attachment. Jupyter notebooks are rendered as cells with text and supported image outputs.',
       `PDFs with at most 10 pages may omit \`pages\`; longer PDFs require it. Page ranges use "3", "1-5" or "1,3,5", with at most ${pdfMaxPages} pages per call. Text-layer pages return text and scanned pages return an image.`,
@@ -1226,7 +1249,15 @@ export function register(ctx) {
           return fail('Read', new Error(pathNotFoundMessage('File does not exist.', abs, ctx.defaultCwd(), (value) => ctx.displayPath(value))), pathMeta(abs));
         }
         const probe = readFileProbe(abs);
-        if (probe.length === 0) return fail('Read', new Error('Cannot read an empty file.'), pathMeta(abs));
+        // An existing empty file is not a failed read: the reference answers it with a warning and marks
+        // the file read, and so do we. There is no content the model could be editing blind against —
+        // there is no content at all — so the hash of those zero bytes authorizes a later Write exactly
+        // as any other full read would, and the staleness check keeps its teeth if anything is appended.
+        if (probe.length === 0) {
+          const empty = Buffer.alloc(0);
+          markFileRead(ctx.currentSessionId?.(), statePath(abs), empty);
+          return ok('Read', EMPTY_FILE_REMINDER, { ...pathMeta(abs), bytes: 0, contentHash: hashOf(empty) });
+        }
         const model = ectx?.model ?? ctx.model;
         const supportsImages = !model || (Array.isArray(model.input) ? model.input.includes('image') : true);
         if (isPdf(probe)) {
@@ -1294,8 +1325,16 @@ export function register(ctx) {
         const byteCap = p.limit === undefined ? readCap : Infinity;
         const snapshot = readTextSnapshot(abs, start, requestedLines, byteCap, probe);
         const total = snapshot.totalLines;
-        if (total === 0) return fail('Read', new Error('Cannot read an empty file.'), pathMeta(abs));
-        if (start >= total) return fail('Read', new Error(`Offset ${p.offset} is beyond end of file (${total} lines total)`), pathMeta(abs));
+        if (total === 0) {
+          markFileRead(ctx.currentSessionId?.(), statePath(abs), Buffer.alloc(0));
+          return ok('Read', EMPTY_FILE_REMINDER, { ...pathMeta(abs), bytes: 0, contentHash: snapshot.contentHash });
+        }
+        // An offset past the end is answered, not refused — but it is the one read that displays NOTHING
+        // of a file that HAS content, so it deliberately records no authorization and emits no
+        // `contentHash`: neither this session nor a replayed transcript may treat it as having seen the
+        // file. (The reference does mark it read; that is the divergence, and it is the direction that
+        // keeps "a blind overwrite is never allowed against bytes the agent has not seen" true.)
+        if (start >= total) return ok('Read', overOffsetReminder(p.offset, total), { ...pathMeta(abs), bytes: snapshot.totalBytes });
         if (snapshot.byteTruncated) {
           return fail('Read', new Error(
             `File content (${formatSize(snapshot.totalBytes)}) exceeds maximum allowed size (${formatSize(readCap)}). `
@@ -1345,8 +1384,8 @@ export function register(ctx) {
     description: [
       'Create a new UTF-8 text file, or fully replace an existing one, within the accessible repositories.',
       'Use it only when you intend to replace the ENTIRE file content — for a localized change use Edit instead.',
-      'Creating a new file still requires an allowed path and an existing parent directory. To overwrite an EXISTING file you must have read it in this conversation first, and it must not have changed on disk since; a Read error or an omitted image does not count as having read it. Overwriting a file you have not inspected discards content you never reviewed, so the write is refused until you have.',
-      'The parent directory must already exist — create it with Bash (mkdir -p) first if needed. Never create documentation files (*.md, README) unless the user explicitly asked, and keep emojis out of file content unless asked.',
+      'Creating a new file still requires an allowed path. To overwrite an EXISTING file you must have read it in this conversation first, and it must not have changed on disk since; a Read error or an omitted image does not count as having read it. Overwriting a file you have not inspected discards content you never reviewed, so the write is refused until you have.',
+      'Missing parent directories are created for you. Never create documentation files (*.md, README) unless the user explicitly asked, and keep emojis out of file content unless asked.',
       'Output includes a human summary, details.diff for review and details.patch (unified) for tooling. Read the diff before you consider an overwrite done.',
     ].join(' '),
     parameters: Type.Object({
@@ -1367,6 +1406,12 @@ export function register(ctx) {
           const display = ctx.displayPath(abs);
           const guard = readGuardError(sessionId, statePath(abs), beforeBuf, false);
           if (guard) return ok('Write', `Error: ${guard}`, { ok: false, ...pathMeta(abs) });
+          // Create the parent tree the way the reference does, so writing into a new directory costs no
+          // extra round trip. It runs AFTER the guard and before the write: the guard decides whether this
+          // write may happen at all, and a directory created for a refused write would be litter. The path
+          // is already through ctx.assertPathAllowed, so every directory made here sits inside a root the
+          // caller may write to.
+          if (beforeBuf === null) mkdirSync(dirname(abs), { recursive: true });
           writeFileSync(abs, p.content, 'utf-8');
           const written = Buffer.from(p.content, 'utf-8');
           markFileRead(sessionId, statePath(abs), written, true);
@@ -1390,6 +1435,7 @@ export function register(ctx) {
     description: [
       'Replace an exact text snippet in a UTF-8 file within the accessible repositories. Use it for a targeted change, after reading enough surrounding context to locate the change precisely.',
       'You must have read the file in this conversation before editing it; Read errors and omitted images do not count. It must not have changed on disk since — an edit written from assumption, or against content that moved, is how work gets silently discarded.',
+      'An empty old_string on a path that does not exist creates the file with new_string, parent directories included, and needs no prior Read. On a path that DOES exist it is refused: use Write to replace content that is already there.',
       'When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: line number + tab. Everything after that is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.',
       'By default old_string must match exactly ONCE, including indentation and whitespace. If it appears more than once, include more context. Set replace_all when every occurrence really is the same change. BOM and CRLF line endings are preserved. The optional fuzzy_match extension tolerates smart quotes, Unicode dashes, exotic spaces and trailing whitespace, but canonical calls must leave it false.',
       'This tool applies ONE replacement per call — there is no batch `edits` array. To make several changes to the same file, call it once per change.',
@@ -1409,6 +1455,30 @@ export function register(ctx) {
         // Serialize the read-modify-write against other mutations of the SAME file (different files still
         // run in parallel) so a concurrent write can't slip between the match read and the write.
         return await withFileMutationQueue(abs, async () => {
+          // An empty `old_string` is the reference's file-creation form (`FileEditTool.ts:224-263`), and it
+          // is the ONE Edit that runs without a prior Read — there is nothing on disk to have read. On an
+          // existing path it stays a refusal, in the reference's own words, so creation never turns into a
+          // silent overwrite; Write, with its read-before-overwrite gate, remains the only way to replace
+          // content that is already there.
+          if (p.old_string === '') {
+            const display = ctx.displayPath(abs);
+            if (p.new_string === '') {
+              return ok('Edit', 'Error: No changes to make: old_string and new_string are exactly the same.', { ok: false, ...pathMeta(abs) });
+            }
+            if (existsSync(abs)) {
+              return ok('Edit', 'Error: Cannot create new file - file already exists.', { ok: false, ...pathMeta(abs) });
+            }
+            mkdirSync(dirname(abs), { recursive: true });
+            writeFileSync(abs, p.new_string, 'utf-8');
+            const created = Buffer.from(p.new_string, 'utf-8');
+            markFileRead(sessionId, statePath(abs), created, true);
+            const newDiff = displayDiff('', p.new_string);
+            const newPatch = unifiedPatch(display, '', p.new_string);
+            return ok('Edit', `File created successfully at: ${display}`, {
+              ...pathMeta(abs), replacements: 1, contentHash: hashOf(created),
+              ...(newDiff ? { diff: newDiff } : {}), ...(newPatch ? { patch: newPatch } : {}),
+            });
+          }
           // Checked on the stat, before the slurp: reading a gigabyte-plus file into a single string is the
           // out-of-memory failure this refusal exists to prevent, so it cannot come after the read.
           const size = statSync(abs).size;
@@ -1469,54 +1539,37 @@ export function register(ctx) {
   ctx.registerTool(defineTool({
     name: 'Search', label: 'Search files',
     description: [
-      'Search file names or UTF-8 file contents within an accessible repository path.',
-      'Use for codebase discovery before reading or editing files. Prefer content mode for symbols/text and files mode for path/name lookup. Always use this tool for content or name search — never grep, rg or find through Bash.',
+      'Search UTF-8 file CONTENTS within an accessible repository path.',
+      'Use for codebase discovery before reading or editing files. Always use this tool or Grep for content search — never grep or rg through Bash.',
+      'It does not search file names: use Glob for name patterns, which is the tool that owns them, and never find through Bash.',
       'Input path must be an accessible directory or file. Output is grouped matches with line numbers and is capped; details.truncated indicates more specific searches are needed.',
       'Matching is always case-insensitive here, on every path that returns results. When case matters, use Grep, whose -i flag makes case folding explicit.',
     ].join(' '),
     parameters: Type.Object({
       path: Type.String({ description: 'Absolute path to search within' }),
-      query: Type.String({ description: 'Literal text or regular expression to search for' }),
-      mode: Type.Optional(Type.Union([Type.Literal('content'), Type.Literal('files')], { description: 'Search content (default) or file names' })),
+      query: Type.String({ description: 'Literal text or regular expression to search for in file contents' }),
       include: Type.Optional(Type.String({ description: 'Optional file glob, e.g. "*.ts", "**/*.tsx", or "*.{ts,tsx}"' })),
     }),
     execute: async (_id, p) => {
       try {
         const abs = ctx.assertPathAllowed(p.path);
-        const mode = p.mode === 'files' ? 'files' : 'content';
         if (!String(p.query ?? '').trim()) return ok('Search', 'Error: query is required.', { ok: false, ...pathMeta(abs) });
         const root = statSync(abs).isDirectory() ? abs : dirname(abs);
         const queryText = String(p.query);
-        const query = safeRegex(queryText);
-        const include = globRegex(p.include);
         const lines = [];
         // Matches found, INCLUDING the ones past the cap. Counting them is what lets the notice below say
         // "showing 200 of 431" instead of guessing truncation from a full page — a page that is exactly
         // full is far more often a complete result than a trimmed one.
         let total = 0;
-        // Set when the traversal itself ran out of budget, so matches may be missing rather than trimmed.
-        let walkTruncated = false;
         try {
-          const hits = await rgSearch(abs, root, queryText, p.include, mode, searchMaxMatches);
+          const hits = await rgSearch(abs, root, queryText, p.include, searchMaxMatches);
           lines.push(...hits.lines);
           total = hits.total;
         } catch (error) {
           if (!commandMissing(error)) throw error;
-          // Filename matching stays safe without rg: the bounded walk reads directory entries and stats,
-          // never file contents. Content search must fail closed — reading arbitrary whole files as UTF-8
-          // is exactly how a broad /data search pulled a production SQLite database into the V8 heap.
-          if (mode === 'content') return ok('Search', RIPGREP_REQUIRED, { ok: false, path: abs, mode });
-          const walked = walkFiles(abs, WALK_CAP + 1);
-          walkTruncated = walked.length > WALK_CAP;
-          for (const file of walked.slice(0, WALK_CAP)) {
-            const rel = relative(root, file) || file;
-            if (include && !include.test(rel) && !include.test(rel.split('/').at(-1) ?? rel)) continue;
-            if (!query.test(rel)) continue;
-            // Keep counting past the cap: the walk is already bounded, so the extra work is a regex test
-            // per file and it buys an honest total instead of "at least this many".
-            total += 1;
-            if (lines.length < searchMaxMatches) lines.push(rel);
-          }
+          // Content search fails closed without rg — reading arbitrary whole files as UTF-8 is exactly how
+          // a broad /data search pulled a production SQLite database into the V8 heap.
+          return ok('Search', RIPGREP_REQUIRED, { ok: false, path: abs, mode: 'content' });
         }
         // Cap each hit so one minified/very long match line can't flood the result set.
         const formatted = lines.map((l) => truncateLine(l, RESULT_LINE_MAX).text).join('\n');
@@ -1524,13 +1577,15 @@ export function register(ctx) {
         // Say so out loud, like Grep does. The cut used to live only in `details.truncated`, which the
         // model never sees — so a search that stopped at its limit was indistinguishable from one that
         // found everything, and "not found" was reported for files that were simply past the cap.
-        const notices = [
-          ...(truncated ? [`[Showing ${lines.length} of ${total} matches — narrow the query or the include pattern for the rest.]`] : []),
-          ...(walkTruncated ? [`[The traversal stopped at ${WALK_CAP} files, so matches beyond it were never examined — search a narrower path.]`] : []),
-        ];
+        const notices = truncated
+          ? [`[Showing ${lines.length} of ${total} matches — narrow the query or the include pattern for the rest.]`]
+          : [];
         const text = [formatted || 'No matches found.', ...notices].join('\n\n');
-        return ok('Search', text, { ...pathMeta(abs), mode, matches: lines.length, total, truncated, walkTruncated });
-      } catch (e) { return fail('Search', safeError(e)); }
+        return ok('Search', text, { ...pathMeta(abs), mode: 'content', matches: lines.length, total, truncated });
+      } catch (e) {
+        if (isTransportFailure(e)) throw safeError(e);
+        return fail('Search', safeError(e));
+      }
     },
   }), { workspaceSafe: true });
 
@@ -1597,7 +1652,7 @@ export function register(ctx) {
       'Fast file pattern matching tool that works with any codebase size.',
       'Supports glob patterns like "**/*.js" or "src/**/*.ts".',
       'Returns matching file paths sorted by modification time (newest first).',
-      'Use this tool when you need to find files by name patterns. For content search, use Grep or Search.',
+      'This is the tool that owns file-name search: use it whenever you need to find files by name patterns, and never find through Bash. For content search, use Grep or Search.',
     ].join(' '),
     parameters: Type.Object({
       pattern: Type.String({ description: 'The glob pattern to match files against (e.g. "**/*.ts", "src/**/*.{js,jsx}")' }),
@@ -1664,7 +1719,7 @@ export function register(ctx) {
       'Supports full regex syntax (e.g. "log.*Error", "function\\s+\\w+").',
       'Pattern syntax: uses ripgrep (not grep) — literal braces need escaping (use `interface\\{\\}` to find `interface{}` in Go code).',
       'Filter files with the glob parameter (e.g. "*.js", "**/*.tsx"); a comma- or space-separated list filters on every pattern in it.',
-      'Output modes: "content" shows matching lines (default), "files_with_matches" shows only file paths, "count" shows match counts per file.',
+      'Output modes: "content" shows matching lines, "files_with_matches" shows only file paths (default), "count" shows match counts per file.',
       'Use context lines (-A/-B/-C) to show surrounding lines in content mode.',
       'For multiline patterns (crossing line boundaries), set multiline: true.',
       'Matching is case-sensitive unless you pass -i; the sibling Search tool always matches case-insensitively, so use Grep when case matters.',
@@ -1678,7 +1733,7 @@ export function register(ctx) {
       type: Type.Optional(Type.String({ description: 'File type to search (rg --type), e.g. "ts", "js", "py", "go", "rust". Cheaper and more precise than glob for standard types; must be a name ripgrep lists in --type-list.' })),
       output_mode: Type.Optional(Type.Union([
         Type.Literal('content'), Type.Literal('files_with_matches'), Type.Literal('count'),
-      ], { description: 'Output mode: "content" shows matching lines (default), "files_with_matches" shows file paths, "count" shows match counts.' })),
+      ], { description: 'Output mode: "content" shows matching lines (supports -A/-B/-C context, -n line numbers, head_limit), "files_with_matches" shows file paths (supports head_limit), "count" shows match counts (supports head_limit). Defaults to "files_with_matches".' })),
       '-A': Type.Optional(Type.Number({ description: 'Lines to show after each match (content mode only).' })),
       '-B': Type.Optional(Type.Number({ description: 'Lines to show before each match (content mode only).' })),
       '-C': Type.Optional(Type.Number({ description: 'Lines to show before and after each match (content mode only). Alias for context.' })),
@@ -1709,7 +1764,10 @@ export function register(ctx) {
         if (p.head_limit !== undefined && (!Number.isSafeInteger(p.head_limit) || p.head_limit < 0)) {
           return ok('Grep', 'Error: head_limit must be a non-negative integer.', { ok: false });
         }
-        const outputMode = p.output_mode ?? 'content';
+        // The reference's default: a file listing, not matching lines. It is the cheaper first answer for
+        // the "where does this live" question that most searches actually are, and the description states
+        // it, so a caller that wants line content asks for `content` explicitly.
+        const outputMode = p.output_mode ?? 'files_with_matches';
         const offset = p.offset ?? 0;
         let lines;
         let truncated = false;
@@ -1757,7 +1815,10 @@ export function register(ctx) {
         return ok('Grep', text, {
           ...pathMeta(root), pattern: p.pattern, outputMode, matches: rows.length, total, offset, truncated,
         });
-      } catch (e) { return fail('Grep', safeError(e)); }
+      } catch (e) {
+        if (isTransportFailure(e)) throw safeError(e);
+        return fail('Grep', safeError(e));
+      }
     },
   }), { workspaceSafe: true });
 

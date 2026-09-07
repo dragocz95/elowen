@@ -221,8 +221,9 @@ describe('files plugin', () => {
     expect(text).not.toContain('line 5');
     expect(text).toContain('Showing lines 3-4 of 10. Use offset=5 to continue.');
     expect((res as { details?: { truncated?: boolean } }).details?.truncated).toBe(true);
+    // An offset past the end is answered with the reference's warning, not an error.
     const beyond = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { file_path: f, offset: 999 }));
-    expect(beyond.content[0].text).toMatch(/beyond end of file/);
+    expect(beyond.content[0].text).toBe('<system-reminder>Warning: the file exists but is shorter than the provided offset (999). The file has 10 lines.</system-reminder>');
   });
 
   it('Read treats offsets 0 and 1 as the first line', async () => {
@@ -243,12 +244,12 @@ describe('files plugin', () => {
     expect(res.content[0].text).toContain('Showing lines 1-2000 of 2005. Use offset=2001 to continue.');
   });
 
-  it('Read rejects an empty file', async () => {
+  it('Read warns about an empty file instead of refusing it', async () => {
     const f = join(dir, 'empty.txt');
     writeFileSync(f, '');
     const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Read', { file_path: f }));
-    expect(res.content[0].text).toMatch(/Error.*empty file/i);
-    expect((res as { details?: { ok?: boolean } }).details?.ok).toBe(false);
+    expect(res.content[0].text).toBe('<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>');
+    expect((res as { details?: { ok?: boolean } }).details?.ok).toBe(true);
   });
 
   it('Read returns an image content block with a base64 attachment', async () => {
@@ -331,7 +332,7 @@ describe('files plugin', () => {
     expect(hit).toContain('[truncated]');
   });
 
-  it('Search finds content and file names with structured metadata', async () => {
+  it('Search finds content with structured metadata and leaves file names to Glob', async () => {
     mkdirSync(join(dir, 'src'), { recursive: true });
     writeFileSync(join(dir, 'src', 'search-target.ts'), 'export const needle = 42;\n');
     writeFileSync(join(dir, 'src', 'search-target.tsx'), 'export const tsxNeedle = 42;\n');
@@ -341,7 +342,8 @@ describe('files plugin', () => {
     expect((content as { details?: { matches?: number } }).details?.matches).toBeGreaterThan(0);
     const braceGlob = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Search', { path: dir, query: 'tsxNeedle', include: '*.{ts,tsx}' }));
     expect(braceGlob.content[0].text).toContain('search-target.tsx');
-    const files = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Search', { path: dir, query: 'search-target', mode: 'files' }));
+    // Name lookup is Glob's job now, and Search no longer offers a mode for it.
+    const files = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Glob', { path: dir, pattern: 'src/search-target.*' }));
     expect(files.content[0].text).toContain('src/search-target.ts');
   });
 
@@ -530,7 +532,7 @@ describe('files plugin — Grep', () => {
   afterEach(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true }); dirs = []; });
 
   it('content mode returns relative path:line:content', async () => {
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg2, 'Grep', { path: dir, pattern: 'needle' }));
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg2, 'Grep', { path: dir, pattern: 'needle', output_mode: 'content' }));
     const out = textOf(res);
     expect(out).toContain('a.ts:1:');
     expect(out.split('\n').every((l) => !l.startsWith('/'))).toBe(true); // relativized, never absolute
@@ -560,7 +562,7 @@ describe('files plugin — Grep', () => {
   });
 
   it('context lines (-C) are relativized, not left absolute or mangled', async () => {
-    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg2, 'Grep', { path: join(dir, 'a.ts'), pattern: 'needle', '-C': 1 }));
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg2, 'Grep', { path: join(dir, 'a.ts'), pattern: 'needle', '-C': 1, output_mode: 'content' }));
     const out = textOf(res);
     // The context line ("const other = 2;") comes back as a dash-form rg row; it must be relativized.
     expect(out).toContain('other');
@@ -570,12 +572,12 @@ describe('files plugin — Grep', () => {
   it('head_limit truncates and appends a pagination note; head_limit 0 means unlimited', async () => {
     const many = tmpDir('grep-head');
     writeFileSync(join(many, 'many.txt'), Array.from({ length: 20 }, (_, i) => `needle ${i}`).join('\n'));
-    const limited = await runWithPolicy(userPolicy([many]), () => runTool(reg2, 'Grep', { path: many, pattern: 'needle', head_limit: 5 }));
+    const limited = await runWithPolicy(userPolicy([many]), () => runTool(reg2, 'Grep', { path: many, pattern: 'needle', head_limit: 5, output_mode: 'content' }));
     expect(detailsOf(limited).matches).toBe(5);
     expect(detailsOf(limited).truncated).toBe(true);
     // The notice states the REAL total and the offset that continues the listing, like Read's footer.
     expect(textOf(limited)).toContain('[Showing results 1-5 of 20. Use offset=5 to continue.]');
-    const unlimited = await runWithPolicy(userPolicy([many]), () => runTool(reg2, 'Grep', { path: many, pattern: 'needle', head_limit: 0 }));
+    const unlimited = await runWithPolicy(userPolicy([many]), () => runTool(reg2, 'Grep', { path: many, pattern: 'needle', head_limit: 0, output_mode: 'content' }));
     expect(detailsOf(unlimited).matches).toBe(20); // 0 = unlimited, NOT "return nothing"
     expect(detailsOf(unlimited).truncated).toBe(false);
   });
@@ -583,9 +585,9 @@ describe('files plugin — Grep', () => {
   it('multiline: true makes . cross newlines (multiline-dotall)', async () => {
     const ml = tmpDir('grep-ml');
     writeFileSync(join(ml, 'm.txt'), 'foo\nbar\nbaz\n');
-    const withMl = await runWithPolicy(userPolicy([ml]), () => runTool(reg2, 'Grep', { path: ml, pattern: 'foo.*bar', multiline: true }));
+    const withMl = await runWithPolicy(userPolicy([ml]), () => runTool(reg2, 'Grep', { path: ml, pattern: 'foo.*bar', multiline: true, output_mode: 'content' }));
     expect(detailsOf(withMl).matches).toBeGreaterThan(0);
-    const withoutMl = await runWithPolicy(userPolicy([ml]), () => runTool(reg2, 'Grep', { path: ml, pattern: 'foo.*bar' }));
+    const withoutMl = await runWithPolicy(userPolicy([ml]), () => runTool(reg2, 'Grep', { path: ml, pattern: 'foo.*bar', output_mode: 'content' }));
     expect(detailsOf(withoutMl).matches).toBe(0); // single-line by default
   });
 
@@ -594,11 +596,11 @@ describe('files plugin — Grep', () => {
     writeFileSync(join(cs, 'c.txt'), 'Needle upper\nneedle lower\nNEEDLE shout\n');
     // A second file whose ONLY match is uppercase, so a file count of 1 vs 2 tells the two modes apart.
     writeFileSync(join(cs, 'd.txt'), 'NEEDLE only\n');
-    const sensitive = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Grep', { path: cs, pattern: 'needle' }));
+    const sensitive = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Grep', { path: cs, pattern: 'needle', output_mode: 'content' }));
     expect(detailsOf(sensitive).matches).toBe(1); // ripgrep's default: only the lowercase line
     expect(textOf(sensitive)).toContain('needle lower');
     expect(textOf(sensitive)).not.toContain('Needle upper');
-    const folded = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Grep', { path: cs, pattern: 'needle', '-i': true }));
+    const folded = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Grep', { path: cs, pattern: 'needle', '-i': true, output_mode: 'content' }));
     expect(detailsOf(folded).matches).toBe(4);
     // The flag reaches rg in every output mode, not just content.
     const files = await runWithPolicy(userPolicy([cs]), () => runTool(reg2, 'Grep', { path: cs, pattern: 'needle', output_mode: 'files_with_matches' }));
@@ -615,7 +617,7 @@ describe('files plugin — Grep', () => {
   it('offset pages through a truncated listing and reaches the tail without gaps or repeats', async () => {
     const many = tmpDir('grep-offset');
     writeFileSync(join(many, 'many.txt'), Array.from({ length: 20 }, (_, i) => `needle ${i}`).join('\n'));
-    const page = async (offset: number) => runWithPolicy(userPolicy([many]), () => runTool(reg2, 'Grep', { path: many, pattern: 'needle', head_limit: 8, offset }));
+    const page = async (offset: number) => runWithPolicy(userPolicy([many]), () => runTool(reg2, 'Grep', { path: many, pattern: 'needle', head_limit: 8, offset, output_mode: 'content' }));
     const p1 = await page(0);
     const p2 = await page(8);
     const p3 = await page(16);
@@ -643,7 +645,7 @@ describe('files plugin — Grep', () => {
     }
     const rows: string[] = [];
     for (let offset = 0; offset < 120; offset += 20) {
-      const res = await runWithPolicy(userPolicy([tree]), () => runTool(reg2, 'Grep', { path: tree, pattern: 'needle', head_limit: 20, offset }));
+      const res = await runWithPolicy(userPolicy([tree]), () => runTool(reg2, 'Grep', { path: tree, pattern: 'needle', head_limit: 20, offset, output_mode: 'content' }));
       rows.push(...textOf(res).split('\n\n')[0].split('\n'));
       expect(detailsOf(res).total).toBe(120);
     }
@@ -658,10 +660,10 @@ describe('files plugin — Grep', () => {
     const t = tmpDir('grep-type');
     writeFileSync(join(t, 'a.ts'), 'const needle = 1;\n');
     writeFileSync(join(t, 'b.py'), 'needle = 1\n');
-    const py = await runWithPolicy(userPolicy([t]), () => runTool(reg2, 'Grep', { path: t, pattern: 'needle', type: 'py' }));
+    const py = await runWithPolicy(userPolicy([t]), () => runTool(reg2, 'Grep', { path: t, pattern: 'needle', type: 'py', output_mode: 'content' }));
     expect(textOf(py)).toContain('b.py');
     expect(textOf(py)).not.toContain('a.ts');
-    const bogus = await runWithPolicy(userPolicy([t]), () => runTool(reg2, 'Grep', { path: t, pattern: 'needle', type: 'notatype' }));
+    const bogus = await runWithPolicy(userPolicy([t]), () => runTool(reg2, 'Grep', { path: t, pattern: 'needle', type: 'notatype', output_mode: 'content' }));
     expect(detailsOf(bogus).ok).toBe(false);
     expect(textOf(bogus)).toContain('--type-list');
   });
@@ -669,7 +671,7 @@ describe('files plugin — Grep', () => {
   it('caps a very long line at 500 columns and keeps ripgrep own truncation marker', async () => {
     const wide = tmpDir('grep-wide');
     writeFileSync(join(wide, 'min.js'), `${'A'.repeat(900)} needle tail\n`);
-    const res = await runWithPolicy(userPolicy([wide]), () => runTool(reg2, 'Grep', { path: wide, pattern: 'needle' }));
+    const res = await runWithPolicy(userPolicy([wide]), () => runTool(reg2, 'Grep', { path: wide, pattern: 'needle', output_mode: 'content' }));
     const row = textOf(res).split('\n')[0];
     expect(row).toContain('[... omitted end of long line]'); // rg says the line was cut, we do not re-cut it
     expect(row).not.toContain('tail'); // everything past the 500th column is gone, the prefix stays
@@ -679,7 +681,7 @@ describe('files plugin — Grep', () => {
   it('declares its default result cap in the description and applies it without head_limit', async () => {
     const big = tmpDir('grep-default-cap');
     writeFileSync(join(big, 'big.txt'), Array.from({ length: 250 }, (_, i) => `needle ${i}`).join('\n'));
-    const res = await runWithPolicy(userPolicy([big]), () => runTool(reg2, 'Grep', { path: big, pattern: 'needle' }));
+    const res = await runWithPolicy(userPolicy([big]), () => runTool(reg2, 'Grep', { path: big, pattern: 'needle', output_mode: 'content' }));
     expect(detailsOf(res).matches).toBe(200); // DEFAULT_SEARCH_MAX_MATCHES, shared with Search
     expect(textOf(res)).toContain('[Showing results 1-200 of 250. Use offset=200 to continue.]');
     const description = (reg2.tools.find((t) => t.name === 'Grep') as unknown as { description: string }).description;
@@ -708,7 +710,7 @@ describe('files plugin — Grep', () => {
     const prevPath = process.env.PATH;
     process.env.PATH = ''; // hide rg: content must never fall back to whole-file JS reads
     try {
-      const grep = await runWithPolicy(userPolicy([fb]), () => runTool(reg2, 'Grep', { path: fb, pattern: 'needle' }));
+      const grep = await runWithPolicy(userPolicy([fb]), () => runTool(reg2, 'Grep', { path: fb, pattern: 'needle', output_mode: 'content' }));
       expect(textOf(grep)).toContain('ripgrep (rg) is required');
       expect(detailsOf(grep).ok).toBe(false);
 
@@ -716,7 +718,8 @@ describe('files plugin — Grep', () => {
       expect(textOf(content)).toContain('ripgrep (rg) is required');
       expect(detailsOf(content).ok).toBe(false);
 
-      const files = await runWithPolicy(userPolicy([fb]), () => runTool(reg2, 'Search', { path: fb, query: 'c.txt', mode: 'files' }));
+      // Glob owns name lookup and never reads file contents, so it still answers without ripgrep.
+      const files = await runWithPolicy(userPolicy([fb]), () => runTool(reg2, 'Glob', { path: fb, pattern: '*.txt' }));
       expect(textOf(files)).toContain('c.txt');
       expect(detailsOf(files).ok).toBe(true);
     } finally {
