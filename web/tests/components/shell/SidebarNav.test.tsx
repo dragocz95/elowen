@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
@@ -124,25 +126,41 @@ describe('SidebarNav destinations', () => {
     mount({ compact: true });
     // The folded column drops the label text, so the accessible name has to come from the attribute.
     expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('aria-label', 'Home');
-    // And the hint is no longer the browser's own bubble: a 16px glyph with nothing on hover is a guess,
-    // and an OS tooltip after half a second is not the affordance the reference has.
-    expect(screen.getByRole('link', { name: 'Home' })).not.toHaveAttribute('title');
+    // The glyph still needs a hint under the pointer, and folded that is the native one — the same
+    // affordance the rail's search field and its `…` control already use.
+    expect(screen.getByRole('link', { name: 'Home' })).toHaveAttribute('title', 'Home');
   });
 
-  it('names the folded rail with a real tooltip, and only while it is folded', async () => {
-    const expanded = mount();
+  it('draws nothing beside the icon when a folded row is hovered or focused', async () => {
+    // The rail is 57px wide and the column clips (`overflow: hidden`), so a panel rendered beside a row
+    // reached the reader as a sliver of itself sliding out from behind the icon. Whatever names a folded
+    // row must not be a rendered panel at all — not a clipped one, and not an invisible one still holding
+    // a box. This is the row that shipped the bug: a plugin world WITH pages, which the rail flattens to
+    // a plain destination.
+    mount({ compact: true });
+    const row = screen.getByRole('link', { name: 'Work' });
+
+    fireEvent.mouseEnter(row);
+    await waitFor(() => expect(screen.getByRole('link', { name: 'Work' })).toBeInTheDocument());
+    expect(screen.queryByRole('tooltip')).toBeNull();
+    expect(document.querySelector('[data-slot="tooltip-content"]')).toBeNull();
+    // The panel used to be a Radix popover, which describes its anchor while it is open.
+    expect(row).not.toHaveAttribute('aria-describedby');
+    // No sub-menu list either: in the rail a world is one row, so there is nothing to disclose.
+    expect(document.querySelector('[data-slot="sidebar-menu-sub"]')).toBeNull();
+
+    fireEvent.focus(row);
+    await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+    expect(document.querySelector('[data-slot="tooltip-content"]')).toBeNull();
+  });
+
+  it('keeps the expanded column free of the hover panel too', () => {
+    mount();
     fireEvent.mouseEnter(screen.getByRole('link', { name: 'Home' }));
     // Nothing to explain while the label is right there — a tip over an already-labelled row is noise.
     expect(screen.queryByRole('tooltip')).toBeNull();
-    expanded.unmount();
-
-    mount({ compact: true });
-    fireEvent.mouseEnter(screen.getByRole('link', { name: 'Home' }));
-    const tip = await screen.findByRole('tooltip');
-    expect(tip).toHaveTextContent('Home');
-
-    fireEvent.mouseLeave(screen.getByRole('link', { name: 'Home' }));
-    await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
+    // Expanded, a world is still a real disclosure. The rail fix must not have flattened THIS.
+    expect(screen.getByRole('button', { name: 'Work' })).toHaveAttribute('aria-expanded');
   });
 
   it('names the palette shortcut with the modifier this machine actually has', () => {
@@ -211,6 +229,17 @@ describe('SidebarNav inline sub-menus', () => {
     mount();
     expect(screen.getByRole('button', { name: 'Work' })).toHaveAttribute('aria-expanded', 'true');
     expect(screen.getByRole('button', { name: 'Ops' })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  /** The DOM check above only sees the rows THIS suite mounts. `SidebarMenuButton` still accepts
+   *  upstream's `tooltip` — the primitive keeps shadcn parity — and it renders that panel exactly when
+   *  the column is collapsed, which is the one state where the column cannot show it: the panel is not
+   *  portalled by design and `.sidebar-nav` clips. Pinned at the source so a new row cannot reintroduce
+   *  the sliver through a code path no test happens to render. */
+  it('passes no tooltip panel to any sidebar row', () => {
+    const source = readFileSync(resolve(process.cwd(), 'components/shell/SidebarNav.tsx'), 'utf8');
+    expect(source).toContain('SidebarMenuButton');
+    expect(source).not.toMatch(/tooltip=/);
   });
 
   it('collapses a sub-menu to its parent destination in the icon rail', () => {
