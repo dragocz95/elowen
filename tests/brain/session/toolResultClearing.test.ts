@@ -10,9 +10,12 @@ import {
   applyToolResultClearing,
   cacheColdAtTurnStart,
   cacheTtlMs,
+  clearedToolResultDetails,
   clearedToolResultPlaceholder,
   clearingCutIndex,
   idleThresholdMs,
+  isClearedToolResult,
+  spillPreview,
   installToolResultClearing,
   selectBudgetedToolResults,
   selectClearableToolResults,
@@ -146,6 +149,73 @@ describe('selectClearableToolResults / clearingCutIndex', () => {
       selectClearableToolResults(messages, new Set([toolResultOccurrenceKey('old-big', T0 + 999)]))
         .map((s) => s.toolCallId),
     ).toEqual(['old-big']);
+  });
+});
+
+describe('the cleared-result marker', () => {
+  /** A placeholder is a tool result of perfectly ordinary shape, and in a multi-byte script a 2 000
+   *  character preview weighs more than CLEAR_MIN_BYTES — so without an identity the cold pass would
+   *  spill a placeholder into a second file and nest one inside the other, losing the path to the real
+   *  output. The identity has to be STRUCTURAL: a text prefix would also match a genuine output that
+   *  merely quotes a placeholder (a Read of a spill file, a DelegateRead of a transcript). */
+  const cleared = (toolCallId: string, text: string, timestamp: number): PiAgentMessage => ({
+    role: 'toolResult', toolCallId, toolName: 'Bash', isError: false, timestamp,
+    content: [{ type: 'text', text }],
+    details: clearedToolResultDetails({ exitCode: 0 }, { mode: 'preview', bytes: 90_000, path: '/tmp/spill/sess-1/c.txt' }),
+  });
+
+  it('recognises a cleared result by its details, never by the text it happens to start with', () => {
+    const placeholder = clearedToolResultPlaceholder('/tmp/spill/sess-1/c.txt', 90_000, 'preview text');
+    expect(isClearedToolResult(cleared('c', placeholder, 3_000))).toBe(true);
+    // The same bytes with no marker are an ordinary result — a tool that READ a spill file produces
+    // exactly this, and calling it cleared would silently exclude it from clearing for good.
+    expect(isClearedToolResult(toolResult('c', placeholder, 3_000))).toBe(false);
+    expect(isClearedToolResult(toolResult('c', big, 3_000))).toBe(false);
+  });
+
+  it('keeps the tool’s own details, so a diff or a shared image still renders', () => {
+    const details = clearedToolResultDetails({ diff: 'a/b', sharedImage: { path: '/x.png' } },
+      { mode: 'time', bytes: 10, path: '/p' });
+    expect(details.diff).toBe('a/b');
+    expect(details.sharedImage).toEqual({ path: '/x.png' });
+  });
+
+  it('is what keeps a large placeholder out of the next selection', () => {
+    const messages = [
+      user('one', T0), assistant('a', T0 + 1), cleared('c1', big, T0 + 2),
+      user('two', T0 + 3), user('three', T0 + 4),
+    ];
+    expect(selectClearableToolResults(messages, new Set())).toEqual([]);
+    // Control: the identical history without the marker really does select that result.
+    const unmarked = [...messages];
+    unmarked[2] = toolResult('c1', big, T0 + 2);
+    expect(selectClearableToolResults(unmarked, new Set()).map((r) => r.toolCallId)).toEqual(['c1']);
+  });
+});
+
+describe('the preview a placeholder quotes', () => {
+  const PATH = '/tmp/spill/sess-1/call-1.v1-preview-90000.txt';
+
+  it('is unchanged for ASCII output — the same 2 000 characters as before', () => {
+    const text = 'a'.repeat(SPILL_PREVIEW_CHARS + 500);
+    expect(spillPreview(text, PATH, 90_000)).toBe(text.slice(0, SPILL_PREVIEW_CHARS));
+  });
+
+  /** The bound is what makes a ROLLBACK safe: a build without the marker recognises a cleared result
+   *  only by its size, so a placeholder at or above CLEAR_MIN_BYTES would be spilled again and nested. */
+  it('is trimmed until the whole placeholder fits under the clearing threshold', () => {
+    const text = '日'.repeat(SPILL_PREVIEW_CHARS);
+    const preview = spillPreview(text, PATH, 90_000);
+    expect(preview.length).toBeLessThan(SPILL_PREVIEW_CHARS);
+    expect(Buffer.byteLength(clearedToolResultPlaceholder(PATH, 90_000, preview), 'utf8'))
+      .toBeLessThan(CLEAR_MIN_BYTES);
+    // Control: the unbounded slice really is a clearing candidate.
+    expect(Buffer.byteLength(clearedToolResultPlaceholder(PATH, 90_000, text), 'utf8'))
+      .toBeGreaterThanOrEqual(CLEAR_MIN_BYTES);
+  });
+
+  it('handles a short output without trimming anything', () => {
+    expect(spillPreview('tiny', PATH, 4)).toBe('tiny');
   });
 });
 

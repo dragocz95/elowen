@@ -275,6 +275,74 @@ export function clearedToolResultPlaceholder(
   return `[Large tool result (${originalBytes} bytes) saved to disk instead of the context. Full output at: ${spillPath} — read it with the Read tool if needed. First ${preview.length} characters below.]\n${preview}`;
 }
 
+/** Where a cleared result's structural identity lives: one key inside the tool result's own `details`.
+ *  `details` is carried verbatim through every reader that matters — the pending row written at
+ *  `message_end`, the `agent_end` re-persist, rehydration (`parsedRows` keeps the whole message object)
+ *  and the fork seed — so the marker survives exactly as far as the placeholder text does.
+ *
+ *  It is deliberately NOT a text prefix. A placeholder's opening characters are not an identity: a
+ *  legitimate output can begin with the same bytes — a Read of a spill file, a DelegateRead of a
+ *  transcript that quotes one, a `journalctl` line — and a prefix test would then declare a real tool
+ *  result "already cleared" and skip it forever. */
+export const CLEARED_TOOL_RESULT_DETAIL = 'clearedToolResult';
+
+/** What the marker records: enough to explain the row without re-parsing the placeholder text, and
+ *  nothing the placeholder does not already say out loud. */
+export interface ClearedToolResultMarker {
+  mode: SpillDescriptor['mode'];
+  bytes: number;
+  path: string;
+}
+
+/** The `details` a cleared result carries: whatever the tool produced, plus the marker. The tool's own
+ *  details are preserved on purpose — a diff, a shared image or a shared file still renders in the
+ *  transcript after the text has moved to disk. */
+export function clearedToolResultDetails(details: unknown, marker: ClearedToolResultMarker): Record<string, unknown> {
+  const base = details && typeof details === 'object' && !Array.isArray(details)
+    ? details as Record<string, unknown>
+    : {};
+  return { ...base, [CLEARED_TOOL_RESULT_DETAIL]: marker };
+}
+
+/** Has this result already been replaced by a placeholder? Structural, so it answers for a message that
+ *  was cleared in this process, one rehydrated from a row and one inherited through a fork seed alike.
+ *
+ *  The guard exists because a placeholder is itself a tool result of ordinary shape: a preview
+ *  placeholder quotes up to {@link SPILL_PREVIEW_CHARS} characters, and in a multi-byte script that is
+ *  several kilobytes — comfortably past {@link CLEAR_MIN_BYTES}, i.e. a selection candidate. Without the
+ *  marker the cold pass would spill a placeholder into a second file and nest a placeholder inside a
+ *  placeholder, losing the path to the real output from the context. */
+export function isClearedToolResult(message: unknown): boolean {
+  const details = (message as { details?: unknown } | null)?.details;
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return false;
+  const marker = (details as Record<string, unknown>)[CLEARED_TOOL_RESULT_DETAIL];
+  if (!marker || typeof marker !== 'object' || Array.isArray(marker)) return false;
+  const { mode, bytes, path } = marker as Record<string, unknown>;
+  return (mode === 'time' || mode === 'preview') && typeof bytes === 'number' && typeof path === 'string';
+}
+
+/** The preview a size/group placeholder quotes: at most {@link SPILL_PREVIEW_CHARS} characters AND few
+ *  enough of them that the finished placeholder stays under {@link CLEAR_MIN_BYTES}.
+ *
+ *  The character cap alone is not enough, and the byte bound is not cosmetic — it is what keeps a
+ *  ROLLBACK safe. A build without {@link isClearedToolResult} recognises a cleared result only by its
+ *  size: anything at or above CLEAR_MIN_BYTES is a clearing candidate. A 2 000-character CJK preview is
+ *  ~6 kB, so reverting to such a build would spill the placeholder itself and hand the model a nested
+ *  placeholder naming a file that holds nothing but another placeholder. Under the bound the placeholder
+ *  is simply a small tool result to any build, past or future, and nothing selects it.
+ *
+ *  ASCII output — everything that actually reaches this size in practice — is untouched by the bound:
+ *  2 000 characters plus the notice is ~2.3 kB, so those placeholders are byte-identical to what the
+ *  previous renderer produced. */
+export function spillPreview(text: string, spillPath: string, originalBytes: number): string {
+  let preview = text.slice(0, SPILL_PREVIEW_CHARS);
+  while (preview.length > 0
+    && Buffer.byteLength(clearedToolResultPlaceholder(spillPath, originalBytes, preview), 'utf8') >= CLEAR_MIN_BYTES) {
+    preview = preview.slice(0, preview.length - Math.max(1, Math.ceil(preview.length / 8)));
+  }
+  return preview;
+}
+
 type ToolResultMessage = Extract<PiAgentMessage, { role: 'toolResult' }>;
 type ContentBlock = ToolResultMessage['content'][number];
 
@@ -322,8 +390,9 @@ function occurrenceKeyOf(message: ToolResultMessage): string {
 
 /** Pure selection: which tool results may be cleared on this pass. Eligible = toolResult before the
  *  cut, ≥ CLEAR_MIN_BYTES of text, with a toolCallId (no id → no spill path → never cleared), not
- *  already latched. `alreadyCleared` holds occurrence keys, so a NEW result that merely reuses a
- *  latched id is judged on its own. Exported for tests. */
+ *  already cleared ({@link isClearedToolResult}) and not already latched. `alreadyCleared` holds
+ *  occurrence keys, so a NEW result that merely reuses a latched id is judged on its own. Exported for
+ *  tests. */
 export function selectClearableToolResults(
   messages: PiAgentMessage[],
   alreadyCleared: ReadonlySet<string>,
@@ -335,6 +404,7 @@ export function selectClearableToolResults(
     const message = messages[index];
     if (message?.role !== 'toolResult') continue;
     if (!message.toolCallId || alreadyCleared.has(occurrenceKeyOf(message))) continue;
+    if (isClearedToolResult(message)) continue;
     const bytes = textBytes(message);
     if (bytes < CLEAR_MIN_BYTES) continue;
     selection.push({ index, toolCallId: message.toolCallId, occurredAt: messageOccurredAt(message), bytes });
