@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { withWriteLock, type Db } from './db.js';
 import { CHANNEL_PREFIX, SUBAGENT_PLATFORM } from '../brain/sessionId.js';
 import { fromRegistryProvider } from '../shared/execs.js';
+import { parseDbTs } from '../shared/time.js';
 import type {
   BrainDebugPage, BrainDebugPayloadPage, BrainDebugRawPayload, BrainDebugRequestDetail,
   BrainDebugRequestItem, BrainDebugRequestStatus, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload,
@@ -996,6 +997,21 @@ export class ProviderRequestStore {
 
   rows(sessionId: string): Record<string, unknown>[] {
     return this.db.prepare('SELECT * FROM brain_provider_requests WHERE session_id = ? ORDER BY seq').all(sessionId) as Record<string, unknown>[];
+  }
+
+  /** When a session row was written, in epoch ms — for a FORK child, the moment of the fork.
+   *
+   *  A conversation timestamp read from the request store looks out of place until you see who asks:
+   *  `forkPrefixReading` anchors its comparison on it, and both of that comparison's callers (the fork log
+   *  line and `scripts/fork-prefix-check.mjs`) reach the database through this store and nothing else. One
+   *  reader, one implementation, no chance of the log line and the self-check anchoring differently.
+   *
+   *  Undefined for an unknown session and for a row whose timestamp will not parse, which the caller reads
+   *  as "no anchor" and answers with its fallback. `created_at` is SQLite's second-resolution UTC text. */
+  sessionCreatedAt(sessionId: string): number | undefined {
+    const row = this.db.prepare('SELECT created_at FROM brain_sessions WHERE id = ?').get(sessionId) as { created_at: string } | undefined;
+    const ms = parseDbTs(row?.created_at);
+    return ms > 0 ? ms : undefined;
   }
 
   pruneDiagnostics(olderThan: number, maxStoredBytes: number, maxSessions = 8): { sessions: number; storedBytes: number } {

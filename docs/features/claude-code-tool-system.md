@@ -384,6 +384,14 @@ agent to read the file back. The same holds for a tool's complete output stored 
 `ctx.persistToolOutput`. Images are never spilled: clearing replaces the text and leaves every other block
 in place, so a picture a tool returned still renders in the transcript.
 
+**Inherited placeholders.** A transcript can be copied into another session, and the copy carries
+placeholders naming the *source's* spill directory. A delegated fork child gets a one-directional
+read-only allowance for exactly that directory, so the placeholder's promise still holds for it; the
+allowance is derived from the durable parent link and never works the other way round. A branched
+conversation (`forkSession`) is a peer rather than a child and gets no such allowance: it reads its own
+history fine, but a Read of an inherited spill path is refused, and the full output has to come from the
+conversation it was branched from.
+
 **Verdict: SKIP — already adopted, and extended.** This finding exists mainly to confirm the port was done
 correctly (thresholds and preview size match) and to note Elowen went one step further with the idle/cache-
 aware clearing trigger. No action.

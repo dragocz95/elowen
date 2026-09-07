@@ -76,8 +76,12 @@ describe('reading the two requests back out of the store', () => {
   const user = (text: string) => ({ role: 'user', content: [{ type: 'text', text }] });
   const assistant = (text: string) => ({ role: 'assistant', content: [{ type: 'text', text }] });
 
-  const fixture = (childMessages: unknown[], childSystem?: string) => {
-    const store = new BrainStore(openDb(':memory:'));
+  /** `parentAfterSpawn` is the background-fork shape: the parent takes ANOTHER turn between the moment the
+   *  child row was created and the moment the child finally sends its own first request. That request is
+   *  the trap — it sits before the child's first one, so anchoring on the child's request picks it. */
+  const fixture = (childMessages: unknown[], childSystem?: string, opts: { parentAfterSpawn?: boolean } = {}) => {
+    const db = openDb(':memory:');
+    const store = new BrainStore(db);
     store.createSession({ id: 'parent', userId: 1, model: 'claude-x' });
     store.createSession({ id: 'child', userId: 1, model: 'claude-x', parentSessionId: 'parent' });
     const requests = store.providerRequests;
@@ -96,6 +100,17 @@ describe('reading the two requests back out of the store', () => {
       user('<user_memories>…</user_memories>\n\nfirst'), assistant('working'),
       user('<user_memories>…</user_memories>\n\nsecond'),
     ]), 2_000);
+    // The fork itself: the child row exists from here on. SQLite stores it to the second, exactly as the
+    // real column does, so the fixture carries the same truncation the anchor has to survive.
+    db.prepare('UPDATE brain_sessions SET created_at = ? WHERE id = ?')
+      .run(new Date(2_500).toISOString().replace('T', ' ').slice(0, 19), 'child');
+    if (opts.parentAfterSpawn) {
+      attempt('parent', payload([
+        user('<user_memories>…</user_memories>\n\nfirst'), assistant('working'),
+        user('<user_memories>…</user_memories>\n\nsecond'), assistant('delegated'),
+        user('<user_memories>a memory the child never carried</user_memories>\n\nthird'),
+      ]), 2_800);
+    }
     attempt('child', payload(childMessages, childSystem), 3_000);
     // …and a LATER parent request, which describes a conversation the child never saw and must not be the
     // one compared.
@@ -115,6 +130,38 @@ describe('reading the two requests back out of the store', () => {
     expect(reading.child.seq).toBe(1);
     expect(reading.comparison.shared).toBe(true);
     expect(formatForkPrefixReading(reading, 'parent', 'child')).toContain('verdict=shared');
+  });
+
+  // The diagnostic's own failure mode, and the reason a real background fork was reported `not-shared`
+  // while the token counters said it had shared: the parent kept working after the fork was taken, so a
+  // request of ITS next turn sits between the fork and the child's first request. Anchoring on the fork
+  // moment is what keeps that request out of the comparison.
+  it('anchors on the moment of the fork, not on the child’s first request', () => {
+    const store = fixture(
+      [...inherited, assistant('delegating'), user('Fork started'), user('Your directive: …')],
+      undefined,
+      { parentAfterSpawn: true },
+    );
+    const reading = forkPrefixReading(store.providerRequests, 'parent', 'child')!;
+    expect(reading.parent.seq).toBe(2);
+    expect(reading.comparison.shared).toBe(true);
+  });
+
+  // No request of the parent's is old enough to be the anchor (capture switched on mid-conversation, a
+  // clock that disagrees). Falling back to the old rule keeps a reading rather than reporting nothing.
+  it('falls back to the child’s first request when nothing precedes the fork', () => {
+    const store = fixture([...inherited, user('Your directive: …')], undefined, { parentAfterSpawn: true });
+    const source = {
+      // Every request the parent sent BEFORE the fork is gone (capture switched on mid-conversation, a
+      // pruned diagnostics table), so the anchor has nothing to select.
+      rows: (sessionId: string) => store.providerRequests.rows(sessionId)
+        .filter((row) => sessionId !== 'parent' || Number(row.started_at) > 2_400),
+      debugRequest: (sessionId: string, requestId: string) => store.providerRequests.debugRequest(sessionId, requestId),
+      sessionCreatedAt: (sessionId: string) => store.providerRequests.sessionCreatedAt(sessionId),
+    };
+    // seq 4 (started at 9_000) is out of reach of both rules; seq 3 — after the fork, before the child's
+    // own request — is all the fallback has left, and a reading beats reporting nothing.
+    expect(forkPrefixReading(source, 'parent', 'child')?.parent.seq).toBe(3);
   });
 
   // The M1 failure, end to end: the child rebuilt the parent's messages WITHOUT the ephemeral blocks that

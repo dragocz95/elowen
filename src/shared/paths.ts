@@ -69,6 +69,27 @@ export function sessionToolResultSpillDir(env: NodeJS.ProcessEnv, sessionId: str
   return toolResultSpillDir(env, spillNamespaceResolver?.(sessionId) || sessionId);
 }
 
+/** Fork child session id → the spill namespace of the session it was forked FROM, or undefined for
+ *  anything that is not a durable fork child (buildBrainCore wires it to BrainStore.forkParentSpillNamespace).
+ *
+ *  A fork seeds the child with its parent's transcript byte for byte, so the child inherits placeholders
+ *  naming files in the PARENT's spill directory — the one thing the per-session allowance cannot cover.
+ *  The direction is fixed by the resolver itself: it answers "which conversation was this one forked
+ *  from", a question a parent can never ask about its child. Undefined (an un-wired process, a test) means
+ *  no allowance at all. */
+let forkParentSpillNamespaceResolver: ((sessionId: string) => string | undefined) | undefined;
+export function setForkParentSpillNamespaceResolver(resolve: ((sessionId: string) => string | undefined) | undefined): void {
+  forkParentSpillNamespaceResolver = resolve;
+}
+
+/** The spill directory a fork child INHERITED placeholders into, or undefined when this session is not a
+ *  fork child. Never falls back to the session's own directory: an absent answer must stay absent, or the
+ *  guard would widen itself on every un-wired process. */
+export function forkParentToolResultSpillDir(env: NodeJS.ProcessEnv, sessionId: string): string | undefined {
+  const namespace = forkParentSpillNamespaceResolver?.(sessionId);
+  return namespace ? toolResultSpillDir(env, namespace) : undefined;
+}
+
 /** Where a conversation's active implementation plan lives — one markdown file per session. A FILE
  *  rather than a DB row on purpose: the plan is a document the user may want to open, read and edit by
  *  hand between turns, and markdown on disk is the only shape that allows it. It sits beside the other

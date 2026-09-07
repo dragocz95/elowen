@@ -58,7 +58,7 @@ import { publicHttpTransport } from '../plugins/publicHttp.js';
 import { platformTurnParkEligible } from '../brain/platformTurnRecovery.js';
 import { createConversationTargets } from '../brain/conversationTargets.js';
 import { setSpillMaxResultBytes, setToolResultGroupBudget } from '../brain/session/toolResultClearing.js';
-import { dataDir, dbPath as configuredDbPath, setSpillNamespaceResolver } from '../shared/paths.js';
+import { dataDir, dbPath as configuredDbPath, setForkParentSpillNamespaceResolver, setSpillNamespaceResolver } from '../shared/paths.js';
 import { setCompactionFailureLimit } from '../brain/session/compactionCircuitBreaker.js';
 import { makeToolOutputPolicy } from '../brain/toolOutput.js';
 import { BUILTIN_TOOL_OUTPUT_SHOWN, builtinToolMetas } from '../brain/tools/index.js';
@@ -365,6 +365,10 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // process shares (daemon and forked sub-agent runner alike) — an unwired process would fall back to
   // id-keyed directories and stop seeing spills of conversations that were ever re-keyed.
   setSpillNamespaceResolver((sessionId) => brainStore.spillNamespace(sessionId));
+  // …and the one namespace a session may read but does not own: the parent a FORK child inherited its
+  // placeholders from. Same construction path, same reason — an unwired process would refuse every fork
+  // child the file its own transcript tells it to read.
+  setForkParentSpillNamespaceResolver((sessionId) => brainStore.forkParentSpillNamespace(sessionId));
   // Origin attribution for brain spend. Built here, next to brainStore, because BOTH the HTTP layer
   // (which learns where a request came from) and the persistence projector (which settles the turn) need
   // the SAME instance — the in-memory sessionId → origin map is what connects the two, and a second
