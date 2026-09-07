@@ -2139,6 +2139,62 @@ describe('BrainStore', () => {
       expect(store.toolResultSpills('s1').map((row) => row.occurredAt)).toEqual([2_000]);
     });
 
+    /** One stored tool-result row in the shape the projector writes: the whole pi message as the content. */
+    const toolResultRow = (id: string, toolCallId: string, occurredAt: number, text: string) => ({
+      id, sessionId: 's1', parentId: null, role: 'toolResult',
+      content: {
+        role: 'toolResult', toolCallId, toolName: 'Bash', isError: false,
+        timestamp: occurredAt, content: [{ type: 'text', text }],
+      },
+    });
+    const storedMessage = (id: string) => JSON.parse(store.getMessages('s1').find((row) => row.id === id)!.content) as
+      { toolCallId: string; toolName: string; timestamp: number; content: { type: string; text: string }[] };
+
+    it('writes a cleared result THROUGH to its transcript row, keeping every other field', () => {
+      // The store is what a respawn, an export and a FORK seed all rebuild the wire from. Leaving the full
+      // result in the row while egress sends a placeholder is what made a fork seed the megabytes its
+      // parent had already cleared — a different conversation, not a cheaper one.
+      store.createSession({ id: 's1', userId: 7, model: 'm' });
+      store.appendMessage(toolResultRow('m1', 'call-1', 1_000, 'x'.repeat(50_007)));
+
+      expect(store.recordClearedToolResult('s1', latch('call-1', { occurredAt: 1_000 }))).toBe(1);
+
+      const rewritten = storedMessage('m1');
+      expect(rewritten.content).toEqual([{ type: 'text', text: latch('call-1').placeholder }]);
+      expect(rewritten.toolCallId).toBe('call-1');
+      expect(rewritten.toolName).toBe('Bash');
+      expect(rewritten.timestamp).toBe(1_000);
+      // Written by the same call, so the row and the latch can never disagree about the placeholder.
+      expect(store.toolResultSpills('s1')).toEqual([stored(latch('call-1', { occurredAt: 1_000 }))]);
+    });
+
+    it('rewrites only the OCCURRENCE it was given, not every row sharing the id', () => {
+      // Sequential id styles reuse `call_0` across turns; rewriting by id alone would replace a live
+      // result of the current run with an older occurrence's placeholder.
+      store.createSession({ id: 's1', userId: 7, model: 'm' });
+      store.appendMessage(toolResultRow('m1', 'call_0', 1_000, 'first output'));
+      store.appendMessage(toolResultRow('m2', 'call_0', 2_000, 'second output'));
+
+      store.recordClearedToolResult('s1', latch('call_0', { occurredAt: 1_000, placeholder: '[cleared first]' }));
+
+      expect(storedMessage('m1').content).toEqual([{ type: 'text', text: '[cleared first]' }]);
+      expect(storedMessage('m2').content).toEqual([{ type: 'text', text: 'second output' }]);
+    });
+
+    it('leaves the transcript alone for a legacy row that carries no placeholder', () => {
+      store.createSession({ id: 's1', userId: 7, model: 'm' });
+      store.appendMessage(toolResultRow('m1', 'call-1', 1_000, 'full output'));
+      expect(store.recordClearedToolResult('s1', latch('call-1', { occurredAt: 1_000, placeholder: null }))).toBe(0);
+      expect(storedMessage('m1').content).toEqual([{ type: 'text', text: 'full output' }]);
+    });
+
+    it('is idempotent: re-latching an already rewritten row writes nothing further', () => {
+      store.createSession({ id: 's1', userId: 7, model: 'm' });
+      store.appendMessage(toolResultRow('m1', 'call-1', 1_000, 'full output'));
+      expect(store.recordClearedToolResult('s1', latch('call-1', { occurredAt: 1_000 }))).toBe(1);
+      expect(store.recordClearedToolResult('s1', latch('call-1', { occurredAt: 1_000 }))).toBe(0);
+    });
+
     it('deleteSession removes the session\'s latch rows and only those', () => {
       store.createSession({ id: 's1', userId: 7, model: 'm' });
       store.createSession({ id: 's2', userId: 7, model: 'm' });

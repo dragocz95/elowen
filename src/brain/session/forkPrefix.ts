@@ -198,6 +198,12 @@ export interface ForkCacheReading {
   sameModel: boolean;
   /** False when the provider reported no cache accounting (no prompt cache on this route). */
   providerCaches: boolean;
+  /** Set when the fork produced no shared prefix for a reason that is not about the counters at all: the
+   *  child's FIRST request failed, or the fork was refused before it ever ran. Such a fork read nothing
+   *  and every counter is zero, so the verdict must name the cause rather than blame the prefix for it —
+   *  the 400 on a replayed tool reference and the transport refusal of an oversized request both landed
+   *  here and produced no line whatsoever. The caller supplies the wording. */
+  failure?: string;
 }
 
 export interface ForkCacheVerdict {
@@ -208,6 +214,7 @@ export interface ForkCacheVerdict {
 /** Why this fork did or did not read the parent's cache. Ordered by how early the cause fires, so the
  *  reason names the FIRST thing that made sharing impossible rather than the symptom it produced. */
 export function forkCacheVerdict(reading: ForkCacheReading): ForkCacheVerdict {
+  if (reading.failure) return { shared: false, reason: reading.failure };
   if (!reading.sameModel) return { shared: false, reason: 'different model' };
   if (!reading.providerCaches) return { shared: false, reason: 'provider without cache' };
   if (reading.parentPrefix <= 0) return { shared: false, reason: 'parent prefix unknown' };
@@ -217,6 +224,46 @@ export function forkCacheVerdict(reading: ForkCacheReading): ForkCacheVerdict {
   // the history while the tool or system block behind it was re-cached.
   if (reading.cacheWrite > reading.parentPrefix - target) return { shared: false, reason: 'prefix rewritten' };
   return { shared: true, reason: 'parent prefix reused' };
+}
+
+/** Room the child must still have AFTER the inherited prefix: its boilerplate and directive, plus one
+ *  reply. A fork that fits the window exactly is not a working fork — it is a conversation that dies on
+ *  its own first answer — so the guard refuses it while there is still something clear to say about why. */
+export const FORK_CHILD_RESERVE_TOKENS = 16_000;
+
+/** What the size guard weighs: how big the seeded prefix is, and what each side's model can hold. */
+export interface ForkWindowFit {
+  /** Estimated tokens of the messages the child would be seeded with. */
+  seedTokens: number;
+  parentModel: string;
+  /** The parent model's context window in tokens; 0 when unknown — reported, never used to decide. */
+  parentWindow: number;
+  childModel: string;
+  /** The child model's context window in tokens. 0 (unknown) makes the guard abstain. */
+  childWindow: number;
+}
+
+/** Whether the seeded prefix cannot fit the CHILD's window. Abstains on an unknown window rather than
+ *  guessing: refusing a fork over a number nobody measured is worse than the failure it would prevent. */
+export function forkExceedsChildWindow(fit: ForkWindowFit): boolean {
+  if (fit.childWindow <= 0) return false;
+  return fit.seedTokens + FORK_CHILD_RESERVE_TOKENS > fit.childWindow;
+}
+
+/** Why the fork was refused, in the words the DELEGATING model reads. It names both windows because the
+ *  interesting case is a cross-model fork — a 1M-window parent onto a 200k-window child — where the seed
+ *  is not too big in itself, it is too big for where it was sent. Without this the oversized request
+ *  reached the transport and came back as `Connection error.`, which says none of that.
+ *
+ *  It ends by naming `fork: false`, because the instance default can turn an ordinary delegation into a
+ *  fork the caller never asked for: the caller has to be told the one word that gets their work done. */
+export function forkWindowRefusal(fit: ForkWindowFit): string {
+  return `fork refused: the inherited context is about ${fit.seedTokens} tokens, which does not fit `
+    + `${fit.childModel} (context window ${fit.childWindow}, less ${FORK_CHILD_RESERVE_TOKENS} reserved `
+    + `for the child's own directive and reply). This conversation runs on ${fit.parentModel} `
+    + `(context window ${fit.parentWindow > 0 ? fit.parentWindow : 'unknown'}). Delegate again with `
+    + '`fork: false` to start the sub-agent on a clean context, or fork onto a model whose window is large '
+    + 'enough for this conversation.';
 }
 
 /** The one INFO line a fork spawn emits, after the child's first provider response. It is the only

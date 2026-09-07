@@ -86,6 +86,10 @@ export interface SessionSpec {
     parentPrefix: number;
     /** False when the child runs on a different model, which can share no cache whatever the prefix. */
     sameModel: boolean;
+    /** The parent's model id and context window, for the size guard's refusal message. The window is 0
+     *  when the spawning process could not resolve it; it is reported, never used to decide. */
+    parentModel: string;
+    parentWindow: number;
   };
   /** A fork child's inherited transcript: the parent's history plus the fork boundary, inserted before
    *  rehydration so the child's very first request carries the parent's prefix. Distinct from
@@ -794,11 +798,15 @@ export class BrainSessionFactory {
     // a cleared result cleared so the prefix stays byte-stable afterwards. The latch is mirrored into
     // brain_tool_result_spills so a respawn restores it even when rehydration changed the message text
     // (externalized images) — the file-equality fallback alone cannot.
+    //
+    // `save` writes THROUGH to the transcript row as well, in one transaction: the stored history is what
+    // every rebuild (respawn, export, fork seed) reconstructs the wire from, so it has to say what the
+    // wire says. See BrainStore.recordClearedToolResult.
     installToolResultClearing(session, spec.sessionId, {
       ...(cacheIdleMs !== undefined ? { idleMs: cacheIdleMs } : {}),
       latchStore: {
         load: () => this.d.store.toolResultSpills(spec.sessionId),
-        save: (entry) => { this.d.store.upsertToolResultSpill(spec.sessionId, entry); },
+        save: (entry) => { this.d.store.recordClearedToolResult(spec.sessionId, entry); },
         remove: (toolCallId, occurredAt) => { this.d.store.deleteToolResultSpill(spec.sessionId, toolCallId, occurredAt); },
       },
     });
@@ -893,9 +901,16 @@ export class BrainSessionFactory {
       session.subscribe((event) => {
         try {
           if (forkReported || event.type !== 'message_end') return;
-          const message = (event as { message?: { role?: string; stopReason?: string; usage?: { cacheRead?: number; cacheWrite?: number; input?: number } } }).message;
+          const message = (event as { message?: { role?: string; stopReason?: string; errorMessage?: string; usage?: { cacheRead?: number; cacheWrite?: number; input?: number } } }).message;
           if (message?.role !== 'assistant') return;
-          if (message.stopReason === 'error' || message.stopReason === 'aborted') return;
+          // An ABORT is somebody stopping the work, not a fact about the prefix — it stays unreported.
+          // A FAILED first request is the opposite: it is the single most important thing this line can
+          // say, and the two production failures this guard was written for (a 400 on a replayed tool
+          // reference, a transport refusal of an oversized request) each produced no line at all.
+          if (message.stopReason === 'aborted') return;
+          const failed = message.stopReason === 'error'
+            ? message.errorMessage?.trim() || 'provider error'
+            : undefined;
           forkReported = true;
           logger('brain-subagent').info(formatForkCacheLine({
             childSessionId: spec.sessionId,
@@ -908,6 +923,7 @@ export class BrainSessionFactory {
             // Whether this wire reports cache accounting at all — the same classification cacheWatch is
             // installed on, so the two can never disagree about which providers have a prompt cache.
             providerCaches: cacheFlavor !== undefined,
+            ...(failed ? { failure: `first request failed: ${failed}` } : {}),
           }));
         } catch (err) {
           logger('brain-subagent').warn(`fork cache measurement failed on ${spec.sessionId}: ${String(err)}`);

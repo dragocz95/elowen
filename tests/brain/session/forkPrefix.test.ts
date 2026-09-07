@@ -1,15 +1,19 @@
 import { describe, it, expect } from 'vitest';
 import {
   FORK_BOILERPLATE_TAG,
+  FORK_CHILD_RESERVE_TOKENS,
   FORK_DIRECTIVE_PREFIX,
   FORK_PLACEHOLDER_RESULT,
   buildForkChildMessage,
   forkCacheVerdict,
+  forkExceedsChildWindow,
   forkParentPrefixTokens,
   forkSeedMessages,
+  forkWindowRefusal,
   formatForkCacheLine,
   type ForkCacheReading,
   type ForkMessage,
+  type ForkWindowFit,
 } from '../../../src/brain/session/forkPrefix.js';
 
 const toolCall = (id: string, name: string) => ({ type: 'toolCall', id, name, arguments: {} });
@@ -118,6 +122,64 @@ describe('fork cache verdict', () => {
     expect(forkCacheVerdict(reading({ parentPrefix: 0 })))
       .toEqual({ shared: false, reason: 'parent prefix unknown' });
   });
+
+  it('blames a failed first request before anything the counters could suggest', () => {
+    // A fork whose first request 400s reads nothing, so every counter is zero — and "prefix mismatch"
+    // would be a true statement about a number that describes none of what happened.
+    expect(forkCacheVerdict(reading({
+      cacheRead: 0,
+      failure: "first request failed: Tool reference 'WorkflowStart' not found in available tools",
+    }))).toEqual({
+      shared: false,
+      reason: "first request failed: Tool reference 'WorkflowStart' not found in available tools",
+    });
+  });
+});
+
+describe('the fork size guard', () => {
+  const fit = (over: Partial<ForkWindowFit> = {}): ForkWindowFit => ({
+    seedTokens: 100_000,
+    parentModel: 'anthropic/big',
+    parentWindow: 1_000_000,
+    childModel: 'anthropic/small',
+    childWindow: 200_000,
+    ...over,
+  });
+
+  it('admits a seed that leaves the child room to answer', () => {
+    expect(forkExceedsChildWindow(fit())).toBe(false);
+  });
+
+  it('refuses a parent conversation that outgrew the CHILD’s window', () => {
+    // The production failure: a ~480k-token owner chat forked onto a 200k-window model. Nothing rejected
+    // it, so the oversized request went to the transport and came back as a bare connection error.
+    expect(forkExceedsChildWindow(fit({ seedTokens: 480_000 }))).toBe(true);
+  });
+
+  it('refuses a seed that fits only by leaving the child no room of its own', () => {
+    expect(forkExceedsChildWindow(fit({ seedTokens: 200_000 - FORK_CHILD_RESERVE_TOKENS + 1 }))).toBe(true);
+    expect(forkExceedsChildWindow(fit({ seedTokens: 200_000 - FORK_CHILD_RESERVE_TOKENS }))).toBe(false);
+  });
+
+  it('abstains when the child window is unknown rather than refusing on a guess', () => {
+    expect(forkExceedsChildWindow(fit({ seedTokens: 5_000_000, childWindow: 0 }))).toBe(false);
+  });
+
+  it('names both models, both windows and the way out', () => {
+    const message = forkWindowRefusal(fit({ seedTokens: 480_000 }));
+    expect(message).toContain('480000');
+    expect(message).toContain('anthropic/small');
+    expect(message).toContain('200000');
+    expect(message).toContain('anthropic/big');
+    expect(message).toContain('1000000');
+    // The instance default turns an omitted `fork` into a fork, so the caller has to be told the one
+    // word that gets their delegation to run at all.
+    expect(message).toContain('`fork: false`');
+  });
+
+  it('says the parent window is unknown instead of printing a zero', () => {
+    expect(forkWindowRefusal(fit({ parentWindow: 0 }))).toContain('context window unknown');
+  });
 });
 
 describe('formatForkCacheLine', () => {
@@ -125,6 +187,17 @@ describe('formatForkCacheLine', () => {
     expect(formatForkCacheLine(reading())).toBe(
       'fork brain-ch-subagent-sub-dlg-1 from brain-7: cacheRead=98000 cacheWrite=400 input=120 '
       + 'parentPrefix≈100000 verdict=shared (parent prefix reused)',
+    );
+  });
+
+  it('reports a fork whose first request failed, with the failure as the reason', () => {
+    // Both production failures produced NO line at all, because the reporter abstained on an error
+    // message — so the one evidence surface for forking was silent exactly when it mattered.
+    expect(formatForkCacheLine(reading({
+      cacheRead: 0, cacheWrite: 0, input: 0, failure: 'first request failed: Connection error.',
+    }))).toBe(
+      'fork brain-ch-subagent-sub-dlg-1 from brain-7: cacheRead=0 cacheWrite=0 input=0 '
+      + 'parentPrefix≈100000 verdict=not-shared (first request failed: Connection error.)',
     );
   });
 
