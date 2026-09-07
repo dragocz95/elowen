@@ -260,14 +260,15 @@ describe('SidebarNav keyboard operation', () => {
     expect(onToggleCollapse).toHaveBeenCalledTimes(2);
   });
 
-  it('offers the footer fold only where folding is the reader\'s call', () => {
-    mount();
+  // The fold belongs to the TopBar's control (tests/components/shell/TopBar.test.tsx) and the column's
+  // rail. The footer carries the surface menu alone, even where folding IS offered.
+  it('leaves the fold out of the footer and keeps the surface menu there', () => {
+    const { container } = mount({ onToggleCollapse: vi.fn() });
+    const footer = container.querySelector('.sidebar-nav__footer');
+    expect(footer).not.toBeNull();
+    expect(footer!.querySelectorAll('button')).toHaveLength(1);
+    expect(footer!.querySelector('.sidebar-nav__more')).not.toBeNull();
     expect(screen.queryByTestId('sidebar-nav-collapse')).toBeNull();
-    const onToggleCollapse = vi.fn();
-    const foldable = mount({ onToggleCollapse });
-    fireEvent.click(screen.getByTestId('sidebar-nav-collapse'));
-    expect(onToggleCollapse).toHaveBeenCalled();
-    foldable.unmount();
   });
 });
 
