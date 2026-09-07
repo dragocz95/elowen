@@ -280,3 +280,27 @@ describe('GET /config/tool-deferral', () => {
     expect((await app.request('/config/tool-deferral', auth(body.token))).status).toBe(403);
   });
 });
+
+// Per-model max output tokens travel the same trust boundary as the context-window pins: a number map
+// keyed `providerId/model`, validated by the schema and sanitized by the store.
+describe('PUT /config carries the per-model max output tokens', () => {
+  it('persists the window and the output cap for one custom model', async () => {
+    const { app, token } = await makeTestApp({});
+    const res = await app.request('/config', put(token, {
+      brain: {
+        modelContextWindows: { 'custom/qwen3.6-35b-a3b': 262_144 },
+        modelMaxTokens: { 'custom/qwen3.6-35b-a3b': 65_536 },
+      },
+    }));
+    expect(res.status).toBe(200);
+    const body = await res.json() as { brain: { modelContextWindows: Record<string, number>; modelMaxTokens: Record<string, number> } };
+    expect(body.brain.modelContextWindows['custom/qwen3.6-35b-a3b']).toBe(262_144);
+    expect(body.brain.modelMaxTokens['custom/qwen3.6-35b-a3b']).toBe(65_536);
+  });
+
+  it('rejects a non-numeric max output value with a 400', async () => {
+    const { app, token } = await makeTestApp({});
+    const res = await app.request('/config', put(token, { brain: { modelMaxTokens: { 'custom/qwen3.6-35b-a3b': '65536' } } }));
+    expect(res.status).toBe(400);
+  });
+});

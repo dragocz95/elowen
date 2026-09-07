@@ -344,3 +344,56 @@ describe('brain provider wire-API (api) round-trip', () => {
     });
   });
 });
+
+describe('ConfigStore per-model limits', () => {
+  // The exact pair from the owner's request: one custom provider entry, one model, both limits pinned
+  // under the `providerId/model` key the settings UI writes.
+  const qwen = 'custom/qwen3.6-35b-a3b';
+
+  it('defaults to empty maps', () => {
+    const cs = new ConfigStore(openDb(':memory:'));
+    expect(cs.get().brain.modelContextWindows).toEqual({});
+    expect(cs.get().brain.modelMaxTokens).toEqual({});
+  });
+
+  it('round-trips both limits for one model through the patch path and the public view', () => {
+    const cs = new ConfigStore(openDb(':memory:'));
+    cs.update({ brain: { modelContextWindows: { [qwen]: 262_144 }, modelMaxTokens: { [qwen]: 65_536 } } });
+    expect(cs.get().brain.modelContextWindows).toEqual({ [qwen]: 262_144 });
+    expect(cs.get().brain.modelMaxTokens).toEqual({ [qwen]: 65_536 });
+    expect(cs.snapshot().brain.modelMaxTokens).toEqual({ [qwen]: 65_536 });
+  });
+
+  it('leaves the sibling map alone when a patch carries only one of them', () => {
+    const cs = new ConfigStore(openDb(':memory:'));
+    cs.update({ brain: { modelContextWindows: { [qwen]: 262_144 }, modelMaxTokens: { [qwen]: 65_536 } } });
+    cs.update({ brain: { modelMaxTokens: { [qwen]: 32_768 } } });
+    expect(cs.get().brain.modelContextWindows).toEqual({ [qwen]: 262_144 });
+    expect(cs.get().brain.modelMaxTokens).toEqual({ [qwen]: 32_768 });
+  });
+
+  // The UI clears an override by dropping the key and sending the whole map, so an empty map must erase
+  // the pin rather than be read as "no opinion".
+  it('clears a pin when the map arrives without its key', () => {
+    const cs = new ConfigStore(openDb(':memory:'));
+    cs.update({ brain: { modelMaxTokens: { [qwen]: 65_536 } } });
+    cs.update({ brain: { modelMaxTokens: {} } });
+    expect(cs.get().brain.modelMaxTokens).toEqual({});
+  });
+
+  it('drops malformed entries instead of persisting them', () => {
+    const cs = new ConfigStore(openDb(':memory:'));
+    cs.update({ brain: { modelMaxTokens: {
+      [qwen]: 65_536.7, 'a/zero': 0, 'a/negative': -1, 'a/nan': Number.NaN, 'a/infinite': Number.POSITIVE_INFINITY,
+      'a/text': '8192', 'a/null': null, '': 4_096,
+    } as never } });
+    expect(cs.get().brain.modelMaxTokens).toEqual({ [qwen]: 65_536 });
+  });
+
+  it('ignores a non-object map', () => {
+    const cs = new ConfigStore(openDb(':memory:'));
+    cs.update({ brain: { modelMaxTokens: { [qwen]: 65_536 } } });
+    cs.update({ brain: { modelMaxTokens: [1, 2] as never } });
+    expect(cs.get().brain.modelMaxTokens).toEqual({});
+  });
+});

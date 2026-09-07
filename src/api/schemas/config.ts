@@ -129,6 +129,9 @@ export const configPatchSchema = z.object({
     agentName: z.unknown().optional(),
     maxSteps: z.number().optional(),
     modelContextWindows: z.record(z.string(), z.number()).optional(),
+    // Max OUTPUT tokens per model, same `providerId/model` key shape as the window pins above. The store
+    // drops non-positive/non-finite entries and the runtime clamps the value against the shared window.
+    modelMaxTokens: z.record(z.string(), z.number()).optional(),
     limits: brainLimitsPatchSchema.optional(),
     hiddenOauth: z.array(z.string()).optional(),
   }).optional(),

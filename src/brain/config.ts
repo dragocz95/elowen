@@ -48,7 +48,11 @@ export function brainConfigFromElowen(config: ConfigStore, creds?: BrainCredenti
   }
 
   if (providers.length === 0) return null;
-  return { providers, contextWindows: config.get().brain.modelContextWindows };
+  return {
+    providers,
+    contextWindows: config.get().brain.modelContextWindows,
+    maxOutputTokens: config.get().brain.modelMaxTokens,
+  };
 }
 
 /**
