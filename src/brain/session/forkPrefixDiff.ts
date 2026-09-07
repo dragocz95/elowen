@@ -109,10 +109,15 @@ export interface ForkPrefixRequest {
 }
 
 /** The read side the comparison needs — satisfied by `BrainStore.providerRequests`, and by a test fixture
- *  holding two rows. Read-only by construction: nothing here can write. */
+ *  holding two rows. Read-only by construction: nothing here can write.
+ *
+ *  `sessionCreatedAt` is the anchor: when the child's session row was written, which is the moment of the
+ *  fork. Optional so a source that cannot answer it (a fixture, a store older than the column) still gets
+ *  a reading through the fallback below rather than none at all. */
 export interface ForkPrefixRequestSource {
   rows(sessionId: string): Record<string, unknown>[];
   debugRequest(sessionId: string, requestId: string): { segments: ForkPrefixSegment[] } | undefined;
+  sessionCreatedAt?(sessionId: string): number | undefined;
 }
 
 function requestsOf(source: ForkPrefixRequestSource, sessionId: string): ForkPrefixRequest[] {
@@ -133,9 +138,22 @@ export interface ForkPrefixReading {
 
 /** Compare the parent's last chat request BEFORE the fork against the child's first.
  *
- *  "Before the fork" matters: by the time anyone asks, the parent has usually taken more turns, and its
- *  newest request describes a conversation the child never saw. The one whose cache the child was meant to
- *  hit is the last one the parent sent no later than the child's first — so that is the one compared.
+ *  "Before the fork" is the moment the CHILD ROW was created, not the moment the child first spoke, and
+ *  the difference is what this diagnostic used to get wrong. A background fork hands its spawner a job id
+ *  and lets the parent carry on: the parent finishes its turn and sends the next request of its own while
+ *  the child is still starting up. That request sits after the fork and before the child's first, so
+ *  anchoring on the child's request selects it — and it legitimately carries the parent's NEW turn frames,
+ *  which the child was never meant to hold. The reading then reports `not-shared` for a fork the token
+ *  counters show sharing perfectly.
+ *
+ *  The seed is taken at the moment of the fork, so the request the child's prefix must match is the last
+ *  one the parent sent no later than that. `created_at` is stored to the second, so a parent request
+ *  inside the same second as the spawn falls on the safe side of the comparison: excluded rather than
+ *  wrongly admitted.
+ *
+ *  The old rule remains as the FALLBACK, for a source that cannot date the child (a fixture, an older
+ *  store) and for a parent whose requests before the fork are no longer captured — a reading anchored a
+ *  little late still names a segment, where no reading at all names nothing.
  *
  *  Returns undefined when either side captured nothing: request capture has a kill switch, and a missing
  *  record is not evidence of a broken prefix. */
@@ -146,9 +164,11 @@ export function forkPrefixReading(
 ): ForkPrefixReading | undefined {
   const child = requestsOf(source, childSessionId).find((request) => request.kind === 'chat');
   if (!child) return undefined;
-  const parent = requestsOf(source, parentSessionId)
-    .filter((request) => request.kind === 'chat' && request.startedAt <= child.startedAt)
-    .at(-1);
+  const parentRequests = requestsOf(source, parentSessionId).filter((request) => request.kind === 'chat');
+  const forkedAt = source.sessionCreatedAt?.(childSessionId);
+  const upTo = (limit: number): ForkPrefixRequest | undefined =>
+    parentRequests.filter((request) => request.startedAt <= limit).at(-1);
+  const parent = (forkedAt === undefined ? undefined : upTo(forkedAt)) ?? upTo(child.startedAt);
   if (!parent) return undefined;
   const parentDetail = source.debugRequest(parentSessionId, parent.requestId);
   const childDetail = source.debugRequest(childSessionId, child.requestId);
