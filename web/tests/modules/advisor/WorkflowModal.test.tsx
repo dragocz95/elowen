@@ -68,7 +68,7 @@ afterEach(() => { server.resetHandlers(); FakeES.instances.length = 0; localStor
 afterAll(() => server.close());
 beforeEach(() => { (globalThis as unknown as { EventSource: unknown }).EventSource = FakeES; });
 
-interface TestNode { id: string; task: string; status: 'pending' | 'running' | 'done' | 'error'; deps: string[]; result?: string; error?: string }
+interface TestNode { id: string; task: string; status: 'pending' | 'running' | 'done' | 'error'; deps: string[]; result?: string; error?: string; model?: string; thinkingLevel?: string }
 const dagEvents = (nodes: TestNode[]) => ([
   { type: 'tool', name: 'WorkflowStart', id: 'w-call' },
   { type: 'workflow', id: 'wf-1', toolCallId: 'w-call', title: 'Rail parity', status: 'running', nodes },
@@ -147,6 +147,29 @@ describe('workflow DAG modal', () => {
     const detail = screen.getByTestId('workflow-node-detail');
     expect(detail.textContent).toContain('prozkoumat kód');
     expect(detail.textContent).toContain('nalezeno pět volajících');
+  });
+
+  /** A DAG routinely mixes a cheap mechanical node with one deliberately run at a high reasoning effort,
+   *  and the node detail was the one place where that was invisible — the model was shown, the effort that
+   *  drives most of its cost was not. */
+  it('names the reasoning effort a node runs on beside its model', async () => {
+    const es = await renderChat();
+    await openDag(es, [
+      { id: 'explore', task: 'prozkoumat kód', status: 'running', deps: [], model: 'p/m', thinkingLevel: 'high' },
+    ]);
+    await act(async () => { fireEvent.click(screen.getByTestId('workflow-node-explore')); });
+
+    const detail = screen.getByTestId('workflow-node-detail').textContent ?? '';
+    expect(detail).toContain('p/m');
+    expect(detail).toContain('high');
+  });
+
+  it('says nothing about reasoning for a node that reported no level', async () => {
+    const es = await renderChat();
+    await openDag(es, [{ id: 'explore', task: 'prozkoumat kód', status: 'running', deps: [], model: 'p/m' }]);
+    await act(async () => { fireEvent.click(screen.getByTestId('workflow-node-explore')); });
+
+    expect(screen.getByTestId('workflow-node-detail').textContent).not.toMatch(/Uvažování|Reasoning/);
   });
 
   it('reports a failed node’s error rather than its (absent) result', async () => {

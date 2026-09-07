@@ -171,9 +171,12 @@ The `subagent` plugin exposes typed delegation and workflow tools. A delegated c
 - its `DelegatedExecutionScope` captures administrator/project/owner authority, plugin tool policy, non-interactive permission rules, prompt appendices, read-only origin, spawning principal, and contribution account;
 - the scope is normalized and validated before persistence and on every resume;
 - a child can inherit or narrow the parent's authority, never widen it;
+- the scope also records the reasoning level the child was spawned on, because continuation, eviction and boot recovery rebuild the child from the scope alone;
 - `DelegateContinue` reuses the child transcript and re-checks the parent's current authority;
 - `write_access: true` can only promote a read-only child explicitly requested as read-only, by the same spawning principal, and only to the caller's current authority;
 - workflow nodes inherit the effective boundary of the creating node.
+
+`Delegate` and a workflow node take an optional `thinkingLevel`. Omitted, the child inherits the delegating turn's reasoning effort, and the session factory drops a level the child's model has no equivalent for. Given explicitly, it is validated against that model's own ladder (`PluginModelOption.reasoningLevels`, from `src/brain/modelCapabilities.ts`) and an unsupported value is refused with the levels that model does have, rather than clamped. The effective level travels on the sub-agent progress row and on the workflow node snapshot, so the CLI and the web show what each child actually runs on.
 
 Workflow DAG execution is implemented by `plugins/subagent/lib/workflow.mjs`. The host-side reverse seam for dynamic node expansion is `WorkflowAddNodes`; a forked runner reaches it through host RPC and cannot fabricate its own identity.
 

@@ -1865,6 +1865,23 @@ describe('BrainStore', () => {
       expect(store.upsertWorkflowRun('root', wf({ nodes: [{ id: 'a', task: 't', status: 'done', deps: [], result: 42 }] }))).toBe(false);
     });
 
+    /** Same whitelist hazard for the node's reasoning effort. Dropped on persist, the level would exist
+     *  only while the snapshot sat in memory: after a reload — or after a restart, when the DAG view is
+     *  rebuilt from this row — the surface that exists to show what each node runs on would read blank. */
+    it('round-trips the reasoning level a node runs on', () => {
+      store.createSession({ id: 'root', userId: 1, model: 'm' });
+      const nodes = [
+        { id: 'hard', task: 't', status: 'running', deps: [], model: 'p/m', thinkingLevel: 'high' },
+        { id: 'plain', task: 't', status: 'running', deps: [] },
+      ];
+      expect(store.upsertWorkflowRun('root', wf({ nodes }))).toBe(true);
+      const [run] = store.getWorkflowRuns('root');
+      expect(run!.nodes.find((n) => n.id === 'hard')!.thinkingLevel).toBe('high');
+      expect(run!.nodes.find((n) => n.id === 'plain')!.thinkingLevel).toBeUndefined();
+      // Malformed rejects the snapshot rather than coercing, like every other node field.
+      expect(store.upsertWorkflowRun('root', wf({ nodes: [{ id: 'a', task: 't', status: 'done', deps: [], thinkingLevel: 5 }] }))).toBe(false);
+    });
+
     // Same whitelist hazard, one level up. `background` is not display trivia: sparedChildSessionIds
     // reads it to spare a running background workflow's node sessions from a parent abort. While the
     // whitelist dropped it the sparing was dead code, so any stop or detach on the origin conversation
