@@ -65,6 +65,12 @@ export const DISCARDED_MESSAGE = 2;
  *  before it reaches this. */
 const MAX_FORK_SEEDED_MESSAGES = 10_000;
 
+/** Every role a stored transcript can carry and rehydration replays: the chat trio plus PI's own
+ *  transcript messages. A parent that has been compacted holds a `compactionSummary` row, and that row
+ *  IS the parent's live context — a fork that refused it could never inherit a long conversation, which
+ *  is precisely the conversation worth forking. */
+const FORK_SEED_ROLES = new Set(['user', 'assistant', 'toolResult', 'compactionSummary', 'branchSummary', 'custom', 'bashExecution']);
+
 export interface BrainSessionRow {
   id: string; user_id: number; title: string; model: string; provider: string; work_dir: string; parent_session_id: string | null;
   delegated_access: string | null;
@@ -975,7 +981,7 @@ export class BrainStore {
     if (!messages.length) return 0;
     if (messages.length > MAX_FORK_SEEDED_MESSAGES) throw new TypeError('fork transcript too long');
     for (const message of messages) {
-      if (message.role !== 'user' && message.role !== 'assistant' && message.role !== 'toolResult') {
+      if (!FORK_SEED_ROLES.has(message.role)) {
         throw new TypeError(`invalid seeded fork message role: ${String(message.role)}`);
       }
     }

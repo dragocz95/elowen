@@ -70,6 +70,19 @@ describe('BrainStore.seedForkTranscript', () => {
     expect(store.getMessages('brain-ch-subagent-sub-1')).toHaveLength(0);
   });
 
+  // Seen on the first production fork: the parent had been compacted, its transcript held a
+  // `compactionSummary` row, and the seed refused it — so exactly the long conversation worth forking was
+  // the one that could not be. The summary row IS the parent's live context and travels with the rest.
+  it('carries a compacted parent transcript, summary row included', () => {
+    const compacted = [
+      { role: 'compactionSummary', summary: 'earlier work, condensed', tokensBefore: 180_000, timestamp: 1 },
+      ...history,
+    ];
+    expect(store.seedForkTranscript('brain-ch-subagent-sub-1', compacted)).toBe(3);
+    const rows = store.getMessages('brain-ch-subagent-sub-1').map((row) => JSON.parse(row.content) as { role: string });
+    expect(rows.map((row) => row.role)).toEqual(['compactionSummary', 'user', 'assistant']);
+  });
+
   it('rejects a role it cannot replay, leaving the child empty', () => {
     expect(() => store.seedForkTranscript('brain-ch-subagent-sub-1', [
       { role: 'system', content: 'nope' },
