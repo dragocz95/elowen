@@ -61,7 +61,7 @@ A goal belongs to the conversation that created it and runs its kickoff and cont
 
 ### Goal limits and resuming
 
-The instance owner can adjust **Settings → Elowen AI → Limits**:
+The instance owner can adjust **Settings → configured assistant AI → Limits**:
 
 - **Goal turn budget** — the default number of autonomous turns before a supervised goal pauses;
 - **Goal safety ceiling** — the absolute maximum number of autonomous goal turns, including YOLO.
@@ -72,7 +72,7 @@ A goal also needs a live driver: the active conversation or an attached client s
 
 ## Tool permissions and approvals
 
-Open **Account → Elowen AI → Command permissions** to manage personal permission rules. The editor has separate lists for Bash command patterns and tool-name patterns. Each rule is one of:
+Open **Account → Models → Command permissions** to manage personal permission rules. The editor has separate lists for Bash command patterns and tool-name patterns. Each rule is one of:
 
 - **Allow** — run without asking;
 - **Ask** — request approval in interactive Web or CLI chat;
@@ -91,9 +91,9 @@ Built-in safety rules are applied underneath your rules. An approval prompt's **
 An `Ask` rule behaves differently depending on where the turn runs:
 
 - In Web or CLI chat, the turn waits for your answer. Cancelling the prompt fails closed.
-- In a scheduled job, platform channel, or delegated child, nobody can answer a prompt. The **Unattended runs** setting in the same Account → Elowen AI section controls the result: **Allow** is the default; **Block** refuses the ask.
+- In a scheduled job, platform channel, or delegated child, nobody can answer a prompt. The **Unattended runs** setting in the same Account → Models section controls the result: **Allow** is the default; **Block** refuses the ask.
 
-The **YOLO mode** toggle in **Account → Elowen AI** auto-approves asks in new sessions. In the CLI, `/yolo`, `/yolo on`, and `/yolo off` change the effective setting for the current session. YOLO never overrides an effective `Deny` rule, and it does not override unattended **Block** mode.
+The **YOLO mode** toggle in **Account → Models** auto-approves asks in new sessions. In the CLI, `/yolo`, `/yolo on`, and `/yolo off` change the effective setting for the current session. YOLO never overrides an effective `Deny` rule, and it does not override unattended **Block** mode.
 
 A tool permission cannot grant a tool that the account does not otherwise have. A narrower Project, channel, plan, or delegated boundary can reduce access further.
 
@@ -111,7 +111,9 @@ A tool permission cannot grant a tool that the account does not otherwise have. 
 
 ## Workflow DAGs
 
-`WorkflowStart` runs a directed graph of delegated children. Independent nodes can run in parallel; a node with dependencies waits for their results and receives those results as context. `WorkflowResume` continues only unfinished work. A node added dynamically inherits the creating node's current scope and cannot widen the workflow's original authority.
+`WorkflowStart` runs a directed graph of delegated children. Independent nodes can run in parallel; a node with dependencies waits for its prerequisites and receives only the direct dependency's handover context. `WorkflowResume` continues only unfinished work. A node added dynamically inherits the creating node's current scope and cannot widen the workflow's original authority.
+
+An explicitly workspace-scoped child receives a logical workspace path view and only workspace-safe tools. Host-filesystem tools, including `WorkflowStart`, are withheld. A normal parent bound to a workspace can still spawn work from that bound worktree; a read-only child can return a plan or report for the parent to save.
 
 A running node may use `WorkflowAddNodes` to extend its own workflow when that workflow engine is local to the process. A node executing in a forked runner reaches the owning engine through the host RPC bridge; if that capability is unavailable, the node is not given `WorkflowAddNodes` rather than being given a tool that cannot work. Nested workflows remain local to the runner that owns them and do not jump to the parent's engine.
 

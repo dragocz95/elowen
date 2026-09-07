@@ -63,7 +63,7 @@ The terms used by Elowen in the Web UI, CLI, channels, and documentation.
 
 | Term | Meaning |
 | --- | --- |
-| **Memory** | A durable, account-scoped fact stored for later conversations, such as a preference, architectural decision, or environment detail. |
+| **Memory** | A durable fact stored for later conversations. It is account-private by default, while an administrator can configure a shared Project pool whose members can recall and manage its rows. |
 | **memory category** | A named folder and classifier description used to organize Memory. Uncategorized facts are not normally recalled. |
 | **embedding** | A numeric representation of text used for meaning-based retrieval. |
 | **semantic search** | Search by meaning using embeddings rather than only matching literal words. |

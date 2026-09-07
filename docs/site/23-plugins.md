@@ -32,6 +32,7 @@ Settings is the source of truth for the plugins available on your deployment. A 
 - `elowen-docs`
 - `statusline`
 - `mcp`
+- `changelog`
 
 Other capabilities are installed deliberately. Examples include Discord, Telegram, Microsoft Teams, WhatsApp, GitHub, skills, scheduling, codebase indexing, and editor or other product integrations.
 
@@ -86,7 +87,7 @@ A grant is separate from the plugin's own configuration and from individual tool
 
 ## Inspect what is active
 
-The plugin detail view shows the plugin's declared capabilities and its current activity. In chat, run **`/tools`** to list the tools currently available to your account, including each tool's plugin owner, description, and input schema.
+The plugin detail view shows the plugin's declared capabilities and its current activity. In the current implementation, **`/tools`** calls an administrator-only runtime endpoint, so it is not a reliable member-facing list of current-session tools. Administrators can use it to inspect plugin owners, descriptions, and schema summaries. Other accounts should use the command catalog and the plugin's granted surfaces as the availability signal.
 
 If a plugin is enabled but its tools or pages are missing, check these items in order:
 

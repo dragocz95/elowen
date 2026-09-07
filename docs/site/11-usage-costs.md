@@ -23,9 +23,9 @@ In a CLI chat, enter **`/stats`**. Use **←** and **→** to switch between **C
 
 In web chat, use the **Stats** command or the Stats control in the chat UI to open the same three-section modal. The chat-platform adapters return the session information as a message rather than drawing the modal.
 
-### Web Stats page
+### Optional Web Stats page
 
-For a longer-term view, open **Stats** in the web UI. It provides model usage over a selectable date range, including:
+The core Web UI provides the in-chat Stats modal described above. If the optional registry `stats` plugin is installed, enabled, and granted to your account, open its page at `/p/stats` for a longer-term view. It provides model usage over a selectable date range, including:
 
 - total tokens,
 - cache volume,
@@ -35,7 +35,7 @@ For a longer-term view, open **Stats** in the web UI. It provides model usage ov
 
 The daily trend supports at most **90 days**. These views do not provide a project selector.
 
-The Stats page is a browser view over Elowen's core usage routes; it is not a separate accounting system.
+The optional Stats page is a browser view over Elowen's core usage routes; it is not a separate accounting system. The core in-chat modal remains available without that plugin.
 
 ## Conversation
 
@@ -98,7 +98,7 @@ OAuth-backed providers can expose subscription or rate-limit windows instead of 
 Elowen displays those windows in two places:
 
 - the CLI telemetry rail for the active provider; and
-- **Settings → Elowen AI**, on the connected OAuth account row.
+- **Settings → configured assistant AI**, on the connected OAuth account row.
 
 A provider may report a five-hour window, weekly windows, or another shape. Elowen does not raise or reset these limits. Window meters become warning-colored at **70%** and danger-colored at **90%**; hovering the meter shows the provider's reset time.
 
@@ -130,7 +130,7 @@ Origin accounting is available only to administrators because it can contain cli
 
 An IP identifies a connection, not a person. Usage history from before origin tracking began has no origin attribution and cannot be reconstructed. Origin totals are intentionally not expected to match the model or day totals exactly.
 
-Runtime retention settings are under **Settings → Elowen AI → Runtime**:
+Runtime retention settings are under **Settings → configured assistant AI → Runtime**:
 
 - `runtime.limits.originIpRetentionDays` — how long an origin IP remains readable; default **30 days**, range **1–365**;
 - `runtime.limits.eventRetentionDays` — how long origin rows are retained; default **30 days**, range **1–365**.

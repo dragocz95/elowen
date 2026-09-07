@@ -70,7 +70,7 @@ A conversation's context window contains the recent transcript plus the instruct
 
 ### Automatic compaction
 
-Automatic compaction is enabled by default and runs at **80%** of the model's context-window capacity. Change it in **Account → Elowen AI**:
+Automatic compaction is enabled by default and runs at **80%** of the model's context-window capacity. Change it in **Account → Models**:
 
 - Turn automatic compaction on or off.
 - Set the global threshold from **30% to 95%**.
@@ -80,7 +80,7 @@ The setting applies to live conversations as well as new ones. Channel conversat
 
 ### Compaction model
 
-You can select a separate model for summarizing in **Account → Elowen AI → Compaction model**. It may use a different provider from the chat model. If you leave it empty, most providers compact with the selected chat model; ChatGPT OAuth may use its configured default model when the selected model is a different catalog entry.
+You can select a separate model for summarizing in **Account → Models → Compaction model**. It may use a different provider from the chat model. If you leave it empty, most providers compact with the selected chat model; ChatGPT OAuth may use its configured default model when the selected model is a different catalog entry.
 
 ### Manual compaction
 
@@ -98,7 +98,7 @@ Compaction is separate from restart recovery. A restart rehydrates the durable t
 
 ### Choosing a model
 
-The default model is configured per account in **Account → Elowen AI**. You can also switch the active conversation from the model picker or with `/model`. The model catalog is assembled from the providers enabled by the instance operator, including configured OpenAI-compatible and Anthropic providers and supported OAuth accounts:
+The default model is configured per account in **Account → Models**. You can also switch the active conversation from the model picker or with `/model`. The model catalog is assembled from the providers enabled by the instance operator, including configured OpenAI-compatible and Anthropic providers and supported OAuth accounts:
 
 - OpenAI Codex / ChatGPT OAuth
 - Claude OAuth
@@ -115,7 +115,7 @@ Reasoning controls are model-specific. Elowen only shows levels the active model
 
 ### Vision fallback
 
-Set an optional **Vision model** in **Account → Elowen AI**. When a message contains an image and the current model is not known to support images, Elowen temporarily switches to the configured vision model. It switches back to the normal model on a later text-only turn.
+Set an optional **Vision model** in **Account → Models**. When a message contains an image and the current model is not known to support images, Elowen temporarily switches to the configured vision model. It switches back to the normal model on a later text-only turn.
 
 A model already known to support images is not replaced by the fallback. If no vision model is configured, Elowen keeps using the current model and the provider determines whether the image can be processed.
 
@@ -142,9 +142,9 @@ Dynamic plugin context is ephemeral: it is used for the current turn and is not 
 
 Turn-start recall searches from the message you send. When the work later moves through files, tools, and errors, Elowen can search again using the work already done in that turn. This **recall while working** is non-blocking: the model continues, and a result that arrives is available on a later model call.
 
-Both automatic recall and recall while working are enabled by default for user conversations. Change the personal switches in **Account → Memory**. Operators configure the recall budgets in **Settings → Elowen AI → Limits**.
+Both automatic recall and recall while working are enabled by default for user conversations. Change the personal switches in **Account → Memory**. Operators configure the recall budgets in **Settings → configured assistant AI → Limits**.
 
-In shared channel conversations, memory is scoped to the verified account associated with the sender. An unlinked sender does not recall that account's personal memories, and one sender's memories are not exposed to another sender. See [Memory & Embeddings](memory) for retrieval, categories, retention, and project scope.
+In shared channel conversations, memory is scoped to the verified account associated with the sender. An unlinked sender does not recall that account's personal memories, and one sender's private memories are not exposed to another sender. An administrator-configured shared Project pool is available only to eligible Project members. See [Memory & Embeddings](memory) for retrieval, categories, retention, and project scope.
 
 ![Memory workspace](images/brain-memory.png)
 
@@ -154,7 +154,7 @@ Tools come from Elowen core and from enabled plugins. The server applies the acc
 
 Some tools require approval. An interactive chat can pause while it waits for your answer. Unattended work uses its captured non-interactive permission boundary and fails closed when it cannot obtain the required authority.
 
-The **YOLO** setting can auto-approve eligible tool requests for a session, while explicit deny rules still apply. Configure its account default, unattended-ask behavior, and granular permission rules in **Account → Elowen AI**. Use `/yolo` in the CLI for the active conversation only. Read [Autonomy & Safety](autonomy-safety) before enabling automatic approval.
+The **YOLO** setting can auto-approve eligible tool requests for a session, while explicit deny rules still apply. Configure its account default, unattended-ask behavior, and granular permission rules in **Account → Models**. Use `/yolo` in the CLI for the active conversation only. Read [Autonomy & Safety](autonomy-safety) before enabling automatic approval.
 
 ## Plan, build, and workflow modes
 

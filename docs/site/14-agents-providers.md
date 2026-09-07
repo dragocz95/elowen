@@ -12,7 +12,7 @@ Elowen's embedded brain is the agent behind Web UI chat, `elowen chat`, supporte
 
 ## Connect an AI provider
 
-The administrator manages providers in **Settings → Elowen AI**. The same setup is available during onboarding with:
+The administrator manages providers in **Settings → configured assistant AI**. The same setup is available during onboarding with:
 
 ```bash
 elowen setup
@@ -27,7 +27,7 @@ Elowen supports two provider protocols:
 - **OpenAI-compatible** — the provider type used by OpenAI and compatible gateways. Presets include OpenAI, OpenRouter, Google Gemini, xAI (Grok), DeepSeek, Groq, Mistral, Together AI, Fireworks AI, Cerebras, Perplexity, Moonshot (Kimi), Z.AI (GLM), NVIDIA NIM, Hugging Face, Baseten, Ollama Cloud, and CoreSynth AI.
 - **Anthropic Messages** — the provider type used by Anthropic (Claude).
 
-To add one, open **Settings → Elowen AI → Providers → +** and set:
+To add one, open **Settings → configured assistant AI → Providers → +** and set:
 
 - a display label;
 - the provider type;
@@ -50,7 +50,7 @@ The setup wizard can install Ollama and download a selected model. A manually co
 
 ### OAuth accounts
 
-The **Accounts** group in **Settings → Elowen AI** supports these sign-in types:
+The **Accounts** group in **Settings → configured assistant AI** supports these sign-in types:
 
 - **ChatGPT / Codex**
 - **Claude**
@@ -83,11 +83,11 @@ For automatically discovered OpenRouter models, zero-cost IDs ending in `:free` 
 
 ### Per-account model access
 
-Set a user's default model in **Account → Elowen AI**. Administrators can use every model in the instance catalog. Other accounts see and can select only models allowed by the instance catalog and their personal model policy. A picker cannot grant access that the daemon has not allowed.
+Set a user's default model in **Account → Models**. Administrators can use every model in the instance catalog. Other accounts see and can select only models allowed by the instance catalog and their personal model policy. A picker cannot grant access that the daemon has not allowed.
 
 A conversation can switch models between turns:
 
-- Web chat and **Account → Elowen AI** provide a model picker.
+- Web chat and **Account → Models** provide a model picker.
 - In `elowen chat`, `/model` opens the picker.
 - `/model <model>` switches directly when the model can be resolved.
 - Inside the CLI `/model` picker, **Ctrl+P** opens API-key provider management.
@@ -96,7 +96,7 @@ The model choice does not change the conversation's Project, tools, plugins, mem
 
 ## Reasoning effort and fast mode
 
-Reasoning controls are model-specific. In **Account → Elowen AI**, the thinking-level control shows only levels accepted by the selected model. A model without an adjustable ladder has no effort picker. The effective level is applied to the live conversation and persisted for the account.
+Reasoning controls are model-specific. In **Account → Models**, the thinking-level control shows only levels accepted by the selected model. A model without an adjustable ladder has no effort picker. The effective level is applied to the live conversation and persisted for the account.
 
 Provider labels can differ from Elowen's canonical names. For example, the CLI displays Codex's canonical `xhigh` as **ultra**. Other models may expose `low`, `medium`, and `high`, while newer Claude and Codex models may also expose `xhigh` or `max`.
 
@@ -121,7 +121,7 @@ The preference remains enabled across unsupported models. Elowen sends a Fast wi
 
 ## Vision and compaction models
 
-These are per-account settings in **Account → Elowen AI**:
+These are per-account settings in **Account → Models**:
 
 - **Vision model** is a fallback for image turns. Elowen uses it only when the current model is known not to accept images. A current model known to support images is kept.
 - **Compaction model** can be different from the chat model and may use another configured provider. It is used for summarizing older conversation history, not for normal replies.
@@ -133,7 +133,7 @@ A model's context window comes from provider metadata when available, or from an
 
 Elowen reports subscription usage for connected **ChatGPT/Codex**, **Claude**, and **Kimi** accounts. GitHub Copilot does not currently have a subscription-usage rail in Elowen.
 
-The account rows in **Settings → Elowen AI** show the usage windows returned by the provider. Readings are normally cached for 60 seconds and provider requests time out after 5 seconds. If a transient refresh fails, Elowen keeps the last reading and marks it stale. These are provider limits: Elowen cannot increase, reset, or predict them.
+The account rows in **Settings → configured assistant AI** show the usage windows returned by the provider. Readings are normally cached for 60 seconds and provider requests time out after 5 seconds. If a transient refresh fails, Elowen keeps the last reading and marks it stale. These are provider limits: Elowen cannot increase, reset, or predict them.
 
 ## Models in delegated work
 
@@ -147,7 +147,7 @@ A workflow is a directed graph of delegated children. Each node can select its o
 
 Fresh configuration enables the forked sub-agent runner. The pool sizes itself from available CPU and memory, leaving capacity for the daemon; it grows only under sustained pressure and queues work fairly when all runner slots are occupied. This is placement, not a refusal limit: queued delegated turns run when a slot is available.
 
-Configure the runner in **Settings → Elowen AI → Runtime**:
+Configure the runner in **Settings → configured assistant AI → Runtime**:
 
 - **Sub-agent runner** turns forked execution on or off. When off, delegated work runs in the daemon process.
 - **Pool maximum** is **Auto** by default, `0` disables forked runners, and a positive value is a hard upper cap. `ELOWEN_SUBAGENT_POOL_MAX` overrides the saved cap for the daemon process.
@@ -157,7 +157,7 @@ If a runner cannot be started, Elowen falls back to in-process execution rather 
 ## Troubleshooting provider setup
 
 1. Run `elowen doctor` and read the Chat/provider check.
-2. In **Settings → Elowen AI**, confirm the account is connected or the API-key provider shows a configured key.
+2. In **Settings → configured assistant AI**, confirm the account is connected or the API-key provider shows a configured key.
 3. For an OpenAI-compatible provider, verify the base URL and whether `<base-url>/models` responds. If it does not, enter model IDs manually.
 4. Confirm the selected model is still present in **Settings → Models** and allowed for the account.
 5. Run the provider's test from the setup flow or reconnect the OAuth account if its credential has expired.

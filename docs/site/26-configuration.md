@@ -59,7 +59,7 @@ Set these variables before starting the relevant process. The defaults keep a lo
 | `ELOWEN_BOOTSTRAP_USER` | unset | Optional initial administrator username; used only when the password is also set. |
 | `ELOWEN_BOOTSTRAP_PASS` | unset | Optional initial administrator password; used only when the username is also set. |
 
-The packaged launcher uses `ELOWEN_WEB_PORT` with a default of `4500`. The Next.js web server itself reads the standard `PORT` and `HOSTNAME` variables. Starting the daemon does not start the web UI; they are separate processes. The former browser terminal and its direct WebSocket port are no longer part of the product.
+The packaged launcher uses `ELOWEN_WEB_PORT` with a default of `4500`. The Next.js web server itself reads the standard `PORT` and `HOSTNAME` variables. Starting the daemon does not start the web UI; they are separate processes.
 
 `elowen setup` is the preferred way to configure a local installation. Use `elowen doctor` to inspect daemon, provider, memory, and plugin readiness.
 
@@ -70,15 +70,14 @@ Open **Settings** as an administrator. Changes normally save automatically; cont
 | Section | What it controls |
 | --- | --- |
 | **System** | Version and update status, daemon/web status, restart actions, automatic updates, push contact, CLI token lifetime, and conversation retention. |
-| **Elowen AI** | Assistant name, AI provider accounts, per-run step limit, brain limits, runtime limits, tool loading, compaction, sub-agent execution, and memory retention. |
-| **Models** | Enabled model entries, custom models, model notes, and context-window overrides. |
-| **Memory** | Embedding and categorization models, embedding tests, reindexing, and recategorization. |
+| **configured assistant AI** | Assistant name, AI provider accounts, per-run step limit, brain limits, runtime limits, tool loading, compaction, sub-agent execution, and memory retention. The label uses the configured assistant name. |
+| **Models** | Enabled model entries, custom models, context-window overrides, and the current embedding and categorization controls where available. The retired `memory` category aliases here. |
 | **Plugins** | Installed plugins, enable/disable state, marketplace installation, updates, removal, and plugin-specific settings. |
 | **Data** | Provider request diagnostics and log viewing. |
 
 ## AI providers
 
-Go to **Settings → Elowen AI**.
+Go to **Settings → configured assistant AI**.
 
 ### API-key providers
 
@@ -99,7 +98,7 @@ API keys are write-only from the browser: the UI reports whether a key is stored
 
 ### OAuth accounts
 
-Supported OAuth connections are **Anthropic**, **OpenAI Codex**, **GitHub Copilot**, and **Kimi**. Start or disconnect them from the provider cards in **Settings → Elowen AI**. Some flows open a provider authorization page or ask you to paste a code back into Elowen.
+Supported OAuth connections are **Anthropic**, **OpenAI Codex**, **GitHub Copilot**, and **Kimi**. Start or disconnect them from the provider cards in **Settings → configured assistant AI**. Some flows open a provider authorization page or ask you to paste a code back into Elowen.
 
 Usage rails are available for the OAuth providers that expose a supported usage endpoint: Anthropic, OpenAI Codex, and Kimi. The rail is cached for 60 seconds, warns at 70%, and shows danger at 90%. GitHub Copilot can be connected and used, but it has no Elowen subscription-usage rail.
 
@@ -120,7 +119,7 @@ The model catalog is an administrator-controlled ceiling. A user's account setti
 
 ## Account-level AI preferences
 
-Users manage their own defaults in **Account → Elowen AI**. These settings do not change the instance-wide provider catalog:
+Users manage their own defaults in **Account → Models**. These settings do not change the instance-wide provider catalog:
 
 - default chat model;
 - thinking level, when the active model supports adjustable reasoning;
@@ -136,7 +135,7 @@ A configured vision model is a fallback, not a permanent second model. Elowen us
 
 ## Runtime limits
 
-The **Elowen AI** section contains two limit editors. They protect the daemon from unbounded output, context growth, waits, and concurrent sessions.
+The **configured assistant AI** section contains two limit editors. They protect the daemon from unbounded output, context growth, waits, and concurrent sessions.
 
 ### Brain limits
 
@@ -182,18 +181,18 @@ The sub-agent runner and remote-compaction switches are operational rollbacks. R
 
 ## Memory configuration
 
-Open **Settings → Memory**. Elowen has two workspace-level memory models:
+Open the current administrator **Models** section for the memory model controls. Elowen has two workspace-level memory models:
 
 - **Embedding model** converts memories into vectors for semantic retrieval.
 - **Categorization model** assigns memories to categories.
 
-Both reuse the API key and endpoint of the selected provider in **Settings → Elowen AI**. There is no second secret field. OAuth accounts are excluded from the embedding picker because they do not expose an embedding endpoint; categorization can use the available chat models.
+Both reuse the API key and endpoint of the selected provider in the configured assistant's **AI** section. There is no second secret field. OAuth accounts are excluded from the embedding picker because they do not expose an embedding endpoint; categorization can use the available chat models.
 
 If embeddings are not configured, memory remains usable with keyword retrieval. After changing the embedding model, use **Reindex** to rebuild the semantic index. Use **Recategorize** after changing categorization or memory categories. These are explicit background operations, not hidden side effects of editing a field.
 
 ### Automatic memory retention
 
-The retention editor is in **Settings → Elowen AI → Retention**. It is enabled by default:
+The retention editor is in **Settings → configured assistant AI → Retention**. It is enabled by default:
 
 | Setting | Default | Meaning |
 | --- | ---: | --- |

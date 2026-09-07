@@ -94,6 +94,6 @@ The current management format is the MCP page, not a manually maintained configu
 
 ## Use Elowen as an MCP server
 
-Elowen also exposes its own tool surface at the stateless `POST /mcp` endpoint. An MCP-compatible client must authenticate with an Elowen bearer token; the exposed tools act with exactly that token's permissions, including its account and plugin access. This endpoint is separate from the external-server bridge described above.
+Elowen also exposes its own tool surface at the stateless `/mcp` endpoint. The server accepts the MCP methods handled by its request transport, not only `POST`. An MCP-compatible client must authenticate with an Elowen bearer token; the exposed tools act with exactly that token's permissions, including its account and plugin access. This endpoint is separate from the external-server bridge described above.
 
 [Next: Configuration](configuration)

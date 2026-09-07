@@ -22,9 +22,9 @@ The core navigation is deliberately small:
 | `/chat` | Full-page conversation with history, model controls, live work, and telemetry. |
 | `/projects` | Projects you can access, their filesystem paths, access assignments, and Git status. |
 | `/memory` | Your account's durable memories, categories, relationship map, maintenance, and lifecycle actions. |
-| `/account` | Your profile and account-level CLI, memory, personality, notification, security, and terminal preferences. |
+| `/account` | Your profile and account-level Models, memory, personality, notification, security, and terminal preferences. |
 | `/users` | Administrator-only account and access management. |
-| `/settings` | Administrator-only daemon, model, plugin, memory, and data settings. |
+| `/settings` | Administrator-only daemon, model, plugin, and data settings. |
 
 Plugin UIs can add navigation worlds at runtime. Their pages use `/p/<plugin>` and `/p/<plugin>/<route>`; a plugin with only one settings section may use the shorter `/p/<plugin>` address. A plugin must be enabled and available to your account before its navigation appears.
 
@@ -107,15 +107,15 @@ Open `/memory` to manage durable facts belonging to your account. The workspace 
 
 The workspace also provides owner-scoped reindex and recategorization maintenance. Retrieval inspection remains available through `POST /memory/retrieve`, not a separate Web tab.
 
-Select a memory to open its detail panel. Depending on its state, you can edit its category, merge it with other records, restore it, or permanently purge it. Personal memories are not visible across accounts.
+Select a memory to open its detail panel. Depending on its state, you can edit its category, merge it with other records, restore it, or permanently purge it. Personal memories are not visible across accounts; shared Project-pool memories are visible only to eligible Project members.
 
 ## Account
 
-Open `/account` for settings that belong to your account rather than the whole daemon. The profile section includes your display name, email, avatar, default Elowen AI model, interface scale, visual-effects preference, and links to your Discord, Microsoft Teams, Telegram, or WhatsApp identity where supported.
+Open `/account` for settings that belong to your account rather than the whole daemon. The profile section includes your display name, email, avatar, interface scale, visual-effects preference, and links to your Discord, Microsoft Teams, Telegram, or WhatsApp identity where supported. Personal model and reasoning controls are in **Account → Models**.
 
 Other sections cover:
 
-- **CLI** — personal Elowen/CLI behavior and model settings;
+- **Models** — personal model, reasoning, vision, compaction, Fast, and execution preferences;
 - **Memory** — recall and memory-saving preferences;
 - **Personality** — your instructions and response style;
 - **Notifications** — browser push notifications;
@@ -133,11 +133,12 @@ Only administrators can open `/users` and `/settings`.
 `/settings` contains the daemon-wide sections:
 
 - **System** — service readiness, updates, and token lifetime;
-- **Elowen AI** — provider configuration, agent identity, limits, retention, runtime, and context windows;
+- **configured assistant AI** — provider configuration, agent identity, limits, retention, runtime, and context windows. The label uses the configured assistant name;
 - **Models** — visible presets and custom model entries;
 - **Plugins** — installation, enable/disable state, grants, logs, and plugin configuration;
-- **Memory** — embedding and categorization configuration;
 - **Data** — administrative maintenance and cleanup.
+
+The former Settings **Memory** path is retired and aliases to **Models**. Embedding and categorization controls are administered through the current Models and AI sections shown by the installation.
 
 Plugin settings are owned by the plugin and open in that plugin's page, not as a second copy inside core Settings. Plugin credentials stay server-side; the browser receives metadata and status, not secret values.
 

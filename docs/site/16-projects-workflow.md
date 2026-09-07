@@ -39,7 +39,7 @@ Fresh configuration confines non-operator commands by default. The Sandbox mount
 
 1. In **Project → Sandbox**, choose **Create workspace**.
 2. Select a Git Project, enter a label, and enter a base ref. The form starts with `main`; the base ref may be an existing branch, tag, or commit.
-3. Select **Create**. Elowen creates a real worktree and a unique generated branch in the form `elowen/u<account>/<label>-<id>`. The label is for display; it is not used as the Git ref verbatim.
+3. Select **Create**. Elowen creates a real worktree and starts with the slugified label in the branch form `elowen/u<account>/<slugified-label>`. It adds a numeric suffix such as `-2` only when the directory, branch, or stored workspace collides.
 4. Choose **Use** and bind the workspace to a conversation.
 
 There is one active workspace per conversation and Project. Once active, relative file operations and `Bash` commands resolve to that worktree. Explicit paths are still checked against the account's Project access. The workspace detail shows its path, branch, changed and untracked files, ahead/behind counts, active processes, and working patch.
@@ -79,7 +79,7 @@ Creating a pull request reuses an existing open pull request with the same base 
 
 A merge is accepted only when the pull request is still open and non-draft, its head matches the expected commit exactly, checks are successful, no current review requests changes, and the repository supports the selected method. Branch force-push, automatic branch deletion, and auto-merge are not available.
 
-GitHub never creates or removes Sandbox worktrees. It consumes the active workspace selected for the conversation.
+GitHub never creates or removes Sandbox worktrees. It consumes the active workspace selected for the conversation. An explicitly workspace-scoped delegated child receives only workspace-safe tools; host-filesystem tools such as `WorkflowStart` are withheld. A normal parent bound to a workspace can still delegate work whose shell starts in the active worktree.
 
 ## CLI and agent tools
 

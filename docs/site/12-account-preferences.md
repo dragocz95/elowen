@@ -65,11 +65,9 @@ An enabled plugin with a `userConfigSchema` appears as its own Account section w
 
 Non-secret fields autosave with revision protection. If another tab or device saved a newer revision, Elowen keeps your draft and offers to reload the server version or keep your changes on top of it. Secret values are never read back or debounced: setting or replacing one requires the explicit **Save** button. A plugin that is disabled or no longer granted disappears from Account and cannot be updated by URL.
 
-## Elowen AI
+## Models
 
-The **Elowen AI** section controls the embedded assistant used by Web chat and
-`elowen chat` in the terminal. The section label uses the configured assistant
-name if an administrator has changed it.
+The **Models** section controls personal model and execution preferences for the embedded assistant used by Web chat and `elowen chat` in the terminal. Instance-wide provider and runtime administration remains under **Settings → configured assistant AI**, where the label uses the configured assistant name.
 
 ### Default model
 

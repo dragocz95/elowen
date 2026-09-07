@@ -106,7 +106,7 @@ Tool availability is the result of the live plugin registry plus the account's a
 2. The account has its required per-user plugin grant.
 3. Required plugin configuration and credentials are complete.
 4. The plugin's **Capabilities** and **Activity** views show no load error.
-5. Run `/tools` in a new turn.
+5. If you are an administrator, run `/tools` in a new turn to inspect the live contribution report. Other accounts should use the command catalog and granted plugin surfaces instead.
 
 A plugin install, update, enable, or disable can be **pending** while active work settles. Do not repeat it; wait for the registry reload result. A successful live reload changes future turns without restarting the daemon.
 
@@ -114,7 +114,7 @@ For MCP tools, inspect the server in the **MCP** page. Reconnect the server afte
 
 ## A tool is denied or asks repeatedly
 
-Open **Account → Elowen AI → Command permissions**. Rules are `allow`, `ask`, or `deny`, and the last matching rule wins. `/yolo` changes only the current CLI session; it cannot override a deny rule or an unattended block.
+Open **Account → Models → Command permissions**. Rules are `allow`, `ask`, or `deny`, and the last matching rule wins. `/yolo` changes only the current CLI session; it cannot override a deny rule or an unattended block.
 
 A delegated child receives a captured permission boundary. Changing the parent account's settings does not widen an already-running child. A read-only child also has a narrower tool set and is not a filesystem sandbox.
 
@@ -134,9 +134,9 @@ A delegated child inherits the relevant project and workspace scope and cannot w
 
 ## Memory or semantic search returns nothing
 
-Memory is account-scoped and may be organized under a project category. Check **Settings → Memory** for the embedding and categorization models, then verify that the fact exists and is categorized. Without an embedding model, keyword retrieval can still work, but semantic search is unavailable.
+Memory is account-scoped by default and may include a shared Project pool. Check the current administrator **Models** and AI settings for the embedding and categorization models, then verify that the fact exists and is categorized. Without an embedding model, keyword retrieval can still work, but semantic search is unavailable.
 
-Compaction affects the active conversation context, not durable Memory. Do not expect another account's memories to appear.
+Compaction affects the active conversation context, not durable Memory. Do not expect another account's private memories to appear; shared Project-pool memories are visible only to eligible Project members.
 
 ## A channel integration is silent
 

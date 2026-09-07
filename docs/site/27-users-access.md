@@ -167,7 +167,7 @@ A terminal grant is not automatically unrestricted host access. Fresh configurat
 ## Permission rules
 
 Permission rules decide what happens when a user's already-available tool is called.
-Open **Account → Elowen AI → Permission rules** to edit the current account's rules.
+Open **Account → Models → Permission rules** to edit the current account's rules.
 Rules are saved immediately.
 
 Each rule uses one of three actions:
@@ -193,7 +193,7 @@ same line.
 
 ### YOLO mode
 
-The **YOLO** setting in **Account → Elowen AI** changes `ask` decisions to `allow`
+The **YOLO** setting in **Account → Models** changes `ask` decisions to `allow`
 without prompting. An explicit `deny` rule still denies. The setting is the default for
 new sessions; `/yolo` in `elowen chat` changes it for the current session only.
 
@@ -203,7 +203,7 @@ available and it cannot override `deny`.
 ### Unattended asks
 
 Chat platforms, scheduled runs, and delegated sub-agents do not have a human waiting
-on an approval prompt. **Account → Elowen AI → Unattended asks** controls what happens
+on an approval prompt. **Account → Models → Unattended asks** controls what happens
 to an `ask` rule there:
 
 - **allow** (default) — treat `ask` as allowed so autonomous work can continue;
