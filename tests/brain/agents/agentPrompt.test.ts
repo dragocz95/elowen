@@ -5,8 +5,9 @@ describe('renderAgentPrompt', () => {
   it('substitutes the tool-name placeholders with Elowen tool names', () => {
     expect(renderAgentPrompt('Use ${GREP_TOOL_NAME} and ${READ_TOOL_NAME} and ${SHELL_TOOL_NAME}'))
       .toBe('Use Search and Read and Bash');
-    expect(renderAgentPrompt('${GLOB_TOOL_NAME} ${CODEBASE_TOOL_NAME} ${LS_TOOL_NAME} ${EDIT_TOOL_NAME}'))
-      .toBe('Search CodebaseSearch ListDir Edit');
+    // Name patterns belong to Glob and contents to Search, the same split the reference draws.
+    expect(renderAgentPrompt('${GLOB_TOOL_NAME} ${FIND_TOOL_NAME} ${CODEBASE_TOOL_NAME} ${LS_TOOL_NAME} ${EDIT_TOOL_NAME}'))
+      .toBe('Glob Glob CodebaseSearch ListDir Edit');
   });
 
   it('resolves the environment conditionals to their bash / embedded branch', () => {
