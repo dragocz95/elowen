@@ -73,6 +73,14 @@ describe('approved OLED palette', () => {
     expect(stripComments(skinCss('studio-oled'))).toMatch(/color-scheme:\s*dark;/);
   });
 
+  it('keeps settings groups, provider tables and sticky headers on neutral surfaces', () => {
+    const tokens = declarations(skinCss('studio-oled'));
+    expect(tokens['--color-document']).toBe('#000');
+    expect(tokens['--color-sticky']).toBe('#090909');
+    expect(tokens['--studio-fill-hover']).toBe('color-mix(in srgb, var(--color-foreground) 4%, transparent)');
+    expect(tokens['--studio-fill-active']).toBe('color-mix(in srgb, var(--color-foreground) 8%, transparent)');
+  });
+
   it('scopes opaque placeholder ink to OLED inputs and textareas', () => {
     expect(stripComments(skinCss('studio-oled'))).toMatch(
       /:root\[data-skin='studio-oled'\] :is\(input, textarea\)::placeholder\s*\{\s*color: var\(--studio-placeholder\);\s*opacity: 1;\s*\}/,

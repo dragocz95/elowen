@@ -6,7 +6,8 @@
 
   /* Black canvas and cards; neutral raised surfaces and hairlines carry the hierarchy. */
   --color-background: #000;
-  --color-document: #03080a;
+  --color-document: #000;
+  --color-sticky: #090909;
   --color-card: #000;
   --color-muted: #111;
   --color-popover: #090909;
