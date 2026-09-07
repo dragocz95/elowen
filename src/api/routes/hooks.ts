@@ -1,9 +1,8 @@
 import { logger } from '../../shared/logger.js';
 import { bodyLimitBytes } from '../validation.js';
-import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { ElowenApp, RouteContext } from '../context.js';
 import type { PluginHttpRequest } from '../../plugins/api.js';
-import { pluginResponseHeaders } from './pluginResponse.js';
+import { pluginResponse } from './pluginResponse.js';
 
 /** External webhooks are small control notifications (a Teams activity is a few KB); anything larger is
  *  not a webhook. Enforced here because the app has no global body cap. */
@@ -36,19 +35,18 @@ export function registerHookRoutes(app: ElowenApp, ctx: RouteContext): void {
       headers,
       body: () => Promise.resolve(raw),
       json: <T = unknown>() => Promise.resolve(JSON.parse(raw.toString('utf8')) as T),
+      acceptsStreamBody: true,
     };
 
     try {
       const res = await match.handler(request);
-      const status = (res.status ?? 200) as ContentfulStatusCode;
-      const body = res.body;
-      const responseHeaders = pluginResponseHeaders(res.headers);
-      if (body === undefined || typeof body === 'string') return new Response(body ?? '', { status, headers: responseHeaders });
-      if (body instanceof Uint8Array) {
-        return new Response(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer, { status, headers: responseHeaders });
-      }
-      if (!responseHeaders.has('content-type')) responseHeaders.set('content-type', 'application/json; charset=UTF-8');
-      return new Response(JSON.stringify(body), { status, headers: responseHeaders });
+      // A published site is served through this mount, so this is the path a multi-gigabyte file takes:
+      // a stream body reaches the client without the daemon ever holding the file.
+      return pluginResponse(res, {
+        method: c.req.method,
+        signal: c.req.raw.signal,
+        onStreamError: (error) => log.warn(`hook stream failed for ${c.req.path}: ${error instanceof Error ? error.message : String(error)}`),
+      });
     } catch (error) {
       // The failure detail stays daemon-side: an external caller (or probe) learns nothing about the
       // handler's internals from the response.

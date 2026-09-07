@@ -6,11 +6,10 @@ import { bodyLimitBytes, formatZodError, readBoundedBody } from '../validation.j
 import { runWithIdentity } from '../../plugins/policyContext.js';
 import { isPluginAllowedForUser } from '../../shared/pluginAccess.js';
 import { operatesInstance } from '../../shared/instanceOperator.js';
-import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import type { ElowenApp, ElowenContext, RouteContext } from '../context.js';
 import type { TurnIdentity } from '../../plugins/policyContext.js';
 import type { PluginApiAccess, PluginApiRequest, PluginApiRoute } from '../../plugins/api.js';
-import { pluginResponseHeaders } from './pluginResponse.js';
+import { pluginResponse } from './pluginResponse.js';
 
 /** Authenticated plugin API payloads are app traffic (JSON bodies, small uploads), not webhooks — a
  *  larger cap than /hooks but still bounded, because the dispatcher buffers the body whole. */
@@ -20,7 +19,7 @@ const log = logger('plugin-api');
 
 /** The core of both plugin API dispatchers (namespaced + root-mounted): enforce the route's declared
  *  access against the request's validated identity, build the PluginApiRequest, run the handler and
- *  map its response — buffered body or SSE stream. Shared so the two surfaces cannot drift. */
+ *  map its response — buffered body, byte stream or SSE. Shared so the two surfaces cannot drift. */
 async function dispatchPluginApi(
   c: ElowenContext,
   ctx: RouteContext,
@@ -53,6 +52,7 @@ async function dispatchPluginApi(
     params: match.params ?? {},
     body: () => Promise.resolve(raw),
     json: <T = unknown>() => Promise.resolve(JSON.parse(raw.toString('utf8')) as T),
+    acceptsStreamBody: true,
     auth: {
       userId: c.get('user')?.id ?? null,
       admin: !ctx.notAdmin(c),
@@ -92,15 +92,11 @@ async function dispatchPluginApi(
         await runWithIdentity(identity, () => res.sse!(send, c.req.raw.signal));
       });
     }
-    const status = (res.status ?? 200) as ContentfulStatusCode;
-    const body = res.body;
-    const responseHeaders = pluginResponseHeaders(res.headers);
-    if (body === undefined || typeof body === 'string') return new Response(body ?? '', { status, headers: responseHeaders });
-    if (body instanceof Uint8Array) {
-      return new Response(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer, { status, headers: responseHeaders });
-    }
-    if (!responseHeaders.has('content-type')) responseHeaders.set('content-type', 'application/json; charset=UTF-8');
-    return new Response(JSON.stringify(body), { status, headers: responseHeaders });
+    return pluginResponse(res, {
+      method: c.req.method,
+      signal: c.req.raw.signal,
+      onStreamError: (error) => log.warn(`plugin api stream failed for ${c.req.path}: ${error instanceof Error ? error.message : String(error)}`),
+    });
   } catch (error) {
     // Body-shape failures map exactly like the core route families' onError, so a grandfathered
     // root-mounted route keeps its clients' 400 contract (invalid JSON / zod shape errors).

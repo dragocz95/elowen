@@ -313,7 +313,30 @@ The route is served at `/plugins/<plugin>/api/status`. The daemon authenticates 
 
 A `rootMount` can preserve an existing top-level API path, but the full root path must be declared in `provides.apiRoutes` with its leading slash. Root mounts are still authenticated, core routes win conflicts, and `:param` segments are supported. Use the namespaced route unless compatibility with an existing client requires a root mount.
 
-An API handler may return a buffered body or an SSE callback through `response.sse`. Validate every route parameter and enforce the caller's Project ownership using `req.auth.accessibleProjects`; a `null` list is a list-scoping result for admin/open/setup contexts, not permission to access an arbitrary Project.
+An API handler may return a buffered body, a byte stream, or an SSE callback through `response.sse`. Validate every route parameter and enforce the caller's Project ownership using `req.auth.accessibleProjects`; a `null` list is a list-scoping result for admin/open/setup contexts, not permission to access an arbitrary Project.
+
+### Streaming a large response
+
+Both HTTP surfaces accept a `ReadableStream<Uint8Array>` as `response.body`. The daemon pipes it to the client without buffering it, so a response may be far larger than the daemon's heap — a webhook route serving a published file is the reason the seam exists.
+
+```javascript
+import { createReadStream, statSync } from 'node:fs';
+import { Readable } from 'node:stream';
+
+ctx.registerHttpRoute({
+  path: 'download',
+  handler: async (req) => {
+    const size = statSync(path).size;
+    const headers = { 'content-type': 'video/mp4', 'content-length': String(size), 'accept-ranges': 'bytes' };
+    if (req.method === 'HEAD') return { status: 200, headers, body: '' };
+    return { status: 200, headers, body: Readable.toWeb(createReadStream(path)) };
+  },
+});
+```
+
+The plugin owns the metadata. `content-length` is passed through untouched, and a range answer is the plugin's own `206` with `content-range` over a stream opened at the requested offset. On a `HEAD` request the daemon cancels a stream body and replies with the headers alone, but a handler that can answer `HEAD` without opening the file should do so. A read failure after the headers were sent is logged by the daemon and destroys the response; it cannot become a status code any more. When the client disconnects, the stream is cancelled and its source closed.
+
+A registry plugin runs on older daemons too, so check `req.acceptsStreamBody` before returning a stream: it is `true` on a daemon that has this seam and `undefined` on one that predates it, where a stream body would be JSON-serialized into `{}`.
 
 ### WebSocket routes
 
