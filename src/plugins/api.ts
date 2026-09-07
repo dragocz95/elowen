@@ -1749,8 +1749,12 @@ export interface PluginContext {
   registerInterval(name: string, fn: () => void | Promise<void>, ms: number): void;
   /** Resolve + assert a filesystem path is inside the current user's accessible repos, returning the
    *  absolute path (throws otherwise). File/terminal tools call this before any disk access. Evaluated at
-   *  tool-call time against the per-session Policy carried on AsyncLocalStorage. */
-  assertPathAllowed(path: string): string;
+   *  tool-call time against the per-session Policy carried on AsyncLocalStorage.
+   *
+   *  `intent: 'read'` additionally admits the one directory a session may read without owning: the spill
+   *  directory a FORK child inherited its placeholders from. Pass it only where the call genuinely leads
+   *  to a read; omitting it keeps the stricter boundary, which is why it is opt-in. */
+  assertPathAllowed(path: string, opts?: { intent?: 'read' | 'write' }): string;
   /** Render a validated host path in the current logical filesystem view. */
   displayPath(path: string): string;
   /** Stable per-session read/write identity; workspace mode includes the durable workspace id. */

@@ -1244,7 +1244,9 @@ export function register(ctx) {
     }, { additionalProperties: false }),
     execute: async (_id, p, _signal, _onUpdate, ectx) => {
       try {
-        const abs = ctx.assertPathAllowed(p.file_path);
+        // The read intent is what lets a fork child open the spill file its INHERITED placeholder names —
+        // the file lives under the parent's directory, and no other tool here promises to read it back.
+        const abs = ctx.assertPathAllowed(p.file_path, { intent: 'read' });
         if (p.offset !== undefined && (!Number.isSafeInteger(p.offset) || p.offset < 0)) {
           return fail('Read', new Error('offset must be a non-negative integer.'), pathMeta(abs));
         }

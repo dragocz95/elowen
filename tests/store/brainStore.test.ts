@@ -2175,6 +2175,39 @@ describe('BrainStore', () => {
       expect(store.spillNamespace('copy')).not.toBe(store.spillNamespace('src'));
       expect(store.spillNamespace('copy').startsWith('copy-')).toBe(true);
     });
+
+    /** The derivation behind the one namespace a session may read without owning it. A fork child is
+     *  seeded with its parent's transcript verbatim, so it inherits placeholders naming the parent's
+     *  files — and nothing else may claim that. */
+    describe('the namespace a fork child inherited its placeholders from', () => {
+      const access = { admin: true, projectIds: [], owner: true, permissionBoundary: null };
+
+      it('resolves to the parent, and only for a durable fork child', () => {
+        store.createSession({ id: 'boss', userId: 7, model: 'm' });
+        store.createSession({
+          id: 'forked', userId: 7, model: 'm', parentSessionId: 'boss',
+          delegatedAccess: { ...access, fork: true },
+        });
+        store.createSession({ id: 'worker', userId: 7, model: 'm', parentSessionId: 'boss', delegatedAccess: access });
+        expect(store.forkParentSpillNamespace('forked')).toBe(store.spillNamespace('boss'));
+        // A plain delegated child composes its own history and inherits no placeholder…
+        expect(store.forkParentSpillNamespace('worker')).toBeUndefined();
+        // …the parent never gains the reverse claim on its child…
+        expect(store.forkParentSpillNamespace('boss')).toBeUndefined();
+        // …and an unknown session answers nothing rather than something.
+        expect(store.forkParentSpillNamespace('nobody')).toBeUndefined();
+      });
+
+      it('falls back to the parent id for a row minted before the namespace column', () => {
+        store.createSession({ id: 'old-boss', userId: 7, model: 'm' });
+        store['db'].prepare("UPDATE brain_sessions SET spill_ns = '' WHERE id = 'old-boss'").run();
+        store.createSession({
+          id: 'old-fork', userId: 7, model: 'm', parentSessionId: 'old-boss',
+          delegatedAccess: { ...access, fork: true },
+        });
+        expect(store.forkParentSpillNamespace('old-fork')).toBe('old-boss');
+      });
+    });
   });
 
   describe('deleteSession', () => {
