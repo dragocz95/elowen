@@ -24,6 +24,7 @@ import {
   verifyAnthropicHostedReplay,
 } from '../../src/brain/session/anthropicHostedToolReplay.js';
 import { clearColdToolResults } from '../../src/brain/session/coldToolResultClearing.js';
+import { providerPayloadHarness } from '../helpers/providerPayloads.js';
 import { anthropicWire } from '../helpers/anthropicWire.js';
 
 /** The quiescence dependencies of a session with nothing in flight — the turn-start pass's only inputs

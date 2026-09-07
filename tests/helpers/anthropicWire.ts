@@ -22,7 +22,7 @@ export interface AnthropicWire {
   close: () => Promise<void>;
 }
 
-export interface WireBody extends Record<string, unknown> {
+interface WireBody extends Record<string, unknown> {
   model: string;
   messages: { role: string; content: unknown }[];
   tools?: { name?: string }[];
