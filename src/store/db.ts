@@ -255,6 +255,9 @@ function applyAdditiveMigrations(db: Db): void {
   addColumn(db, 'brain_sessions', 'activity_turn_id', 'TEXT');
   addColumn(db, 'brain_sessions', 'activity_boot_id', 'TEXT');
   addColumn(db, 'brain_sessions', 'activity_detail', "TEXT NOT NULL DEFAULT ''");
+  // Which automation ran the projected turn (see brain_sessions in schema.sql). Empty on every existing
+  // row: a turn that already settled cannot be re-attributed, and every one of them reads as a person's.
+  addColumn(db, 'brain_sessions', 'activity_automation', "TEXT NOT NULL DEFAULT ''");
   addColumn(db, 'brain_sessions', 'activity_at', 'TEXT');
   addColumn(db, 'brain_sessions', 'web_participated_at', 'TEXT');
   // The delegated-result inbox now serves two producers (see brain_subagent_results in schema.sql):

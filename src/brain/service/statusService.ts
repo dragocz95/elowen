@@ -28,12 +28,20 @@ import { clientDir, effectiveTurnWorkDir, turnWorkDir } from './workDir.js';
 import { realPathWithin } from '../../plugins/pathGuard.js';
 import { recoverablePartialTurnRows } from '../persistence.js';
 import type { KnownControls } from '../../plugins/api.js';
+import type { TurnAutomation } from '../../plugins/policyContext.js';
+import { conversationActivityAutomation } from '../session/conversationActivity.js';
 
 /** One row in the caller's conversation list (the pickers' "attached" marker rides `attached`). */
 export interface SessionListItem {
   id: string; title: string; provider: string; model: string; updated_at: string;
   running: boolean; active: boolean; attached: number;
-  activity: { state: 'idle' | 'working' | 'done' | 'failed'; seq: number; at: string | null; detail: string; unread: boolean };
+  /** `automation` names what ran the projected turn — 'scheduled' for a cron job or a wake-up, null for a
+   *  turn a person asked for. It outlives settlement, so a client can mark a conversation where a
+   *  SCHEDULE finished differently from one that answered its reader. */
+  activity: {
+    state: 'idle' | 'working' | 'done' | 'failed'; seq: number; at: string | null; detail: string;
+    automation: TurnAutomation | null; unread: boolean;
+  };
   /** Whether this conversation is BUSY — which neither `running` nor `activity.state` answers alone.
    *  `running` only says a live session object exists, and one outlives its last turn by design; the
    *  durable activity claim is authoritative for a turn but is settled the moment a turn returns.
@@ -63,7 +71,8 @@ function paginate<T>(all: T[], opts?: SessionPageOpts): SessionPage<T> {
 function activityOf(row: BrainSessionRow): SessionListItem['activity'] {
   return {
     state: row.activity_state, seq: row.activity_seq, at: row.activity_at,
-    detail: row.activity_detail, unread: row.web_participated_at !== null && row.activity_read_seq < row.activity_seq,
+    detail: row.activity_detail, automation: conversationActivityAutomation(row.activity_automation),
+    unread: row.web_participated_at !== null && row.activity_read_seq < row.activity_seq,
   };
 }
 

@@ -9,11 +9,13 @@ import { logger } from '../shared/logger.js';
 import { CHANNEL_PREFIX, SUBAGENT_PREFIX, CRON_PREFIX, isArchivedChannelSession } from '../brain/sessionId.js';
 import {
   boundedConversationActivityDetail,
+  conversationActivityAutomation,
   conversationActivityUnread,
   type ConversationActivitySnapshot,
   type ConversationActivitySurface,
   type ConversationActivityState,
 } from '../brain/session/conversationActivity.js';
+import type { TurnAutomation } from '../plugins/policyContext.js';
 import { collectImageFiles, isPersistedImageBlock } from '../brain/chatImages.js';
 import { collectChatFiles, type StoredChatFile } from '../brain/chatFiles.js';
 import { rollupActivatedTools } from '../brain/continuity/activatedTools.js';
@@ -84,6 +86,8 @@ export interface BrainSessionRow {
   activity_turn_id: string | null;
   activity_boot_id: string | null;
   activity_detail: string;
+  /** The automation that ran the projected turn, '' when a person asked for it (see schema.sql). */
+  activity_automation: string;
   activity_at: string | null;
   web_participated_at: string | null;
   created_at: string; updated_at: string;
@@ -321,17 +325,18 @@ export class BrainStore {
   getSessionActivity(sessionId: string): (ConversationActivitySnapshot & { unread: boolean }) | undefined {
     const row = this.db.prepare(
       `SELECT activity_state, activity_seq, activity_read_seq, activity_turn_id, activity_boot_id,
-              activity_detail, activity_at, web_participated_at
+              activity_detail, activity_automation, activity_at, web_participated_at
          FROM brain_sessions WHERE id = ?`,
     ).get(sessionId) as {
       activity_state: ConversationActivityState; activity_seq: number; activity_read_seq: number;
       activity_turn_id: string | null; activity_boot_id: string | null; activity_detail: string;
-      activity_at: string | null; web_participated_at: string | null;
+      activity_automation: string; activity_at: string | null; web_participated_at: string | null;
     } | undefined;
     if (!row) return undefined;
     const activity: ConversationActivitySnapshot = {
       state: row.activity_state, seq: row.activity_seq, readSeq: row.activity_read_seq,
       turnId: row.activity_turn_id, bootId: row.activity_boot_id, detail: row.activity_detail,
+      automation: conversationActivityAutomation(row.activity_automation),
       at: row.activity_at, webParticipatedAt: row.web_participated_at,
     };
     return { ...activity, unread: conversationActivityUnread(activity) };
@@ -339,16 +344,23 @@ export class BrainStore {
 
   /** Begin one accepted owner turn. The active turn id is a compare-and-set fence: a late or concurrent
    *  admission cannot replace a still-working turn. */
-  beginSessionActivity(sessionId: string, turnId: string, surface: ConversationActivitySurface, detail?: string): boolean {
+  beginSessionActivity(
+    sessionId: string,
+    turnId: string,
+    surface: ConversationActivitySurface,
+    detail?: string,
+    automation?: TurnAutomation,
+  ): boolean {
     if (!sessionId || !turnId || (surface !== 'web' && surface !== 'cli')) return false;
     const bootId = this.delegation.currentBootId() || null;
     return this.db.prepare(
       `UPDATE brain_sessions
           SET activity_state = 'working', activity_seq = activity_seq + 1,
-              activity_turn_id = ?, activity_boot_id = ?, activity_detail = ?, activity_at = datetime('now'),
+              activity_turn_id = ?, activity_boot_id = ?, activity_detail = ?, activity_automation = ?,
+              activity_at = datetime('now'),
               web_participated_at = CASE WHEN ? = 'web' THEN COALESCE(web_participated_at, datetime('now')) ELSE web_participated_at END
         WHERE id = ? AND (activity_state != 'working' OR activity_turn_id IS NULL OR activity_turn_id = ?)`,
-    ).run(turnId, bootId, boundedConversationActivityDetail(detail), surface, sessionId, turnId).changes > 0;
+    ).run(turnId, bootId, boundedConversationActivityDetail(detail), automation ?? '', surface, sessionId, turnId).changes > 0;
   }
 
   /** Settle the current turn exactly once. Clearing the turn and boot ids makes any later duplicate or stale
@@ -391,7 +403,8 @@ export class BrainStore {
     return this.db.prepare(
       `UPDATE brain_sessions
           SET activity_state = 'idle', activity_seq = activity_seq + 1,
-              activity_turn_id = NULL, activity_boot_id = NULL, activity_detail = '', activity_at = datetime('now')
+              activity_turn_id = NULL, activity_boot_id = NULL, activity_detail = '', activity_automation = '',
+              activity_at = datetime('now')
         WHERE id = ? AND (? IS NOT NULL AND activity_turn_id = ? OR ? IS NULL AND activity_state != 'working')`,
     ).run(sessionId, turnId ?? null, turnId ?? null, turnId ?? null).changes > 0;
   }
@@ -402,7 +415,8 @@ export class BrainStore {
     return this.db.prepare(
       `UPDATE brain_sessions
           SET activity_state = 'idle', activity_seq = activity_seq + 1,
-              activity_turn_id = NULL, activity_boot_id = NULL, activity_detail = '', activity_at = datetime('now')
+              activity_turn_id = NULL, activity_boot_id = NULL, activity_detail = '', activity_automation = '',
+              activity_at = datetime('now')
         WHERE id = ? AND activity_state = 'working'
           AND (activity_boot_id IS NULL OR activity_boot_id != ?)`,
     ).run(sessionId, currentBootId).changes > 0;
@@ -421,7 +435,8 @@ export class BrainStore {
       const reaped = this.db.prepare(
         `UPDATE brain_sessions
             SET activity_state = 'idle', activity_seq = activity_seq + 1,
-                activity_turn_id = NULL, activity_boot_id = NULL, activity_detail = '', activity_at = datetime('now')
+                activity_turn_id = NULL, activity_boot_id = NULL, activity_detail = '', activity_automation = '',
+                activity_at = datetime('now')
           WHERE parked_at IS NULL AND activity_state = 'working'
             AND activity_boot_id IS NOT NULL AND activity_boot_id != ?`,
       ).run(currentBootId).changes;

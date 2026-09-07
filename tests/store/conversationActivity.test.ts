@@ -51,6 +51,30 @@ describe('BrainStore conversation activity', () => {
     db.close();
   });
 
+  // The marker is what lets the conversation list tell a finished SCHEDULE from an answer somebody asked
+  // for, and the list only ever sees settled turns — so it has to outlive settlement. The next ordinary
+  // turn overwrites it, and every neutral idle transition clears it.
+  it('carries the scheduled marker through settlement and drops it on the next ordinary turn', () => {
+    const db = openDb(':memory:');
+    const store = new BrainStore(db);
+    store.setDelegationBootId('boot-1');
+    session(store);
+
+    expect(store.beginSessionActivity('s1', 'cron-turn', 'web', 'digest', 'scheduled')).toBe(true);
+    expect(store.getSessionActivity('s1')).toMatchObject({ state: 'working', automation: 'scheduled' });
+    expect(store.settleSessionActivity('s1', 'cron-turn', 'web', 'done')).toBe(true);
+    expect(store.getSessionActivity('s1')).toMatchObject({ state: 'done', automation: 'scheduled' });
+
+    expect(store.beginSessionActivity('s1', 'my-turn', 'web')).toBe(true);
+    expect(store.settleSessionActivity('s1', 'my-turn', 'web', 'done')).toBe(true);
+    expect(store.getSessionActivity('s1')).toMatchObject({ state: 'done', automation: null });
+
+    expect(store.beginSessionActivity('s1', 'cron-turn-2', 'web', undefined, 'scheduled')).toBe(true);
+    expect(store.resetSessionActivity('s1', 'cron-turn-2')).toBe(true);
+    expect(store.getSessionActivity('s1')).toMatchObject({ state: 'idle', automation: null });
+    db.close();
+  });
+
   it('uses the turn id as a CAS fence and keeps sequence values monotonic', () => {
     const db = openDb(':memory:');
     const store = new BrainStore(db);

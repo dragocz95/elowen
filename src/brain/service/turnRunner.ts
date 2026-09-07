@@ -711,7 +711,13 @@ export class BrainTurnRunner {
           } }
         : {}),
       ...(ownsConversationActivity
-        ? { conversationActivity: { store: this.d.store, turnId: activityTurnId, surface: activitySurface, onChanged: this.d.onConversationActivityChanged, defer: true } }
+        ? { conversationActivity: {
+            store: this.d.store, turnId: activityTurnId, surface: activitySurface,
+            // A cron job or a wake-up firing into an owner conversation says so, so the conversation list
+            // can report a finished SCHEDULE rather than the mark an answer somebody asked for wears.
+            ...(request.automation ? { automation: request.automation } : {}),
+            onChanged: this.d.onConversationActivityChanged, defer: true,
+          } }
         : {}),
     });
     try {

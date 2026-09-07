@@ -3,6 +3,7 @@ import type { BrainStore } from '../../store/brainStore.js';
 import type { ConversationTitler } from '../conversationTitler.js';
 import type { MemoryCurator } from '../memoryCurator.js';
 import type { PinToken } from '../../store/usageOriginStore.js';
+import type { TurnAutomation } from '../../plugins/policyContext.js';
 import { resetConversationActivity, type ConversationActivityChanged, type ConversationActivityStore, type ConversationActivitySurface } from './conversationActivity.js';
 
 /** The ONE place that decides what a turn does BESIDES answering — the settlement side of the same
@@ -69,6 +70,9 @@ export interface TurnOpening {
     turnId: string;
     surface: ConversationActivitySurface;
     detail?: string;
+    /** The unattended automation running this turn, so the conversation list can tell a scheduled job
+     *  that finished here from an answer the reader asked for. Absent = a person's own turn. */
+    automation?: TurnAutomation;
     onChanged?: ConversationActivityChanged;
     /** Defer the durable working projection until the caller has acquired its conversation admission lock. */
     defer?: boolean;
@@ -104,7 +108,8 @@ export function openTurn(parts: TurnOpening): OpenedTurn {
   const begin = (): void => {
     if (!conversationActivity || activityStarted) return;
     activityStarted = conversationActivity.store.beginSessionActivity(
-      activitySessionId, conversationActivity.turnId, conversationActivity.surface, conversationActivity.detail);
+      activitySessionId, conversationActivity.turnId, conversationActivity.surface,
+      conversationActivity.detail, conversationActivity.automation);
     if (activityStarted) conversationActivity.onChanged?.(activitySessionId);
   };
   if (conversationActivity && !conversationActivity.defer) begin();
@@ -128,7 +133,8 @@ export function openTurn(parts: TurnOpening): OpenedTurn {
       // predecessor only when this turn still owns it, then begin on the replacement row.
       resetConversationActivity(conversationActivity.store, previousSessionId, conversationActivity.turnId, conversationActivity.onChanged);
       activityStarted = conversationActivity.store.beginSessionActivity(
-        activitySessionId, conversationActivity.turnId, conversationActivity.surface, conversationActivity.detail);
+        activitySessionId, conversationActivity.turnId, conversationActivity.surface,
+        conversationActivity.detail, conversationActivity.automation);
       if (activityStarted) conversationActivity.onChanged?.(activitySessionId);
     },
     close(): void {

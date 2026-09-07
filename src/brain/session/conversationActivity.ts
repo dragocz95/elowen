@@ -3,6 +3,8 @@
  * This module owns transition policy. BrainStore owns the atomic compare-and-set writes; callers can use the
  * decision result to keep transient/live state and the durable projection on the same vocabulary. */
 
+import type { TurnAutomation } from '../../plugins/policyContext.js';
+
 export const CONVERSATION_ACTIVITY_STATES = ['idle', 'working', 'done', 'failed'] as const;
 export type ConversationActivityState = typeof CONVERSATION_ACTIVITY_STATES[number];
 export type ConversationActivitySurface = 'web' | 'cli';
@@ -11,6 +13,12 @@ export type ConversationActivityChanged = (sessionId: string) => void;
 /** Keep owner surface validation at the activity boundary so callers do not grow surface branches. */
 export function conversationActivitySurface(value: string | undefined, fallback: ConversationActivitySurface): ConversationActivitySurface {
   return value === 'web' || value === 'cli' ? value : fallback;
+}
+
+/** The persisted automation marker, validated at the same boundary as the surface. Anything the host
+ *  does not mint itself reads as "a person asked for this turn". */
+export function conversationActivityAutomation(value: string | null | undefined): TurnAutomation | null {
+  return value === 'scheduled' ? value : null;
 }
 
 /** Public detail is deliberately short: this is a status hint, never a transcript or prompt channel. */
@@ -27,13 +35,16 @@ export interface ConversationActivitySnapshot {
   turnId: string | null;
   bootId: string | null;
   detail: string;
+  /** Which automation ran the projected turn; null when a person asked for it. Survives settlement, so a
+   *  settled `done` can still say that it was a scheduled job that finished here. */
+  automation: TurnAutomation | null;
   at: string | null;
   webParticipatedAt: string | null;
 }
 
 export interface ConversationActivityStore {
   getSessionActivity(sessionId: string): ConversationActivitySnapshot | undefined;
-  beginSessionActivity(sessionId: string, turnId: string, surface: ConversationActivitySurface, detail?: string): boolean;
+  beginSessionActivity(sessionId: string, turnId: string, surface: ConversationActivitySurface, detail?: string, automation?: TurnAutomation): boolean;
   settleSessionActivity(sessionId: string, turnId: string, surface: ConversationActivitySurface, state: 'done' | 'failed', detail?: string): boolean;
   resetSessionActivity(sessionId: string, turnId?: string): boolean;
   ackSessionActivity(sessionId: string, readSeq?: number, surface?: ConversationActivitySurface): boolean;

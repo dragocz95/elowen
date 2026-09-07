@@ -108,8 +108,11 @@ export interface BrainModelOption {
    *  `false` is a catalogued text-only model. */
   vision?: boolean;
 }
-/** One brain conversation in the session picker (web chat + CLI). */
-export interface BrainActivityView { state: 'idle' | 'working' | 'done' | 'failed'; seq: number; at: string | null; detail: string; unread: boolean }
+/** One brain conversation in the session picker (web chat + CLI). `automation` says WHAT ran the turn
+ *  this projection describes — 'scheduled' for a cron job or a wake-up, null for a turn a person asked
+ *  for — and it outlives settlement, so a finished schedule and an answered question do not wear the
+ *  same mark. */
+export interface BrainActivityView { state: 'idle' | 'working' | 'done' | 'failed'; seq: number; at: string | null; detail: string; automation?: 'scheduled' | null; unread: boolean }
 /** `working` is the daemon's own answer to "is this conversation busy": its durable activity claim OR a
  *  delegated child still running under it. Optional so a payload from an older daemon still types; absent
  *  reads as false rather than being re-derived from `running`, which only reports that a live session

@@ -240,6 +240,10 @@ CREATE TABLE IF NOT EXISTS brain_sessions (
   activity_turn_id TEXT,
   activity_boot_id TEXT,
   activity_detail TEXT NOT NULL DEFAULT '',
+  -- The unattended automation that ran the turn this projection describes ('' = a person asked for it).
+  -- It SURVIVES settlement on purpose: a conversation where a scheduled job just finished must not wear
+  -- the same "done" mark as one that answered the reader's own question.
+  activity_automation TEXT NOT NULL DEFAULT '',
   activity_at TEXT,
   web_participated_at TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
