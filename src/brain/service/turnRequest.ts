@@ -49,6 +49,10 @@ export interface TurnRequest {
   interruptResume?: boolean;
   /** Internal admission seam used by BrainService.startSend; never part of REST/SSE payloads. */
   onAdmitted?: (sessionId: string) => void;
+  /** The durable user row this turn was already projected into, so the turn context can stamp the frames
+   *  it composes onto the very row the wire text was built around. Set by the runner right after
+   *  admission prepared the row; never accepted from REST input. */
+  durableUserRowId?: string;
   /** Where the request that ordered this turn came from, resolved by the HTTP layer — the only layer
    *  that can see it. Absent means nothing ordered the turn (a goal continuation, a cron wake-up, a
    *  boot-recovered delegation), which settles honestly as `internal` rather than inheriting the last

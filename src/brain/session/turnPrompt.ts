@@ -44,12 +44,32 @@ export interface TurnPromptParts {
   runningSubagents?: string;
 }
 
-/** Compose the parts into the final prompt string.
+/** What a turn wrapped around the user's own words, kept apart from them.
+ *
+ *  Every part above is EPHEMERAL: it is composed for one turn and nothing used to write it down, while the
+ *  bytes it produced went to the provider inside the user message. That gap is what a fork seeded from the
+ *  stored rows fell into — the parent's cached prefix contains these blocks and the child's rebuilt one did
+ *  not, so the two diverged at the first turn that carried any of them and the child re-billed everything
+ *  behind it. The store is the wire truth, so the frames are persisted beside the user's text: the row
+ *  still reads as the person's own words for the transcript, the export, the titler and the curator, while
+ *  the ONE reading that rebuilds the wire (persistence.parsedRows) puts them back byte for byte. */
+export interface TurnWireFrames {
+  v: 1;
+  /** Everything composed IN FRONT of the user's text, already carrying its own trailing blank lines. */
+  lead?: string;
+  /** Everything composed BEHIND it, already carrying its leading blank lines. */
+  trail?: string;
+  /** The model-facing text itself, stored only when it differs from the row's own clean text (an
+   *  attachment marker, a fork child's boilerplate). Absent means the row's text IS what went out. */
+  text?: string;
+}
+
+/** Compose the parts into the final prompt string, and report the frames that surround the user's text.
  *
  *  The leading parts bring their own trailing blank line (they are block-framed at their source), so they
  *  are concatenated as-is; the trailing parts are joined with a blank line each. Both rules reproduce the
  *  two original call sites byte for byte, which is what makes the extraction safe to land on its own. */
-export function composeTurnPrompt(parts: TurnPromptParts): string {
+export function composeTurnWire(parts: TurnPromptParts): { prompt: string; frames: TurnWireFrames } {
   const lead = [parts.skills, parts.memory, parts.hook, parts.permissions, parts.beforeUser]
     .filter((part): part is string => !!part)
     .join('');
@@ -64,5 +84,31 @@ export function composeTurnPrompt(parts: TurnPromptParts): string {
     .filter((part): part is string => !!part)
     .map((part) => `\n\n${part}`)
     .join('');
-  return lead + parts.text + trail;
+  return {
+    prompt: lead + parts.text + trail,
+    frames: { v: 1, ...(lead ? { lead } : {}), ...(trail ? { trail } : {}), text: parts.text },
+  };
+}
+
+export function composeTurnPrompt(parts: TurnPromptParts): string {
+  return composeTurnWire(parts).prompt;
+}
+
+/** Re-read frames off a stored row. Structural rather than trusted: the value has been through SQLite,
+ *  where an older writer, a hand-edited row or a corrupt blob can put anything in this field. */
+export function parseTurnWireFrames(value: unknown): TurnWireFrames | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const frames = value as { v?: unknown; lead?: unknown; trail?: unknown; text?: unknown };
+  if (frames.v !== 1) return undefined;
+  const string = (part: unknown): string | undefined => (typeof part === 'string' && part ? part : undefined);
+  const lead = string(frames.lead);
+  const trail = string(frames.trail);
+  const text = typeof frames.text === 'string' ? frames.text : undefined;
+  if (lead === undefined && trail === undefined && text === undefined) return undefined;
+  return { v: 1, ...(lead ? { lead } : {}), ...(trail ? { trail } : {}), ...(text !== undefined ? { text } : {}) };
+}
+
+/** The exact bytes this turn sent, rebuilt from the row's clean text and its stored frames. */
+export function applyTurnWireFrames(text: string, frames: TurnWireFrames): string {
+  return `${frames.lead ?? ''}${frames.text ?? text}${frames.trail ?? ''}`;
 }

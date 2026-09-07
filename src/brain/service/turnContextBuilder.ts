@@ -29,7 +29,8 @@ import { drainPostCompactionContext } from '../continuity/postCompactionContext.
 import { recallMemoryBlock } from '../session/memoryBlock.js';
 import { pluginContextBlock } from '../session/pluginContextBlock.js';
 import { runningSubagentsBlock } from '../session/runningSubagents.js';
-import { composeTurnPrompt } from '../session/turnPrompt.js';
+import { composeTurnWire } from '../session/turnPrompt.js';
+import { projectTurnWireFrames } from '../persistence.js';
 import { EXIT_PLAN_MODE_TOOL } from '../../shared/planTool.js';
 import { planFilePath } from '../../shared/paths.js';
 import { ensurePlanDir, readPlan } from '../continuity/planStore.js';
@@ -215,7 +216,7 @@ export class TurnContextBuilder {
           // rides UNDER the user message as a <system-reminder> — alongside runningSubagents — rather than
           // prefixing the user's words. Keeps the user message body stable/contiguous across mode switches
           // and matches how every other per-turn directive is injected.
-          prompt = composeTurnPrompt({
+          const wire = composeTurnWire({
             memory: memory.block,
             hook: hookBlock,
             permissions: permissions.block,
@@ -228,6 +229,15 @@ export class TurnContextBuilder {
             modeReminder,
             runningSubagents,
           });
+          prompt = wire.prompt;
+          // The row exists (admission projected it before this build) but holds only the user's own words.
+          // Stamp what this turn wrapped around them, so the store is what the request was — otherwise a
+          // fork seeded from these rows, and a respawn replaying them, both send a different prefix from
+          // the one this conversation's cache was written with. Stamped before the prompt goes out on
+          // purpose: a turn rejected at preflight has its whole row rolled back, frames and all.
+          if (request.durableUserRowId) {
+            projectTurnWireFrames(this.d.store, live.sessionId, request.durableUserRowId, wire.frames);
+          }
         }
         // Recall commits at PI's successful PREFLIGHT, not when prompt() is merely called and not after the
         // whole agent loop. The boundary is load-bearing in both directions: before it, PI may reject the

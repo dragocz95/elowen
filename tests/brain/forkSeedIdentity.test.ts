@@ -1,7 +1,12 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { openDb, type Db } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
-import { rehydrate, storedContextMessages } from '../../src/brain/persistence.js';
+import {
+  projectTurnWireFrames, projectUserTurn, rehydrate, rehydrateWithTimestamps, storedContextMessages,
+} from '../../src/brain/persistence.js';
+import { composeTurnWire } from '../../src/brain/session/turnPrompt.js';
+import { renderTurnContextFrame } from '../../src/brain/session/turnContextFrame.js';
+import { shapeBrainMessages } from '../../src/brain/messageView.js';
 import { FORK_EXECUTE_DENIES, forkSeedMessages, type ForkMessage } from '../../src/brain/session/forkPrefix.js';
 import { delegatedToolPolicy, delegatedVisibilityToolPolicy, type DelegatedExecutionScope } from '../../src/brain/delegatedScope.js';
 import { visibleToolNames } from '../../src/brain/session/capabilities.js';
@@ -224,6 +229,83 @@ describe('a fork seeded after a cold turn start', () => {
       .toEqual(payload.messages.slice(0, seeded.length).map((message) => flatten(message.content)));
     expect(JSON.stringify(seeded)).not.toContain(BIG);
     expect(JSON.stringify(seeded)).toContain('Older tool result cleared');
+  });
+});
+
+/** The blocks the parent's request carries that nothing used to write down.
+ *
+ *  A turn is composed of the user's words plus whatever the runtime wrapped around them — recalled
+ *  memories, the permission summary, plugin context frames, a mode directive, a running-sub-agent
+ *  reminder. All of it went to the provider inside the user message and none of it reached a row, so a
+ *  child seeded from those rows diverged at the FIRST turn that carried any of them and re-billed
+ *  everything behind it. In an owner chat with recall on (the default) that is turn one.
+ *
+ *  RED BEFORE THE FIX: the row held only the user's text, so the seed below is that text alone while the
+ *  parent's own next request opens with the memories, the digest and the context frame. Dropping the
+ *  `projectTurnWireFrames` call, or reading the rows without the frames, fails the first assertion on the
+ *  first message. */
+describe('a fork seeded from a turn that carried ephemeral frames', () => {
+  const MEMORY = '<user_memories>\nThe owner deploys from one host.\n</user_memories>\n\n';
+  const PERMISSIONS = '<permissions>\nBash: ask · Write: allow\n</permissions>\n\n';
+  const REMINDER = '<system-reminder>A sub-agent is still running.</system-reminder>';
+  const parts = {
+    memory: MEMORY,
+    permissions: PERMISSIONS,
+    beforeUser: renderTurnContextFrame(['Current date & time: Monday, 7 September 2026'], 'before-user'),
+    text: 'find the regression',
+    runningSubagents: REMINDER,
+  };
+
+  const parentStore = (): { store: BrainStore; wire: ReturnType<typeof composeTurnWire> } => {
+    const store = new BrainStore(openDb(':memory:'));
+    store.createSession({ id: 's-frames', userId: 7, model: 'anthropic/big' });
+    const wire = composeTurnWire(parts);
+    const { id } = projectUserTurn(store, 's-frames', parts.text);
+    projectTurnWireFrames(store, 's-frames', id, wire.frames);
+    store.appendMessage({
+      id: 'a1', sessionId: 's-frames', parentId: null, role: 'assistant',
+      content: { role: 'assistant', timestamp: 2_000, content: [{ type: 'text', text: 'looking' }] },
+    });
+    return { store, wire };
+  };
+
+  it('opens with the exact bytes the parent’s next request opens with', async () => {
+    const { store, wire } = parentStore();
+    const harness = await providerPayloadHarness();
+    harness.session.messages.push(
+      { role: 'user', content: [{ type: 'text', text: wire.prompt }] } as never,
+      { role: 'assistant', content: [{ type: 'text', text: 'looking' }] } as never,
+    );
+    const payload = (await harness.prompt('and now this'))[0]!;
+    const seeded = forkSeedMessages(storedContextMessages(store, 's-frames') as ForkMessage[], 9_000);
+    const flatten = (content: unknown): string => (Array.isArray(content) ? content : [])
+      .map((block) => (block as { text?: string }).text ?? '').join('');
+    expect(seeded.map((message) => typeof message.content === 'string' ? message.content : flatten(message.content)))
+      .toEqual(payload.messages.slice(0, seeded.length).map((message) => flatten(message.content)));
+    expect(seeded[0]?.content).toContain(MEMORY);
+    expect(seeded[0]?.content).toContain(PERMISSIONS);
+    expect(seeded[0]?.content).toContain('placement="before-user"');
+    expect(seeded[0]?.content).toContain(REMINDER);
+  });
+
+  it('keeps the transcript, the export and the curator on the person’s own words', () => {
+    const { store } = parentStore();
+    const rows = store.getMessages('s-frames').map((row) => ({ ...row, created_at: row.created_at }));
+    const view = shapeBrainMessages(rows as never);
+    expect(view.find((message) => message.role === 'user')?.text).toBe(parts.text);
+    const exported = rehydrateWithTimestamps(store, 's-frames', process.cwd()).sm
+      .buildSessionContext().messages as { role: string; content: unknown }[];
+    expect(exported.find((message) => message.role === 'user')?.content).toBe(parts.text);
+  });
+
+  it('rehydrates to the request it sent, so a restart moves no cache', () => {
+    const { store, wire } = parentStore();
+    const replayed = (rehydrate(store, 's-frames', process.cwd()).buildSessionContext().messages as {
+      role: string; content: unknown;
+    }[]).find((message) => message.role === 'user');
+    expect(replayed?.content).toBe(wire.prompt);
+    // …and nothing of the bookkeeping itself reaches the replayed message.
+    expect(Object.keys(replayed as object)).not.toContain('wireFrames');
   });
 });
 
