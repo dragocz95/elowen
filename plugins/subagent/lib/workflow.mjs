@@ -555,7 +555,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       }
     }
     const context = dependencyContextChunks(contextParts, contextTotal);
-    return {
+    const access = {
       ...parentAccess,
       ...(toolPolicy ? { toolPolicy } : {}),
       model,
@@ -580,9 +580,18 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         : { prompt: 'You are a focused sub-agent running one node of a workflow. Complete the task and report the result concisely — no preamble.' }),
       // A node's DIRECT dependencies' handovers. This is the DAG's own data flow, sibling to sibling, and
       // is the one hand-over forking cannot replace — a dependency is not a parent, so there is no cache
-      // of its to read. A fork node still receives it: it inherits the ORIGIN's context, not its siblings'.
-      ...(context.length ? { context } : {}),
+      // of its to read.
+      //
+      // NOT for a fork node. Its system prompt is the origin conversation's byte for byte, so the host
+      // appends nothing to it (see packDelegatedPromptAppend at the fork boundary) and anything handed
+      // over this way would be dropped without a trace. A fork node gets the same blocks in its DIRECTIVE
+      // message instead — see the `handover` below.
+      ...(context.length && !node.fork ? { context } : {}),
     };
+    // The fork node's copy of exactly those blocks, as text. It rides with the directive, which is the one
+    // block that already sits AFTER the shared prefix, so delivering it costs the node its own uncached
+    // block and moves no cached byte. Empty for every non-fork node, whose blocks travel in `context`.
+    return { access, handover: node.fork ? context.join('\n\n') : '' };
   };
 
   const runNode = async (wf, node) => {
@@ -608,7 +617,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       else if ((e.type === 'step' || e.type === 'idle') && e.usage?.totalTokens) { ns.tokens = e.usage.totalTokens; ns.seconds = Math.round((Date.now() - ns.startedAt) / 1000); snapshot(wf); }
     };
     try {
-      const access = await buildNodeAccess(wf, node);
+      const { access, handover } = await buildNodeAccess(wf, node);
       // buildNodeAccess is an async boundary that can take a while — with an explicit model it may wait on
       // a live /models request — and WorkflowStop or a plugin reload can settle the run inside that window.
       // Without this fence the stale continuation would still spawn a child, one nobody can reach or abort:
@@ -626,7 +635,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       const channelId = ns.channelId || `wf-${wf.id}-${node.id}-${randomUUID()}`;
       ns.channelId = channelId;
       const collectSource = { platform: 'subagent', userId: 'subagent', roleIds: [], channelId, access };
-      const raw = await runNodeTurn(wf, node, ns, collectSource, onEvent);
+      const raw = await runNodeTurn(wf, node, ns, collectSource, onEvent, handover);
       // A node whose turn ended with nothing to say has not done its task — its dependents would inherit an
       // empty handover and the parent a blank line marked DONE. It fails the workflow like any other error,
       // so the summary says so up front and WorkflowResume re-runs it.
@@ -646,15 +655,15 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     tick(wf);
   };
 
-  /** One node turn: normally the task prompt (plus the resume/restart note) into the node's channel. A
-   *  node handed back by a BOOT resume that still has its child session gets the host's continuation
-   *  first — the same one a delegated child gets after a restart: a transcript that already ends on the
-   *  node's answer IS the result, an interrupted turn is continued silently over `[interrupted]` tool
-   *  results, and only an empty transcript falls through to the ordinary prompt. Prompting such a node
-   *  with its task again made it start over on top of half-done work (and its earlier answer, when it had
-   *  one, was simply lost). The continuation is consumed once: a later retry of the same node is a
-   *  fresh prompt again. */
-  const runNodeTurn = async (wf, node, ns, source, onEvent) => {
+  /** One node turn: normally the task prompt (plus the resume/restart note, plus a fork node's dependency
+   *  handover) into the node's channel. A node handed back by a BOOT resume that still has its child
+   *  session gets the host's continuation first — the same one a delegated child gets after a restart: a
+   *  transcript that already ends on the node's answer IS the result, an interrupted turn is continued
+   *  silently over `[interrupted]` tool results, and only an empty transcript falls through to the
+   *  ordinary prompt. Prompting such a node with its task again made it start over on top of half-done
+   *  work (and its earlier answer, when it had one, was simply lost). The continuation is consumed once:
+   *  a later retry of the same node is a fresh prompt again. */
+  const runNodeTurn = async (wf, node, ns, source, onEvent, handover = '') => {
     if (wf.continueNode && ns.sessionId && wf.continueOnce?.delete(node.id)) {
       let continued;
       try { continued = await wf.continueNode(ns.sessionId, onEvent); }
@@ -667,7 +676,10 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         return continued.reply;
       }
     }
-    return getRun()(source, ns.taskNote ? `${node.task}\n\n${ns.taskNote}` : node.task, onEvent);
+    // Directive, then the retry note, then a FORK node's dependency handover (empty for every other node,
+    // which receives the same blocks as system-prompt context). Instructions stay together at the top and
+    // the bulk background material comes last, immediately before the node starts work.
+    return getRun()(source, [node.task, ns.taskNote, handover].filter(Boolean).join('\n\n'), onEvent);
   };
 
   /** Launch every node whose dependencies are all done. Marks them running BEFORE the async spawn so a

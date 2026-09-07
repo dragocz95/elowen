@@ -4,12 +4,10 @@ import {
   FORK_DIRECTIVE_PREFIX,
   FORK_PLACEHOLDER_RESULT,
   buildForkChildMessage,
-  buildForkWorktreeNotice,
   forkCacheVerdict,
   forkParentPrefixTokens,
   forkSeedMessages,
   formatForkCacheLine,
-  isInForkChild,
   type ForkCacheReading,
   type ForkMessage,
 } from '../../../src/brain/session/forkPrefix.js';
@@ -72,31 +70,6 @@ describe('the fork directive prompt', () => {
     const shared = `</${FORK_BOILERPLATE_TAG}>`;
     expect(first.slice(0, first.indexOf(shared))).toBe(second.slice(0, second.indexOf(shared)));
     expect(first).not.toBe(second);
-  });
-});
-
-describe('isInForkChild', () => {
-  it('detects the boilerplate in a plain-string user message', () => {
-    expect(isInForkChild([{ role: 'user', content: buildForkChildMessage('x') }])).toBe(true);
-  });
-
-  it('detects it in a block-shaped user message', () => {
-    const message: ForkMessage = { role: 'user', content: [{ type: 'text', text: buildForkChildMessage('x') }] };
-    expect(isInForkChild([message])).toBe(true);
-  });
-
-  it('does not fire on an ordinary conversation, or on the tag inside an assistant message', () => {
-    expect(isInForkChild([{ role: 'user', content: 'please fork the repo' }])).toBe(false);
-    expect(isInForkChild([{ role: 'assistant', content: [{ type: 'text', text: `<${FORK_BOILERPLATE_TAG}>` }] }]))
-      .toBe(false);
-  });
-});
-
-describe('buildForkWorktreeNotice', () => {
-  it('names both directories so the child can translate inherited paths', () => {
-    const notice = buildForkWorktreeNotice('/srv/app', '/srv/wt/agent-1');
-    expect(notice).toContain('/srv/app');
-    expect(notice).toContain('/srv/wt/agent-1');
   });
 });
 

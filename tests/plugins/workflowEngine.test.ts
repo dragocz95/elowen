@@ -607,6 +607,37 @@ describe('workflow engine', () => {
     expect(c).not.toContain('## Handover from node "a"');
   });
 
+  // A FORK node runs on the origin conversation's system prompt byte for byte, so the host appends NOTHING
+  // to it. Handing its dependencies' results over as prompt context therefore lost them without a trace —
+  // the node ran with no knowledge of what it waited for, and nothing was truncated, refused or logged.
+  // They have to travel in its DIRECTIVE, the one block that already sits after the fork boundary, while
+  // the shared prefix stays byte-identical.
+  it('gives a fork node its dependency handovers in the directive and appends nothing to the prefix', async () => {
+    const { tools, runs, contexts } = harness();
+    const res = await tools.get('WorkflowStart')!.execute('t-fork-deps', {
+      nodesFile: workflowFile({
+        fork: true,
+        nodes: [
+          { id: 'left', task: 'left WITH_HANDOVER' },
+          { id: 'right', task: 'right WITH_HANDOVER' },
+          { id: 'join', task: 'join both findings', deps: ['left', 'right'] },
+        ],
+      }),
+    });
+    expect(res.content[0]?.text).toMatch(/status: done/);
+    // The harness keys a run on the VERBATIM prompt, which for a fork node now carries the handover too.
+    const join = runs.find((run) => run.fullTask.startsWith('join both findings'));
+    expect(join).toBeDefined();
+    // Both dependencies reach it, under the same label the non-fork path uses…
+    expect(join?.fullTask).toContain('Results handed over by the nodes this one depends on');
+    expect(join?.fullTask).toContain('handover-of:left WITH_HANDOVER');
+    expect(join?.fullTask).toContain('handover-of:right WITH_HANDOVER');
+    // …and so does the WorkflowAddNodes briefing, which rides in the very same blocks.
+    expect(join?.fullTask).toContain('You are node "join" of a running workflow');
+    // …while the cached prefix is untouched: a fork node is handed no prompt context at all.
+    expect(contexts.get(join!.task)).toEqual([]);
+  });
+
   // A node cannot write a handover it was never asked for, so the instruction has to reach it BEFORE it
   // works — and only when it actually has successors, or a leaf spends its answer on a section nobody reads.
   it('asks a node with successors for a handover and leaves a leaf alone', async () => {

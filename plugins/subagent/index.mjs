@@ -468,8 +468,15 @@ export function register(ctx) {
       // read the warm prompt cache. Anything that would narrow the child changes the request prefix, which
       // rewrites the whole cache instead of reading it — so each of those is refused BY NAME rather than
       // silently producing an expensive fork. The host enforces the same boundary; this is the half that
-      // explains itself. Omitted, the instance default decides.
-      const fork = p.fork === undefined ? ctx.forkParentContext?.() === true : p.fork === true;
+      // explains itself.
+      //
+      // Only an OWNER conversation has a prefix worth inheriting: a sub-agent is a worker already, and a
+      // shared room's session is a channel the host refuses to fork (see the same rule in platforms.ts).
+      // The instance default is therefore consulted only where a fork is actually possible — everywhere
+      // else an omitted `fork` silently stays off, because turning the operator toggle on must not break
+      // nested and channel delegation wholesale. An EXPLICIT `fork: true` still gets the refusal below.
+      const canFork = ctx.currentIdentity()?.conversation === 'own';
+      const fork = p.fork === undefined ? (canFork && ctx.forkParentContext?.() === true) : p.fork === true;
       if (fork) {
         const conflict = Array.isArray(p.tools) ? 'tools'
           : p.read_only === true ? 'read_only'
@@ -483,9 +490,14 @@ export function register(ctx) {
         }
         // A forked worker keeps Delegate in its toolset (removing it would change the tool block and break
         // the very cache the fork was spawned for), so the refusal has to happen here, when the call arrives.
-        if (ctx.currentIdentity()?.platform === 'subagent') {
-          return ok('Error: `fork` is not available inside a sub-agent — you ARE a worker already. '
-            + 'Carry out your directive directly with your own tools.');
+        // Named per place: a worker is told it already IS the fork, while a channel is told what it lacks —
+        // the host would otherwise answer both with the same raw boundary error.
+        if (!canFork) {
+          return ok(ctx.currentIdentity()?.platform === 'subagent'
+            ? 'Error: `fork` is not available inside a sub-agent — you ARE a worker already. '
+              + 'Carry out your directive directly with your own tools.'
+            : 'Error: `fork` is only available in an owner conversation — this one has no prompt cache of '
+              + 'its own for a child to inherit. Delegate without `fork` and put what the child needs in its task.');
         }
       }
       // Validate the requested type against the live catalog (a miss is a self-correctable error listing
