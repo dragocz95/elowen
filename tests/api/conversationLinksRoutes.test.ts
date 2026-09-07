@@ -27,6 +27,8 @@ function setup(opts: {
   cron?: 'legacy' | LinksHook;
   mine?: { id: string }[];
   managed?: { id: string }[];
+  /** Session rows the run-target resolution may find, keyed by id. Absent = no store at all. */
+  rows?: Record<string, { user_id: number }>;
 } = {}) {
   const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
@@ -67,6 +69,7 @@ function setup(opts: {
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
     brain: brain as never, plugins,
+    ...(opts.rows ? { brainStore: { getSession: (id: string) => opts.rows![id] } as never } : {}),
   });
   return { app, users, admin, amy, calls, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
 }
@@ -88,7 +91,7 @@ describe('GET /brain/conversation-links', () => {
     const { status, body } = await links(app, amyTok);
     const expected: ConversationJobLink = {
       jobId: 'job-1', conversationId: 'brain-2', name: 'Daily digest', enabled: true,
-      scope: 'personal', href: '/p/cronjob?job=job-1',
+      scope: 'personal', href: '/p/cronjob?job=job-1', run: null,
     };
 
     expect(status).toBe(200);
@@ -203,8 +206,42 @@ describe('GET /brain/conversation-links', () => {
 
     expect(body.links).toEqual([{
       jobId: 'a b/c?d', conversationId: 'brain-2', name: 'Daily digest', enabled: true,
-      scope: 'personal', href: `/p/cronjob?job=${encodeURIComponent('a b/c?d')}`,
+      scope: 'personal', href: `/p/cronjob?job=${encodeURIComponent('a b/c?d')}`, run: null,
     }]);
+  });
+
+  /** WHERE A JOB RUNS is the plugin's to know and core's to authorize. A named conversation must be the
+   *  caller's own real conversation; a cron channel is built by core from the channel id, so a plugin can
+   *  never hand back a ready-made session id and point a row at somebody else's transcript. */
+  it('resolves a run target the caller may read, and refuses one they may not', async () => {
+    const { app, amyTok } = setup({
+      cron: () => ([
+        { ...link({ jobId: 'own' }), runSessionId: 'brain-2' },
+        { ...link({ jobId: 'channel' }), runChannelId: 'job-channel' },
+        { ...link({ jobId: 'foreign' }), runSessionId: 'brain-1' },
+        { ...link({ jobId: 'gone' }), runSessionId: 'brain-404' },
+        { ...link({ jobId: 'smuggled' }), runSessionId: 'brain-ch-discord-42' },
+      ] as unknown as CronConversationLink[]),
+      mine: [{ id: 'brain-2' }],
+      rows: {
+        'brain-2': { user_id: 2 },
+        'brain-1': { user_id: 1 },
+        'brain-ch-cron-job-channel': { user_id: 2 },
+        'brain-ch-discord-42': { user_id: 2 },
+      },
+    });
+
+    const { body } = await links(app, amyTok);
+
+    expect(body.links.map((l) => [l.jobId, l.run])).toEqual([
+      ['own', { sessionId: 'brain-2', continuable: true }],
+      ['channel', { sessionId: 'brain-ch-cron-job-channel', continuable: false }],
+      // Somebody else's conversation, a row that does not exist, and a channel session smuggled in as a
+      // conversation id all resolve to nothing at all.
+      ['foreign', null],
+      ['gone', null],
+      ['smuggled', null],
+    ]);
   });
 
   it('needs authentication', async () => {

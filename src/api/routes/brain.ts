@@ -6,6 +6,7 @@ import { readChatImage, isStoredChatImageName } from '../../brain/chatImages.js'
 import { chatFileDisposition, chatFilesDir, isStoredChatFileName, readChatFile } from '../../brain/chatFiles.js';
 import { logger } from '../../shared/logger.js';
 import { isPluginAllowedForUser } from '../../shared/pluginAccess.js';
+import { CRON_PLATFORM, channelSessionId, isNonUserSession } from '../../brain/sessionId.js';
 import { UsageService, type ProviderUsage } from '../../brain/providerUsage.js';
 import { codexUsageSource } from '../../brain/openaiCodexUsage.js';
 import { kimiUsageSource } from '../../brain/kimiUsage.js';
@@ -41,6 +42,37 @@ interface ConversationJobLink {
   enabled: boolean;
   scope: 'personal' | 'instance';
   href: string;
+  /** The conversation the job's turns actually RAN in, once core has verified the caller may open it.
+   *  Null when the plugin named none, the transcript does not exist yet (a job that has never fired) or
+   *  the caller may not read it — the row then still navigates to `href`, the schedule's own editor.
+   *  `continuable` is false for the job's cron channel, which is opened read-only. */
+  run: { sessionId: string; continuable: boolean } | null;
+}
+
+/** Resolve the run target a cron link claims, or null. The plugin decides WHERE a job runs; whether the
+ *  caller may open that transcript is core's decision alone, so both forms are re-checked here against the
+ *  store rather than trusted. A named conversation must be the caller's own real conversation; a cron
+ *  channel is built from the channel id (never accepted as a ready-made session id, so a plugin can point
+ *  at nothing but its own platform's rooms) and is readable by its owner or an administrator. */
+function resolveJobRun(
+  store: import('../../store/brainStore.js').BrainStore | undefined,
+  requester: { id: number; admin: boolean },
+  entry: { runSessionId?: unknown; runChannelId?: unknown },
+): { sessionId: string; continuable: boolean } | null {
+  if (!store) return null;
+  if (typeof entry.runSessionId === 'string' && entry.runSessionId) {
+    const id = entry.runSessionId;
+    const row = store.getSession(id);
+    if (!row || isNonUserSession(id) || row.user_id !== requester.id) return null;
+    return { sessionId: id, continuable: true };
+  }
+  if (typeof entry.runChannelId === 'string' && entry.runChannelId) {
+    const id = channelSessionId(`${CRON_PLATFORM}-${entry.runChannelId}`);
+    const row = store.getSession(id);
+    if (!row || (row.user_id !== requester.id && !requester.admin)) return null;
+    return { sessionId: id, continuable: false };
+  }
+  return null;
 }
 
 /** Turn what the cron plugin contributed into rows core is willing to serialize.
@@ -55,11 +87,12 @@ function toConversationJobLinks(
   contributed: unknown,
   requester: { id: number; admin: boolean },
   authorized: ReadonlySet<string>,
+  store?: import('../../store/brainStore.js').BrainStore,
 ): ConversationJobLink[] {
   if (!Array.isArray(contributed)) return [];
   const out: ConversationJobLink[] = [];
   for (const raw of contributed) {
-    const entry = raw as Partial<Record<'jobId' | 'conversationId' | 'name' | 'enabled' | 'ownerUserId', unknown>>;
+    const entry = raw as Partial<Record<'jobId' | 'conversationId' | 'name' | 'enabled' | 'ownerUserId' | 'runSessionId' | 'runChannelId', unknown>>;
     const jobId = typeof entry?.jobId === 'string' ? entry.jobId.trim() : '';
     const conversationId = typeof entry?.conversationId === 'string' ? entry.conversationId : '';
     const name = typeof entry?.name === 'string' ? entry.name.trim() : '';
@@ -73,6 +106,7 @@ function toConversationJobLinks(
       enabled: entry.enabled === true,
       scope: ownerUserId === null ? 'instance' : 'personal',
       href: `/p/cronjob?job=${encodeURIComponent(jobId)}`,
+      run: resolveJobRun(store, requester, entry),
     });
   }
   return out;
@@ -249,7 +283,7 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
       logger('brain-conversation-links').error(`cron link read failed: ${(e as Error).message}`);
       return c.json({ status: 'error', links: [] });
     }
-    const links = toConversationJobLinks(contributed, { id: user.id, admin: !!user.is_admin }, new Set(conversationIds));
+    const links = toConversationJobLinks(contributed, { id: user.id, admin: !!user.is_admin }, new Set(conversationIds), d.brainStore);
     return c.json({ status: 'available', links });
   }));
 

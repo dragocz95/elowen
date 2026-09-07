@@ -1049,6 +1049,14 @@ export interface CronConversationLink {
   enabled: boolean;
   /** The account whose job this is, or null for an instance job. */
   ownerUserId: number | null;
+  /** WHERE THE JOB'S TURNS ACTUALLY RUN — a different question from where it is FILED, which is what
+   *  `conversationId` answers and is organization only. A job bound to an origin conversation names that
+   *  conversation here; a job that runs in its own cron channel names the CHANNEL instead and core builds
+   *  the session id from it, so the shape of a channel session id stays core's to decide. Both absent
+   *  means the plugin cannot say, and the navigation falls back to the schedule's own editor. Core
+   *  re-checks that the target exists and belongs to the requester before serializing either form. */
+  runSessionId?: string;
+  runChannelId?: string;
 }
 
 /** The workflow engine's abort seam. Aborting a parent turn tears down the node child sessions that are
