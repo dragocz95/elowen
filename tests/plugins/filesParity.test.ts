@@ -128,6 +128,18 @@ describe('files plugin — Edit size cap', () => {
   });
   afterAll(() => { rmSync(dir, { recursive: true, force: true }); });
 
+  it('answers a missing Edit target the way Read does, not with a raw ENOENT', async () => {
+    writeFileSync(join(dir, 'notes.md'), 'body\n');
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(
+      reg, 'Edit', { file_path: join(dir, 'notes.txt'), old_string: 'body', new_string: 'text' },
+    ));
+    expect(detailsOf(res).ok).toBe(false);
+    expect(textOf(res)).toContain('File does not exist.');
+    expect(textOf(res)).toContain('Note: your current working directory is');
+    expect(textOf(res)).toContain(`Did you mean ${join(dir, 'notes.md')}?`);
+    expect(textOf(res)).not.toContain('ENOENT');
+  });
+
   it('refuses a file over 1 GB before reading it into memory', async () => {
     const path = join(dir, 'huge.txt');
     writeFileSync(path, 'needle\n');
@@ -168,6 +180,15 @@ describe('files plugin — Glob and Grep reach', () => {
     ));
     const rows = textOf(res).split('\n').sort();
     expect(rows).toEqual(['src/a.ts', 'src/c.js', 'src/deep/b.ts']);
+    expect(textOf(res)).not.toContain('d.md');
+  });
+
+  it('splits the same glob list for Search, which shares the include parameter', async () => {
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(
+      reg, 'Search', { path: dir, query: 'needle', include: '*.js,*.ts' },
+    ));
+    const files = [...new Set(textOf(res).split('\n').filter(Boolean).map((row) => row.split(':')[0]))].sort();
+    expect(files).toEqual(['src/a.ts', 'src/c.js', 'src/deep/b.ts']);
     expect(textOf(res)).not.toContain('d.md');
   });
 
@@ -226,6 +247,9 @@ describe('files plugin — search helpers', () => {
     expect(splitGlobPatterns('*.js,*.ts')).toEqual(['*.js', '*.ts']);
     expect(splitGlobPatterns('*.js *.ts')).toEqual(['*.js', '*.ts']);
     expect(splitGlobPatterns('*.{ts,tsx}')).toEqual(['*.{ts,tsx}']);
+    // A brace group NEXT TO a comma list is both forms at once: rg matches nothing when it arrives whole.
+    expect(splitGlobPatterns('*.{ts,tsx},*.js')).toEqual(['*.{ts,tsx}', '*.js']);
+    expect(splitGlobPatterns('src/**/*.{a,b} *.md,*.txt')).toEqual(['src/**/*.{a,b}', '*.md', '*.txt']);
     expect(splitGlobPatterns('')).toEqual([]);
   });
 

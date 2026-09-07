@@ -104,6 +104,12 @@ describe('terminal plugin', () => {
     expect(bash.description).toContain('DO NOT use newlines to separate commands (newlines are ok in quoted strings).');
   });
 
+  it('does not send the model to mkdir a parent directory that Write now creates itself', () => {
+    const bash = reg.tools.find((tool) => tool.name === 'Bash') as unknown as { description: string };
+    expect(bash.description).not.toContain('Write refuses a missing directory');
+    expect(bash.description).toContain("Write and Edit create a file's missing parent directories themselves");
+  });
+
   it('maps a workspace guest cwd through the real workspace PathView contract', () => {
     const workspace = join(dir, 'workspace-host');
     mkdirSync(join(workspace, 'nested'), { recursive: true });

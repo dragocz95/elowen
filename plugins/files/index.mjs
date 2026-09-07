@@ -956,13 +956,26 @@ export function pathNotFoundMessage(lead, target, cwd, display = (p) => p) {
 }
 
 /** Split a `glob` value the way the reference does: on whitespace, then on commas, keeping a brace group
- *  whole. Each token becomes its own `--glob`, so "*.js,*.ts" filters on both instead of matching nothing. */
+ *  whole. Each token becomes its own `--glob`, so "*.js,*.ts" filters on both instead of matching nothing.
+ *  The comma split counts brace depth rather than skipping any token that contains a brace, because
+ *  "*.{ts,tsx},*.js" is both forms at once and rg matches nothing at all when it arrives as one pattern. */
 export function splitGlobPatterns(value) {
   if (typeof value !== 'string') return [];
   const out = [];
   for (const token of value.split(/\s+/).filter(Boolean)) {
-    if (token.includes('{')) { out.push(token); continue; }
-    for (const part of token.split(',')) if (part) out.push(part);
+    let depth = 0;
+    let current = '';
+    for (const ch of token) {
+      if (ch === ',' && depth === 0) {
+        if (current) out.push(current);
+        current = '';
+        continue;
+      }
+      if (ch === '{') depth += 1;
+      else if (ch === '}' && depth > 0) depth -= 1;
+      current += ch;
+    }
+    if (current) out.push(current);
   }
   return out;
 }
@@ -1052,7 +1065,9 @@ async function rgSearch(abs, root, queryText, include, maxMatches) {
   const args = [
     '--line-number', '--with-filename', '--color', 'never', '--no-heading', '-i',
     ...ignoreGlobs.flatMap((g) => ['--glob', g]),
-    ...(include ? ['--glob', include] : []),
+    // Same split as Grep: one `--glob` per pattern, so "*.js,*.ts" filters on both instead of being
+    // handed to rg as a single pattern that matches nothing.
+    ...splitGlobPatterns(include).flatMap((g) => ['--glob', g]),
     '--',
     safeRegexSource(queryText),
     abs,
@@ -1479,6 +1494,14 @@ export function register(ctx) {
               ...(newDiff ? { diff: newDiff } : {}), ...(newPatch ? { patch: newPatch } : {}),
             });
           }
+          // The same missing-path answer Read, Glob and Grep give, and the reference's own for this tool:
+          // a raw ENOENT from the stat below names neither the directory the path was resolved against nor
+          // the neighbour the caller probably meant.
+          if (!existsSync(abs)) {
+            return ok('Edit', `Error: ${pathNotFoundMessage(
+              'File does not exist.', abs, ctx.defaultCwd(), (value) => ctx.displayPath(value),
+            )}`, { ok: false, ...pathMeta(abs) });
+          }
           // Checked on the stat, before the slurp: reading a gigabyte-plus file into a single string is the
           // out-of-memory failure this refusal exists to prevent, so it cannot come after the read.
           const size = statSync(abs).size;
@@ -1548,7 +1571,7 @@ export function register(ctx) {
     parameters: Type.Object({
       path: Type.String({ description: 'Absolute path to search within' }),
       query: Type.String({ description: 'Literal text or regular expression to search for in file contents' }),
-      include: Type.Optional(Type.String({ description: 'Optional file glob, e.g. "*.ts", "**/*.tsx", or "*.{ts,tsx}"' })),
+      include: Type.Optional(Type.String({ description: 'Optional file glob, e.g. "*.ts", "**/*.tsx", or "*.{ts,tsx}"; a comma- or space-separated list filters on every pattern in it' })),
     }),
     execute: async (_id, p) => {
       try {
