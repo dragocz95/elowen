@@ -3,11 +3,11 @@
 // react, not thrown, matching how the Elowen* tools surface API errors.
 import { defineTool, withFileMutationQueue, truncateHead, truncateLine, formatSize, generateDiffString, generateUnifiedPatch, resizeImage, formatDimensionNote } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
-import { closeSync, fstatSync, openSync, readFileSync, readSync, writeFileSync, readdirSync, statSync, mkdtempSync, rmSync } from 'node:fs';
+import { closeSync, existsSync, fstatSync, openSync, readFileSync, readSync, writeFileSync, readdirSync, statSync, mkdtempSync, rmSync } from 'node:fs';
 import { execFile, execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
-import { dirname, extname, join, relative } from 'node:path';
+import { basename, dirname, extname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
 
 const DEFAULT_MAX = 100_000;
@@ -20,6 +20,35 @@ const RESULT_LINE_MAX = 500; // cap each search hit so one minified line can't f
 // whose encoded payload tops ~5 MB, so cap the RAW bytes at ~3.75 MB to keep the base64 under that ceiling.
 const IMAGE_MAX_BYTES = 3_750_000;
 const SKIP_DIRS = new Set(['.git', 'node_modules', 'dist', 'web-dist', '.next', '.turbo']);
+/** A byte budget bounds the bytes a read returns; this bounds what those bytes COST in context. Dense text
+ *  (minified JS, JSON, base64) carries far more tokens per byte than prose, so a page the byte cap allows —
+ *  or one an explicit `limit` exempts from it — can still be several times the model's read budget. */
+const MAX_READ_TOKENS = 25_000;
+/** Above this a whole-file slurp is an OOM risk rather than an edit: V8 caps a string near 2^30 bytes. */
+const MAX_EDIT_BYTES = 1024 ** 3;
+/** Reading one of these blocks forever or never reaches EOF. Checked on the PATH, before any I/O, so the
+ *  check itself cannot hang. Harmless special files such as /dev/null are deliberately not listed. */
+const BLOCKED_DEVICE_PATHS = new Set([
+  '/dev/zero', '/dev/random', '/dev/urandom', '/dev/full',
+  '/dev/stdin', '/dev/tty', '/dev/console', '/dev/stdout', '/dev/stderr',
+  '/dev/fd/0', '/dev/fd/1', '/dev/fd/2',
+]);
+/** Extensions whose content is not text. PDFs, notebooks and the image formats this tool renders natively
+ *  are excluded at the call site, so only files nothing here can display reach the refusal. */
+const BINARY_EXTENSIONS = new Set([
+  '.ico', '.tiff', '.tif',
+  '.mp4', '.mov', '.avi', '.mkv', '.webm', '.wmv', '.flv', '.m4v', '.mpeg', '.mpg',
+  '.mp3', '.wav', '.ogg', '.flac', '.aac', '.m4a', '.wma', '.aiff', '.opus',
+  '.zip', '.tar', '.gz', '.bz2', '.7z', '.rar', '.xz', '.z', '.tgz', '.iso',
+  '.exe', '.dll', '.so', '.dylib', '.bin', '.o', '.a', '.obj', '.lib', '.app', '.msi', '.deb', '.rpm',
+  '.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx', '.odt', '.ods', '.odp',
+  '.ttf', '.otf', '.woff', '.woff2', '.eot',
+  '.pyc', '.pyo', '.class', '.jar', '.war', '.ear', '.node', '.wasm', '.rlib',
+  '.sqlite', '.sqlite3', '.db', '.mdb', '.idx',
+  '.psd', '.ai', '.eps', '.sketch', '.fig', '.xd', '.blend', '.3ds', '.max',
+  '.swf', '.fla',
+  '.lockb', '.dat', '.data',
+]);
 const DEFAULT_GLOB_MAX = 100;
 /** How many files a traversal may visit before it gives up. Shared by Glob and Search's rg-less
  *  fallback so both report the same bound with the same wording. */
@@ -280,6 +309,27 @@ export function detectImageMime(buf) {
   return null;
 }
 const INLINE_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
+
+export function isBlockedDevicePath(filePath) {
+  if (BLOCKED_DEVICE_PATHS.has(filePath)) return true;
+  // /proc/self/fd/0-2 and /proc/<pid>/fd/0-2 are Linux aliases for the same three streams.
+  return filePath.startsWith('/proc/')
+    && (filePath.endsWith('/fd/0') || filePath.endsWith('/fd/1') || filePath.endsWith('/fd/2'));
+}
+
+/** The binary extension of `filePath`, or null when this tool can render the file. */
+export function binaryExtensionOf(filePath) {
+  const ext = extname(filePath).toLowerCase();
+  return BINARY_EXTENSIONS.has(ext) ? ext : null;
+}
+
+/** Rough token count for `content`. Dense JSON is mostly single-character tokens, so it costs about twice
+ *  what the same bytes of prose do — the same two ratios the reference uses. */
+export function estimateTokens(content, extension = '') {
+  const ext = String(extension).replace(/^\./, '').toLowerCase();
+  const bytesPerToken = ext === 'json' || ext === 'jsonl' || ext === 'jsonc' ? 2 : 4;
+  return Math.round(content.length / bytesPerToken);
+}
 
 // ── PDF ──────────────────────────────────────────────────────────────────────
 // Read via poppler (pdftotext / pdftoppm / pdfinfo) rather than a bundled parser: it handles the real
@@ -819,6 +869,24 @@ function relativizeContentLine(line, root) {
   return line;
 }
 
+/** Strip the search root from a row that carries no line-number boundary (`-n: false`). */
+function relativizePathPrefix(line, root) {
+  if (line === '--' || !line.startsWith('/')) return line;
+  const prefix = root.endsWith('/') ? root : `${root}/`;
+  return line.startsWith(prefix) ? line.slice(prefix.length) : line;
+}
+
+/** A killed rg is a timeout, not a search that found nothing: say which bound was hit and what to narrow,
+ *  otherwise the caller reads the generic failure as "no matches here" and moves on. */
+export function grepTimeoutError(error) {
+  const killed = error && typeof error === 'object'
+    && (error.killed === true || error.signal === 'SIGTERM' || error.code === 'ETIMEDOUT');
+  if (!killed) return null;
+  return new Error(`Search timed out after ${SEARCH_TIMEOUT_MS / 1000} seconds. `
+    + 'The search may have matched files but did not complete in time. '
+    + 'Try searching a more specific path or pattern.');
+}
+
 /** Relativize an rg `--count` line (`/abs:count`). */
 function relativizeCountLine(line, root) {
   if (!line.startsWith('/')) return line;
@@ -826,6 +894,59 @@ function relativizeCountLine(line, root) {
   if (idx < 0) return line;
   const p = line.slice(0, idx);
   return `${relative(root, p) || p}${line.slice(idx)}`;
+}
+
+/** A file next to `target` that differs only in extension, or null. A model that mis-constructs a path
+ *  usually gets the stem right and the suffix wrong, and naming the real neighbour saves a whole round. */
+function similarSibling(target) {
+  const dir = dirname(target);
+  const base = basename(target);
+  const stem = base.slice(0, base.length - extname(base).length) || base;
+  let entries;
+  try { entries = readdirSync(dir); } catch { return null; }
+  const match = entries.find((name) => name !== base
+    && (name.slice(0, name.length - extname(name).length) || name) === stem);
+  return match ? join(dir, match) : null;
+}
+
+/** The one missing-path message for Read, Glob and Grep: what is missing, where the tool is looking, and
+ *  the neighbour the caller probably meant. `lead` names the thing so each tool keeps its own noun. */
+export function pathNotFoundMessage(lead, target, cwd, display = (p) => p) {
+  const suggestion = similarSibling(target);
+  return [
+    lead,
+    `Note: your current working directory is ${display(cwd)}.`,
+    ...(suggestion ? [`Did you mean ${display(suggestion)}?`] : []),
+  ].join(' ');
+}
+
+/** Split a `glob` value the way the reference does: on whitespace, then on commas, keeping a brace group
+ *  whole. Each token becomes its own `--glob`, so "*.js,*.ts" filters on both instead of matching nothing. */
+export function splitGlobPatterns(value) {
+  if (typeof value !== 'string') return [];
+  const out = [];
+  for (const token of value.split(/\s+/).filter(Boolean)) {
+    if (token.includes('{')) { out.push(token); continue; }
+    for (const part of token.split(',')) if (part) out.push(part);
+  }
+  return out;
+}
+
+/** Split an ABSOLUTE glob into the directory it is anchored to and the pattern relative to that directory,
+ *  so `/repo/src/**\/*.ts` searches `/repo/src`. Returns null for a relative pattern, which keeps its
+ *  existing meaning of "relative to `path`". Without this an absolute pattern matches nothing at all,
+ *  because the matcher only ever sees paths relative to the search root. */
+export function extractGlobBase(pattern) {
+  const source = String(pattern ?? '');
+  if (!source.startsWith('/')) return null;
+  const segments = source.split('/');
+  const literal = [];
+  let index = 1;
+  for (; index < segments.length - 1; index += 1) {
+    if (/[*?{}[\]]/.test(segments[index])) break;
+    literal.push(segments[index]);
+  }
+  return { base: `/${literal.join('/')}`, pattern: segments.slice(index).join('/') || '*' };
 }
 
 function globRegex(glob) {
@@ -957,10 +1078,12 @@ async function assertKnownType(type, root) {
  *  caller can name the offset that continues it. `headLimit: 0` means unlimited (reference semantics),
  *  still bounded by `maxMatches`. */
 async function rgGrep(target, root, pattern, opts = {}) {
-  const { include, type, outputMode = 'content', beforeContext, afterContext, contextLines, multiline, caseInsensitive, headLimit, offset = 0, maxMatches } = opts;
+  const { include, type, outputMode = 'content', beforeContext, afterContext, contextLines, lineNumbers = true, multiline, caseInsensitive, headLimit, offset = 0, maxMatches } = opts;
   if (type) await assertKnownType(type, root);
   const ignoreGlobs = [...SKIP_DIRS].map((d) => `!${d}/**`);
-  const args = ['--color', 'never', '--no-heading'];
+  // Hidden files are ordinary source in a repository — CI workflows, dotfile configs, .env templates — and
+  // rg skips them by default. The SKIP_DIRS globs below still keep .git out of the result set.
+  const args = ['--color', 'never', '--no-heading', '--hidden'];
   // A single minified or base64 line must not eat the whole result cap. `--max-columns-preview` keeps the
   // first RESULT_LINE_MAX columns and lets rg append its own "[... omitted end of long line]" marker;
   // without it rg drops the line body entirely. This is the ONLY per-line length bound for Grep — a
@@ -976,16 +1099,22 @@ async function rgGrep(target, root, pattern, opts = {}) {
   } else if (outputMode === 'count') {
     args.push('--count');
   } else {
-    args.push('--line-number', '--with-filename');
-    if (beforeContext != null) args.push('-B', String(beforeContext));
-    if (afterContext != null) args.push('-A', String(afterContext));
-    if (contextLines != null) args.push('-C', String(contextLines));
+    args.push('--with-filename');
+    if (lineNumbers) args.push('--line-number');
+    // A symmetric context window replaces the one-sided flags rather than adding to them, so `context`
+    // and `-C` mean exactly what they say when a caller passes both forms.
+    if (contextLines != null) {
+      args.push('-C', String(contextLines));
+    } else {
+      if (beforeContext != null) args.push('-B', String(beforeContext));
+      if (afterContext != null) args.push('-A', String(afterContext));
+    }
   }
   // `--multiline-dotall` makes `.` cross newlines, which is what the tool description promises multiline
   // does — `--multiline` alone only lets an explicit `\n` in the pattern span lines.
   if (multiline) args.push('--multiline', '--multiline-dotall');
   args.push(...ignoreGlobs.flatMap((g) => ['--glob', g]));
-  if (include) args.push('--glob', include);
+  for (const globPattern of splitGlobPatterns(include)) args.push('--glob', globPattern);
   if (type) args.push('--type', type);
   args.push('--', pattern, target);
   let stdout;
@@ -994,6 +1123,8 @@ async function rgGrep(target, root, pattern, opts = {}) {
   } catch (e) {
     // rg exits 1 on "no matches" (same as content mode) — a real empty result, not an rg-missing signal.
     if (e && typeof e === 'object' && 'code' in e && e.code === 1) return { lines: [], truncated: false, total: 0 };
+    const timeout = grepTimeoutError(e);
+    if (timeout) throw timeout;
     throw e;
   }
   const raw = stdout.split('\n').filter(Boolean);
@@ -1002,9 +1133,15 @@ async function rgGrep(target, root, pattern, opts = {}) {
   // Order the WHOLE match set before paging, so `offset` walks one stable sequence: page 2 must continue
   // page 1, not re-rank a different subset (files_with_matches is mtime-ordered across all matches; the
   // sort is stable, so rg's `--sort path` order breaks ties the same way on every page).
+  const relativizeRow = (line) => {
+    if (outputMode === 'count') return relativizeCountLine(line, root);
+    // Without `-n` a content row is `path:text` and a context row `path-text`, which carry no line-number
+    // boundary for the content relativizer to find — a plain prefix strip is what is left.
+    return lineNumbers ? relativizeContentLine(line, root) : relativizePathPrefix(line, root);
+  };
   const ordered = outputMode === 'files_with_matches'
     ? raw.map((abs) => ({ abs, mtime: mtimeOf(abs) })).sort((a, b) => b.mtime - a.mtime).map((f) => relative(root, f.abs) || f.abs)
-    : raw.map((line) => outputMode === 'count' ? relativizeCountLine(line, root) : relativizeContentLine(line, root));
+    : raw.map(relativizeRow);
   const lines = ordered.slice(offset, offset + cap);
   return { lines, truncated: ordered.length > offset + lines.length, total: ordered.length };
 }
@@ -1075,6 +1212,18 @@ export function register(ctx) {
         }
         if (p.limit !== undefined && (!Number.isSafeInteger(p.limit) || p.limit < 1)) {
           return fail('Read', new Error('limit must be a positive integer.'), pathMeta(abs));
+        }
+        // Both checks are on the PATH and run before any I/O: opening a blocking device to find out that it
+        // blocks is the failure they exist to prevent, and a binary file has nothing to show either way.
+        if (isBlockedDevicePath(abs)) {
+          return fail('Read', new Error(`Cannot read '${ctx.displayPath(abs)}': this device file would block or produce infinite output.`), pathMeta(abs));
+        }
+        const binaryExt = binaryExtensionOf(abs);
+        if (binaryExt) {
+          return fail('Read', new Error(`This tool cannot read binary files. The file appears to be a binary ${binaryExt} file. Please use appropriate tools for binary file analysis.`), pathMeta(abs));
+        }
+        if (!existsSync(abs)) {
+          return fail('Read', new Error(pathNotFoundMessage('File does not exist.', abs, ctx.defaultCwd(), (value) => ctx.displayPath(value))), pathMeta(abs));
         }
         const probe = readFileProbe(abs);
         if (probe.length === 0) return fail('Read', new Error('Cannot read an empty file.'), pathMeta(abs));
@@ -1154,6 +1303,19 @@ export function register(ctx) {
             + 'content instead of reading the whole file.',
           ), pathMeta(abs));
         }
+        // Same scope as the byte cap: an explicit `limit` is the caller taking responsibility for the page
+        // it asked for, and that rule is what the paged-read contract rests on. What this adds is the
+        // second bound the byte cap cannot express — dense content (JSON, minified sources) costs about
+        // twice the tokens per byte of prose, so a page well under the byte ceiling can still be far over
+        // the model's read budget.
+        const tokens = estimateTokens(snapshot.content, extname(abs));
+        if (p.limit === undefined && tokens > MAX_READ_TOKENS) {
+          return fail('Read', new Error(
+            `File content (${tokens} tokens) exceeds maximum allowed tokens (${MAX_READ_TOKENS}). `
+            + 'Use offset and limit parameters to read specific portions of the file, or search for specific '
+            + 'content instead of reading the whole file.',
+          ), pathMeta(abs));
+        }
         const endShown = snapshot.selectedEnd;
         const truncated = endShown < total;
         const sessionId = ctx.currentSessionId?.();
@@ -1211,7 +1373,10 @@ export function register(ctx) {
           const base = beforeBuf?.toString('utf-8') ?? '';
           const diff = displayDiff(base, p.content);
           const patch = unifiedPatch(display, base, p.content);
-          return ok('Write', `Wrote ${Buffer.byteLength(p.content)} bytes to ${display}`, {
+          const summary = beforeBuf === null
+            ? `File created successfully at: ${display}`
+            : `The file ${display} has been updated successfully.`;
+          return ok('Write', summary, {
             ...pathMeta(abs), bytes: Buffer.byteLength(p.content), contentHash: hashOf(written),
             ...(diff ? { diff } : {}), ...(patch ? { patch } : {}),
           });
@@ -1225,6 +1390,7 @@ export function register(ctx) {
     description: [
       'Replace an exact text snippet in a UTF-8 file within the accessible repositories. Use it for a targeted change, after reading enough surrounding context to locate the change precisely.',
       'You must have read the file in this conversation before editing it; Read errors and omitted images do not count. It must not have changed on disk since — an edit written from assumption, or against content that moved, is how work gets silently discarded.',
+      'When editing text from Read tool output, ensure you preserve the exact indentation (tabs/spaces) as it appears AFTER the line number prefix. The line number prefix format is: line number + tab. Everything after that is the actual file content to match. Never include any part of the line number prefix in the old_string or new_string.',
       'By default old_string must match exactly ONCE, including indentation and whitespace. If it appears more than once, include more context. Set replace_all when every occurrence really is the same change. BOM and CRLF line endings are preserved. The optional fuzzy_match extension tolerates smart quotes, Unicode dashes, exotic spaces and trailing whitespace, but canonical calls must leave it false.',
       'This tool applies ONE replacement per call — there is no batch `edits` array. To make several changes to the same file, call it once per change.',
       'Output includes details.diff for review and details.patch (unified). If old_string is missing or ambiguous, read the file again and give more context.',
@@ -1243,6 +1409,13 @@ export function register(ctx) {
         // Serialize the read-modify-write against other mutations of the SAME file (different files still
         // run in parallel) so a concurrent write can't slip between the match read and the write.
         return await withFileMutationQueue(abs, async () => {
+          // Checked on the stat, before the slurp: reading a gigabyte-plus file into a single string is the
+          // out-of-memory failure this refusal exists to prevent, so it cannot come after the read.
+          const size = statSync(abs).size;
+          if (size > MAX_EDIT_BYTES) {
+            return ok('Edit', `Error: File is too large to edit (${formatSize(size)}). Maximum editable file size is 1 GB.`,
+              { ok: false, ...pathMeta(abs) });
+          }
           const beforeBuf = readFileSync(abs);
           // `true`: an anchored edit may proceed through a post-write reformat of our OWN content — its
           // old_string still has to match what is on disk now. A blind overwrite (Write) gets no such pass.
@@ -1432,10 +1605,20 @@ export function register(ctx) {
     }),
     execute: async (_id, p) => {
       try {
-        const searchRoot = p.path ? ctx.assertPathAllowed(p.path) : ctx.defaultCwd();
+        // An absolute pattern carries its own search root, which is what makes it match at all: the
+        // matcher only ever sees paths relative to that root.
+        const anchored = extractGlobBase(p.pattern);
+        const searchRoot = anchored
+          ? ctx.assertPathAllowed(anchored.base)
+          : (p.path ? ctx.assertPathAllowed(p.path) : ctx.defaultCwd());
+        if (!existsSync(searchRoot)) {
+          return ok('Glob', `Error: ${pathNotFoundMessage(
+            `Directory does not exist: ${ctx.displayPath(searchRoot)}.`, searchRoot, ctx.defaultCwd(), (value) => ctx.displayPath(value),
+          )}`, { ok: false, ...pathMeta(searchRoot) });
+        }
         const abs = statSync(searchRoot).isDirectory() ? searchRoot : dirname(searchRoot);
-        if (!p.path && isFsRoot(abs)) return ok('Glob', 'Error: no path given and no project root is set — pass an explicit path.', { ok: false });
-        const regex = globRegex(p.pattern);
+        if (!p.path && !anchored && isFsRoot(abs)) return ok('Glob', 'Error: no path given and no project root is set — pass an explicit path.', { ok: false });
+        const regex = globRegex(anchored ? anchored.pattern : p.pattern);
         if (!regex) return ok('Glob', 'Error: invalid glob pattern.', { ok: false });
         const globMax = Math.min(Math.max(Number(ctx.config.globMax) || DEFAULT_GLOB_MAX, 10), 500);
         // One over the cap, so "the tree holds exactly WALK_CAP files" is distinguishable from "the walk
@@ -1465,7 +1648,7 @@ export function register(ctx) {
           ...(truncated ? [`[Showing the ${results.length} newest of ${matched.length} matching files — narrow the pattern for more.]`] : []),
           ...(walkTruncated ? [`[The traversal stopped at ${WALK_CAP} files, so matches beyond it were never examined — search a narrower path.]`] : []),
         ];
-        const text = [results.join('\n') || 'No files matched.', ...notices].join('\n\n');
+        const text = [results.join('\n') || 'No files found', ...notices].join('\n\n');
         return ok('Glob', text, {
           ...pathMeta(abs), pattern: p.pattern, matches: results.length, truncated, walkTruncated,
         });
@@ -1477,9 +1660,10 @@ export function register(ctx) {
     name: 'Grep', label: 'Search file contents',
     description: [
       'A powerful search tool built on ripgrep for searching file contents by regular expression.',
-      'ALWAYS use Grep for content search tasks. NEVER invoke grep or rg as a Bash command.',
+      'ALWAYS use Grep for content search tasks. NEVER invoke grep or rg as a Bash command. The Grep tool has been optimized for correct permissions and access.',
       'Supports full regex syntax (e.g. "log.*Error", "function\\s+\\w+").',
-      'Filter files with the glob parameter (e.g. "*.js", "**/*.tsx").',
+      'Pattern syntax: uses ripgrep (not grep) — literal braces need escaping (use `interface\\{\\}` to find `interface{}` in Go code).',
+      'Filter files with the glob parameter (e.g. "*.js", "**/*.tsx"); a comma- or space-separated list filters on every pattern in it.',
       'Output modes: "content" shows matching lines (default), "files_with_matches" shows only file paths, "count" shows match counts per file.',
       'Use context lines (-A/-B/-C) to show surrounding lines in content mode.',
       'For multiline patterns (crossing line boundaries), set multiline: true.',
@@ -1497,8 +1681,10 @@ export function register(ctx) {
       ], { description: 'Output mode: "content" shows matching lines (default), "files_with_matches" shows file paths, "count" shows match counts.' })),
       '-A': Type.Optional(Type.Number({ description: 'Lines to show after each match (content mode only).' })),
       '-B': Type.Optional(Type.Number({ description: 'Lines to show before each match (content mode only).' })),
-      '-C': Type.Optional(Type.Number({ description: 'Lines to show before and after each match (content mode only).' })),
+      '-C': Type.Optional(Type.Number({ description: 'Lines to show before and after each match (content mode only). Alias for context.' })),
+      context: Type.Optional(Type.Number({ description: 'Lines to show before and after each match (rg -C), content mode only. Takes precedence over -C, -A and -B.' })),
       '-i': Type.Optional(Type.Boolean({ description: 'Case-insensitive search (rg -i). Defaults to false.' })),
+      '-n': Type.Optional(Type.Boolean({ description: 'Show line numbers in output (rg -n), content mode only. Defaults to true.' })),
       multiline: Type.Optional(Type.Boolean({ description: 'Enable multiline matching for patterns crossing line boundaries.' })),
       head_limit: Type.Optional(Type.Integer({ minimum: 0, description: `Max number of result lines to return. Defaults to ${searchMaxMatches}; 0 removes the head limit but the ${searchMaxMatches} cap still applies.` })),
       offset: Type.Optional(Type.Integer({ minimum: 0, description: 'Skip this many results before the page returned, for continuing a truncated listing. Defaults to 0.' })),
@@ -1508,6 +1694,11 @@ export function register(ctx) {
         // rg accepts a single FILE as its search path — pass it through so `path` pointing at a file
         // searches that file, not its whole parent directory. `root` (its dirname) only relativizes output.
         const target = p.path ? ctx.assertPathAllowed(p.path) : ctx.defaultCwd();
+        if (!existsSync(target)) {
+          return ok('Grep', `Error: ${pathNotFoundMessage(
+            `Path does not exist: ${ctx.displayPath(target)}.`, target, ctx.defaultCwd(), (value) => ctx.displayPath(value),
+          )}`, { ok: false, ...pathMeta(target) });
+        }
         const isDir = statSync(target).isDirectory();
         const root = isDir ? target : dirname(target);
         if (!p.path && isFsRoot(root)) return ok('Grep', 'Error: no path given and no project root is set — pass an explicit path.', { ok: false });
@@ -1530,7 +1721,8 @@ export function register(ctx) {
             outputMode,
             beforeContext: p['-B'],
             afterContext: p['-A'],
-            contextLines: p['-C'],
+            contextLines: p.context ?? p['-C'],
+            lineNumbers: p['-n'] !== false,
             caseInsensitive: p['-i'] === true,
             multiline: p.multiline === true,
             headLimit: p.head_limit,
@@ -1548,7 +1740,9 @@ export function register(ctx) {
         // here would only chop that marker off. --max-columns does NOT apply to the other two modes, whose
         // rows are file paths, so those keep the explicit bound.
         const rows = outputMode === 'content' ? lines : lines.map((l) => truncateLine(l, RESULT_LINE_MAX).text);
-        let text = rows.join('\n') || 'No matches found.';
+        // The reference splits the empty result by mode: a file listing that found nothing says so about
+        // files, the other two modes about matches.
+        let text = rows.join('\n') || (outputMode === 'files_with_matches' ? 'No files found' : 'No matches found');
         // Say out loud which slice of the result set this is, and — when more remains — the exact offset
         // that continues it. Counted in RESULT ROWS, which is what `offset` skips: in content mode with
         // -A/-B/-C a row may be a context line, so "results" is not the same as "matches". Unlike Read's

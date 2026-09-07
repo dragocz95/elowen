@@ -120,7 +120,7 @@ describe('files plugin — Read dedup of an unchanged range', () => {
   // model was never shown. What says so is the recorded RANGE, which only a text Read writes.
   it('never stubs against a Write baseline, and dedups again once a Read has shown the file', async () => {
     const path = join(dir, `${n}-authored.txt`);
-    expect((await inSession('Write', { file_path: path, content: 'alpha\nbeta\n' })).content[0].text).toContain('Wrote');
+    expect((await inSession('Write', { file_path: path, content: 'alpha\nbeta\n' })).content[0].text).toMatch(/successfully/);
 
     const first = await inSession('Read', { file_path: path });
     expect(first.content[0].text).toContain('alpha');
@@ -171,7 +171,7 @@ describe('files plugin — Read dedup of an unchanged range', () => {
 
     // The seeded entry still authorizes, which is what the replay is for.
     const write = await inSession('Write', { file_path: path, content: 'rewritten\n' }, revived);
-    expect(write.content[0].text).toContain('Wrote');
+    expect(write.content[0].text).toMatch(/successfully/);
   });
 
   // A stub carries the same details as the read it replaces, so replaying it after a restart authorizes
@@ -187,7 +187,7 @@ describe('files plugin — Read dedup of an unchanged range', () => {
     await afterSpawn(revived, [{ role: 'toolResult', details: stub.details }]);
 
     const write = await inSession('Write', { file_path: path, content: 'rewritten\n' }, revived);
-    expect(write.content[0].text).toContain('Wrote');
+    expect(write.content[0].text).toMatch(/successfully/);
   });
 
   // Eviction is least-recently-USED, and a stub IS a use: a conversation whose reads are all answered from
