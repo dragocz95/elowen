@@ -364,14 +364,28 @@ export interface PluginHttpRequest {
   body: () => Promise<Buffer>;
   /** JSON.parse over `body()`; throws on invalid JSON. */
   json: <T = unknown>() => Promise<T>;
+  /** True when this daemon's dispatcher can send a stream as {@link PluginHttpResponse.body}.
+   *
+   *  A plugin travels separately from the daemon: the registry ships one build that has to run on the
+   *  older daemons people are still on. Reading the answer HERE is what lets such a plugin serve a file
+   *  it must not buffer, and answer honestly instead of returning a stream an older daemon would
+   *  JSON-serialize into `{}`. Absent (undefined) on every daemon before the seam existed. */
+  acceptsStreamBody?: boolean;
 }
 export interface PluginHttpResponse {
   /** Defaults to 200. */
   status?: number;
   /** Arrays preserve duplicate response fields such as multiple Set-Cookie lines. */
   headers?: Record<string, string | string[]>;
-  /** An object body is JSON-serialized with a json content-type; string/bytes pass through. */
-  body?: string | Uint8Array | object;
+  /** An object body is JSON-serialized with a json content-type; string/bytes pass through.
+   *
+   *  A `ReadableStream<Uint8Array>` — the WEB stream shape, because that is what a `Response` takes; a
+   *  Node stream is converted with `Readable.toWeb(createReadStream(path))` — is piped to the client
+   *  chunk by chunk and never buffered, so the response may be far larger than the daemon's heap. The
+   *  plugin owns the metadata: `content-length` (passed through untouched), `content-type`, and range
+   *  answers (`206` with `content-range`) if it implements them. On HEAD the dispatcher cancels the
+   *  stream and answers with the headers alone, so the source is closed rather than read and dropped. */
+  body?: string | Uint8Array | ReadableStream<Uint8Array> | object;
   /** Server-sent-events stream instead of a buffered body (authenticated plugin API only). The
    *  dispatcher opens the SSE response and runs this until it returns or the client disconnects
    *  (`signal` aborts). `send` writes one event frame. Ignored when `body` is also set. */
