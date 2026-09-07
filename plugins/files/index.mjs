@@ -1052,7 +1052,9 @@ async function rgSearch(abs, root, queryText, include, maxMatches) {
   const args = [
     '--line-number', '--with-filename', '--color', 'never', '--no-heading', '-i',
     ...ignoreGlobs.flatMap((g) => ['--glob', g]),
-    ...(include ? ['--glob', include] : []),
+    // Same split as Grep: one `--glob` per pattern, so "*.js,*.ts" filters on both instead of being
+    // handed to rg as a single pattern that matches nothing.
+    ...splitGlobPatterns(include).flatMap((g) => ['--glob', g]),
     '--',
     safeRegexSource(queryText),
     abs,
@@ -1548,7 +1550,7 @@ export function register(ctx) {
     parameters: Type.Object({
       path: Type.String({ description: 'Absolute path to search within' }),
       query: Type.String({ description: 'Literal text or regular expression to search for in file contents' }),
-      include: Type.Optional(Type.String({ description: 'Optional file glob, e.g. "*.ts", "**/*.tsx", or "*.{ts,tsx}"' })),
+      include: Type.Optional(Type.String({ description: 'Optional file glob, e.g. "*.ts", "**/*.tsx", or "*.{ts,tsx}"; a comma- or space-separated list filters on every pattern in it' })),
     }),
     execute: async (_id, p) => {
       try {

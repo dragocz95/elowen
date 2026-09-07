@@ -171,6 +171,15 @@ describe('files plugin — Glob and Grep reach', () => {
     expect(textOf(res)).not.toContain('d.md');
   });
 
+  it('splits the same glob list for Search, which shares the include parameter', async () => {
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(
+      reg, 'Search', { path: dir, query: 'needle', include: '*.js,*.ts' },
+    ));
+    const files = [...new Set(textOf(res).split('\n').filter(Boolean).map((row) => row.split(':')[0]))].sort();
+    expect(files).toEqual(['src/a.ts', 'src/c.js', 'src/deep/b.ts']);
+    expect(textOf(res)).not.toContain('d.md');
+  });
+
   it('searches hidden directories that ripgrep would skip by default', async () => {
     const res = await runWithPolicy(userPolicy([dir]), () => runTool(
       reg, 'Grep', { path: dir, pattern: 'needle pipeline', output_mode: 'files_with_matches' },
