@@ -42,6 +42,25 @@ function ConversationSwitcher({ onClose }: { onClose: () => void }) {
   // An account that loses its admin rights while the modal is open must not keep the register on screen.
   const showing: 'mine' | 'all' = isAdmin ? view : 'mine';
 
+  // ONE control, placed where there is room for it. The shared header is a single row — icon, title,
+  // actions, close — and two sentence-long labels do not fit beside a title on a phone: the switch took
+  // the row and the conversation list's own name was clipped to a letter. A phone gives it a line of its
+  // own above the list, where both labels are readable and the track scrolls rather than breaking if the
+  // screen is narrower still.
+  const toggle = isAdmin ? (
+    <Segmented
+      size="sm"
+      nowrap
+      value={showing}
+      onChange={(next) => setView(next as 'mine' | 'all')}
+      aria-label={t.chat.historyTitle}
+      options={[
+        { value: 'mine', label: t.sessionsPanel.viewMine },
+        { value: 'all', label: t.chat.openRegister },
+      ]}
+    />
+  ) : null;
+
   return (
     <Modal
       title={t.chat.historyTitle}
@@ -51,20 +70,10 @@ function ConversationSwitcher({ onClose }: { onClose: () => void }) {
       // What the register is, said only where it is on screen: the personal list needs no explanation.
       {...(showing === 'all' ? { description: t.chat.registerHint } : {})}
       onClose={onClose}
-      headerActions={isAdmin ? (
-        <Segmented
-          size="sm"
-          value={showing}
-          onChange={(next) => setView(next as 'mine' | 'all')}
-          aria-label={t.chat.historyTitle}
-          options={[
-            { value: 'mine', label: t.sessionsPanel.viewMine },
-            { value: 'all', label: t.chat.openRegister },
-          ]}
-        />
-      ) : undefined}
+      headerActions={phone ? undefined : toggle ?? undefined}
     >
       <ModalBody>
+        {phone && toggle ? toggle : null}
         {/* Both views hand the chosen conversation to the chat surface behind this modal, so both dismiss
             it — the reader lands in what they opened rather than back on the list covering it. */}
         {showing === 'all'
