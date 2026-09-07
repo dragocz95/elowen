@@ -243,7 +243,15 @@ describe('ProviderRequestRecorder', () => {
       { type: 'tool_search_tool_bm25_20251119', name: 'tool_search_tool_bm25' },
       { name: 'dynamic_probe', input_schema: { type: 'object', properties: { attempt_2: { type: 'integer' } } }, defer_loading: true },
     ]);
-    expect(second.messages.find((entry) => entry.role === 'assistant')?.content).toEqual(rawHostedContent);
+    // The second request's tool block carries `dynamic_probe`, not the `probe` the replayed hosted-search
+    // result references — the exact shape that produced `Tool reference 'probe' not found in available
+    // tools` in production. The reference is dropped so the request stays valid; everything else about the
+    // server-owned turn is replayed byte for byte, including the pairing Anthropic requires.
+    expect(second.messages.find((entry) => entry.role === 'assistant')?.content).toEqual([
+      rawHostedContent[0],
+      { ...rawHostedContent[1], content: { type: 'tool_search_tool_search_result', tool_references: [] } },
+      rawHostedContent[2],
+    ]);
     expect(first.transformed).toBe(true);
     expect(second.transformed).toBe(true);
   });
