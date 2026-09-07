@@ -311,7 +311,13 @@ export interface SpawnOpts {
    *  parent's model travels with it because a cross-model fork is precisely the case the guard exists for
    *  and the spawning process cannot always look it up: a delegated turn commonly runs in the sub-agent
    *  runner, where the parent has no live record at all. */
-  forkCache?: { parentSessionId: string; parentPrefix: number; sameModel: boolean; parentModel: string; parentWindow: number };
+  forkCache?: {
+    parentSessionId: string; parentPrefix: number; sameModel: boolean; parentModel: string;
+    /** The CONFIG provider entry the parent runs on, when it is known. The parent's context WINDOW is
+     *  deliberately NOT passed with it: only the spawner holds the model registry, and resolving it there,
+     *  beside the child's own window, is what keeps the guard comparing two numbers from one source. */
+    parentProviderId?: string;
+  };
   /** WHOSE personal settings compose this session — chat model, compaction model, auto-compact
    *  thresholds and advisor style. A shared room serves several people, so its caller names the VERIFIED
    *  WRITER of the turn that is spawning: a room's owner is only whoever opened it, and their personal

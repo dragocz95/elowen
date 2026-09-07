@@ -29,7 +29,7 @@ import { rolloverDue, SESSION_IDLE_ROLLOVER_MS } from './session/idleRollover.js
 import { decideAmbientBlock } from './session/ambientBlock.js';
 import { drainPostCompactionContext } from './continuity/postCompactionContext.js';
 import { composeTurnPrompt } from './session/turnPrompt.js';
-import { buildForkChildMessage, forkParentPrefixTokens, forkSeedMessages, type ForkMessage } from './session/forkPrefix.js';
+import { buildForkChildMessage, forkParentPrefixTokens, forkSeedMessages, forkSeedRefusal, formatForkCacheLine, type ForkMessage } from './session/forkPrefix.js';
 import { turnSkillsBlock } from './session/turnSkills.js';
 import { settleTurn, titleTurnConversation } from './session/turnSettled.js';
 import { maybeColdStartCompaction } from './session/coldStartCompaction.js';
@@ -859,6 +859,29 @@ export class ChannelSessionService {
       // ONE lookup for both readings the fork-cache line needs below — the parent's live record carries
       // the warm prefix AND the provider/model the fork has to match.
       const forkParent = forkChild ? this.parentLive(parentSessionId) : undefined;
+      // The durable row behind it, for the readings a runner process cannot take off a live record.
+      const forkParentRow = forkChild && parentSessionId ? this.d.store.getSession(parentSessionId) : undefined;
+      // A fork whose seed came back EMPTY has no inherited context at all: the parent has never spoken, or
+      // the shared reading dropped every row it holds. Running the child anyway is the one outcome nobody
+      // can act on — it is composed as a fork, advertises the parent's tool block and says it inherited the
+      // conversation, while actually starting from nothing. Refuse it the way the size guard refuses an
+      // oversized one, and record the refusal on the fork's own log line so a fork that never ran leaves
+      // the same evidence as one that did.
+      if (forkSeed !== undefined && forkSeed.length === 0 && parentSessionId) {
+        const reason = this.d.store.getMessages(parentSessionId).length === 0
+          ? 'the parent conversation has no messages yet'
+          : 'no message of the parent conversation could be read back';
+        logger('brain-subagent').info(formatForkCacheLine({
+          childSessionId: sessionId,
+          parentSessionId,
+          cacheRead: 0, cacheWrite: 0, input: 0,
+          parentPrefix: forkParentPrefixTokens((forkParent?.session.messages ?? []) as unknown as ForkMessage[]),
+          sameModel: true,
+          providerCaches: false,
+          failure: `refused: seed unavailable (${reason})`,
+        }));
+        throw new Error(forkSeedRefusal(reason));
+      }
       if (!ch) {
         this.d.registry.channelEvictOldestIfFull(this.maxChannels());
         ch = await this.d.spawn({
@@ -895,10 +918,15 @@ export class ChannelSessionService {
               // For the size guard's refusal, which has to name what this conversation is running on. The
               // live record first, then the durable row — a delegated turn commonly runs in the runner,
               // where the parent has no live record at all, and a refusal that cannot name the parent
-              // model is exactly as unhelpful as the transport error it replaces. The parent's WINDOW is
-              // not resolved here: it takes the model registry, and the guard decides on the child's.
-              parentModel: forkParent?.model ?? this.d.store.getSession(parentSessionId)?.model ?? 'the parent model',
-              parentWindow: 0,
+              // model is exactly as unhelpful as the transport error it replaces.
+              parentModel: forkParent?.model ?? forkParentRow?.model ?? 'the parent model',
+              // …and the CONFIG provider entry it runs on, because a model id alone does not identify a
+              // model: two configured entries commonly expose the same id with different windows. The
+              // window itself is resolved in the spawner, off the very registry the child's own window
+              // comes from, so the guard cannot compare two numbers taken from two different sources.
+              ...(forkParent?.providerId || forkParentRow?.provider
+                ? { parentProviderId: forkParent?.providerId || forkParentRow?.provider || '' }
+                : {}),
             },
           } : {}),
           trustedChannel: opts.trusted, // admin-role sender → trusted-channel (all projects + full plugin toolset), still no Elowen*

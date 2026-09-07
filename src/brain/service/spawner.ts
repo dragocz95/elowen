@@ -135,6 +135,23 @@ export function liveRecallUserId(
   return turnWriterUserId != null && turnWriterUserId > 0 ? turnWriterUserId : null;
 }
 
+/** One configured model's context window in tokens, or 0 when nothing here can name it.
+ *
+ *  Read off the REGISTRY rather than the raw config, because that is where the operator's per-model pin
+ *  (`brain.modelContextWindows`) has already been applied — the same descriptor the session's own model
+ *  comes from. A config provider entry is needed as well as the id: model ids are not globally unique, so
+ *  an id alone can resolve under another entry's window. */
+function contextWindowOf(
+  registry: ReturnType<typeof buildBrainRegistry>,
+  cfg: BrainRuntimeConfig,
+  providerId: string,
+  modelId: string,
+): number {
+  const entry = cfg.providers.find((provider) => provider.id === providerId);
+  if (!entry) return 0;
+  return registry.find(registryProviderName(entry), modelId)?.contextWindow ?? 0;
+}
+
 export class LiveSessionSpawner {
   constructor(private d: SpawnerDeps) {}
 
@@ -273,7 +290,15 @@ export class LiveSessionSpawner {
         seedTokens: opts.forkSeed.reduce(
           (total, message) => total + estimateTokens(message as unknown as Parameters<typeof estimateTokens>[0]), 0),
         parentModel: opts.forkCache?.parentModel ?? model.id,
-        parentWindow: opts.forkCache?.parentWindow ?? 0,
+        // Resolved HERE, off the same registry the child's window below comes from, because this is the
+        // only place that holds one. It was hard-coded to 0, so every refusal told the reader the parent's
+        // window was "unknown" — the one number that makes a cross-model refusal legible. Same-model forks
+        // fall back to the child's own resolution, which is the same model.
+        parentWindow: opts.forkCache?.parentProviderId
+          ? contextWindowOf(registry, cfg, opts.forkCache.parentProviderId, opts.forkCache.parentModel)
+          : (opts.forkCache?.parentModel === undefined || opts.forkCache.parentModel === model.id
+              ? model.contextWindow ?? 0
+              : 0),
         childModel: model.id,
         childWindow: model.contextWindow ?? 0,
       };

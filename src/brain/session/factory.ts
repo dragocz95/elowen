@@ -86,10 +86,12 @@ export interface SessionSpec {
     parentPrefix: number;
     /** False when the child runs on a different model, which can share no cache whatever the prefix. */
     sameModel: boolean;
-    /** The parent's model id and context window, for the size guard's refusal message. The window is 0
-     *  when the spawning process could not resolve it; it is reported, never used to decide. */
+    /** The parent's model id, for the size guard's refusal message. */
     parentModel: string;
-    parentWindow: number;
+    /** The CONFIG provider entry the parent runs on, when the spawning process knows it. The parent's
+     *  context WINDOW is resolved from it in the spawner, off the same registry the child's own comes
+     *  from; it is reported in the refusal, never used to decide. */
+    parentProviderId?: string;
   };
   /** A fork child's inherited transcript: the parent's history plus the fork boundary, inserted before
    *  rehydration so the child's very first request carries the parent's prefix. Distinct from

@@ -266,6 +266,19 @@ export function forkWindowRefusal(fit: ForkWindowFit): string {
     + 'enough for this conversation.';
 }
 
+/** Why the fork was refused because its inherited context could not be BUILT, in the words the delegating
+ *  model reads.
+ *
+ *  A fork whose seed cannot be assembled has nothing to share: running it anyway would start the child on
+ *  an empty context while every surface — the tool block, the boilerplate, the fork-cache line — still
+ *  claims it inherited the conversation. That silent divergence is worse than a refusal, so the caller is
+ *  told the same thing the size guard tells it, in the same shape and ending on the same one word that
+ *  gets their work done. */
+export function forkSeedRefusal(reason: string): string {
+  return `fork refused: the inherited context could not be built (${reason}). Delegate again with `
+    + '`fork: false` to start the sub-agent on a clean context.';
+}
+
 /** The one INFO line a fork spawn emits, after the child's first provider response. It is the only
  *  evidence surface for the cache rule, so it carries the raw counters as well as the verdict — a reader
  *  who distrusts the verdict can recompute it. */
