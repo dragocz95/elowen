@@ -3881,6 +3881,44 @@ describe('BrainService', () => {
     expect(d.store.getMessages('brain-ch-cron-job-1').map((m) => JSON.parse(m.content).content)).toContain('wake three');
   });
 
+  it('a dedicated origin creates the job\'s own conversation, names it after the job and empties it before every run', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('cron', {}, { info() {}, warn() {}, error() {} });
+    let handler: ((src: unknown, text: string, onEvent?: (e: { type: string; sessionId?: string }) => void) => Promise<string | undefined>) | null = null;
+    ctx.registerPlatform({ name: 'cron', connect: async () => {}, listen: (h) => { handler = h; }, send: async () => {} });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    (d as unknown as { platformOwner: () => number }).platformOwner = () => 1;
+    (d as unknown as { policy: (userId: number) => unknown }).policy =
+      (userId) => ({ allowedProjectIds: new Set([userId]), allowedPaths: () => [] });
+    const svc = new BrainService(d as never);
+    await svc.startPlatforms();
+    const fire = (text: string) => handler!({ platform: 'cron', userId: 'cron', roleIds: [], channelId: 'job-1',
+      origin: { sessionId: 'brain-1-job-1', userId: 1, dedicated: { title: 'Morning report' } },
+      access: { admin: false, projectIds: [], actAsUserId: 1, scheduled: true },
+    }, text);
+
+    // First run: the conversation did not exist and is created under the owner with the job's name.
+    expect(await fire('run one')).toBe('echo:run one');
+    expect(d.store.getSession('brain-1-job-1')).toMatchObject({ user_id: 1, title: 'Morning report' });
+    const texts = () => d.store.getMessages('brain-1-job-1').map((m) => JSON.parse(m.content).content);
+    expect(texts()).toContain('run one');
+
+    // Second run: the transcript is wiped first, so only the latest run is in the conversation.
+    expect(await fire('run two')).toBe('echo:run two');
+    expect(texts()).toContain('run two');
+    expect(texts()).not.toContain('run one');
+    expect(d.store.getSession('brain-ch-cron-job-1')).toBeUndefined();
+
+    // A dedicated id may never name a channel session, even one that does not exist yet.
+    const refused = await handler!({ platform: 'cron', userId: 'cron', roleIds: [], channelId: 'job-2',
+      origin: { sessionId: 'brain-ch-somewhere', userId: 1, dedicated: { title: 'x' } },
+      access: { admin: false, projectIds: [], actAsUserId: 1, scheduled: true },
+    }, 'sneak');
+    expect(refused).toBe('echo:sneak'); // channel fallback, not the named row
+    expect(d.store.getSession('brain-ch-somewhere')).toBeUndefined();
+  });
+
   it('classifies a linked Teams 1:1 as direct and lets a personal scheduled job bind delivery to it', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();
