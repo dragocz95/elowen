@@ -3911,6 +3911,20 @@ describe('BrainService', () => {
     expect(d.store.getSession('brain-1-job-1')?.title).toBe('Morning report');
     expect(d.store.getSession('brain-ch-cron-job-1')).toBeUndefined();
 
+    // A first turn that fails still leaves the conversation named after the job (the retry must not
+    // find a prompt-derived title), and the name is clamped like a manual rename.
+    d.session.prompt.mockImplementationOnce(async () => { throw new Error('relay down'); });
+    await expect(handler!({ platform: 'cron', userId: 'cron', roleIds: [], channelId: 'job-3',
+      origin: { sessionId: 'brain-1-job-3', userId: 1, dedicated: { title: `  Long   ${'x'.repeat(200)}` } },
+      access: { admin: false, projectIds: [], actAsUserId: 1, scheduled: true },
+    }, 'first')).rejects.toThrow('relay down');
+    expect(d.store.getSession('brain-1-job-3')?.title).toBe(`Long ${'x'.repeat(115)}`);
+    // The contract requires a named conversation with `dedicated`.
+    await expect(handler!({ platform: 'cron', userId: 'cron', roleIds: [], channelId: 'job-4',
+      origin: { userId: 1, dedicated: { title: 'nameless' } },
+      access: { admin: false, projectIds: [], actAsUserId: 1, scheduled: true },
+    }, 'x')).rejects.toThrow('must name its conversation');
+
     // A dedicated id may never name a channel session, even one that does not exist yet.
     const refused = await handler!({ platform: 'cron', userId: 'cron', roleIds: [], channelId: 'job-2',
       origin: { sessionId: 'brain-ch-somewhere', userId: 1, dedicated: { title: 'x' } },

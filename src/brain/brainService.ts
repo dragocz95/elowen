@@ -499,6 +499,7 @@ export class BrainService {
         // no originating conversation, but its result belongs to that person, not to a channel session
         // anchored on the instance admin. An account that has never chatted has no row yet, so this
         // degrades to the caller's own fallback exactly like a vanished origin does.
+        if (dedicated && sessionId === undefined) throw new Error('a dedicated origin must name its conversation');
         const target = sessionId ?? defaultUserSessionId(userId);
         const row = this.d.store.getSession(target);
         // An account that has never chatted has no row for its own default conversation yet. That is not
@@ -512,11 +513,13 @@ export class BrainService {
         if (!mayCreate && !isOwnedUserSession(row, userId, target)) return null;
         // `send` only accepts a conversation that already has a row; spawning it here is what creates
         // the row under this account, the same way opening a fresh conversation does.
-        if (mayCreate) await this.lifecycle.ensureLive(userId, target);
+        if (mayCreate) {
+          await this.lifecycle.ensureLive(userId, target);
+          // Named after the job before its first turn: a titled row is skipped by the titler, and a first
+          // turn that fails and is retried finds the name already there. Same clamp as a manual rename.
+          if (dedicated) this.d.store.renameSession(target, collapseWhitespace(dedicated.title).slice(0, 120) || target);
+        }
         await this.send({ userId, text, mode: 'build', session: target, automation });
-        // Named after the job, not after its prompt: the row exists only after the first send, and the
-        // background titler's compare-and-set loses to this rename exactly like it loses to a manual one.
-        if (dedicated && !row) this.d.store.renameSession(target, dedicated.title);
         onEvent?.({ type: 'session', sessionId: target });
         return lastAssistantText(this.d.store, target);
       },
