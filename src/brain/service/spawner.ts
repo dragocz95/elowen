@@ -547,6 +547,7 @@ export class LiveSessionSpawner {
       sessionId, ownerUserId, parentSessionId: opts.parentSessionId, delegatedAccess: opts.delegatedAccess,
       seedMessages: opts.seedMessages,
       ...(opts.forkSeed ? { forkSeed: opts.forkSeed } : {}),
+      ...(opts.forkCache ? { forkCache: opts.forkCache } : {}),
       runtime: this.d.runtime, model, providerId, compactionFallbackModel: route.compactionFallback, cwd,
       ...(opts.pathView ? { displayCwd: '.', contextRoot: opts.pathView.root, sanitizePaths: opts.pathView.sanitize } : {}),
       systemPrompt: persona, appendSystemPrompt: append,

@@ -306,6 +306,8 @@ export interface SpawnOpts {
   /** The transcript a fork child starts from: the parent's history plus the fork boundary. Written once,
    *  before the session manager rehydrates, and only for a brand-new child. */
   forkSeed?: ForkMessage[];
+  /** What the fork's cache-verdict log line needs, measured on the child's first provider response. */
+  forkCache?: { parentSessionId: string; parentPrefix: number; sameModel: boolean };
   /** WHOSE personal settings compose this session — chat model, compaction model, auto-compact
    *  thresholds and advisor style. A shared room serves several people, so its caller names the VERIFIED
    *  WRITER of the turn that is spawning: a room's owner is only whoever opened it, and their personal

@@ -192,6 +192,24 @@ export function forkToolDenial(name: string): string | undefined {
  *  provider may round its own accounting. Below this the prefix genuinely diverged. */
 const SHARED_CACHE_RATIO = 0.9;
 
+/** How big the parent's warm prefix was, from its own last provider response: what it read out of the
+ *  cache plus what it paid for fresh. That sum is what a fork child should read back almost entirely.
+ *
+ *  Reads the LAST assistant message that carries usage. An earlier one would describe a shorter
+ *  conversation, and the fork inherits the whole of it. Returns 0 when the parent has said nothing yet or
+ *  the provider reported no usage — the verdict then says the prefix is unknown instead of dividing by a
+ *  number nobody measured. */
+export function forkParentPrefixTokens(messages: readonly ForkMessage[]): number {
+  for (let i = messages.length - 1; i >= 0; i -= 1) {
+    const message = messages[i]!;
+    if (message.role !== 'assistant') continue;
+    const usage = (message as { usage?: { cacheRead?: number; input?: number } }).usage;
+    if (!usage) continue;
+    return (usage.cacheRead ?? 0) + (usage.input ?? 0);
+  }
+  return 0;
+}
+
 export interface ForkCacheReading {
   childSessionId: string;
   parentSessionId: string;

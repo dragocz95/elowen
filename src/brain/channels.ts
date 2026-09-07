@@ -28,7 +28,7 @@ import { rolloverDue, SESSION_IDLE_ROLLOVER_MS } from './session/idleRollover.js
 import { decideAmbientBlock } from './session/ambientBlock.js';
 import { drainPostCompactionContext } from './continuity/postCompactionContext.js';
 import { composeTurnPrompt } from './session/turnPrompt.js';
-import { buildForkChildMessage, forkSeedMessages, type ForkMessage } from './session/forkPrefix.js';
+import { buildForkChildMessage, forkParentPrefixTokens, forkSeedMessages, type ForkMessage } from './session/forkPrefix.js';
 import { turnSkillsBlock } from './session/turnSkills.js';
 import { settleTurn, titleTurnConversation } from './session/turnSettled.js';
 import { maybeColdStartCompaction } from './session/coldStartCompaction.js';
@@ -879,6 +879,16 @@ export class ChannelSessionService {
           // as a channel; what the fork may RUN is still the delegated scope.
           ...(forkChild ? { fork: true } : {}),
           ...(forkSeed?.length ? { forkSeed } : {}),
+          // The verdict needs the size of the warm prefix at the moment of the fork, which only the
+          // parent's LIVE record knows. Absent (an evicted parent, a runner process) it stays 0 and the
+          // line says the prefix is unknown rather than inventing a denominator.
+          ...(forkChild && parentSessionId ? {
+            forkCache: {
+              parentSessionId,
+              parentPrefix: forkParentPrefixTokens((this.parentLive(parentSessionId)?.session.messages ?? []) as unknown as ForkMessage[]),
+              sameModel: !opts.model?.model || opts.model.model === this.parentLive(parentSessionId)?.model,
+            },
+          } : {}),
           trustedChannel: opts.trusted, // admin-role sender → trusted-channel (all projects + full plugin toolset), still no Elowen*
           scheduled: opts.scheduled, // timer-driven turn → focused `scheduled` system prompt instead of the coding base
           thinkingLevel: opts.thinkingLevel,

@@ -6,6 +6,7 @@ import {
   buildForkChildMessage,
   buildForkWorktreeNotice,
   forkCacheVerdict,
+  forkParentPrefixTokens,
   forkSeedMessages,
   formatForkCacheLine,
   isInForkChild,
@@ -159,5 +160,20 @@ describe('formatForkCacheLine', () => {
       'fork brain-ch-subagent-sub-dlg-1 from brain-7: cacheRead=0 cacheWrite=100000 input=120 '
       + 'parentPrefix≈100000 verdict=not-shared (different model)',
     );
+  });
+});
+
+describe('forkParentPrefixTokens', () => {
+  it('reads the parent’s LAST usage, since the fork inherits the whole conversation', () => {
+    expect(forkParentPrefixTokens([
+      { role: 'assistant', usage: { cacheRead: 10, input: 5 } },
+      { role: 'user', content: 'more' },
+      { role: 'assistant', usage: { cacheRead: 90_000, input: 400 } },
+    ])).toBe(90_400);
+  });
+
+  it('reports 0 rather than a guess when the parent has produced no usage', () => {
+    expect(forkParentPrefixTokens([{ role: 'user', content: 'hi' }])).toBe(0);
+    expect(forkParentPrefixTokens([{ role: 'assistant', content: [] }])).toBe(0);
   });
 });
