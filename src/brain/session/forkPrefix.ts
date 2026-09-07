@@ -204,6 +204,12 @@ export interface ForkCacheReading {
    *  the 400 on a replayed tool reference and the transport refusal of an oversized request both landed
    *  here and produced no line whatsoever. The caller supplies the wording. */
   failure?: string;
+  /** Where the child's request stopped being its parent's, when the counters say the prefix diverged and
+   *  the captured requests can say WHERE (see forkPrefixDiff). A `prefix mismatch` verdict is otherwise a
+   *  dead end for the reader: it proves the fork paid full price without naming the block that cost it.
+   *  Absent whenever request capture is off, either request went unrecorded, or the miss has nothing to do
+   *  with the prefix. */
+  firstDifference?: string;
 }
 
 export interface ForkCacheVerdict {
@@ -287,5 +293,6 @@ export function formatForkCacheLine(reading: ForkCacheReading): string {
   return `fork ${reading.childSessionId} from ${reading.parentSessionId}: `
     + `cacheRead=${reading.cacheRead} cacheWrite=${reading.cacheWrite} input=${reading.input} `
     + `parentPrefix≈${reading.parentPrefix} `
-    + `verdict=${verdict.shared ? 'shared' : 'not-shared'} (${verdict.reason})`;
+    + `verdict=${verdict.shared ? 'shared' : 'not-shared'} (${verdict.reason})`
+    + (!verdict.shared && reading.firstDifference ? ` first-diff=${reading.firstDifference}` : '');
 }
