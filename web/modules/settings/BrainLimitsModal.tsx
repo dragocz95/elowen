@@ -1,9 +1,10 @@
 'use client';
-import { SlidersHorizontal, AlignLeft, Type, HardDrive, Layers, ShieldAlert, Timer, Brain, ListChecks, Target, Repeat, MessagesSquare, Share2, type LucideIcon } from 'lucide-react';
+import { SlidersHorizontal, AlignLeft, Type, HardDrive, Layers, ShieldAlert, Timer, Brain, ListChecks, Target, Repeat, MessagesSquare, GitFork, type LucideIcon } from 'lucide-react';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
 import { HelpTip } from '../../components/ui/HelpTip';
 import { Slider } from '../../components/ui/Slider';
+import { Toggle } from '../../components/ui/Toggle';
 import { formatTokens } from '../../lib/format';
 import { useTranslation } from '../../lib/i18n';
 import type { SaveStatus } from '../../lib/useAutoSaveStatus';
@@ -17,7 +18,6 @@ export const BRAIN_LIMIT_DEFAULTS: BrainLimits = {
   memoryRecallCount: 10, memoryRecallChars: 20000,
   memoryLiveRecallPasses: 10, memoryLiveRecallCount: 2, memoryLiveRecallBytes: 20000,
   goalTurnBudget: 50, goalMaxTurns: 50, channelSessionCap: 32,
-  delegateContextChars: 40000,
 };
 
 const MILLISECONDS_PER_MINUTE = 60_000;
@@ -53,7 +53,6 @@ const BRAIN_LIMIT_FIELDS: BrainLimitField[] = [
   { key: 'goalTurnBudget', kind: 'count', min: 4, max: 500, step: 1, icon: Target },
   { key: 'goalMaxTurns', kind: 'count', min: 8, max: 500, step: 1, icon: Repeat },
   { key: 'channelSessionCap', kind: 'count', min: 4, max: 256, step: 1, icon: MessagesSquare },
-  { key: 'delegateContextChars', kind: 'size', min: 20000, max: 80000, step: 1000, icon: Share2 },
 ];
 
 const DISPLAY_DIVISORS: Record<BrainLimitKind, number> = {
@@ -69,11 +68,15 @@ function toCanonicalValue(field: BrainLimitField, displayValue: number): number 
 
 /** Modal editor for operator-tunable brain limits. Edits flow straight back into the caller's state,
  *  which auto-saves through the shared status controller, so there is no Save button. */
-export function BrainLimitsModal({ limits, applied, onChange, onClose, status = 'idle', retry, flush, presentation }: {
+export function BrainLimitsModal({ limits, applied, forkParentContext = false, onForkParentContextChange, onChange, onClose, status = 'idle', retry, flush, presentation }: {
   limits: BrainLimits;
   /** Fields the daemon clamped on the last save, each carrying the value actually in force. A clamp used
    *  to be invisible here, which left the operator believing a refused value had taken effect. */
   applied?: Partial<BrainLimits>;
+  /** Instance default for the Delegate tool's `fork` flag. Not a limit, but the one other operator
+   *  decision about sub-agents, so it lives in this editor rather than in a modal of its own. */
+  forkParentContext?: boolean;
+  onForkParentContextChange?: (next: boolean) => void;
   onChange: (next: (cur: BrainLimits) => BrainLimits) => void;
   onClose: () => void;
   status?: SaveStatus;
@@ -136,6 +139,27 @@ export function BrainLimitsModal({ limits, applied, onChange, onClose, status = 
             );
           })}
         </div>
+        {onForkParentContextChange ? (
+          <div className="mt-6 border-t border-border pt-4">
+            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+              {t.brain.subagents.title}
+            </p>
+            <div className="flex items-center gap-2.5 py-2">
+              <span className="flex h-7 w-7 shrink-0 items-center justify-center text-muted-foreground">
+                <GitFork size={18} aria-hidden />
+              </span>
+              <span className="flex min-w-0 flex-1 items-center gap-1.5 text-sm font-medium text-foreground">
+                {t.brain.subagents.forkParentContext}
+                <HelpTip>{t.brain.subagents.forkParentContextHint}</HelpTip>
+              </span>
+              <Toggle
+                checked={forkParentContext}
+                onChange={onForkParentContextChange}
+                label={t.brain.subagents.forkParentContext}
+              />
+            </div>
+          </div>
+        ) : null}
       </ModalBody>
       <ModalFooter status={<AutoSaveStatus status={status} onRetry={retry} />}>
         <Button variant="accent" onClick={close} disabled={closeDisabled}>{t.common.done}</Button>

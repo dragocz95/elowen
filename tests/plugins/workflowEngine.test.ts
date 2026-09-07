@@ -31,8 +31,8 @@ const { registerWorkflow } = await import(resolve(repoRoot, 'plugins/subagent/li
 // The REAL chunker, not a double. A pass-through double is what let a wide fan-in ship broken: the engine
 // sized its slices against a budget the packaging could never hold, and the only thing that would have
 // caught it was the very function the double replaced.
-const { delegateContextChunks } = await import(resolve(repoRoot, 'plugins/subagent/index.mjs')) as {
-  delegateContextChunks(raw: unknown, totalChars?: number): string[];
+const { dependencyContextChunks } = await import(resolve(repoRoot, 'plugins/subagent/index.mjs')) as {
+  dependencyContextChunks(raw: unknown, totalChars?: number): string[];
 };
 
 /** The Sandbox ROWS are faked; the resolution rules are not. The harness serves `ctx.resolveWorkspaceScope`
@@ -83,7 +83,7 @@ interface WorkflowControl {
 let gate: { task: string; promise: Promise<void> } | null = null;
 
 function harness(opts: {
-  toolPolicyAllow?: string[]; contextChars?: number;
+  toolPolicyAllow?: string[];
   /** Park listModels so a test can cancel INSIDE buildNodeAccess, the first startup race. */
   modelsGate?: Promise<void>;
   /** Emit the child's `session` only after the gate — the host's real ordering, where the delegated call is
@@ -216,7 +216,6 @@ function harness(opts: {
       return [{ provider: 'p', model: 'm' }];
     },
     toolNames: () => ['Read', 'Write', 'Bash'],
-    delegateContextChars: () => opts.contextChars ?? undefined,
     delegatedTurnsOutOfProcess: () => opts.delegatedRemote === true,
     delegatedWorkflowExpansionAvailable: () => opts.delegatedRpcAvailable === true,
     workflowExpansionRpc: () => opts.workflowExpansionRpc ?? null,
@@ -226,7 +225,7 @@ function harness(opts: {
     resolveDelegateTools: (_inheritedAllow: string[] | undefined, requested: string[] | undefined) =>
       (requested ? { allow: requested } : { allow: undefined }),
     principalOf: (identity: unknown) => (identity ? 'elowen:1' : null),
-    delegateContextChunks,
+    dependencyContextChunks,
   };
   registerWorkflow(ctx, () => run, helpers);
   /** Everything the node can read, as one string — the chunks are a transport detail, not the content. */
@@ -364,19 +363,19 @@ describe('workflow engine', () => {
     const res = await start.execute('precedence', {
       nodesFile: workflowFile({
         title: 'File title',
-        context: 'file context',
+        fork: true,
         background: true,
         nodes: [{ id: 'precedence', task: 'precedence' }],
       }),
       title: 'Argument title',
-      context: 'argument context',
+      fork: false,
       background: false,
     });
 
     expect(res.content[0]?.text).toMatch(/status: done/);
     expect(snapshots[0]?.title).toBe('Argument title');
-    expect(contextOf('precedence')).toContain('argument context');
-    expect(contextOf('precedence')).not.toContain('file context');
+    // The argument wins over the file: the node is NOT forked, so it keeps the generic node role prompt.
+    expect(contextOf('precedence')).not.toContain('fork-boilerplate');
   });
 
   it('rejects a workflow file outside the current access boundary', async () => {
@@ -631,9 +630,9 @@ describe('workflow engine', () => {
   // left AND tell the node which results it is not seeing in full.
   it('gives a wide fan-in every dependency, and names the ones it had to truncate', async () => {
     const { tools, contextOf } = harness();
-    const branches = ['a', 'b', 'c', 'd', 'e', 'f', 'g'];
+    const branches = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l'];
     // Each branch reports far more than its slice can hold, the way a real review section does.
-    const longTask = (id: string) => `${id}:${'x'.repeat(3_000)}`;
+    const longTask = (id: string) => `${id} BULK:8000`;
     await tools.get('WorkflowStart')!.execute('t-fanin', {
       nodesFile: workflowFile([
         ...branches.map((id) => ({ id, task: longTask(id) })),
@@ -648,12 +647,12 @@ describe('workflow engine', () => {
     for (const id of branches) expect(synthesis).toMatch(new RegExp(`truncated to fit[^\\n]*${id}`));
   });
 
-  // The fan-in the seven-branch test never reached: with dozens of dependencies the divided budget fell
-  // below the 400-char floor, which the engine then applied anyway. The blocks that resulted overran the
-  // context budget, delegateContextChunks cut the last GROUPS off, and the node ran — and reported — on
-  // dependencies it had never been shown. An input it cannot represent must fail the node, not shrink it.
-  it('refuses a fan-in it cannot represent instead of running the node on missing dependencies', async () => {
-    const { tools, launched, contextOf } = harness({ contextChars: 26_000 });
+  // This used to refuse: the divided budget fell below the 400-char floor, the engine applied it anyway,
+  // and the node ran on dependencies it had never been shown. The guard is still there and still fails the
+  // node loudly, but it is now DEFENSIVE — the fixed budget carries the widest DAG the engine allows
+  // (MAX_NODES) above the floor, so the reachable invariant is that a maximum fan-in arrives whole.
+  it('carries the widest fan-in the engine allows without dropping a dependency', async () => {
+    const { tools, launched, contextOf } = harness();
     const branches = Array.from({ length: 63 }, (_, i) => `n${i}`);
     const res = await tools.get('WorkflowStart')!.execute('t-wide', {
       nodesFile: workflowFile([
@@ -661,22 +660,19 @@ describe('workflow engine', () => {
         { id: 'synthesis', task: 'synthesise', deps: branches },
       ]),
     });
-    const text = res.content[0]!.text;
-    expect(text).toMatch(/status: error/);
-    expect(text).toMatch(/\[synthesis\] ERROR/);
-    // Actionable: it names the fan-in and the budget that could not carry it.
-    expect(text).toMatch(/63 dependenc/);
-    expect(text).toMatch(/26000|26 000/);
-    // And it never started on a partial context.
-    expect(launched).not.toContain('synthesise');
-    expect(contextOf('synthesise')).toBe('');
+    expect(res.content[0]!.text).toMatch(/status: done/);
+    expect(launched).toContain('synthesise');
+    const synthesis = contextOf('synthesise');
+    for (const id of branches) expect(synthesis).toContain(`## Handover from node "${id}"`);
+    // Nothing shaved off the end by the chunker, which is how the original bug presented.
+    expect(synthesis).not.toContain('further context block');
   });
 
   // A width the budget CAN represent, with every dependency reporting far more than its slice: the packed
   // context must then sit right under the budget, so each dependency arrives as its own attributed block
   // and none is cut off the end by the chunker. This is where an ESTIMATED block cost overruns.
   it('carries a wide fan-in in full when the budget can hold it, without breaching the scope bounds', async () => {
-    const { tools, contexts } = harness({ contextChars: 26_000 });
+    const { tools, contexts } = harness();
     const branches = Array.from({ length: 24 }, (_, i) => `n${i}`);
     await tools.get('WorkflowStart')!.execute('t-wide-ok', {
       nodesFile: workflowFile([
@@ -690,7 +686,7 @@ describe('workflow engine', () => {
     expect(joined).not.toContain('further context block'); // nothing silently cut by the chunker
     expect(chunks.length).toBeLessThanOrEqual(16);
     for (const chunk of chunks) expect(chunk.length).toBeLessThanOrEqual(8_000);
-    expect(chunks.reduce((n, chunk) => n + chunk.length, 0)).toBeLessThanOrEqual(26_000);
+    expect(chunks.reduce((n, chunk) => n + chunk.length, 0)).toBeLessThanOrEqual(40_000);
     // Every dependency got the SAME slice. An overrun does not announce itself: the chunker simply shaves
     // the tail of the chunk it no longer has room for, which shows up here as one short final block.
     const sizes = [...receivedPerNode(joined, branches).values()];
@@ -733,7 +729,7 @@ describe('workflow engine', () => {
   // whole — each arriving at the handover cap, none announced as cut. (The tight-budget case, where they
   // genuinely cannot fit, is covered by the operator-budget test below.)
   it('carries five capped handovers whole when the budget can hold them', async () => {
-    const { tools, contextOf } = harness({ contextChars: 26_000 });
+    const { tools, contextOf } = harness();
     const branches = ['a', 'b', 'c', 'd', 'e'];
     await tools.get('WorkflowStart')!.execute('t-five-big', {
       nodesFile: workflowFile([
@@ -772,23 +768,32 @@ describe('workflow engine', () => {
     expect(dependent).not.toContain('DelegateRead');
   });
 
-  // The budget is an operator setting (Settings → Elowen AI → Limits), read live off the plugin context.
-  // A workflow that ignored it would silently keep the built-in default whatever the operator chose.
-  it('sizes the dependency slices from the operator-configured budget', async () => {
-    const branches = ['a', 'b', 'c', 'd', 'e'];
-    const nodes = [
-      ...branches.map((id) => ({ id, task: `${id} BULK:8000` })),
-      { id: 'synthesis', task: 'synthesise', deps: branches },
-    ];
-    const generous = harness({ contextChars: 26_000 });
-    await generous.tools.get('WorkflowStart')!.execute('t-generous', { nodesFile: workflowFile(nodes) });
-    const tight = harness({ contextChars: 6_000 });
-    await tight.tools.get('WorkflowStart')!.execute('t-tight', { nodesFile: workflowFile(nodes) });
-    const big = receivedPerNode(generous.contextOf('synthesise'), branches).get('a')!;
-    const small = receivedPerNode(tight.contextOf('synthesise'), branches).get('a')!;
-    expect(big).toBeGreaterThan(small * 2);
-    // Even on the tight budget nothing disappears without the node hearing about it.
-    for (const id of branches) expect(tight.contextOf('synthesise')).toMatch(new RegExp(`truncated to fit[^\\n]*${id}`));
+  // The budget is an ENGINE CONSTANT now, not an operator setting: it was a knob only while the same
+  // packaging also carried the retired parent-to-child hand-over. What must still hold is that one fixed
+  // budget is DIVIDED across the fan-in, and that nothing disappears without the node hearing about it.
+  it('divides one fixed budget across the fan-in, and names what it truncated', async () => {
+    const run = async (branches: string[], id: string) => {
+      const h = harness();
+      await h.tools.get('WorkflowStart')!.execute(id, {
+        nodesFile: workflowFile([
+          ...branches.map((n) => ({ id: n, task: `${n} BULK:20000` })),
+          { id: 'synthesis', task: 'synthesise', deps: branches },
+        ]),
+      });
+      return h;
+    };
+    const wide = Array.from({ length: 12 }, (_, i) => `n${i}`);
+    const many = await run(wide, 't-wide-share');
+    const synthesis = many.contextOf('synthesise');
+    // Every dependency arrives, every one is named as shortened, and the packed whole stays inside the
+    // fixed budget — which together is what "divided, not clipped" means.
+    for (const id of wide) {
+      expect(synthesis).toContain(`## Handover from node "${id}"`);
+      expect(synthesis).toMatch(new RegExp(`truncated to fit[^\\n]*${id}`));
+    }
+    const sizes = [...receivedPerNode(synthesis, wide).values()];
+    expect(new Set(sizes).size).toBe(1); // one budget, divided evenly — not a first-come clip
+    expect(synthesis.length).toBeLessThanOrEqual(40_000);
   });
 
   // The modal reports which model is burning a node's tokens. `node.model` is only set when the caller
@@ -947,7 +952,7 @@ describe('workflow engine', () => {
     registerWorkflow(ctx, () => run, {
       resolveDelegateTools: () => ({ allow: undefined }),
       principalOf: () => 'elowen:1',
-      delegateContextChunks,
+      dependencyContextChunks,
     });
     const startP = tools.get('WorkflowStart')!.execute('t6', { title: 'dyn', nodesFile: workflowFile([{ id: 'root', task: 'root' }]) });
     await new Promise((r) => setTimeout(r, 5)); // let root launch and park on the gate
@@ -1005,7 +1010,7 @@ describe('workflow engine', () => {
     registerWorkflow(ctx, () => run, {
       resolveDelegateTools: () => ({ allow: undefined }),
       principalOf,
-      delegateContextChunks,
+      dependencyContextChunks,
     });
     const startP = tools.get('WorkflowStart')!.execute('t7', { nodesFile: workflowFile([{ id: 'root', task: 'root' }]) });
     await new Promise((r) => setTimeout(r, 5));
@@ -1334,7 +1339,7 @@ describe('workflow start limit', () => {
     registerWorkflow(ctx, () => run, {
       resolveDelegateTools: () => ({ allow: undefined }),
       principalOf: () => 'elowen:1',
-      delegateContextChunks,
+      dependencyContextChunks,
     });
     return { tools, release };
   }
@@ -1412,7 +1417,7 @@ describe('workflow background + detach', () => {
     registerWorkflow(ctx, () => run, {
       resolveDelegateTools: () => ({ allow: undefined }),
       principalOf: (id: { elowenUserId?: number } | null) => (id?.elowenUserId ? `elowen:${id.elowenUserId}` : null),
-      delegateContextChunks,
+      dependencyContextChunks,
     });
     return { tools, controls, hooks, completions, launched, finished, release, snapshots, stoppedSessions };
   }
@@ -1895,7 +1900,7 @@ describe('WorkflowResume', () => {
     registerWorkflow(ctx, () => run, {
       resolveDelegateTools: () => ({ allow: undefined }),
       principalOf: (id: { elowenUserId?: number }) => (id.elowenUserId ? `elowen:${id.elowenUserId}` : 'subagent:subagent'),
-      delegateContextChunks,
+      dependencyContextChunks,
     });
     const tool = (name: string): Tool => {
       const found = tools.get(name);

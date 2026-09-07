@@ -1256,6 +1256,11 @@ export const en = {
     agentName: "Assistant name",
     maxSteps: "Max steps",
     maxStepsHint: "Maximum model rounds per request. Prevents runaway loops. Range 100–1,000 in steps of 100; default 200.",
+    subagents: {
+      title: "Sub-agents",
+      forkParentContext: "Fork parent context",
+      forkParentContextHint: "When a Delegate call does not say otherwise, start the sub-agent as a FORK of this conversation: the same system prompt, the same tools and the whole history, so the provider reads the cached prefix instead of billing it again. The cache is only shared while nothing narrows the child, so a forked sub-agent cannot be given its own toolset, read-only mode, a sub-agent type or a workspace, and a different model shares no cache at all.",
+    },
     limits: {
       title: "Limits",
       manage: "Edit limits",
@@ -1288,8 +1293,6 @@ export const en = {
       goalMaxTurnsHint: "Absolute cap on autonomous goal turns — even in YOLO the loop pauses here so a runaway goal can't burn tokens forever. Range 8-500, default 64.",
       channelSessionCap: "Live channel sessions",
       channelSessionCapHint: "How many live channel conversations (e.g. Discord threads) stay in memory before the least-recently-used one is dropped (its history stays in the database). Range 4-256, default 32.",
-      delegateContextChars: "Sub-agent context",
-      delegateContextCharsHint: "Approximate token budget for the background a delegating agent hands to a sub-agent or workflow node (each dependency result travels as its own block). Calculated at 4 characters per token. Higher means the node sees more of its dependencies' output at a higher token cost; anything that still does not fit is reported as truncated. Range ≈2,500–20,000 tokens, default ≈5,000.",
       clamped: "Saved as {value} — the value you set was outside the allowed range.",
       minuteUnit: "min",
       tokenUnit: "tokens",

@@ -14,7 +14,6 @@ const CONFIG = {
     limits: {
       toolOutputMaxLines: 80, toolOutputMaxChars: 30000, elicitationTimeoutMs: 300000,
       memoryRecallCount: 6, memoryRecallChars: 1500, goalTurnBudget: 8, goalMaxTurns: 64, channelSessionCap: 32,
-      delegateContextChars: 20000,
     },
     providers: [] as unknown[],
   },
@@ -46,15 +45,28 @@ describe('BrainSection limits — collapsed into a drawer', () => {
     renderBrain();
     const trigger = await screen.findByRole('button', { name: 'Edit limits' });
     fireEvent.click(trigger);
-    for (const label of ['Tool output — lines', 'Tool output — tokens', 'Question timeout', 'Memory recall — count', 'Memory recall — tokens', 'Goal turn budget', 'Goal safety ceiling', 'Live channel sessions', 'Sub-agent context']) {
+    for (const label of ['Tool output — lines', 'Tool output — tokens', 'Question timeout', 'Memory recall — count', 'Memory recall — tokens', 'Goal turn budget', 'Goal safety ceiling', 'Live channel sessions']) {
       expect(screen.getByRole('slider', { name: label })).toBeTruthy();
     }
     expect(screen.getByText('5 min')).toBeTruthy();
     expect(screen.getByText('≈ 7.5k tokens')).toBeTruthy();
     // Raised inside the drawer, the way a real Escape arrives: the dialog is Radix-driven now and listens
     // on the document, which `window` sits above rather than inside.
+    // The retired sub-agent context budget is gone, and the Sub-agents group stands in its place.
+    expect(screen.queryByRole('slider', { name: 'Sub-agent context' })).toBeNull();
+    expect(screen.getByText('Sub-agents')).toBeTruthy();
+    expect(screen.getByRole('switch', { name: 'Fork parent context' })).toBeTruthy();
     fireEvent.keyDown(screen.getByRole('slider', { name: 'Memory recall — count' }), { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('slider', { name: 'Memory recall — count' })).toBeNull());
+  });
+
+  // The instance default rides the limits editor's own auto-save, so flipping it must reach the daemon
+  // as part of the brain patch rather than needing an editor of its own.
+  it('saves the fork default from the Sub-agents group', async () => {
+    renderBrain();
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit limits' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Fork parent context' }));
+    await waitFor(() => expect((putBody as { brain?: { forkParentContext?: boolean } })?.brain?.forkParentContext).toBe(true));
   });
 
   it('autosaves the canonical count from a slider without a Save button', async () => {

@@ -1218,6 +1218,11 @@ export const sk = {
     agentName: "Meno asistenta",
     maxSteps: "Max krokov",
     maxStepsHint: "Najvyšší počet kôl s modelom pre jednu požiadavku. Chráni pred zacyklením. Rozsah 100–1 000 po 100, predvolené 200.",
+    subagents: {
+      title: "Sub-agenti",
+      forkParentContext: "Fork kontextu rodiča",
+      forkParentContextHint: "Ak volanie Delegate neurčí inak, spustí sa subagent ako FORK tejto konverzácie: rovnaký systémový prompt, rovnaké nástroje a celá história, takže poskytovateľ prečíta uloženú cache namiesto toho, aby prefix účtoval znova. Cache je zdieľaná len dokiaľ dieťa nič nezužuje, takže forknutý subagent nemôže dostať vlastnú sadu nástrojov, režim len na čítanie, typ subagenta ani workspace, a iný model nezdieľa cache vôbec.",
+    },
     limits: {
       title: "Limity",
       manage: "Upraviť limity",
@@ -1250,8 +1255,6 @@ export const sk = {
       goalMaxTurnsHint: "Absolútny strop autonómnych ťahov cieľa — aj v YOLO sa slučka tu pozastaví, aby zabehnutý cieľ nespálil tokeny donekonečna. Rozsah 8–500, predvolené 64.",
       channelSessionCap: "Živé kanálové relácie",
       channelSessionCapHint: "Koľko živých kanálových konverzácií (napr. Discord vlákien) zostáva v pamäti, než sa najdlhšie nepoužitá zahodí (jej história zostáva v databáze). Rozsah 4–256, predvolené 32.",
-      delegateContextChars: "Kontext pre subagenta",
-      delegateContextCharsHint: "Približný rozpočet tokenov pre podklady, ktoré odovzdávajúci agent odovzdá subagentovi alebo uzlu workflow (výsledok každej závislosti putuje ako samostatný blok). Počíta sa so 4 znakmi na token. Vyššia hodnota znamená viac podkladov za cenu vyššej spotreby tokenov; čo sa ani tak nezmestí, je ohlásené ako skrátené. Rozsah ≈2 500–20 000 tokenov, predvolené ≈5 000.",
       clamped: "Uložené ako {value} — zadaná hodnota bola mimo povolený rozsah.",
       minuteUnit: "min",
       tokenUnit: "tokenov",

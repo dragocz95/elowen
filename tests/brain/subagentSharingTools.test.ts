@@ -5,7 +5,6 @@ import { runWithPolicy } from '../../src/plugins/policyContext.js';
 import { FORK_EXECUTE_DENIES, forkToolDenial } from '../../src/brain/session/forkPrefix.js';
 import { delegatedToolPolicy, delegatedVisibilityToolPolicy } from '../../src/brain/delegatedScope.js';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { Policy } from '../../src/plugins/policyContext.js';
 
 /** ShareFile/ShareImage exist to hand something to a PERSON. A sub-agent has nobody on the other end —
  *  what it shares lands in its own panel, never in the conversation that delegated the work — so an
@@ -34,15 +33,16 @@ const compose = (kind: 'owner-chat' | 'trusted-channel', share: boolean): ToolDe
 const scope = (fork: boolean) => ({
   admin: true, projectIds: [] as number[], owner: true, permissionBoundary: null, ...(fork ? { fork: true } : {}),
 });
-const POLICY = { allowedProjectIds: 'all', allowedPaths: () => [] } as unknown as Policy;
+const POLICY = { allowedProjectIds: 'all', allowedPaths: () => [] } as unknown as Parameters<typeof runWithPolicy>[0];
 
 const runTool = async (tools: ToolDefinition[], name: string, forkChild: boolean): Promise<string> => {
   const tool = tools.find((t) => t.name === name);
   if (!tool) throw new Error(`${name} was not composed`);
   const policy = forkChild ? delegatedToolPolicy(scope(true)) : delegatedToolPolicy(scope(false));
-  const result = await runWithPolicy(POLICY, () => tool.execute('call-1', {} as never), {
+  const run = tool.execute as unknown as (id: string, params: unknown) => Promise<{ content: { text?: string }[] }>;
+  const result = await runWithPolicy(POLICY, () => run('call-1', {}), {
     toolPolicy: policy, ...(forkChild ? { forkChild: true } : {}),
-  }) as { content: { text?: string }[] };
+  });
   return result.content.map((block) => block.text ?? '').join('');
 };
 

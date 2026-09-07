@@ -11,7 +11,6 @@ import { assertPathAllowed } from '../../src/plugins/pathGuard.js';
 import type { Policy } from '../../src/plugins/policy.js';
 import type { PluginSkill } from '../../src/plugins/api.js';
 import type { EmbeddingConfig } from '../../src/embeddings/embeddingService.js';
-import { DEFAULT_BRAIN_LIMITS } from '../../src/store/configStore.js';
 
 const noopLog = { info() {}, warn() {}, error() {} };
 const fakeSkill = (name: string) => ({ name, description: 'd', filePath: `/s/${name}.md` } as unknown as PluginSkill);
@@ -312,21 +311,21 @@ describe('PluginRegistry', () => {
     });
   });
 
-  // The operator's sub-agent context budget travels through a long positional wiring chain
-  // (bootstrap → loadPlugins → contextFor), which is exactly where a mis-ordered argument hides: the
-  // delegating plugin would silently keep its built-in default whatever the operator configured.
-  describe('ctx.delegateContextChars', () => {
+  // The operator's fork default travels through a long positional wiring chain (bootstrap → loadPlugins
+  // → contextFor), which is exactly where a mis-ordered argument hides: the delegating plugin would
+  // silently keep its own default whatever the operator configured.
+  describe('ctx.forkParentContext', () => {
     const U = undefined;
-    it('exposes the wired budget live, and falls back to the default without one', () => {
+    it('exposes the wired default live, and falls back to off without one', () => {
       const reg = new PluginRegistry();
-      let configured = 12_345;
+      let configured = true;
       const ctx = reg.contextFor('subagent', {}, noopLog, U, U, U, U, U, U, U, U, U, U, U, U, U, U,
         () => configured);
-      expect(ctx.delegateContextChars()).toBe(12_345);
-      configured = 8_000;
-      expect(ctx.delegateContextChars()).toBe(8_000); // read live, not captured at register time
-      expect(reg.contextFor('subagent', {}, noopLog).delegateContextChars())
-        .toBe(DEFAULT_BRAIN_LIMITS.delegateContextChars);
+      expect(ctx.forkParentContext()).toBe(true);
+      configured = false;
+      expect(ctx.forkParentContext()).toBe(false); // read live, not captured at register time
+      // Nothing wired at all is OFF, never on: an unconfigured host must not start forking by itself.
+      expect(reg.contextFor('subagent', {}, noopLog).forkParentContext()).toBe(false);
     });
   });
 

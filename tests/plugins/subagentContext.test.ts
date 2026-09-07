@@ -8,8 +8,8 @@ import {
 } from '../../src/brain/delegatedScope.js';
 
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
-const { delegateContextChunks } = await import(resolve(repoRoot, 'plugins/subagent/index.mjs')) as {
-  delegateContextChunks(raw: unknown, totalChars?: number): string[];
+const { dependencyContextChunks } = await import(resolve(repoRoot, 'plugins/subagent/index.mjs')) as {
+  dependencyContextChunks(raw: unknown, totalChars?: number): string[];
 };
 const limits = await import(resolve(repoRoot, 'plugins/subagent/lib/limits.mjs')) as {
   MAX_CONTEXT_CHUNK_CHARS: number;
@@ -27,24 +27,24 @@ const SCOPE_MAX_PROMPT_CHARS = 8_000;
 const SCOPE_MAX_PROMPT_CHUNKS = 16;
 const SCOPE_MAX_PROMPT_TOTAL_CHARS = 120_000;
 
-describe('delegateContextChunks', () => {
+describe('dependencyContextChunks', () => {
   it('returns nothing for empty, whitespace, or non-string input', () => {
-    expect(delegateContextChunks(undefined)).toEqual([]);
-    expect(delegateContextChunks('')).toEqual([]);
-    expect(delegateContextChunks('   \n  ')).toEqual([]);
-    expect(delegateContextChunks(42)).toEqual([]);
-    expect(delegateContextChunks(['', '  '])).toEqual([]);
+    expect(dependencyContextChunks(undefined)).toEqual([]);
+    expect(dependencyContextChunks('')).toEqual([]);
+    expect(dependencyContextChunks('   \n  ')).toEqual([]);
+    expect(dependencyContextChunks(42)).toEqual([]);
+    expect(dependencyContextChunks(['', '  '])).toEqual([]);
   });
 
   it('wraps real context in a labelled, self-contained block', () => {
-    const chunks = delegateContextChunks('The API base is /v2 and auth uses bearer tokens.');
+    const chunks = dependencyContextChunks('The API base is /v2 and auth uses bearer tokens.');
     expect(chunks).toHaveLength(1);
-    expect(chunks[0]).toContain('Context shared by the delegating agent');
+    expect(chunks[0]).toContain('Results handed over by the nodes this one depends on');
     expect(chunks[0]).toContain('The API base is /v2 and auth uses bearer tokens.');
   });
 
   it('clips oversized context to stay within the delegated-scope per-chunk bound', () => {
-    const chunks = delegateContextChunks('x'.repeat(40_000));
+    const chunks = dependencyContextChunks('x'.repeat(40_000));
     expect(chunks).toHaveLength(1);
     expect(chunks[0]!.length).toBeLessThan(SCOPE_MAX_PROMPT_CHARS);
     expect(chunks[0]).toContain('[truncated]');
@@ -55,11 +55,11 @@ describe('delegateContextChunks', () => {
   // away. Each part must get its own chunk, and only the first carries the header.
   it('gives every part its own chunk, with the header on the first one only', () => {
     const parts = ['briefing', 'result A', 'result B', 'result C'];
-    const chunks = delegateContextChunks(parts);
+    const chunks = dependencyContextChunks(parts);
     expect(chunks).toHaveLength(4);
-    expect(chunks[0]).toContain('Context shared by the delegating agent');
+    expect(chunks[0]).toContain('Results handed over by the nodes this one depends on');
     expect(chunks[0]).toContain('briefing');
-    for (const chunk of chunks.slice(1)) expect(chunk).not.toContain('Context shared by the delegating agent');
+    for (const chunk of chunks.slice(1)) expect(chunk).not.toContain('Results handed over by the nodes this one depends on');
     expect(chunks[1]).toBe('result A');
     expect(chunks[3]).toBe('result C');
   });
@@ -68,7 +68,7 @@ describe('delegateContextChunks', () => {
   // they would arrive as ~1 000 chars each. As separate chunks they fit whole.
   it('delivers five sizeable parts in full when the budget allows', () => {
     const parts = ['a', 'b', 'c', 'd', 'e'].map((id) => `${id}:${id.repeat(4_998)}`);
-    const chunks = delegateContextChunks(parts, MAX_CONTEXT_TOTAL_CHARS);
+    const chunks = dependencyContextChunks(parts, MAX_CONTEXT_TOTAL_CHARS);
     expect(chunks).toHaveLength(5);
     for (const chunk of chunks) expect(chunk).not.toContain('[truncated]');
     for (const [i, part] of parts.entries()) expect(chunks[i]).toContain(part);
@@ -76,7 +76,7 @@ describe('delegateContextChunks', () => {
 
   it('honours the operator-configured total budget', () => {
     const parts = ['a', 'b', 'c', 'd', 'e'].map((id) => `${id}:${id.repeat(4_998)}`);
-    const tight = delegateContextChunks(parts, 6_000);
+    const tight = dependencyContextChunks(parts, 6_000);
     const total = tight.reduce((n, chunk) => n + chunk.length, 0);
     expect(total).toBeLessThanOrEqual(6_500); // the budget plus the header/marker packaging
     // A tighter budget must not silently swallow parts: whatever survived is marked, whatever did not is counted.
@@ -89,11 +89,11 @@ describe('delegateContextChunks', () => {
   // child while still respecting the upper bound.
   it('falls back to the default budget for a malformed operator value', () => {
     const parts = ['a', 'b', 'c', 'd', 'e'].map((id) => `${id}:${id.repeat(4_998)}`);
-    const fallback = delegateContextChunks(parts, Number.NaN);
-    expect(fallback).toEqual(delegateContextChunks(parts, undefined));
-    // Four of the five 5 000-char parts fit the 20 000-char default; the fifth is reported as dropped.
-    expect(fallback).toHaveLength(4);
-    expect(fallback.at(-1)).toMatch(/further context block/);
+    const fallback = dependencyContextChunks(parts, Number.NaN);
+    expect(fallback).toEqual(dependencyContextChunks(parts, undefined));
+    // All five 5 000-char parts fit the 40 000-char engine constant, so nothing is reported as dropped.
+    expect(fallback).toHaveLength(5);
+    expect(fallback.at(-1)).not.toMatch(/further context block/);
     const total = fallback.reduce((n, chunk) => n + chunk.length, 0);
     expect(total).toBeLessThanOrEqual(DEFAULT_CONTEXT_TOTAL_CHARS + 500);
   });
@@ -102,7 +102,7 @@ describe('delegateContextChunks', () => {
   // the child would lose not just the overflow but the entire delegation.
   it('never breaches the delegated-scope bounds, whatever it is handed', () => {
     const parts = Array.from({ length: 40 }, (_, i) => `part-${i}:${'y'.repeat(9_000)}`);
-    const chunks = delegateContextChunks(parts, 1_000_000);
+    const chunks = dependencyContextChunks(parts, 1_000_000);
     expect(chunks.length).toBeLessThanOrEqual(limits.MAX_CONTEXT_CHUNKS);
     expect(chunks.length).toBeLessThan(SCOPE_MAX_PROMPT_CHUNKS);
     for (const chunk of chunks) expect(chunk.length).toBeLessThan(SCOPE_MAX_PROMPT_CHARS);
@@ -116,7 +116,7 @@ describe('delegateContextChunks', () => {
   // `.md` agent role push the assembled scope over the ceiling — and an invalid scope is not a shortened
   // child prompt, it is a child that never spawns. So assert the whole composition the host mints.
   it('composes with the role prompt and channel fragment into a scope the normalizer accepts', () => {
-    const context = delegateContextChunks(
+    const context = dependencyContextChunks(
       Array.from({ length: 12 }, (_, i) => `dependency-${i}:${'y'.repeat(9_000)}`),
       MAX_CONTEXT_TOTAL_CHARS,
     );

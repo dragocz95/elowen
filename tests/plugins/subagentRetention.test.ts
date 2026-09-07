@@ -122,8 +122,8 @@ interface WorkflowTool {
 const { registerWorkflow } = await import(resolve(repoRoot, 'plugins/subagent/lib/workflow.mjs')) as {
   registerWorkflow(ctx: unknown, getRun: unknown, helpers: unknown): void;
 };
-const { delegateContextChunks } = await import(resolve(repoRoot, 'plugins/subagent/index.mjs')) as {
-  delegateContextChunks(raw: unknown, totalChars?: number): string[];
+const { dependencyContextChunks } = await import(resolve(repoRoot, 'plugins/subagent/index.mjs')) as {
+  dependencyContextChunks(raw: unknown, totalChars?: number): string[];
 };
 
 function workflowHarness(dir: string, config?: Record<string, unknown>) {
@@ -155,13 +155,12 @@ function workflowHarness(dir: string, config?: Record<string, unknown>) {
     workflowEmitter: () => (u: { id: string }) => { snapshots.push(u); },
     listModels: async () => [],
     toolNames: () => ['Read'],
-    delegateContextChars: () => undefined,
   };
   registerWorkflow(ctx, () => run, {
     resolveDelegateTools: (_inherited: string[] | undefined, requested: string[] | undefined) =>
       (requested ? { allow: requested } : { allow: undefined }),
     principalOf: (identity: unknown) => (identity ? 'elowen:1' : null),
-    delegateContextChunks,
+    dependencyContextChunks,
   });
   const get = (name: string): WorkflowTool => {
     const found = tools.get(name);

@@ -69,9 +69,9 @@ export function resolveDelegateTools(inheritedAllow, requested, available) {
   return { allow: names };
 }
 const clip = (text, limit) => text.length <= limit ? text : `${text.slice(0, limit)}${TRUNCATION_MARKER}`;
-/** Format the parent-supplied context into the system-prompt chunks the child receives. The child cannot
- *  see the parent conversation, so this is how the delegating agent hands over what it already knows —
- *  saving the child from re-deriving it (and giving it a stable, cacheable prefix block).
+/** Format a workflow node's DEPENDENCY results into the system-prompt chunks it receives. A node cannot
+ *  see its siblings' conversations, so this is how a finished node's handover reaches the node waiting on
+ *  it — the one hand-over forking cannot replace, because a dependency is a sibling and not a parent.
  *
  *  Each part becomes its OWN chunk, so the per-chunk ceiling bounds a single dependency result instead of
  *  all of them joined: passing the whole context as one string is what left a five-way fan-in with ~13%
@@ -81,7 +81,7 @@ const clip = (text, limit) => text.length <= limit ? text : `${text.slice(0, lim
  *  that did not fit whole ends in `[truncated]`, and parts that did not fit at all are counted on the
  *  last chunk. The caller is expected to size its parts against `totalChars`; the budget enforced here is
  *  the backstop that keeps the scope valid. */
-export function delegateContextChunks(raw, totalChars) {
+export function dependencyContextChunks(raw, totalChars) {
   const parts = (Array.isArray(raw) ? raw : [raw])
     .map((part) => typeof part === 'string' ? part.trim() : '')
     .filter(Boolean);
@@ -430,12 +430,6 @@ export function register(ctx) {
     ].join(' '),
     parameters: Type.Object({
       task: Type.String({ description: 'The complete, self-contained instruction for the sub-agent — it does not see this conversation. Include all context, constraints and the output format you want back.' }),
-      context: Type.Optional(Type.String({
-        description: 'Relevant background YOU already know that the sub-agent would otherwise have to re-derive '
-          + '(findings from files you read, decisions, conventions, IDs). It is added to the sub-agent\'s system '
-          + 'prompt as a stable, cache-friendly block — pass it to save the sub-agent re-exploring and to cut cost. '
-          + 'Keep it to what matters for THIS task; the `task` field still carries the actual instruction.',
-      })),
       fork: Type.Optional(Type.Boolean({
         description: 'FORK this conversation instead of starting a clean one. The child begins with your entire '
           + 'context — the same system prompt, the same tools and every message so far — and your task text becomes '
@@ -551,7 +545,6 @@ export function register(ctx) {
       // The child inherits the delegating turn's working directory, so its tools resolve relative paths
       // against — and it advertises — the SAME project the parent runs in, never the daemon's `/`.
       const parentCwd = ctx.currentWorkDir?.();
-      const contextChunks = delegateContextChunks(p.context, ctx.delegateContextChars?.());
       const access = {
         ...parentAccess,
         ...(toolPolicy ? { toolPolicy } : {}),
@@ -575,8 +568,6 @@ export function register(ctx) {
         ...(fork ? { fork: true } : agentType
           ? { agentType }
           : { prompt: 'You are a focused sub-agent. Complete the task and report the result concisely — no preamble.' }),
-        // Optional parent-supplied background, added to the child's system-prompt prefix (cache-friendly).
-        ...(contextChunks.length ? { context: contextChunks } : {}),
       };
       const emit = ctx.subagentEmitter();
       const emitCompletion = ctx.subagentCompletionEmitter();
@@ -1169,7 +1160,7 @@ export function register(ctx) {
   // Workflow tools reuse the SAME captured `run` handler and the delegate access primitives, so a
   // workflow node spawns exactly like a delegation (never Orca). `run` is captured lazily on connect;
   // the engine reads it through the getter at execute time.
-  registerWorkflow(ctx, () => run, { resolveDelegateTools, principalOf, delegateContextChunks });
+  registerWorkflow(ctx, () => run, { resolveDelegateTools, principalOf, dependencyContextChunks });
 
   // ── Typed sub-agent editor API (root mounts, grandfathered core URLs): the catalog `.md` files are
   // core-owned (agentRegistry parses them for delegation), reached through the host's subagentCatalog

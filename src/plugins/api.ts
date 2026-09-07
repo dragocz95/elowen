@@ -1785,12 +1785,10 @@ export interface PluginContext {
    *  the server happens to be hosted. Falls back to the host's own zone when unset. Read live, so an
    *  operator changing it applies on the next call. */
   timezone(): string;
-  /** Total characters of parent-supplied context a plugin may attach to a delegated child (Settings →
-   *  Elowen AI → Limits). The delegating plugin owns HOW it spends the budget — how many chunks, and how
-   *  it divides them between a workflow node's dependencies — but the ceiling is the operator's, so
-   *  raising it does not mean editing a plugin. Read live, so a change applies on the next delegation
-   *  without a restart. Falls back to the configured default when nothing is wired. */
-  delegateContextChars(): number;
+  /** The instance default for forking a delegated child (Settings → Elowen AI → Sub-agents). It decides
+   *  what a `Delegate` call means when it says nothing about `fork`; an explicit flag on the call always
+   *  wins. Read live, so a change applies on the next delegation without a restart. */
+  forkParentContext(): boolean;
   /** Bridged MCP tool definitions handed down by the process that forked this one, or undefined when
    *  nothing was handed down (every normal daemon). Present ONLY in a sub-agent runner: the `mcp` plugin
    *  registers exactly these instead of connecting every configured server at boot, and connects a server

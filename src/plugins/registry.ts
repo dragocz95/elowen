@@ -22,7 +22,6 @@ import { bindingRef, resolveDelegatedWorkspace } from '../brain/workspaceScope.j
 import { processRegistry } from '../brain/processRegistry.js';
 import { subagentSessionId } from '../brain/sessionId.js';
 import type { AskAnswer } from '../brain/events.js';
-import { DEFAULT_BRAIN_LIMITS } from '../store/configStore.js';
 import type { WorkflowExpansionRpc } from '../subagent/hostRpc.js';
 import { isPluginAllowedForUser, type PluginAccessUser } from '../shared/pluginAccess.js';
 import { normalizeNotificationDestination } from './destinations.js';
@@ -917,7 +916,7 @@ export class PluginRegistry {
 
   /** Build the context passed to one plugin's `register()`. `config` is that plugin's own slice;
    *  `dataRoot` hosts per-plugin writable dirs (tests fall back to the OS tmpdir). */
-  contextFor(name: string, config: Record<string, unknown>, logger: PluginLogger, dataRoot?: string, notify?: (text: string, channelId?: string) => Promise<void>, listModels?: () => Promise<PluginModelOption[]>, resolveProvider?: (id: string) => ProviderCredentials | null, caps?: PluginCapabilities, provides?: PluginManifest['provides'], answerQuestion?: (id: string, answers: AskAnswer[]) => boolean, embedder?: PluginEmbedder, embeddingConfig?: () => EmbeddingConfig, allToolNames?: () => string[], timezone?: () => string, subagentTypes?: () => { name: string; description: string }[], requestReload?: () => void, allChatCommands?: () => PluginSlashCommand[], delegateContextChars?: () => number, delegatedChildren?: DelegatedChildBridge, mcpBridgeSnapshot?: McpBridgeSnapshot, delegatedTurnsOutOfProcess?: () => boolean, delegatedWorkflowExpansionAvailable?: () => boolean, workflowExpansionRpc?: WorkflowExpansionRpc, pluginDb?: (plugin: string) => PluginDb, publishEvent?: (e: ElowenEvent) => void, host?: PluginHostWiring, subscribeEvents?: (fn: (e: ElowenEvent) => void) => () => void, resolveControl?: <K extends keyof KnownControls>(name: K) => KnownControls[K] | undefined, deleteEvents?: (target: string) => void): PluginContext {
+  contextFor(name: string, config: Record<string, unknown>, logger: PluginLogger, dataRoot?: string, notify?: (text: string, channelId?: string) => Promise<void>, listModels?: () => Promise<PluginModelOption[]>, resolveProvider?: (id: string) => ProviderCredentials | null, caps?: PluginCapabilities, provides?: PluginManifest['provides'], answerQuestion?: (id: string, answers: AskAnswer[]) => boolean, embedder?: PluginEmbedder, embeddingConfig?: () => EmbeddingConfig, allToolNames?: () => string[], timezone?: () => string, subagentTypes?: () => { name: string; description: string }[], requestReload?: () => void, allChatCommands?: () => PluginSlashCommand[], forkParentContext?: () => boolean, delegatedChildren?: DelegatedChildBridge, mcpBridgeSnapshot?: McpBridgeSnapshot, delegatedTurnsOutOfProcess?: () => boolean, delegatedWorkflowExpansionAvailable?: () => boolean, workflowExpansionRpc?: WorkflowExpansionRpc, pluginDb?: (plugin: string) => PluginDb, publishEvent?: (e: ElowenEvent) => void, host?: PluginHostWiring, subscribeEvents?: (fn: (e: ElowenEvent) => void) => () => void, resolveControl?: <K extends keyof KnownControls>(name: K) => KnownControls[K] | undefined, deleteEvents?: (target: string) => void): PluginContext {
     const scoped: PluginLogger = {
       info: (m) => logger.info(`[plugin:${name}] ${m}`),
       warn: (m) => logger.warn(`[plugin:${name}] ${m}`),
@@ -1446,7 +1445,7 @@ export class PluginRegistry {
       // The operator's configured zone; invalid legacy config must not crash a prompt or scheduler.
       // Fall back to the server zone and warn once per bad value for this plugin generation.
       timezone: liveTimezone,
-      delegateContextChars: () => delegateContextChars?.() ?? DEFAULT_BRAIN_LIMITS.delegateContextChars,
+      forkParentContext: () => forkParentContext?.() ?? false,
       // Absent, not undefined, when nothing was handed down: the `mcp` plugin branches on presence, and
       // "the daemon told us it bridges nothing" (an empty array) must stay distinguishable from "nobody
       // told us anything" (a plain daemon, which connects at boot).
