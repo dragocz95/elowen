@@ -365,6 +365,42 @@ describe('web transcript reducer', () => {
     expect(collectSubagents(live.turns)).toEqual([settled]);
   });
 
+  // The agents table shows one row per child, but a child can hold two calls at once: the Delegate still
+  // working, and a DelegateContinue whose message was steered into that running turn and which therefore
+  // returns within a second with no model and no elapsed time. Latest-call-wins made that stub speak for
+  // the whole sub-agent — the row the CLI rail showed frozen as running on 7 Sep.
+  it('lets the working delegation speak for a child whose steered follow-up already returned', () => {
+    const CHILD = 'brain-ch-subagent-steer';
+    const main = { sessionId: CHILD, status: 'running' as const, task: 'redesign the panel', tools: 12, seconds: 400, model: 'claude-opus-5' };
+    const steer = { sessionId: CHILD, status: 'done' as const, task: 'Owner decision (19:10)', tools: 0, seconds: 1 };
+    let view = fromHistory([{ role: 'assistant', text: '', segments: [
+      { kind: 'tool', id: 'delegate-1', name: 'Delegate' },
+      { kind: 'tool', id: 'continue-1', name: 'DelegateContinue' },
+    ] }]);
+    view = reduce(view, { type: 'subagent', id: 'delegate-1', ...main });
+    view = reduce(view, { type: 'subagent', id: 'continue-1', ...steer });
+
+    expect(collectSubagents(view.turns)).toEqual([main]);
+
+    // …and once the delegation itself ends, nothing on the child is running any more, so the child is
+    // reported finished — on its newest call, exactly as the CLI rail and the daemon resolve it.
+    view = reduce(view, { type: 'subagent', id: 'delegate-1', ...main, status: 'done', tools: 18, seconds: 900 });
+    expect(collectSubagents(view.turns)).toEqual([steer]);
+  });
+
+  it('reports a child running when a recovering continuation follows a finished delegation', () => {
+    // 4 Sep: the newer run arrives as a PREPENDED synthetic anchor, so the older finished row is scanned
+    // last — and last-wins reported a working sub-agent as done.
+    const CHILD = 'brain-ch-subagent-recover';
+    const continued = { sessionId: CHILD, status: 'running' as const, task: 'continue: fix the blockers', tools: 3, seconds: 60 };
+    const view = fromHistory([
+      { role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'continue-2', name: 'DelegateContinue', sub: continued }] },
+      { role: 'assistant', text: '', segments: [{ kind: 'tool', id: 'delegate-2', name: 'Delegate', sub: { sessionId: CHILD, status: 'done', task: 'first ask', tools: 40, seconds: 900 } }] },
+    ]);
+
+    expect(collectSubagents(view.turns)).toEqual([continued]);
+  });
+
   it('ignores an unknown post-idle sub-agent id without creating a turn', () => {
     const before = fromHistory([{ role: 'assistant', text: 'settled' }]);
     const after = reduce(before, {

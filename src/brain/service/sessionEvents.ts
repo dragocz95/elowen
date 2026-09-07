@@ -73,16 +73,6 @@ function recordDisplayMarker(
  *  brain_subagent_runs row; the marker only needs enough to recognise which delegation just finished. */
 const SUBAGENT_MARKER_TASK_MAX = 80;
 
-/** A DelegateContinue tool emits its own terminal progress row after a successful mid-turn steer. That row
- * describes the SHORT continuation call, not the child turn it steered into: while the actual delegated
- * call still holds its lifecycle claim, showing/persisting `done` makes the UI mark the child complete and
- * then "restart" on its next real progress event. Keep it visibly running until the call claim ends. */
-export function visibleSubagentUpdate(update: SubagentUpdate, delegatedCallRunning: boolean): SubagentUpdate {
-  return delegatedCallRunning && (update.status === 'done' || update.status === 'error')
-    ? { ...update, status: 'running' }
-    : update;
-}
-
 /** Longest title carried in a workflow marker's detail. The full title lives on the durable
  *  brain_workflows snapshot; the marker only needs enough to recognise which DAG just finished. */
 const WORKFLOW_MARKER_TITLE_MAX = 80;

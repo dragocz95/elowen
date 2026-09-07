@@ -5491,7 +5491,7 @@ describe('sub-agent session tap + owner steering', () => {
     expect((await svc.tapSessionSnapshot(1, 'brain-1', () => {})).snapshot.goal).toBeNull();
   });
 
-  it('keeps a steered continuation visibly running until the child\'s actual call claim ends', async () => {
+  it('settles a steered continuation\'s own row while the delegation it steered into keeps the child running', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
@@ -5500,35 +5500,45 @@ describe('sub-agent session tap + owner steering', () => {
     const sessions = (svc as unknown as {
       sessions: {
         setChildRunning(parent: string, child: string, running: boolean, source?: 'call' | 'progress'): void;
+        hasActiveChildren(parent: string): boolean;
       };
     }).sessions;
+    const rowOf = (toolCallId: string) => d.store.getSubagentRuns('brain-1').find((run) => run.toolCallId === toolCallId);
     d.session.prompt.mockImplementationOnce(async () => {
       sessions.setChildRunning('brain-1', child, true, 'call');
       const emit = currentSubagentEmitter();
+      emit?.({ id: 'delegate-1', sessionId: child, status: 'running', task: 'the real job', tools: 4, seconds: 300 });
       emit?.({ id: 'continue-1', sessionId: child, status: 'running', task: 'continue', tools: 0, seconds: 0 });
       // DelegateContinue itself just settled, but the original delegated call is still in flight.
       emit?.({ id: 'continue-1', sessionId: child, status: 'done', task: 'continue', tools: 0, seconds: 0 });
     });
 
     await svc.send({ userId: 1, text: 'steer it' });
-    expect(d.store.getSubagentRuns('brain-1').find((run) => run.sessionId === child)?.status).toBe('running');
-    // The visible row stays running under the original child call, but the DelegateContinue call itself has
-    // finished. Recovery reads lifecycle, not the display projection, so a restart must not respawn it.
+    // Each row is its own call's honest record: the follow-up returned, the delegation did not. Recording
+    // the follow-up as still running (so a per-child view would not mark the child complete) is what left
+    // it frozen on the rail and in the model's reminder — nothing ever emits for that call again.
+    expect(rowOf('continue-1')).toMatchObject({ status: 'done' });
+    expect(rowOf('delegate-1')).toMatchObject({ status: 'running' });
+    // The child itself is untouched: still claimed live, so stop/abort/shutdown all still see it.
+    expect(sessions.hasActiveChildren('brain-1')).toBe(true);
+    expect(d.store.activeDelegationChildIds('brain-1')).toContain(child);
+    // Recovery reads lifecycle, not the display projection, so a restart must not respawn the follow-up.
     expect((d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'continue-1'").get() as { lifecycle: string }).lifecycle).toBe('done');
     const restarted = new BrainService(d as never);
     bootRecovery(restarted).claimAll();
     expect((d.db.prepare("SELECT lifecycle FROM brain_subagent_runs WHERE tool_call_id = 'continue-1'").get() as { lifecycle: string }).lifecycle).toBe('done');
     expect(d.store.pendingSubagentResults('brain-1')).toEqual([]);
 
-    // Once the actual call claim ends, the child's own terminal progress is terminal again.
-    sessions.setChildRunning('brain-1', child, false, 'call');
+    // And when the delegation itself ends, so does the child.
     d.session.prompt.mockImplementationOnce(async () => {
       currentSubagentEmitter()?.({
-        id: 'continue-1', sessionId: child, status: 'done', task: 'continue', tools: 0, seconds: 1,
+        id: 'delegate-1', sessionId: child, status: 'done', task: 'the real job', tools: 9, seconds: 900,
       });
+      sessions.setChildRunning('brain-1', child, false, 'call');
     });
     await svc.send({ userId: 1, text: 'observe completion' });
-    expect(d.store.getSubagentRuns('brain-1').find((run) => run.sessionId === child)?.status).toBe('done');
+    expect(rowOf('delegate-1')).toMatchObject({ status: 'done' });
+    expect(d.store.activeDelegationChildIds('brain-1')).not.toContain(child);
   });
 
   it('persists delegated child state across reconnect and keeps post-parent-idle completion on the original tool row', async () => {

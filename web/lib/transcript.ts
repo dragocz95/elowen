@@ -496,18 +496,36 @@ function attachToToolInTurns(
   return false;
 }
 
-/** Collect the delegated sub-agents across the whole transcript (one per child session, latest state
- *  wins) — the source for the agents table + drill-in. Mirrors the CLI's `subagentStates()` scan. */
+/** Collect the delegated sub-agents across the whole transcript, one row per child session — the source
+ *  for the agents table + drill-in. Mirrors the CLI's `subagentStates()` scan and the daemon's
+ *  `preferChildRun`.
+ *
+ *  A child can hold SEVERAL calls at once: the Delegate that is still working plus a DelegateContinue
+ *  whose message was steered into that running turn, which returns within a second carrying neither the
+ *  child's model nor its elapsed time. Latest-state-wins per CHILD let whichever call was rendered last
+ *  speak for the whole sub-agent, so a still-running call is preferred here and a terminal one speaks
+ *  only when no call on that child is running. Per CALL it stays latest-wins: one tool call id can appear
+ *  twice (a synthetic running anchor and the real row it re-attaches to) and only the later one is current. */
 export function collectSubagents(turns: ChatTurn[]): SubagentState[] {
-  const byId = new Map<string, SubagentState>();
-  for (const turn of turns) {
+  const byCall = new Map<string, SubagentState>();
+  for (let ti = 0; ti < turns.length; ti++) {
+    const turn = turns[ti]!;
     if (turn.role !== 'elowen') continue;
-    for (const seg of turn.segments) {
+    for (let si = 0; si < turn.segments.length; si++) {
+      const seg = turn.segments[si]!;
       if (seg.kind !== 'tools') continue;
-      for (const item of seg.items) if (item.sub?.sessionId) byId.set(item.sub.sessionId, item.sub);
+      for (let ii = 0; ii < seg.items.length; ii++) {
+        const item = seg.items[ii]!;
+        if (item.sub?.sessionId) byCall.set(item.id ?? `at:${ti}:${si}:${ii}`, item.sub);
+      }
     }
   }
-  return [...byId.values()];
+  const bySession = new Map<string, SubagentState>();
+  for (const sub of byCall.values()) {
+    const speaking = bySession.get(sub.sessionId);
+    if (!speaking || sub.status === 'running' || speaking.status !== 'running') bySession.set(sub.sessionId, sub);
+  }
+  return [...bySession.values()];
 }
 
 /** Collect the workflows across the whole transcript (one per workflow id, latest state wins) — the

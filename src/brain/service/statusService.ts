@@ -16,6 +16,7 @@ import type { ElicitationRegistry } from '../elicitation.js';
 import type { CardRegistry } from '../cards.js';
 import { isNonUserSession, isChannelSession, channelIdOf, platformOfSession, defaultUserSessionId } from '../sessionId.js';
 import { terminalizeWorkflow } from '../workflowRuns.js';
+import { preferChildRun } from '../subagentRuns.js';
 import { withTimeout } from '../../shared/withTimeout.js';
 import type { BrainDeps } from '../brainDeps.js';
 import type { ClientAttachments } from './attachments.js';
@@ -264,24 +265,24 @@ export class BrainStatusService {
       ...this.d.sessions.childrenOf(sessionId),
       ...this.d.store.activeDelegationChildIds(sessionId),
     ]);
-    // ONE state per child: the NEWEST run row (by insertion, never updated_at) that the liveness filter
-    // KEEPS. A child continued after it finished (DelegateContinue, or a boot-claimed recovery of that
-    // continuation) has two rows, and every client projects sub-agent state by child session — two rows
-    // for one child is two voices, and whichever the client applied last won (a prepended synthetic
-    // anchor for the running row lost to the older row's terminal chip later in the page: a working
-    // sub-agent shown as done). Filtering FIRST matters: a newer row whose display state is still
-    // `running` while its lifecycle is long terminal (its final upsert never landed) is exactly what the
-    // filter hides, and hiding it must not take the older finished row down with it — the child was
-    // finished, and that is what the page should say.
+    // ONE state per child, chosen among the rows the liveness filter KEEPS — see preferChildRun for why a
+    // still-running call outranks one that returned. A child continued after it finished, or steered
+    // mid-turn, holds a row per call, and every client projects sub-agent state by child session: two
+    // rows for one child is two voices, and whichever the client applied last won (a prepended synthetic
+    // anchor for the running row lost to the older row's terminal chip later in the page — a working
+    // sub-agent shown as done). Filtering FIRST matters: a row whose display state is still `running`
+    // while its lifecycle is long terminal (its final upsert never landed) is exactly what the filter
+    // hides, and hiding it must not take a finished sibling row down with it — the child was finished,
+    // and that is what the page should say.
     const runs = this.d.store.getSubagentRuns(sessionId);
-    const newest = new Map<string, BrainSubagentRun>();
+    const speaking = new Map<string, BrainSubagentRun>();
     for (const run of runs) {
       if (run.status === 'running' && !active.has(run.sessionId)) continue;
-      const current = newest.get(run.sessionId);
-      if (!current || run.rowid > current.rowid) newest.set(run.sessionId, run);
+      const current = speaking.get(run.sessionId);
+      speaking.set(run.sessionId, current ? preferChildRun(current, run) : run);
     }
     // The store's own order (updated_at) is what every other consumer sees; keep it here too.
-    return runs.filter((run) => newest.get(run.sessionId) === run);
+    return runs.filter((run) => speaking.get(run.sessionId) === run);
   }
 
   /** The conversation's durable DAGs. Same read-time fallback as subagentRuns, but a TRANSFORM rather than
