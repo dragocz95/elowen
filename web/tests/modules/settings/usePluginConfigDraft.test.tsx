@@ -56,6 +56,21 @@ describe('usePluginConfigDraft', () => {
     expect(result.current.errorKind).toBe('validation');
   });
 
+  it('still saves another field while a legacy stored number sits outside the manifest range', async () => {
+    mutateAsync.mockResolvedValue({ ok: true });
+    const detail = pluginDetail([
+      { key: 'maxAssetMb', label: 'Largest file', type: 'number', min: 1, max: 64 },
+      { key: 'streaming', label: 'Streaming', type: 'boolean' },
+    ], { maxAssetMb: 512, streaming: false });
+    const { result } = renderHook(() => usePluginConfigDraft('test-plugin', detail));
+
+    act(() => result.current.setValue('streaming', true));
+    await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+
+    expect(mutateAsync).toHaveBeenCalledWith(expect.objectContaining({ values: { maxAssetMb: 512, streaming: true } }));
+    expect(result.current.status).not.toBe('error');
+  });
+
   it('reads a 400 from the daemon as a validation error, not a transport failure', async () => {
     mutateAsync.mockRejectedValue(new ElowenApiError('invalid value for "maxAssetMb": must be at most 64', 400));
     const detail = pluginDetail([{ key: 'maxAssetMb', label: 'Largest file', type: 'number' }], { maxAssetMb: 8 });

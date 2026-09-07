@@ -27,18 +27,22 @@ export function numberOutOfBounds(field: PluginConfigField, value: unknown): boo
   return false;
 }
 
-function sanitizeConfig(values: Record<string, unknown>, schema: readonly PluginConfigField[], includeSecrets: ReadonlySet<string> = new Set(), validateJson = true): Record<string, unknown> {
+/** `validateAgainst` is the last persisted snapshot: like the daemon, a value is validated only when it
+ *  differs from what is stored, so a legacy out-of-range value never blocks saving the other fields.
+ *  Omit it to build a baseline without validating. */
+function sanitizeConfig(values: Record<string, unknown>, schema: readonly PluginConfigField[], includeSecrets: ReadonlySet<string> = new Set(), validateAgainst?: Record<string, unknown>): Record<string, unknown> {
   const jsonKeys = new Set(schema.filter((field) => field.type === 'json').map((field) => field.key));
   const secretKeys = new Set(schema.filter((field) => field.type === 'secret').map((field) => field.key));
   const numberFields = new Map(schema.filter((field) => field.type === 'number').map((field) => [field.key, field]));
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(values)) {
     if (secretKeys.has(key) && !includeSecrets.has(key)) continue;
-    if (validateJson && jsonKeys.has(key) && typeof value === 'string' && value.trim() !== '') {
+    const changed = validateAgainst !== undefined && !Object.is(value, validateAgainst[key]);
+    if (changed && jsonKeys.has(key) && typeof value === 'string' && value.trim() !== '') {
       try { JSON.parse(value); } catch { throw new PluginConfigValidationError(`Invalid JSON in ${key}`); }
     }
     const numberField = numberFields.get(key);
-    if (numberField && numberOutOfBounds(numberField, value)) throw new PluginConfigValidationError(`Out-of-range value in ${key}`);
+    if (changed && numberField && numberOutOfBounds(numberField, value)) throw new PluginConfigValidationError(`Out-of-range value in ${key}`);
     out[key] = value;
   }
   return out;
@@ -95,13 +99,13 @@ export function usePluginConfigDraft(
   // Config PATCHes are full snapshots. Serialize them so a slow older response can never land after a
   // newer one and roll the server back while the UI reports the latest generation as saved.
   const saveChain = useRef<Promise<void>>(Promise.resolve());
-  const lastPersisted = useRef<Record<string, unknown>>(sanitizeConfig(detail.config, detail.configSchema, new Set(), false));
+  const lastPersisted = useRef<Record<string, unknown>>(sanitizeConfig(detail.config, detail.configSchema));
 
   useEffect(() => {
     if (seededName === name) return;
     setValues(detail.config);
     revision.current = detail.revision;
-    lastPersisted.current = sanitizeConfig(detail.config, detail.configSchema, new Set(), false);
+    lastPersisted.current = sanitizeConfig(detail.config, detail.configSchema);
     setConflict(null);
     setErrorKind(null);
     setSeededName(name);
@@ -134,7 +138,7 @@ export function usePluginConfigDraft(
     if (typeof result.revision === 'number') revision.current = result.revision;
     if (!result.config || typeof result.config !== 'object' || Array.isArray(result.config)) return;
     const canonical = result.config as Record<string, unknown>;
-    lastPersisted.current = sanitizeConfig(canonical, detail.configSchema, new Set(), false);
+    lastPersisted.current = sanitizeConfig(canonical, detail.configSchema);
     setValues((current) => current === snapshot ? canonical : current);
   };
   const queueSave = (snapshot: Record<string, unknown>): Promise<unknown> => {
@@ -151,7 +155,7 @@ export function usePluginConfigDraft(
     [values],
     async () => {
       let snapshot: Record<string, unknown>;
-      try { snapshot = sanitizeConfig(values, detail.configSchema); }
+      try { snapshot = sanitizeConfig(values, detail.configSchema, new Set(), lastPersisted.current); }
       catch (error) { setErrorKind(classifyError(error)); throw error; }
       if (sameSnapshot(snapshot, lastPersisted.current)) return;
       setErrorKind(null);
@@ -173,7 +177,7 @@ export function usePluginConfigDraft(
     if (!conflict) return;
     const next = choice === 'reload' ? conflict.config : { ...conflict.config, ...values };
     revision.current = conflict.revision;
-    lastPersisted.current = sanitizeConfig(conflict.config, detail.configSchema, new Set(), false);
+    lastPersisted.current = sanitizeConfig(conflict.config, detail.configSchema);
     setValues(next);
     setConflict(null);
     setErrorKind(null);
@@ -192,7 +196,7 @@ export function usePluginConfigDraft(
     setErrorKind(null);
     let response: unknown;
     try {
-      response = await queueSave(sanitizeConfig(next, detail.configSchema, isSecret ? new Set([key]) : new Set()));
+      response = await queueSave(sanitizeConfig(next, detail.configSchema, isSecret ? new Set([key]) : new Set(), lastPersisted.current));
     } catch (error) {
       adoptConflictRevision(error);
       setErrorKind(classifyError(error));
@@ -202,7 +206,7 @@ export function usePluginConfigDraft(
       && response.config && typeof response.config === 'object' && !Array.isArray(response.config)
       ? response.config as Record<string, unknown> : next;
     if (response && typeof response === 'object' && 'revision' in response && typeof response.revision === 'number') revision.current = response.revision;
-    lastPersisted.current = sanitizeConfig(canonical, detail.configSchema, new Set(), false);
+    lastPersisted.current = sanitizeConfig(canonical, detail.configSchema);
     setValues((current) => {
       if (isSecret) {
         if (current === base) {
