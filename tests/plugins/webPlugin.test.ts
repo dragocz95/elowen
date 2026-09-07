@@ -12,6 +12,7 @@ let importNonce = 0;
 interface ToolResult { content: { text: string }[]; details?: Record<string, unknown> }
 interface Tool {
   name: string;
+  description: string;
   parameters: { required?: string[]; properties?: Record<string, Record<string, unknown>>; additionalProperties?: boolean };
   execute: (id: string, params: unknown, signal?: AbortSignal) => Promise<ToolResult>;
 }
@@ -109,6 +110,45 @@ describe('web plugin Fable-compatible payloads', () => {
     });
     expect(fetchTool.parameters.additionalProperties).toBe(false);
   });
+
+  it('tells the model to prefer an MCP fetch tool and warns about authenticated URLs', async () => {
+    const { fetchTool } = await mount({});
+    expect(fetchTool.description).toContain(
+      'IMPORTANT: If an MCP-provided web fetch tool is available, prefer using that tool instead of this one, as it may have fewer restrictions.',
+    );
+    expect(fetchTool.description).toContain('WebFetch WILL FAIL for authenticated or private URLs');
+    expect(fetchTool.description).toContain('For GitHub URLs, prefer using the gh CLI via Bash instead');
+  });
+
+  it('makes the Sources section a mandatory requirement in the WebSearch description', async () => {
+    const { search } = await mount({});
+    expect(search.description).toContain('CRITICAL REQUIREMENT - You MUST follow this:');
+    expect(search.description).toContain('you MUST include a "Sources:" section at the end of your response');
+    expect(search.description).toContain('as markdown hyperlinks: [Title](URL)');
+    expect(search.description).toContain('This is MANDATORY - never skip including sources in your response');
+  });
+});
+
+describe('web plugin WebSearch recency guidance', () => {
+  afterEach(() => { vi.unstubAllGlobals(); vi.useRealTimers(); });
+
+  it('renders the current month and year from the instance clock and follows it', async () => {
+    const { searchDateGuidance } = await import(`${pluginEntry}?test=${importNonce++}`) as {
+      searchDateGuidance: (now?: Date) => string;
+    };
+    expect(searchDateGuidance(new Date('2026-09-07T12:00:00Z'))).toContain('The current month is September 2026.');
+    expect(searchDateGuidance(new Date('2027-01-15T12:00:00Z'))).toContain('The current month is January 2027.');
+  });
+
+  it('appends the year guidance to every search result', async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-09-07T12:00:00Z'));
+    const { search } = await mount({ serperApiKey: 'serper-key' }, SERPER_BODY);
+    const text = textOf(await search.execute('t', { query: 'anything' }));
+    expect(text).toContain('IMPORTANT - Use the correct year in search queries:');
+    expect(text).toContain('The current month is September 2026.');
+    expect(text).toContain('NOT last year');
+  });
 });
 
 describe('web plugin WebSearch backends', () => {
@@ -123,7 +163,7 @@ describe('web plugin WebSearch backends', () => {
     expect(calls[0]!.url).toBe('https://google.serper.dev/search');
     expect(calls[0]!.init.headers['x-api-key']).toBe('serper-key');
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ q: 'meaning of life', num: 2, gl: 'us' });
-    expect(text).toMatch(/^- First hit\n {2}https:\/\/example\.com\/a\n {2}Alpha snippet$/);
+    expect(text).toMatch(/^- First hit\n {2}https:\/\/example\.com\/a\n {2}Alpha snippet\n\nIMPORTANT - Use the correct year/);
     expect(text).not.toContain('42');
   });
 
@@ -209,7 +249,7 @@ describe('web plugin WebSearch backends', () => {
 
     expect(calls[0]!.url).toBe('https://api.tavily.com/search');
     expect(JSON.parse(String(calls[0]!.init.body))).toEqual({ api_key: 'tavily-key', query: 'anything', max_results: 3, include_answer: false });
-    expect(text).toMatch(/^- T\n {2}https:\/\/t\.example\n {2}Tavily snippet$/);
+    expect(text).toMatch(/^- T\n {2}https:\/\/t\.example\n {2}Tavily snippet\n\nIMPORTANT - Use the correct year/);
     expect(text).not.toContain('Tavily answer');
   });
 
@@ -408,6 +448,24 @@ describe('web plugin WebFetch pipeline', () => {
     expect(text).toContain('HTTP 503');
     expect(cancellations.map((entry) => entry.url)).toEqual([url]);
     expect(inferenceCalls).toHaveLength(0);
+  });
+
+  it('follows a redirect that only adds or drops a leading www.', async () => {
+    const seen: string[] = [];
+    const { fetchTool, inferenceCalls } = await mount({}, undefined, async (url) => {
+      const value = String(url);
+      seen.push(value);
+      if (value === 'https://example.test/page') {
+        return new Response('', { status: 301, headers: { location: 'https://www.example.test/page' } });
+      }
+      return new Response('<p>Arrived</p>', { status: 200, headers: { 'content-type': 'text/html' } });
+    });
+
+    const text = textOf(await fetchTool.execute('f', { url: 'https://example.test/page', prompt: 'Summarize' }));
+
+    expect(seen).toEqual(['https://example.test/page', 'https://www.example.test/page']);
+    expect(text).not.toContain('REDIRECT DETECTED');
+    expect(inferenceCalls).toHaveLength(1);
   });
 
   it('treats a port change as a cross-host redirect', async () => {
