@@ -377,6 +377,13 @@ placeholder reaches the stored transcript without any rewrite — and *additiona
 trigger for old, already-seen results once the prompt cache has gone cold anyway
 (`coldToolResultClearing.ts`), which Claude Code's version doesn't describe.
 
+**Known limitation.** A spilled result is reachable by the MODEL only. The placeholder names a path inside
+the conversation's own spill directory, which the path guard lets that session read with the Read tool;
+there is no web or API route that serves it. A user who wants the full output therefore has to ask the
+agent to read the file back. The same holds for a tool's complete output stored through
+`ctx.persistToolOutput`. Images are never spilled: clearing replaces the text and leaves every other block
+in place, so a picture a tool returned still renders in the transcript.
+
 **Verdict: SKIP — already adopted, and extended.** This finding exists mainly to confirm the port was done
 correctly (thresholds and preview size match) and to note Elowen went one step further with the idle/cache-
 aware clearing trigger. No action.

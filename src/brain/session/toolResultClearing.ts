@@ -94,8 +94,9 @@ export const KEEP_USER_TURNS = 2;
  *  replaces. */
 export const TURN_START_KEEP_USER_TURNS = KEEP_USER_TURNS - 1;
 
-/** Identity of ONE toolResult occurrence in the history: the model-minted id PLUS the message's own
- *  from an old enough build may predate that, and a hook upstream could hand anything through. */
+/** The message's own timestamp — the second half of a toolResult occurrence's identity, the id being the
+ *  first. 0 when it carries none: a message from an old enough build may predate the field, and a hook
+ *  upstream could hand anything through. */
 function messageOccurredAt(message: ToolResultMessage): number {
   const at = (message as { timestamp?: unknown }).timestamp;
   return typeof at === 'number' && Number.isFinite(at) && at > 0 ? at : 0;
@@ -109,16 +110,16 @@ export function toolResultSpillPath(spillDir: string, toolCallId: string, descri
   return join(spillDir, `${fsSafeSegment(toolCallId)}.${SPILL_NAME_VERSION}-${descriptor.mode}-${descriptor.bytes}.txt`);
 }
 
-/** What a restored latch needs that the spill CONTENT cannot supply. `bytes` is the sum of the individual
- *  text blocks' byte lengths, while the file holds those blocks joined by '\n' — so for an n-block result
- *  the file is n-1 bytes larger and the number cannot be recovered by measuring it. `mode` decides which
- *  placeholder wording was used. Both are therefore carried in the FILE NAME, which makes the spill write
- *  a single atomic operation that persists content and metadata together: there is no window in which one
- *  exists without the other, and no second store to keep in sync.
+/** What the spill FILE NAME carries beyond the content. `bytes` is the sum of the individual text blocks'
+ *  byte lengths, while the file holds those blocks joined by '\n' — so for an n-block result the file is
+ *  n-1 bytes larger and the number cannot be recovered by measuring it. `mode` says which placeholder
+ *  wording was used. Putting both in the name makes the spill a single atomic write that persists the
+ *  content and its metadata together: there is no window in which one exists without the other, and no
+ *  second store to keep in sync.
  *
  *  Version prefix on purpose: the v1 rules include the preview length and the placeholder wording. A future
- *  change to either must mint v2 rather than reinterpret v1 names, because a restored latch has to rebuild
- *  the placeholder BYTE-IDENTICALLY or it defeats its own purpose. */
+ *  change to either must mint v2 rather than reinterpret v1 names — the store's own migrations rebuild v1
+ *  placeholders from these names and have to reproduce them byte for byte. */
 export interface SpillDescriptor { mode: 'time' | 'preview'; bytes: number }
 
 const SPILL_NAME_VERSION = 'v1';
@@ -278,7 +279,8 @@ export function clearedToolResultContent<T extends { type: string }>(
 }
 
 /** The exact text a spill file holds for a result: its text blocks joined by '\n'. Single source of truth
- *  for the write and the restore comparison — if these two ever disagreed, no latch would ever restore. */
+ *  for what the cold pass writes and for the byte-identity check that adopts an existing file at the same
+ *  path — if the two ever disagreed, a second pass would refuse every adoption and clear nothing. */
 export function toolResultText(message: ToolResultMessage): string {
   return (Array.isArray(message.content) ? message.content : [])
     .filter((block: ContentBlock): block is Extract<ContentBlock, { type: 'text' }> => block.type === 'text')

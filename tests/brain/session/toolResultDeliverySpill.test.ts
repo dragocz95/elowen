@@ -100,17 +100,39 @@ describe('the afterToolCall wrapper', () => {
   }) as never;
 
   /** PI replaces the WHOLE tool result with an error string when `afterToolCall` throws, so a failing
-   *  spill would not merely leave the output unspilled — it would destroy it. */
+   *  spill would not merely leave the output unspilled — it would destroy it. What this covers is THIS
+   *  module's own work: everything from reading the content to writing the file. A throw from the INNER
+   *  hook is deliberately left to propagate — that is PI's existing contract for those hooks — and the
+   *  two paths that never reach this hook at all (PI's `immediate` preparations and a batch failed after
+   *  a truncated assistant message) are covered by the cold turn-start pass instead. */
   it('never throws, whatever the decision does', async () => {
-    const session = { agent: { afterToolCall: async () => ({ content: text(10) }) } } as never;
+    const session = { agent: {} } as never;
     installToolResultDeliverySpill(session, 'sess-1', {
       spillDir: DIR,
       writeSpill: async () => { throw new Error('ENOSPC'); },
     });
     const hook = (session as { agent: { afterToolCall: (i: unknown) => Promise<unknown> } }).agent.afterToolCall;
-    // A content array whose length getter throws takes the decision itself down, not just the write.
+    // A content array whose length getter throws takes the decision itself down, not just the write. With
+    // no inner hook to replace it, this really is what the decision runs on.
     const hostile = new Proxy([], { get: (target, key) => { if (key === 'length') throw new Error('boom'); return Reflect.get(target, key); } });
-    await expect(hook(input(hostile))).resolves.toEqual({ content: text(10) });
+    await expect(hook(input(hostile))).resolves.toBeUndefined(); // undefined = PI keeps the executed result
+    // …and with a healthy inner hook in front of it, that hook's result comes back untouched.
+    const wrapped = { agent: { afterToolCall: async () => ({ content: text(10) }) } } as never;
+    installToolResultDeliverySpill(wrapped, 'sess-1', {
+      spillDir: DIR,
+      writeSpill: async () => { throw new Error('ENOSPC'); },
+    });
+    const wrappedHook = (wrapped as { agent: { afterToolCall: (i: unknown) => Promise<unknown> } }).agent.afterToolCall;
+    await expect(wrappedHook(input(hostile))).resolves.toEqual({ content: text(10) });
+  });
+
+  /** The inner hook's throw is PI's contract, not this module's to swallow: a `tool_result` extension that
+   *  fails must still fail the call, exactly as it did before this wrapper existed. */
+  it('lets a throwing inner hook through', async () => {
+    const session = { agent: { afterToolCall: async () => { throw new Error('extension failed'); } } } as never;
+    installToolResultDeliverySpill(session, 'sess-1', { spillDir: DIR });
+    const hook = (session as { agent: { afterToolCall: (i: unknown) => Promise<unknown> } }).agent.afterToolCall;
+    await expect(hook(input(text(10)))).rejects.toThrow('extension failed');
   });
 
   it('sends the full result when the spill cannot be stored', async () => {
