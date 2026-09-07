@@ -141,6 +141,13 @@ function harness(opts: {
       const n = (attempts.get(task) ?? 0) + 1;
       attempts.set(task, n);
       if (n === 1) return 'Error: boom (will succeed on retry)';
+    // A node whose turn ends without saying anything — the shape a model that announces "now writing the
+    // file" and stops leaves behind. EMPTY_ONCE does it on the first attempt only, so a resume can prove
+    // the node is re-run rather than carried forward as done.
+    } else if (task.includes('EMPTY_ONCE')) {
+      const n = (attempts.get(task) ?? 0) + 1;
+      attempts.set(task, n);
+      if (n === 1) return '   ';
     // The task text rides along so a test can drive a REALISTIC failure body (a provider's 400 payload,
     // newlines and all) through the same in-band `Error:` convention the host uses.
     } else if (task.includes('FAIL')) return `Error: boom ${task}`;
@@ -175,6 +182,8 @@ function harness(opts: {
   const warnings: string[] = [];
   /** Every sibling control the engine asked for. `sandbox` must never appear: the real registry refuses it. */
   const controlsAsked: string[] = [];
+  /** The durable completions a background run handed the host, in delivery order. */
+  const completions: { toolCallId: string; status: string; result: string; run?: number }[] = [];
   const ctx = {
     dataDir: () => workflowFilesDir,
     registerTool: (def: Tool) => { tools.set(def.name, def); },
@@ -198,6 +207,7 @@ function harness(opts: {
     assertPathAllowed: assertTestPathAllowed,
     sanitizePathOutput: (text: string) => text,
     workflowEmitter: () => (u: (typeof snapshots)[number]) => { snapshots.push(u); },
+    workflowCompletionEmitter: () => (c: { toolCallId: string; status: string; result: string; run?: number }) => { completions.push(c); },
     // The gated variant must also RESOLVE the model: returning [] makes buildNodeAccess throw
     // "model is not available" before it ever reaches the fence being tested.
     listModels: async () => {
@@ -221,7 +231,7 @@ function harness(opts: {
   registerWorkflow(ctx, () => run, helpers);
   /** Everything the node can read, as one string — the chunks are a transport detail, not the content. */
   const contextOf = (task: string) => (contexts.get(task) ?? []).join('\n\n');
-  return { tools, controls, snapshots, launched, contexts, contextOf, sessionId, access, model, runs, stoppedSessions, warnings, controlsAsked };
+  return { tools, controls, snapshots, launched, contexts, contextOf, sessionId, access, model, runs, stoppedSessions, warnings, controlsAsked, completions };
 }
 
 describe('workflow engine', () => {
@@ -1626,6 +1636,43 @@ describe('WorkflowStop guards', () => {
 });
 
 describe('WorkflowResume', () => {
+  // Seen in production: a node announced "now writing the report" and ended its turn with nothing, the
+  // workflow reported it DONE with "(the node returned nothing)", its dependent got an empty handover, and
+  // nothing flagged the run as failed — so nobody resumed it.
+  it('fails a node that ends its turn without a result, and a resume re-runs it', async () => {
+    const { tools, launched, snapshots } = harness();
+    const first = await tools.get('WorkflowStart')!.execute('empty1', {
+      nodesFile: workflowFile([{ id: 'a', task: 'a EMPTY_ONCE' }, { id: 'b', task: 'b', deps: ['a'] }]),
+    });
+    const text = first.content[0]!.text;
+    expect(text).toMatch(/status: error/);
+    expect(text).toMatch(/\[a\] ERROR\nError: the node ended its turn without returning a result/);
+    expect(text).toMatch(/\[b\] PENDING \(after a\)\n\(did not run — a dependency failed\)/);
+
+    const resumed = await tools.get('WorkflowResume')!.execute('empty1-resume', { workflowId: snapshots[0]!.id });
+    expect(resumed.content[0]!.text).toMatch(/status: done/);
+    expect(launched).toEqual(['a EMPTY_ONCE', 'a EMPTY_ONCE', 'b']);
+  });
+
+  // The first run's summary was delivered and acknowledged under the workflow id. A resumed run's
+  // summary is a NEW result the parent has not heard, so it must be numbered as its own run — the host
+  // dedupes by result id, and an unnumbered second completion would be dropped as a duplicate.
+  it('numbers the completion of each resumed background run so the host delivers it, not drops it', async () => {
+    const { tools, snapshots, completions } = harness();
+    await tools.get('WorkflowStart')!.execute('bg-resume', {
+      nodesFile: workflowFile([{ id: 'a', task: 'a FAIL_ONCE' }]), background: true,
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(completions).toHaveLength(1);
+    expect(completions[0]).toMatchObject({ toolCallId: 'bg-resume', status: 'error', run: 0 });
+
+    await tools.get('WorkflowResume')!.execute('bg-resume-2', { workflowId: snapshots[0]!.id });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(completions).toHaveLength(2);
+    expect(completions[1]).toMatchObject({ toolCallId: 'bg-resume', status: 'done', run: 1 });
+    expect(completions[1]!.result).toContain('done:a');
+  });
+
   it('re-runs only the failed/pending nodes, leaves DONE nodes untouched, and frees their dependents', async () => {
     const { tools, launched, snapshots } = harness();
     const first = await tools.get('WorkflowStart')!.execute('r1', {

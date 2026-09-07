@@ -265,6 +265,9 @@ export interface WorkflowCompletion {
   title?: string;
   status: 'done' | 'error' | 'cancelled';
   result: string;
+  /** Which run of the DAG this summary closes: absent/0 for the first, N for the Nth WorkflowResume. A
+   *  resumed run's summary is a NEW result the parent has not heard, not a replay of the first one. */
+  run?: number;
 }
 
 /** Result of a manual/auto context compaction. `compacted` is false when there was nothing to compact

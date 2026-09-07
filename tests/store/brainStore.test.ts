@@ -497,6 +497,29 @@ describe('BrainStore', () => {
       expect(store.pendingSubagentResults('root')).toEqual([]);
     });
 
+    // Seen in production: a background DAG failed, its summary was delivered and acknowledged, the owner
+    // resumed it, the resumed run finished — and its summary silently hit the first row and was never
+    // delivered. The parent learned the workflow had finished only by asking WorkflowStatus.
+    it('lets a resumed run\'s completion supersede the delivered one, while a same-run duplicate still no-ops', () => {
+      store.createSession({ id: 'root', userId: 1, model: 'm' });
+      expect(store.upsertWorkflowRun('root', { id: 'wf-1', toolCallId: 'wfcall-1', status: 'error', nodes: [] })).toBe(true);
+      expect(store.enqueueWorkflowResult('root', { id: 'wf-1', toolCallId: 'wfcall-1', status: 'error', result: 'first run failed' })).toBe(true);
+      expect(store.acknowledgeSubagentResult('root', 'wf-1')).toBe(true);
+      expect(store.pendingSubagentResults('root')).toEqual([]);
+
+      // The resumed run closes with its own numbered completion: back to pending, new body, same DAG link.
+      const resumed = { id: 'wf-1', toolCallId: 'wfcall-1', status: 'done' as const, result: 'resumed run finished', run: 1 };
+      expect(store.enqueueWorkflowResult('root', resumed)).toBe(true);
+      const pending = store.pendingSubagentResults('root');
+      expect(pending).toHaveLength(1);
+      expect(pending[0]).toMatchObject({ kind: 'workflow', id: 'wf-1#resume-1', workflowId: 'wf-1', status: 'done', result: 'resumed run finished', delivery: 'pending' });
+      // A duplicate emit of THAT run changes nothing.
+      expect(store.enqueueWorkflowResult('root', resumed)).toBe(true);
+      expect(store.pendingSubagentResults('root')).toHaveLength(1);
+      expect(store.pendingSubagentResults('root')[0]!.result).toBe('resumed run finished');
+      expect(store.acknowledgeSubagentResult('root', 'wf-1#resume-1')).toBe(true);
+    });
+
     it('rejects a workflow result whose (parent, tool-call) has no durable DAG', () => {
       store.createSession({ id: 'root', userId: 1, model: 'm' });
       store.upsertWorkflowRun('root', { id: 'wf-1', toolCallId: 'wfcall-1', status: 'running', nodes: [] });

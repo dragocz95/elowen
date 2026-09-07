@@ -150,7 +150,7 @@ export function subagentResultReminder(result: BrainSubagentResult): string {
     // A workflow delivers one whole-DAG summary body (which itself names each node's outcome), so
     // it rides a <workflow-result> block rather than the sub-agent <result>/<error> split.
     ? '<system-reminder>\n'
-      + `<workflow-result id="${xmlEscape(result.id)}" status="${result.status}">\n`
+      + `<workflow-result id="${xmlEscape(result.workflowId ?? result.id)}" status="${result.status}">\n`
       + `<task>${xmlEscape(result.task)}</task>\n<result>${xmlEscape(result.result ?? '(the workflow returned nothing)')}</result>\n</workflow-result>\n`
       + '<instruction>A background workflow finished. Incorporate this result into your current work. '
       + 'The node transcripts remain available separately; do not claim their internal tool calls as your own.</instruction>\n'

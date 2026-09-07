@@ -300,6 +300,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         toolCallId: wf.toolCallId,
         ...(wf.title ? { title: wf.title } : {}),
         background: wf.background === true,
+        run: wf.run ?? 0,
         ...(wf.sharedContext ? { sharedContext: wf.sharedContext } : {}),
         originSessionId: wf.originSessionId,
         originPrincipal: wf.originPrincipal,
@@ -622,7 +623,10 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       ns.channelId = channelId;
       const collectSource = { platform: 'subagent', userId: 'subagent', roleIds: [], channelId, access };
       const raw = await runNodeTurn(wf, node, ns, collectSource, onEvent);
-      const reply = raw || '(the node returned nothing)';
+      // A node whose turn ended with nothing to say has not done its task — its dependents would inherit an
+      // empty handover and the parent a blank line marked DONE. It fails the workflow like any other error,
+      // so the summary says so up front and WorkflowResume re-runs it.
+      const reply = raw?.trim() ? raw : 'Error: the node ended its turn without returning a result';
       if (reply.startsWith('Error:')) { ns.status = 'error'; ns.error = clip(reply.slice('Error:'.length).trim() || reply, MAX_RESULT_CHARS); }
       // The node's answer reaches the parent through `summarize`: keep its END, where a report's conclusion
       // is. An error stays head-first — it leads with what broke. Its DEPENDENTS get the handover instead,
@@ -733,7 +737,9 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
   const deliverCompletion = (wf, summary) => {
     if (!wf.background || !wf.emitCompletion) return;
     try {
-      wf.emitCompletion({ id: wf.id, toolCallId: wf.toolCallId, ...(wf.title ? { title: wf.title } : {}), status: wf.status, result: summary });
+      // `run` tells the host which run of this DAG the summary closes: a resumed run's summary must reach
+      // the parent as a NEW result, not be dropped as a duplicate of the first one it already heard.
+      wf.emitCompletion({ id: wf.id, toolCallId: wf.toolCallId, ...(wf.title ? { title: wf.title } : {}), status: wf.status, result: summary, run: wf.run ?? 0 });
     } catch (e) {
       ctx.logger.warn(`workflow completion persistence failed: ${errorText(e)}`);
     }
@@ -929,6 +935,9 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       finishedAt: undefined,
       resolveDone: undefined,
       background: true,
+      // A boot resume is a run of its own too: the interrupted run may already have delivered a summary
+      // (a cancelled-on-restart one), and this run's must not be dropped as its duplicate.
+      run: (Number.isInteger(raw.run) && raw.run >= 0 ? raw.run : 0) + 1,
       emitCompletion: (completion) => hooks.complete(completion),
       resolveDetached: undefined,
       // Boot-only: nodes whose child session survived get ONE continuation (runNodeTurn) instead of a
@@ -1241,6 +1250,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       if (typeof p.background === 'boolean') wf.background = p.background;
       wf.finished = false;
       wf.finishedAt = undefined;
+      wf.run = (wf.run ?? 0) + 1;
       // Re-capture BOTH turn-scoped emitters on THIS (resuming) turn, exactly like WorkflowStart does —
       // the ones captured at the original Start are bound to a turn that is long over.
       wf.emit = ctx.workflowEmitter();

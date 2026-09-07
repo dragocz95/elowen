@@ -298,16 +298,21 @@ function normalizeSubagentResult(raw: unknown): Omit<BrainSubagentResult, 'paren
  *  the summary body still names the true engine status. */
 function normalizeWorkflowCompletion(
   raw: unknown,
-): { id: string; toolCallId: string; status: 'done' | 'error'; task: string; result: string } | undefined {
+): { id: string; resultId: string; toolCallId: string; status: 'done' | 'error'; task: string; result: string } | undefined {
   if (!raw || typeof raw !== 'object') return undefined;
   const o = raw as Record<string, unknown>;
   if (typeof o.id !== 'string' || !o.id || o.id.length > 512) return undefined;
   if (typeof o.toolCallId !== 'string' || !o.toolCallId || o.toolCallId.length > 512) return undefined;
   if (o.status !== 'done' && o.status !== 'error' && o.status !== 'cancelled') return undefined;
   if (typeof o.result !== 'string') return undefined;
+  if (o.run !== undefined && (typeof o.run !== 'number' || !Number.isInteger(o.run) || o.run < 0)) return undefined;
   const title = typeof o.title === 'string' && o.title ? o.title : o.id;
   return {
     id: o.id,
+    // Every run of one workflow — the first, and each WorkflowResume after it — ends in its own completion,
+    // and the resumed run's is the one the parent has not heard yet. It gets its own result id so it can
+    // supersede the delivered one instead of colliding with it.
+    resultId: o.run ? `${o.id}#resume-${o.run}` : o.id,
     toolCallId: o.toolCallId,
     status: o.status === 'done' ? 'done' : 'error',
     task: bounded(title, 8_000),
@@ -759,8 +764,11 @@ export class BrainDelegationStore {
    *  completion (one place for retry/backoff/drain/ack), but the linkage is kind-aware: the row is
    *  accepted only against an existing brain_workflows DAG for this exact (parent_session_id,
    *  tool_call_id). A workflow leaves child_session_id empty and carries its id in workflow_id.
-   *  First-write-wins and idempotent on a duplicate emit; workflows never take part in the synthetic
-   *  restart upgrade (a daemon restart drops the in-memory engine, so there is nothing to reconcile). */
+   *  Idempotent on a duplicate emit of the SAME run (the result id wins first); a LATER run's completion
+   *  — a WorkflowResume of a DAG whose first summary was already delivered — replaces the row and puts it
+   *  back to pending, because that summary is exactly the one the parent has not heard yet. Workflows
+   *  never take part in the synthetic restart upgrade (a daemon restart drops the in-memory engine, so
+   *  there is nothing to reconcile). */
   enqueueWorkflowResult(parentSessionId: string, raw: unknown): boolean {
     const result = normalizeWorkflowCompletion(raw);
     if (!parentSessionId || !result) return false;
@@ -779,11 +787,13 @@ export class BrainDelegationStore {
           (result_id, parent_session_id, tool_call_id, child_session_id, kind, workflow_id, status, task, payload)
          VALUES (?, ?, ?, '', 'workflow', ?, ?, ?, ?)
          ON CONFLICT(result_id) DO NOTHING
-         ON CONFLICT(parent_session_id, tool_call_id) DO NOTHING`
-      ).run(result.id, parentSessionId, result.toolCallId, result.id, result.status, result.task, payload);
+         ON CONFLICT(parent_session_id, tool_call_id) DO UPDATE SET
+           result_id = excluded.result_id, status = excluded.status, task = excluded.task,
+           payload = excluded.payload, attempts = 0, wake_attempts = 0, delivery_state = 'pending'`
+      ).run(result.resultId, parentSessionId, result.toolCallId, result.id, result.status, result.task, payload);
       const row = this.db.prepare(
         'SELECT parent_session_id, tool_call_id FROM brain_subagent_results WHERE result_id = ?'
-      ).get(result.id) as { parent_session_id: string; tool_call_id: string } | undefined;
+      ).get(result.resultId) as { parent_session_id: string; tool_call_id: string } | undefined;
       return row?.parent_session_id === parentSessionId && row.tool_call_id === result.toolCallId;
     });
   }
