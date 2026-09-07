@@ -82,7 +82,7 @@ Scope note: PI owns the base agent loop, tool execution, and session persistence
 
 **Claude Code**: `maybeTimeBasedMicrocompact()` (`services/compact/microCompact.ts:402-517`) fires when the gap since the last main-loop assistant message exceeds a configured threshold (GrowthBook-controlled), on the reasoning that a cold gap means the server prefix cache has already expired, so the *next* request will re-write the full prefix regardless — clearing old tool results now only shrinks what gets rewritten, at zero incremental cache cost. It keeps the last N (`keepRecent`) compactable tool results and content-clears the rest to a fixed marker string, latching the decision so it never reverts.
 
-**Elowen today**: `toolResultClearing.ts` implements essentially the identical mechanism, explicitly modeled on it (`toolResultClearing.ts:12-27`): gated by `cacheColdAtTurnStart()` comparing the last-user-message gap against the cache TTL + 1-minute buffer (`cacheTiming.ts:15-20`), keeping the last `KEEP_USER_TURNS=2` turns and spilling everything older to disk with a write-once (`wx`) latch (`toolResultClearing.ts:47,76,229-322`). The design rationale ("never rewrite history while the cache could still be warm") is stated as the governing invariant in both codebases.
+**Elowen today**: `coldToolResultClearing.ts` implements essentially the identical mechanism. It runs at the start of a turn, beside the cold-start compaction, gated by `cacheDefinitelyCold()` (the last request's TTL plus a one-minute buffer) *and* by `sessionHasWorkInFlight()` — the second half matters because a running fork child re-sends its parent's prefix and keeps that cache warm while the parent's own rows age. It keeps the trailing user turn and spills everything older to disk, writing the spill, every transcript row and the live messages in one pass, so the store and the wire agree without any latch. The design rationale ("never rewrite history while the cache could still be warm") is stated as the governing invariant in both codebases.
 
 **Gain from adopting**: none — this is already implemented, and Elowen's version additionally spills full content to disk with a Read-tool-recoverable path, which CC's time-trigger path does *not* do (CC's time-based clear has no preview/recovery — content is just gone, replaced by `TIME_BASED_MC_CLEARED_MESSAGE` with no file reference; `microCompact.ts:36,479-483`). Elowen's version is strictly more recoverable.
 
@@ -108,11 +108,13 @@ Scope note: PI owns the base agent loop, tool execution, and session persistence
 
 **Claude Code**: `enforceToolResultBudget()` (`utils/toolResultStorage.ts:769-909`) is a *second*, independent layer from single-result persistence (F9): it looks at the **sum** of all tool-result content in one wire-level user message (parallel tool calls collapse into one API message) and, if the sum exceeds `MAX_TOOL_RESULTS_PER_MESSAGE_CHARS=200_000` chars (`constants/toolLimits.ts:49`), persists the *largest* fresh results in that message to disk until back under budget — even if no single result individually crossed the per-tool threshold. State is tracked per `tool_use_id` (`seenIds`/`replacements`) and frozen forever once a result's fate (replaced or not) is decided, guaranteeing the same choice is replayed byte-identically on every subsequent turn for prompt-cache stability (`toolResultStorage.ts:372-393,641-667`).
 
-**Elowen today**: `toolResultClearing.ts` evaluates individual results and the aggregate size of each current-run, consecutive `toolResult` group. `selectBudgetedToolResults` spills the largest members above `TOOL_RESULT_GROUP_BUDGET_BYTES` (default 200,000 bytes), while latching both spilled and kept decisions for prompt-cache stability. The per-result threshold remains 50,000 bytes.
+**Elowen today**: `decideDeliverySpill` weighs each result against the running total of its batch as PI finalizes it, and spills any result that would take that batch past `TOOL_RESULT_GROUP_BUDGET_BYTES` (default 200,000 bytes). Deciding at delivery removes the need for a frozen-decision table: the placeholder exists before the tool-result message does, so it lands in the stored row from the start and no later pass can revise it. The per-result threshold remains 50,000 bytes.
 
-**Why it matters**: parallel tool calls make the many-medium-results case practical, even when every individual result is below the per-result threshold. The implementation reuses the existing transform-context spill path, groups consecutive current-run results as one provider message, spills largest-first, and latches both kept and spilled decisions.
+**Why it matters**: parallel tool calls make the many-medium-results case practical, even when every individual result is below the per-result threshold.
 
-**Verdict: ADOPTED in 0.28.24.** The aggregate budget and durable latch are implemented in the existing transform-context spill path; the limit is operator-tunable and applies live.
+**Difference from Claude Code**: the decision is made in COMPLETION order rather than largest-first, because at delivery each result is finalized on its own and the batch is not visible as a whole. Both honour the budget; where the online order keeps a large early result that largest-first would have spilled, the cold turn-start pass clears it later.
+
+**Verdict: ADOPTED in 0.28.24.** The limit is operator-tunable and applies live.
 
 ---
 
@@ -120,7 +122,7 @@ Scope note: PI owns the base agent loop, tool execution, and session persistence
 
 **Claude Code**: `maybePersistLargeToolResult()` (`utils/toolResultStorage.ts:272-334`) persists any one tool result over a per-tool threshold (default `DEFAULT_MAX_RESULT_SIZE_CHARS=50_000` chars, `constants/toolLimits.ts:13`) to `<sessionDir>/tool-results/<id>.{json,txt}`, replacing it in context with a preview (2000 bytes, newline-aligned) plus the file path.
 
-**Elowen today**: `toolResultClearing.ts`'s size trigger (`selectOversizedToolResults`, `SPILL_MAX_RESULT_BYTES=50_000`, `SPILL_PREVIEW_CHARS=2000`) does exactly this, including matching the same 50,000-byte threshold and 2000-char preview size CC uses (`toolResultClearing.ts:47-72`), with write-once (`wx`) spill semantics and pathGuard-scoped read-back via the `Read` tool.
+**Elowen today**: the size trigger in `decideDeliverySpill` (`SPILL_MAX_RESULT_BYTES=50_000`, `SPILL_PREVIEW_CHARS=2000`) does exactly this, including matching the same 50,000-byte threshold and 2000-char preview size CC uses, with write-once (`wx`) spill semantics and pathGuard-scoped read-back via the `Read` tool. The preview is additionally bounded so the finished placeholder stays under the clearing threshold, which is what keeps it from ever being spilled a second time by a build that predates the structural cleared marker.
 
 **Verdict: SKIP — already implemented, at parity (same thresholds, same preview size).**
 
@@ -144,7 +146,7 @@ Scope note: PI owns the base agent loop, tool execution, and session persistence
 
 **Claude Code**: images are **not** continuously aged out of context. The only image-stripping code found, `stripImagesFromMessages()` (`services/compact/compact.ts:145-200`), runs once, only on the messages sent *to the compaction summarization call itself* (so that call doesn't itself blow its own context budget) — it does not touch the images that remain in the live, uncompacted conversation. Outside of compaction, CC's only mitigation for image-heavy sessions is a user-facing error suggesting `/compact` when a many-image request exceeds a dimension limit (`services/api/errors.ts:635`). Token *estimation* for images is a flat 2000-token approximation used consistently across the codebase (`services/tokenEstimation.ts:400-411`, `microCompact.ts:38,152-153`).
 
-**Elowen today**: `stripHistoricalImages()` (`src/brain/session/historyImageStripping.ts:44-61`) runs on **every** cold-cache turn (same TTL-based gate as F6/F7), continuously collapsing every image block in every message before the current run into a `[image omitted from history]` placeholder — proactively, not just at compaction time. It's latched per-message-hash for idempotence and cache stability (`historyImageStripping.ts:63-126`), the same pattern as `toolResultClearing.ts`.
+**Elowen today**: `stripHistoricalImages()` (`src/brain/session/historyImageStripping.ts:44-61`) runs on **every** cold-cache turn (same TTL-based gate as F6/F7), continuously collapsing every image block in every message before the current run into a `[image omitted from history]` placeholder — proactively, not just at compaction time. It's latched per-message-hash for idempotence and cache stability (`historyImageStripping.ts:63-126`).
 
 **Gain from adopting CC's approach**: none — Elowen's mechanism is strictly more thorough. CC lets images accumulate in the live conversation indefinitely between compactions (each one re-serialized into every provider call, per Elowen's own code comment at `historyImageStripping.ts:38-39` explaining exactly this cost); Elowen prevents that steady-state growth entirely.
 
@@ -182,7 +184,7 @@ Scope note: PI owns the base agent loop, tool execution, and session persistence
 |---|---------|---------|----------|-----------|
 | F13 | User-facing context/token breakdown (`/context`-equivalent) | **ADAPTED in 0.28.24** | — | Category/free-space and top-tool breakdown is available through the API and CLI |
 | F2 | Circuit breaker on repeated compaction failure | **ADOPTED in 0.28.24** | — | Per-session automatic-compaction breaker with manual recovery retained |
-| F8 | Aggregate per-message tool-result budget | **ADOPTED in 0.28.24** | — | 200,000-byte current-run group budget reuses the existing spill/latch machinery |
+| F8 | Aggregate per-message tool-result budget | **ADOPTED in 0.28.24** | — | 200,000-byte current-run group budget decided at delivery, in batch-completion order |
 | F4 | Detailed anti-drift compaction summary prompt | ADAPT | medium | Cheap via existing `session_before_compact` hook; targets a real summary-quality failure mode |
 | F10 | File-read deduplication | ADAPT | medium | Measured ~18%/2.64% savings in CC, but cost depends on unverified PI extension-hook feasibility — spike first |
 | F7 | Cache-editing microcompact (warm-cache clearing) | ADOPT if API-available / SKIP otherwise | medium | High potential value for long warm sessions, but entirely gated on unverified Anthropic beta availability |

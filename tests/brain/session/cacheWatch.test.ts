@@ -6,7 +6,7 @@ import {
   installCacheWatch,
   type CachePayloadMonitor,
 } from '../../../src/brain/session/cacheWatch.js';
-import { cacheTtlMs } from '../../../src/brain/session/toolResultClearing.js';
+import { cacheTtlMs } from '../../../src/brain/session/cacheTiming.js';
 import { runWithPolicy } from '../../../src/plugins/policyContext.js';
 import { setLogSink } from '../../../src/shared/logger.js';
 

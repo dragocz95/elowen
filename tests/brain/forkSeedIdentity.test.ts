@@ -105,11 +105,9 @@ describe('the transcript a fork inherits', () => {
       role: 'toolResult', toolCallId: 'call-bash', toolName: 'Bash', isError: false,
       timestamp: 2_200, content: [{ type: 'text', text: OUTPUT }],
     });
-    store.recordClearedToolResult('s-parent', {
-      toolCallId: 'call-bash', occurredAt: 2_200, mode: 'preview', bytes: 50_007,
-      preview: OUTPUT.slice(0, 20), path: '/data/tool-results/s-parent/call-bash.v1-preview-50007.txt',
-      placeholder: PLACEHOLDER,
-    });
+    store.clearToolResultRows('s-parent', [{
+      toolCallId: 'call-bash', occurredAt: 2_200, placeholder: PLACEHOLDER,
+    }]);
   });
 
   const seed = (): ForkMessage[] => forkSeedMessages(storedContextMessages(store, 's-parent') as ForkMessage[], 9_000);

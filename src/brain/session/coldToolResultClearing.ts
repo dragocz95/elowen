@@ -98,7 +98,7 @@ async function clearCold(
   if (sessionHasWorkInFlight(d, live.sessionId)) return;
 
   const messages = live.session.messages;
-  const selected = selectClearableToolResults(messages, new Set(), TURN_START_KEEP_USER_TURNS);
+  const selected = selectClearableToolResults(messages, TURN_START_KEEP_USER_TURNS);
   if (selected.length === 0) return;
 
   const spillDir = options.spillDir ?? sessionToolResultSpillDir(process.env, live.sessionId);

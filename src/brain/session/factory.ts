@@ -19,7 +19,7 @@ import {
 import { assessColdCompaction, type AssessColdCompaction } from './coldStartCompaction.js';
 import { installHistoryImageStripping } from './historyImageStripping.js';
 import { imagesRejected } from './imageRejection.js';
-import { installToolResultClearing, installToolResultDeliverySpill } from './toolResultClearing.js';
+import { installToolResultDeliverySpill } from './toolResultClearing.js';
 import { createCachePayloadMonitor, installCacheWatch, type CachePayloadMonitor, type CacheWatchFlavor } from './cacheWatch.js';
 import { idleThresholdMs, OPENAI_CACHE_MAX_RETENTION_MS } from './cacheTiming.js';
 import { installCacheBreakpoints } from './cacheBreakpoints.js';
@@ -801,24 +801,9 @@ export class BrainSessionFactory {
     // the content reaches the provider as a placeholder the first time rather than replacing bytes it
     // has already cached.
     installToolResultDeliverySpill(session, spec.sessionId);
-    // Same egress seam: large tool results that have scrolled two user turns back are swapped for a
-    // placeholder + spill-file path, but only once the prompt cache has provably expired (idle gate) —
-    // history is never rewritten while a request could still cache-hit, and the per-session latch keeps
-    // a cleared result cleared so the prefix stays byte-stable afterwards. The latch is mirrored into
-    // brain_tool_result_spills so a respawn restores it even when rehydration changed the message text
-    // (externalized images) — the file-equality fallback alone cannot.
-    //
-    // `save` writes THROUGH to the transcript row as well, in one transaction: the stored history is what
-    // every rebuild (respawn, export, fork seed) reconstructs the wire from, so it has to say what the
-    // wire says. See BrainStore.recordClearedToolResult.
-    installToolResultClearing(session, spec.sessionId, {
-      ...(cacheIdleMs !== undefined ? { idleMs: cacheIdleMs } : {}),
-      latchStore: {
-        load: () => this.d.store.toolResultSpills(spec.sessionId),
-        save: (entry) => { this.d.store.recordClearedToolResult(spec.sessionId, entry); },
-        remove: (toolCallId, occurredAt) => { this.d.store.deleteToolResultSpill(spec.sessionId, toolCallId, occurredAt); },
-      },
-    });
+    // Older results that have scrolled out of reach are cleared by the turn-start pass instead
+    // (coldToolResultClearing.ts), which needs the store and therefore lives with the turn rather than
+    // with the session.
     // cacheWatch is the tripwire that logs whether a warm drop came from system, tools, a history segment,
     // or a likely provider-side eviction. Installed for Anthropic and both OpenAI Responses wires — all map
     // real cached-token figures into cacheRead; other providers expose best-effort stats whose drops are noise.

@@ -14,7 +14,7 @@ import {
 } from '../../src/brain/session/factory.js';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
-import { CLEAR_MIN_BYTES } from '../../src/brain/session/toolResultClearing.js';
+import { SPILL_MAX_RESULT_BYTES } from '../../src/brain/session/toolResultClearing.js';
 
 let dirs: string[] = [];
 afterEach(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true }); dirs = []; });
@@ -510,45 +510,24 @@ describe('BrainSessionFactory context-saving installers', () => {
     };
   }
 
-  it('installs tool-result clearing (with spill under the data dir) and subscribes cacheWatch', async () => {
-    // A 66-minute idle gap exceeds BOTH the short (6m) and long (61m) gate, so the test is robust
-    // regardless of PI_CACHE_RETENTION in the environment.
+  it('installs delivery-time tool-result spilling (under the data dir) and subscribes cacheWatch', async () => {
     const { home, listeners, session, cacheMonitor } = await createWithProvider('anthropic');
     try {
-      const transform = session.agent.transformContext;
-      expect(typeof transform).toBe('function');
+      const afterToolCall = session.agent.afterToolCall;
+      expect(typeof afterToolCall).toBe('function');
 
-      const T0 = 1_700_000_000_000;
-      const big = 'x'.repeat(CLEAR_MIN_BYTES * 2);
-      const toolCall = (id: string, timestamp: number) => ({
-        role: 'assistant', timestamp,
-        content: [{ type: 'toolCall', id, name: 'Bash', arguments: {} }],
-      });
-      const toolResult = (id: string, timestamp: number) => ({
-        role: 'toolResult', toolCallId: id, toolName: 'Bash', isError: false, timestamp,
-        content: [{ type: 'text', text: big }],
-      });
-      const messages = [
-        { role: 'user', content: 'first', timestamp: T0 },
-        toolCall('old-big', T0 + 1),
-        toolResult('old-big', T0 + 2),
-        { role: 'user', content: 'second', timestamp: T0 + 3 },
-        toolCall('mid', T0 + 4),
-        toolResult('mid', T0 + 5),
-        { role: 'user', content: 'third', timestamp: T0 + 4_000_000 },
-        toolCall('new', T0 + 4_000_001),
-        toolResult('new', T0 + 4_000_002),
-      ];
-      const out = await transform!(messages as never) as typeof messages;
+      const big = 'x'.repeat(SPILL_MAX_RESULT_BYTES + 1);
+      const out = await afterToolCall!({
+        assistantMessage: { role: 'assistant', content: [] },
+        toolCall: { id: 'old-big', name: 'Bash', arguments: {} },
+        args: {}, isError: false, context: {},
+        result: { content: [{ type: 'text', text: big }], details: {} },
+      } as never) as { content: { text: string }[] };
 
-      // Only the result before the 2nd-from-last user message is cleared; the two freshest turns stay.
-      const clearedText = (out[2]?.content as { text: string }[])[0]?.text ?? '';
-      expect(clearedText).toContain('Older tool result cleared');
-      expect(out[5]).toBe(messages[5]);
-      expect(out[8]).toBe(messages[8]);
-      // The full text was spilled BEFORE the placeholder replaced it.
-      // Located by its stable prefix: the rest of the name carries the descriptor a restarted session
-      // needs to rebuild this exact placeholder.
+      // The placeholder exists before PI builds the message, so the row it writes carries it from the
+      // start — nothing is ever rewritten.
+      expect(out.content[0]?.text).toContain('saved to disk instead of the context');
+      // The full text was spilled BEFORE the placeholder replaced it, under the session's own namespace.
       const spillDir = join(home, '.config/elowen/tool-results/sess-anthropic');
       const spillName = readdirSync(spillDir).find((n) => n.startsWith('old-big.v1-'));
       expect(spillName).toBeDefined();
@@ -628,23 +607,22 @@ describe('BrainSessionFactory context-saving installers', () => {
       const transform = session.agent.transformContext;
       expect(typeof transform).toBe('function');
       const t0 = 1_700_000_000_000;
+      // Image stripping is the destructive egress transform this knob governs: OpenAI may hold an
+      // inactive prompt cache for a full hour, so seven minutes of idle must not be treated as cold.
       const messagesAt = (thirdAt: number) => [
         { role: 'user', content: 'first', timestamp: t0 },
-        { role: 'assistant', timestamp: t0 + 1, content: [{ type: 'toolCall', id: 'old', name: 'Bash', arguments: {} }] },
-        { role: 'toolResult', toolCallId: 'old', toolName: 'Bash', isError: false, timestamp: t0 + 2,
-          content: [{ type: 'text', text: 'x'.repeat(CLEAR_MIN_BYTES * 2) }] },
-        { role: 'user', content: 'second', timestamp: t0 + 3 },
-        { role: 'assistant', timestamp: t0 + 4, content: [{ type: 'text', text: 'ok' }] },
+        { role: 'user', timestamp: t0 + 2,
+          content: [{ type: 'text', text: 'look' }, { type: 'image', data: 'AAAA', mimeType: 'image/png' }] },
         { role: 'user', content: 'third', timestamp: thirdAt },
       ];
 
       const warm = messagesAt(t0 + 7 * 60_000);
       const warmOut = await transform!(warm as never) as typeof warm;
-      expect(warmOut[2]).toBe(warm[2]);
+      expect(warmOut[1]).toBe(warm[1]);
 
       const cold = messagesAt(t0 + 62 * 60_000);
       const coldOut = await transform!(cold as never) as typeof cold;
-      expect((coldOut[2]?.content as { text: string }[])[0]?.text).toContain('Older tool result cleared');
+      expect((coldOut[1]?.content as { type: string }[]).some((block) => block.type === 'image')).toBe(false);
     } finally {
       vi.unstubAllEnvs();
     }
