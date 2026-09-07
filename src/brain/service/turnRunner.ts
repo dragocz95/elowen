@@ -672,11 +672,17 @@ export class BrainTurnRunner {
     // to: new user input enters PI's native queue and becomes a transcript row only on delivery.
     const turnBusy = active.session.isStreaming || hasActiveNativeCompactionCheck(active.session);
     if (!internal) this.d.goals.cancelGoalContinuation(active.sessionId); // a real (non-internal) user turn cancels any pending goal continuation
-    // A system nudge (a finished background command waking the operator's session) is best-effort: if the
-    // session is already streaming the agent is busy and needs no wake, so drop it rather than enqueue a
-    // stray user turn. When idle it runs straight through, and — crucially — never drives the goal loop
-    // (see the skipped afterTurnGoalJudge below), so it can't burn a goal-budget turn or mis-judge a goal.
-    if (internal?.kind === 'systemNudge' && turnBusy) return;
+    // A system nudge (a finished background command waking the operator's session) into a RUNNING turn is
+    // steered as a hidden custom message: PI folds it in before the turn's next model call, the same way a
+    // sub-agent result reaches a busy parent, so the agent learns of the exit without polling for it. It
+    // is never a user turn: nothing is echoed or queued as a chip, and a turn that ends before PI's next
+    // pull leaves the notice waiting for the next turn's start. When idle it runs straight through, and —
+    // crucially — never drives the goal loop (see the skipped afterTurnGoalJudge below), so it can't burn a
+    // goal-budget turn or mis-judge a goal.
+    if (internal?.kind === 'systemNudge' && turnBusy) {
+      steerCustomMessage(active.session, customSystemMessage('system-nudge', text));
+      return;
+    }
     // Everything this turn does besides answering — see openTurn. AFTER the two guards above and before
     // anything can steer or queue: the pin belongs to the request that ordered the turn, and a message
     // sent into a RUNNING turn is steered into it, so it must reach the origin ledger without repointing
@@ -726,8 +732,8 @@ export class BrainTurnRunner {
     // folds it in during the SAME turn instead of waiting for it to end. Admission creates only PI queue
     // state; the spawner persists/emits the authoritative user row at PI's later message_start, after the
     // matching queue chip disappeared. Only a real user turn reaches this: internal goal kickoff/
-    // continuation drives the loop itself and must run its own turn, and a busy systemNudge already
-    // returned above.
+    // continuation drives the loop itself and must run its own turn, and a busy systemNudge was already
+    // steered above.
     if (turnBusy && !internal) {
       const queuedText = this.contextBuilder.withRunningSubagents(text, active.sessionId);
       const admission = new TurnAdmission(

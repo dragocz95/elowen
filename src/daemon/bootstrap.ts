@@ -192,9 +192,9 @@ export async function buildApp(opts: BuildOpts) {
     const status = info.exitCode === 0 ? 'finished successfully' : `exited (code ${info.exitCode})`;
     const text = `⚙️ Background command \`${info.command}\` ${status}. If it matters, read its output with `
       + `ProcessOutput("${info.id}") and continue; otherwise just carry on.`;
-    // `systemNudge`: no 'you' bubble, dropped if the target session is already streaming, and it never
-    // drives the goal loop (so a wake can't spend a goal-budget turn or mis-judge an active goal). Bound to
-    // the session the command was started in — not whatever conversation is currently active.
+    // `systemNudge`: no 'you' bubble, steered into the turn when the target session is already streaming,
+    // and it never drives the goal loop (so a wake can't spend a goal-budget turn or mis-judge an active
+    // goal). Bound to the session the command was started in — not whatever conversation is currently active.
     void brain.send({
       userId,
       text,

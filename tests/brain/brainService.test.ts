@@ -1319,10 +1319,9 @@ describe('BrainService', () => {
     expect(sessions.isActiveChild(childId)).toBe(false);
   });
 
-  // The wake a finished background command sends. Two adjacent guards in the runner used to contradict
-  // each other — drop-when-busy, then a steer branch that also named systemNudge and could never be
-  // reached — so pin the behaviour that actually runs, in both session states.
-  it('a systemNudge arriving mid-turn is dropped, never steered into the running turn', async () => {
+  // The wake a finished background command sends. Mid-turn it used to be dropped, so an agent that had
+  // moved a command to the background learned of its exit only by polling ProcessOutput step after step.
+  it('a systemNudge arriving mid-turn is steered into the running turn as a hidden custom message, not a user turn', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     const { sessionId } = await svc.start(1);
@@ -1331,9 +1330,11 @@ describe('BrainService', () => {
 
     await svc.send({ userId: 1, text: 'Background command finished.', mode: 'build', internal: { kind: 'systemNudge' }, session: sessionId });
 
-    expect(d.session.steer).not.toHaveBeenCalled();
+    expect(d.session.agent.steer).toHaveBeenCalledTimes(1);
+    expect(d.session.agent.steer.mock.calls[0]![0]).toMatchObject({ role: 'custom', customType: 'system-nudge', content: 'Background command finished.', display: false });
+    expect(d.session.steer).not.toHaveBeenCalled();           // never a user message
     expect(d.session.prompt.mock.calls.length).toBe(prompts); // no turn ran
-    expect(svc.queueList(1)).toEqual([]);                     // and nothing was left queued
+    expect(svc.queueList(1)).toEqual([]);                     // and no chip was left queued
   });
 
   it('a systemNudge on an idle session runs its own turn, so the wake actually lands', async () => {

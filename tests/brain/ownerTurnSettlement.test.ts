@@ -87,7 +87,7 @@ function fakeDeps() {
     getActiveToolNames(this: { __active: string[] }) { return this.__active; },
     setActiveToolsByName: vi.fn(function (this: { __active: string[] }, names: string[]) { this.__active = names; }),
     model: undefined as unknown,
-    agent: { streamFunction: vi.fn() },
+    agent: { streamFunction: vi.fn(), steer: vi.fn() },
     thinkingLevel: '' as string,
     supportsThinking: () => true,
     getAvailableThinkingLevels: () => ['minimal', 'low', 'medium', 'high', 'xhigh', 'max'],
@@ -471,7 +471,7 @@ describe('recovery notices racing owner admission', () => {
 describe('the activity feed reports work that actually runs', () => {
   // The feed is streamed live to attached browsers, so a row for work that was refused a line later is
   // not merely untidy: it says somebody is working when nobody is, once per dropped nudge.
-  it('does not announce a system nudge that is dropped because the session is busy', async () => {
+  it('does not announce a system nudge steered into a busy session as a turn of its own', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
@@ -479,6 +479,7 @@ describe('the activity feed reports work that actually runs', () => {
 
     await svc.send({ userId: 1, text: 'your command finished', internal: { kind: 'systemNudge' } } as never);
 
+    expect(d.session.agent.steer).toHaveBeenCalledWith(expect.objectContaining({ customType: 'system-nudge' }));
     expect(d.activity).toEqual([]);
   });
 

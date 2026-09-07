@@ -833,7 +833,7 @@ describe('terminal plugin — the process registry is the single source of truth
     const id = await startBg(session, `node -e "process.stdout.write('one\\n'); setTimeout(() => process.stdout.write('two\\n'), 500)"`);
     await new Promise((r) => setTimeout(r, 250)); // first write landed, the child is still alive
 
-    const first = await inSession(session, 'ProcessOutput', { id });
+    const first = await inSession(session, 'ProcessOutput', { id, block: false });
     expect(first.content[0].text).toContain('one');
     expect(first.content[0].text).not.toContain('two');
     expect(first.content[0].text).toContain('[still running]');
@@ -1256,6 +1256,21 @@ describe('terminal plugin — ProcessOutput(block)', () => {
     expect(processRegistry.list().find((p) => p.id === id)).toBeUndefined(); // the exit read collects it
   }, 20_000);
 
+  // A model that got "(no new output) [still running]" back instantly called ProcessOutput again at
+  // once, step after step, after a run was auto-backgrounded. Waiting is therefore the default.
+  it('waits for the exit by default; block=false is the immediate peek', async () => {
+    const session = 'brain-term-block-default';
+    const id = await startBg(session, `node -e "setTimeout(() => { console.log('later'); }, 600)"`);
+    const peek = await inSession(session, 'ProcessOutput', { id, block: false });
+    expect(peek.content[0].text).toContain('(no new output)');
+    expect(peek.content[0].text).toContain('[still running]');
+    const started = Date.now();
+    const res = await inSession(session, 'ProcessOutput', { id });
+    expect(res.content[0].text).toContain('later');
+    expect(res.content[0].text).toContain('[exited 0]');
+    expect(Date.now() - started).toBeGreaterThan(300);
+  }, 20_000);
+
   it('block=true on an already-finished process returns immediately', async () => {
     const session = 'brain-term-block-done';
     const id = await startBg(session, 'echo instant');
@@ -1278,11 +1293,11 @@ describe('terminal plugin — ProcessOutput(block)', () => {
     expect(processRegistry.list().find((p) => p.id === id)?.running).toBe(true);
   }, 20_000);
 
-  it('without block the read stays a non-waiting snapshot', async () => {
+  it('block=false is a non-waiting snapshot', async () => {
     const session = 'brain-term-block-off';
     const id = await startBg(session, `node -e "setTimeout(() => { console.log('late'); }, 5000)"`);
     const started = Date.now();
-    const res = await inSession(session, 'ProcessOutput', { id });
+    const res = await inSession(session, 'ProcessOutput', { id, block: false });
     expect(res.content[0].text).toContain('[still running]');
     expect(res.content[0].text).not.toContain('after waiting');
     expect(Date.now() - started).toBeLessThan(1_000);
@@ -1327,7 +1342,7 @@ describe('terminal plugin — blocking budget and sleep polling', () => {
   it('refuses a bare `sleep N` in the foreground and names the blocking read instead', async () => {
     const res = await inSession('brain-sleep-block', 'Bash', { command: 'sleep 30' });
     expect(res.content[0].text).toMatch(/refused a bare sleep of 30s/);
-    expect(res.content[0].text).toContain('ProcessOutput(id, block=true)');
+    expect(res.content[0].text).toContain('ProcessOutput(id)');
     expect(processRegistry.listForSession('brain-sleep-block')).toHaveLength(0); // refused BEFORE anything was spawned
   }, 20_000);
 
@@ -1444,7 +1459,7 @@ describe('terminal plugin — blocking budget and sleep polling', () => {
     expect(id, text).toBeTruthy();
     expect(text).toContain('passed the 30s blocking budget');
     expect(text).toContain('45s timeout');
-    expect(text).toContain(`ProcessOutput("${id}", block=true)`);
+    expect(text).toContain(`ProcessOutput("${id}")`);
     // It really is an ordinary background job now, not a foreground run wearing a new label.
     const listed = processRegistry.listForSession(moved).find((x) => x.id === id);
     expect(listed?.completionMode).toBe('job');

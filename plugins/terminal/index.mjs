@@ -26,7 +26,7 @@ const MIN_TIMEOUT_S = 1;
 // one is torn down with the daemon by `--die-with-parent`, and an unsandboxed one is killed with the
 // service cgroup on restart anyway — the in-memory registry that addresses it does not survive either.
 const DEFAULT_BLOCK_S = 30;
-const MAX_BLOCK_S = 120;
+const MAX_BLOCK_S = 600;
 // How long a FOREGROUND run may hold the turn before it is moved to the background instead of being
 // killed at its deadline. Claude Code backgrounds at 15 s (BashTool.tsx:57); 30 s here for one reason: it
 // sits ABOVE the 20 s default timeout, so the rule is expressible in a sentence — a caller who did not
@@ -955,8 +955,8 @@ export function register(ctx) {
       'Prefer the dedicated file tools (Read, Edit, Write, Search, ListDir) over cat, head, tail, sed, awk, echo, grep or rg. A shell read does NOT satisfy Edit/Write\'s read-before-write check, so reading a file with cat just forces a second Read before you can edit it — Read it directly. Reach for the shell when the task genuinely needs it: builds, tests, git, service inspection, process management.',
       'Quote paths that contain spaces, and create a file\'s parent directory (mkdir -p) before writing into a new location — Write refuses a missing directory.',
       `\`timeout\` is milliseconds, defaults to ${DEFAULT_TIMEOUT_MS}, and may not exceed ${MAX_TIMEOUT_MS}. The larger Elowen ceiling supports slow finite local builds without changing units.`,
-      `A foreground command whose \`timeout\` exceeds ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} is normally MOVED to the background at ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} instead of being killed at that deadline: the result then reports a process id, and ProcessOutput(id, block=true) waits for the rest. It is not moved when the user approved it at a permission prompt, when this conversation's background slots are full, or when the turn is not an interactive chat of its own (a sub-agent or workflow node, whose caller needs the output rather than a process id) — then the deadline still applies and the result says so.`,
-      `Do not send a bare \`sleep N\` (N >= ${MIN_BLOCKED_SLEEP_S}) as the whole command to wait for something — that is refused. Start the work with run_in_background=true and wait for it with ProcessOutput(id, block=true).`,
+      `A foreground command whose \`timeout\` exceeds ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} is normally MOVED to the background at ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} instead of being killed at that deadline: the result then reports a process id, and ProcessOutput(id) waits for the rest. It is not moved when the user approved it at a permission prompt, when this conversation's background slots are full, or when the turn is not an interactive chat of its own (a sub-agent or workflow node, whose caller needs the output rather than a process id) — then the deadline still applies and the result says so.`,
+      `Do not send a bare \`sleep N\` (N >= ${MIN_BLOCKED_SLEEP_S}) as the whole command to wait for something — that is refused. Start the work with run_in_background=true and wait for it with ProcessOutput(id).`,
       'Pass run_in_background=true for detached work. Manage detached work with ListProcesses, ProcessOutput, and KillProcess. backgroundMode="service" marks a long-lived server or watcher.',
       'description is the live display context for the command. dangerouslyDisableSandbox=false is a no-op; true is always refused before any process is spawned.',
       `Inline output is capped at ~${Math.round(outputCap / 1000)} kB: past that the result carries the BEGINNING and the END, and the retained output is saved to a file the result names when one could be written — read it with the Read tool (offset/limit) rather than re-running the command. For a run far larger than the cap, redirect it to a file of your own and grep that instead.`,
@@ -970,7 +970,7 @@ export function register(ctx) {
         description: `Optional timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}, max ${MAX_TIMEOUT_MS}). Above ${AUTO_BACKGROUND_BUDGET_MS} it is not a kill deadline: the run is normally moved to the background at ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} and then continues with no time limit.`,
       })),
       description: Type.Optional(Type.String({ description: 'Clear, concise active-voice description of what the command does. Use 5-10 words for simple commands; add enough context for piped commands or obscure flags. Describe the action directly without labels such as "complex" or "risky".' })),
-      run_in_background: Type.Optional(Type.Boolean({ description: 'Run the command in the background' })),
+      run_in_background: Type.Optional(Type.Boolean({ description: 'Run the command in the background. You get a process id back and are notified when it completes — never poll. ProcessOutput(id) waits for it when you need the result now.' })),
       dangerouslyDisableSandbox: Type.Optional(Type.Boolean({ description: 'Sandbox bypass request; true is always refused by Elowen' })),
       cwd: Type.Optional(Type.String({ description: 'Elowen extension: working directory within accessible repositories' })),
       backgroundMode: Type.Optional(Type.Union([Type.Literal('job'), Type.Literal('service')], {
@@ -996,7 +996,7 @@ export function register(ctx) {
         const sleepSeconds = background ? null : blockedSleepSeconds(p.command);
         if (sleepSeconds !== null) {
           return ok(`Error: refused a bare sleep of ${durationLabel(sleepSeconds * 1000)} — a foreground sleep that does nothing else spends the turn waiting. `
-            + 'To wait for work you started: run it with run_in_background=true and read it with ProcessOutput(id, block=true), which returns the moment it exits. '
+            + 'To wait for work you started: run it with run_in_background=true and read it with ProcessOutput(id), which returns the moment it exits. '
             + 'To wait for something to become READY (a server accepting connections, a file appearing), put the retry inside the command — '
             + '`until curl -sf http://127.0.0.1:3000 >/dev/null; do sleep 1; done` is fine, and so is `sleep 19; tail /tmp/build.log`, because the command goes on to produce a result. '
             + `A deliberate pause shorter than ${MIN_BLOCKED_SLEEP_S}s is also still allowed.`);
@@ -1091,9 +1091,8 @@ export function register(ctx) {
             // they asked for a long deadline in order to see the command through.
             const why = foregroundEntry?.detachReason === 'budget'
               ? `\nIt passed the ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} blocking budget, so it was moved here instead of being killed at its ${durationLabel(timeoutMs)} timeout.`
-                + ` Call ProcessOutput("${id}", block=true) to wait for the rest of its output.`
               : '';
-            return ok(`Moved to background as process ${id}: ${run.command}\n(cwd: ${run.cwd})\nStill running with no time limit; use ProcessOutput("${id}") to read its retained output.${why}`);
+            return ok(`Moved to background as process ${id}: ${run.command}\n(cwd: ${run.cwd})\nStill running with no time limit. You will be notified when it completes — do not poll. If you need its result now, ProcessOutput("${id}") waits for it.${why}`);
           }
           // Foreground completion: drop the registry entry WITHOUT a nudge, exactly as a non-backgrounded
           // command produced no lingering process before this change.
@@ -1159,7 +1158,7 @@ export function register(ctx) {
           const bg = new BgProcess(id, p.command, cwd, outputCap, () => { emitProcCard(sessionId, accountUserId); ctx.processes.markExited(id); }, prepared);
           ctx.processes.register(handleFor(id, bg, accountUserId, sessionId, p.backgroundMode === 'service' ? 'service' : 'job', bg.workspaceId, bg.homeGeneration));
           emitProcCard();
-          return ok(`Started background process ${id}: ${bg.command}\n(cwd: ${bg.cwd})\nUse ProcessOutput("${id}") to read its retained output tail.`);
+          return ok(`Started background process ${id}: ${bg.command}\n(cwd: ${bg.cwd})\nYou will be notified when it completes — do not poll. If you need its result now, ProcessOutput("${id}") waits for it.`);
         } finally {
           releaseSlot();
         }
@@ -1193,27 +1192,30 @@ export function register(ctx) {
     name: 'ProcessOutput', label: 'Read process output',
     description: [
       'Read the output (stdout + stderr) of a background process started with Bash(run_in_background=true).',
-      'By default this returns only what was written SINCE your last read and does not wait — the process keeps running.',
-      'Pass all=true for the whole retained buffer. For an explicit background process this is a byte-capped tail, and a loss notice says when earlier output was dropped.',
-      `Pass block=true to WAIT for the process to finish instead of polling: the call returns as soon as it exits, or after \`timeout\` seconds (default ${DEFAULT_BLOCK_S}, max ${MAX_BLOCK_S}) with the output so far and a note that it is still running. Use it whenever you need a finite command's result — never call this in a polling loop.`,
+      `By default this WAITS for the process to finish: the call returns as soon as it exits, or after \`timeout\` seconds (default ${DEFAULT_BLOCK_S}, max ${MAX_BLOCK_S}) with the output so far and a note that it is still running — then simply call it again. Never poll in a loop with block=false.`,
+      'Each call returns only what was written SINCE your last read; pass all=true for the whole retained buffer. For an explicit background process this is a byte-capped tail, and a loss notice says when earlier output was dropped.',
+      'Pass block=false to peek at the output of a long-lived process (a server, a watcher) without waiting.',
       'The process id comes from the Bash call that started it; use ListProcesses if you no longer have it. Only processes of THIS conversation are readable, and the buffer keeps the last part of the output — an extremely chatty process loses its earliest lines.',
       'Reading a process that has already exited returns its remaining output and then collects it, so that id stops working afterwards. This tool is only for shell processes — a background sub-agent result comes back through DelegateResult.',
     ].join(' '),
     parameters: Type.Object({
       id: Type.String({ description: 'Process id returned by Bash(run_in_background=true)' }),
       all: Type.Optional(Type.Boolean({ description: 'Return the whole buffer instead of just new output' })),
-      block: Type.Optional(Type.Boolean({ description: 'Wait for the process to finish before returning (default false).' })),
-      timeout: Type.Optional(Type.Number({ description: `Seconds to wait when block=true (default ${DEFAULT_BLOCK_S}, max ${MAX_BLOCK_S}). Ignored otherwise.` })),
+      block: Type.Optional(Type.Boolean({ description: 'Wait for the process to finish before returning (default true). false = return what is there right now.' })),
+      timeout: Type.Optional(Type.Number({ description: `Seconds to wait for the exit (default ${DEFAULT_BLOCK_S}, max ${MAX_BLOCK_S}). Ignored with block=false.` })),
     }),
     execute: async (_id, p) => {
       const handle = scopedHandle(p.id);
       if (!handle) return ok(`Error: no background process ${p.id}.`);
-      // Blocking read: park until the process exits (or the deadline passes) instead of making the model
-      // poll. The wait is bounded and the process survives a timeout, so a caller that still needs the
-      // result simply blocks again. Waiting on the ALREADY-SCOPED handle is what keeps this safe — an id
-      // from another session was rejected above, so nobody can block on a conversation they can't read.
+      // Waiting is the default: a model that gets "(no new output) [still running]" back instantly
+      // calls again at once and burns a turn step per poll (seen in production after auto-background).
+      // Parking here until the process exits (or the deadline passes) is what the caller wants for any
+      // finite command; a long-lived process is peeked at with block=false. The wait is bounded and the
+      // process survives a timeout, so a caller that still needs the result simply waits again. Waiting
+      // on the ALREADY-SCOPED handle is what keeps this safe — an id from another session was rejected
+      // above, so nobody can block on a conversation they can't read.
       let waitedOut = false;
-      if (p.block === true && handle.running()) {
+      if (p.block !== false && handle.running()) {
         const waitS = clampSeconds(p.timeout, DEFAULT_BLOCK_S, MIN_TIMEOUT_S, MAX_BLOCK_S);
         waitedOut = await ctx.processes.waitForExit(p.id, waitS * 1000) === 'timeout';
       }
@@ -1236,7 +1238,7 @@ export function register(ctx) {
       'Stop a background shell process of this conversation by id — a dev server, watcher or build you no longer need, or one that is stuck.',
       'The process id comes from the Bash(run_in_background=true) call that started it, or from ListProcesses when you no longer have it; only processes started in THIS conversation can be killed, and an unknown id is reported back as an error rather than killing anything.',
       'This is IRREVERSIBLE and abrupt: the shell and its tracked descendants are SIGKILLed immediately with no chance to shut down cleanly or flush. Direct Linux runs also track descendants that create a new session; direct-host backgrounding is refused on platforms where that cannot be guaranteed. A killed build or migration can leave partial state behind. Read what it has produced with ProcessOutput first if the output still matters, because the entry is dropped afterwards and its buffer is gone.',
-      'Do not use it to work around a command that is merely slow (wait, or read it with ProcessOutput block=true), and never to kill processes you did not start.',
+      'Do not use it to work around a command that is merely slow (wait, or read it with ProcessOutput), and never to kill processes you did not start.',
     ].join(' '),
     parameters: Type.Object({
       id: Type.String({ description: 'Process id from Bash(run_in_background=true) or ListProcesses. The tracked process tree is SIGKILLed immediately and its output buffer is discarded.' }),
