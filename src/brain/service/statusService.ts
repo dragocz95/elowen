@@ -568,8 +568,9 @@ export class BrainStatusService {
   private ownedSessions(userId: number): SessionListItem[] {
     const activeId = this.d.lifecycle.activeSessionId(userId);
     const unspoken = this.d.store.unspokenSessionIds(userId);
-    // One rollup for the whole listing, the way the register already does it — never a query per row.
-    const tokens = this.d.store.tokenTotalsAll();
+    // One rollup for the whole listing — never a query per row, and scoped to this account: the listing
+    // renders nobody else's conversations, and this runs on every picker and every listing refetch.
+    const tokens = this.d.store.tokenTotals(userId);
     return this.d.store.listSessions(userId)
       .filter((s) => !isNonUserSession(s.id) && !unspoken.has(s.id))
       .map((s) => ({

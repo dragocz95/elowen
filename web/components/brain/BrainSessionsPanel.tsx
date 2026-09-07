@@ -147,7 +147,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
     return next;
   });
 
-  useEffect(() => { setPage(0); }, [search, sort, direction]);
+  useEffect(() => { setPage(0); }, [search, sort, direction, setPage]);
 
   /** Clicking the active column reverses it; a different column starts at its own natural order. */
   const sortBy = (key: SortKey) => {

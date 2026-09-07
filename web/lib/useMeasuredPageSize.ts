@@ -29,9 +29,12 @@ export function useMeasuredPageSize(scrollRef: RefObject<HTMLDivElement | null>)
   // without re-subscribing, and reading it out of state would pin the callback to a stale render.
   const pageSizeRef = useRef(FALLBACK_PAGE_SIZE);
 
+  // The latest measurement, so the render-time re-measure below does not have to rebuild the observer.
+  const measureRef = useRef<() => void>(() => {});
+
   useLayoutEffect(() => {
     const box = scrollRef.current;
-    if (!box || typeof ResizeObserver === 'undefined') return;
+    if (!box) return;
     const measure = (): void => {
       const available = box.clientHeight;
       if (available <= 0) return; // hidden or unmeasurable — keep the last good answer rather than guessing
@@ -46,11 +49,19 @@ export function useMeasuredPageSize(scrollRef: RefObject<HTMLDivElement | null>)
       setPageSize(next);
       setPage((p) => Math.floor((p * prev) / next));
     };
+    measureRef.current = measure;
     measure();
+    if (typeof ResizeObserver === 'undefined') return;
     const observer = new ResizeObserver(measure);
     observer.observe(box);
     return () => observer.disconnect();
   }, [scrollRef]);
+
+  // The rows arrive AFTER the box. The scroll box takes its height from flex, so it does not resize when
+  // the table replaces the loading state and the observer stays silent — leaving the first open sized off
+  // the fallback row height. Re-measuring after every render catches that first real row; it is a few
+  // reads of the live DOM and it sets nothing while the answer is unchanged, so it cannot loop.
+  useLayoutEffect(() => { measureRef.current(); });
 
   return { pageSize, page, setPage };
 }
