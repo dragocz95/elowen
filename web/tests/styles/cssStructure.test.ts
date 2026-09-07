@@ -230,3 +230,15 @@ describe('every custom property the stylesheets read is defined', () => {
     expect([...new Set(undefinedRefs)]).toEqual([]);
   });
 });
+
+/** A register row's menu renders IN PLACE, inside the cell it was opened from, and every cell in the
+ *  table carries `z-index: 1`. Equal z-indexes are resolved by document order, so without this rule the
+ *  row actions of every row BELOW paint straight through the open panel — which is what a phone
+ *  screenshot showed. jsdom computes no stacking at all, so this pins the rule; the fix itself was
+ *  verified in a real browser. */
+describe('a register cell with an open overlay leaves the row stacking tie', () => {
+  it('lifts it into the menu band rather than a literal above 1', () => {
+    const css = stripComments(read(join(COMPONENTS, 'data-table.css')));
+    expect(css).toMatch(/\.data-table-cell:has\(\[data-state='open'\]\)\s*\{[^}]*z-index:\s*var\(--z-menu\)/);
+  });
+});

@@ -107,6 +107,15 @@
   z-index: 1;
 }
 
+/* An overlay opened from a row renders IN PLACE (the app removes Radix's portal, see overlayStack), so
+   the panel lives inside its own cell's stacking context. Every other cell carries `z-index: 1` too, and
+   equal values are decided by document order — which is why the row actions of the rows BELOW painted
+   straight through an open menu. While a control in the cell is open, the cell joins the menu band, and
+   the panel's own `overlay-layer-menu` finally counts for something. */
+.data-table-cell:has([data-state='open']) {
+  z-index: var(--z-menu);
+}
+
 /* A ghost row action (delete, retry) is quiet on a mouse and revealed with the row. A touch pointer has
    no hover to reveal it with, so there it is always present and always at least a finger wide. Gated on
    the pointer, never on the viewport: a narrow window on a laptop still has a mouse. */
