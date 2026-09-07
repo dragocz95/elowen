@@ -265,7 +265,7 @@ The global `GET /events` stream is separate from the conversation stream. It rep
 | `POST` | `/brain/interrupt-queued` | Interrupt the active turn and promote the oldest queued message. |
 | `POST` | `/brain/session/stop` | Release a client binding and stop/dispose a session when appropriate; `detachOnly` is used by closing web clients. |
 | `POST` | `/brain/visibility` | Report whether a client window is hidden or visible. |
-| `POST` | `/brain/model` | Switch the selected conversation to a configured provider/model. |
+| `POST` | `/brain/model` | Switch the selected conversation to a configured provider/model. Send `provider` and `model` separately, or send a canonical `<provider>/<model>` string in `model`; the server splits it only when the prefix is a configured provider. |
 | `POST` | `/brain/think` | Set reasoning effort for the conversation and account default. Body: `{ "level": "…", "session"?: "…" }`. |
 | `POST` | `/brain/fast` | Set or toggle the caller account's durable Fast preference; the selected session reports current route support. |
 | `POST` | `/brain/yolo` | Enable or disable the conversation-scoped YOLO override. Deny rules still apply. |

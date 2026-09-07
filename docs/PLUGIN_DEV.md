@@ -682,9 +682,9 @@ A paragraph naming the change in the reader's terms.
 ### Added
 
 - One line per change, written for somebody using Elowen rather than building it.
-
-![What the recap looks like](assets/0.28.34/recap.png)
 ```
+
+Add screenshots only when the referenced asset is tracked under `plugins/changelog/entries/assets/<version>/`. Do not leave a Markdown image reference to an untracked or unavailable file.
 
 Rules the parser and the page rely on:
 

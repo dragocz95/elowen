@@ -114,7 +114,10 @@ Use it to:
 - enable or disable model entries available to users;
 - add, edit, or remove custom model entries;
 - attach notes to a model;
-- set a context-window override for an Elowen AI model when its endpoint does not report a reliable value.
+- set a context-window override for an Elowen AI model when its endpoint does not report a reliable value;
+- set a maximum output-token override for one provider/model pair when the endpoint supports a larger or smaller answer budget.
+
+Context-window and max-output overrides are keyed by the exact `provider/model` pair. Input and output share one context window, so Elowen clamps the output cap to leave prompt headroom. The default maximum output is 8,192 tokens when neither the provider descriptor nor an administrator override supplies another value.
 
 The model catalog is an administrator-controlled ceiling. A user's account settings can select a model only from the models available to that account and workspace.
 

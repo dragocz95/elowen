@@ -39,6 +39,12 @@ The input also supports these local features:
 - **`/cd [path]`** shows or changes the CLI working directory. It affects later prompts, shell commands, attachments, exports, and local history, but it does not expand the daemon's project permissions.
 - **`/editor`** opens `$VISUAL` or `$EDITOR` for the current draft. A non-zero editor exit keeps the original draft.
 
+### File and search tools
+
+The agent's file tools use the same Project and path boundaries as the CLI. `Read` handles text, Markdown, PDFs, notebooks, and supported images; it refuses known binary files and blocking device paths instead of guessing. A whole-file read is limited to about 25,000 tokens, so use `offset` and `limit`, or search for a narrower region, when a file is larger.
+
+`Grep` searches hidden files while still skipping generated and repository metadata directories, reports timeouts instead of treating them as no matches, and supports context windows and paged results. `Glob` accepts absolute patterns anchored at their literal directory. `Edit` and `Write` still require the read-before-write contract and exact path boundaries.
+
 ### Queue and interrupt
 
 Only one turn runs in a conversation at a time. A message sent while the agent is working is queued and survives a daemon restart.
@@ -97,7 +103,7 @@ elowen run --goal "finish the cleanup" --max-turns 12
 
 Important options:
 
-- `--model <id>` and `--provider <id>` select the model for this run.
+- `--model <provider/model>` selects a canonical provider/model pair; `--model <id> --provider <id>` remains supported for separate selection.
 - `-c`/`--continue` continues the active conversation (the default); `--resume <id>` selects one; `--new` starts fresh.
 - `--mode plan|build|workflow` selects the mode. `--plan` is a shorthand for `--mode plan`.
 - `--goal <text>` starts a persistent goal; `--max-turns <N>` sets its turn budget.

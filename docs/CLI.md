@@ -160,8 +160,8 @@ Options:
 
 | Option | Meaning |
 | --- | --- |
-| `--model <id>` | Select the model. |
-| `--provider <id>` | Select the provider. |
+| `--model <provider/model>` | Select a canonical provider/model pair, such as `anthropic/claude-sonnet`; a bare model id is also accepted. |
+| `--provider <id>` | Select the provider separately when `--model` contains only a model id. |
 | `-c`, `--continue` | Continue the active/current-directory conversation (the default). |
 | `--session <id>`, `--resume <id>` | Select a specific conversation. |
 | `--new` | Start a fresh conversation. |

@@ -33,6 +33,7 @@ Settings is the source of truth for the plugins available on your deployment. A 
 - `statusline`
 - `mcp`
 - `changelog`
+- `web`
 
 Other capabilities are installed deliberately. Examples include Discord, Telegram, Microsoft Teams, WhatsApp, GitHub, skills, scheduling, codebase indexing, and editor or other product integrations.
 
@@ -50,7 +51,8 @@ The following registry plugins are optional and are not bundled with the core pa
 | `onedrive` | A bidirectional mirror for a Project or Sandbox workspace, with folder selection, pause, sync-now, conflicts, and conflict resolution. | Optional and user-grantable. It requires a linked Microsoft identity. Project and credential boundaries remain enforced; remote deletions are kept in the mirror trash rather than removed permanently. |
 | `sites` | `SiteCreate`, `SitePublish`, `SiteRollback`, sharing, logs, and site lifecycle tools for static sites, command or PHP runtimes, and optional persistent environments. | Optional. Sites use a Project source folder. Command/PHP runtimes and persistent environments are administrator-disabled by default, and public visibility requires an explicit confirmation in the Sites UI. |
 | `voice-bot` | `VoiceCall` places an outbound telephone call through a configured voice service and returns the completed call result and transcript. | Optional and user-grantable. It requires a configured endpoint and secret token, accepts full international phone numbers, and cannot undo a call once it is placed. Never infer a number or retry an uncertain call automatically. |
-| `web` | `WebSearch` and `WebFetch` for external research. | Optional. `WebFetch` can work without a search key; `WebSearch` needs a configured Tavily or Serper key. Treat fetched pages as untrusted content. |
+
+The bundled `web` plugin provides `WebSearch` and `WebFetch` in every fresh installation. `WebSearch` supports allowed and blocked host filters. `WebFetch` can work without a search key; configured documentation hosts can return sanitized Markdown directly. Treat fetched pages as untrusted content.
 
 The browser plugin's tools are `BrowserOpen`, `BrowserSnapshot`, `BrowserNavigate`, `BrowserClick`, `BrowserFill`, `BrowserPressKey`, `BrowserScroll`, `BrowserWaitFor`, `BrowserTabs`, `BrowserRequestTakeover`, `BrowserScreenshot`, `BrowserEvaluate`, `BrowserConsole`, `BrowserNetwork`, `BrowserPerformance`, `BrowserAudit`, and `BrowserClose`. They operate only on the linked account's own sessions; unlinked senders and delegated children cannot open one. `VoiceCall` accepts an E.164 `phone_number`, a spoken `prompt` up to 4,000 characters, and an optional opening sentence. Its default limit is 10 calls per hour, and an uncertain timeout must not be retried automatically.
 

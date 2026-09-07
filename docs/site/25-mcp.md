@@ -79,7 +79,9 @@ ToolSearch({"query":"select:mcp__github__create_issue","max_results":5})
 
 Both `query` and `max_results` are required. `max_results` defaults to `5` in the schema and limits keyword results up to the hard safety cap of `25`. An explicit `select:` query ignores the keyword limit but still obeys the hard cap. A keyword query can find matching tools, and `mcp__github` can load deferred tools from one server. This reduces prompt size; it does not change server permissions or account access.
 
-The MCP plugin also provides `ListMcpResources` and `ReadMcpResource` for servers that publish resources. These tools are loaded on demand and follow the same server/account visibility rules.
+The MCP plugin also provides `ListMcpResources` and `ReadMcpResource` for servers that publish resources. These tools are loaded on demand and follow the same server/account visibility rules. Text resources are returned as text; binary resources are saved in the plugin data directory with a path that the agent can pass to `Read` or another file tool.
+
+Images returned by bridged MCP tools are passed to vision-capable models as real image content and are downsampled when an image exceeds the provider's dimension limit. Other non-text content is represented by a short placeholder instead of exposing base64 data in the prompt.
 
 ## Timeouts and troubleshooting
 

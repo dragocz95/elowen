@@ -127,7 +127,7 @@ These are per-account settings in **Account → Models**:
 - **Compaction model** can be different from the chat model and may use another configured provider. It is used for summarizing older conversation history, not for normal replies.
 - **Auto-compact** is enabled by default at **80%** of the effective context window. The threshold can be set from **30% to 95%**, with per-model overrides.
 
-A model's context window comes from provider metadata when available, or from an administrator override in **Settings → Models**. The override key is the provider/model pair, so two providers serving the same model ID can have different values.
+A model's context window comes from provider metadata when available, or from an administrator override in **Settings → Models**. The same model catalog can also pin a maximum output-token budget for the exact provider/model pair. Input and output share one context window, so Elowen clamps that output cap to leave prompt headroom and uses 8,192 tokens by default when no descriptor or override supplies another value. Two providers serving the same model ID can therefore have different context and output limits.
 
 ## OAuth usage limits
 
