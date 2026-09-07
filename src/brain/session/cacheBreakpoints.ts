@@ -225,8 +225,13 @@ export function createTrailingCacheBreakpoint(): TrailingCacheBreakpoint {
   let confirmed: PreviousWrite | undefined;
   /** The position the in-flight request marked, awaiting its outcome. */
   let candidate: PreviousWrite | undefined;
-  /** No request of this session has been seen yet, so the fork boundary below is still the opening one.
-   *  After that the remembered position is a real observation and always the better answer. */
+  /** No request of this session has SUCCEEDED yet, so the fork boundary below is still the opening one.
+   *  After that the remembered position is a real observation and always the better answer.
+   *
+   *  Spent by the response, not by the request: a fork's opening request that comes back 429 or 529 is
+   *  retried, and a flag consumed by the failed attempt left that retry without the inherited mark — one
+   *  full re-cache of the whole parent prefix, for a transient fault. Mirrors `confirmed` below, which has
+   *  always moved only on a 2xx. */
   let first = true;
   return {
     request(payload) {
@@ -256,7 +261,6 @@ export function createTrailingCacheBreakpoint(): TrailingCacheBreakpoint {
       }
       candidate = { index: marker.messageIndex, prefixHash: chain };
       const opening = first;
-      first = false;
       if (!remembered || !stillThere) {
         // A fork's OPENING request has nothing remembered — and is the one request that most needs the
         // second breakpoint, because the position its parent wrote is now several messages behind pi-ai's
@@ -276,7 +280,12 @@ export function createTrailingCacheBreakpoint(): TrailingCacheBreakpoint {
       return payload;
     },
     response(status) {
-      if (status >= 200 && status < 300 && candidate) confirmed = candidate;
+      if (status >= 200 && status < 300) {
+        // A request the provider accepted is the one that stops this session being new — including a
+        // request that carried no marker at all, which stages no candidate but has still been sent.
+        first = false;
+        if (candidate) confirmed = candidate;
+      }
       candidate = undefined;
     },
   };

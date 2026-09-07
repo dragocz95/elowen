@@ -788,18 +788,21 @@ export class BrainTurnRunner {
         this.dropPendingCompactionEcho(active, pendingCompactionEchoId);
         pendingCompactionEchoId = undefined;
       }
+      const admission = new TurnAdmission(
+        { store: this.d.store, titler: this.d.titler, chatImagesDir: this.d.chatImagesDir },
+        { live, text: turnText, images: turnImages, display: echoDisplay, mode: turnMode, visible: isUserTurn, titleOnAdmission: isUserTurn, onAdmitted: request.onAdmitted },
+      );
+      // Named BEFORE the context is built: the builder stamps this row with the frames it wraps around the
+      // user's words, so the store keeps what actually went on the wire.
+      const { durableId } = admission.prepare();
       const turnRequest: TurnRequest = {
         ...request,
         text: turnText,
         images: turnImages,
         mode: turnMode,
         display: echoDisplay,
+        durableUserRowId: durableId,
       };
-      const admission = new TurnAdmission(
-        { store: this.d.store, titler: this.d.titler, chatImagesDir: this.d.chatImagesDir },
-        { live, text: turnText, images: turnImages, display: echoDisplay, mode: turnMode, visible: isUserTurn, titleOnAdmission: isUserTurn, onAdmitted: request.onAdmitted },
-      );
-      admission.prepare();
       try {
       // Before the turn context, not after it: building that context awaits turn-start memory recall — a
       // remote embedding with a 30 s deadline — and the sender's own message is rendered from this event

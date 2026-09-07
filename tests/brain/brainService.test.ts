@@ -9,6 +9,7 @@ import type { KnownControls, PluginSkill, SubagentProgressEvent } from '../../sr
 import { currentSubagentEmitter, currentToolPolicy, currentTurnModel, currentWorkDir } from '../../src/plugins/policyContext.js';
 import { personalityText } from '../../src/brain/personality.js';
 import { NO_REPLY_NUDGE } from '../../src/brain/messageView.js';
+import { storedContextMessages } from '../../src/brain/persistence.js';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
@@ -3785,7 +3786,7 @@ describe('BrainService', () => {
     expect(roles).toContain('assistant');
   });
 
-  it('places volatile turn-context around channel text without persisting either context block', async () => {
+  it('places volatile turn-context around channel text and stores it beside the sender’s words', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();
     const ctx = reg.contextFor('rt', {}, { info() {}, warn() {}, error() {} });
@@ -3804,9 +3805,15 @@ describe('BrainService', () => {
     expect(prompt.indexOf('CHANNEL BEFORE')).toBeLessThan(prompt.indexOf('channel request'));
     expect(prompt.indexOf('channel request')).toBeLessThan(prompt.indexOf('CHANNEL AFTER'));
     expect(calls).toBe(2);
+    // The row keeps the sender's own words as its text — that is what the transcript, the export, the
+    // titler and the curator read — while the frames the turn wrapped around them are stored BESIDE it, so
+    // a respawn of this room (and a fork seeded from it) rebuilds the request the provider actually saw.
     const stored = d.store.getMessages('brain-ch-disc-context').find((m) => m.role === 'user');
-    expect(stored?.content).not.toContain('CHANNEL BEFORE');
-    expect(stored?.content).not.toContain('CHANNEL AFTER');
+    const row = JSON.parse(stored!.content) as { content: string; wireFrames?: { lead?: string; trail?: string } };
+    expect(row.content).toBe('channel request');
+    expect(row.wireFrames?.lead).toContain('CHANNEL BEFORE');
+    expect(row.wireFrames?.trail).toContain('CHANNEL AFTER');
+    expect(storedContextMessages(d.store as never, 'brain-ch-disc-context')[0]?.content).toBe(prompt);
   });
 
   it('channelSend throws on a provider-errored turn instead of returning an empty reply', async () => {

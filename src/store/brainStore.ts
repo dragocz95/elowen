@@ -1038,6 +1038,23 @@ export class BrainStore {
     ).run({ id: input.id, session_id: input.sessionId, role: input.role, content: JSON.stringify(input.content) });
   }
 
+  /** ONE message row by id, in its expected session — for a caller that knows which row it wrote and must
+   *  not read the whole transcript to find it again. */
+  message(sessionId: string, messageId: string): BrainMessageRow | undefined {
+    return this.db.prepare('SELECT * FROM brain_messages WHERE id = ? AND session_id = ?')
+      .get(messageId, sessionId) as BrainMessageRow | undefined;
+  }
+
+  /** Replace ONE message row's stored content, only in its expected session. Used by the projector that
+   *  stamps a settled turn's wire frames onto the user row it wrote before the prompt went out (see
+   *  persistence.projectTurnWireFrames) — the row's own clean text is preserved by that caller, which
+   *  rewrites the same message with one field added. Returns false when the id is unknown here, which is
+   *  the normal outcome for a turn whose row admission already rolled back. */
+  setMessageContent(sessionId: string, messageId: string, content: unknown): boolean {
+    return this.db.prepare('UPDATE brain_messages SET content = ? WHERE id = ? AND session_id = ?')
+      .run(JSON.stringify(content), messageId, sessionId).changes > 0;
+  }
+
   /** Replace the content of every named tool result with the placeholder that is now its wire truth, in
    *  ONE transaction over ONE scan of the session's tool-result rows.
    *

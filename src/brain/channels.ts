@@ -19,7 +19,7 @@ import { recordSubagentProgress } from './subagentRuns.js';
 import { runCompaction, withDescendantUsage, sessionUsageSnapshot } from './events.js';
 import type { ElicitationRegistry } from './elicitation.js';
 import type { CardRegistry } from './cards.js';
-import { projectUserTurn, storedContextMessages } from './persistence.js';
+import { projectTurnWireFrames, projectUserTurn, storedContextMessages } from './persistence.js';
 import { attachmentTurnNote, storeChannelAttachments, unstoredAttachmentTurnNote, type ChannelAttachment, type ChannelUploadDeps } from './channelAttachments.js';
 import { newCostMeter, runWithMeter } from './openrouterMeter.js';
 import { extractText, isThinkingOnlyReply, NO_REPLY_NUDGE, lastAssistant } from './messageView.js';
@@ -28,7 +28,7 @@ import { isPromptCommand } from './slashCommands.js';
 import { rolloverDue, SESSION_IDLE_ROLLOVER_MS } from './session/idleRollover.js';
 import { decideAmbientBlock } from './session/ambientBlock.js';
 import { drainPostCompactionContext } from './continuity/postCompactionContext.js';
-import { composeTurnPrompt } from './session/turnPrompt.js';
+import { composeTurnWire } from './session/turnPrompt.js';
 import { buildForkChildMessage, forkParentPrefixTokens, forkSeedMessages, forkSeedRefusal, formatForkCacheLine, type ForkMessage } from './session/forkPrefix.js';
 import { turnSkillsBlock } from './session/turnSkills.js';
 import { settleTurn, titleTurnConversation } from './session/turnSettled.js';
@@ -1225,7 +1225,7 @@ export class ChannelSessionService {
               commitSkillsDigest = skills.commit;
               // Blocks a channel deliberately does not carry are simply absent: modes and the interactive
               // permission summary are owner-chat concepts, and a room has neither.
-              prompted = composeTurnPrompt({
+              const wire = composeTurnWire({
                 skills: skills.block,
                 memory: memory.block,
                 hook: await pluginContextBlock({
@@ -1244,6 +1244,11 @@ export class ChannelSessionService {
                 // that delegated here needs the reminder more than the owner chat does, not less.
                 runningSubagents: runningSubagentsBlock(this.d.registry, this.d.store, ch.sessionId),
               });
+              prompted = wire.prompt;
+              // What this turn wrapped around the sender's words belongs in the row beside them: the store
+              // is what the request was, so a respawn of this room — and a fork seeded from it — rebuilds
+              // the prefix the provider actually cached instead of a shorter one.
+              if (projected) projectTurnWireFrames(this.d.store, sessionId, projected.id, wire.frames);
             }
             this.d.registry.throwIfPendingAbort(sessionId);
             // Recall commits at HAND-OFF, before the turn runs, unlike the two below it. Those are read

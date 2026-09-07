@@ -61,6 +61,7 @@
     "models:refresh": "node scripts/refresh-model-capabilities.mjs",
     "db:prune-stale-models": "node --experimental-strip-types --no-warnings scripts/prune-stale-brain-models.mjs",
     "db:inspect-retired-domains": "node scripts/inspect-retired-domain-tables.mjs",
+    "brain:fork-prefix-check": "node scripts/fork-prefix-check.mjs",
     "build:web": "node scripts/build-web-bundle.mjs",
     "prepublishOnly": "npm run build && npm run build:web",
     "test": "vitest run",

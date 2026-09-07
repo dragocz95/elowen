@@ -376,6 +376,21 @@ describe('a fork child’s opening request', () => {
     expect(markerPositions(send(bp, payload(next)))).toEqual(['5', '7']);
   });
 
+  /** RED BEFORE THE FIX: `request()` spent the opening flag on the way out, so the retry after a 429 took
+   *  the ordinary path and marked only pi-ai's own position — the fork then re-cached the entire inherited
+   *  prefix over a transient fault. */
+  it('still marks the inherited tail when the first attempt failed and is retried', () => {
+    const bp = createTrailingCacheBreakpoint();
+    expect(markerPositions(send(bp, payload(forkOpening()), 429))).toEqual(['2', '5']);
+    expect(markerPositions(send(bp, payload(forkOpening()), 529))).toEqual(['2', '5']);
+    expect(markerPositions(send(bp, payload(forkOpening())))).toEqual(['2', '5']);
+    // …and the SUCCESSFUL attempt does spend it: the child now has an observation of its own.
+    const next = [...forkOpening()];
+    next[5] = userMessage(plain(`<context placement="before-user">\nnow\n</context>\n\n${DIRECTIVE}`));
+    next.push(assistantMessage('working'), userMessage(marked('tool done')));
+    expect(markerPositions(send(bp, payload(next)))).toEqual(['5', '7']);
+  });
+
   it('leaves the four-marker budget intact', () => {
     const bp = createTrailingCacheBreakpoint();
     const spent = { tools: [{ name: 'Read', input_schema: {}, cache_control: EPHEMERAL }, { name: 'Write', input_schema: {}, cache_control: EPHEMERAL }] };

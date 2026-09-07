@@ -217,6 +217,18 @@ describe('formatForkCacheLine', () => {
       + 'parentPrefix≈100000 verdict=not-shared (different model)',
     );
   });
+
+  // A `prefix mismatch` proves the fork paid full price and, on its own, names nothing to go and look at.
+  // The segment comparison (forkPrefixDiff) supplies the missing half and the line carries it.
+  it('names the first differing segment when the prefix is what broke', () => {
+    expect(formatForkCacheLine(reading({ cacheRead: 100, firstDifference: 'input#0 changed (user)' }))).toBe(
+      'fork brain-ch-subagent-sub-dlg-1 from brain-7: cacheRead=100 cacheWrite=400 input=120 '
+      + 'parentPrefix≈100000 verdict=not-shared (prefix mismatch) first-diff=input#0 changed (user)',
+    );
+    // A fork that DID share has no first difference to report, whatever a caller passes.
+    expect(formatForkCacheLine(reading({ firstDifference: 'input#0 changed (user)' })))
+      .not.toContain('first-diff');
+  });
 });
 
 describe('forkParentPrefixTokens', () => {

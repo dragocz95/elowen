@@ -8,6 +8,7 @@ import { isSubagentSession } from './sessionId.js';
 import { HISTORY_IMAGE_PLACEHOLDER } from './session/historyImageStripping.js';
 import { externalizeImageBlocks } from './chatImages.js';
 import type { StoredChatImage } from './chatImages.js';
+import { applyTurnWireFrames, parseTurnWireFrames, type TurnWireFrames } from './session/turnPrompt.js';
 
 import { currentMeter } from './openrouterMeter.js';
 import { isErroredContextOverflow } from './events.js';
@@ -28,6 +29,46 @@ export function projectUserTurn(store: BrainStore, sessionId: string, text: stri
   const row = store.appendMessage({ id: randomUUID(), sessionId, parentId: null, role: 'user', content });
   store.touchSession(sessionId);
   return { id: row.id, createdAt: row.created_at };
+}
+
+/** The field a user row keeps its turn's ephemeral frames under. */
+const WIRE_FRAMES_KEY = 'wireFrames';
+
+/** Record what this turn actually sent around the user's words.
+ *
+ *  The row is written before `prompt()` (so pre-prompt compaction can see it) and therefore before the
+ *  frames exist; this stamps them on afterwards, leaving `content` exactly as it was. Everything that
+ *  reads a user row as the PERSON'S words — the transcript, the export, the titler, the curator — keeps
+ *  reading the same clean text, while {@link storedContextMessages} and {@link rehydrate} put the frames
+ *  back and so reproduce the request byte for byte, from the store rather than by composing them a second
+ *  time (which would move the very cache entry this exists to keep).
+ *
+ *  Stores `text` only when the model-facing text differs from the row's own — an attachment marker, a fork
+ *  child's boilerplate — so an ordinary turn pays for the frames alone. A turn that framed nothing writes
+ *  nothing at all. */
+export function projectTurnWireFrames(
+  store: BrainStore,
+  sessionId: string,
+  messageId: string,
+  frames: TurnWireFrames,
+): boolean {
+  const row = store.message(sessionId, messageId);
+  if (!row) return false;
+  let parsed: unknown;
+  try { parsed = JSON.parse(row.content); }
+  catch { return false; }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return false;
+  const message = parsed as Record<string, unknown>;
+  const clean = typeof message.content === 'string' ? message.content : undefined;
+  const text = frames.text !== undefined && frames.text !== clean ? frames.text : undefined;
+  if (!frames.lead && !frames.trail && text === undefined) return false;
+  const stored: TurnWireFrames = {
+    v: 1,
+    ...(frames.lead ? { lead: frames.lead } : {}),
+    ...(frames.trail ? { trail: frames.trail } : {}),
+    ...(text !== undefined ? { text } : {}),
+  };
+  return store.setMessageContent(sessionId, messageId, { ...message, [WIRE_FRAMES_KEY]: stored });
 }
 
 /** Mirror a finished turn into SQLite (the sole store). `agent_end` carries the complete run order,
@@ -717,7 +758,14 @@ function alignedKeepCount(storeRoles: string[], keptRoles: string[]): number {
  *  tool_result blocks`) and every retry rebuilds the same broken context. Filtering here rather than
  *  deleting the row keeps the result visible in the stored transcript while making the replayed context
  *  valid, and heals conversations already carrying an orphan. */
-function* parsedRows(store: BrainStore, sessionId: string): Generator<{ msg: { role: string; content: unknown }; createdAt: string }> {
+function* parsedRows(
+  store: BrainStore,
+  sessionId: string,
+  /** `wire`: put each user row's stored turn frames back, which is what the provider was sent and what a
+   *  respawn or a fork seed has to reproduce. Omitted: the person's own words alone — what an export
+   *  reads. Either way the frames field itself never reaches a replayed message. */
+  mode: 'wire' | 'clean' = 'clean',
+): Generator<{ msg: { role: string; content: unknown }; createdAt: string }> {
   const introduced = new Set<string>();
   for (const row of store.getMessages(sessionId)) {
     let parsed: unknown;
@@ -735,8 +783,22 @@ function* parsedRows(store: BrainStore, sessionId: string): Generator<{ msg: { r
         if (call?.type === 'toolCall' && call.id) introduced.add(call.id);
       }
     }
-    yield { msg: withoutExternalizedImages(msg), createdAt: row.created_at };
+    yield { msg: withoutExternalizedImages(withTurnWireFrames(msg, mode)), createdAt: row.created_at };
   }
+}
+
+/** Replay a user row as the request that carried it. The frames field is removed either way: it is
+ *  bookkeeping about the message, and handing it to PI would put an unknown key on a live context
+ *  message that every later reader (and the provider conversion) would have to ignore. */
+function withTurnWireFrames(
+  msg: { role: string; content: unknown },
+  mode: 'wire' | 'clean',
+): { role: string; content: unknown } {
+  if (!Object.hasOwn(msg, WIRE_FRAMES_KEY)) return msg;
+  const { [WIRE_FRAMES_KEY]: raw, ...rest } = msg as Record<string, unknown> & { role: string; content: unknown };
+  const frames = parseTurnWireFrames(raw);
+  if (mode === 'clean' || !frames || typeof rest.content !== 'string') return rest;
+  return { ...rest, content: applyTurnWireFrames(rest.content, frames) };
 }
 
 /** Replay a row whose image bytes moved to disk. The bytes are deliberately NOT read back: a rehydrated
@@ -811,20 +873,25 @@ function piSessionId(sessionId: string): string {
  *  parent's. A compaction divider is yielded as its stored row, which the child's own replay turns back
  *  into a compaction entry exactly as a respawn does. */
 export function storedContextMessages(store: BrainStore, sessionId: string): { role: string; content: unknown }[] {
-  return [...parsedRows(store, sessionId)].map(({ msg }) => msg);
+  return [...parsedRows(store, sessionId, 'wire')].map(({ msg }) => msg);
 }
 
 /** Rebuild an in-memory PI session manager pre-seeded with the stored history (D1). Spike-proven:
  *  messages appended before createAgentSession appear as session.messages. */
 export function rehydrate(store: BrainStore, sessionId: string, cwd: string): SessionManager {
   const sm = SessionManager.inMemory(cwd, { id: piSessionId(sessionId) });
-  for (const { msg } of parsedRows(store, sessionId)) replayRow(sm, msg);
+  // WIRE, not clean: a respawn has to send the same bytes the disposed session did, or the restart moves
+  // the prompt cache it was meant to keep.
+  for (const { msg } of parsedRows(store, sessionId, 'wire')) replayRow(sm, msg);
   return sm;
 }
 
 /** Like `rehydrate`, but also returns each appended message's original store timestamp (ISO 8601). The
  *  export path needs it because PI's `appendMessage` stamps `Date.now()`, which would otherwise make an
- *  exported transcript show the export time on every message instead of when it was actually said. */
+ *  exported transcript show the export time on every message instead of when it was actually said.
+ *
+ *  Deliberately CLEAN where `rehydrate` is wire: an export is a record of what people said, and the turn
+ *  frames are runtime scaffolding nobody wrote. */
 export function rehydrateWithTimestamps(store: BrainStore, sessionId: string, cwd: string): { sm: SessionManager; timestamps: string[] } {
   const sm = SessionManager.inMemory(cwd);
   const timestamps: string[] = [];

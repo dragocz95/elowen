@@ -1,5 +1,6 @@
 import { createAgentSession, DefaultResourceLoader, estimateTokens, SettingsManager } from '@earendil-works/pi-coding-agent';
-import { formatForkCacheLine, type ForkMessage } from './forkPrefix.js';
+import { forkCacheVerdict, formatForkCacheLine, type ForkCacheReading, type ForkMessage } from './forkPrefix.js';
+import { forkPrefixFirstDifference } from './forkPrefixDiff.js';
 import type { AgentSession, ExtensionAPI, PromptTemplate, ResourceLoader, Skill, ToolDefinition, ModelRuntime } from '@earendil-works/pi-coding-agent';
 import type { Model, Api } from '@earendil-works/pi-ai';
 import type { BrainStore } from '../../store/brainStore.js';
@@ -894,7 +895,7 @@ export class BrainSessionFactory {
             ? message.errorMessage?.trim() || 'provider error'
             : undefined;
           forkReported = true;
-          logger('brain-subagent').info(formatForkCacheLine({
+          const reading = {
             childSessionId: spec.sessionId,
             parentSessionId: forkCache.parentSessionId,
             cacheRead: message.usage?.cacheRead ?? 0,
@@ -906,6 +907,9 @@ export class BrainSessionFactory {
             // installed on, so the two can never disagree about which providers have a prompt cache.
             providerCaches: cacheFlavor !== undefined,
             ...(failed ? { failure: `first request failed: ${failed}` } : {}),
+          };
+          logger('brain-subagent').info(formatForkCacheLine({
+            ...reading, ...this.forkPrefixDifference(reading),
           }));
         } catch (err) {
           logger('brain-subagent').warn(`fork cache measurement failed on ${spec.sessionId}: ${String(err)}`);
@@ -1005,5 +1009,11 @@ export class BrainSessionFactory {
     // Last, so observers see the finished session — and before the caller can run a turn on it.
     await spec.onSpawned?.({ sessionId: spec.sessionId, messages: session.messages });
     return { session, applyCompaction, assessColdCompaction: assessCold };
+  }
+
+  /** Name the segment where the child's request stopped being its parent's, for a verdict that blames the
+   *  prefix — the half the token counters cannot supply (see forkPrefixDiff). */
+  private forkPrefixDifference(reading: ForkCacheReading): { firstDifference?: string } {
+    return forkPrefixFirstDifference(this.d.store.providerRequests, reading, forkCacheVerdict(reading));
   }
 }
