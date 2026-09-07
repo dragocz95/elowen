@@ -820,6 +820,64 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     expect(sent?.identity).toMatchObject({ platform: 'cron', admin: true, owner: true });
   });
 
+  /** A job somebody scheduled runs as that person, so the transcript it produces is theirs. Filing it
+   *  under the operator put its usage, its cleanup on account deletion and its place in the owner's own
+   *  listing on whoever happens to run the instance — and left the owner unable to read their own job. */
+  it('files an owned job\u2019s cron room under the account it runs as', async () => {
+    let sent: ChannelSendOpts | undefined;
+    let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+    const adapter = { name: 'cron', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      policyForUser: () => userPolicy,
+      identity: linkedResolver(false),
+      channels: {
+        sessionOwnerUserId: () => undefined,
+        send: async (o: ChannelSendOpts) => { sent = o; return 'owned reply'; },
+        fragmentFor: () => '', setLastWriter: () => {},
+      } as never,
+      dispatch: noDispatch,
+    });
+    await orch.startAll();
+
+    await handler!({
+      platform: 'cron', userId: 'cron', channelId: 'job-amy', roleIds: [],
+      access: { admin: false, projectIds: [], actAsUserId: 4, scheduled: true },
+    } as never, 'run the owned job');
+
+    // The account it acts for is both who the turn runs as and who the room belongs to.
+    expect(sent).toMatchObject({ channelId: 'cron-job-amy', ownerUserId: 4, writerUserId: 4 });
+  });
+
+  /** An existing room keeps the owner it was created with, here and everywhere else: re-pointing a
+   *  transcript is a migration, not something an incoming turn may do. */
+  it('leaves an existing cron room on the owner it was created with', async () => {
+    let sent: ChannelSendOpts | undefined;
+    let handler: ((src: never, text: string) => Promise<unknown>) | undefined;
+    const adapter = { name: 'cron', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
+    const orch = new PlatformOrchestrator({
+      plugins: async () => ({ platforms: [adapter] }) as never,
+      platformOwner: () => 1,
+      policyForUser: () => userPolicy,
+      identity: linkedResolver(false),
+      channels: {
+        sessionOwnerUserId: () => 1,
+        send: async (o: ChannelSendOpts) => { sent = o; return 'owned reply'; },
+        fragmentFor: () => '', setLastWriter: () => {},
+      } as never,
+      dispatch: noDispatch,
+    });
+    await orch.startAll();
+
+    await handler!({
+      platform: 'cron', userId: 'cron', channelId: 'job-amy', roleIds: [],
+      access: { admin: false, projectIds: [], actAsUserId: 4, scheduled: true },
+    } as never, 'run the owned job');
+
+    expect(sent?.ownerUserId).toBe(1);
+  });
+
   // Instance automation is not a user account, so there is nobody to hold a grant against. The
   // accountless cron shape must stay DENY-only — expressed as an omitted allow-list, not as an empty one,
   // which would silently strip every plugin tool from the instance's own scheduled work.

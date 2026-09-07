@@ -359,9 +359,14 @@ export class PlatformOrchestrator {
           // row to the archived id (channels.ts), which frees the canonical id, so the next person to write
           // opens a genuinely new session and owns that one.
           //
-          // An unlinked sender has no account to name, and the accountless instance cron has none either,
-          // so both keep the operator.
-          else sessionOwner = rowOwner ?? linkedUserId ?? owner;
+          // A job's own cron room is opened by the account that scheduled it and every turn in it already
+          // RUNS as that account (`actAsUserId`, resolved to `accountUserId` here), so the transcript is
+          // theirs and is filed under them — otherwise its usage, its account-deletion cleanup and its
+          // place in the owner's own listing all sat with whoever runs the instance. There is no sender to
+          // confuse this with: cron is host automation, so the account can only be the one the host
+          // stamped in. An unlinked sender has no account to name, and the accountless INSTANCE cron has
+          // none either, so both keep the operator.
+          else sessionOwner = rowOwner ?? linkedUserId ?? (src.platform === 'cron' ? accountUserId : undefined) ?? owner;
           const identity: TurnIdentity = {
             ...resolved.identity,
             conversation: directChat ? 'direct' : 'shared',
