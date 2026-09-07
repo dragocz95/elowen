@@ -18,10 +18,12 @@ const SIDEBAR_GROUP_ORDER: readonly SidebarGroupId[] = ['primary', 'work', 'inst
 
 /** Where you arrive. Everything the app opens on, before any of the work. */
 const PRIMARY_ENTRY_IDS = ['home', 'chat'];
-/** Administering the instance rather than working in it. Only an admin ever has these. */
-const INSTANCE_ENTRY_IDS = ['settings', 'users'];
-/** The account, drawn alone after a separator — the reference's "Manage account". It is an ordinary
- *  entry, so it is still hidden, restored and reordered like the rest; only its region is fixed. */
+/** Administering the instance rather than working in it — and what the instance has to say for itself:
+ *  the release notes of the version it runs (the bundled changelog plugin) sit here, not among the work
+ *  (owner decision, 7 Sep 2026). Everything else is admin-only. */
+const INSTANCE_ENTRY_IDS = ['settings', 'users', 'plugin-changelog'];
+/** The account, drawn last, directly under the block above it — the reference's "Manage account". It is
+ *  an ordinary entry, so it is still hidden, restored and reordered like the rest; only its region is fixed. */
 const ACCOUNT_ENTRY_ID = 'account';
 
 interface SidebarGroup {

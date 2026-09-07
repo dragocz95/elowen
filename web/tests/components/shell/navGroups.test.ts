@@ -33,6 +33,14 @@ describe('sidebarLayout', () => {
       .toEqual(['plugin-skills']);
   });
 
+  it('files the release notes under the instance, not among the work', () => {
+    // What the instance has to say for itself belongs with the instance (owner, 7 Sep 2026).
+    const { groups } = sidebarLayout([entry('home'), entry('plugin-changelog', "What's new"), entry('settings')]);
+    expect(groups.find((group) => group.id === 'instance')!.entries.map((item) => item.id))
+      .toEqual(['plugin-changelog', 'settings']);
+    expect(groups.map((group) => group.id)).not.toContain('work');
+  });
+
   it('drops a group nobody has entries in, rather than drawing an empty header', () => {
     // A non-admin has no Settings or Users, so the instance group must not exist at all.
     const { groups } = sidebarLayout([entry('home'), entry('memory')]);

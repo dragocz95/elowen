@@ -89,7 +89,7 @@ describe('SidebarNav destinations', () => {
     expect(screen.getByRole('link', { name: 'Home' }).querySelector('.sidebar-nav__badge')).toBeNull();
   });
 
-  it('groups the column the way the reference does, account last and set apart by air', () => {
+  it('groups the column the way the reference does, account last and flush under the instance block', () => {
     const { container } = mount();
     const groups = Array.from(container.querySelectorAll<HTMLElement>('[data-group]'));
     expect(groups.map((group) => group.dataset.group)).toEqual(['primary', 'work', 'instance', 'account']);
