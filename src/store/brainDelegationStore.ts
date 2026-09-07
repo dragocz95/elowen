@@ -170,6 +170,7 @@ function normalizeWorkflowNode(raw: unknown): WorkflowNode | undefined {
   if (o.sessionId !== undefined && (typeof o.sessionId !== 'string' || !o.sessionId || o.sessionId.length > 512)) return undefined;
   if (o.detail !== undefined && typeof o.detail !== 'string') return undefined;
   if (o.model !== undefined && typeof o.model !== 'string') return undefined;
+  if (o.thinkingLevel !== undefined && typeof o.thinkingLevel !== 'string') return undefined;
   if (o.tokens !== undefined && (typeof o.tokens !== 'number' || !Number.isSafeInteger(o.tokens) || o.tokens < 0)) return undefined;
   if (o.seconds !== undefined && (typeof o.seconds !== 'number' || !Number.isSafeInteger(o.seconds) || o.seconds < 0)) return undefined;
   if (o.startedAt !== undefined && (typeof o.startedAt !== 'number' || !Number.isSafeInteger(o.startedAt) || o.startedAt < 0)) return undefined;
@@ -187,6 +188,7 @@ function normalizeWorkflowNode(raw: unknown): WorkflowNode | undefined {
     ...(typeof o.tokens === 'number' ? { tokens: o.tokens } : {}),
     ...(typeof o.seconds === 'number' ? { seconds: o.seconds } : {}),
     ...(typeof o.model === 'string' ? { model: bounded(o.model, 512) } : {}),
+    ...(typeof o.thinkingLevel === 'string' ? { thinkingLevel: bounded(o.thinkingLevel, 64) } : {}),
     ...(typeof o.startedAt === 'number' ? { startedAt: o.startedAt } : {}),
     ...(typeof o.result === 'string' ? { result: bounded(o.result, MAX_WORKFLOW_RESULT_CHARS) } : {}),
     ...(typeof o.error === 'string' ? { error: bounded(o.error, MAX_WORKFLOW_RESULT_CHARS) } : {}),

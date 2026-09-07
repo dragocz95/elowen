@@ -225,6 +225,7 @@ export function WorkflowModal({ workflowId, onClose }: { workflowId: string; onC
   const meta = selected ? [
     statusLabel[selected.status],
     selected.model ? `${t.agents.model}: ${selected.model}` : '',
+    selected.thinkingLevel ? `${t.brainChat.reasoningLabel}: ${selected.thinkingLevel}` : '',
     selected.tokens !== undefined ? `${formatTokens(selected.tokens)} ${t.agents.tokens.toLowerCase()}` : '',
     selected.seconds !== undefined ? `${selected.seconds}s` : '',
     `${t.workflowModal.deps}: ${selected.deps.join(', ') || t.workflowModal.depsNone}`,

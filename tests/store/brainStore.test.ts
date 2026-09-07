@@ -79,6 +79,25 @@ describe('BrainStore', () => {
     expect(store.delegatedAccessFor('child')).toBeUndefined();
   });
 
+  /** The scope check gates whether a durable child may run at all, and a workflow node re-prompted into
+   *  its existing session mints its scope fresh from live access. Counting reasoning effort as part of
+   *  that identity would strand every child of a workflow interrupted before the level was ever captured:
+   *  the stored row has none, the rebuilt one has the inherited level, and the node dies on an authority
+   *  error about a field that carries no authority. Everything that IS authority still has to match. */
+  it('matches a stored scope whose reasoning level differs, and only that field', () => {
+    store.createSession({ id: 'root', userId: 7, model: 'm' });
+    const base = { admin: false, projectIds: [3], owner: false, permissionBoundary: null };
+    store.createSession({ id: 'legacy-level', userId: 7, model: 'm', parentSessionId: 'root', delegatedAccess: base });
+
+    expect(store.hasDelegatedAccess('legacy-level', { ...base, thinkingLevel: 'high' })).toBe(true);
+    store.createSession({ id: 'levelled', userId: 7, model: 'm', parentSessionId: 'root', delegatedAccess: { ...base, thinkingLevel: 'high' } });
+    expect(store.hasDelegatedAccess('levelled', { ...base, thinkingLevel: 'low' })).toBe(true);
+    expect(store.hasDelegatedAccess('levelled', base)).toBe(true);
+    // Authority still has to match exactly — the level is the ONLY field this tolerates.
+    expect(store.hasDelegatedAccess('levelled', { ...base, admin: true, thinkingLevel: 'high' })).toBe(false);
+    expect(store.hasDelegatedAccess('levelled', { ...base, projectIds: [3, 4], thinkingLevel: 'high' })).toBe(false);
+  });
+
   it('reassignSession keeps delegated children attached to the archived parent id', () => {
     store.createSession({ id: 'root', userId: 1, model: 'm' });
     store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });
@@ -1863,6 +1882,23 @@ describe('BrainStore', () => {
       // Malformed variants of the new fields reject the snapshot rather than coercing.
       expect(store.upsertWorkflowRun('root', wf({ nodes: [{ id: 'a', task: 't', status: 'done', deps: [], startedAt: -5 }] }))).toBe(false);
       expect(store.upsertWorkflowRun('root', wf({ nodes: [{ id: 'a', task: 't', status: 'done', deps: [], result: 42 }] }))).toBe(false);
+    });
+
+    /** Same whitelist hazard for the node's reasoning effort. Dropped on persist, the level would exist
+     *  only while the snapshot sat in memory: after a reload — or after a restart, when the DAG view is
+     *  rebuilt from this row — the surface that exists to show what each node runs on would read blank. */
+    it('round-trips the reasoning level a node runs on', () => {
+      store.createSession({ id: 'root', userId: 1, model: 'm' });
+      const nodes = [
+        { id: 'hard', task: 't', status: 'running', deps: [], model: 'p/m', thinkingLevel: 'high' },
+        { id: 'plain', task: 't', status: 'running', deps: [] },
+      ];
+      expect(store.upsertWorkflowRun('root', wf({ nodes }))).toBe(true);
+      const [run] = store.getWorkflowRuns('root');
+      expect(run!.nodes.find((n) => n.id === 'hard')!.thinkingLevel).toBe('high');
+      expect(run!.nodes.find((n) => n.id === 'plain')!.thinkingLevel).toBeUndefined();
+      // Malformed rejects the snapshot rather than coercing, like every other node field.
+      expect(store.upsertWorkflowRun('root', wf({ nodes: [{ id: 'a', task: 't', status: 'done', deps: [], thinkingLevel: 5 }] }))).toBe(false);
     });
 
     // Same whitelist hazard, one level up. `background` is not display trivia: sparedChildSessionIds

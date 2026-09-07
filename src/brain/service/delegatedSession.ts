@@ -761,6 +761,11 @@ export class DelegatedSessionService {
       ...(opts?.model
         ? { model: modelSelectionFromSpec(opts.model) }
         : row.model ? { model: { model: row.model, ...(row.provider ? { provider: row.provider } : {}) } } : {}),
+      // The child's OWN reasoning effort, captured at spawn. Without it a continuation passed no level, so
+      // channels.send saw a "changed" level, disposed a live child mid-conversation and respawned it — and
+      // an evicted or restart-recovered child came back on the model default, silently cheaper than the
+      // sub-agent the delegating turn had asked for.
+      ...(scope.thinkingLevel ? { thinkingLevel: scope.thinkingLevel } : {}),
       ownerSteer: true,
       idleRolloverMs: Number.POSITIVE_INFINITY,
       ...(opts?.rebuildSession ? { rebuildSession: true } : {}),

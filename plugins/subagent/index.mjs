@@ -12,6 +12,7 @@ import { raceDetach } from './lib/detach.mjs';
 import { resolveResultRetentionMs } from './lib/retention.mjs';
 import { resolveStallMs } from './lib/stall.mjs';
 import { toolListCovers } from './lib/toolLists.mjs';
+import { THINKING_LEVEL_HINT, resolveThinkingLevel } from './lib/thinking.mjs';
 import {
   CONTEXT_HEADER,
   MAX_CONTEXT_CHUNK_CHARS,
@@ -389,14 +390,18 @@ export function register(ctx) {
       + 'user explicitly asked to run a sub-agent on a different model, or when a delegation was refused '
       + 'because the model you named is not configured; by default a sub-agent inherits your own model and '
       + 'you should not pass `model` at all. It takes no arguments and returns one line per configured '
-      + 'model with its provider label, or a note that none are configured. This is a read-only lookup of '
+      + 'model with its provider label and, where the model has one, the reasoning levels its `thinkingLevel` '
+      + 'accepts — or a note that none are configured. This is a read-only lookup of '
       + 'what this Elowen instance has wired up — it does not switch YOUR model, change any setting, or say '
       + 'anything about pricing or availability at the provider.',
     parameters: Type.Object({}),
     execute: async () => {
       const list = await ctx.listModels().catch(() => []);
       return ok(list.length
-        ? list.map((m) => `${m.provider}/${m.model}${m.providerLabel ? ` (${m.providerLabel})` : ''}`).join('\n')
+        // The ladder belongs on this line: it is the only place a caller can learn which thinkingLevel a
+        // model accepts, and the alternative is discovering it from a refusal after guessing.
+        ? list.map((m) => `${m.provider}/${m.model}${m.providerLabel ? ` (${m.providerLabel})` : ''}`
+          + `${m.reasoningLevels?.length ? ` — reasoning: ${m.reasoningLevels.join(', ')}` : ''}`).join('\n')
         : 'No models configured.');
     },
   }));
@@ -420,7 +425,7 @@ export function register(ctx) {
       'To launch several independent sub-agents, put multiple delegate calls in ONE response so they run concurrently; do not serialize them. Once you have delegated a search, do not also run it yourself.',
       'Use read_only=true when the sub-agent only needs to look (explore, search, report) — it then gets read-only TOOLS (no Write/Edit) plus a shell clamped to non-destructive commands, and cannot delegate further. The shell clamp is a guardrail, not a sandbox: redirection and `sed -i` are permitted, so the child can still write files the daemon user can reach; what it cannot run is rm/mv/chmod, git commit/push/reset, npm, systemctl, kill, curl/wget/ssh or sudo. Use `tools` to hand it an exact toolset. Either way you can only ever narrow what you already hold.',
       'Pass workspaceId to explicitly confine the child to one Git Sandbox worktree as its logical filesystem root. The child then uses short relative paths and cannot use the parent’s wider filesystem access. An active parent workspace is not inherited as that logical root unless the parent is itself an explicitly workspace-scoped child — but a child spawned from a conversation bound to a workspace still starts in that worktree, and shell commands whose working directory is inside the workspace run in the workspace container (worktree at /workspace, no Git, fresh /tmp per command); a read_only child has no Write tool and no scratch directory there, so it must return a plan or document as its RESULT for you to save.'
-      + ' The sub-agent inherits your model; pass `model` only when the user explicitly asked for a different one. Its final message comes back to you, not to the user — relay what matters. A sub-agent that already ran is NOT gone: its transcript is kept, so before delegating something that builds on earlier work, check DelegateList and send that sub-agent a follow-up with DelegateContinue instead — it resumes with its full context, where a fresh one would have to rediscover everything.'
+      + ' The sub-agent inherits your model; pass `model` only when the user explicitly asked for a different one. It inherits your reasoning effort too — pass `thinkingLevel` to run this one harder (design, unclear bugs, security review) or cheaper (mechanical, well-specified edits) than your own turn. Its final message comes back to you, not to the user — relay what matters. A sub-agent that already ran is NOT gone: its transcript is kept, so before delegating something that builds on earlier work, check DelegateList and send that sub-agent a follow-up with DelegateContinue instead — it resumes with its full context, where a fresh one would have to rediscover everything.'
       + agentTypeLine,
     ].join(' '),
     parameters: Type.Object({
@@ -435,6 +440,7 @@ export function register(ctx) {
         description: 'Run the sub-agent on a DIFFERENT model — pass this ONLY when the user explicitly asked for it. '
           + 'Value from DelegateModels ("provider/model" or a bare model id). Omit it to inherit your own model.',
       })),
+      thinkingLevel: Type.Optional(Type.String({ minLength: 1, description: THINKING_LEVEL_HINT })),
       background: Type.Optional(Type.Boolean({
         description: 'Start asynchronously and return a stable job id immediately. Omit or false to wait for the result.',
       })),
@@ -469,8 +475,10 @@ export function register(ctx) {
       // self-correct (or relay the list to the user).
       const parentTurn = ctx.currentModel() ?? undefined;
       let model = parentTurn ? { provider: parentTurn.provider, model: parentTurn.model } : undefined;
+      // One catalog read for both checks below: the level is validated against the ladder of the model
+      // this delegation actually resolves to, so it has to be resolved first.
+      const list = p.model || p.thinkingLevel ? await ctx.listModels().catch(() => []) : [];
       if (p.model) {
-        const list = await ctx.listModels().catch(() => []);
         const want = p.model.trim();
         const hit = list.find((m) => `${m.provider}/${m.model}` === want || m.model === want);
         if (!hit) {
@@ -478,10 +486,14 @@ export function register(ctx) {
         }
         model = { provider: hit.provider, model: hit.model };
       }
-      // The child inherits the delegating turn's reasoning effort too, so a sub-agent spawned from a
-      // high-reasoning conversation thinks just as hard by default instead of dropping to the model
-      // default. The host drops it if the (possibly different) child model has no such level.
-      const thinkingLevel = parentTurn?.thinkingLevel;
+      // An explicit level is this delegation's own choice and is validated against the child model's
+      // ladder (fail loudly, like an unknown `model`). Omitted, the child inherits the delegating turn's
+      // reasoning effort, so a sub-agent spawned from a high-reasoning conversation thinks just as hard
+      // by default instead of dropping to the model default; the host drops an inherited level the
+      // (possibly different) child model has no equivalent for.
+      const resolvedThinking = resolveThinkingLevel(p.thinkingLevel, parentTurn?.thinkingLevel, model, list);
+      if (resolvedThinking.error) return ok(`Error: ${resolvedThinking.error}`);
+      const thinkingLevel = resolvedThinking.level;
 
       // Capture every PARENT turn accessor before the child is scheduled. Child callbacks run in their
       // own turn scope. `parentSessionId` is persisted by the host so delegated usage rolls up to the

@@ -30,6 +30,9 @@ const request = (): DelegatedTurnRequest => ({
     permissionBoundary: { rules: [{ scope: 'tools', pattern: 'Write', action: 'deny' }], unattendedAsks: 'deny' },
     promptAppend: ['You are a focused sub-agent.', 'context block'],
     contributionUserId: 2,
+    // The level the child spawned on, captured durably so a respawn on the other side of this wire (or
+    // after a restart) rebuilds it at the same effort instead of the model default.
+    thinkingLevel: 'high',
   },
   scheduled: false,
   model: { provider: 'e2e', model: 'mock-model' },

@@ -224,6 +224,10 @@ export interface WorkflowNode {
   tokens?: number;
   seconds?: number;
   model?: string;
+  /** The reasoning effort this node actually runs on — its own `thinkingLevel` declaration, or the level
+   *  it inherited from the workflow origin, resolved once the node starts. Absent when the node runs on
+   *  the model's default effort. */
+  thinkingLevel?: string;
   startedAt?: number;
   result?: string;
   error?: string;

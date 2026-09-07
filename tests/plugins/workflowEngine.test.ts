@@ -95,13 +95,16 @@ function harness(opts: {
   /** Report delegated turns as dispatched to a forked runner process. */
   delegatedRemote?: boolean;
   delegatedRpcAvailable?: boolean;
+  /** The model catalog `ctx.listModels()` serves — a node's own `thinkingLevel` is validated against the
+   *  ladder of whichever entry its model resolves to. */
+  models?: { provider: string; model: string; reasoningLevels?: string[] }[];
   subagentTypes?: { name: string; description: string }[];
   workflowExpansionRpc?: { addNodes(input: { workflowId: string; nodes: unknown[] }): Promise<{ added: string[] }> };
 } = {}) {
   gate = null;
   const tools = new Map<string, Tool>();
   const controls = new Map<string, WorkflowControl>();
-  const snapshots: { id: string; toolCallId: string; title?: string; status: string; workspaceRef?: { workspaceId: string; projectId: number }; nodes: { id: string; status: string; deps: string[]; startedAt?: number; result?: string; error?: string; workspaceRef?: { workspaceId: string; projectId: number } }[] }[] = [];
+  const snapshots: { id: string; toolCallId: string; title?: string; status: string; workspaceRef?: { workspaceId: string; projectId: number }; nodes: { id: string; status: string; deps: string[]; startedAt?: number; result?: string; error?: string; model?: string; thinkingLevel?: string; workspaceRef?: { workspaceId: string; projectId: number } }[] }[] = [];
   const launched: string[] = [];
   /** The context chunks each node was actually handed, by task — what the child can see, not what we hoped. */
   const contexts = new Map<string, string[]>();
@@ -110,8 +113,8 @@ function harness(opts: {
   const attempts = new Map<string, number>();
   /** Every launch as the host saw it: which channel the node ran in, and the VERBATIM task it received.
    *  A resume is only real if the channel id repeats — that is what puts the retry back in the same session. */
-  const runs: { task: string; channelId: string; fullTask: string; sessionIdleMs?: number; toolPolicy?: { allow?: string[]; deny?: string[] }; model?: { provider: string; model: string }; workspaceRef?: { workspaceId: string; projectId: number } }[] = [];
-  const run = async (source: { access?: { context?: string[]; sessionIdleMs?: number; toolPolicy?: { allow?: string[]; deny?: string[] }; model?: { provider: string; model: string }; workspaceRef?: { workspaceId: string; projectId: number } }; channelId?: string }, fullTask: string, onEvent: (e: unknown) => void) => {
+  const runs: { task: string; channelId: string; fullTask: string; sessionIdleMs?: number; toolPolicy?: { allow?: string[]; deny?: string[] }; model?: { provider: string; model: string }; thinkingLevel?: string; workspaceRef?: { workspaceId: string; projectId: number } }[] = [];
+  const run = async (source: { access?: { context?: string[]; sessionIdleMs?: number; toolPolicy?: { allow?: string[]; deny?: string[] }; model?: { provider: string; model: string }; thinkingLevel?: string; workspaceRef?: { workspaceId: string; projectId: number } }; channelId?: string }, fullTask: string, onEvent: (e: unknown) => void) => {
     // A resumed node is handed its task plus a trailing resume note. Everything keyed by identity here
     // (launch order, session id, FAIL_ONCE attempts) must key on the TASK, or a retry would read as a
     // different node and FAIL_ONCE would fail forever.
@@ -122,6 +125,7 @@ function harness(opts: {
       ...(source.access?.sessionIdleMs !== undefined ? { sessionIdleMs: source.access.sessionIdleMs } : {}),
       ...(source.access?.toolPolicy !== undefined ? { toolPolicy: source.access.toolPolicy } : {}),
       ...(source.access?.model !== undefined ? { model: source.access.model } : {}),
+      ...(source.access?.thinkingLevel !== undefined ? { thinkingLevel: source.access.thinkingLevel } : {}),
       ...(source.access?.workspaceRef !== undefined ? { workspaceRef: source.access.workspaceRef } : {}),
     });
     contexts.set(task, source.access?.context ?? []);
@@ -197,7 +201,7 @@ function harness(opts: {
     // The gated variant must also RESOLVE the model: returning [] makes buildNodeAccess throw
     // "model is not available" before it ever reaches the fence being tested.
     listModels: async () => {
-      if (!opts.modelsGate) return [];
+      if (!opts.modelsGate) return opts.models ?? [];
       await opts.modelsGate;
       return [{ provider: 'p', model: 'm' }];
     },
@@ -786,6 +790,82 @@ describe('workflow engine', () => {
     await tools.get('WorkflowStart')!.execute('t-model', { nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
     const node = snapshots.at(-1)!.nodes[0]!;
     expect(node.model).toBe('p/m'); // the parent's model, which the node inherited
+  });
+
+  /** Per-node reasoning effort. A DAG mixes a mechanical node with one that has to design or debug, so the
+   *  level belongs on the node, not on the whole run — and it has to reach the child through the same
+   *  access the model does. Mutation: read `parentModel?.thinkingLevel` again in buildNodeAccess and the
+   *  declared level is accepted and then ignored. */
+  describe('a node\'s own reasoning level', () => {
+    const models = [
+      { provider: 'p', model: 'm', reasoningLevels: ['low', 'medium', 'high'] },
+      { provider: 'p', model: 'plain', reasoningLevels: undefined },
+    ];
+
+    it('overrides the level the node would inherit from the workflow origin', async () => {
+      const { tools, runs, model } = harness({ models });
+      model.current = { provider: 'p', model: 'm', thinkingLevel: 'high' };
+      await tools.get('WorkflowStart')!.execute('t-level', {
+        nodesFile: workflowFile([
+          { id: 'cheap', task: 'cheap', thinkingLevel: 'low' },
+          { id: 'inherit', task: 'inherit' },
+        ]),
+      });
+      expect(runs.find((r) => r.task === 'cheap')?.thinkingLevel).toBe('low');
+      expect(runs.find((r) => r.task === 'inherit')?.thinkingLevel).toBe('high');
+    });
+
+    // Same reason the effective MODEL is reported: an inherited level is invisible on the declaration, and
+    // a workflow node was the one child whose reasoning effort no surface showed at all.
+    it('reports the effective level on the snapshot, inherited or declared', async () => {
+      const { tools, snapshots, model } = harness({ models });
+      model.current = { provider: 'p', model: 'm', thinkingLevel: 'high' };
+      await tools.get('WorkflowStart')!.execute('t-level-snap', {
+        nodesFile: workflowFile([
+          { id: 'cheap', task: 'cheap', thinkingLevel: 'low' },
+          { id: 'inherit', task: 'inherit' },
+        ]),
+      });
+      const nodes = snapshots.at(-1)!.nodes;
+      expect(nodes.find((n) => n.id === 'cheap')?.thinkingLevel).toBe('low');
+      expect(nodes.find((n) => n.id === 'inherit')?.thinkingLevel).toBe('high');
+    });
+
+    it('fails the node loudly when its model has no such level, naming the ones it has', async () => {
+      const { tools, snapshots, launched } = harness({ models });
+      await tools.get('WorkflowStart')!.execute('t-level-bad', {
+        nodesFile: workflowFile([{ id: 'a', task: 'a', thinkingLevel: 'xhigh' }]),
+      });
+      const node = snapshots.at(-1)!.nodes[0]!;
+      expect(node.status).toBe('error');
+      expect(node.error).toContain('thinkingLevel "xhigh" is not available on p/m');
+      expect(node.error).toContain('low, medium, high');
+      expect(node.error).toContain('node "a"');
+      expect(launched).toEqual([]); // refused before the child was ever spawned
+    });
+
+    // WorkflowAddNodes shares NODE_SHAPE and the same normalizer, so a dynamically added node has to
+    // accept the field too — the declaration is dropped entirely if dag.mjs does not carry it across.
+    it('travels through WorkflowAddNodes as well', async () => {
+      const h = harness({ models });
+      h.model.current = { provider: 'p', model: 'm', thinkingLevel: 'medium' };
+      let release!: () => void;
+      gate = { task: 'root', promise: new Promise<void>((resolveGate) => { release = resolveGate; }) };
+      const started = h.tools.get('WorkflowStart')!.execute('t-level-add', {
+        nodesFile: workflowFile([{ id: 'root', task: 'root' }]),
+      });
+      await new Promise((r) => setTimeout(r, 5));
+      const workflowId = h.snapshots[0]!.id;
+      const added = await h.tools.get('WorkflowAddNodes')!.execute('t-level-add-1', {
+        workflowId,
+        nodes: [{ id: 'leaf', task: 'leaf', thinkingLevel: 'high' }],
+      });
+      expect(added.content[0]!.text).toMatch(/Added 1 node/);
+      release();
+      await started;
+      expect(h.runs.find((r) => r.task === 'leaf')?.thinkingLevel).toBe('high');
+      expect(h.tools.get('WorkflowAddNodes')!.parameters?.properties).toHaveProperty('nodes');
+    });
   });
 
   // Regression: qwen3.8-max-preview double-escaped non-ASCII in the title argument, so the parsed string

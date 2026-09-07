@@ -146,9 +146,12 @@ The scope can capture:
 - focused role/context prompt appendices;
 - whether read-only mode was requested or imposed;
 - the principal that spawned it;
-- the account whose personal tools, HOME, and Sandbox state it inherits.
+- the account whose personal tools, HOME, and Sandbox state it inherits;
+- the reasoning level it runs on, so a continuation or a restart resumes it at the same effort.
 
 The child cannot widen that scope. Continuation re-checks the parent's current authority, so revoked Projects, plugin grants, and stricter permission settings affect old children. The only supported widening is promotion of a read-only child that the same principal explicitly requested as read-only; the promoted scope is minted from the caller's current authority.
+
+A delegation and a workflow node each choose their own reasoning effort with an optional `thinkingLevel`, picked from the difficulty of that task: omitted or low for mechanical work, high for design, unexplained failures, or security-sensitive review. Omitting it inherits the delegating turn's level. A level the child's model does not offer is refused with the levels it does, never silently reduced.
 
 A **workflow DAG** is a set of delegated nodes with explicit dependencies. Independent nodes can run in parallel; dependent nodes receive completed dependency results. Nodes inherit the effective boundary of their creating node. The workflow engine is plugin-owned, while the host owns the durable session and recovery seams.
 

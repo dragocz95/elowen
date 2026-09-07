@@ -47,12 +47,21 @@ export interface DelegatedExecutionScope {
   /** Explicit Sandbox worktree assigned by the delegating turn. The durable scope stores only this
    * ownership tuple; every process resolves the canonical host path through Sandbox immediately before use. */
   workspaceRef?: SandboxWorkspaceRef;
+  /** Reasoning effort this child was spawned on — the Delegate call's own `thinkingLevel`, or the level
+   * inherited from the delegating turn. Captured here because it is spawn input, not display data: a
+   * continuation, an eviction and a boot recovery all rebuild the child from this scope, and without it
+   * every one of them respawned the child on the model default (and `channels.thinkingChanged` disposed
+   * the live session to do so). Absent = run on the model's default effort. */
+  thinkingLevel?: string;
 }
 
 const MAX_PROJECT_IDS = 10_000;
 const MAX_TOOL_NAMES = 2_000;
 const MAX_TOOL_NAME_CHARS = 256;
 const MAX_PRINCIPAL_CHARS = 256;
+// A canonical ladder word ('minimal' … 'xhigh'); the ceiling only keeps a corrupt row from carrying a
+// blob into every respawn. The level's meaning stays PI's (session/factory.ts clamps what it cannot use).
+const MAX_THINKING_LEVEL_CHARS = 64;
 const MAX_PROMPT_CHUNKS = 16;
 const MAX_PROMPT_CHARS = 8_000;
 // Shared budget for ALL system-prompt sections of a delegated child (role prompt + parent-supplied
@@ -165,6 +174,12 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     if (!Number.isSafeInteger(value.contributionUserId) || (value.contributionUserId as number) <= 0) return undefined;
     contributionUserId = value.contributionUserId as number;
   }
+  let thinkingLevel: string | undefined;
+  if (own(value, 'thinkingLevel')) {
+    if (typeof value.thinkingLevel !== 'string') return undefined;
+    thinkingLevel = value.thinkingLevel.trim();
+    if (!thinkingLevel || thinkingLevel.length > MAX_THINKING_LEVEL_CHARS) return undefined;
+  }
   let workspaceRef: SandboxWorkspaceRef | undefined;
   if (own(value, 'workspaceRef')) {
     const rawWorkspace = value.workspaceRef;
@@ -190,6 +205,7 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     ...(settingsUserId !== undefined ? { settingsUserId } : {}),
     ...(contributionUserId !== undefined ? { contributionUserId } : {}),
     ...(workspaceRef ? { workspaceRef } : {}),
+    ...(thinkingLevel ? { thinkingLevel } : {}),
   };
 }
 
@@ -363,16 +379,26 @@ export function promoteDelegatedScope(
     ...(scope.settingsUserId !== undefined ? { settingsUserId: scope.settingsUserId } : {}),
     ...(scope.contributionUserId !== undefined ? { contributionUserId: scope.contributionUserId } : {}),
     ...(scope.workspaceRef ? { workspaceRef: scope.workspaceRef } : {}),
+    // Effort is not authority: a promoted child is the SAME conversation continuing with write access, so
+    // it keeps thinking exactly as hard as it did while it was read-only.
+    ...(scope.thinkingLevel ? { thinkingLevel: scope.thinkingLevel } : {}),
   });
   if (!promoted) return { error: 'the resulting access could not be validated' };
   return { scope: promoted };
 }
 
-/** Semantically compare canonical durable scopes without trusting caller object identity or array order. */
+/** Semantically compare the AUTHORITY of two canonical durable scopes, without trusting caller object
+ *  identity or array order. `thinkingLevel` is deliberately excluded: it is reasoning effort, not
+ *  permission, and this comparison gates whether a child may run at all. A workflow node re-prompted into
+ *  its existing session mints its scope fresh from live access, so counting the level would have made
+ *  every node of a workflow interrupted BEFORE the level was captured unrunnable after the upgrade — the
+ *  stored row has no level, the rebuilt one does. Nothing here may widen access either way. */
 export function sameDelegatedExecutionScope(a: DelegatedExecutionScope, b: DelegatedExecutionScope): boolean {
   const left = normalizeDelegatedExecutionScope(a);
   const right = normalizeDelegatedExecutionScope(b);
-  return !!left && !!right && JSON.stringify(left) === JSON.stringify(right);
+  if (!left || !right) return false;
+  const authority = ({ thinkingLevel: _level, ...rest }: DelegatedExecutionScope) => rest;
+  return JSON.stringify(authority(left)) === JSON.stringify(authority(right));
 }
 
 /** Add an account-level deny-list to an inherited scope. This only narrows access; an old deny remains

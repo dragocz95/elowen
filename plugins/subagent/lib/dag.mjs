@@ -29,7 +29,7 @@ function hasCycle(nodes) {
   return false;
 }
 
-/** Normalize one raw node into `{ id, task, deps, model?, tools?, readOnly?, subagentType? }`, or return
+/** Normalize one raw node into `{ id, task, deps, model?, thinkingLevel?, tools?, readOnly?, subagentType? }`, or return
  *  an error string. `knownIds` is the full set of ids in the (combined) graph so deps can be checked
  *  eagerly. `subagentType` is validated against the live catalog later (host-side, in buildNodeAccess). */
 function normalizeNode(raw, knownIds) {
@@ -49,6 +49,10 @@ function normalizeNode(raw, knownIds) {
   const node = { id, task: task.slice(0, MAX_TASK_CHARS), deps };
   const model = str(raw.model);
   if (model) node.model = model;
+  // Validated against the node model's ladder in buildNodeAccess, where that model is resolved — here it
+  // is only carried, exactly like `model` itself.
+  const thinkingLevel = str(raw.thinkingLevel);
+  if (thinkingLevel) node.thinkingLevel = thinkingLevel;
   if (Array.isArray(raw.tools)) {
     const tools = [...new Set(raw.tools.map(str).filter(Boolean))];
     // An explicitly EMPTY list is a mistake, not "give it everything" — reject it exactly like `delegate`

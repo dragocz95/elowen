@@ -75,6 +75,15 @@ describe('promoteDelegatedScope', () => {
     expect(promoted.permissionBoundary).not.toEqual(readOnlyChild().permissionBoundary);
   });
 
+  /** Effort is not authority. A promotion is the same conversation carrying on with write access, so the
+   *  sub-agent must keep thinking as hard as it did — dropping the level here would quietly downgrade a
+   *  child spawned at a high effort the moment it was allowed to act on what it found. */
+  it('keeps the reasoning level the child was spawned with', () => {
+    const promoted = scopeOf(promoteDelegatedScope(readOnlyChild({ thinkingLevel: 'high' }), access()));
+    expect(promoted.thinkingLevel).toBe('high');
+    expect(scopeOf(promoteDelegatedScope(readOnlyChild(), access())).thinkingLevel).toBeUndefined();
+  });
+
   it('never exceeds the caller — the promoted scope passes the continuation check against that same turn', () => {
     const now = access();
     expect(scopeExceedsCurrentAccess(scopeOf(promoteDelegatedScope(readOnlyChild(), now)), now)).toBeUndefined();

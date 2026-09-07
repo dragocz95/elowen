@@ -259,6 +259,9 @@ class WorkflowModal implements Component, Focusable {
       // Directly after the tokens: which model actually burned them. A workflow routinely mixes models
       // across nodes, so the count alone does not tell you what you are paying for.
       node.model ? `${color.faint('model ')}${color.text(terminalInlineText(node.model))}` : '',
+      // Beside the model, because the two together are what a node actually costs: the same DAG routinely
+      // mixes a cheap mechanical node with one deliberately run at a high reasoning effort.
+      node.thinkingLevel ? `${color.faint('thinking ')}${color.text(terminalInlineText(node.thinkingLevel))}` : '',
       secs !== undefined ? color.text(formatDuration(secs)) : '',
       `${color.faint('deps ')}${color.text(terminalInlineText(node.deps.join(', ')) || 'root')}`,
       node.workspaceRef ? color.faint('[S] sandboxed') : '',

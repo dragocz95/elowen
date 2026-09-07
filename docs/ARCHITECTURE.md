@@ -171,9 +171,14 @@ The `subagent` plugin exposes typed delegation and workflow tools. A delegated c
 - its `DelegatedExecutionScope` captures administrator/project/owner authority, plugin tool policy, non-interactive permission rules, prompt appendices, read-only origin, spawning principal, and contribution account;
 - the scope is normalized and validated before persistence and on every resume;
 - a child can inherit or narrow the parent's authority, never widen it;
+- the scope also records the reasoning level the child was spawned on, because continuation, eviction and boot recovery rebuild the child from the scope alone;
 - `DelegateContinue` reuses the child transcript and re-checks the parent's current authority;
 - `write_access: true` can only promote a read-only child explicitly requested as read-only, by the same spawning principal, and only to the caller's current authority;
 - workflow nodes inherit the effective boundary of the creating node.
+
+`Delegate` and a workflow node take an optional `thinkingLevel`. Omitted, the child inherits the delegating turn's reasoning effort, and the provider layer clamps a level the child's model cannot serve. Given explicitly, it is validated against that model's own ladder (`PluginModelOption.reasoningLevels`, assembled in `src/brain/models.ts`) and an unsupported value is refused with the levels that model does have, rather than clamped. A model the live catalog does not list is not evidence of anything, so the level is passed on and clamped instead of refused. The effective level travels on the sub-agent progress row and on the workflow node snapshot, so the CLI and the web show what each child actually runs on.
+
+The level is not authority, so `sameDelegatedExecutionScope` ignores it. A child spawned before the field existed keeps running on the inherited default until it is spawned again; its stored scope is not upgraded by request input, and a rebuilt scope that carries a level must not fail the durable-scope check against a row that has none.
 
 Workflow DAG execution is implemented by `plugins/subagent/lib/workflow.mjs`. The host-side reverse seam for dynamic node expansion is `WorkflowAddNodes`; a forked runner reaches it through host RPC and cannot fabricate its own identity.
 
