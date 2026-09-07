@@ -120,6 +120,7 @@ import { dirName } from './filePath';
 import { buildUsageSummary } from './usageBars';
 import { DEFAULT_RANGE, isStoredRange, parseRange, rangeBounds, serializeRange } from './dateRange';
 import { eventIcon } from './eventMeta';
+import { renderMarkdown } from './markdown';
 
 // @platform-keep plugin-ui-runtime :: window.ElowenUiRuntime && PLUGIN_UI_API_VERSION
 /** Generic browser-plugin platform for future github/sandblox consumers; zero in-repo callers is expected.
@@ -377,6 +378,9 @@ export function ensurePluginUiRuntime(): void {
       // added here for the retired `work` views and removed with them, but `stats` reads the same five
       // — so its page threw "serializeRange is not a function" on mount from then on.
       DEFAULT_RANGE, isStoredRange, parseRange, rangeBounds, serializeRange,
+      // The host's own markdown pipeline, so a bundle rendering authored notes never ships a second
+      // parser or its own sanitizer settings.
+      renderMarkdown,
     },
     api,
     navigate: (href) => navigateImpl(href),

@@ -47,7 +47,7 @@ interface RuntimeComponents {
   LoadingState: ComponentType<{ variant?: 'list' | 'cards' | 'block'; height?: string }>;
 }
 
-interface RuntimeUtils { apiErrorMessage(error: unknown): string }
+interface RuntimeUtils { apiErrorMessage(error: unknown): string; renderMarkdown(text: string): string }
 
 interface ChangelogRuntime {
   components: RuntimeComponents;

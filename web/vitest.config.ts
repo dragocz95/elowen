@@ -10,9 +10,7 @@ export default defineConfig({
   // Plugin-bundle sources under ../plugins/*/web-src are imported by suites in tests/pluginUi/ and
   // exercised against the real window.ElowenUiRuntime; they live outside web/, so their react/lucide
   // imports must resolve to THIS app's node_modules (one React instance — the same guarantee the
-  // production build shim gives). The same rule covers the browser libraries a bundle shares with the
-  // app rather than duplicating — `marked` and `dompurify`, which the changelog page renders its
-  // release notes with, exactly as the chat transcript does.
+  // production build shim gives).
   server: { fs: { allow: ['..'] } },
   resolve: {
     alias: {
@@ -21,8 +19,6 @@ export default defineConfig({
       'react-dom': dep('react-dom'),
       react: dep('react'),
       'lucide-react': dep('lucide-react'),
-      marked: dep('marked'),
-      dompurify: dep('dompurify'),
       '@testing-library/react': dep('@testing-library/react'),
       msw: dep('msw'),
       'msw/node': dep('msw/node'),

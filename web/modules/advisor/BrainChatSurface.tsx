@@ -1,9 +1,8 @@
 'use client';
 import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
-import { marked } from 'marked';
-import DOMPurify from 'dompurify';
 import { Send, Square, Plus, ChevronDown, Paperclip, X, FileText, Download, Users, ChevronRight, Brain, Activity, Pencil, MoreHorizontal, ListChecks, Clock3, ImageOff, ExternalLink, Compass, Hammer, Workflow, type LucideIcon } from 'lucide-react';
 import { toolGlyph } from '../../lib/toolGlyph';
+import { renderMarkdown } from '../../lib/markdown';
 import { langForPath, parseDiffRow } from '../../lib/codeDiff';
 import { highlightCode, type CodeTokenKind } from '../../lib/codeHighlight';
 import { usePersistentState } from '../../lib/usePersistentState';
@@ -64,9 +63,9 @@ import { InlineArtifact } from './InlineArtifact';
 
 const STATUSLINE_VALUES = ['shown', 'hidden'] as const;
 
-/** Sanitized-markdown block for one assistant text segment (marked + DOMPurify, no bubble). */
+/** Sanitized-markdown block for one assistant text segment (no bubble). */
 function TextSegment({ text, className = '' }: { text: string; className?: string }) {
-  const html = useMemo(() => DOMPurify.sanitize(marked.parse(text, { async: false }) as string), [text]);
+  const html = useMemo(() => renderMarkdown(text), [text]);
   return <div className={`chat-markdown text-sm leading-relaxed text-foreground ${className}`} dangerouslySetInnerHTML={{ __html: html }} />;
 }
 
