@@ -21,7 +21,7 @@
 
 ---
 
-Elowen is a personal AI agent that runs on **your** machine. Chat with it in the terminal, from the Web UI, Discord, or WhatsApp; it keeps the same projects, permissions, tools, and durable memory across every surface. It can investigate code, edit files, use a terminal, plan tasks, delegate focused work — and stop to ask when a decision belongs to you.
+Elowen is a personal AI agent that runs on **your** machine. Chat with it in the terminal, from the Web UI, Discord, Telegram, Microsoft Teams, or WhatsApp; it keeps the same projects, permissions, and tools across every surface. Personal durable memory follows the linked account, while explicitly shared Project pools are available only to eligible members. It can investigate code, edit files, use a terminal, plan tasks, delegate focused work, and stop to ask when a decision belongs to you.
 
 It is deliberately self-hosted: a Node.js daemon, SQLite, a Next.js Web UI, and plugins you can inspect, enable, or remove. Your provider accounts and project data stay under your control.
 
@@ -96,7 +96,7 @@ elowen up | down                    # manage local services
 | **Delegation** | Hand focused work to a sub-agent — on your model, or on a different model from a different provider entirely. Its live status, tool activity, and result stay attached to the parent conversation — never a black box. |
 | **Workflows** | Let the agent decompose a job into a DAG of sub-agents and run it: independent steps in parallel, dependents waiting for what they need, and every node free to run on its own model — a cheap fast model for mechanical steps, a frontier model for the hard ones, mixed providers in one graph. The dependency tree, each node's progress and its transcript stay in the conversation — during the run and long after it. |
 | **Permissions** | Per-user model ceilings and granular tool rules decide what may run, what must ask, and what is denied. Approval is a real pause in the work, not a best-effort ping. |
-| **Durable memory** | Memory that carries across surfaces and is scoped to the project you are working in, so one client's context never bleeds into another's. Each memory carries a vitality score that rises with use and decays with time, so the store tidies itself instead of growing forever — and nothing is ever hard-deleted. Recall runs again mid-turn, not only when a turn starts. A durable queue holds your mid-turn follow-up instead of dropping it. |
+| **Durable memory** | Account-private memory carries across surfaces, while an administrator can configure shared Project pools for eligible members. Each memory carries a vitality score that contributes to ranking and retention. Soft deletion keeps items recoverable until permanent purge. Recall can run again mid-turn, not only when a turn starts. A durable queue holds a mid-turn follow-up instead of dropping it. |
 | **Plugins** | Files, terminal, MCP, skills, scheduling, codebase search, chat platforms, and more — declared by manifest, scoped by a registry API, deny-by-default. |
 | **Scheduling** | Recurring jobs and one-shot wake-ups (`daily 07:30`, `every 15m`, standard cron), read on **your** clock. |
 | **Self-hosted** | A Node.js daemon, SQLite, and a Next.js Web UI. Your accounts and data stay yours. |
@@ -133,10 +133,6 @@ elowen up | down                    # manage local services
 <tr>
 <td width="50%"><img src="docs/site/images/account-settings.png" alt="Account constellation"><br><sub>Web UI — account, your preferences in orbit</sub></td>
 <td width="50%"><img src="docs/site/images/projects-editor.png" alt="Project editor"><br><sub>Web UI — in-app project editor</sub></td>
-</tr>
-<tr>
-<td width="50%"><img src="docs/site/images/web-ui-kanban.png" alt="Kanban"><br><sub>Web UI — kanban</sub></td>
-<td width="50%"><img src="docs/site/images/web-ui-timeline.png" alt="Timeline"><br><sub>Web UI — timeline</sub></td>
 </tr>
 <tr>
 <td width="50%"><img src="docs/site/images/brain-memory.png" alt="Memory"><br><sub>Web UI — durable memory</sub></td>
@@ -212,7 +208,7 @@ Elowen is a small, self-hosted stack of stable, modern tooling — no external s
 |---|---|
 | **Runtime** | [Node.js](https://nodejs.org) 22+ (ESM), distributed on [npm](https://www.npmjs.com/package/elowen) |
 | **Agent core** | The [PI](https://www.npmjs.com/package/@earendil-works/pi-ai) SDK — `pi-ai`, `pi-coding-agent`, and the `pi-tui` terminal UI |
-| **Daemon & API** | [Hono](https://hono.dev) on `@hono/node-server`, with `ws` for the WebSocket terminal |
+| **Daemon & API** | [Hono](https://hono.dev) on `@hono/node-server` |
 | **Storage** | [better-sqlite3](https://github.com/WiseLibs/better-sqlite3) — a single SQLite file |
 | **Web UI** | [Next.js](https://nextjs.org) (standalone) + React |
 | **Agent execution** | [tmux](https://github.com/tmux/tmux) sessions, with [node-pty](https://github.com/microsoft/node-pty) for live PTY streaming |

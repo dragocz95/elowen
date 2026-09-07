@@ -10,7 +10,7 @@ group: Everyday use
 
 Elowen memory stores durable, reusable facts across conversations: preferences, decisions, project details, and environment topology. It is not a transcript or a chat archive.
 
-Memory is private to one Elowen account. A conversation can recall only that account's memories, and unlinked platform senders and delegated task workers cannot use the memory tools.
+Memory is private to one Elowen account by default. An administrator can configure a shared Project memory pool; members of that Project can then recall and manage memories in the shared pool according to the current account and Project boundary. Unlinked platform senders and delegated task workers cannot use personal memory tools.
 
 ## How recall works
 
@@ -18,10 +18,10 @@ Elowen can recall memories automatically at the start of a turn and, when enable
 
 - With embeddings configured, retrieval is semantic: it matches meaning rather than exact words.
 - Without a usable embedding configuration, retrieval falls back to keyword and recency matching.
-- Retrieved results are ranked primarily by semantic similarity, with importance and vitality breaking ties. The current ranking weights are `0.80` similarity, `0.10` importance, and `0.10` vitality.
+- Retrieved results use a combined score. The current vector-ranking weights are `0.80` semantic similarity, `0.10` importance, and `0.10` vitality. In keyword fallback, recency also contributes to ranking.
 - Similar results are deduplicated while they are packed into the prompt. The current packing threshold is cosine similarity `0.70`.
 
-The automatic turn-start recall defaults to a maximum of 10 memories and a shared budget of 20,000 characters. The semantic relevance floor and these limits can be changed under **Settings → Elowen AI**.
+The automatic turn-start recall defaults to a maximum of 10 memories and a shared budget of 20,000 characters. The semantic relevance floor and these limits can be changed under **Settings → `<assistant name>` AI**.
 
 `MemorySearch` is also available during a conversation when a fact is needed explicitly. Its default is up to 6 matching memories, subject to the retrieval budget.
 
@@ -29,7 +29,7 @@ The automatic turn-start recall defaults to a maximum of 10 memories and a share
 
 Live recall searches again as the agent moves from your initial request to files, tools, and errors. It is non-blocking: the search starts in the background and its result is injected into a later model call.
 
-Configure the per-account switch at **Account → Memory → Recall while working**. The instance-wide limits are under **Settings → Elowen AI → Limits**:
+Configure the per-account switch at **Account → Memory → Recall while working**. The instance-wide limits are under **Settings → `<assistant name>` AI → Limits**:
 
 | Setting | Default | Range |
 |---|---:|---:|
@@ -54,7 +54,7 @@ Every memory has:
 
 ### Memory tools
 
-There is no standalone `elowen memory` CLI command. In terminal chat and other supported Elowen sessions, memory is managed with these tools:
+There is no standalone `elowen memory` CLI command. In terminal chat and other supported Elowen sessions, memory is managed with these tools. The tools authenticate as your linked Elowen account. Search, listing, and row mutations can include shared Project rows that your current scope can access, but category creation, category deletion, and `MemoryRecategorize` operate on your personal categories and memories. Shared category changes use the administrator/API boundary described below.
 
 | Tool | Use |
 |---|---|
@@ -73,7 +73,7 @@ There is no standalone `elowen memory` CLI command. In terminal chat and other s
 
 ## Categories and project scope
 
-A memory must belong to a category to be recalled. Categories are private to your account and have a unique name, an optional description, an optional icon, and an optional project binding.
+A memory must belong to a category to be recalled. Personal categories belong to your account; shared Project pools use the pool's accessible categories. Categories have a unique name, an optional description, an optional icon, and an optional project binding.
 
 The category description is the classifier's guide. Make it specific about what belongs there, for example:
 
@@ -81,7 +81,7 @@ The category description is the classifier's guide. Make it specific about what 
 Deployment layout, service topology, DNS records, and hosting details. No secrets.
 ```
 
-New memories are categorized asynchronously in the background. If a memory is uncategorized, it remains stored but is not recallable. `MemoryRecategorize` can classify uncategorized memories after you create categories; use `all: true` when you deliberately want to re-sort existing assignments. Automatic categorization requires a categorization model configured under **Settings → Memory**.
+New memories are categorized asynchronously in the background. If a memory is uncategorized, it remains stored but is not recallable. `MemoryRecategorize` reclassifies your personal memories after you create categories; it does not reclassify a shared Project pool. Use `all: true` when you deliberately want to re-sort your personal assignments. Automatic categorization requires a categorization model configured in the current administrator AI and Models settings. The retired **Settings → Memory** label aliases to **Models**.
 
 When a memory is added during work in a project:
 
@@ -95,7 +95,7 @@ For recall, Elowen resolves the current working directory to the most specific m
 
 To bind or edit a category, open `/memory`, open the category manager, and set **Project scope**. The `MemoryCategoryCreate` tool creates a global category; project binding is available in the web interface.
 
-Deleting a category keeps its memories but makes them uncategorized, so they stop being recalled until categorized again. Category deletion cannot be undone.
+Deleting a category keeps its memories but makes them uncategorized, so they stop being recalled until categorized again. In a shared Project pool, eligible members can manage accessible shared rows, while emptying the trash remains account-owned. Personal category deletion is account-scoped; deleting a shared pool category is an administrator operation and affects the pool's rows. Category deletion cannot be undone.
 
 ## Vitality and automatic retention
 
@@ -121,7 +121,7 @@ Automatic retention is enabled by default. A daily maintenance sweep soft-delete
 | Half-life for importance 1–4 | 3 / 7 / 14 / 30 days | 0–90 days |
 | Importance 5 | Never decays or evicts | Read-only |
 
-Set a half-life to `0` for **never**. Configure these values in **Settings → Elowen AI → Memory retention**. Soft-deleted memories remain in the trash and can be restored from `/memory`; permanent purge removes them irreversibly.
+Set a half-life to `0` for **never**. Configure these values in **Settings → `<assistant name>` AI → Memory retention**. Soft-deleted memories remain in the trash and can be restored from `/memory`; permanent purge removes them irreversibly.
 
 ## Self-service maintenance
 
@@ -136,7 +136,7 @@ The older `POST /memory/reindex` and `POST /memory/reclassify` routes remain ava
 
 ## Embedding configuration
 
-Configure the embedding model in **Settings → Memory**. The Settings UI selects a provider and model and accepts an optional vector dimension. Providers and their credentials are managed under **Settings → Elowen AI**.
+Configure the embedding model in the administrator **Models** and AI settings. The Settings UI selects a provider and model and accepts an optional vector dimension. Providers and their credentials are managed under the configured assistant's **AI** settings.
 
 A usable embedding configuration needs both:
 
@@ -166,7 +166,7 @@ When you change the embedding model, existing vectors no longer match the model.
 
 ### Categorization model
 
-Categorization is separate from embeddings. In **Settings → Memory**, choose a provider and model for classification. It can be a less expensive model than the one used for embeddings. Categorization is best-effort; a categorization failure does not prevent a memory from being stored.
+Categorization is separate from embeddings. In the administrator **Models** and AI settings, choose a provider and model for classification. It can be a less expensive model than the one used for embeddings. Categorization is best-effort; a categorization failure does not prevent a memory from being stored.
 
 ## Codebase semantic search
 
@@ -180,7 +180,7 @@ After changing the embedding model, check `CodebaseStatus` and run `CodebaseRein
 
 ## API and privacy
 
-Memory API routes are caller-owned: a caller can read and modify only its own memories. Embedding and categorization configuration is workspace-level and admin-gated.
+Memory API routes expose the caller's own rows plus any shared Project pool rows accessible to that caller. The split is deliberate: creating a memory is account-owned, while access-scoped row reads, patching, soft deletion, restore, purge, category assignment, and merge can operate on an accessible shared row. The audit feed, maintenance status and jobs, legacy reindex, and reclassify routes are account-owned. Category listing includes shared pools, category creation is account-owned, personal category changes are owner-scoped, and shared-category update or deletion is administrator-only. Emptying the trash is also account-owned. Embedding and categorization configuration is instance-level and administrator-gated.
 
 The main API surfaces are:
 

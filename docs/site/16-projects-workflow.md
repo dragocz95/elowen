@@ -39,7 +39,7 @@ Fresh configuration confines non-operator commands by default. The Sandbox mount
 
 1. In **Project → Sandbox**, choose **Create workspace**.
 2. Select a Git Project, enter a label, and enter a base ref. The form starts with `main`; the base ref may be an existing branch, tag, or commit.
-3. Select **Create**. Elowen creates a real worktree and a unique generated branch in the form `elowen/u<account>/<label>-<id>`. The label is for display; it is not used as the Git ref verbatim.
+3. Select **Create**. Elowen creates a real worktree and starts with the slugified label in the branch form `elowen/u<account>/<slugified-label>`. It adds a numeric suffix such as `-2` only when the directory, branch, or stored workspace collides.
 4. Choose **Use** and bind the workspace to a conversation.
 
 There is one active workspace per conversation and Project. Once active, relative file operations and `Bash` commands resolve to that worktree. Explicit paths are still checked against the account's Project access. The workspace detail shows its path, branch, changed and untracked files, ahead/behind counts, active processes, and working patch.
@@ -51,6 +51,26 @@ A workspace can be created only from a Git Project. Workspace ownership is accou
 **Commit selected paths** accepts a Git commit message and a list of workspace-relative paths, one per line. Only those paths are staged; Sandbox never runs `git add -A`. Repository hooks are disabled for this operation, and unselected changes remain in the workspace.
 
 A clean workspace with no untracked files, commits ahead of its base ref, or active process leases can be removed directly. For a workspace containing changes or commits, the browser first shows a loss preview; discarding requires the exact displayed phrase. Active processes always block removal.
+
+## Optional Project integrations
+
+These integrations are registry plugins. Install and enable them from **Settings → Plugins → Available**; they are not part of the bundled Project surface, and their pages appear only when the plugin is available to the account.
+
+### OneDrive mirrors
+
+The optional **OneDrive** plugin adds a Project tab that mirrors a selected Project folder or Sandbox workspace into the linked account's own OneDrive in both directions. It requires the account's Microsoft identity to be connected and may require an administrator to grant the plugin.
+
+Choose the whole Project or one folder, then use the mirror controls to pause, resume, sync now, inspect conflicts, or disconnect. Files excluded by `.gitignore`, version-control internals, dependencies, environment files, private keys, and credentials are never mirrored. A remote deletion is kept in the mirror's `.elowen-trash` area rather than removed permanently, and a conflict keeps both versions until you choose which copy wins.
+
+### Published Sites
+
+The optional **Sites** plugin creates a `sites/` source folder inside the active Project or Sandbox workspace. `SiteCreate` creates a draft, and `SitePublish` copies the finished output into a retained release. Static sites are available by default; command and PHP runtimes require an administrator to enable them.
+
+Sites can be private, visible to Project members, available to signed-in accounts, shared with named guests, or made public through an explicit confirmation in the Sites UI. Persistent rootless environments are a separate high-privilege option and require administrator setup, host dependencies, and resource limits. Site source remains in the Project even if the published site is deleted.
+
+### Project Editor
+
+The optional **Editor** plugin provides `/p/editor` for browsing and editing accessible Project files. It supports file and folder operations, uploads, Markdown, image, PDF, media, Office, and CSV previews, plus read-only Git history. The editor does not widen Project access, and its administrator-only System root is separate from ordinary Project editing.
 
 ## Connect GitHub and publish a branch
 
@@ -79,7 +99,7 @@ Creating a pull request reuses an existing open pull request with the same base 
 
 A merge is accepted only when the pull request is still open and non-draft, its head matches the expected commit exactly, checks are successful, no current review requests changes, and the repository supports the selected method. Branch force-push, automatic branch deletion, and auto-merge are not available.
 
-GitHub never creates or removes Sandbox worktrees. It consumes the active workspace selected for the conversation.
+GitHub never creates or removes Sandbox worktrees. It consumes the active workspace selected for the conversation. An explicitly workspace-scoped delegated child receives only workspace-safe tools; host-filesystem tools such as `WorkflowStart` are withheld. A normal parent bound to a workspace can still delegate work whose shell starts in the active worktree.
 
 ## CLI and agent tools
 

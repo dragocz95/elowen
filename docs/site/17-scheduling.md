@@ -18,9 +18,9 @@ A scheduled turn runs with the authority of its owner: a personal job uses the o
 ## Where to manage schedules
 
 - **Web:** open **Settings → Automation**. The page lists jobs, their owner, schedule, status, last run, and destination where applicable. Select a job to edit it. Changes are picked up within 30 seconds by default.
-- **Chat:** use `CronAdd`, `ScheduleWakeup`, `CronList`, and `CronRemove`.
+- **Chat:** use `CronAdd`, `CronConversations`, `ScheduleWakeup`, `CronList`, and `CronRemove`.
 
-The `cronjob` plugin must be enabled, and an account needs access to it before it can create personal schedules. Its current tools are `CronAdd`, `ScheduleWakeup`, `CronList`, and `CronRemove`.
+The `cronjob` plugin must be enabled, and an account needs access to it before it can create personal schedules. `CronConversations` lists eligible filing conversations for recurring jobs; filing is organizational and does not choose execution context, model, permissions, or delivery.
 
 ## Personal and instance schedules
 
@@ -28,7 +28,7 @@ The `cronjob` plugin must be enabled, and an account needs access to it before i
 
 | Scope | Use it for | Execution and delivery |
 |---|---|---|
-| `personal` | Automation for the person asking | Runs as that host-verified Elowen account, with its project policy, tool restrictions, and plugin grants. A job created in an owner's or direct platform conversation reports back to that exact conversation; otherwise it reports in the owner's own conversation. |
+| `personal` | Automation for the person asking | Runs as that host-verified Elowen account, with its project policy, tool restrictions, and plugin grants. Owner-chat and Web-created jobs use a dedicated job conversation unless a permitted `notifyChannelId` is configured. A job created in a direct 1:1 platform chat can retain that direct origin; a shared-room job has no private origin and uses the normal channel path. An explicit notification channel takes precedence over the normal ownership-based destination. |
 | `instance` | Automation belonging to the whole Elowen instance | Only the instance owner can create it. It has no account owner, runs with instance-owner powers, and reports through the notification channel unless an explicit destination is selected. |
 
 A broad administrator session does not by itself authorize an `instance` job. `scope` describes who the automation is for, not merely what the current caller is allowed to do; use `personal` when the schedule is for one person.
@@ -47,6 +47,7 @@ Create a recurring job with `CronAdd`. Required fields are:
 | `scope` | `personal` or `instance`. |
 | `schedule` | A supported recurring schedule. |
 | `prompt` | What Elowen should do on each run. |
+| `conversationSessionId` | Required filing conversation id from `CronConversations`. It organizes the recurring job in conversation history; it does not change execution, model, permissions, or delivery. |
 
 A new job is armed from the time it is created. It waits for the next natural occurrence instead of firing immediately. Set `enabled: false` to create it paused; the web page can also pause an existing job without deleting it.
 
@@ -97,7 +98,7 @@ The scheduler checks for due work every 30 seconds by default. Five-field cron s
 | `plain` | Set `true` to omit the `⏰ **job name**` header from delivered results. |
 | `enabled` | Set `false` to create the job paused. |
 | `check` | An optional shell guard for an instance job or a sufficiently privileged personal job. |
-| `notifyChannelId` | An optional channel or thread destination. It is intended for instance or sufficiently privileged owner jobs; ordinary personal jobs report to their own conversation. Without a destination, an instance job uses the notification channel. |
+| `notifyChannelId` | An optional channel or thread destination. It is intended for instance or sufficiently privileged owner jobs; ordinary personal jobs report to their own conversation. When present and permitted, it overrides the normal ownership-based destination. Without a destination, an instance job uses the notification channel. |
 
 ### The `check` guard
 
@@ -149,22 +150,28 @@ Removal is permanent and deletes the prompt and schedule. Pause a recurring job 
 
 **Personal daily summary:**
 
+First call `CronConversations` and choose an eligible filing conversation. Then include its returned id:
+
 ```js
 CronAdd({
   name: "morning-summary",
   scope: "personal",
   schedule: "daily 07:30",
+  conversationSessionId: "<conversation-id-from-CronConversations>",
   prompt: "Summarize yesterday's completed work and today's calendar."
 })
 ```
 
 **Instance-wide polling job with a guard:**
 
+Only the instance owner can create this schedule. Call `CronConversations` in that owner's eligible context and use one of the returned conversation ids for filing; filing does not grant instance authority.
+
 ```js
 CronAdd({
   name: "inbox-watch",
   scope: "instance",
   schedule: "every 15m",
+  conversationSessionId: "<conversation-id-from-CronConversations>",
   hours: "7-22",
   check: "himalaya envelope list --page-size 1 --folder INBOX --unread",
   prompt: "Summarize any new unread email and identify urgent items."

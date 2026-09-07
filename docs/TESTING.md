@@ -29,10 +29,10 @@ Use isolated temporary databases and Project directories. Prefer fake clocks, co
 
 - `tests/contract/registryPluginDependencies.test.ts` keeps runtime dependencies required by plugins in the external `elowen-plugins` registry in the daemon's `dependencies` and verifies their Knip exemptions match actual `src/` imports.
 - `tests/contract/pluginBuildDiscovery.test.ts` verifies that `build:ts` discovers `tsconfig.plugins.*.json` rather than enumerating plugin names, and that TypeScript plugin output targets its own `plugins/<name>/dist`.
-- `tests/contract/pluginWebTestHoming.test.ts` prevents browser tests from being stranded under bundled plugin `web-src/`; registry-owned plugin tests must run in `/var/www/elowen-plugins`.
+- `tests/contract/pluginWebTestHoming.test.ts` prevents browser tests from being stranded under bundled plugin `web-src/`; registry-owned plugin tests must run in their owning registry checkout.
 - `tests/scripts/distIntegrity.test.ts` checks source/output parity, rejects unmanifested plugin folders, and verifies the real build removes stale output when run with `ELOWEN_DIST_BUILD_TEST=1`.
 
-When a change affects a registry plugin, run its focused tests in the `/var/www/elowen-plugins` checkout as well as the host contract tests here. Do not copy registry implementation or tests into this repository to make the local suite green.
+When a change affects a registry plugin, run its focused tests in that plugin's owning registry checkout as well as the host contract tests here. Do not copy registry implementation or tests into this repository to make the local suite green.
 
 ## Web tests and browser E2E
 
@@ -78,7 +78,7 @@ npm run test:e2e:delegate
 npm run test:e2e:subagent
 npm run test:e2e:subagent:runner
 npm run test:e2e:workflow
-node scripts/tests/recovery-e2e/run.mjs
+npm run test:e2e:recovery
 ```
 
 The suites cover streamed chat and provider errors, stop/kill lifecycle, REST/SSE/auth contracts, old-schema upgrades, continuity and compaction, public hooks, delegated turns, forked runners, workflow DAG ordering/resume/stop, and restart-safe delegation recovery. The recovery suite restarts a real daemon against the same SQLite database and verifies fail-closed handling of unanswered tool calls and durable results.

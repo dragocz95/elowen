@@ -60,11 +60,19 @@ The child result, transcript, and usage remain linked to the parent conversation
 
 ![Elowen terminal chat showing a delegated sub-agent](../screenshots/cli/11-subagent.png)
 
+## Manage background processes
+
+Long-running shell commands started with `Bash(run_in_background: true)` have handles scoped to the current conversation and account. Use `ListProcesses` to list only this conversation's background jobs, `ProcessOutput` to wait for or inspect one job, and `KillProcess` to stop one abruptly.
+
+`ProcessOutput` waits by default and returns incremental output. Use `block: false` for a bounded peek or `all: true` for the retained buffer. The buffer is a rolling tail, so earlier output may be reported as dropped; after a process exits and its final output is collected, the handle is removed. `KillProcess` sends an immediate kill to the tracked process tree and discards retained output, so read output first when it matters. Foreground commands and another conversation's processes are not listed.
+
+The terminal plugin limits concurrent background processes per session and account. The configured default is 16, with an operator-controlled range. Use the process handle returned by the tool rather than polling with repeated sleep commands.
+
 ## Run a workflow DAG
 
 Use `/workflow` in CLI or web chat when the request is best handled by orchestration rather than one turn. This changes the agent's prompt bias; it is not an additional permission boundary. The agent may still handle a trivial request directly instead of wrapping it in a workflow.
 
-A workflow is started with `WorkflowStart`. Its complete definition must be in a JSON file created with `Write`; nodes cannot be passed inline. The file can be a node array or an object containing `nodes`, optional `title`, optional shared `context`, and optional `background`:
+A workflow is started with `WorkflowStart`. Its complete definition must be in a JSON file created with `Write`; nodes cannot be passed inline. An explicitly workspace-scoped child cannot use `WorkflowStart`, because host-filesystem tools are withheld from that logical workspace view. A normal parent bound to a workspace can still start delegated work whose shell begins in that worktree. The file can be a node array or an object containing `nodes`, optional `title`, optional shared `context`, and optional `background`:
 
 ```json
 [
@@ -87,7 +95,7 @@ A workflow is started with `WorkflowStart`. Its complete definition must be in a
 
 Each node needs a unique `id` and a complete `task`. It may also specify `deps`, `model`, `read_only`, `tools`, and `subagent_type`. At least one node must have no dependencies. A workflow may contain up to 64 nodes; dependency ids must exist, and cycles are rejected.
 
-Use a workflow when steps have an order or pass results between stages, such as `gather → analyze → write`. Every node is a fresh sub-agent that cannot see the parent conversation. A dependent node receives the completed results of its dependencies as context. For unrelated work, separate parallel `Delegate` calls are simpler.
+Use a workflow when steps have an order or pass results between stages, such as `gather → analyze → write`. Every node is a fresh sub-agent that cannot see the parent conversation. A dependent receives only the direct dependency's `## Handover` block, capped at 4,000 characters. Without that heading it receives only the bounded end of the dependency result, so write concise handovers for downstream nodes. For unrelated work, separate parallel `Delegate` calls are simpler.
 
 By default, `WorkflowStart` waits for the whole DAG and returns the node results. Set `background: true`, or press **`Ctrl+B`** while a foreground workflow is running, to detach it. Elowen then delivers the workflow summary when it finishes. A background workflow continues even if the conversation that started it is aborted.
 

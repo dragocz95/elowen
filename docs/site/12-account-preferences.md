@@ -65,11 +65,9 @@ An enabled plugin with a `userConfigSchema` appears as its own Account section w
 
 Non-secret fields autosave with revision protection. If another tab or device saved a newer revision, Elowen keeps your draft and offers to reload the server version or keep your changes on top of it. Secret values are never read back or debounced: setting or replacing one requires the explicit **Save** button. A plugin that is disabled or no longer granted disappears from Account and cannot be updated by URL.
 
-## Elowen AI
+## Models
 
-The **Elowen AI** section controls the embedded assistant used by Web chat and
-`elowen chat` in the terminal. The section label uses the configured assistant
-name if an administrator has changed it.
+The **Models** section controls personal model and execution preferences for the embedded assistant used by Web chat and `elowen chat` in the terminal. Instance-wide provider and runtime administration remains under **Settings → `<assistant name>` AI**, where the label uses the configured assistant name.
 
 ### Default model
 
@@ -197,8 +195,7 @@ the [Memory](memory) page.
 ## Terminal
 
 **Account → Terminal** controls the appearance and behavior of `elowen chat` in
-the terminal. The Web UI shows a live preview of those CLI settings; the former
-browser terminal is no longer part of Elowen. Changes autosave.
+the terminal. The Web UI shows a live preview of those CLI settings. Use `elowen chat` for interactive terminal work or the optional terminal plugin tools for background shell processes; Elowen does not provide a browser terminal endpoint. Changes autosave.
 
 - **Colors**: follow the application theme with **Auto**, or choose **Custom**
   and edit the 21-color palette. Presets include **Elowen Dark**, **Elowen

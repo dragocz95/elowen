@@ -114,7 +114,7 @@ File, terminal, editor, GitHub, and other integrations must use the shared proje
 
 The bundled `sandbox` plugin adds account-owned worktree roots to that same policy. Core consumes the plugin's typed `SandboxControl` live on every use; it does not read Sandbox tables directly. An active workspace can provide a branch, base reference, label, and path for a Project. Terminal and delegated execution receive a prepared launch with its working directory, HOME, roots, confinement mode, and a durable execution lease.
 
-A read-only shell or plan-mode restriction is a policy guard, not a complete operating-system sandbox. The Sandbox plugin is the component that prepares confined execution where the configured runtime supports it.
+A read-only shell or plan-mode restriction is a policy guard, not a complete operating-system sandbox. The Sandbox plugin is the component that prepares confined execution where the configured runtime supports it. Workspace branches use `elowen/u<account>/<slugified-label>` and add `-2`, `-3`, and so on only after a directory, branch, or stored-workspace collision.
 
 ## Brain tools and prompt composition
 
@@ -150,7 +150,7 @@ Plugins are discovered from the bundled plugin directory and the instance data d
 A failed plugin is skipped without publishing partial tools or routes. The current bundled set is:
 
 ```text
-askuser  elowen-docs  files  mcp  runtime-context
+askuser  changelog  elowen-docs  files  mcp  runtime-context
 sandbox  statusline  subagent  terminal  web
 ```
 
@@ -190,9 +190,9 @@ The forked runner is enabled by default in fresh configuration (`runtime.subagen
 
 A persistent goal is owned by a conversation and is driven by `GoalLoopService`. It re-enters the ordinary brain pipeline with the same account, Project, plugin, tool, and permission boundaries. It is not a separate mission or task executor.
 
-Memory is per account. Recall and curation run through the core memory services and honor the acting identity in owner chat and verified platform turns. Uncategorized memories are never recalled. Embeddings and categorization are optional enhancements; keyword-based operation remains possible without an embedding model.
+Memory is account-owned by default. An administrator can configure a Project shared pool whose eligible members can recall and manage the pool's rows; owner chat and verified platform turns still honor the acting identity. Uncategorized memories are never recalled. Embeddings and categorization are optional enhancements; keyword-based operation remains possible without an embedding model.
 
-Scheduling is plugin-owned. Personal jobs run with the owning account and re-check account/plugin access when they fire; instance jobs are operator-owned. A scheduled platform delivery remains a channel turn, not an owner-chat turn.
+Scheduling is plugin-owned. Personal jobs run with the owning account and re-check account/plugin access when they fire. Owner-chat and Web-created recurring jobs use a dedicated job conversation unless a permitted explicit notification channel is configured. Direct one-to-one platform jobs retain their direct origin, while shared-room jobs use the normal channel path. An explicit notification channel takes precedence over the normal ownership-based destination. Instance jobs are operator-owned. Filing a job under a conversation is organizational and does not change execution context, model, permissions, or delivery.
 
 ## Database, migrations, and maintenance
 
