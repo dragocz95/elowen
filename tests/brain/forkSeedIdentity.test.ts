@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { openDb, type Db } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { rehydrate, storedContextMessages } from '../../src/brain/persistence.js';
-import { forkSeedMessages, type ForkMessage } from '../../src/brain/session/forkPrefix.js';
+import { FORK_EXECUTE_DENIES, forkSeedMessages, type ForkMessage } from '../../src/brain/session/forkPrefix.js';
+import { delegatedToolPolicy, delegatedVisibilityToolPolicy, type DelegatedExecutionScope } from '../../src/brain/delegatedScope.js';
+import { visibleToolNames } from '../../src/brain/session/capabilities.js';
 import { HISTORY_IMAGE_PLACEHOLDER } from '../../src/brain/session/historyImageStripping.js';
 import { createToolSearchHandle, seedActivatedFromHistory } from '../../src/brain/toolSearch/toolSearchTool.js';
 import {
@@ -38,6 +40,18 @@ const HOSTED_CONTENT = [
     content: { type: 'tool_search_tool_search_result', tool_references: [{ type: 'tool_reference', tool_name: 'WorkflowStart' }] },
   },
   { type: 'text', text: 'searched' },
+];
+
+/** The same shape, naming a tool a fork child is allowed to SEE but never to run — the name the
+ *  production fork actually lost out of its replayed history. */
+const SHARE_CONTENT = [
+  { type: 'server_tool_use', id: 'srvtoolu_2', name: 'tool_search_tool_bm25', input: { query: 'share' } },
+  {
+    type: 'tool_search_tool_result',
+    tool_use_id: 'srvtoolu_2',
+    content: { type: 'tool_search_tool_search_result', tool_references: [{ type: 'tool_reference', tool_name: 'ShareImage' }] },
+  },
+  { type: 'text', text: 'shared' },
 ];
 
 const OUTPUT = 'x'.repeat(50_007);
@@ -172,6 +186,33 @@ describe('the transcript a fork inherits', () => {
  *  it stay there). */
 describe('a hosted-search reference replayed into a fork child', () => {
   const MODEL = 'claude-x';
+
+  /** …and the tool block a fork child assembles has to be the parent's, or the repair above fires on
+   *  content that should never have been at risk. Production fork `brain-ch-subagent-sub-dlg-292aee42`
+   *  hit exactly that: its visibility policy withheld the six fork-denied schemas, so the child's block
+   *  held 169 where its parent sent 175 AND a replayed reference naming `ShareImage` was dropped from the
+   *  history on top of it — two divergences from one cause. */
+  it('names a tool the child’s block still carries, because a fork advertises its parent’s', () => {
+    const forked: DelegatedExecutionScope = { admin: false, projectIds: [1], owner: false, permissionBoundary: null, fork: true };
+    // The production shape: the caller hands the EXECUTION policy's deny set down as `currentDenied`.
+    const execution = delegatedToolPolicy(forked);
+    const visible = visibleToolNames(
+      ['Read', ...FORK_EXECUTE_DENIES],
+      new Set(),
+      delegatedVisibilityToolPolicy(forked, execution?.deny ?? []),
+      undefined,
+    );
+    for (const name of FORK_EXECUTE_DENIES) expect(visible).toContain(name);
+    const request = restoreAnthropicHostedReplay(
+      { model: MODEL, tools: visible.map((name) => ({ name, input_schema: { type: 'object' } })), messages: [{ role: 'assistant', content: [{ type: 'text', text: 'shared' }] }] },
+      [{ role: 'assistant', content: [{ type: 'text', text: 'shared' }], anthropicHostedToolReplay: { v: 1, content: SHARE_CONTENT } }],
+      MODEL,
+    );
+    const block = (request as { messages: { content: Record<string, unknown>[] }[] }).messages[0]!
+      .content.find((b) => b.type === 'tool_search_tool_result')!;
+    expect((block.content as { tool_references: unknown[] }).tool_references)
+      .toEqual([{ type: 'tool_reference', tool_name: 'ShareImage' }]);
+  });
 
   const payload = (toolNames: readonly string[]): Record<string, unknown> => ({
     model: MODEL,

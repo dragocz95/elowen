@@ -545,14 +545,35 @@ const DELEGATED_INTERACTIVE_TOOL_DENIES = ['AskUserQuestion'] as const;
  *
  *  For an ordinary child the two are the same object, and this returns exactly {@link delegatedToolPolicy}.
  *  A FORK child is the one case where they part: its visible set must equal the parent's byte for byte, so
- *  the interactive and fork denies are withheld here and enforced at execute time instead. */
+ *  the interactive and fork denies are withheld here and enforced at execute time instead.
+ *
+ *  Withholding them from what THIS function adds is not enough, because every delegated spawn path hands
+ *  the child an execution policy as `currentDenied`: both the runner request (buildDelegatedTurnRequest)
+ *  and the daemon's own continuation compute `delegatedToolPolicy` first and pass its deny set down. The
+ *  fork names therefore arrived back through the caller's list and were filtered out of the tool block
+ *  anyway — measured in production as a child advertising 169 schemas where its parent sent 175, which
+ *  re-billed the whole prefix behind the first missing one. So the names are subtracted here as well.
+ *
+ *  The trade this makes deliberately: an account that has itself disabled one of those six loses the
+ *  disable at SCHEMA level inside a fork child. It loses nothing at execute time — the execution policy
+ *  still carries the name and `forkToolDenial` still refuses the call — and a schema the parent carries is
+ *  exactly what a fork is for. */
 export function delegatedVisibilityToolPolicy(
   scope: DelegatedExecutionScope,
   currentDenied: Iterable<string> = [],
   currentAllow?: Iterable<string>,
 ): ToolPolicy | undefined {
   if (!scope.fork) return delegatedToolPolicy(scope, currentDenied, currentAllow);
-  return toolPolicyFrom(withDelegatedDeniedTools(scope, currentDenied), currentAllow);
+  const policy = toolPolicyFrom(withDelegatedDeniedTools(scope, currentDenied), currentAllow);
+  if (!policy?.deny) return policy;
+  // Subtract from the RESULT, not from the caller's list, so the invariant holds wherever the name
+  // entered: the caller's execution policy, the captured scope's own deny, or this function's own adds.
+  const deny = new Set([...policy.deny].filter((name) => !FORK_EXECUTE_DENIES.includes(name)));
+  if (policy.allow === undefined && deny.size === 0) return undefined;
+  return {
+    ...(policy.allow !== undefined ? { allow: policy.allow } : {}),
+    ...(deny.size ? { deny } : {}),
+  };
 }
 
 /** Intersect a scope's captured allow-list with the spawning account's current grant, and carry its denies.

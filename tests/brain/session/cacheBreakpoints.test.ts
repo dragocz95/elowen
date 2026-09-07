@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { createTrailingCacheBreakpoint } from '../../../src/brain/session/cacheBreakpoints.js';
 import type { TrailingCacheBreakpoint } from '../../../src/brain/session/cacheBreakpoints.js';
+import { buildForkChildMessage, FORK_PLACEHOLDER_RESULT } from '../../../src/brain/session/forkPrefix.js';
 
 const EPHEMERAL = { type: 'ephemeral', ttl: '1h' };
 
@@ -327,5 +328,61 @@ describe('createTrailingCacheBreakpoint', () => {
     expect(() => send(bp, { messages: 'nope' })).not.toThrow();
     expect(() => send(bp, { messages: [] })).not.toThrow();
     expect(() => bp.response(200)).not.toThrow(); // a stray response with no request staged
+  });
+});
+
+/** A fork child's OPENING request is the one this module could not help before, and the one that needs it
+ *  most. The child has no previous request of its own, so nothing is remembered — while the position its
+ *  PARENT wrote is now three messages behind pi-ai's mark, because the fork appends the parent's trailing
+ *  assistant message, a stand-in result for each open tool call, and its own directive on top of it.
+ *
+ *  RED BEFORE THE FIX: production fork `brain-ch-subagent-sub-dlg-292aee42` sent exactly this shape and
+ *  carried ONE message-level marker, on its directive. Removing the opening-request branch from
+ *  `request()` returns this test to `['3']`. */
+describe('a fork child’s opening request', () => {
+  const DIRECTIVE = buildForkChildMessage('do the thing');
+  const placeholder = (id: string): Record<string, unknown> =>
+    ({ type: 'tool_result', tool_use_id: id, content: [{ type: 'text', text: FORK_PLACEHOLDER_RESULT }] });
+
+  /** The inherited tail, exactly as the seed builds it: the parent's last user message (where the
+   *  parent's own mark sat), then its trailing assistant message, then the fork's additions. */
+  const forkOpening = (): unknown[] => [
+    userMessage(plain('earlier')),
+    assistantMessage('earlier reply'),
+    userMessage({ type: 'tool_result', tool_use_id: 'a', content: 'parent result' }),
+    { role: 'assistant', content: [{ type: 'text', text: 'delegating' }, { type: 'tool_use', id: 'b', name: 'Delegate', input: {} }] },
+    userMessage(placeholder('b')),
+    userMessage(marked(`<context placement="before-user">\nnow\n</context>\n\n${DIRECTIVE}`)),
+  ];
+
+  it('also marks the last message it inherited, which is where its parent’s mark sat', () => {
+    const bp = createTrailingCacheBreakpoint();
+    expect(markerPositions(send(bp, payload(forkOpening())))).toEqual(['2', '5']);
+  });
+
+  it('marks nothing extra on an ordinary session’s first request', () => {
+    const bp = createTrailingCacheBreakpoint();
+    const ordinary = [userMessage(plain('earlier')), assistantMessage('reply'), userMessage(marked('ask'))];
+    expect(markerPositions(send(bp, payload(ordinary)))).toEqual(['2']);
+  });
+
+  it('does it once, then hands over to the position it has actually observed', () => {
+    const bp = createTrailingCacheBreakpoint();
+    send(bp, payload(forkOpening()));
+    const next = [...forkOpening()];
+    next[5] = userMessage(plain(`<context placement="before-user">\nnow\n</context>\n\n${DIRECTIVE}`));
+    next.push(assistantMessage('working'), userMessage(marked('tool done')));
+    // The remembered position (the directive, 5) is re-marked; the inherited tail is not marked again.
+    expect(markerPositions(send(bp, payload(next)))).toEqual(['5', '7']);
+  });
+
+  it('leaves the four-marker budget intact', () => {
+    const bp = createTrailingCacheBreakpoint();
+    const spent = { tools: [{ name: 'Read', input_schema: {}, cache_control: EPHEMERAL }, { name: 'Write', input_schema: {}, cache_control: EPHEMERAL }] };
+    const result = send(bp, payload(forkOpening(), spent)) as MarkedPayload;
+    const total = (result.system ?? []).filter((block) => block.cache_control !== undefined).length
+      + (spent.tools.filter((tool) => tool.cache_control !== undefined).length)
+      + markerPositions(result).length;
+    expect(total).toBeLessThanOrEqual(4);
   });
 });
