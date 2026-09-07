@@ -147,9 +147,9 @@ The daemon and web application have separate build steps. From a checkout:
 ```bash
 git clone https://github.com/dragocz95/elowen.git
 cd elowen
-npm install
+npm ci
+npm ci --prefix web
 npm run build
-npm install --prefix web
 npm run build:web
 ```
 

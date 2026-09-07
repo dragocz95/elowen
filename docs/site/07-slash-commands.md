@@ -71,7 +71,7 @@ Modes are client session state for CLI and Web chat. Channels do not publish the
 | `/context` | — | Opens the CLI context-breakdown view inside the stats overlay. |
 | `/mcp` | — | Inspects configured MCP servers, tools, and reconnect health. |
 | `/skills` | — | Lists loaded skills and lets you load or manage user-defined skills. |
-| `/tools` | — | Inspects active plugin tools, their owners, descriptions, and input schemas. |
+| `/tools` | — | Administrator-only inspection of active plugin tools, owners, descriptions, and schema summaries. It is not a member-facing current-session tool list in the current implementation. |
 
 `/context` has a different meaning in chat channels: there it opens a picker to move the channel onto one of the user's existing conversations. The CLI command is only the local context breakdown.
 

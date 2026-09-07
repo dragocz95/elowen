@@ -81,7 +81,7 @@ Set defaults in **Settings → Plugins → Discord** or override them per channe
 - `maxUploadImages` defaults to `4` generated images per reply.
 - `language` defaults to `en` and controls the bot's service messages; `cs` and `sk` are also available.
 
-Voice uses a configured OpenAI-compatible provider from **Settings → Elowen AI**:
+Voice uses a configured OpenAI-compatible provider from **Settings → `<assistant name>` AI**:
 
 - `voiceProvider` selects the provider; leave it empty to keep voice unavailable.
 - `stt` enables incoming voice transcription and is off by default; `sttModel` defaults to `whisper-1`.

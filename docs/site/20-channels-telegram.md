@@ -76,7 +76,7 @@ Set defaults in **Settings → Plugins → Telegram** or override them in a chat
 
 For images, set `visionModel` to a vision-capable model, or leave it empty to use the chat's normal model. `maxImageBytes` defaults to `5242880` bytes and `maxImages` defaults to `4`; generated replies attach at most `maxUploadImages` images (default `4`). Shared files sent by the agent are capped at four per reply. Telegram messages are split for the platform's limits, and generated images and supported files are sent as attachments.
 
-Voice uses a configured OpenAI-compatible provider from **Settings → Elowen AI**:
+Voice uses a configured OpenAI-compatible provider from **Settings → `<assistant name>` AI**:
 
 - `voiceProvider` selects the provider.
 - `stt` enables transcription of incoming voice messages or audio; it is off by default.

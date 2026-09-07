@@ -138,7 +138,7 @@ The installer writes these Linux units:
 
 The daemon unit runs the compiled `dist/daemon/index.js`; the web unit runs `web-dist/server.js`. Both run as the selected unprivileged service user. The web unit starts after the daemon and has a short stop timeout because `build:web` injects a SIGTERM handler into the standalone Next.js server.
 
-On daemon stop or restart, new turns are refused and active work drains at a step boundary when it can be resumed on the next boot; work stuck mid-step is waited for up to ten minutes. The daemon exits with status 75 for an intentional restart, which systemd treats as a restart. `KillMode=mixed` lets forked sub-agent runners finish during the daemon drain, and `TimeoutStopSec=660` is deliberately longer than the ten-minute drain. Use `elowen down --force` only when you explicitly accept losing in-flight work.
+On daemon stop or restart, new turns are refused and active work is checkpointed so it can resume on the next boot. The generated daemon unit uses `KillMode=mixed`, `RestartSec=3`, and `TimeoutStopSec=30`; the daemon's own pause guards keep normal shutdown within that bounded window. The generated web unit uses `RestartSec=3` and `TimeoutStopSec=15`. Use `elowen down --force` only when you explicitly accept losing in-flight work.
 
 The update timer starts 15 minutes after boot and checks hourly (`Persistent=true` also catches a missed run after downtime). The timer is enabled by the installer, but `elowen update --auto` is a no-op until auto-update is enabled in Elowen settings. It installs `elowen@latest` into the active npm prefix, then queues one non-blocking restart of both units.
 
@@ -215,7 +215,7 @@ install -m 600 /path/to/plugin-secrets.key \
 
 The database and `plugin-secrets.key` must come from the same backup set. Restoring the database without its matching key cannot recover encrypted plugin credentials. Elowen has no built-in backup/restore command.
 
-SQLite runs with WAL mode, foreign keys, a five-second busy timeout, and automatic migrations at daemon boot. Plugin-owned schemas use the plugin migration API. Start the new daemon after restoring a backup and inspect the logs for migration errors before serving traffic.
+SQLite runs with WAL mode, foreign keys, a five-second busy timeout, and automatic migrations at daemon boot. Plugin-owned schemas use the plugin migration API. Recovery claims interrupted work synchronously before platform traffic starts, then resumes safe work asynchronously after boot. Unanswered tool calls fail closed rather than being replayed as completed side effects. Start the new daemon after restoring a backup and inspect migration and recovery logs before serving traffic.
 
 ## Logs and health
 

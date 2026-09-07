@@ -1,6 +1,6 @@
 # Web UI UX and accessibility contract
 
-This document records the web UI contract implemented in the upcoming Elowen `0.28.24` checkout. The release is not published yet. It describes implemented behavior, not proposed redesigns. The source of truth is `web/`, its focused tests, and the shared plugin UI kit.
+This document records the web UI contract implemented in the Elowen `0.28.34` checkout. It describes implemented behavior, not proposed redesigns. The source of truth is `web/`, its focused tests, and the shared plugin UI kit.
 
 ## Visual system
 
@@ -82,7 +82,7 @@ Secret plugin fields are outside debounced autosave. The browser never receives 
 
 ## Plugin UI runtime
 
-Plugin browser pages are hosted under `/p/<plugin>/...` and are loaded only when the authenticated plugin listing marks them available and compatible. The host installs `window.ElowenUiRuntime` with API version 12. It provides the host React and JSX runtime, curated components, hooks, utilities, authenticated same-origin API access, and SPA navigation.
+Plugin browser pages are hosted under `/p/<plugin>/...` and are loaded only when the authenticated plugin listing marks them available and compatible. The host installs `window.ElowenUiRuntime` with API version 16. It provides the host React and JSX runtime, curated components, hooks, utilities, authenticated same-origin API access, and SPA navigation.
 
 Plugin bundles must build with `elowen-plugin-ui-kit`, use the host runtime, and never import the host `web/` application or ship another React/query runtime. The runtime publishes the same page chrome and interaction primitives as core, including `WorkspaceShell`, `WorkspaceHero`, `PageToolbar`, `Modal`, `ConfirmDialog`, `ManageSelectionModal`, `SelectionSummary`, `DirectoryPicker`, `Slider`, `DataTable`, `WorkspaceTakeover`, `AutoSaveStatus`, `useAutoSaveStatus`, `usePluginConfigDraft`, and the shared loading/error/empty states. A plugin may contribute main pages, account panels, administrator User panels, Project panels, and Settings sections. Settings sections report host-visible save state through `onSaveState`; sections that render their own complete frame declare `ownsPageFrame` and own their save indicator too.
 

@@ -33,7 +33,7 @@ The `users` table is the account boundary. Administrators have instance-wide man
 
 Every project-capable route and tool must use the shared path policy in `src/plugins/pathGuard.ts` and the current account's Project assignments. A UI visibility decision is not a security check: the route or tool must re-check the acting identity at execution time.
 
-The account boundary also applies to personal memory, account plugin configuration, encrypted user secrets, GitHub credentials, Sandbox workspaces, and per-user tool authority. Shared channel senders are not silently treated as the account owner, and unlinked senders do not receive personal memory.
+The account boundary also applies to personal memory, account plugin configuration, encrypted user secrets, GitHub credentials, Sandbox workspaces, and per-user tool authority. An administrator can configure a Project shared-memory pool for eligible Project members; that pool remains bounded by Project membership. Shared channel senders are not silently treated as the account owner, and unlinked senders do not receive personal memory.
 
 ## Tool authority and permission rules
 
@@ -65,7 +65,7 @@ A safe delegation implementation must preserve these invariants:
 - workflow nodes inherit the effective boundary of the node that creates them;
 - forked runner processes use the same `buildBrainCore()` path but do not start another daemon, HTTP server, scheduler, or platform gateway.
 
-Workflow nodes should be self-contained and report a bounded result. Independent nodes may run in parallel; dependency edges must be explicit and acyclic. Dynamic expansion goes through the host `WorkflowAddNodes` seam rather than allowing a child to fabricate workflow identity or bypass the host.
+Workflow nodes should be self-contained and report a bounded result. Independent nodes may run in parallel; dependency edges must be explicit and acyclic. An explicitly workspace-scoped child receives only workspace-safe tools and cannot use host-filesystem tools such as `WorkflowStart`; if it has no write tool, return the plan or document in the node result for the parent to save. Dynamic expansion goes through the host `WorkflowAddNodes` seam rather than allowing a child to fabricate workflow identity or bypass the host.
 
 Delegated state is durable in `brain_subagent_runs` and related session rows. Recovery claims interrupted work in dependency order; unanswered tool calls are not replayed blindly as if their side effects were known.
 

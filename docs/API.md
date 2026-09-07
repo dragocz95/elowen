@@ -156,9 +156,12 @@ elowen api GET /auth/me
 | `GET` | `/projects/summary` | Authenticated | Return the project register projection, including permitted plugin indicators and administrator member summaries. |
 | `GET` | `/projects/:id/users` | Admin | List users assigned to a project. |
 | `GET` | `/fs/dirs` | Admin | Browse permitted server directories for project registration (`?path=`). It returns directory names, not file contents. |
+| `POST` | `/fs/dirs` | Admin | Create a directory with `{ "parent": "…", "name": "…" }`; returns `201`, `409` when it already exists, or a validation/access error. |
 | `POST` | `/projects` | Admin | Register a project with `slug`, `path`, and optional `notes`. |
 | `PATCH` | `/projects/:id` | Admin | Update a project's path, notes, or project-relative image icon. The slug is immutable. |
 | `DELETE` | `/projects/:id` | Admin | Remove a project from Elowen's registry and access grants. It does not delete files on disk, and the home project cannot be removed. |
+| `GET` | `/projects/:id/memory-members` | Admin | Read the accounts allowed to use the Project's shared memory pool. An empty share list means every Project member is included. |
+| `PUT` | `/projects/:id/memory-members` | Admin | Replace the shared-memory member list with `{ "userIds": [ ... ] }`; every account must exist and already be assigned to the Project. |
 | `GET` | `/projects/:id/git` | Project access | Read the project's Git snapshot, branches, and recent commits. |
 
 Core does not expose general file browsing or editing routes. Those are provided by enabled plugins and remain subject to the same project and path guards.
@@ -208,6 +211,9 @@ Brain routes operate on the authenticated user's own active conversation unless 
 | `GET` | `/brain/context-usage` | Read the live conversation context breakdown; use `?session=` for a specific session. |
 | `POST` | `/brain/start` | Start or resume a conversation. Use `fresh: true` for a new conversation. |
 | `GET` | `/brain/sessions` | List the caller's conversations. Add `limit` and/or `offset` for a `{ items, total, hasMore }` response; without them the legacy array response is retained. |
+| `POST` | `/brain/sessions/:id/read` | Mark owned-session activity as read. The body accepts the optional activity boundary and surface. Unknown sessions return `404`. |
+| `GET` | `/brain/conversation-links` | Return scheduled-job links for the caller's visible conversations. Use `?scope=all` for the administrator register; it returns `403` for non-administrators and distinguishes `available`, `unavailable`, and `error` states when the scheduling plugin or grant is unavailable. |
+| `GET` | `/brain/conversations` | Authenticated SSE stream of content-free conversation invalidations for the caller. It returns `503` when the brain is unavailable. |
 | `GET` | `/brain/managed-sessions` | Administrator view of managed conversations, including platform sessions. |
 | `DELETE` | `/brain/managed-sessions` | Administrator bulk deletion; use `?scope=all` for the cross-account register. |
 | `DELETE` | `/brain/managed-sessions/:id` | Administrator deletion of one managed conversation. |
@@ -259,7 +265,7 @@ The global `GET /events` stream is separate from the conversation stream. It rep
 | `POST` | `/brain/interrupt-queued` | Interrupt the active turn and promote the oldest queued message. |
 | `POST` | `/brain/session/stop` | Release a client binding and stop/dispose a session when appropriate; `detachOnly` is used by closing web clients. |
 | `POST` | `/brain/visibility` | Report whether a client window is hidden or visible. |
-| `POST` | `/brain/model` | Switch the selected conversation to a configured provider/model. |
+| `POST` | `/brain/model` | Switch the selected conversation to a configured provider/model. Send `provider` and `model` separately, or send a canonical `<provider>/<model>` string in `model`; the server splits it only when the prefix is a configured provider. |
 | `POST` | `/brain/think` | Set reasoning effort for the conversation and account default. Body: `{ "level": "…", "session"?: "…" }`. |
 | `POST` | `/brain/fast` | Set or toggle the caller account's durable Fast preference; the selected session reports current route support. |
 | `POST` | `/brain/yolo` | Enable or disable the conversation-scoped YOLO override. Deny rules still apply. |
@@ -285,12 +291,14 @@ The global `GET /events` stream is separate from the conversation stream. It rep
 
 | Method | Path | Access | Purpose |
 | --- | --- | --- | --- |
-| `GET` | `/brain/processes` | Process owner | List the caller's background shell processes; use `?session=` to select a conversation. |
-| `GET` | `/brain/processes/:id/output` | Process owner | Read one process output buffer. |
-| `DELETE` | `/brain/processes/:id` | Process owner | Kill one background process. |
+| `GET` | `/brain/processes` | Instance owner and process owner | List background shell processes owned by the caller; use `?session=` to select a conversation. The route never exposes another operator's process. |
+| `GET` | `/brain/processes/:id/output` | Instance owner and process owner | Read one owned process output buffer; use `?session=` when selecting a conversation. |
+| `DELETE` | `/brain/processes/:id` | Instance owner and process owner | Kill one owned background process; use `?session=` when selecting a conversation. |
 | `POST` | `/brain/context` | Admin | Bind an owned conversation into a platform channel target. Body: `{ "channel": "…", "session": "…" }`. |
 
-The browser terminal and its WebSocket endpoint are not part of the current web application. Interactive shell output is exposed through the terminal plugin's tools and the normal brain stream; there is no supported core terminal ticket or terminal WebSocket API.
+The core web application does not expose a browser terminal or a core terminal WebSocket API. Interactive shell output is exposed through the terminal plugin's tools and the normal brain stream. Plugins may register separate ticket-authenticated WebSocket routes under `/ws/plugins/<plugin>/…`.
+
+The corresponding process tools are conversation-scoped and apply the same owner boundary. `ListProcesses` lists background jobs only. `ProcessOutput` waits by default, supports a non-blocking peek with `block: false`, returns incremental output unless `all: true`, and may report that earlier bytes were dropped from its bounded rolling tail. After a process exits and its final output is collected, its handle is removed. `KillProcess` sends an immediate kill to the tracked process tree and discards the retained buffer, so read output first when it matters. See [Tasks & Missions](site/13-tasks-missions.md) for the user-facing tool contract.
 
 ### Providers and OAuth
 
@@ -312,36 +320,45 @@ The browser terminal and its WebSocket endpoint are not part of the current web 
 
 `/brain/debug/*` is an administrator-only, private, non-cacheable diagnostic surface. It includes session, request, segment, raw-request, and legacy-transcript inspection routes. It is intended for debugging the daemon, not for normal chat clients.
 
-## Memory
-
-Memory is private to the authenticated account. Core memory works without embeddings; semantic search and re-indexing use embeddings when configured.
+### Semantic command-palette search
 
 | Method | Path | Access | Purpose |
 | --- | --- | --- | --- |
-| `GET` | `/memory` | Own account | List memories. Supports `status`, `kind`, `categoryId`, `limit`, and `offset`; `q` performs semantic search and falls back to keyword search when embeddings are unavailable. |
-| `POST` | `/memory` | Own account | Create a memory. |
-| `GET` | `/memory/:id` | Own account | Read one memory. |
-| `PATCH` | `/memory/:id` | Own account | Update one memory. |
-| `DELETE` | `/memory/:id` | Own account | Soft-delete one memory. |
-| `POST` | `/memory/:id/restore` | Own account | Restore a soft-deleted memory. |
-| `DELETE` | `/memory/:id/purge` | Own account | Permanently delete one memory. |
-| `PUT` | `/memory/:id/category` | Own account | Assign or clear a category. |
-| `GET` | `/memory/:id/events` | Own account | Read one memory's audit history. |
-| `GET` | `/memory/:id/vitality-history` | Own account | Read vitality history; `days` defaults to `30` and is capped at `365`. |
-| `GET` | `/memory/events` | Own account | Read the account's memory audit feed; optional `limit`. |
-| `POST` | `/memory/merge` | Own account | Merge source memory IDs into a new memory; sources are soft-deleted. |
-| `POST` | `/memory/purge` | Own account | Permanently delete a batch of memory IDs. |
-| `POST` | `/memory/empty-trash` | Own account | Permanently delete all soft-deleted memories. |
-| `POST` | `/memory/retrieve` | Own account | Inspect retrieval ranking for a query. |
-| `POST` | `/memory/reindex` | Own account | Legacy bounded re-embed of pending or stale memories; one request processes at most 100. |
+| `POST` | `/search/rank` | Authenticated | Rank caller-supplied `{ query, candidates: [{ id, text }] }` by embedding similarity. The route is limited to 30 requests per minute and returns `503` when embeddings are not configured or unavailable. |
+| `POST` | `/search/ask` | Authenticated | Ask the configured search model to select caller-supplied `{ query, candidates: [{ id, title, subtitle? }] }`. The route is limited to 10 requests per minute and returns `503` when no model is configured or the request fails. |
+
+Both routes validate bounded candidate lists and return `400` for invalid JSON or schemas. They rank or select only the candidates supplied by the caller.
+
+## Memory
+
+Memory is private to the authenticated account by default. An administrator can configure a Project shared pool; eligible Project members can then recall and manage accessible rows in that pool. The routes do not all share the same scope: row reads and access-scoped row operations widen to shared pools, while creation, audit feeds, maintenance, legacy reindex, and reclassify remain account-owned. A patch is an access-scoped row operation and can update an accessible shared-pool row. Core memory works without embeddings; semantic search and re-indexing use embeddings when configured.
+
+| Method | Path | Access | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/memory` | Own account plus accessible shared Project pool | List memories. Supports `status`, `kind`, `categoryId`, `limit`, and `offset`; `q` performs semantic search and falls back to keyword search when embeddings are unavailable. |
+| `POST` | `/memory` | Own account | Create a memory owned by the caller; project categorization may place it in an accessible shared pool. |
+| `GET` | `/memory/:id` | Own account or accessible shared Project pool | Read one memory. |
+| `PATCH` | `/memory/:id` | Own account or accessible shared Project pool | Update one accessible memory. |
+| `DELETE` | `/memory/:id` | Own account or accessible shared Project pool | Soft-delete one accessible memory. |
+| `POST` | `/memory/:id/restore` | Own account or accessible shared Project pool | Restore one accessible soft-deleted memory. |
+| `DELETE` | `/memory/:id/purge` | Own account or accessible shared Project pool | Permanently delete one accessible memory. |
+| `PUT` | `/memory/:id/category` | Own account or accessible shared Project pool | Assign or clear a category subject to the caller's accessible categories. |
+| `GET` | `/memory/:id/events` | Own account or accessible shared Project pool | Read one accessible memory's audit history. |
+| `GET` | `/memory/:id/vitality-history` | Own account or accessible shared Project pool | Read accessible memory vitality history; `days` defaults to `30` and is capped at `365`. |
+| `GET` | `/memory/events` | Own account | Read the caller's memory audit feed; optional `limit`. |
+| `POST` | `/memory/merge` | Own account or accessible shared Project pool | Merge accessible source memory IDs into a new caller-owned memory; sources are soft-deleted. |
+| `POST` | `/memory/purge` | Own account or accessible shared Project pool | Permanently delete a batch of accessible memory IDs. |
+| `POST` | `/memory/empty-trash` | Own account | Permanently delete all of the caller's soft-deleted memories. |
+| `POST` | `/memory/retrieve` | Caller memory scope | Inspect retrieval ranking for a query. |
+| `POST` | `/memory/reindex` | Own account | Legacy bounded re-embed of the caller's pending or stale memories; one request processes at most 100. |
 | `GET` | `/memory/maintenance` | Own account | Read the caller's background reindex and recategorization jobs. |
 | `POST` | `/memory/maintenance/reindex` | Own account | Start or return the caller's full active-memory reindex job; responds with HTTP `202`. |
 | `POST` | `/memory/maintenance/recategorize` | Own account | Start or return background categorization with `mode: "uncategorized"` or `"all"`; responds with HTTP `202`. |
-| `GET` | `/memory/categories` | Own account | List owned categories. |
-| `POST` | `/memory/categories` | Own account | Create a category, optionally linked to an accessible project. |
-| `PATCH` | `/memory/categories/:cid` | Own account | Update a category. |
-| `DELETE` | `/memory/categories/:cid` | Own account | Delete a category and clear references from its memories. |
-| `POST` | `/memory/categories/suggest-icon` | Own account | Suggest a category icon. |
+| `GET` | `/memory/categories` | Own categories plus shared Project pools | List categories visible to the caller. |
+| `POST` | `/memory/categories` | Own account with Project access | Create a caller-owned category, optionally linked to an accessible Project. |
+| `PATCH` | `/memory/categories/:cid` | Category owner, or administrator for a shared pool | Update a personal category, or update a shared pool category as an administrator. |
+| `DELETE` | `/memory/categories/:cid` | Category owner, or administrator for a shared pool | Delete a personal category, or delete a shared pool category as an administrator. References are cleared from affected memories. |
+| `POST` | `/memory/categories/suggest-icon` | Authenticated | Suggest a category icon. |
 | `GET` | `/memory/embedding` | Authenticated | Read workspace embedding configuration and its computed `configured` flag. |
 | `PUT` | `/memory/embedding` | Admin or setup mode | Update workspace embedding configuration. |
 | `POST` | `/memory/embedding/test` | Admin or setup mode | Test the configured embedding provider. |
@@ -388,6 +405,25 @@ Plugin API handlers are resolved from the live registry on every request:
 - Plugin routes declare their access level. The dispatcher enforces administrator access and, for `userGrantable` plugins, the caller's plugin grant.
 - Buffered plugin API request bodies are capped at 4 MiB. Plugin handlers may also return SSE responses.
 - Root-mounted plugin routes are live contributions and can change with the installed plugin set. Core routes take precedence when a root mount conflicts with a core path.
+
+The external MCP bridge plugin contributes management routes for external stdio, HTTP, and SSE servers. Personal servers require a linked account and are visible only to that account. Instance servers require `identity.owner === true`; stdio creation or start requires the same instance-owner authority regardless of the row's scope. The `GET` route also requires a linked account, including for an administrator's view.
+
+Request bodies use these shapes:
+
+- Create: `{ "scope": "personal" | "instance", "name": "…", "transport": "stdio" | "http" | "sse", "command": "…", "args": [], "env": {}, "url": "…", "enabled": true }`. Stdio uses `command`, optional `args` and `env`; HTTP/SSE uses `url`. The name is limited to 1–40 letters, numbers, underscores, or dashes, and remote URLs cannot contain credentials or sensitive query parameters.
+- Update: `{ "scope": "personal" | "instance", …server fields, "expectedRevision": 0 }`. The scope resolves the server in the acting account's personal set or the instance set; `expectedRevision` is optional and produces `409` on a stale write.
+- Delete: `{ "scope": "personal" | "instance" }`.
+- Reconnect: `{ "scope": "personal" | "instance", "name": "…" }`.
+- Transfer: `{ "fromScope": "personal" | "instance", "toScope": "personal" | "instance", "name": "…", "expectedRevision": 0 }`. It moves between the instance set and the acting linked account's personal set. It cannot transfer directly to another account, and stdio servers cannot be transferred.
+
+| Method | Path | Access | Purpose |
+| --- | --- | --- | --- |
+| `GET` | `/plugins/mcp/api/servers` | Linked account | List the acting account's personal servers and, for an instance owner, the instance servers. The response includes `canManageInstance`. |
+| `POST` | `/plugins/mcp/api/servers` | Linked account; instance owner for `scope: "instance"` and all stdio | Create a personal or instance server after validating its transport and URL or command. |
+| `PATCH` | `/plugins/mcp/api/servers/:name` | Owner of the selected personal or instance scope; instance owner for stdio | Update one server's configuration. |
+| `DELETE` | `/plugins/mcp/api/servers/:name` | Owner of the selected personal or instance scope | Remove one server and close its transport or process group. |
+| `POST` | `/plugins/mcp/api/reconnect` | Owner of the selected personal or instance scope; instance owner for stdio | Reconnect one external server and refresh its tool list. |
+| `POST` | `/plugins/mcp/api/transfer` | Linked account for personal scope; instance owner for any instance side | Move a remote server between the instance set and the acting account's personal set. |
 
 The bundled subagent plugin currently contributes these administrator-only compatibility routes for the editable sub-agent catalog:
 
