@@ -12,6 +12,7 @@ import { raceDetach } from './lib/detach.mjs';
 import { resolveResultRetentionMs } from './lib/retention.mjs';
 import { resolveStallMs } from './lib/stall.mjs';
 import { toolListCovers } from './lib/toolLists.mjs';
+import { liveToolDetail } from './lib/progress.mjs';
 import { THINKING_LEVEL_HINT, resolveThinkingLevel } from './lib/thinking.mjs';
 import {
   CONTEXT_HEADER,
@@ -653,7 +654,7 @@ export function register(ctx) {
       const onEvent = (e) => {
         lastActivityAt = Date.now();
         if (e.type === 'session' && e.sessionId) { state.sessionId = e.sessionId; push('running'); }
-        else if (e.type === 'tool' && e.name) { state.tools += 1; state.detail = e.detail ? `${e.name} ${e.detail}` : e.name; push('running'); }
+        else if (e.type === 'tool' && e.name) { state.tools += 1; state.detail = liveToolDetail(e); push('running'); }
         else if ((e.type === 'step' || e.type === 'idle') && e.usage?.totalTokens) { state.tokens = e.usage.totalTokens; push('running'); }
         // The child's own sub-agent or workflow is running (a nested Delegate mid-turn, or the host's
         // keep-alive while the child waits on it after its turn): this call is not stalled and its progress
@@ -1069,7 +1070,7 @@ export function register(ctx) {
       };
       const push = (status) => pushJob(state, status);
       const onEvent = (e) => {
-        if (e.type === 'tool' && e.name) { state.tools += 1; state.detail = e.detail ? `${e.name} ${e.detail}` : e.name; push('running'); }
+        if (e.type === 'tool' && e.name) { state.tools += 1; state.detail = liveToolDetail(e); push('running'); }
         else if ((e.type === 'step' || e.type === 'idle') && e.usage?.totalTokens) { state.tokens = e.usage.totalTokens; push('running'); }
         // Same as Delegate: the host keeps this continuation open while the child's own sub-agent runs, and
         // this is what the call's row says meanwhile.

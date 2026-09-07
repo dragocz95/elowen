@@ -34,8 +34,12 @@ export type BrainEvent =
    *  spinner. */
   | { type: 'tool_authoring'; name?: string; detail?: string; reason?: string }
   /** A tool call starting. `icon` is resolved daemon-side from the core map + plugin manifest `icons`
-   *  (single source; clients render it, falling back to a generic glyph when absent). */
-  | { type: 'tool'; name: string; detail?: string; icon?: string; id?: string; command?: string }
+   *  (single source; clients render it, falling back to a generic glyph when absent).
+   *  `reason` is the same model-authored status note `tool_authoring` streams (optional `_reason`, or
+   *  Bash's canonical `description`), settled: a surface that projects a live "what is it doing" line from
+   *  tool starts — the sub-agent rail — can show the human note instead of the derived label. Additive and
+   *  safe to ignore; the transcript renders `name`/`detail` exactly as before. */
+  | { type: 'tool'; name: string; detail?: string; icon?: string; id?: string; command?: string; reason?: string }
   /** An edit finished. `output`, when present, is a minimal notes-only view (hook annotations like
    *  "formatted a.ts with prettier" — see `details.notes`) the reducer attaches alongside the diff;
    *  clients that ignore it lose only the note, never the diff. */
@@ -609,7 +613,11 @@ export function toBrainEvent(e: AgentSessionEvent, now: number = Date.now(), ima
     // The start event carries the arguments (the end event does not), so the verbatim shell command is
     // captured HERE and threaded to the output on the matching end event by the transcript reducer.
     const display = toolDisplay(anyE.toolName, anyE.args);
-    return { type: 'tool', name: display.name, detail: display.detail, command: toolCommand(anyE.args), id: anyE.toolCallId };
+    // The note the model authored for this call, settled — the same extraction the authoring stream uses,
+    // so the spinner label and anything projected from tool starts read one source. Still present here:
+    // `stripReason` clones the arguments inside the tool's own execute wrapper, which runs after this event.
+    const reason = extractReason(anyE.args, anyE.toolName);
+    return { type: 'tool', name: display.name, detail: display.detail, command: toolCommand(anyE.args), id: anyE.toolCallId, ...(reason ? { reason } : {}) };
   }
   // Edits carry a display diff in their result details — that's the one tool output worth showing.
   if (anyE.type === 'tool_execution_end') {

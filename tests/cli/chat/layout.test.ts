@@ -253,7 +253,7 @@ describe('chat layout components', () => {
     });
   });
 
-  describe('sub-agent block Ctrl+B hint', () => {
+  describe('sub-agent block', () => {
     const renderSub = (sub: Record<string, unknown>): string => {
       const turn = { role: 'elowen' as const, streaming: true, segments: [
         { kind: 'tools' as const, items: [{ name: 'Delegate', sub }] },
@@ -276,6 +276,14 @@ describe('chat layout components', () => {
     it('drops the hint once the sub-agent has finished', () => {
       const rendered = renderSub({ sessionId: 'child', status: 'done', task: 'inspect', tools: 4, seconds: 9 });
       expect(rendered).not.toContain('ctrl+b');
+    });
+
+    // The plugin decides what the live line SAYS (its `detail`, now the child's own status note rather than
+    // a tool name and a path); the renderer must put that string on the row untouched, so the note reaches
+    // the person as authored. Pinned here because a row that reformats it would defeat the whole change.
+    it('renders the running child\'s detail verbatim, note and all', () => {
+      const rendered = renderSub({ sessionId: 'child', status: 'running', task: 'inspect', tools: 2, seconds: 3, detail: 'Upravuji soubor…' });
+      expect(rendered).toContain('Upravuji soubor…');
     });
   });
 
