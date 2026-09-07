@@ -420,14 +420,11 @@
   gap: 0;
   padding-inline: 0;
 }
-/* Two 28px controls, a gap and the footer's own inset do not fit across a 57px rail, and `overflow:
-   hidden` on the column silently clipped the fold off its left edge. Stacked they are both square,
-   centred and whole, and the footer gives up its fixed height rather than either control moving. */
+/* One 28px control, but the row's 1rem inset does not leave it room across a 57px rail and `overflow:
+   hidden` on the column would clip it. Folded it takes the same 0.5rem inset every other rail row takes
+   and centres, so the footer keeps its declared height in both modes and nothing steps at the fold. */
 .sidebar-nav[data-mode='rail'] .sidebar-nav__footer {
-  flex-direction: column;
   justify-content: center;
-  height: auto;
-  padding-block: 0.375rem;
   padding-inline: 0.5rem;
 }
 .sidebar-nav[data-mode='rail'] .sidebar-nav__more { margin-inline-start: 0; }
@@ -458,7 +455,6 @@
   padding-inline: 1rem;
   border-top: 1px solid var(--color-sidebar-border);
 }
-.sidebar-nav__collapse,
 .sidebar-nav__more {
   display: grid;
   flex: none;
@@ -470,7 +466,6 @@
   transition: color var(--motion-fast) var(--ease-out), background-color var(--motion-fast) var(--ease-out);
 }
 .sidebar-nav__more { margin-inline-start: auto; }
-.sidebar-nav__collapse:hover,
 .sidebar-nav__more:hover { background: var(--color-sidebar-accent); color: var(--color-foreground); }
 /* The fold's edge target. Transparent until the pointer is on it, so the column's own outer rule is what
    is seen at rest and the accent only answers the pointer. */
@@ -484,7 +479,6 @@
 .sidebar-nav__item:focus-visible,
 .sidebar-nav__sub-item:focus-visible,
 .sidebar-nav__switcher:focus-visible,
-.sidebar-nav__collapse:focus-visible,
 .sidebar-nav__more:focus-visible,
 .sidebar-nav__close:focus-visible {
   outline: 2px solid var(--color-primary);

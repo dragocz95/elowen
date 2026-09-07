@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { Fragment, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import { ChevronRight, ChevronsUpDown, MoreHorizontal, PanelLeft, Search, Settings2, UserRound, X } from 'lucide-react';
+import { ChevronRight, ChevronsUpDown, MoreHorizontal, Search, Settings2, UserRound, X } from 'lucide-react';
 import { useBrand } from '../../lib/brand';
 import { useBrainSessions, useHealth, useMe } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
@@ -36,7 +36,6 @@ import {
   SidebarMenuSubItem,
   SidebarProvider,
   SidebarRail,
-  SidebarTrigger,
 } from '../ui/shadcn/sidebar';
 import { useReturnFocus } from '../ui/overlayStack';
 
@@ -588,20 +587,8 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
               control is the same `SkinSwitcher` the TopBar mounts — not a second switch with its own
               state. Sheet only: on a desktop column the TopBar already carries it. */}
           {drawer ? <SkinSwitcher placement="drawer" /> : null}
-          {/* The fold, bottom-left, exactly where the reference puts it. `SidebarTrigger` toggles the
-              primitive's own state, which this column forwards to the shell. Offered only where folding
-              is the user's call — a control that changes nothing is worse than no control. */}
-          {onToggleCollapse ? (
-            <SidebarTrigger
-              className="sidebar-nav__collapse"
-              data-testid="sidebar-nav-collapse"
-              aria-label={compact ? t.common.expandNav : t.common.collapseNav}
-              title={`${compact ? t.common.expandNav : t.common.collapseNav} · ${t.nav.collapseShortcut}`}
-              aria-keyshortcuts="Control+Backslash Meta+Backslash"
-            >
-              <PanelLeft size={16} strokeWidth={1.75} aria-hidden />
-            </SidebarTrigger>
-          ) : null}
+          {/* The fold is the TopBar's control and the column's rail, not a third button down here: one
+              affordance for one action. Ctrl/⌘ + \ still folds the column from anywhere. */}
           {/* The keyboard's way into the menu the right-click opens. It has to exist independently of the
               entries: hide them all and there is nothing left to open a menu ON. */}
           <button
