@@ -32,9 +32,12 @@ function Entry({ entry, expanded, onToggle, strings }: {
 }) {
   const { components, hooks, utils } = runtime();
   const { Badge } = components;
+  // The locale is part of the key: switching the UI language must refetch the translated body rather
+  // than keep serving the one cached under the previous language.
+  const { locale } = hooks.useTranslation();
   const detail = hooks.useQuery<EntryDetail>({
-    queryKey: ['plugin', PLUGIN, 'entry', entry.version],
-    queryFn: () => runtime().api(`/plugins/${PLUGIN}/api/entries/${encodeURIComponent(entry.version)}`),
+    queryKey: ['plugin', PLUGIN, 'entry', entry.version, locale],
+    queryFn: () => runtime().api(`/plugins/${PLUGIN}/api/entries/${encodeURIComponent(entry.version)}?lang=${encodeURIComponent(locale)}`),
     enabled: expanded,
     staleTime: Infinity,
   });
@@ -81,10 +84,11 @@ export function ChangelogPage() {
   // proves every key a bundle reads exists in its manifest resolves the binding from this literal.
   const strings = hooks.usePluginStrings('changelog');
   const queryClient = hooks.useQueryClient();
+  const { locale } = hooks.useTranslation();
 
   const listing = hooks.useQuery<EntryListing>({
-    queryKey: ['plugin', PLUGIN, 'entries'],
-    queryFn: () => runtime().api(`/plugins/${PLUGIN}/api/entries`),
+    queryKey: ['plugin', PLUGIN, 'entries', locale],
+    queryFn: () => runtime().api(`/plugins/${PLUGIN}/api/entries?lang=${encodeURIComponent(locale)}`),
   });
   // Memoized so the `??` does not hand out a fresh empty array on every render, which would re-run the
   // separator memo below each time.

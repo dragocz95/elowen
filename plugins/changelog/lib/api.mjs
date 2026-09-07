@@ -2,7 +2,7 @@
  *  their images, and the marker recording how far the reader has got. */
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
-import { isNewerThanSeen } from './entries.mjs';
+import { isNewerThanSeen, localizeEntry } from './entries.mjs';
 
 /** Image types an entry may reference. SVG is deliberately absent: it is a script-carrying document,
  *  and nothing in a release note needs one. */
@@ -24,11 +24,11 @@ function json(body, status = 200) {
 
 /** Metadata only. The bodies stay behind `entries/<version>` so the list does not grow with the whole
  *  history of the product every time somebody opens the page. */
-function listing(entries, lastSeen, tracked) {
+function listing(entries, lastSeen, tracked, lang) {
   return entries.map((entry) => ({
     version: entry.version,
     date: entry.date,
-    title: entry.title,
+    title: localizeEntry(entry, lang).title,
     tags: entry.tags,
     pinned: entry.pinned,
     unread: tracked && isNewerThanSeen(entry.version, lastSeen),
@@ -46,11 +46,13 @@ export function registerRoutes(ctx, { entries, assetsDir, seen }) {
       // never be cleared, because there is no row to write either.
       const tracked = req.auth.userId !== null;
       const lastSeen = seen.lastSeen(req.auth.userId);
+      // The page's UI locale; an entry without that translation falls back to its English original.
+      const lang = typeof req.query.lang === 'string' ? req.query.lang : '';
       const version = req.path.trim();
-      if (version === '') return json({ lastSeenVersion: lastSeen, entries: listing(entries, lastSeen, tracked) });
+      if (version === '') return json({ lastSeenVersion: lastSeen, entries: listing(entries, lastSeen, tracked, lang) });
       const entry = entries.find((e) => e.version === version);
       if (!entry) return json({ error: 'not found' }, 404);
-      return json({ ...entry, unread: tracked && isNewerThanSeen(entry.version, lastSeen) });
+      return json({ ...localizeEntry(entry, lang), unread: tracked && isNewerThanSeen(entry.version, lastSeen) });
     },
   });
 

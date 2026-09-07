@@ -62,9 +62,30 @@ function parseFrontMatter(source) {
   return { meta, body: text.slice(match[0].length).trim() };
 }
 
+/** The languages an entry may be translated into, matching the web UI locales. `<version>.md` is the
+ *  English original; `<version>.cs.md` and `<version>.sk.md` carry a translated title and body. */
+const TRANSLATION_LANGS = new Set(['cs', 'sk']);
+
+/** `0.28.25.cs.md` → 'cs', `0.28.25.md` → null. */
+function translationLang(file) {
+  const stem = file.slice(0, -'.md'.length);
+  const lang = stem.slice(stem.lastIndexOf('.') + 1);
+  return TRANSLATION_LANGS.has(lang) ? lang : null;
+}
+
+/** The title and body of `entry` in `lang`, or the English original when no translation shipped. Only
+ *  the text is translated: date, tags and pin come from the English file, which is the one source of
+ *  truth for what the release is. */
+export function localizeEntry(entry, lang) {
+  const translation = entry.translations[lang];
+  const { translations, ...rest } = entry;
+  return translation ? { ...rest, title: translation.title, body: translation.body } : rest;
+}
+
 /** Every entry in `dir`, newest first, pinned ones ahead of the rest. A file whose front matter names no
  *  `version` is skipped with a warning: it would otherwise sort as 0.0.0 and sit at the bottom forever
- *  under a name nobody chose. */
+ *  under a name nobody chose. A translation is attached to the original of the same version; one without
+ *  an original is skipped, because there would be no release to hang it on. */
 export function loadEntries(dir, log) {
   let files;
   try {
@@ -73,7 +94,8 @@ export function loadEntries(dir, log) {
     return [];
   }
   const entries = [];
-  const seenVersions = new Set();
+  const byVersion = new Map();
+  const translations = [];
   for (const file of files) {
     const path = join(dir, file);
     let source;
@@ -88,21 +110,40 @@ export function loadEntries(dir, log) {
       log?.warn?.(`entry ${file} has no version in its front matter — skipped`);
       continue;
     }
+    const lang = translationLang(file);
+    if (lang) {
+      translations.push({ file, lang, version: meta.version, title: typeof meta.title === 'string' ? meta.title : '', body });
+      continue;
+    }
     // The version addresses the entry: it is the React key, the `aria-controls` target and what
     // `entries/<version>` looks up. A second file claiming one would give two rows the same identity.
-    if (seenVersions.has(meta.version)) {
+    if (byVersion.has(meta.version)) {
       log?.warn?.(`entry ${file} repeats version ${meta.version} — skipped`);
       continue;
     }
-    seenVersions.add(meta.version);
-    entries.push({
+    const entry = {
       version: meta.version,
       date: typeof meta.date === 'string' ? meta.date : '',
       title: typeof meta.title === 'string' ? meta.title : '',
       tags: Array.isArray(meta.tags) ? meta.tags : [],
       pinned: meta.pinned === true,
       body,
-    });
+      translations: {},
+    };
+    byVersion.set(meta.version, entry);
+    entries.push(entry);
+  }
+  for (const t of translations) {
+    const entry = byVersion.get(t.version);
+    if (!entry) {
+      log?.warn?.(`entry ${t.file} translates version ${t.version}, which has no English original — skipped`);
+      continue;
+    }
+    if (entry.translations[t.lang]) {
+      log?.warn?.(`entry ${t.file} repeats the ${t.lang} translation of ${t.version} — skipped`);
+      continue;
+    }
+    entry.translations[t.lang] = { title: t.title, body: t.body };
   }
   entries.sort((a, b) => (a.pinned === b.pinned ? compareVersions(a.version, b.version) : (a.pinned ? -1 : 1)));
   return entries;

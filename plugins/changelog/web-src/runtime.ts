@@ -28,6 +28,8 @@ interface MutationResult<TVars> { mutate(vars: TVars): void; isPending: boolean 
 interface QueryClient { invalidateQueries: (input: { queryKey: unknown[] }) => Promise<void> }
 
 interface RuntimeHooks {
+  /** Only the locale is read: the plugin's own strings come through usePluginStrings. */
+  useTranslation(): { locale: string };
   usePluginStrings(plugin: string): Record<string, string>;
   useQuery<T>(options: Record<string, unknown>): QueryResult<T>;
   useMutation<TVars>(options: Record<string, unknown>): MutationResult<TVars>;

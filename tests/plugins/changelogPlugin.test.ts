@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { openDb } from '../../src/store/db.js';
-import { compareVersions, isNewerThanSeen, loadEntries } from '../../plugins/changelog/lib/entries.mjs';
+import { compareVersions, isNewerThanSeen, loadEntries, localizeEntry } from '../../plugins/changelog/lib/entries.mjs';
 import { registerRoutes } from '../../plugins/changelog/lib/api.mjs';
 import type { PluginApiRequest, PluginApiRoute, PluginContext, PluginHttpResponse } from '../../src/plugins/api.js';
 
@@ -37,13 +37,14 @@ async function call(
   method: string,
   path: string,
   userId: number | null = 1,
+  query: Record<string, string> = {},
 ): Promise<{ status: number; body: PluginHttpResponse['body']; headers?: PluginHttpResponse['headers'] }> {
   const match = registry.apiRoute('changelog', path, method);
   if (!match) throw new Error(`no route for ${method} ${path}`);
   const req = {
     method,
     path: match.remainder,
-    query: {},
+    query,
     headers: {},
     params: {},
     body: () => Promise.resolve(Buffer.alloc(0)),
@@ -68,6 +69,39 @@ describe('changelog entries on disk', () => {
     const unpinned = entries.filter((e) => !e.pinned).map((e) => e.version);
     expect(unpinned).toEqual([...unpinned].sort(compareVersions));
     expect(entries.findIndex((e) => !e.pinned)).toBeGreaterThanOrEqual(entries.filter((e) => e.pinned).length);
+  });
+
+  it('ships every release in Czech and Slovak beside the English original', () => {
+    // App copy exists in all three locales; a release note is app copy the reader sees on a page.
+    const entries = loadEntries(join(pluginsDir, 'changelog', 'entries'), log);
+    for (const entry of entries) {
+      for (const lang of ['cs', 'sk'] as const) {
+        const translation = entry.translations[lang];
+        expect(translation, `${entry.version} has no ${lang} translation`).toBeDefined();
+        expect(translation!.title).not.toBe('');
+        expect(translation!.body).not.toBe('');
+        expect(translation!.title).not.toBe(entry.title);
+      }
+    }
+  });
+
+  it('attaches a <version>.<lang>.md translation to its original and skips one without an original', () => {
+    const dir = temp('entries');
+    // Listed before the original alphabetically: the loader must not depend on the readdir order.
+    writeFileSync(join(dir, '1.2.3.cs.md'), '---\nversion: 1.2.3\ntitle: Česky\ntags: [Ignored]\n---\n\nČeské tělo.\n');
+    writeFileSync(join(dir, '1.2.3.md'), '---\nversion: 1.2.3\ndate: 2026-01-01\ntitle: English\ntags: [One]\n---\n\nEnglish body.\n');
+    writeFileSync(join(dir, '1.2.4.sk.md'), '---\nversion: 1.2.4\ntitle: Orphan\n---\n\nNo original.\n');
+    const warnings: string[] = [];
+    const entries = loadEntries(dir, { warn: (m: string) => warnings.push(m) });
+    expect(entries.map((e) => e.version)).toEqual(['1.2.3']);
+    expect(entries[0]!.translations).toEqual({ cs: { title: 'Česky', body: 'České tělo.' } });
+    // Only the text is translated; what the release IS comes from the original.
+    expect(entries[0]!.tags).toEqual(['One']);
+    expect(localizeEntry(entries[0]!, 'cs')).toMatchObject({ title: 'Česky', body: 'České tělo.', tags: ['One'], date: '2026-01-01' });
+    expect(localizeEntry(entries[0]!, 'sk')).toMatchObject({ title: 'English', body: 'English body.' });
+    expect('translations' in localizeEntry(entries[0]!, 'cs')).toBe(false);
+    expect(warnings).toHaveLength(1);
+    expect(warnings[0]).toContain('1.2.4.sk.md');
   });
 
   it('orders versions numerically, not lexically', () => {
@@ -119,6 +153,26 @@ describe('changelog routes', () => {
     expect((one.body as { body: string }).body.length).toBeGreaterThan(0);
 
     expect((await call(registry, 'GET', 'entries/9.9.9')).status).toBe(404);
+  });
+
+  it('serves the title and body in the requested language and falls back to English', async () => {
+    const { registry } = await setup();
+    const english = (await call(registry, 'GET', 'entries')).body as { entries: { version: string; title: string }[] };
+    const czech = (await call(registry, 'GET', 'entries', 1, { lang: 'cs' })).body as { entries: { version: string; title: string }[] };
+    expect(czech.entries.map((e) => e.version)).toEqual(english.entries.map((e) => e.version));
+    expect(czech.entries[0]!.title).not.toBe(english.entries[0]!.title);
+
+    const version = english.entries[0]!.version;
+    const one = (await call(registry, 'GET', `entries/${version}`, 1, { lang: 'cs' })).body as { title: string; body: string; translations?: unknown };
+    expect(one.title).toBe(czech.entries[0]!.title);
+    const original = (await call(registry, 'GET', `entries/${version}`)).body as { body: string };
+    expect(one.body).not.toBe(original.body);
+    // The translation map is a loader detail, not part of the entry the page renders.
+    expect(one.translations).toBeUndefined();
+
+    // A locale nothing was translated into reads the English original.
+    const german = (await call(registry, 'GET', `entries/${version}`, 1, { lang: 'de' })).body as { body: string };
+    expect(german.body).toBe(original.body);
   });
 
   it('declares every route it registers, and every route is user-level', async () => {
