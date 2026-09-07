@@ -962,13 +962,37 @@ function v1ClearedPlaceholder(spillPath: string, originalBytes: number, preview?
  *  `toolResultText` in toolResultClearing, because the file-derived half below compares against it. */
 function v1ToolResultText(content: unknown): string {
   if (!Array.isArray(content)) return '';
-  return content
-    .filter((block): block is { type: 'text'; text: string } => {
-      const candidate = block as { type?: unknown; text?: unknown } | null;
-      return !!candidate && candidate.type === 'text' && typeof candidate.text === 'string';
-    })
-    .map((block) => block.text)
-    .join('\n');
+  return v1TextBlocks(content).map((block) => block.text).join('\n');
+}
+
+function v1TextBlocks(content: unknown): { type: 'text'; text: string }[] {
+  if (!Array.isArray(content)) return [];
+  return content.filter((block): block is { type: 'text'; text: string } => {
+    const candidate = block as { type?: unknown; text?: unknown } | null;
+    return !!candidate && candidate.type === 'text' && typeof candidate.text === 'string';
+  });
+}
+
+/** What a latch row's `bytes` counted: the sum of the individual text blocks' UTF-8 byte lengths.
+ *
+ *  Not the length of {@link v1ToolResultText}, and the difference is not academic — that string is joined
+ *  by '\n', so an n-block result measures n-1 bytes too many, and a JS string LENGTH counts UTF-16 code
+ *  units, so any non-ASCII result measures far too few. Comparing either against `bytes` picks the wrong
+ *  occurrence: '界界' is 6 bytes and 2 units, so a 6-byte latch matched a 2-byte ASCII candidate instead
+ *  and overwrote a result that was never cleared. */
+function v1ToolResultBytes(content: unknown): number {
+  let total = 0;
+  for (const block of v1TextBlocks(content)) total += Buffer.byteLength(block.text, 'utf8');
+  return total;
+}
+
+/** The content a cleared result carries, frozen here exactly as `clearedToolResultContent` renders it:
+ *  the placeholder in place of all the text, every other block kept where it was. A legacy row can hold
+ *  an externalized image reference beside its text, and clearing is a decision about text alone. */
+function v1ClearedContent(content: unknown, placeholder: string): unknown[] {
+  const kept = (Array.isArray(content) ? content : [])
+    .filter((block) => (block as { type?: unknown } | null)?.type !== 'text');
+  return [{ type: 'text', text: placeholder }, ...kept];
 }
 
 /** One toolResult row, parsed once so both halves of the backfill share the pass. */
@@ -1046,7 +1070,7 @@ function backfillClearedToolResultRows(db: Db): void {
     let fromRows = 0;
     let fromFiles = 0;
     const rewrite = (sessionId: string, row: ClearableRow, placeholder: string): boolean => {
-      const serialized = JSON.stringify({ ...row.message, content: [{ type: 'text', text: placeholder }] });
+      const serialized = JSON.stringify({ ...row.message, content: v1ClearedContent(row.message.content, placeholder) });
       if (serialized === row.content) return false;
       update.run(serialized, sessionId, row.id);
       row.content = serialized;
@@ -1113,6 +1137,20 @@ const V1_CLEARED_DETAIL = 'clearedToolResult';
  *  REUSED tool call id is minted after a compaction that itself happened later — well past this window. */
 const V1_LEGACY_ROW_SLACK_MS = 120_000;
 
+/** Does this stored message already carry the structural cleared marker? The one thing that makes the
+ *  pass below idempotent BY CONSTRUCTION rather than by luck: a converged row is not a candidate for
+ *  anything, so a second run has nothing left to choose between and cannot reach a different answer than
+ *  the first. Structural, exactly like the runtime's own guard — a placeholder's opening text is not an
+ *  identity and is deliberately not read. */
+function v1AlreadyCleared(message: Record<string, unknown>): boolean {
+  const details = message.details;
+  if (!details || typeof details !== 'object' || Array.isArray(details)) return false;
+  const marker = (details as Record<string, unknown>)[V1_CLEARED_DETAIL];
+  if (!marker || typeof marker !== 'object' || Array.isArray(marker)) return false;
+  const { mode, bytes, path } = marker as Record<string, unknown>;
+  return (mode === 'time' || mode === 'preview') && typeof bytes === 'number' && typeof path === 'string';
+}
+
 /** A row's SQLite UTC 'YYYY-MM-DD HH:MM:SS' as epoch ms; 0 when missing or unparsable, which makes the
  *  heuristic below match only timestamp-less occurrences — the conservative reading. */
 function v1SqliteUtcMs(value: string | undefined): number {
@@ -1135,26 +1173,34 @@ function v1SqliteUtcMs(value: string | undefined): number {
  *  · Rows the runtime already converged, which carry the placeholder text but no marker. Without one, a
  *    build that recognises a cleared result only by its size would spill a multi-byte preview placeholder
  *    a second time and nest one inside the other. Stamping the marker is what closes that.
+ *  · Rows v18 converged FROM A SPILL FILE, which have no latch row at all and would otherwise never be
+ *    reached. They are recognised by PROOF, never by the placeholder's opening text: the row's text has
+ *    to equal, byte for byte, the v1 placeholder rebuilt from a spill file that is actually on disk and
+ *    whose name states the same size. That is exactly the pair v18 wrote and nothing else can forge it by
+ *    accident — which matters most for a long CJK preview, the one placeholder large enough for a
+ *    size-only selector to spill a second time.
  *
  *  The table itself is deliberately NOT dropped here. The previous build restores its latch from these
  *  rows, so dropping them while a rollback is still possible would make that build re-send every cleared
  *  result whole. A later migration drops it once this one has soaked. Note that `schema.sql` recreates the
  *  table on every open, so after the drop it comes back empty, forever, and nothing reads it.
  *
- *  Idempotent: a row that already says what this pass would write re-serializes to the same bytes and is
- *  skipped, and a database with no such table is a no-op. */
+ *  Idempotent BY CONSTRUCTION, not by comparison: every phase skips a row that already carries the
+ *  structural marker, so a re-run has no candidates left to choose between and cannot reach a different
+ *  answer than the first run did. The occurrence a legacy row was resolved to is written back into that
+ *  row in the SAME transaction, which also removes the indeterminate identity a rollback would otherwise
+ *  re-guess over content this pass has already replaced. A database with no such table is a no-op. */
 function convergeLegacyClearedToolResults(db: Db): void {
   runOnce(db, 19, () => {
     const table = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'brain_tool_result_spills'").get();
     if (!table) return;
     const latches = db.prepare(
-      `SELECT session_id, tool_call_id, occurred_at, mode, bytes, preview, path, placeholder, created_at
+      `SELECT rowid AS rowid, session_id, tool_call_id, occurred_at, mode, bytes, preview, path, placeholder, created_at
          FROM brain_tool_result_spills ORDER BY rowid ASC`
     ).all() as {
-      session_id: string; tool_call_id: string; occurred_at: number; mode: string; bytes: number;
+      rowid: number; session_id: string; tool_call_id: string; occurred_at: number; mode: string; bytes: number;
       preview: string | null; path: string; placeholder: string | null; created_at: string;
     }[];
-    if (latches.length === 0) return;
     const bySession = new Map<string, typeof latches>();
     for (const row of latches) {
       const list = bySession.get(row.session_id);
@@ -1162,16 +1208,18 @@ function convergeLegacyClearedToolResults(db: Db): void {
       else bySession.set(row.session_id, [row]);
     }
     const update = db.prepare('UPDATE brain_messages SET content = ? WHERE session_id = ? AND id = ?');
+    const stampOccurrence = db.prepare('UPDATE brain_tool_result_spills SET occurred_at = ? WHERE rowid = ?');
     let converged = 0;
     let marked = 0;
+    interface V1Marker { mode: 'time' | 'preview'; bytes: number; path: string }
     /** Write the placeholder and the marker into one row, unless it already says exactly that. */
-    const write = (sessionId: string, row: ClearableRow, placeholder: string, latch: typeof latches[number]): boolean => {
+    const write = (sessionId: string, row: ClearableRow, placeholder: string, marker: V1Marker): boolean => {
       const details = row.message.details;
       const base = details && typeof details === 'object' && !Array.isArray(details) ? details as Record<string, unknown> : {};
       const serialized = JSON.stringify({
         ...row.message,
-        content: [{ type: 'text', text: placeholder }],
-        details: { ...base, [V1_CLEARED_DETAIL]: { mode: latch.mode === 'preview' ? 'preview' : 'time', bytes: latch.bytes, path: latch.path } },
+        content: v1ClearedContent(row.message.content, placeholder),
+        details: { ...base, [V1_CLEARED_DETAIL]: marker },
       });
       if (serialized === row.content) return false;
       update.run(serialized, sessionId, row.id);
@@ -1179,8 +1227,11 @@ function convergeLegacyClearedToolResults(db: Db): void {
       row.message = JSON.parse(serialized) as Record<string, unknown>;
       return true;
     };
+    const markerOf = (latch: typeof latches[number]): V1Marker => ({
+      mode: latch.mode === 'preview' ? 'preview' : 'time', bytes: latch.bytes, path: latch.path,
+    });
     for (const [sessionId, rows] of bySession) {
-      const parsed = toolResultRowsOf(db, sessionId);
+      const parsed = toolResultRowsOf(db, sessionId).filter((row) => !v1AlreadyCleared(row.message));
       if (parsed.length === 0) continue;
       const claimed = new Set<string>();
       // Exact rows first, so a legacy row can never claim an occurrence an exact one owns. The file has
@@ -1191,7 +1242,7 @@ function convergeLegacyClearedToolResults(db: Db): void {
         const target = parsed.find((row) => row.toolCallId === latch.tool_call_id && row.occurredAt === latch.occurred_at);
         if (!target || claimed.has(target.id)) continue;
         claimed.add(target.id);
-        if (write(sessionId, target, latch.placeholder, latch)) marked += 1;
+        if (write(sessionId, target, latch.placeholder, markerOf(latch))) marked += 1;
       }
       for (const latch of rows) {
         if (latch.occurred_at !== 0) continue;
@@ -1200,19 +1251,78 @@ function convergeLegacyClearedToolResults(db: Db): void {
         const candidates = parsed.filter((row) => row.toolCallId === latch.tool_call_id
           && !claimed.has(row.id)
           && row.occurredAt <= writtenAt + V1_LEGACY_ROW_SLACK_MS);
-        const target = candidates.find((row) => v1ToolResultText(row.message.content).length === latch.bytes)
+        // The byte-exact candidate wins, measured the way the latch row measured it: UTF-8 bytes per text
+        // block, no join separators. Any other reading picks a different result on non-ASCII output.
+        const target = candidates.find((row) => v1ToolResultBytes(row.message.content) === latch.bytes)
           ?? candidates[0];
         if (!target) continue;
         claimed.add(target.id);
         const preview = latch.mode === 'preview' ? latch.preview ?? '' : undefined;
         const placeholder = latch.placeholder ?? v1ClearedPlaceholder(latch.path, latch.bytes, preview);
-        if (write(sessionId, target, placeholder, latch)) converged += 1;
+        if (write(sessionId, target, placeholder, markerOf(latch))) converged += 1;
+        // Pin the judgement in the latch row itself: this occurrence is no longer a guess anyone has to
+        // make again — not this pass on a re-run, and not the previous build if it is ever rolled back
+        // onto rows whose content has since been replaced.
+        stampOccurrence.run(target.occurredAt, latch.rowid);
       }
     }
+    marked += markFileConvergedToolResults(db);
     if (converged + marked > 0) {
       console.warn(`database migration: converged ${converged} legacy cleared tool-result row(s) and marked ${marked} already-cleared row(s)`);
     }
   });
+}
+
+/** The v18 file cohort: rows whose text v18 rebuilt from a spill file, which carry no latch row and so are
+ *  invisible to every phase above. Without the structural marker a build that recognises a cleared result
+ *  only by its SIZE spills them a second time — a 2 000-character CJK preview is ~6 kB, comfortably past
+ *  that selector's threshold — and nests a placeholder inside a placeholder, losing the path to the real
+ *  output.
+ *
+ *  The evidence is the pair, never the text alone: the row's single text block has to equal the v1
+ *  placeholder rebuilt from a spill file that exists, named for the same tool call and stating its own
+ *  size. Only content this migration's own predecessor wrote can satisfy that, so no legitimate output
+ *  that merely opens with the same words is ever marked. Returns how many rows were stamped. */
+function markFileConvergedToolResults(db: Db): number {
+  const sessions = db.prepare('SELECT id, spill_ns FROM brain_sessions').all() as { id: string; spill_ns: string }[];
+  const update = db.prepare('UPDATE brain_messages SET content = ? WHERE session_id = ? AND id = ?');
+  let marked = 0;
+  for (const session of sessions) {
+    const spillDir = join(dataDir(process.env), 'tool-results', fsSafeSegment(session.spill_ns || session.id));
+    let names: string[] = [];
+    try { names = readdirSync(spillDir); }
+    catch { continue; } // no spill directory: this conversation never cleared anything
+    if (names.length === 0) continue;
+    for (const row of toolResultRowsOf(db, session.id)) {
+      if (v1AlreadyCleared(row.message)) continue;
+      const blocks = Array.isArray(row.message.content) ? row.message.content : [];
+      const text = blocks.length === 1 ? v1TextBlocks(blocks)[0]?.text : undefined;
+      if (text === undefined) continue;
+      const prefix = `${fsSafeSegment(row.toolCallId)}.v1-`;
+      for (const name of names) {
+        if (!name.startsWith(prefix)) continue;
+        const match = /^(time|preview)-(\d+)\.txt$/.exec(name.slice(prefix.length));
+        const bytes = match ? Number(match[2]) : NaN;
+        if (!match || !Number.isSafeInteger(bytes)) continue;
+        const path = join(spillDir, name);
+        let onDisk: string;
+        try { onDisk = readFileSync(path, 'utf-8'); }
+        catch { continue; }
+        const mode = match[1] as 'time' | 'preview';
+        const preview = mode === 'preview' ? onDisk.slice(0, V1_SPILL_PREVIEW_CHARS) : undefined;
+        if (v1ClearedPlaceholder(path, bytes, preview) !== text) continue;
+        const details = row.message.details;
+        const base = details && typeof details === 'object' && !Array.isArray(details) ? details as Record<string, unknown> : {};
+        update.run(
+          JSON.stringify({ ...row.message, details: { ...base, [V1_CLEARED_DETAIL]: { mode, bytes, path } } }),
+          session.id, row.id,
+        );
+        marked += 1;
+        break;
+      }
+    }
+  }
+  return marked;
 }
 
 /** Apply `mutate` to a parsed JSON object and re-serialize. A blob that is corrupt or not an object is
