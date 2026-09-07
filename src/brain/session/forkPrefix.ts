@@ -10,9 +10,10 @@
  *  Pure by design — no store, no session, no clock. The spawn path supplies the parent's messages and the
  *  fork's boundary is derived from them, so a test can assert the boundary without a live session. */
 
-/** Wraps the child's standing rules. Also the recursion marker: a fork child keeps Delegate in its tool
- *  pool (dropping it would change the tool block and break the cache), so the guard is a history scan for
- *  this tag rather than a missing tool. */
+/** Wraps the child's standing rules — the constant block every sibling fork of one turn shares, so only
+ *  the directive behind it is new. A fork child keeps Delegate in its tool pool (dropping it would change
+ *  the tool block and break the cache); the recursion guard is the platform check at the delegation
+ *  boundary, not this tag. */
 export const FORK_BOILERPLATE_TAG = 'fork-boilerplate';
 export const FORK_DIRECTIVE_PREFIX = 'Your directive: ';
 /** The stand-in result every forked tool call is answered with. IDENTICAL for every child on purpose:
@@ -115,32 +116,6 @@ export function forkSeedMessages(parentMessages: readonly ForkMessage[], now: nu
     timestamp: now,
   }));
   return [...parentMessages, ...results];
-}
-
-/** Whether this conversation is itself a fork child. Scans for the boilerplate tag in user text, which
- *  survives everything short of compaction rewriting the message outright. */
-export function isInForkChild(messages: readonly ForkMessage[]): boolean {
-  const marker = `<${FORK_BOILERPLATE_TAG}>`;
-  return messages.some((message) => {
-    if (message.role !== 'user') return false;
-    if (typeof message.content === 'string') return message.content.includes(marker);
-    if (!Array.isArray(message.content)) return false;
-    return message.content.some((block) => {
-      const text = (block as { type?: unknown; text?: unknown } | null)?.text;
-      return typeof text === 'string' && text.includes(marker);
-    });
-  });
-}
-
-/** Told to a fork child that runs somewhere other than the parent's working directory: every path in the
- *  inherited context is the parent's, and its own edits stay where it is. */
-export function buildForkWorktreeNotice(parentCwd: string, childCwd: string): string {
-  return `You've inherited the conversation context above from a parent agent working in ${parentCwd}. `
-    + `You are operating in an isolated git worktree at ${childCwd} — same repository, same relative file `
-    + 'structure, separate working copy. Paths in the inherited context refer to the parent\'s working '
-    + 'directory; translate them to your worktree root. Re-read files before editing if the parent may '
-    + 'have modified them since they appear in the context. Your changes stay in this worktree and will '
-    + 'not affect the parent\'s files.';
 }
 
 /** What a FORK child may not run, even though it advertises every one of these.
