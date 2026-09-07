@@ -573,10 +573,12 @@ export class BrainDelegationStore {
       if (row.state) {
         try { state = normalizeSubagentState(JSON.parse(row.state)); } catch { state = undefined; }
       }
-      // `state.status` is the live UI projection. A steered DelegateContinue terminalizes its OWN durable
-      // row while the original call claim keeps that projection visibly `running`; once the process exits
-      // there is no later update to rewrite it. The host-owned lifecycle is therefore authoritative for a
-      // terminal latest row, while running/recovering rows keep the projection's richer status.
+      // `state.status` is the live UI projection of ONE call, and the newest call on a child is not
+      // necessarily the one that speaks for it: a steered DelegateContinue settles its own row within a
+      // second while the delegation it steered into keeps working. `active_run` spans every call on the
+      // child, so it answers liveness; the host-owned lifecycle is authoritative for a terminal latest
+      // row (its final upsert may never have landed), and only then does the projection's richer status
+      // stand in.
       const lifecycleStatus = row.active_run ? 'running'
         : row.lifecycle === 'done' ? 'done'
           : row.lifecycle === 'error' || row.lifecycle === 'recovery_required' || row.lifecycle === 'legacy_interrupted'
@@ -872,17 +874,25 @@ export class BrainDelegationStore {
    *  Retired as `acknowledged` because that is the only non-pending state the column allows, and the column
    *  drives the QUEUE rather than an audit trail: it answers "is anyone still waiting for this", and after
    *  this sweep nobody is. Widening the CHECK to carry a third state would mean rebuilding the table for a
-   *  distinction only this comment needs. */
+   *  distinction only this comment needs.
+   *
+   *  EVERY call on that parent must be terminal, not merely its newest row: a DelegateContinue steered
+   *  into a running turn returns immediately, and reading that one row would retire an answer the child
+   *  still has a turn coming for. */
   discardOrphanedDeliveries(): number {
     return withWriteLock(this.db, () => {
       const info = this.db.prepare(
         `UPDATE brain_subagent_results SET delivery_state = 'acknowledged'
           WHERE delivery_state = 'pending'
-            AND (
-              SELECT json_extract(r.state, '$.status') FROM brain_subagent_runs r
+            AND EXISTS (
+              SELECT 1 FROM brain_subagent_runs r
                WHERE r.child_session_id = brain_subagent_results.parent_session_id
-               ORDER BY r.updated_at DESC LIMIT 1
-            ) IN ('done', 'error', 'cancelled')`
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM brain_subagent_runs r
+               WHERE r.child_session_id = brain_subagent_results.parent_session_id
+                 AND json_extract(r.state, '$.status') NOT IN ('done', 'error', 'cancelled')
+            )`
       ).run();
       return info.changes;
     });

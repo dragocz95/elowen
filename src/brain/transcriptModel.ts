@@ -80,6 +80,10 @@ export class TranscriptModel implements TranscriptRead {
   private readonly subagentIndices = new Map<string, number>();
   private readonly subagentSources = new Map<string, Set<string>>();
   private readonly sourceSessions = new Map<string, string>();
+  /** The latest state of each delegate CALL, keyed by its tool source — the input the per-child rail row
+   *  is folded from. One child can hold several calls at once (a Delegate still working plus a
+   *  DelegateContinue steered into it), and each carries its own status, model and elapsed time. */
+  private readonly subagentCalls = new Map<string, SubagentState>();
   /** Workflow snapshots, latest-per-id — the side panel's read model. Derived, never authoritative: it is
    *  refilled by indexTurn() from each durable `WorkflowStart` item, so it survives a rebuild. */
   private workflowProjection: WorkflowState[] = [];
@@ -502,6 +506,7 @@ export class TranscriptModel implements TranscriptRead {
     this.subagentIndices.clear();
     this.subagentSources.clear();
     this.sourceSessions.clear();
+    this.subagentCalls.clear();
     this.workflowProjection = [];
     this.workflowIndices.clear();
     // Both projections stay mutable while a rebuild refills them from the durable turns, and are frozen
@@ -652,15 +657,32 @@ export class TranscriptModel implements TranscriptRead {
     const sources = this.subagentSources.get(sub.sessionId) ?? new Set<string>();
     sources.add(source);
     this.subagentSources.set(sub.sessionId, sources);
-    const projected = Object.freeze({ ...sub });
+    // State is kept per CALL. Keying it by child session instead is what let a DelegateContinue steered
+    // into a running turn — a call that returns within a second, carrying no model and no elapsed time of
+    // its own — become the child's whole rail row and stay frozen there, and what let an older finished
+    // Delegate overwrite the recovering continuation of the same child.
+    this.subagentCalls.set(source, Object.freeze({ ...sub }));
+    this.projectSubagent(sub.sessionId, clone);
+  }
 
-    const index = this.subagentIndices.get(sub.sessionId);
+  /** Refresh the ONE rail row a child owns, folded across its calls: the newest still-running call speaks
+   *  for it, else its newest call. Mirrors the daemon's `preferChildRun` and the web's `collectSubagents`
+   *  so the rail, the agents table and a reconnect cannot tell three different stories. */
+  private projectSubagent(sessionId: string, clone: boolean): void {
+    let speaking: SubagentState | undefined;
+    for (const source of this.subagentSources.get(sessionId) ?? []) {
+      const state = this.subagentCalls.get(source);
+      if (!state) continue;
+      if (!speaking || state.status === 'running' || speaking.status !== 'running') speaking = state;
+    }
+    if (!speaking) return;
+    const index = this.subagentIndices.get(sessionId);
     if (clone) this.subagentProjection = this.subagentProjection.slice();
     if (index == null) {
-      this.subagentIndices.set(sub.sessionId, this.subagentProjection.length);
-      this.subagentProjection.push(projected);
+      this.subagentIndices.set(sessionId, this.subagentProjection.length);
+      this.subagentProjection.push(speaking);
     } else {
-      this.subagentProjection[index] = projected;
+      this.subagentProjection[index] = speaking;
     }
     if (clone) this.freezeSubagents();
   }
@@ -682,9 +704,12 @@ export class TranscriptModel implements TranscriptRead {
 
   private removeSubagentSource(source: string, sessionId: string, clone: boolean): void {
     this.sourceSessions.delete(source);
+    this.subagentCalls.delete(source);
     const sources = this.subagentSources.get(sessionId);
     sources?.delete(source);
-    if (sources?.size) return;
+    // Another call of this child survives, so the child keeps its row — but the row it should now show
+    // may be a different call's state than the one just dropped.
+    if (sources?.size) { this.projectSubagent(sessionId, clone); return; }
     this.subagentSources.delete(sessionId);
     const index = this.subagentIndices.get(sessionId);
     if (index == null) return;

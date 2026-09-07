@@ -155,11 +155,6 @@ export class LiveSessionRegistry<T extends { sessionId: string; session: { dispo
     }
   }
   childrenOf(parentSessionId: string): string[] { return [...(this.children.get(parentSessionId)?.keys() ?? [])]; }
-  /** Whether one specific lifecycle writer still claims this edge. UI progress uses this to distinguish a
-   * continuation tool's terminal row from the actual delegated call finishing. */
-  hasChildClaim(parentSessionId: string, childSessionId: string, source: ChildClaimSource): boolean {
-    return this.children.get(parentSessionId)?.get(childSessionId)?.has(source) === true;
-  }
   hasActiveChildren(parentSessionId: string): boolean { return (this.children.get(parentSessionId)?.size ?? 0) > 0; }
   /** Park without polling until this parent's current direct children settle, or until the caller's bounded
    *  collect window expires. A new child started after an idle resolution belongs to the next collect pass. */
