@@ -10,7 +10,8 @@
   --color-sticky: #090909;
   --color-card: #000;
   --color-muted: #111;
-  --color-popover: #090909;
+  /* Overlays and floating menus sit between black content and the opaque sticky header. */
+  --color-popover: #050505;
   --color-border: #242424;
   --color-border-strong: #383838;
 

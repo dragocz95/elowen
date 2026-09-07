@@ -50,7 +50,7 @@ describe('approved OLED palette', () => {
       '--color-background': '#000',
       '--color-card': '#000',
       '--color-sidebar': '#000',
-      '--color-popover': '#090909',
+      '--color-popover': '#050505',
       '--color-muted': '#111',
       '--color-border': '#242424',
       '--color-border-strong': '#383838',
@@ -79,6 +79,14 @@ describe('approved OLED palette', () => {
     expect(tokens['--color-sticky']).toBe('#090909');
     expect(tokens['--studio-fill-hover']).toBe('color-mix(in srgb, var(--color-foreground) 4%, transparent)');
     expect(tokens['--studio-fill-active']).toBe('color-mix(in srgb, var(--color-foreground) 8%, transparent)');
+  });
+
+  it('separates black content, near-black overlays and opaque headers', () => {
+    const tokens = declarations(skinCss('studio-oled'));
+    expect(tokens['--color-document']).toBe('#000');
+    expect(tokens['--color-popover']).toBe('#050505');
+    expect(tokens['--color-sticky']).toBe('#090909');
+    expect(new Set([tokens['--color-document'], tokens['--color-popover'], tokens['--color-sticky']]).size).toBe(3);
   });
 
   it('scopes opaque placeholder ink to OLED inputs and textareas', () => {
