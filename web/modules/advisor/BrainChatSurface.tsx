@@ -333,7 +333,7 @@ function StaticCard({ card, live }: { card: BrainCard; live: boolean }) {
 
 /** The card's row test ids: the shared `TodoRow` stamps these so the card's tests keep addressing it by
  *  the names it has always had. */
-const CARD_ROW_IDS: TodoRowIds = { row: 'chat-card-row', running: 'chat-card-running', subject: 'chat-card-subject', elapsed: 'chat-card-elapsed', blocked: 'chat-card-blocked' };
+const CARD_ROW_IDS: TodoRowIds = { row: 'chat-card-row', running: 'chat-card-running', subject: 'chat-card-subject', menu: 'chat-card-menu', elapsed: 'chat-card-elapsed', blocked: 'chat-card-blocked' };
 
 /** The conversation's checklist, where it has always been — the last thing above the composer — and now
  *  something the reader can work rather than only read.
@@ -1435,7 +1435,13 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
   // the reader can collapse the whole row from its chevron; in either state the pill is not on screen, and
   // a top bar that had already given up its picker would leave no way to change models at all. So the bar
   // stands down exactly when the statusline is actually rendering the control, and takes it back otherwise.
-  const statuslineOwnsModel = Boolean(lineCfg?.showModel && hasStatuslineStats && statuslineShown);
+  //
+  // `currentModel` is part of that condition and not an extra: a conversation the controller has not
+  // adopted — a history entry being previewed — has no model to switch, so the statusline prints the name
+  // as a read-only span (see the model slot below) rather than the picker. Reading the plugin's toggles
+  // alone left that state with no switcher anywhere: not in the bar's wide controls, not in the compact
+  // dock, not in the phone's ⋯ menu.
+  const statuslineOwnsModel = Boolean(lineCfg?.showModel && hasStatuslineStats && statuslineShown && currentModel);
   // `undefined` until the viewport has actually been measured. Every branch below therefore tests `=== true`
   // or `=== false` and renders NOTHING in between: the boolean-returning hook reports `false` first, which
   // on a phone painted one frame of the desktop controls (inline picker, mode pill, reasoning button) before

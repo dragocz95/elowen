@@ -152,6 +152,32 @@ describe('model switcher — the statusline owns it while it is showing one', ()
     expect(within(pickers()[0]!).getByRole('button', { name: 'claude-opus' })).toBeInTheDocument();
   });
 
+  it('keeps the top-bar control while the statusline only PRINTS the model of an unadopted conversation', async () => {
+    // Previewing a history entry the controller has not adopted: the conversation has a model, but this
+    // client is not driving it, so the statusline renders the name as a plain read-out and not as the
+    // picker. Standing down on the row's mere presence left this state with no model control anywhere —
+    // not in the bar's wide controls, not in its compact copy, not in the phone's ⋯ menu.
+    server.use(
+      http.get('*/api/brain/status', () => HttpResponse.json({
+        running: false, sessionId: 'brain-1', model: '', provider: '', providerLabel: '',
+        usage: null, statusline, cards: [], queued: [],
+      })),
+      http.get('*/api/brain/sessions', () => HttpResponse.json([{
+        id: 'brain-1', title: 'Yesterday', provider: 'anthropic-oauth', model: 'claude-opus',
+        updated_at: '2026-09-06', active: true, attached: 0,
+      }])),
+    );
+    const line = await renderSurface();
+
+    // The statusline prints the name in the model slot, and it is not a control.
+    const readOut = await within(line).findByText('claude-opus');
+    expect(readOut).toHaveAttribute('data-stat', 'model');
+    expect(within(line).queryByTestId('chat-model-picker')).toBeNull();
+    // …so the bar keeps its copy: exactly one switcher on the surface, never zero.
+    await waitFor(() => expect(pickers()).toHaveLength(1));
+    expect(within(pickers()[0]!).getByRole('button', { name: 'Model' })).toBeInTheDocument();
+  });
+
   it('folds the picker out of the phone overflow menu while the statusline shows it', async () => {
     setViewport(true);
     const line = await renderSurface();

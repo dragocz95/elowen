@@ -83,7 +83,7 @@ type DocumentPaint = { background: string; colorScheme: 'dark' | 'light' };
  *  that used to stand in for its absence would have been a third look nobody could select. */
 const SKIN_PAINT: Record<SkinName, DocumentPaint> = {
   'studio-light': { background: '#fbfbfb', colorScheme: 'light' },
-  'studio-oled': { background: '#03080a', colorScheme: 'dark' },
+  'studio-oled': { background: '#000', colorScheme: 'dark' },
 };
 
 const documentPaint = (skin: SkinName): DocumentPaint => SKIN_PAINT[skin];
