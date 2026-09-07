@@ -74,7 +74,7 @@ describe('dependencyContextChunks', () => {
     for (const [i, part] of parts.entries()) expect(chunks[i]).toContain(part);
   });
 
-  it('honours the operator-configured total budget', () => {
+  it('honours an explicitly narrowed total budget', () => {
     const parts = ['a', 'b', 'c', 'd', 'e'].map((id) => `${id}:${id.repeat(4_998)}`);
     const tight = dependencyContextChunks(parts, 6_000);
     const total = tight.reduce((n, chunk) => n + chunk.length, 0);
@@ -83,11 +83,11 @@ describe('dependencyContextChunks', () => {
     expect(tight.join('\n')).toContain('[truncated]');
   });
 
-  // A malformed or absent operator value must not disable the bound — it falls back to the default.
+  // A malformed or absent override must not disable the bound — it falls back to the engine constant.
   // The budget must land on the DEFAULT, so the outcome has to be indistinguishable from passing nothing:
   // a malformed value that instead yielded no context (or the minimum budget) would silently starve the
   // child while still respecting the upper bound.
-  it('falls back to the default budget for a malformed operator value', () => {
+  it('falls back to the default budget for a malformed override', () => {
     const parts = ['a', 'b', 'c', 'd', 'e'].map((id) => `${id}:${id.repeat(4_998)}`);
     const fallback = dependencyContextChunks(parts, Number.NaN);
     expect(fallback).toEqual(dependencyContextChunks(parts, undefined));
