@@ -364,10 +364,17 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
    *  The label stays mounted so the collapse transition can finish, but is `aria-hidden` in the icon
    *  column; `aria-label` names the row exactly where the text is not presented.
    *
-   *  The two hover hints do not overlap. EXPANDED the row carries the native `title`, which is there to
-   *  keep a truncated label readable and is exactly the right affordance for it. FOLDED the label is not
-   *  on screen at all, so the primitive's `tooltip` names the glyph in a real, styled tip beside the rail
-   *  — a native `title` there is a 500ms delay and an OS bubble the design has no say over. */
+   *  ONE hover hint, the native `title`, in BOTH modes. Expanded it keeps a truncated label readable;
+   *  folded it names the glyph.
+   *
+   *  It used to be the primitive's `tooltip` while folded — a styled panel beside the rail. That panel is
+   *  not portalled (see ui/shadcn/tooltip.tsx) and leans on `position: fixed` to escape the column's
+   *  `overflow: hidden`, but the row's entrance animation keeps `transform: translateY(0)` applied
+   *  through its `both` fill, which makes the row a containing block and re-anchors the panel INSIDE the
+   *  57px rail. The reader saw a sliver of a rounded panel sliding out beside the icon. Widening the
+   *  clipping chain is not available either: the column scrolls, and `overflow-x: visible` beside
+   *  `overflow-y: auto` computes back to `auto`. The rail is hint-only, exactly like its search field and
+   *  its `…` control, both of which have always used the native `title`. */
   const destination = (entry: NavEntry, onContextMenu?: (event: React.MouseEvent) => void) => {
     const active = entryIsActive(entry, pathname);
     const currentPage = active && entry.href !== undefined && route.currentHref === entry.href;
@@ -378,13 +385,13 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
       ?? (entry.badge ? { count: entry.badge, title: String(entry.badge), live: false } : undefined);
     const hint = badge ? `${entry.label} · ${badge.title}` : entry.label;
     return (
-      <SidebarMenuButton asChild isActive={active} className="sidebar-nav__item" tooltip={hint}>
+      <SidebarMenuButton asChild isActive={active} className="sidebar-nav__item">
         <Link
           href={entry.href ?? '#'}
           draggable={false}
           aria-current={currentPage ? 'page' : undefined}
           aria-label={compact ? entry.label : undefined}
-          title={compact ? undefined : hint}
+          title={hint}
           onContextMenu={onContextMenu}
         >
           <span className="sidebar-nav__icon" aria-hidden><Icon size={16} strokeWidth={1.75} /></span>
@@ -409,7 +416,7 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
     return (
       <Collapsible open={open} onOpenChange={() => subMenus.toggle(key)} className="sidebar-nav__disclosure">
         <CollapsibleTrigger asChild>
-          <SidebarMenuButton isActive={active} className="sidebar-nav__item" title={entry.label} tooltip={entry.label} onContextMenu={onContextMenu}>
+          <SidebarMenuButton isActive={active} className="sidebar-nav__item" title={entry.label} onContextMenu={onContextMenu}>
             <span className="sidebar-nav__icon" aria-hidden><Icon size={16} strokeWidth={1.75} /></span>
             <span className="sidebar-nav__label">{entry.label}</span>
             <ChevronRight className="sidebar-nav__caret" size={12} strokeWidth={1.75} aria-hidden />

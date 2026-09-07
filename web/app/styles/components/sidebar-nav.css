@@ -408,9 +408,9 @@
 /* ── The icon rail ───────────────────────────────────────────────────────────────────────────────── */
 
 /* Folded, the column is the marks and nothing else. A sliced word is not a treatment, so every label,
-   hint and caret is withheld rather than clipped, and the row centres on its glyph. A tooltip beside the
-   row is what names it under the pointer (`SidebarMenuButton`'s `tooltip`, rendered only while the column
-   is collapsed); `aria-label` names it to a screen reader. */
+   hint and caret is withheld rather than clipped, and the row centres on its glyph. NOTHING is drawn
+   beside the rail on hover: the native `title` names the glyph under the pointer and `aria-label` names
+   it to a screen reader (see SidebarNav's `destination` for why the styled panel is gone). */
 .sidebar-nav[data-mode='rail'] :is(.sidebar-nav__label, .sidebar-nav__search-label, .sidebar-nav__kbd, .sidebar-nav__lockup, .sidebar-nav__switcher-caret, .sidebar-nav__group-label) {
   display: none;
 }
