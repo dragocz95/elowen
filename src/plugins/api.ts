@@ -236,8 +236,13 @@ export interface SessionSource {
    *
    *  With no `sessionId` the target is that account's DEFAULT conversation — the shape a scheduled job
    *  somebody OWNS uses: it was never created from a particular conversation, but its result still
-   *  belongs in its owner's own chat rather than in a channel session only the admin can read. */
-  origin?: { sessionId?: string; userId: number; deliveryTarget?: string };
+   *  belongs in its owner's own chat rather than in a channel session only the admin can read.
+   *
+   *  `dedicated` names an owner-chat conversation that belongs to ONE recurring job: the host creates it
+   *  under the account when it does not exist yet, titled `title`. Runs accumulate there like any other
+   *  conversation and the ordinary compaction keeps the context bounded. A named `sessionId` is required
+   *  with it. */
+  origin?: { sessionId?: string; userId: number; deliveryTarget?: string; dedicated?: { title: string } };
   /** Lazy platform-history provider: called ONLY when this message opens a brand-new conversation.
    *  Individual role-preserving messages are preferred; a legacy string remains accepted during rollout. */
   history?: () => Promise<PlatformHistory>;

@@ -494,11 +494,12 @@ export class BrainService {
       // Owner-chat origin work only. Direct platform origins are deliberately intercepted by
       // PlatformOrchestrator and run through ChannelSessionService + the outbound adapter; routing a
       // `brain-ch-*` row through send() would create an owner-chat live session with owner capabilities.
-      originSend: async (userId, sessionId, text, automation, onEvent) => {
+      originSend: async (userId, sessionId, text, automation, onEvent, dedicated) => {
         // No session named → the account's own default conversation. A scheduled job somebody owns has
         // no originating conversation, but its result belongs to that person, not to a channel session
         // anchored on the instance admin. An account that has never chatted has no row yet, so this
         // degrades to the caller's own fallback exactly like a vanished origin does.
+        if (dedicated && sessionId === undefined) throw new Error('a dedicated origin must name its conversation');
         const target = sessionId ?? defaultUserSessionId(userId);
         const row = this.d.store.getSession(target);
         // An account that has never chatted has no row for its own default conversation yet. That is not
@@ -506,9 +507,18 @@ export class BrainService {
         // account. Refusing here would push the turn onto the channel fallback, where the transcript ends
         // up in a session owned by the operator: the exact place this person's job must not report.
         // A NAMED session still has to exist, belong to the account and be an owner-chat conversation;
-        // only the derived default may be created. Channel rows never cross this boundary.
-        const mayCreate = sessionId === undefined && row === undefined;
+        // only the derived default and a job's DEDICATED conversation may be created. Channel rows never
+        // cross this boundary: a dedicated id is validated by the same owner-chat rule once it exists.
+        const mayCreate = row === undefined && (sessionId === undefined || (dedicated !== undefined && !isNonUserSession(target)));
         if (!mayCreate && !isOwnedUserSession(row, userId, target)) return null;
+        // `send` only accepts a conversation that already has a row; spawning it here is what creates
+        // the row under this account, the same way opening a fresh conversation does.
+        if (mayCreate) {
+          await this.lifecycle.ensureLive(userId, target);
+          // Named after the job before its first turn: a titled row is skipped by the titler, and a first
+          // turn that fails and is retried finds the name already there. Same clamp as a manual rename.
+          if (dedicated) this.d.store.renameSession(target, collapseWhitespace(dedicated.title).slice(0, 120) || target);
+        }
         await this.send({ userId, text, mode: 'build', session: target, automation });
         onEvent?.({ type: 'session', sessionId: target });
         return lastAssistantText(this.d.store, target);
