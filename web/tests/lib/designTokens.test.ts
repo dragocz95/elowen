@@ -44,6 +44,42 @@ function declarations(css: string): Record<string, string> {
 
 const baseTokens = declarations(tokensCss);
 
+describe('approved OLED palette', () => {
+  it('owns the black surfaces and neutral ink without changing the ember accent', () => {
+    expect(declarations(skinCss('studio-oled'))).toMatchObject({
+      '--color-background': '#000',
+      '--color-card': '#000',
+      '--color-sidebar': '#000',
+      '--color-popover': '#090909',
+      '--color-muted': '#111',
+      '--color-border': '#242424',
+      '--color-border-strong': '#383838',
+      '--color-sidebar-border': '#242424',
+      '--color-sidebar-rule': '#242424',
+      '--color-sidebar-accent': '#141414',
+      '--color-sidebar-foreground': '#c4c4c4',
+      '--color-sidebar-accent-foreground': '#fff',
+      '--color-foreground': '#fafafa',
+      '--color-card-foreground': '#fafafa',
+      '--color-popover-foreground': '#fafafa',
+      '--color-muted-foreground': '#c4c4c4',
+      '--glass-surface': '#000',
+      '--mesh-accent': 'none',
+      '--shadow-card': 'none',
+      '--color-primary': '#ff5236',
+      '--primary-rgb': '255 82 54',
+      '--studio-placeholder': '#aaa',
+    });
+    expect(stripComments(skinCss('studio-oled'))).toMatch(/color-scheme:\s*dark;/);
+  });
+
+  it('scopes opaque placeholder ink to OLED inputs and textareas', () => {
+    expect(stripComments(skinCss('studio-oled'))).toMatch(
+      /:root\[data-skin='studio-oled'\] :is\(input, textarea\)::placeholder\s*\{\s*color: var\(--studio-placeholder\);\s*opacity: 1;\s*\}/,
+    );
+  });
+});
+
 describe('runtime token emission', () => {
   it('keeps the theme static because plugin chart colours are passed through runtime props', () => {
     expect(stripComments(tokensCss)).toMatch(/@theme\s+static\s*\{/);
