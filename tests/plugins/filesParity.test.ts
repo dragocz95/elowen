@@ -235,6 +235,9 @@ describe('files plugin — search helpers', () => {
     expect(splitGlobPatterns('*.js,*.ts')).toEqual(['*.js', '*.ts']);
     expect(splitGlobPatterns('*.js *.ts')).toEqual(['*.js', '*.ts']);
     expect(splitGlobPatterns('*.{ts,tsx}')).toEqual(['*.{ts,tsx}']);
+    // A brace group NEXT TO a comma list is both forms at once: rg matches nothing when it arrives whole.
+    expect(splitGlobPatterns('*.{ts,tsx},*.js')).toEqual(['*.{ts,tsx}', '*.js']);
+    expect(splitGlobPatterns('src/**/*.{a,b} *.md,*.txt')).toEqual(['src/**/*.{a,b}', '*.md', '*.txt']);
     expect(splitGlobPatterns('')).toEqual([]);
   });
 

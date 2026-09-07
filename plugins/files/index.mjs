@@ -956,13 +956,26 @@ export function pathNotFoundMessage(lead, target, cwd, display = (p) => p) {
 }
 
 /** Split a `glob` value the way the reference does: on whitespace, then on commas, keeping a brace group
- *  whole. Each token becomes its own `--glob`, so "*.js,*.ts" filters on both instead of matching nothing. */
+ *  whole. Each token becomes its own `--glob`, so "*.js,*.ts" filters on both instead of matching nothing.
+ *  The comma split counts brace depth rather than skipping any token that contains a brace, because
+ *  "*.{ts,tsx},*.js" is both forms at once and rg matches nothing at all when it arrives as one pattern. */
 export function splitGlobPatterns(value) {
   if (typeof value !== 'string') return [];
   const out = [];
   for (const token of value.split(/\s+/).filter(Boolean)) {
-    if (token.includes('{')) { out.push(token); continue; }
-    for (const part of token.split(',')) if (part) out.push(part);
+    let depth = 0;
+    let current = '';
+    for (const ch of token) {
+      if (ch === ',' && depth === 0) {
+        if (current) out.push(current);
+        current = '';
+        continue;
+      }
+      if (ch === '{') depth += 1;
+      else if (ch === '}' && depth > 0) depth -= 1;
+      current += ch;
+    }
+    if (current) out.push(current);
   }
   return out;
 }
