@@ -271,6 +271,64 @@ function normalizedKnownContent(content: readonly unknown[]): unknown[] {
   return out;
 }
 
+/** The tool names ONE request actually offers, or undefined when the payload carries no tool list to
+ *  judge against (nothing to check, so nothing is dropped). Anthropic validates a replayed
+ *  `tool_reference` against exactly this array — the projected one, since the hosted-search projector
+ *  runs before this restore — so it is the only correct denominator. */
+function requestToolNames(payload: JsonObject): Set<string> | undefined {
+  if (!Array.isArray(payload.tools)) return undefined;
+  const names = new Set<string>();
+  for (const raw of payload.tools) {
+    const name = record(raw)?.name;
+    if (typeof name === 'string') names.add(name);
+  }
+  return names;
+}
+
+/** Drop the `tool_reference` entries of a replayed hosted-search result that name a tool THIS request does
+ *  not carry, and say which.
+ *
+ *  A replay is the parent request's server-owned content played back verbatim, but the tools block is not
+ *  replayed with it: every session — and above all a FORK child — assembles its own from its own composed
+ *  catalog and the acting sender's visibility. When the two disagree, Anthropic rejects the whole request
+ *  with `Tool reference '<name>' not found in available tools`, and the conversation cannot make a single
+ *  further turn. Nothing client-side can conjure the missing definition (the child genuinely does not have
+ *  that tool), so the reference to it is what has to go.
+ *
+ *  The `tool_search_tool_result` BLOCK is always kept, even when every reference inside it is dropped:
+ *  Anthropic requires each `server_tool_use` to keep its matching result, and {@link hasCompleteToolSearchPairs}
+ *  enforces the same pairing on this side. Only the reference list inside it narrows. */
+function withoutDanglingToolReferences(
+  content: readonly JsonObject[],
+  available: ReadonlySet<string>,
+): { content: JsonObject[]; dropped: string[] } {
+  const dropped: string[] = [];
+  const next = content.map((block): JsonObject => {
+    if (block.type !== 'tool_search_tool_result') return block;
+    const inner = record(block.content);
+    const references = inner?.tool_references;
+    if (!inner || !Array.isArray(references)) return block;
+    const kept = references.filter((raw) => {
+      const name = record(raw)?.tool_name;
+      if (typeof name !== 'string' || available.has(name)) return true;
+      dropped.push(name);
+      return false;
+    });
+    return kept.length === references.length ? block : { ...block, content: { ...inner, tool_references: kept } };
+  });
+  return { content: dropped.length > 0 ? next : [...content], dropped };
+}
+
+/** The replay content this payload may actually carry, plus whatever had to be dropped to make it valid.
+ *  Shared by restore and verify so the two can never disagree about what the final request should hold. */
+function replayableContent(
+  payload: JsonObject,
+  content: readonly JsonObject[],
+): { content: JsonObject[]; dropped: string[] } {
+  const available = requestToolNames(payload);
+  return available === undefined ? { content: [...content], dropped: [] } : withoutDanglingToolReferences(content, available);
+}
+
 function replayEntries(contextMessages: readonly unknown[]): AnthropicHostedReplayMetadata[] {
   return contextMessages.flatMap((message) => {
     const meta = replayMetadata(message);
@@ -295,6 +353,7 @@ export function restoreAnthropicHostedReplay(
   payload: unknown,
   contextMessages: readonly unknown[],
   expectedModelId: string,
+  onDroppedToolReferences?: (names: readonly string[]) => void,
 ): unknown | undefined {
   const object = record(payload);
   if (!object || object.model !== expectedModelId || !Array.isArray(object.messages)) return undefined;
@@ -310,8 +369,10 @@ export function restoreAnthropicHostedReplay(
     if (index < 0) continue;
     const candidate = record(messages[index]);
     if (!candidate || !Array.isArray(candidate.content)) continue;
-    if (isDeepStrictEqual(candidate.content, meta.content)) { claimed.add(index); continue; }
-    nextMessages[index] = { ...candidate, content: clone(meta.content) };
+    const replayable = replayableContent(object, meta.content);
+    if (replayable.dropped.length > 0) onDroppedToolReferences?.(replayable.dropped);
+    if (isDeepStrictEqual(candidate.content, replayable.content)) { claimed.add(index); continue; }
+    nextMessages[index] = { ...candidate, content: clone(replayable.content) };
     claimed.add(index);
     changed = true;
   }
@@ -332,7 +393,10 @@ export function verifyAnthropicHostedReplay(
     const index = matchingAssistantIndex(object.messages, meta, claimed);
     if (index < 0) return false;
     const candidate = record(object.messages[index]);
-    if (!candidate || !Array.isArray(candidate.content) || !isDeepStrictEqual(candidate.content, meta.content)) return false;
+    // Against the SAME projection restore applies: a reference this request cannot carry was deliberately
+    // removed, and demanding it back here would turn that repair into a hard failure of every later turn.
+    if (!candidate || !Array.isArray(candidate.content)
+      || !isDeepStrictEqual(candidate.content, replayableContent(object, meta.content).content)) return false;
     claimed.add(index);
   }
   return true;
@@ -427,6 +491,8 @@ export function createAnthropicHostedToolReplay(
   const expectedModelId = expected.id;
   let currentContext: readonly unknown[] = [];
   let unsafeHostedReplay = false;
+  /** Tool names already reported as dropped from a replayed hosted-search result — see the warn below. */
+  const droppedToolReferences = new Set<string>();
   const compactionSignals = new WeakSet<AbortSignal>();
   const installed = new WeakSet<AgentSession['agent']>();
 
@@ -436,7 +502,16 @@ export function createAnthropicHostedToolReplay(
       // does not replay that turn as signed assistant content, and a successful rewrite removes the marker.
       pi.on('session_before_compact', (event) => { compactionSignals.add(event.signal); });
       pi.on('before_provider_request', (event) =>
-        restoreAnthropicHostedReplay(event.payload, currentContext, expectedModelId));
+        restoreAnthropicHostedReplay(event.payload, currentContext, expectedModelId, (names) => {
+          // One line per NAME for the life of the session, not one per request: a fork child whose catalog
+          // is narrower than its parent's would otherwise repeat the same list on every single turn, and
+          // the fact worth reading is which tool the replay named that this session does not have.
+          const fresh = names.filter((name) => !droppedToolReferences.has(name));
+          for (const name of fresh) droppedToolReferences.add(name);
+          if (fresh.length > 0) {
+            log.warn(`dropped replayed hosted-search reference(s) to ${fresh.join(', ')} — not in this session's tool block`);
+          }
+        }));
     },
 
     install(session) {
