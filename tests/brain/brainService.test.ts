@@ -8752,6 +8752,35 @@ describe('BrainService.continueSubagent (a delegating turn picking a sub-agent b
     expect(opts.model).toBeUndefined();
   });
 
+  /** The reasoning effort travels with the child, not with the call that spawned it. Without it on the
+   *  continuation, `channels.thinkingChanged` saw the live child's level replaced by nothing, disposed the
+   *  session and respawned it on the model default — so a sub-agent delegated at a high effort answered its
+   *  own follow-up (and every turn after an eviction or a restart) at the cheapest one.
+   *  Mutation: drop the `thinkingLevel` spread in sendDelegated and this reads undefined. */
+  it('resumes on the reasoning level the sub-agent was spawned with', async () => {
+    const { d, svc, sessionId, send } = await seed();
+    const child = 'brain-ch-subagent-sub-effort';
+    d.store.createSession({
+      id: child, userId: 1, model: 'k3', provider: 'kimi-coding',
+      parentSessionId: sessionId, delegatedAccess: { ...SCOPE, thinkingLevel: 'high' },
+    });
+    await svc.continueSubagent(sessionId, child, 'carry on', ADMIN_ACCESS);
+    const [opts] = send.mock.calls[0] as unknown as [Record<string, unknown>];
+    expect(opts.thinkingLevel).toBe('high');
+  });
+
+  it('passes no level for a child whose scope recorded none', async () => {
+    const { d, svc, sessionId, send } = await seed();
+    const child = 'brain-ch-subagent-sub-noeffort';
+    d.store.createSession({
+      id: child, userId: 1, model: 'k3', provider: 'kimi-coding',
+      parentSessionId: sessionId, delegatedAccess: SCOPE,
+    });
+    await svc.continueSubagent(sessionId, child, 'carry on', ADMIN_ACCESS);
+    const [opts] = send.mock.calls[0] as unknown as [Record<string, unknown>];
+    expect(opts.thinkingLevel).toBeUndefined();
+  });
+
   describe('an explicit model override', () => {
     it('overrides the model recorded on the session row', async () => {
       const { d, svc, sessionId, send } = await seed();

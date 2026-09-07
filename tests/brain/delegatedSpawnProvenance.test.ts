@@ -72,4 +72,18 @@ describe('PlatformOrchestrator — promotion provenance on the durable child sco
     expect(sent.delegatedAccess?.spawnedBy).toBeUndefined();
     expect(sent.delegatedAccess?.readOnlyOrigin).toBe('requested');
   });
+
+  /** The reasoning effort is spawn INPUT, not display data: a continuation, an eviction and a boot
+   *  recovery all rebuild the child from this scope alone. Carrying it only on the one dispatch left
+   *  every later turn of that child on the model default. */
+  it('captures the reasoning level on the durable scope, not only on the dispatch', async () => {
+    const sent = await spawn({ ...base, thinkingLevel: 'high', principal: 'elowen:1' });
+    expect(sent.thinkingLevel).toBe('high');
+    expect(sent.delegatedAccess?.thinkingLevel).toBe('high');
+  });
+
+  it('records no level for a delegation that carried none', async () => {
+    const sent = await spawn({ ...base, principal: 'elowen:1' });
+    expect(sent.delegatedAccess?.thinkingLevel).toBeUndefined();
+  });
 });
