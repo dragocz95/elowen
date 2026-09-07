@@ -97,7 +97,9 @@ describe('chat telemetry panel', () => {
     setViewport(false);
     renderChat(<ChatPage />);
     expect(await screen.findByTestId('telemetry-column')).toBeInTheDocument();
-    const statusModel = (await screen.findByTestId('chat-statusline')).querySelector<HTMLElement>('[data-stat="model"]')!;
+    // The model slot IS the picker's trigger now that the switcher lives in the statusline, so the
+    // qualified identity rides the button the pointer rests on rather than its positioning wrapper.
+    const statusModel = (await screen.findByTestId('chat-statusline')).querySelector<HTMLElement>('[data-stat="model"] button')!;
     expect(statusModel).toHaveTextContent('gpt-5.6-sol');
     expect(statusModel).toHaveAttribute('title', 'Účet ChatGPT/gpt-5.6-sol');
     expect(statusModel).not.toHaveTextContent('Účet ChatGPT/');

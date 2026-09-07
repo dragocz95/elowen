@@ -56,13 +56,21 @@ function renderSurface() {
   );
 }
 
+/** The model slot in the statusline. It is the picker's trigger — the slot became a control when the
+ *  switcher moved down here — so the qualified identity lives on the button the pointer actually rests on,
+ *  not on its positioning wrapper. */
+function modelSlot(statusline: HTMLElement): HTMLElement {
+  const slot = statusline.querySelector('[data-stat="model"]') as HTMLElement;
+  return slot.querySelector('button') ?? slot;
+}
+
 describe('chat header provider identity', () => {
   // The compact statusline shows only the model; its title retains the public provider identity.
   // Passing `provider` instead of `providerLabel || provider` loses the operator label.
   it('names the provider by the operator label, never by the internal registry name', async () => {
     renderSurface();
     const statusline = await screen.findByTestId('chat-statusline');
-    const model = statusline.querySelector('[data-stat="model"]');
+    const model = modelSlot(statusline);
     expect(model).toHaveTextContent('kimi-k2.7-code');
     expect(model).toHaveAttribute('title', 'Ollama/kimi-k2.7-code');
     expect(statusline).not.toHaveTextContent('Ollama/');
@@ -75,7 +83,7 @@ describe('chat header provider identity', () => {
     status = { ...STATUS, providerLabel: '' };
     renderSurface();
     const statusline = await screen.findByTestId('chat-statusline');
-    const model = statusline.querySelector('[data-stat="model"]');
+    const model = modelSlot(statusline);
     expect(model).toHaveTextContent('kimi-k2.7-code');
     expect(model).toHaveAttribute('title', 'ollama/kimi-k2.7-code');
     expect(statusline).not.toHaveTextContent('ollama/');
