@@ -1059,6 +1059,61 @@ export class BrainStore {
     });
   }
 
+  /** Record one cleared tool result the way egress already sends it: the latch row AND the transcript row
+   *  it describes, in ONE transaction.
+   *
+   *  The stored transcript is the wire truth. Clearing used to keep its placeholder in memory only, so the
+   *  row still held the full result and every store-derived rebuild — a respawn, an export, and above all
+   *  a FORK seed — reconstructed a context the parent no longer sends. Writing the placeholder through
+   *  makes rehydration equal to egress by construction. Nothing is lost: the full output lives in the
+   *  spill file the placeholder names.
+   *
+   *  The prompt-cache invariant is untouched, because this runs only where egress has ALREADY replaced
+   *  those bytes — the cold gate, or a result of the current run that has not reached the provider yet —
+   *  never while a warm prefix still depends on the old text.
+   *
+   *  Returns how many transcript rows were rewritten. 0 is normal rather than an error: a legacy latch row
+   *  carries no placeholder, and a re-latch of an occurrence whose row already says the same thing has
+   *  nothing left to write. */
+  recordClearedToolResult(sessionId: string, spill: ToolResultSpillRecord): number {
+    return this.db.transaction((): number => {
+      this.upsertToolResultSpill(sessionId, spill);
+      return spill.placeholder === null
+        ? 0
+        : this.rewriteToolResultRow(sessionId, spill.toolCallId, spill.occurredAt, spill.placeholder);
+    })();
+  }
+
+  /** Replace one tool-result row's content with the placeholder egress is sending for it. Matched on the
+   *  OCCURRENCE key (the model-minted id plus the message's own timestamp) — the same identity the latch
+   *  uses, because an id alone is not unique across a compaction. Every other field of the stored message
+   *  is preserved, so a rewritten row differs from its predecessor in nothing but the content blocks the
+   *  placeholder stands in for. */
+  private rewriteToolResultRow(sessionId: string, toolCallId: string, occurredAt: number, placeholder: string): number {
+    const rows = this.db.prepare(
+      `SELECT id, content FROM brain_messages WHERE session_id = ? AND role = 'toolResult' AND pending <> ${DISCARDED_MESSAGE} ORDER BY rowid ASC`
+    ).all(sessionId) as { id: string; content: string }[];
+    const update = this.db.prepare('UPDATE brain_messages SET content = ? WHERE session_id = ? AND id = ?');
+    let rewritten = 0;
+    for (const row of rows) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(row.content); }
+      catch { continue; } // a corrupt row is skipped here exactly as rehydration skips it
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+      const message = parsed as { toolCallId?: unknown; timestamp?: unknown };
+      if (message.toolCallId !== toolCallId) continue;
+      const at = typeof message.timestamp === 'number' && Number.isFinite(message.timestamp) && message.timestamp > 0
+        ? message.timestamp
+        : 0;
+      if (at !== occurredAt) continue;
+      const serialized = JSON.stringify({ ...message, content: [{ type: 'text', text: placeholder }] });
+      if (serialized === row.content) continue;
+      update.run(serialized, sessionId, row.id);
+      rewritten += 1;
+    }
+    return rewritten;
+  }
+
   /** Drop one latch row by its occurrence key — toolResultClearing prunes a row whose occurrence a
    *  compaction removed from the history, so it can never capture a later reuse of the same id. */
   deleteToolResultSpill(sessionId: string, toolCallId: string, occurredAt: number): void {

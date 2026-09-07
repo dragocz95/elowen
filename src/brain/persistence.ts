@@ -801,6 +801,19 @@ function piSessionId(sessionId: string): string {
   return createHash('sha256').update(sessionId).digest('hex');
 }
 
+/** The stored history as the messages a rehydration replays — the same rows, the same orphan filtering
+ *  and the same externalized-image collapse, without building a SessionManager for them.
+ *
+ *  This is the ONE reading of "what this conversation currently is". A FORK seeds its child from it, so
+ *  the child's context is the parent's by construction rather than by a second implementation that has to
+ *  be kept in step: raw rows would carry back the full tool results egress has already cleared and the
+ *  image bytes it has already collapsed, which is a bigger conversation than the parent sends, not the
+ *  parent's. A compaction divider is yielded as its stored row, which the child's own replay turns back
+ *  into a compaction entry exactly as a respawn does. */
+export function storedContextMessages(store: BrainStore, sessionId: string): { role: string; content: unknown }[] {
+  return [...parsedRows(store, sessionId)].map(({ msg }) => msg);
+}
+
 /** Rebuild an in-memory PI session manager pre-seeded with the stored history (D1). Spike-proven:
  *  messages appended before createAgentSession appear as session.messages. */
 export function rehydrate(store: BrainStore, sessionId: string, cwd: string): SessionManager {
