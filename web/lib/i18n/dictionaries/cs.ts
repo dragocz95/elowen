@@ -1873,6 +1873,7 @@ export const cs = {
     save: 'Uložit konfiguraci',
     saveError: 'Uložení konfigurace selhalo',
     invalidJson: 'Před uložením této změny zadejte platný JSON.',
+    numberRange: 'Povolený rozsah: {min}–{max}.',
     editorEmpty: 'Prázdné',
     editorLines: '{n} řádků',
     editorItems: '{n} položek',

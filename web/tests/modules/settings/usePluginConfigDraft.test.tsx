@@ -43,6 +43,32 @@ describe('usePluginConfigDraft', () => {
     expect(result.current.status).toBe('error');
   });
 
+  it('never autosaves a number above the manifest ceiling and reports it as a validation error', async () => {
+    mutateAsync.mockResolvedValue({ ok: true });
+    const detail = pluginDetail([{ key: 'maxAssetMb', label: 'Largest file', type: 'number', min: 1, max: 64 }], { maxAssetMb: 8 });
+    const { result } = renderHook(() => usePluginConfigDraft('test-plugin', detail));
+
+    act(() => result.current.setValue('maxAssetMb', 512));
+    await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+
+    expect(mutateAsync).not.toHaveBeenCalled();
+    expect(result.current.status).toBe('error');
+    expect(result.current.errorKind).toBe('validation');
+  });
+
+  it('reads a 400 from the daemon as a validation error, not a transport failure', async () => {
+    mutateAsync.mockRejectedValue(new ElowenApiError('invalid value for "maxAssetMb": must be at most 64', 400));
+    const detail = pluginDetail([{ key: 'maxAssetMb', label: 'Largest file', type: 'number' }], { maxAssetMb: 8 });
+    const { result } = renderHook(() => usePluginConfigDraft('test-plugin', detail));
+
+    act(() => result.current.setValue('maxAssetMb', 512));
+    await act(async () => { await vi.advanceTimersByTimeAsync(900); });
+
+    expect(mutateAsync).toHaveBeenCalledTimes(1);
+    expect(result.current.status).toBe('error');
+    expect(result.current.errorKind).toBe('validation');
+  });
+
   it('does not submit an untouched stored secret as an empty value', async () => {
     mutateAsync.mockResolvedValue({ ok: true });
     const detail = pluginDetail([

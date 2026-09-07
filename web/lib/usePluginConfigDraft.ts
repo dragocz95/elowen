@@ -9,15 +9,36 @@ import type { PluginConfigField, PluginConfigSaveResponse } from './types';
  * that field would lose the user's draft on navigation. */
 class PluginConfigValidationError extends Error {}
 
+/** Does this number field's draft value sit outside the manifest's `min`/`max`/`step`? The daemon
+ *  enforces exactly these bounds on the write path and answers 400, so a value that fails here is
+ *  never sent: the row shows the allowed range instead of the footer reporting a failed save. A
+ *  cleared value (null) is the explicit reset to the default and always passes. */
+export function numberOutOfBounds(field: PluginConfigField, value: unknown): boolean {
+  if (field.type !== 'number' || value === null || value === undefined) return false;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return true;
+  if (field.min !== undefined && value < field.min) return true;
+  if (field.max !== undefined && value > field.max) return true;
+  if (field.step !== undefined) {
+    const base = field.min ?? 0;
+    const nearest = base + Math.round((value - base) / field.step) * field.step;
+    const tolerance = Number.EPSILON * Math.max(1, Math.abs(value), Math.abs(base), Math.abs(field.step), Math.abs(nearest)) * 8;
+    if (Math.abs(value - nearest) > tolerance) return true;
+  }
+  return false;
+}
+
 function sanitizeConfig(values: Record<string, unknown>, schema: readonly PluginConfigField[], includeSecrets: ReadonlySet<string> = new Set(), validateJson = true): Record<string, unknown> {
   const jsonKeys = new Set(schema.filter((field) => field.type === 'json').map((field) => field.key));
   const secretKeys = new Set(schema.filter((field) => field.type === 'secret').map((field) => field.key));
+  const numberFields = new Map(schema.filter((field) => field.type === 'number').map((field) => [field.key, field]));
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(values)) {
     if (secretKeys.has(key) && !includeSecrets.has(key)) continue;
     if (validateJson && jsonKeys.has(key) && typeof value === 'string' && value.trim() !== '') {
       try { JSON.parse(value); } catch { throw new PluginConfigValidationError(`Invalid JSON in ${key}`); }
     }
+    const numberField = numberFields.get(key);
+    if (numberField && numberOutOfBounds(numberField, value)) throw new PluginConfigValidationError(`Out-of-range value in ${key}`);
     out[key] = value;
   }
   return out;
@@ -88,8 +109,10 @@ export function usePluginConfigDraft(
 
   const ready = seededName === name;
   const secretKeys = new Set(detail.configSchema.filter((field) => field.type === 'secret').map((field) => field.key));
+  // A 400 is the daemon refusing a VALUE (its validator mirrors the bounds checked above), not a
+  // transport failure: retrying the same snapshot can only fail again, so it reads as validation.
   const classifyError = (error: unknown): PluginConfigErrorKind => {
-    if (error instanceof ElowenApiError) return error.status === 409 ? 'conflict' : 'transport';
+    if (error instanceof ElowenApiError) return error.status === 409 ? 'conflict' : error.status === 400 ? 'validation' : 'transport';
     return error instanceof PluginConfigValidationError ? 'validation' : 'transport';
   };
   const adoptConflictRevision = (error: unknown): void => {

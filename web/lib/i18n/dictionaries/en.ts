@@ -1910,6 +1910,7 @@ export const en = {
     save: 'Save configuration',
     saveError: 'Saving the configuration failed',
     invalidJson: 'Enter valid JSON before this change can be saved.',
+    numberRange: 'Allowed range: {min}–{max}.',
     // Summaries a field whose editor opens in a modal shows in its settings row: how much is stored,
     // never the content itself.
     editorEmpty: 'Empty',

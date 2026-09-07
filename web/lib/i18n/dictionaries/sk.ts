@@ -1868,6 +1868,7 @@ export const sk = {
     save: 'Uložiť konfiguráciu',
     saveError: 'Uloženie konfigurácie zlyhalo',
     invalidJson: 'Pred uložením tejto zmeny zadajte platný JSON.',
+    numberRange: 'Povolený rozsah: {min}–{max}.',
     editorEmpty: 'Prázdne',
     editorLines: '{n} riadkov',
     editorItems: '{n} položiek',

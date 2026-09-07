@@ -27,7 +27,7 @@ import { useBrand } from '../../lib/brand';
 import { useConfig, useBrainModels, useNotificationDestinations, usePlugins, usePluginTools, useProjects } from '../../lib/queries';
 import type { BrainModelOption, PluginConfigField, PluginDetail, RolePolicy, McpServerSpec } from '../../lib/types';
 import { RISK_TONE, CONNECTION_KEYS } from './pluginDetail.shared';
-import type { PluginConfigCommitResult, PluginConfigDraft } from '../../lib/usePluginConfigDraft';
+import { numberOutOfBounds, type PluginConfigCommitResult, type PluginConfigDraft } from '../../lib/usePluginConfigDraft';
 import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface';
 import { Slider } from '../../components/ui/Slider';
 import { normalizeTokenList, TokenList } from '../../components/ui/TokenList';
@@ -740,6 +740,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
             placeholder={displayPlaceholder(f)}
             aria-label={fieldLabel(f)}
             value={displayed}
+            aria-invalid={numberOutOfBounds(f, raw) || undefined}
             onChange={(e) => set(f.key, e.target.value === '' ? null : Number(e.target.value) * divisor)}
           />
         );
@@ -877,6 +878,11 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
     // one-line hint does not.
     const help = f.help?.trim() && f.help.trim() !== description?.trim() ? f.help : undefined;
     const risk = f.risk ? <Badge tone={RISK_TONE[f.risk]}>{riskText(f.risk)}</Badge> : null;
+    // The allowed range, shown only while the typed value would be refused: the daemon answers 400 to
+    // it, and a footer that just says the save failed sent people looking for a broken connection.
+    const range = f.type === 'number' && numberOutOfBounds(f, values[f.key])
+      ? <span className="text-destructive" role="alert">{t.pluginCfg.numberRange.replace('{min}', String(displayBound(f.min, numberDivisor(f)) ?? '')).replace('{max}', String(displayBound(f.max, numberDivisor(f)) ?? ''))}</span>
+      : null;
 
     if (MODAL_FIELD_TYPES.has(f.type)) {
       const invalid = f.type === 'json' && isJsonInvalid(jsonText(values[f.key]));
@@ -973,7 +979,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
         label={label}
         description={description}
         hint={help}
-        status={risk ?? undefined}
+        status={risk || range ? <span className="flex flex-wrap items-center gap-2">{risk}{range}</span> : undefined}
         trailingLayout={risk ? 'stack' : undefined}
         className={risk ? 'plugin-config-risk-row' : undefined}
         control={renderField(f)}
