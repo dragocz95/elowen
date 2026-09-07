@@ -19,6 +19,7 @@ const MOCK_SERVER = join(here, '../fixtures/mock-mcp-server.mjs');
 const PAGINATED_MOCK_SERVER = join(here, '../fixtures/mock-mcp-paginated-server.mjs');
 const LATENCY_MOCK_SERVER = join(here, '../fixtures/mock-mcp-latency-server.mjs');
 const SLOW_INIT_MOCK_SERVER = join(here, '../fixtures/mock-mcp-slow-init-server.mjs');
+const RESOURCE_MOCK_SERVER = join(here, '../fixtures/mock-mcp-resource-server.mjs');
 
 const alive = (pid: number): boolean => { try { process.kill(pid, 0); return true; } catch { return false; } };
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -26,7 +27,7 @@ const waitFor = async (fn: () => boolean, ms = 3000) => { const end = Date.now()
 
 /** A minimal PluginContext stand-in capturing the tools/hooks the plugin registers. `mcpBridgeSnapshot`
  *  is what a forked sub-agent runner is handed: present ⇒ declare these tools and connect nothing. */
-function fakeCtx(config: Record<string, unknown>, mcpBridgeSnapshot?: unknown, db: Db = openPluginTablesDb(), identity: object | null | (() => object | null) = null) {
+function fakeCtx(config: Record<string, unknown>, mcpBridgeSnapshot?: unknown, db: Db = openPluginTablesDb(), identity: object | null | (() => object | null) = null, dataDir = mkdtempSync(join(tmpdir(), 'elowen-mcp-data-'))) {
   const tools: { name: string; execute: (id: string, args: unknown) => Promise<unknown>; ownerUserId?: number }[] = [];
   const hooks: { name: string; run: (p: unknown) => unknown }[] = [];
   const controls = new Map<string, unknown>();
@@ -44,7 +45,8 @@ function fakeCtx(config: Record<string, unknown>, mcpBridgeSnapshot?: unknown, d
     registerControl: (name: string, control: unknown) => controls.set(name, control),
     registerApiRoute: (route: { path: string; method?: string; handler: (req: unknown) => Promise<unknown> }) => apiRoutes.push(route),
     registerUserRemoved: (handler: (userId: number) => Promise<void> | void) => userRemoved.push(handler),
-    tools, hooks, controls, apiRoutes, userRemoved, rawDb: db,
+    dataDir: () => dataDir,
+    tools, hooks, controls, apiRoutes, userRemoved, rawDb: db, dataDirPath: dataDir,
   };
 }
 
@@ -643,7 +645,7 @@ describe('mcp plugin — declaring bridged tools from an inherited snapshot', ()
     await teardown(ctx);
   }, 30000);
 
-  it('surfaces a connect that fails at first call the way a dead server does — an error result, not a crash', async () => {
+  it('throws a connect that fails at first call, so the host marks the result is_error', async () => {
     const ctx = fakeCtx({
       connectTimeoutMs: 5000,
       // A command that exits immediately: the transport closes and the connect rejects.
@@ -653,12 +655,11 @@ describe('mcp plugin — declaring bridged tools from an inherited snapshot', ()
 
     const ghost = ctx.tools.find((t) => t.name === 'mcp__dead__ghost');
     expect(ghost, 'the tool is still DECLARED — the model sees the same surface either way').toBeTruthy();
-    const res = (await ghost!.execute('1', {})) as { content: { text: string }[]; details: { ok: boolean } };
-    expect(res.details.ok).toBe(false);
-    expect(res.content[0]!.text).toMatch(/^Error: /);
+    // A transport that never came up is a host fault, not an answer: it is thrown, and the message the
+    // host renders as the errored result still names what happened.
+    await expect(ghost!.execute('1', {})).rejects.toThrow();
     // The failure is not cached: a later call tries again rather than answering from a stale rejection.
-    const second = (await ghost!.execute('2', {})) as { details: { ok: boolean } };
-    expect(second.details.ok).toBe(false);
+    await expect(ghost!.execute('2', {})).rejects.toThrow();
     await teardown(ctx);
   }, 30000);
 
@@ -682,6 +683,64 @@ describe('mcp plugin — declaring bridged tools from an inherited snapshot', ()
     expect(res.details.ok).toBe(false); // the mock exposes no resources — but it was ASKED, not skipped
     expect(starts(log)).toBe(1);
     await teardown(ctx);
+  }, 30000);
+
+  it('answers the resource tools in the reference JSON shape, blobs included', async () => {
+    const ctx = fakeCtx({
+      connectTimeoutMs: 10000,
+      servers: [{ name: 'res', enabled: true, transport: 'stdio', command: process.execPath, args: [RESOURCE_MOCK_SERVER] }],
+    });
+    await register(ctx as never);
+
+    const list = ctx.tools.find((t) => t.name === 'ListMcpResources');
+    const listed = (await list!.execute('1', {})) as { content: { text: string }[]; details: { ok: boolean; count: number } };
+    expect(listed.details.ok).toBe(true);
+    const listing = JSON.parse(listed.content[0]!.text) as {
+      resources: { uri: string; name: string; mimeType?: string; description?: string; server: string }[];
+      errors?: unknown;
+    };
+    expect(listing.errors).toBeUndefined();
+    expect(listing.resources).toContainEqual({
+      uri: 'file:///notes.txt', name: 'notes', mimeType: 'text/plain', description: 'Some notes', server: 'res',
+    });
+    // An absent description is OMITTED, not blanked, so "none" is distinguishable from "empty".
+    const picture = listing.resources.find((r) => r.uri === 'file:///picture.png');
+    expect(picture).toEqual({ uri: 'file:///picture.png', name: 'blob', mimeType: 'image/png', server: 'res' });
+
+    const read = ctx.tools.find((t) => t.name === 'ReadMcpResource');
+    const text = (await read!.execute('2', { server: 'res', uri: 'file:///notes.txt' })) as { content: { text: string }[] };
+    expect(JSON.parse(text.content[0]!.text)).toEqual({
+      contents: [{ uri: 'file:///notes.txt', mimeType: 'text/plain', text: 'note body' }],
+    });
+
+    const blob = (await read!.execute('3', { server: 'res', uri: 'file:///picture.png' })) as { content: { text: string }[] };
+    const parsed = JSON.parse(blob.content[0]!.text) as { contents: { uri: string; mimeType?: string; blobSavedTo?: string; text?: string }[] };
+    const entry = parsed.contents[0]!;
+    expect(entry.uri).toBe('file:///picture.png');
+    expect(entry.mimeType).toBe('image/png');
+    expect(entry.blobSavedTo).toBeTruthy();
+    expect(readFileSync(entry.blobSavedTo!, 'utf-8')).toBe('binary-bytes');
+    expect(entry.text).toContain('saved to');
+
+    await teardown(ctx);
+    rmSync(ctx.dataDirPath, { recursive: true, force: true });
+  }, 30000);
+
+  it('reports an unreachable server as data in the listing rather than losing it', async () => {
+    const ctx = fakeCtx({
+      connectTimeoutMs: 10000,
+      servers: [{ name: 'res', enabled: true, transport: 'stdio', command: process.execPath, args: [RESOURCE_MOCK_SERVER] }],
+    });
+    await register(ctx as never);
+
+    const list = ctx.tools.find((t) => t.name === 'ListMcpResources');
+    const named = (await list!.execute('1', { server: 'nowhere' })) as { content: { text: string }[]; details: { ok: boolean } };
+    // A server that is not there is an answer the model can act on, so it stays readable text.
+    expect(named.details.ok).toBe(false);
+    expect(named.content[0]!.text).toContain('is not connected');
+
+    await teardown(ctx);
+    rmSync(ctx.dataDirPath, { recursive: true, force: true });
   }, 30000);
 
   it('bridgeSnapshot() reports only CONNECTED servers, with the fields registration reads', async () => {
