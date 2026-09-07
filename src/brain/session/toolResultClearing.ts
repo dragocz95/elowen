@@ -253,6 +253,30 @@ export function spillPreview(text: string, spillPath: string, originalBytes: num
 type ToolResultMessage = Extract<PiAgentMessage, { role: 'toolResult' }>;
 type ContentBlock = ToolResultMessage['content'][number];
 
+/** The content a cleared tool result carries: the placeholder in place of ALL of its text, followed by
+ *  every block that is not text, in their original order.
+ *
+ *  Clearing is a decision about TEXT — the spill file holds text, the byte budgets measure text, and the
+ *  placeholder names a path to read text back. An image block is none of those things: it has no
+ *  representation in the spill file, so replacing the whole content with the placeholder would destroy
+ *  the picture rather than move it. At delivery it would be destroyed before it was ever persisted, since
+ *  the row is written from the message this content becomes.
+ *
+ *  Non-text blocks are therefore carried through untouched, and the image path that already exists keeps
+ *  working on them: the projector externalizes the bytes to a `ref` on the way into the row, and the cold
+ *  turn-start pass collapses them to the history placeholder once the cache is provably gone. One rule,
+ *  used by the delivery trigger, the cold pass and the row rewrite alike, so all three agree on what a
+ *  cleared result looks like. */
+export function clearedToolResultContent<T extends { type: string }>(
+  content: readonly T[],
+  placeholder: string,
+): ({ type: 'text'; text: string } | T)[] {
+  return [
+    { type: 'text' as const, text: placeholder },
+    ...content.filter((block) => block.type !== 'text'),
+  ];
+}
+
 /** The exact text a spill file holds for a result: its text blocks joined by '\n'. Single source of truth
  *  for the write and the restore comparison — if these two ever disagreed, no latch would ever restore. */
 export function toolResultText(message: ToolResultMessage): string {
@@ -405,8 +429,10 @@ export function decideDeliverySpill(
   const oversized = bytes > spillMaxResultBytes();
   const overBudget = committedBytes + bytes > groupBudgetBytes();
   // No id means no spill path (pathGuard could not let the model read it back), so such a result can
-  // only ever be counted toward its group, never removed from it.
-  if (!toolCallId || (!oversized && !overBudget)) return { wireBytes: bytes, spill: null };
+  // only ever be counted toward its group, never removed from it. No TEXT means there is nothing a spill
+  // could hold: a pure image result past an already-spent budget would otherwise be handed a placeholder
+  // naming an empty file, which costs the group more than the zero bytes it charges it for.
+  if (!toolCallId || bytes === 0 || (!oversized && !overBudget)) return { wireBytes: bytes, spill: null };
   const path = toolResultSpillPath(spillDir, toolCallId, { mode: 'preview', bytes });
   const text = deliveryText(content);
   const placeholder = clearedToolResultPlaceholder(path, bytes, spillPreview(text, path, bytes));
@@ -495,7 +521,7 @@ export function installToolResultDeliverySpill(
     log.info(`spilled ${input.toolCall.id} on delivery (${trigger} trigger, ${bytes} bytes)`);
     return {
       ...hooked,
-      content: [{ type: 'text', text: placeholder }],
+      content: clearedToolResultContent(content, placeholder) as DeliveryContent,
       details: clearedToolResultDetails(hooked?.details ?? input.result.details, marker),
     };
   }

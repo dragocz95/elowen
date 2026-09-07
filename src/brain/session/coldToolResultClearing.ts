@@ -8,6 +8,7 @@ import { collapseHistoricalImages, type PiAgentMessage } from './historyImageStr
 import { imagesRejected } from './imageRejection.js';
 import {
   TURN_START_KEEP_USER_TURNS,
+  clearedToolResultContent,
   clearedToolResultDetails,
   clearedToolResultPlaceholder,
   defaultReadSpill,
@@ -149,7 +150,13 @@ async function clearCold(
   // never be observable in disagreement by a request that starts in the gap.
   for (const mutation of mutations) {
     const message = mutation.message as { content: unknown; details?: unknown };
-    message.content = [{ type: 'text', text: mutation.placeholder }];
+    // Text out, everything else in place: an image block has nothing in the spill file and would simply
+    // be destroyed. The images pass above has already collapsed the historical ones when the image gate
+    // was open, so what survives here is what that gate deliberately kept.
+    message.content = clearedToolResultContent(
+      Array.isArray(message.content) ? message.content as { type: string }[] : [],
+      mutation.placeholder,
+    );
     message.details = mutation.details;
     // The one line that lets a cacheWatch "history rewritten in place" warning be attributed: clearing a
     // result and stripping an image are otherwise the same silence in the log, with different fixes.

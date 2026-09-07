@@ -16,6 +16,7 @@ import {
   installToolResultDeliverySpill,
   isClearedToolResult,
 } from '../../../src/brain/session/toolResultClearing.js';
+import { createSessionPersistenceProjector } from '../../../src/brain/persistence.js';
 import { providerPayloadHarness } from '../../helpers/providerPayloads.js';
 
 /** Size and group spilling decided at DELIVERY, before PI builds the tool-result message.
@@ -180,6 +181,8 @@ describe('the spill directory in production wiring', () => {
 
 describe('a real session delivering an oversized tool result', () => {
   const OUTPUT = `HEAD-${'z'.repeat(60_000)}-TAIL`;
+  /** A real 1×1 PNG: the store names an image file after its own bytes, so the bytes have to be real. */
+  const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
   it('puts the placeholder in the message, the event and the next request, and the output on disk', async () => {
     const spillDir = mkdtempSync(join(tmpdir(), 'elowen-delivery-spill-'));
@@ -225,5 +228,63 @@ describe('a real session delivering an oversized tool result', () => {
     const second = payloads[1];
     expect(JSON.stringify(second)).not.toContain('-TAIL');
     expect(JSON.stringify(second)).toContain('saved to disk instead of the context');
+  });
+
+  /** RED BEFORE THE FIX: the spill replaced the WHOLE content with the placeholder, so a result that
+   *  carried an image alongside its text lost the picture before it had ever been persisted — the row is
+   *  written from this very message, and the spill file holds text only. The image had no second home to
+   *  come back from, on the wire or in the transcript. */
+  it('keeps an image block, which the spill file could never hold, on the wire and in the row', async () => {
+    const spillDir = mkdtempSync(join(tmpdir(), 'elowen-delivery-image-'));
+    const imagesDir = mkdtempSync(join(tmpdir(), 'elowen-delivery-images-'));
+    dirs.push(spillDir, imagesDir);
+    const store = new BrainStore(openDb(':memory:'));
+    store.createSession({ id: 'sess-img', userId: 7, model: 'm' });
+    const harness = await providerPayloadHarness({
+      toolNames: ['Shot'],
+      customTools: [defineTool({
+        name: 'Shot', label: 'Shot', description: 'Returns a large output and a picture',
+        parameters: Type.Object({}),
+        execute: async () => ({
+          content: [{ type: 'text', text: OUTPUT }, { type: 'image', data: PNG, mimeType: 'image/png' }],
+          details: {},
+        }),
+      })],
+      replyFor: (call) => (call === 1 ? [{ type: 'toolCall', id: 'call-shot', name: 'Shot', arguments: {} }] : undefined),
+    });
+    installToolResultDeliverySpill(harness.session, 'sess-img', { spillDir });
+    harness.session.subscribe(createSessionPersistenceProjector(
+      store, harness.session, 'sess-img', 200_000, imagesDir,
+    ) as never);
+
+    await harness.prompt('shoot');
+
+    // The live message: the text became the placeholder, the picture stayed exactly where it was.
+    const live = harness.session.messages.find((m) => (m as { role?: string }).role === 'toolResult') as {
+      content: { type: string; text?: string; data?: string }[];
+    };
+    expect(live.content.map((block) => block.type)).toEqual(['text', 'image']);
+    expect(live.content[0]!.text).toContain('saved to disk instead of the context');
+    expect(live.content[1]!.data).toBe(PNG);
+    // The wire truly carried it: this is the context of the request that FOLLOWS the tool call, i.e. the
+    // first one to send this result at all.
+    const sent = harness.contexts[1]!.messages.find((m) => (m as { role?: string }).role === 'toolResult') as {
+      content: { type: string; data?: string }[];
+    };
+    expect(sent.content.find((block) => block.type === 'image')?.data).toBe(PNG);
+    // …and the row the projector wrote holds the externalized reference, not the bytes and not nothing.
+    const row = store.getMessages('sess-img').find((r) => r.role === 'toolResult');
+    const stored = JSON.parse(row!.content) as { content: { type: string; ref?: { file: string } }[] };
+    expect(stored.content.map((block) => block.type)).toEqual(['text', 'image']);
+    expect(existsSync(join(imagesDir, stored.content[1]!.ref!.file))).toBe(true);
+  });
+
+  /** The pure-image result Astra asked for: no text means nothing a spill file could hold, so the group
+   *  budget being spent already must not manufacture a placeholder that names an empty file. */
+  it('never spills a result that has no text at all, whatever the group has already spent', () => {
+    const image = [{ type: 'image', data: PNG, mimeType: 'image/png' }] as never;
+    const decision = decideDeliverySpill(TOOL_RESULT_GROUP_BUDGET_BYTES, DIR, 'c1', image);
+    expect(decision.spill).toBeNull();
+    expect(decision.wireBytes).toBe(0);
   });
 });

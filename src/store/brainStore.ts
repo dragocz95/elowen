@@ -17,6 +17,7 @@ import {
 } from '../brain/session/conversationActivity.js';
 import type { TurnAutomation } from '../plugins/policyContext.js';
 import { collectImageFiles, isPersistedImageBlock } from '../brain/chatImages.js';
+import { clearedToolResultContent } from '../brain/session/toolResultClearing.js';
 import { collectChatFiles, type StoredChatFile } from '../brain/chatFiles.js';
 import { rollupActivatedTools } from '../brain/continuity/activatedTools.js';
 import { rollupWorkingSet } from '../brain/continuity/workingSet.js';
@@ -1091,9 +1092,16 @@ export class BrainStore {
           : 0;
         const entry = byOccurrence.get(`${message.toolCallId}\u0000${at}`);
         if (!entry) continue;
+        const stored = (message as { content?: unknown }).content;
         const serialized = JSON.stringify({
           ...message,
-          content: [{ type: 'text', text: entry.placeholder }],
+          // The same rule the live mutation applies, so the row and the context agree block for block:
+          // the placeholder stands in for the TEXT, and an externalized image reference stays where it is
+          // rather than being deleted by a decision that was only ever about text.
+          content: clearedToolResultContent(
+            Array.isArray(stored) ? stored as { type: string }[] : [],
+            entry.placeholder,
+          ),
           ...(entry.details === undefined ? {} : { details: entry.details }),
         });
         if (serialized === row.content) continue;
