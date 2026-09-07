@@ -96,7 +96,7 @@ Enabled plugins can contribute UI to several parts of the Web UI. These surfaces
 
 Project tabs sit beside the core **Overview** tab and, for administrators, **Access**. A plugin tab owns its own content and may provide its own page frame; the host supplies loading, compatibility, and failure states. Plugin settings retain their save status when opened as a standalone page.
 
-For example, **Sandbox** can provide account-scoped Git worktree management, while **GitHub** can provide repository and pull-request views. Their availability and exact actions depend on the installed plugin, its grants, and the account's Project access. External actions such as publishing, pull-request creation, reviews, and merges require the plugin's server-side checks and confirmation.
+For example, **Sandbox** can provide account-scoped Git worktree management, while **GitHub** can provide repository and pull-request views. Optional **Editor**, **Sites**, and **OneDrive** plugins can add a project editor, published-site management, and a Project mirror tab. The **Browser** plugin adds an account section and live browser sessions when the host dependencies are available. Their availability and exact actions depend on the installed plugin, its grants, configuration, and the account's Project access. External actions such as publishing, pull-request creation, reviews, merges, site publication, and OneDrive sync decisions require the plugin's server-side checks and any required confirmation.
 
 ## Memory
 

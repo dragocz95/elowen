@@ -36,6 +36,26 @@ Settings is the source of truth for the plugins available on your deployment. A 
 
 Other capabilities are installed deliberately. Examples include Discord, Telegram, Microsoft Teams, WhatsApp, GitHub, skills, scheduling, codebase indexing, and editor or other product integrations.
 
+## Current optional integrations
+
+The following registry plugins are optional and are not bundled with the core package. Install them only when their capability fits the deployment, then grant them to individual accounts when the manifest requires it. The registry and plugin manifests remain authoritative for availability, version, and required core release.
+
+| Plugin | Adds | Important boundaries |
+| --- | --- | --- |
+| `browser` | Persistent private Chrome sessions with accessibility-first navigation, screenshots, console and network inspection, performance checks, and a live VNC view with user takeover. | Optional and user-grantable. Each account has its own profile and browser process. All traffic goes through the enforcing network proxy; host Chrome, virtual-display, and live-view dependencies must be ready. |
+| `codebase` | `CodebaseSearch`, `CodebaseStatus`, and `CodebaseReindex` for semantic search over accessible repositories. | Optional. It reuses the configured embedding model and stores a private per-repository index. It complements the files plugin's literal search. |
+| `editor` | A project editor at `/p/editor` with file creation, upload, rename, copy, deletion, Markdown and media previews, Office-to-PDF preview, and read-only Git history. | Optional. Project access still applies to every file operation. Administrators may also use its separate System root surface; disabling the plugin removes the editor surface. |
+| `image-gen` and `image-edit` | `GenerateImage` creates a PNG from a prompt. `EditImage` transforms one accessible PNG or JPEG file or one public image URL without overwriting the source. | Optional. Both reuse a configured OpenAI-compatible provider. They are unavailable until the provider is configured and can take up to two minutes per call. |
+| `lsp` | Language-server diagnostics, definition lookup, reference lookup, hover information, and document or workspace symbols. | Optional. It uses the real language server for the file and can install supported npm-based servers into Elowen's own prefix. |
+| `onedrive` | A bidirectional mirror for a Project or Sandbox workspace, with folder selection, pause, sync-now, conflicts, and conflict resolution. | Optional and user-grantable. It requires a linked Microsoft identity. Project and credential boundaries remain enforced; remote deletions are kept in the mirror trash rather than removed permanently. |
+| `sites` | `SiteCreate`, `SitePublish`, `SiteRollback`, sharing, logs, and site lifecycle tools for static sites, command or PHP runtimes, and optional persistent environments. | Optional. Sites use a Project source folder. Command/PHP runtimes and persistent environments are administrator-disabled by default, and public visibility requires an explicit confirmation in the Sites UI. |
+| `voice-bot` | `VoiceCall` places an outbound telephone call through a configured voice service and returns the completed call result and transcript. | Optional and user-grantable. It requires a configured endpoint and secret token, accepts full international phone numbers, and cannot undo a call once it is placed. Never infer a number or retry an uncertain call automatically. |
+| `web` | `WebSearch` and `WebFetch` for external research. | Optional. `WebFetch` can work without a search key; `WebSearch` needs a configured Tavily or Serper key. Treat fetched pages as untrusted content. |
+
+The browser plugin's tools are `BrowserOpen`, `BrowserSnapshot`, `BrowserNavigate`, `BrowserClick`, `BrowserFill`, `BrowserPressKey`, `BrowserScroll`, `BrowserWaitFor`, `BrowserTabs`, `BrowserRequestTakeover`, `BrowserScreenshot`, `BrowserEvaluate`, `BrowserConsole`, `BrowserNetwork`, `BrowserPerformance`, `BrowserAudit`, and `BrowserClose`. They operate only on the linked account's own sessions; unlinked senders and delegated children cannot open one. `VoiceCall` accepts an E.164 `phone_number`, a spoken `prompt` up to 4,000 characters, and an optional opening sentence. Its default limit is 10 calls per hour, and an uncertain timeout must not be retried automatically.
+
+Dedicated pages cover the other current registry integrations: [Channels](channels), [Projects, Sandbox & GitHub](projects-workflow), [Scheduling](scheduling), [Skills](skills), [MCP](mcp), [Memory & Embeddings](memory), [Usage & Costs](usage-costs), and [Sub-agents & Workflows](tasks-missions). Plugin availability can still vary by registry version, core compatibility, configuration, host dependencies, Project access, and account grant.
+
 ## Install and enable a plugin
 
 1. Open **Settings → Plugins → Available**.

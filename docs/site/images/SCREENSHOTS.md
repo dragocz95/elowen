@@ -19,7 +19,7 @@ The following existing PNGs are not referenced by the current numbered manual an
 | `brain-chat.png` | Chat with a technical conversation | Referenced by current manual | Elowen answering a question about a rounding bug in the web chat |
 | `getting-started-chat.png` | Chat with the introduction conversation | Referenced by current manual | Elowen introducing its capabilities in the web chat |
 | `projects-list.png` | Projects registry | Referenced by current manual | Project registry with paths, notes and read-only Git context |
-| `projects-editor.png` | Editor with an open file | Referenced by current manual | Built-in code editor with the project file tree and an open source file |
+| `projects-editor.png` | Editor plugin with an open file | Referenced by current manual | Optional Project Editor plugin with the project file tree and an open source file |
 | `users-rbac.png` | Users directory | Referenced by current manual | User directory with roles, project boundaries and model permissions |
 | `settings-overview.png` | Settings → System | Referenced by current manual | Elowen System settings with the section rail and service diagnostics |
 | `settings-models.png` | Settings → Models | Referenced by current manual | Elowen model catalogue with provider groups and enabled models |

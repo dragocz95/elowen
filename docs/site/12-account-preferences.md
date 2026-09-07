@@ -195,8 +195,7 @@ the [Memory](memory) page.
 ## Terminal
 
 **Account → Terminal** controls the appearance and behavior of `elowen chat` in
-the terminal. The Web UI shows a live preview of those CLI settings; the former
-browser terminal is no longer part of Elowen. Changes autosave.
+the terminal. The Web UI shows a live preview of those CLI settings. Use `elowen chat` for interactive terminal work or the optional terminal plugin tools for background shell processes; Elowen does not provide a browser terminal endpoint. Changes autosave.
 
 - **Colors**: follow the application theme with **Auto**, or choose **Custom**
   and edit the 21-color palette. Presets include **Elowen Dark**, **Elowen

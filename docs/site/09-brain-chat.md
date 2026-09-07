@@ -121,6 +121,12 @@ A model already known to support images is not replaced by the fallback. If no v
 
 When the `Read` tool opens an image file, the same image shown to the model also appears inline in the conversation. Elowen deduplicates it if the agent later shares that exact stored image. Clicking any chat image—an upload, generated image, shared image, or read preview—opens the common in-app image dialog, with a separate action to open the file in a new browser tab.
 
+### Optional image tools
+
+The optional registry plugins `image-gen` and `image-edit` add `GenerateImage` and `EditImage`. Install and enable them in **Settings → Plugins → Available**, then select a configured OpenAI-compatible provider in each plugin's settings. They reuse that provider's existing key; they do not create a second secret field.
+
+`GenerateImage` creates one PNG from a text prompt and returns it inline in Web chat. Choose square, landscape, or portrait output. `EditImage` takes one accessible PNG or JPEG project file, or one public image URL, and returns a new PNG without overwriting the source. Image calls can take up to two minutes, and neither tool is available until its provider is configured.
+
 ### Subscription usage
 
 Usage indicators are available for connected ChatGPT, Claude, and Kimi OAuth accounts when their provider exposes usage data. Elowen reports the provider's limits; it cannot increase or reset them. GitHub Copilot does not have a subscription usage rail in Elowen.

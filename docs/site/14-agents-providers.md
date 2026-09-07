@@ -141,7 +141,7 @@ The account rows in **Settings → `<assistant name>` AI** show the usage window
 
 A child receives the caller's execution boundary and can only narrow it; selecting a stronger model does not grant more Projects, tools, or permissions. A child may delegate further, but each nested child is derived from the current child's already-narrowed authority.
 
-A workflow is a directed graph of delegated children. Each node can select its own enabled model, so a graph can use a cheaper model for routine steps and a different model for steps that need deeper reasoning. Independent nodes may run in parallel; dependent nodes wait for their prerequisites and receive their completed results as context. Built-in `explore` and `plan` sub-agent types are read-only. See [Autonomy & Safety](autonomy-safety) for permission and recovery rules.
+A workflow is a directed graph of delegated children. Each node can select its own enabled model, so a graph can use a cheaper model for routine steps and a different model for steps that need deeper reasoning. Independent nodes may run in parallel; dependent nodes wait for their prerequisites and receive only each direct dependency's `## Handover` block, capped at 4,000 characters. Without that heading, they receive only the bounded end of that dependency's result; upstream results are not passed transitively. Built-in `explore` and `plan` sub-agent types are read-only. See [Autonomy & Safety](autonomy-safety) for permission and recovery rules.
 
 ### Forked runner pool
 

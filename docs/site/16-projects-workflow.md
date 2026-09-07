@@ -52,6 +52,26 @@ A workspace can be created only from a Git Project. Workspace ownership is accou
 
 A clean workspace with no untracked files, commits ahead of its base ref, or active process leases can be removed directly. For a workspace containing changes or commits, the browser first shows a loss preview; discarding requires the exact displayed phrase. Active processes always block removal.
 
+## Optional Project integrations
+
+These integrations are registry plugins. Install and enable them from **Settings → Plugins → Available**; they are not part of the bundled Project surface, and their pages appear only when the plugin is available to the account.
+
+### OneDrive mirrors
+
+The optional **OneDrive** plugin adds a Project tab that mirrors a selected Project folder or Sandbox workspace into the linked account's own OneDrive in both directions. It requires the account's Microsoft identity to be connected and may require an administrator to grant the plugin.
+
+Choose the whole Project or one folder, then use the mirror controls to pause, resume, sync now, inspect conflicts, or disconnect. Files excluded by `.gitignore`, version-control internals, dependencies, environment files, private keys, and credentials are never mirrored. A remote deletion is kept in the mirror's `.elowen-trash` area rather than removed permanently, and a conflict keeps both versions until you choose which copy wins.
+
+### Published Sites
+
+The optional **Sites** plugin creates a `sites/` source folder inside the active Project or Sandbox workspace. `SiteCreate` creates a draft, and `SitePublish` copies the finished output into a retained release. Static sites are available by default; command and PHP runtimes require an administrator to enable them.
+
+Sites can be private, visible to Project members, available to signed-in accounts, shared with named guests, or made public through an explicit confirmation in the Sites UI. Persistent rootless environments are a separate high-privilege option and require administrator setup, host dependencies, and resource limits. Site source remains in the Project even if the published site is deleted.
+
+### Project Editor
+
+The optional **Editor** plugin provides `/p/editor` for browsing and editing accessible Project files. It supports file and folder operations, uploads, Markdown, image, PDF, media, Office, and CSV previews, plus read-only Git history. The editor does not widen Project access, and its administrator-only System root is separate from ordinary Project editing.
+
 ## Connect GitHub and publish a branch
 
 GitHub is account-scoped. Go to **Account settings → GitHub** and choose **Connect GitHub** to complete the device login. Each account keeps its own GitHub identity and credentials. If GitHub reports an expired authorization, reconnect the account; Elowen does not silently refresh it.
