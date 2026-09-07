@@ -423,6 +423,7 @@ export function register(ctx) {
       'Delegate when the subtask is self-contained and only the conclusion matters, not the exploration trail; when answering would mean reading across many files and you want the summary rather than the file dumps; or when you have independent work to run in parallel. Do NOT delegate a single-fact lookup where you already know the file or symbol, work that needs nuanced judgment about the user\'s intent, or anything so small that spawning an agent costs more than doing it.',
       'By default the call BLOCKS and returns the sub-agent\'s final result. Set background=true for an independent side-quest: it returns a job id immediately and the result is delivered to you in a NEW turn — do other work meanwhile, then end your turn. You are woken when it lands, so never poll DelegateStatus in a loop.',
       'To launch several independent sub-agents, put multiple delegate calls in ONE response so they run concurrently; do not serialize them. Once you have delegated a search, do not also run it yourself.',
+      'Pass `fork: true` to fork yourself instead of spawning a clean sub-agent — a fork inherits your full conversation context. Fork when the intermediate tool output isn\'t worth keeping in your context; the criterion is qualitative — "will I need this output again" — not task size. A fork pays off only when the child runs on the SAME provider and model as the parent, because what a fork buys is the provider\'s cached prefix: with a different `model` the child inherits the context but shares no cache, so a fresh sub-agent with a focused task is the right default there.',
       'Use read_only=true when the sub-agent only needs to look (explore, search, report) — it then gets read-only TOOLS (no Write/Edit) plus a shell clamped to non-destructive commands, and cannot delegate further. The shell clamp is a guardrail, not a sandbox: redirection and `sed -i` are permitted, so the child can still write files the daemon user can reach; what it cannot run is rm/mv/chmod, git commit/push/reset, npm, systemctl, kill, curl/wget/ssh or sudo. Use `tools` to hand it an exact toolset. Either way you can only ever narrow what you already hold.',
       'Pass workspaceId to explicitly confine the child to one Git Sandbox worktree as its logical filesystem root. The child then uses short relative paths and cannot use the parent’s wider filesystem access. An active parent workspace is not inherited as that logical root unless the parent is itself an explicitly workspace-scoped child — but a child spawned from a conversation bound to a workspace still starts in that worktree, and shell commands whose working directory is inside the workspace run in the workspace container (worktree at /workspace, no Git, fresh /tmp per command); a read_only child has no Write tool and no scratch directory there, so it must return a plan or document as its RESULT for you to save.'
       + ' The sub-agent inherits your model; pass `model` only when the user explicitly asked for a different one. It inherits your reasoning effort too — pass `thinkingLevel` to run this one harder (design, unclear bugs, security review) or cheaper (mechanical, well-specified edits) than your own turn. Its final message comes back to you, not to the user — relay what matters. A sub-agent that already ran is NOT gone: its transcript is kept, so before delegating something that builds on earlier work, check DelegateList and send that sub-agent a follow-up with DelegateContinue instead — it resumes with its full context, where a fresh one would have to rediscover everything.'
@@ -431,13 +432,21 @@ export function register(ctx) {
     parameters: Type.Object({
       task: Type.String({ description: 'The complete, self-contained instruction for the sub-agent — it does not see this conversation. Include all context, constraints and the output format you want back.' }),
       fork: Type.Optional(Type.Boolean({
-        description: 'FORK this conversation instead of starting a clean one. The child begins with your entire '
-          + 'context — the same system prompt, the same tools and every message so far — and your task text becomes '
-          + 'its directive. Fork when the work depends on what you already know here: a file you have read, a '
-          + 'decision made earlier, the shape of the bug you just traced. Do NOT fork for a fresh, unrelated task; '
-          + 'a clean child is cheaper and stays on topic. A fork reuses the prompt cache — and therefore costs '
-          + 'almost nothing to start — only while nothing narrows it, so `tools`, `read_only`, `subagent_type` and '
-          + '`workspaceId` are refused with a fork, and a different `model` runs fine but shares no cache. Forking '
+        description: 'FORK this conversation instead of starting a clean one — a fork inherits your full '
+          + 'conversation context: the same system prompt, the same tools and every message so far, and your task '
+          + 'text becomes its directive. Fork when the intermediate tool output isn\'t worth keeping in your '
+          + 'context. The criterion is qualitative — "will I need this output again" — not task size. Research: '
+          + 'fork open-ended questions, and when research splits into independent questions launch parallel forks '
+          + 'in one message. Implementation: prefer to fork implementation work that requires more than a couple '
+          + 'of edits, and do research before jumping to implementation. Since the fork inherits your context, the '
+          + 'task is a directive — what to do, not what the situation is; do not re-explain background. Forks are '
+          + 'cheap because they share your prompt cache. A fork '
+          + 'pays off only when the child runs on the SAME provider and model as the parent, because what a fork '
+          + 'buys is the provider\'s cached prefix: with a different `model` the child inherits the context but '
+          + 'shares no cache, so a fresh sub-agent with a focused task is the right default there. Do NOT fork a '
+          + 'fresh, unrelated task; a clean child is cheaper and stays on topic. `tools`, `read_only`, '
+          + '`subagent_type` and `workspaceId` are refused with a fork, because a fork must keep the parent\'s '
+          + 'exact tool set and prompt — delegate a fresh sub-agent when you need any of them. Forking '
           + 'is available only in this conversation: a forked worker cannot fork again.',
       })),
       model: Type.Optional(Type.String({

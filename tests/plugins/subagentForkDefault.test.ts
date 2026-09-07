@@ -119,4 +119,27 @@ describe('Delegate fork — the instance default applies only where a fork is po
     const res = await delegate(reg, ownerChat, {});
     expect(res.forked).toBe(false);
   });
+
+  // The "when to fork" guidance is split across the system prompt, this tool's description and the `fork`
+  // parameter, and all three have to say the same thing. The sentence worth pinning hardest is the one
+  // about the model: a fork buys the provider's cached prefix, and Elowen routinely runs sub-agents on
+  // another provider or model, where a fork inherits the context and shares no cache at all.
+  it('states the fork criterion and the same-model condition in the tool description', async () => {
+    const reg = await load(false);
+    const description = reg.tools.find((t) => t.name === 'Delegate')?.description ?? '';
+    expect(description).toContain('a fork inherits your full conversation context');
+    expect(description).toContain('"will I need this output again" — not task size');
+    expect(description).toContain('only when the child runs on the SAME provider and model as the parent');
+  });
+
+  it('gives the `fork` parameter the when-to-fork guidance and the fresh-sub-agent exit', async () => {
+    const reg = await load(false);
+    const schema = reg.tools.find((t) => t.name === 'Delegate')?.parameters as
+      { properties?: { fork?: { description?: string } } } | undefined;
+    const fork = schema?.properties?.fork?.description ?? '';
+    expect(fork).toContain('a fork inherits your full conversation context');
+    expect(fork).toContain('"will I need this output again" — not task size');
+    expect(fork).toContain('only when the child runs on the SAME provider and model as the parent');
+    expect(fork).toContain('delegate a fresh sub-agent when you need any of them');
+  });
 });

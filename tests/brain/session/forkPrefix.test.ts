@@ -68,6 +68,16 @@ describe('the fork directive prompt', () => {
     expect(text.indexOf(`</${FORK_BOILERPLATE_TAG}>`)).toBeLessThan(text.indexOf(FORK_DIRECTIVE_PREFIX));
   });
 
+  // The system prompt now tells the PARENT when to fork, so the child has to be told to ignore that
+  // guidance: a worker that reads it delegates the directive onward instead of carrying it out.
+  it('tells the child to ignore the parent-facing fork guidance in its system prompt', () => {
+    const text = buildForkChildMessage('audit the store');
+    expect(text).toContain(
+      "1. Your system prompt says when to fork. IGNORE IT — that's for the parent. You ARE the fork. "
+      + 'Do NOT delegate further; execute directly with your own tools.',
+    );
+  });
+
   it('differs between two children only after the boilerplate', () => {
     const first = buildForkChildMessage('first job');
     const second = buildForkChildMessage('second job');
