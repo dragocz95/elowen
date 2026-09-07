@@ -8,6 +8,18 @@ export const OPENAI_CACHE_TTL_MS = 5 * 60_000;
  *  the upper bound so they never rewrite a prefix that could still be warm. */
 export const OPENAI_CACHE_MAX_RETENTION_MS = 60 * 60_000;
 
+/** How long THIS provider may keep an inactive prompt cache alive whatever retention the request asked
+ *  for — the floor every destructive rewrite has to respect on top of the TTL it stamped.
+ *
+ *  Anthropic honours the TTL it is given, so its answer is 0 and the stamped TTL stands alone. Both
+ *  OpenAI Responses wires do not: the documented behaviour is up to an hour of retention for an inactive
+ *  prompt, so a conversation running on the short 5-minute retention would otherwise have its history
+ *  rewritten while the provider is still holding the prefix. Keyed on the wire API rather than on the
+ *  provider name, because that is what decides which cache is in play. */
+export function providerCacheRetentionFloorMs(api: string | undefined): number {
+  return api === 'openai-responses' || api === 'openai-codex-responses' ? OPENAI_CACHE_MAX_RETENTION_MS : 0;
+}
+
 /** pi-ai's short cache TTL is 5 minutes, long (PI_CACHE_RETENTION=long) is 1 hour; the daemon defaults
  * to long. Resolved from the same env var pi-ai reads, so Elowen and pi-ai never disagree. */
 export function cacheTtlMs(env: NodeJS.ProcessEnv): number {

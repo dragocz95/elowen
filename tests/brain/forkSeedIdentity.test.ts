@@ -1,6 +1,12 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { defineTool } from '@earendil-works/pi-coding-agent';
+import { Type } from 'typebox';
 import { openDb, type Db } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
+import { BrainSessionFactory } from '../../src/brain/session/factory.js';
 import {
   projectTurnWireFrames, projectUserTurn, rehydrate, rehydrateWithTimestamps, storedContextMessages,
 } from '../../src/brain/persistence.js';
@@ -19,6 +25,18 @@ import {
 } from '../../src/brain/session/anthropicHostedToolReplay.js';
 import { clearColdToolResults } from '../../src/brain/session/coldToolResultClearing.js';
 import { providerPayloadHarness } from '../helpers/providerPayloads.js';
+import { anthropicWire } from '../helpers/anthropicWire.js';
+
+/** The quiescence dependencies of a session with nothing in flight — the turn-start pass's only inputs
+ *  besides the store itself. */
+const coldDeps = (store: BrainStore): never => ({
+  store,
+  sessions: {
+    get: () => ({ session: { isStreaming: false, getSteeringMessages: () => [], getFollowUpMessages: () => [] } }),
+    isParentAborting: () => false, hasPendingAbort: () => false, hasActiveChildren: () => false,
+  },
+  elicitation: { pendingForSession: () => null },
+}) as never;
 
 /** A fork child must start from what its parent's next request WOULD send, byte for byte. That is a
  *  stronger claim than "the same rows": between the stored rows and the wire sit the transforms this
@@ -177,58 +195,128 @@ describe('the transcript a fork inherits', () => {
   });
 });
 
-/** The gap the previous version of this file left open: it compared the seed with a REHYDRATION, which is
- *  a second reading of the same rows and therefore agrees with them by construction. What a fork actually
- *  promises is that the child starts from what the PARENT'S NEXT REQUEST would send — and the two can only
- *  be equal if every transform that shortens the parent's context has already written itself into the
- *  rows.
+/** The golden test, and the two gaps its previous version left open.
  *
- *  RED BEFORE THE CHANGE: clearing ran on the egress copy, so the parent's next request carried a
- *  placeholder that the seed knew nothing about until a separate row rewrite happened to have landed. */
-describe('a fork seeded after a cold turn start', () => {
-  const BIG = 'x'.repeat(9_000);
+ *  It used to compare the seed with a REHYDRATION — a second reading of the same rows, which agrees with
+ *  them by construction — and then with a payload the test harness had projected itself, flattening every
+ *  message into one text block. Roles, tool call ids, image blocks, the coalescing of tool results and the
+ *  whole hosted-replay path were invisible to that comparison, so it could stay green through any of them
+ *  breaking.
+ *
+ *  What a fork actually promises is that the child's FIRST request is what the PARENT'S NEXT request would
+ *  have been. So that is what this measures: two real sessions built by the production factory, running the
+ *  production extension chain, over pi-ai's own `anthropic-messages` provider pointed at a loopback socket.
+ *  The bytes compared are the bytes the provider would have received.
+ *
+ *  RED BEFORE THE CHANGE: the parent's live context collapsed two adjacent images into ONE placeholder (as
+ *  PI's own downgrade does) while the row replay produced one placeholder PER image, so the child's tool
+ *  result differed from its parent's in the middle of the cached prefix. */
+describe('the first request a fork child sends', () => {
+  const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+  const GIF = 'R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7';
+  const OUTPUT = 'y'.repeat(60_000);
 
-  const seedRow = (store: BrainStore, id: string, message: unknown): void => {
-    store.appendMessage({ id, sessionId: 's-live', parentId: null, role: (message as { role: string }).role, content: message });
-  };
+  let dirs: string[] = [];
+  afterEach(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true }); dirs = []; });
 
-  it('is exactly what the parent’s next request sends', async () => {
+  /** A user row is stored as PLAIN TEXT (`projectUserTurn`), while the live message PI builds carries a
+   *  text BLOCK, and the converter passes both through as they are. Every rehydration and every fork
+   *  therefore sends `content: "hello"` where the original session sent `content: [{type:"text",…}]`.
+   *  Asserted on its own below, and normalized here so it cannot mask a second difference. */
+  const normalize = (messages: { role: string; content: unknown }[]): unknown[] => messages.map((message) => ({
+    ...message,
+    content: typeof message.content === 'string'
+      ? [{ type: 'text', text: message.content }]
+      : message.content,
+  }));
+
+  it('is byte-identical to the request its parent would have sent', async () => {
+    const chatImagesDir = mkdtempSync(join(tmpdir(), 'elowen-fork-images-'));
+    const spillDir = mkdtempSync(join(tmpdir(), 'elowen-fork-spill-'));
+    dirs.push(chatImagesDir, spillDir);
+    const wire = await anthropicWire({
+      replyFor: (call) => (call === 1 ? { toolCall: { id: 'call-1', name: 'Shot' } } : { text: 'ok' }),
+    });
+    try {
+      const store = new BrainStore(openDb(':memory:'));
+      store.createSession({ id: 's-parent-live', userId: 7, model: 'claude-x' });
+      const factory = new BrainSessionFactory({ store, chatImagesDir } as never);
+      // One tool result with everything the wire has to survive: text past the delivery-spill trigger and
+      // two ADJACENT images, which the live pass and the row replay have to reconstruct the same way.
+      const spec = {
+        ownerUserId: 7, runtime: wire.runtime, model: wire.model, cwd: process.cwd(),
+        systemPrompt: 'sys', appendSystemPrompt: [], skills: [],
+        // The Anthropic hosted-search wiring, so the deferred tool block and the raw-replay extension are
+        // part of the chain being compared rather than something the test quietly leaves out.
+        hostedToolSearch: 'anthropic',
+        tools: [defineTool({
+          name: 'Shot', label: 'Shot', description: 'Returns a large output and two pictures',
+          parameters: Type.Object({}),
+          execute: async () => ({
+            content: [
+              { type: 'text', text: OUTPUT },
+              { type: 'image', data: PNG, mimeType: 'image/png' },
+              { type: 'image', data: GIF, mimeType: 'image/gif' },
+            ],
+            details: {},
+          }),
+        })],
+        autoCompact: false, autoCompactAtPct: 80,
+      };
+      const parent = await factory.create({ ...spec, sessionId: 's-parent-live' } as never);
+      projectUserTurn(store, 's-parent-live', 'hello');
+      await parent.session.prompt('hello');
+
+      // The turn-start pass the parent's next turn would run: the images collapse in the live context, so
+      // this is the exact moment the "live == rows == wire" claim is made.
+      await clearColdToolResults(coldDeps(store), {
+        session: parent.session as never, sessionId: 's-parent-live', lastRequestCacheTtlMs: 60 * 60_000,
+      }, { spillDir, now: () => Date.now() + 3 * 60 * 60_000 });
+
+      const seed = forkSeedMessages(storedContextMessages(store, 's-parent-live') as ForkMessage[], 200_000);
+      await parent.session.prompt('again');
+      const parentRequest = wire.bodies.at(-1)!;
+
+      const fork = { admin: false, projectIds: [], owner: false, permissionBoundary: null, fork: true };
+      store.createSession({
+        id: 's-child', userId: 7, model: 'claude-x', parentSessionId: 's-parent-live', delegatedAccess: fork,
+      });
+      const child = await factory.create({
+        ...spec, sessionId: 's-child', parentSessionId: 's-parent-live', delegatedAccess: fork, forkSeed: seed,
+      } as never);
+      await child.session.prompt('again');
+      const childRequest = wire.bodies.at(-1)!;
+
+      // The whole prefix, block for block — not a flattened projection of it.
+      expect(normalize(childRequest.messages)).toEqual(normalize(parentRequest.messages));
+      // …and the rest of the request the prefix is cached against.
+      expect(childRequest.tools).toEqual(parentRequest.tools);
+      expect(childRequest.system).toEqual(parentRequest.system);
+      // The transforms really did fire, so the equality above is not two untouched histories agreeing.
+      const toolResult = JSON.stringify(parentRequest.messages.find((message) => message.role === 'user'
+        && Array.isArray(message.content)
+        && (message.content as { type: string }[]).some((block) => block.type === 'tool_result')));
+      expect(toolResult).toContain('saved to disk instead of the context');
+      expect(toolResult).not.toContain(OUTPUT.slice(0, 3_000));
+      expect(toolResult).toContain(HISTORY_IMAGE_PLACEHOLDER);
+      expect(toolResult).not.toContain(PNG);
+      // Exactly ONE placeholder for the two adjacent images, on both sides.
+      expect(toolResult.split(HISTORY_IMAGE_PLACEHOLDER)).toHaveLength(2);
+    } finally {
+      await wire.close();
+    }
+  }, 60_000);
+
+  /** The one difference the normalization above covers, stated out loud so it stays a known limitation
+   *  rather than something the golden test hides: a replayed user message is a bare string where the live
+   *  one is a text block. It is not introduced by tool-result clearing — it is how user rows have always
+   *  been stored — and every rehydration has it too. */
+  it('differs from it in exactly one known place: a replayed user message is a bare string', async () => {
     const store = new BrainStore(openDb(':memory:'));
-    store.createSession({ id: 's-live', userId: 7, model: 'anthropic/big' });
-    const messages = [
-      { role: 'user', content: [{ type: 'text', text: 'one' }], timestamp: 1_000 },
-      { role: 'assistant', timestamp: 1_050, content: [{ type: 'toolCall', id: 'call-a', name: 'Bash', arguments: {} }] },
-      { role: 'toolResult', toolCallId: 'call-a', toolName: 'Bash', isError: false, timestamp: 1_100, details: {}, content: [{ type: 'text', text: BIG }] },
-      { role: 'user', content: [{ type: 'text', text: 'two' }], timestamp: 2_000 },
-    ];
-    messages.forEach((message, index) => seedRow(store, `m${index}`, message));
-
-    const harness = await providerPayloadHarness();
-    for (const message of messages) harness.session.messages.push(message as never);
-
-    await clearColdToolResults(
-      {
-        store,
-        sessions: {
-          get: () => ({ session: { isStreaming: false, getSteeringMessages: () => [], getFollowUpMessages: () => [] } }),
-          isParentAborting: () => false, hasPendingAbort: () => false, hasActiveChildren: () => false,
-        },
-        elicitation: { pendingForSession: () => null },
-      },
-      { session: harness.session as never, sessionId: 's-live', lastRequestCacheTtlMs: 60 * 60_000 },
-      { spillDir: '/tmp/fork-seed-spill', now: () => Date.now() + 2 * 60 * 60_000, writeSpill: async () => {} },
-    );
-
-    const payload = (await harness.prompt('three'))[0]!;
-    const seeded = forkSeedMessages(storedContextMessages(store, 's-live') as ForkMessage[], 9_000);
-    // The harness flattens each message's blocks into one text block, so comparing that text compares the
-    // bytes the provider would receive. The parent's request carries the new prompt on top of the seed.
-    const flatten = (content: unknown): string => (Array.isArray(content) ? content : [])
-      .map((block) => (block as { text?: string }).text ?? '').join('');
-    expect(seeded.map((message) => flatten(message.content)))
-      .toEqual(payload.messages.slice(0, seeded.length).map((message) => flatten(message.content)));
-    expect(JSON.stringify(seeded)).not.toContain(BIG);
-    expect(JSON.stringify(seeded)).toContain('Older tool result cleared');
+    store.createSession({ id: 's-shape', userId: 7, model: 'claude-x' });
+    projectUserTurn(store, 's-shape', 'hello');
+    const seeded = forkSeedMessages(storedContextMessages(store, 's-shape') as ForkMessage[], 200_000);
+    expect(seeded[0]?.content).toBe('hello');
   });
 });
 

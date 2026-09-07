@@ -94,8 +94,9 @@ export const KEEP_USER_TURNS = 2;
  *  replaces. */
 export const TURN_START_KEEP_USER_TURNS = KEEP_USER_TURNS - 1;
 
-/** Identity of ONE toolResult occurrence in the history: the model-minted id PLUS the message's own
- *  from an old enough build may predate that, and a hook upstream could hand anything through. */
+/** The message's own timestamp — the second half of a toolResult occurrence's identity, the id being the
+ *  first. 0 when it carries none: a message from an old enough build may predate the field, and a hook
+ *  upstream could hand anything through. */
 function messageOccurredAt(message: ToolResultMessage): number {
   const at = (message as { timestamp?: unknown }).timestamp;
   return typeof at === 'number' && Number.isFinite(at) && at > 0 ? at : 0;
@@ -109,16 +110,16 @@ export function toolResultSpillPath(spillDir: string, toolCallId: string, descri
   return join(spillDir, `${fsSafeSegment(toolCallId)}.${SPILL_NAME_VERSION}-${descriptor.mode}-${descriptor.bytes}.txt`);
 }
 
-/** What a restored latch needs that the spill CONTENT cannot supply. `bytes` is the sum of the individual
- *  text blocks' byte lengths, while the file holds those blocks joined by '\n' — so for an n-block result
- *  the file is n-1 bytes larger and the number cannot be recovered by measuring it. `mode` decides which
- *  placeholder wording was used. Both are therefore carried in the FILE NAME, which makes the spill write
- *  a single atomic operation that persists content and metadata together: there is no window in which one
- *  exists without the other, and no second store to keep in sync.
+/** What the spill FILE NAME carries beyond the content. `bytes` is the sum of the individual text blocks'
+ *  byte lengths, while the file holds those blocks joined by '\n' — so for an n-block result the file is
+ *  n-1 bytes larger and the number cannot be recovered by measuring it. `mode` says which placeholder
+ *  wording was used. Putting both in the name makes the spill a single atomic write that persists the
+ *  content and its metadata together: there is no window in which one exists without the other, and no
+ *  second store to keep in sync.
  *
  *  Version prefix on purpose: the v1 rules include the preview length and the placeholder wording. A future
- *  change to either must mint v2 rather than reinterpret v1 names, because a restored latch has to rebuild
- *  the placeholder BYTE-IDENTICALLY or it defeats its own purpose. */
+ *  change to either must mint v2 rather than reinterpret v1 names — the store's own migrations rebuild v1
+ *  placeholders from these names and have to reproduce them byte for byte. */
 export interface SpillDescriptor { mode: 'time' | 'preview'; bytes: number }
 
 const SPILL_NAME_VERSION = 'v1';
@@ -253,8 +254,33 @@ export function spillPreview(text: string, spillPath: string, originalBytes: num
 type ToolResultMessage = Extract<PiAgentMessage, { role: 'toolResult' }>;
 type ContentBlock = ToolResultMessage['content'][number];
 
+/** The content a cleared tool result carries: the placeholder in place of ALL of its text, followed by
+ *  every block that is not text, in their original order.
+ *
+ *  Clearing is a decision about TEXT — the spill file holds text, the byte budgets measure text, and the
+ *  placeholder names a path to read text back. An image block is none of those things: it has no
+ *  representation in the spill file, so replacing the whole content with the placeholder would destroy
+ *  the picture rather than move it. At delivery it would be destroyed before it was ever persisted, since
+ *  the row is written from the message this content becomes.
+ *
+ *  Non-text blocks are therefore carried through untouched, and the image path that already exists keeps
+ *  working on them: the projector externalizes the bytes to a `ref` on the way into the row, and the cold
+ *  turn-start pass collapses them to the history placeholder once the cache is provably gone. One rule,
+ *  used by the delivery trigger, the cold pass and the row rewrite alike, so all three agree on what a
+ *  cleared result looks like. */
+export function clearedToolResultContent<T extends { type: string }>(
+  content: readonly T[],
+  placeholder: string,
+): ({ type: 'text'; text: string } | T)[] {
+  return [
+    { type: 'text' as const, text: placeholder },
+    ...content.filter((block) => block.type !== 'text'),
+  ];
+}
+
 /** The exact text a spill file holds for a result: its text blocks joined by '\n'. Single source of truth
- *  for the write and the restore comparison — if these two ever disagreed, no latch would ever restore. */
+ *  for what the cold pass writes and for the byte-identity check that adopts an existing file at the same
+ *  path — if the two ever disagreed, a second pass would refuse every adoption and clear nothing. */
 export function toolResultText(message: ToolResultMessage): string {
   return (Array.isArray(message.content) ? message.content : [])
     .filter((block: ContentBlock): block is Extract<ContentBlock, { type: 'text' }> => block.type === 'text')
@@ -390,7 +416,11 @@ export interface DeliverySpillDecision {
  *  small results would have no eligible candidate and could overrun the budget without limit.
  *
  *  The resulting guarantee is `group ≤ budget + n·placeholder`, where the placeholder is bounded under
- *  {@link CLEAR_MIN_BYTES} by construction ({@link spillPreview}). What it does NOT reproduce is the
+ *  {@link CLEAR_MIN_BYTES} by construction ({@link spillPreview}). It is an INDUCTION over the results of
+ *  one batch and therefore holds only while the decisions are taken one at a time, which the caller
+ *  guarantees by serializing them per batch — PI finalizes a batch in parallel, and concurrent decisions
+ *  each spend a budget the others have already spent. It counts TEXT bytes: an image block is neither
+ *  measured nor spilled here. What it does NOT reproduce is the
  *  egress pass's largest-first choice: the results of one batch are finalized in completion order and
  *  each decision is final by the time the next result arrives, so an early large result can fill the
  *  budget that a later, larger one would have used better. Both orders honour the budget; only the
@@ -405,8 +435,10 @@ export function decideDeliverySpill(
   const oversized = bytes > spillMaxResultBytes();
   const overBudget = committedBytes + bytes > groupBudgetBytes();
   // No id means no spill path (pathGuard could not let the model read it back), so such a result can
-  // only ever be counted toward its group, never removed from it.
-  if (!toolCallId || (!oversized && !overBudget)) return { wireBytes: bytes, spill: null };
+  // only ever be counted toward its group, never removed from it. No TEXT means there is nothing a spill
+  // could hold: a pure image result past an already-spent budget would otherwise be handed a placeholder
+  // naming an empty file, which costs the group more than the zero bytes it charges it for.
+  if (!toolCallId || bytes === 0 || (!oversized && !overBudget)) return { wireBytes: bytes, spill: null };
   const path = toolResultSpillPath(spillDir, toolCallId, { mode: 'preview', bytes });
   const text = deliveryText(content);
   const placeholder = clearedToolResultPlaceholder(path, bytes, spillPreview(text, path, bytes));
@@ -459,16 +491,40 @@ export function installToolResultDeliverySpill(
    *  which is exactly one wire-level tool-result message after pi-ai coalesces the run — and weakly, so
    *  a long conversation's batches are collected with their messages. */
   const committed = new WeakMap<object, number>();
+  /** The tail of each batch's decision chain. PI finalizes a batch's tool calls with `Promise.all`, so
+   *  without this every result of one batch reads the same `committed` value, awaits its own spill, and
+   *  then writes a total that has forgotten every other result — the online budget an unserialized
+   *  counter enforces is no bound at all (a measured 352 kB against a declared 232 kB).
+   *
+   *  Serializing the DECISION restores the model the budget is actually derived from: one result at a
+   *  time, each seeing what the ones before it committed, which is what makes `group ≤ budget + n·placeholder`
+   *  an induction rather than a hope. Only the decision is serialized — the tools themselves ran in
+   *  parallel long before this hook, and the work between two links is one spill write. */
+  const decisions = new WeakMap<object, Promise<unknown>>();
   const inner = agent.afterToolCall;
   agent.afterToolCall = async (input, signal) => {
     const hooked = await inner?.(input, signal);
     try {
-      return await spillOnDelivery(input, hooked);
+      return await afterPreviousDecision(input, hooked);
     } catch (error) {
       log.warn(`delivery-time spill decision failed for ${input.toolCall?.id} — the result goes out whole`, error);
       return hooked;
     }
   };
+
+  /** Queue this result's decision behind the ones already taken for its batch. The stored tail is always
+   *  a SETTLED promise: a link that rejected must not take the rest of the batch down with it — those
+   *  results would then never be decided at all, which is the one failure this module must never cause. */
+  function afterPreviousDecision(
+    input: AfterToolCallInput,
+    hooked: Awaited<ReturnType<AfterToolCall>>,
+  ): Promise<Awaited<ReturnType<AfterToolCall>>> {
+    const batch = input.assistantMessage as unknown as object;
+    const previous = decisions.get(batch) ?? Promise.resolve();
+    const decision = previous.then(() => spillOnDelivery(input, hooked));
+    decisions.set(batch, decision.then(() => undefined, () => undefined));
+    return decision;
+  }
 
   async function spillOnDelivery(
     input: AfterToolCallInput,
@@ -495,7 +551,7 @@ export function installToolResultDeliverySpill(
     log.info(`spilled ${input.toolCall.id} on delivery (${trigger} trigger, ${bytes} bytes)`);
     return {
       ...hooked,
-      content: [{ type: 'text', text: placeholder }],
+      content: clearedToolResultContent(content, placeholder) as DeliveryContent,
       details: clearedToolResultDetails(hooked?.details ?? input.result.details, marker),
     };
   }

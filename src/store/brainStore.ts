@@ -17,6 +17,7 @@ import {
 } from '../brain/session/conversationActivity.js';
 import type { TurnAutomation } from '../plugins/policyContext.js';
 import { collectImageFiles, isPersistedImageBlock } from '../brain/chatImages.js';
+import { clearedToolResultContent } from '../brain/session/toolResultClearing.js';
 import { collectChatFiles, type StoredChatFile } from '../brain/chatFiles.js';
 import { rollupActivatedTools } from '../brain/continuity/activatedTools.js';
 import { rollupWorkingSet } from '../brain/continuity/workingSet.js';
@@ -1091,9 +1092,16 @@ export class BrainStore {
           : 0;
         const entry = byOccurrence.get(`${message.toolCallId}\u0000${at}`);
         if (!entry) continue;
+        const stored = (message as { content?: unknown }).content;
         const serialized = JSON.stringify({
           ...message,
-          content: [{ type: 'text', text: entry.placeholder }],
+          // The same rule the live mutation applies, so the row and the context agree block for block:
+          // the placeholder stands in for the TEXT, and an externalized image reference stays where it is
+          // rather than being deleted by a decision that was only ever about text.
+          content: clearedToolResultContent(
+            Array.isArray(stored) ? stored as { type: string }[] : [],
+            entry.placeholder,
+          ),
           ...(entry.details === undefined ? {} : { details: entry.details }),
         });
         if (serialized === row.content) continue;
@@ -1212,6 +1220,34 @@ export class BrainStore {
    *  idle-rollover check without loading the whole history. */
   lastMessageAt(sessionId: string): string | undefined {
     const row = this.db.prepare('SELECT MAX(created_at) AS ts FROM brain_messages WHERE session_id = ?').get(sessionId) as { ts: string | null };
+    return row.ts ?? undefined;
+  }
+
+  /** The newest message in any FORK descendant of this session, or undefined when it has none.
+   *
+   *  A fork child is seeded with a COPY of its parent's context, so every request it makes re-sends the
+   *  parent's prefix and keeps that server-side cache warm — while the parent's own rows quietly age past
+   *  the TTL. Any gate that rewrites the parent's history on the argument "nothing has been sent for
+   *  longer than the retention" has to count these requests as the parent's own, and a child that has
+   *  already FINISHED still leaves the prefix warm for the rest of the retention window, so "is a child
+   *  running right now" is not the same question.
+   *
+   *  Only forks: an ordinary delegated child composes its own prompt and shares no prefix. Recursive,
+   *  because a fork of a fork carries the original prefix too. Message time is the proxy for request
+   *  time, the same equivalence {@link lastMessageAt} rests on — a request happens inside a prompt that
+   *  writes its rows within seconds. */
+  lastForkChildMessageAt(sessionId: string): string | undefined {
+    const row = this.db.prepare(
+      `WITH RECURSIVE forks(id) AS (
+         SELECT s.id FROM brain_sessions s
+          WHERE s.parent_session_id = ? AND json_valid(s.delegated_access)
+            AND json_extract(s.delegated_access, '$.fork') = 1
+         UNION
+         SELECT s.id FROM brain_sessions s JOIN forks f ON s.parent_session_id = f.id
+          WHERE json_valid(s.delegated_access) AND json_extract(s.delegated_access, '$.fork') = 1
+       )
+       SELECT MAX(m.created_at) AS ts FROM brain_messages m WHERE m.session_id IN (SELECT id FROM forks)`
+    ).get(sessionId) as { ts: string | null };
     return row.ts ?? undefined;
   }
 

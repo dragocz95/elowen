@@ -8,6 +8,7 @@ import { collapseHistoricalImages, type PiAgentMessage } from './historyImageStr
 import { imagesRejected } from './imageRejection.js';
 import {
   TURN_START_KEEP_USER_TURNS,
+  clearedToolResultContent,
   clearedToolResultDetails,
   clearedToolResultPlaceholder,
   defaultReadSpill,
@@ -53,7 +54,8 @@ const log = logger('brain-tool-clearing');
  *  the two store reads/writes. Structural, so the owner turn runner and the channel service both satisfy
  *  it with the dependencies they already hold. */
 export interface ColdToolResultClearingDeps extends SessionQuiescenceDeps {
-  store: SessionQuiescenceDeps['store'] & Pick<BrainStore, 'lastMessageAt' | 'clearToolResultRows'>;
+  store: SessionQuiescenceDeps['store']
+    & Pick<BrainStore, 'lastMessageAt' | 'lastForkChildMessageAt' | 'clearToolResultRows'>;
 }
 
 /** The live-session facts the pass reads — the same structural shape as {@link ColdCompactionSession}, so
@@ -63,6 +65,10 @@ export interface ColdToolResultSession {
   sessionId: string;
   interactedAt?: number;
   lastRequestCacheTtlMs?: number;
+  /** The longest this session's PROVIDER may hold an inactive prompt cache, whatever TTL the request
+   *  declared (see {@link providerCacheRetentionFloorMs}). Unset on providers that honour the declared
+   *  retention, where the stamped TTL is already the whole answer. */
+  cacheRetentionFloorMs?: number;
 }
 
 export interface ColdToolResultClearingOptions {
@@ -95,15 +101,23 @@ async function clearCold(
   if (live.session.isStreaming || live.session.isCompacting) return;
   const now = options.now ?? Date.now;
   const lastMessageAt = d.store.lastMessageAt(live.sessionId);
-  const cold = cacheDefinitelyCold(lastMessageAt, live.interactedAt, live.lastRequestCacheTtlMs, now());
-  // Images use the UPPER bound of every provider's retention, not the TTL pi-ai asked for: OpenAI may
-  // keep an inactive prompt cache for a full hour whatever retention the request declared, and this pass
-  // is the destructive one. A refused image is the exception that overrides the gate entirely — it fails
-  // every later request until it is gone, so leaving it in would brick the conversation for that hour.
+  // A fork child's requests are this session's prefix being re-sent, so they count as this session's
+  // activity — for the whole retention window, not only while the child is still running.
+  const forkChildAt = d.store.lastForkChildMessageAt(live.sessionId);
+  // Text uses the TTL the requests were actually made under, raised to whatever this PROVIDER may keep an
+  // inactive prompt cache for regardless of the retention it was asked for. Without that floor an OpenAI
+  // Responses conversation running on the short 5-minute retention had its history rewritten after six
+  // minutes, while the provider may still be holding the prefix for the best part of an hour.
+  const retentionMs = Math.max(live.lastRequestCacheTtlMs ?? 0, live.cacheRetentionFloorMs ?? 0);
+  const cold = cacheDefinitelyCold(lastMessageAt, live.interactedAt, retentionMs || undefined, now(), forkChildAt);
+  // Images use the UPPER bound of every provider's retention, whatever this one declares: OpenAI may keep
+  // an inactive prompt cache for a full hour, and this pass is the destructive one. A refused image is the
+  // exception that overrides the gate entirely — it fails every later request until it is gone, so leaving
+  // it in would brick the conversation for that hour.
   const rejected = imagesRejected(live.sessionId);
   const imagesCold = rejected || cacheDefinitelyCold(
     lastMessageAt, live.interactedAt,
-    Math.max(live.lastRequestCacheTtlMs ?? 0, OPENAI_CACHE_MAX_RETENTION_MS), now(),
+    Math.max(retentionMs, OPENAI_CACHE_MAX_RETENTION_MS), now(), forkChildAt,
   );
   if (!cold && !imagesCold) return;
   if (sessionHasWorkInFlight(d, live.sessionId)) return;
@@ -149,7 +163,13 @@ async function clearCold(
   // never be observable in disagreement by a request that starts in the gap.
   for (const mutation of mutations) {
     const message = mutation.message as { content: unknown; details?: unknown };
-    message.content = [{ type: 'text', text: mutation.placeholder }];
+    // Text out, everything else in place: an image block has nothing in the spill file and would simply
+    // be destroyed. The images pass above has already collapsed the historical ones when the image gate
+    // was open, so what survives here is what that gate deliberately kept.
+    message.content = clearedToolResultContent(
+      Array.isArray(message.content) ? message.content as { type: string }[] : [],
+      mutation.placeholder,
+    );
     message.details = mutation.details;
     // The one line that lets a cacheWatch "history rewritten in place" warning be attributed: clearing a
     // result and stripping an image are otherwise the same silence in the log, with different fixes.

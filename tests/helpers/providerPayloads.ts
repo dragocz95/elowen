@@ -118,6 +118,10 @@ export interface PayloadHarness {
   settings: SettingsManager;
   /** Final, post-extension payloads in request order. */
   payloads: WirePayload[];
+  /** The pi-ai `Context` of each request, in request order — the messages AFTER the whole
+   *  `transformContext` chain and before the provider converter flattens them. The payloads above are a
+   *  text projection, so this is the only capture that still holds image blocks, tool call ids and roles. */
+  contexts: Context[];
   /** Run one turn and return the payloads it produced. */
   prompt: (text: string) => Promise<WirePayload[]>;
 }
@@ -129,12 +133,14 @@ export async function providerPayloadHarness(options: PayloadHarnessOptions = {}
   const api = `payload-harness-${Math.random()}` as Api;
   const tools = options.tools ?? [{ type: 'function', name: 'probe', parameters: { type: 'object' } }];
   const payloads: WirePayload[] = [];
+  const contexts: Context[] = [];
   let call = 0;
 
   registry.registerProvider('harness', {
     name: 'Payload harness', api, baseUrl: 'https://provider.invalid', apiKey: 'key',
     streamSimple: async (model, context, request = {}) => {
       call += 1;
+      contexts.push(context);
       const body = anthropicBody(model, context, tools);
       // The RETURN value is the point: it is the payload after every `before_provider_request` handler.
       const sent = (await request.onPayload?.(body, model)) ?? body;
@@ -193,6 +199,7 @@ export async function providerPayloadHarness(options: PayloadHarnessOptions = {}
     session,
     settings,
     payloads,
+    contexts,
     prompt: async (text: string) => {
       const before = payloads.length;
       await session.prompt(text);

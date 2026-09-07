@@ -141,6 +141,92 @@ describe('converging legacy cleared tool-result rows', () => {
     db.close();
   });
 
+  /** RED BEFORE THE FIX: the candidate was chosen by comparing a JS string LENGTH against a byte count,
+   *  so '界界' (6 bytes, 2 units) never matched its own latch row and the pass overwrote the 2-byte ASCII
+   *  result that happened to come first. The output that was never cleared was gone for good. */
+  it('picks the byte-exact occurrence, measured in UTF-8 rather than in string length', () => {
+    const wrong = 'no';                 // 2 bytes, 2 units
+    const right = '界界';                // 6 bytes, 2 units
+    const db = openDb(path);
+    db.prepare('INSERT INTO brain_messages (id, session_id, role, content) VALUES (?, ?, ?, ?)')
+      .run('m-wrong', 's-1', 'toolResult', message('call-1', Date.parse('2025-12-31T23:50:00Z'), wrong));
+    db.prepare('INSERT INTO brain_messages (id, session_id, role, content) VALUES (?, ?, ?, ?)')
+      .run('m-right', 's-1', 'toolResult', message('call-1', Date.parse('2025-12-31T23:55:00Z'), right));
+    db.prepare(
+      `INSERT INTO brain_tool_result_spills (session_id, tool_call_id, occurred_at, mode, bytes, preview, path, placeholder, created_at)
+       VALUES ('s-1', 'call-1', 0, 'time', 6, NULL, ?, ?, '2026-01-01 00:00:00')`
+    ).run(spillPath, clearedToolResultPlaceholder(spillPath, 6));
+    writeFileSync(spillPath, right);
+    rearm(db);
+    db.close();
+
+    const migrated = openDb(path);
+    expect(storedMessage(migrated, 'm-wrong').content[0]?.text).toBe(wrong);
+    expect(storedMessage(migrated, 'm-right').content[0]?.text).toBe(clearedToolResultPlaceholder(spillPath, 6));
+    migrated.close();
+  });
+
+  /** RED BEFORE THE FIX: re-arming the pass over its own output re-ran the whole heuristic. The row it
+   *  had already converged no longer matched by size, so the fallback claimed the NEXT candidate and a
+   *  second, untouched result was overwritten. Convergence has to be a fixed point. */
+  it('changes nothing on a second run, even with another candidate for the same id', () => {
+    const first = 'target'.repeat(1);
+    const second = 'other-result';
+    const db = openDb(path);
+    db.prepare('INSERT INTO brain_messages (id, session_id, role, content) VALUES (?, ?, ?, ?)')
+      .run('m-first', 's-1', 'toolResult', message('call-1', Date.parse('2025-12-31T23:50:00Z'), first));
+    db.prepare('INSERT INTO brain_messages (id, session_id, role, content) VALUES (?, ?, ?, ?)')
+      .run('m-second', 's-1', 'toolResult', message('call-1', Date.parse('2025-12-31T23:55:00Z'), second));
+    db.prepare(
+      `INSERT INTO brain_tool_result_spills (session_id, tool_call_id, occurred_at, mode, bytes, preview, path, placeholder, created_at)
+       VALUES ('s-1', 'call-1', 0, 'time', 6, NULL, ?, ?, '2026-01-01 00:00:00')`
+    ).run(spillPath, clearedToolResultPlaceholder(spillPath, 6));
+    writeFileSync(spillPath, first);
+    rearm(db);
+    db.close();
+
+    const once = openDb(path);
+    const converged = storedMessage(once, 'm-first');
+    expect(converged.content[0]?.text).toBe(clearedToolResultPlaceholder(spillPath, 6));
+    // The occurrence is no longer a guess: it is recorded on the latch row the judgement was made for.
+    expect((once.prepare('SELECT occurred_at FROM brain_tool_result_spills').get() as { occurred_at: number }).occurred_at)
+      .toBe(Date.parse('2025-12-31T23:50:00Z'));
+    rearm(once);
+    once.close();
+
+    const twice = openDb(path);
+    expect(storedMessage(twice, 'm-first')).toEqual(converged);
+    expect(storedMessage(twice, 'm-second').content[0]?.text).toBe(second);
+    twice.close();
+  });
+
+  /** RED BEFORE THE FIX: v18 converged this row from the spill file alone, so it has no latch row — and
+   *  v19 iterated latch rows only, leaving a ~6 kB CJK placeholder that a size-only selector in a rolled
+   *  back build would spill a second time, nesting a placeholder inside a placeholder. */
+  it('marks a placeholder v18 rebuilt from a spill file, proven against the file itself', () => {
+    const cjk = '界'.repeat(9_000);
+    const filePath = join(spillDir, 'call-file.v1-preview-27000.txt');
+    const placeholder = clearedToolResultPlaceholder(filePath, 27_000, cjk.slice(0, 2_000));
+    const db = openDb(path);
+    db.prepare('INSERT INTO brain_messages (id, session_id, role, content) VALUES (?, ?, ?, ?)')
+      .run('m-file', 's-1', 'toolResult', message('call-file', 4_000, placeholder));
+    // A second row whose text merely OPENS like a placeholder: no file proves it, so it stays untouched.
+    db.prepare('INSERT INTO brain_messages (id, session_id, role, content) VALUES (?, ?, ?, ?)')
+      .run('m-quote', 's-1', 'toolResult', message('call-quote', 4_100, `${placeholder} (quoted by a Read)`));
+    writeFileSync(filePath, cjk);
+    rearm(db);
+    db.close();
+
+    const migrated = openDb(path);
+    const marked = storedMessage(migrated, 'm-file');
+    expect(marked.content).toEqual([{ type: 'text', text: placeholder }]); // text untouched
+    expect(isClearedToolResult(marked)).toBe(true);
+    expect(marked.details?.[CLEARED_TOOL_RESULT_DETAIL])
+      .toEqual({ mode: 'preview', bytes: 27_000, path: filePath });
+    expect(isClearedToolResult(storedMessage(migrated, 'm-quote'))).toBe(false);
+    migrated.close();
+  });
+
   it('runs on a fresh database, where the table exists but holds nothing', () => {
     const fresh = join(dir, 'fresh.db');
     const db = openDb(fresh);

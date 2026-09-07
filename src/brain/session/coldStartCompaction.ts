@@ -137,8 +137,16 @@ export function cacheDefinitelyCold(
   interactedAt: number | undefined,
   lastRequestCacheTtlMs: number | undefined,
   now: number,
+  /** The newest message of any FORK descendant (BrainStore.lastForkChildMessageAt). A fork child re-sends
+   *  its parent's prefix on every request, so its activity is the parent's cache being kept warm — and it
+   *  outlives the child: a child that finished a minute ago leaves the shared prefix warm for the rest of
+   *  the retention window, which "does the parent have running children" cannot see. */
+  lastForkChildMessageAt?: string | undefined,
 ): boolean {
-  const lastActivity = lastActivityMs(lastMessageAt, interactedAt);
+  const lastActivity = Math.max(
+    lastActivityMs(lastMessageAt, interactedAt),
+    parseDbTs(lastForkChildMessageAt),
+  );
   if (lastActivity === 0) return false;
   return now - lastActivity >= coldCompactionGateMs(lastRequestCacheTtlMs);
 }
@@ -149,7 +157,10 @@ const coldLog = logger('brain-compaction');
  *  the two registries {@link sessionHasWorkInFlight} consults. Structural, so both the owner turn runner
  *  and the channel service satisfy it with the dependencies they already hold. */
 export interface ColdStartCompactionDeps extends SessionQuiescenceDeps {
-  store: SessionQuiescenceDeps['store'] & { lastMessageAt(sessionId: string): string | undefined };
+  store: SessionQuiescenceDeps['store'] & {
+    lastMessageAt(sessionId: string): string | undefined;
+    lastForkChildMessageAt(sessionId: string): string | undefined;
+  };
 }
 
 /** The live-session facts the trigger reads. Structural on purpose: the policy is usable by both owner
@@ -186,6 +197,7 @@ export async function maybeColdStartCompaction(d: ColdStartCompactionDeps, live:
   if (live.session.isStreaming || live.session.isCompacting) return;
   if (!cacheDefinitelyCold(
     d.store.lastMessageAt(live.sessionId), live.interactedAt, live.lastRequestCacheTtlMs, Date.now(),
+    d.store.lastForkChildMessageAt(live.sessionId),
   )) return;
   // The shared fail-closed predicate (also the teardown's): a queued message, parked question,
   // running child/background job or armed goal means the context is not this turn's to rewrite.
