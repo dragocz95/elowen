@@ -240,7 +240,7 @@ function LiveRow({ label, meta, tone, title, onClick, ariaLabel, muted = false }
 }
 
 /** The rail's row test ids for the shared `TodoRow`: the names the rail's own tests have always used. */
-const RAIL_TASK_ROW_IDS: TodoRowIds = { row: 'telemetry-row', running: 'telemetry-task-running', subject: 'telemetry-task-subject', elapsed: 'telemetry-task-elapsed', blocked: 'telemetry-task-blocked' };
+const RAIL_TASK_ROW_IDS: TodoRowIds = { row: 'telemetry-row', running: 'telemetry-task-running', subject: 'telemetry-task-subject', menu: 'telemetry-task-menu', elapsed: 'telemetry-task-elapsed', blocked: 'telemetry-task-blocked' };
 
 /** The conversation's task list, as the rail reports it: a done/total meter, the work that matters now,
  *  and one menu control per row.

@@ -77,10 +77,14 @@ const TRIGGER_CLASS: Record<ActionMenuVariant, string> = {
   kebab: 'inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground data-[state=open]:bg-accent data-[state=open]:text-accent-foreground',
 };
 
-export function ActionMenu({ items, label, trigger, triggerClassName, className, align = 'right', variant = 'destructive', openOnHover }: {
+export function ActionMenu({ items, label, trigger, triggerClassName, className, testId, align = 'right', variant = 'destructive', openOnHover }: {
   items: ActionMenuItem[];
   label?: string;
   trigger?: ReactNode;
+  /** `data-testid` for the positioning wrapper. A caller whose layout DEPENDS on that wrapper — see
+   *  `className` below — has to be able to address it by name; identifying it by the utility classes it
+   *  happens to carry makes a test fail on a restyle rather than on the regression it guards. */
+  testId?: string;
   /** Override the trigger button styling. Wins over `variant`. */
   triggerClassName?: string;
   /** Classes for the positioning wrapper — the menu's box in its parent's layout, not the trigger's skin.
@@ -134,6 +138,7 @@ export function ActionMenu({ items, label, trigger, triggerClassName, className,
 
   return (
     <div
+      {...(testId ? { 'data-testid': testId } : {})}
       className={className ? `relative ${className}` : 'relative'}
       onMouseEnter={hoverOpens ? () => openMenu('none') : undefined}
       onMouseLeave={hoverOpens ? scheduleClose : undefined}

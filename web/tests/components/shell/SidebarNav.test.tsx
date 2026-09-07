@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { setupServer } from 'msw/node';
@@ -237,7 +238,10 @@ describe('SidebarNav inline sub-menus', () => {
    *  portalled by design and `.sidebar-nav` clips. Pinned at the source so a new row cannot reintroduce
    *  the sliver through a code path no test happens to render. */
   it('passes no tooltip panel to any sidebar row', () => {
-    const source = readFileSync(resolve(process.cwd(), 'components/shell/SidebarNav.tsx'), 'utf8');
+    // Resolved from THIS file, not from the process's working directory: a source pin has to keep
+    // reading the source whoever starts the runner and from wherever.
+    const web = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+    const source = readFileSync(join(web, 'components', 'shell', 'SidebarNav.tsx'), 'utf8');
     expect(source).toContain('SidebarMenuButton');
     expect(source).not.toMatch(/tooltip=/);
   });

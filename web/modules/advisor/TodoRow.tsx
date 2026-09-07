@@ -16,6 +16,8 @@ export interface TodoRowIds {
   running: string;
   /** The truncating task subject — the row's one elastic column. */
   subject: string;
+  /** The action menu's positioning wrapper, which is the column the subject truncates against. */
+  menu: string;
   /** The live `· 12m 3s` clock on the in-progress row. */
   elapsed: string;
   /** The blocked tooltip riding beside the trigger. */
@@ -58,6 +60,7 @@ export function TodoRow({ row, now, onStatus, onOpen, ids }: {
         label={`${t.tasksModal.taskActions}: ${row.label}${row.owner ? ` · ${row.owner}` : ''}`}
         align="left"
         openOnHover={false}
+        testId={ids.menu}
         // The menu's wrapper is the row's shrinking column. Without `min-w-0` its automatic minimum size
         // is the trigger's min-content width — the subject's nowrap text in full — so the wrapper keeps
         // its max-content width, the subject truncates against a box wider than the rail, and the trailing

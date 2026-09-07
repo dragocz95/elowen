@@ -4,6 +4,8 @@ import { render, screen, act, waitFor, within } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { onUnhandledRequest } from '../../msw';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
@@ -87,6 +89,10 @@ function renderRail(node: ReactNode) {
 
 const classesOf = (el: Element) => el.className.split(/\s+/).filter(Boolean);
 
+/** The `web/` root, resolved from THIS file rather than from the process's working directory: the source
+ *  pins below must keep reading the same files whoever starts the runner and from wherever. */
+const WEB = join(dirname(fileURLToPath(import.meta.url)), '..', '..', '..');
+
 /** The three parts of a task row, addressed the way the rail's own ids name them. */
 async function taskRowParts(host: HTMLElement) {
   // The clock rides the ONE in-progress row, so it is what identifies the row worth measuring.
@@ -94,8 +100,9 @@ async function taskRowParts(host: HTMLElement) {
   const row = elapsed.closest('li') as HTMLElement;
   const subject = within(row).getByTestId('telemetry-task-subject');
   // The ActionMenu's positioning wrapper: the row's shrinking column, and the element that used to
-  // refuse to give.
-  const wrapper = subject.closest('div.relative') as HTMLElement;
+  // refuse to give. Addressed by the id the rail stamps on it — matching on the utility classes it
+  // happens to carry would fail on a restyle instead of on the geometry this suite guards.
+  const wrapper = within(row).getByTestId('telemetry-task-menu');
   return { subject, elapsed, wrapper };
 }
 
@@ -179,7 +186,7 @@ describe('telemetry rail — a task row keeps its trailing meta on screen', () =
 // there can be no free space left to grow into, and a row that cannot shrink either lays its trailing
 // token count past the rail's edge. `LiveRow` has to keep overriding it.
 describe('telemetry rail — the row button opts back into shrinking', () => {
-  const source = readFileSync('modules/advisor/TelemetryPanel.tsx', 'utf8');
+  const source = readFileSync(join(WEB, 'modules', 'advisor', 'TelemetryPanel.tsx'), 'utf8');
 
   it('overrides the Button primitive\'s base shrink-0 on the live row', () => {
     const liveRowClass = source.match(/className="h-6 min-w-0 flex-1 shrink [^"]*"/);
@@ -191,7 +198,7 @@ describe('telemetry rail — the row button opts back into shrinking', () => {
   });
 
   it('pins that the primitive it overrides really does ship shrink-0', () => {
-    const button = readFileSync('components/ui/shadcn/button.tsx', 'utf8');
+    const button = readFileSync(join(WEB, 'components', 'ui', 'shadcn', 'button.tsx'), 'utf8');
     expect(button).toContain('inline-flex shrink-0 items-center');
   });
 });

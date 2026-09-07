@@ -333,7 +333,7 @@ function StaticCard({ card, live }: { card: BrainCard; live: boolean }) {
 
 /** The card's row test ids: the shared `TodoRow` stamps these so the card's tests keep addressing it by
  *  the names it has always had. */
-const CARD_ROW_IDS: TodoRowIds = { row: 'chat-card-row', running: 'chat-card-running', subject: 'chat-card-subject', elapsed: 'chat-card-elapsed', blocked: 'chat-card-blocked' };
+const CARD_ROW_IDS: TodoRowIds = { row: 'chat-card-row', running: 'chat-card-running', subject: 'chat-card-subject', menu: 'chat-card-menu', elapsed: 'chat-card-elapsed', blocked: 'chat-card-blocked' };
 
 /** The conversation's checklist, where it has always been — the last thing above the composer — and now
  *  something the reader can work rather than only read.
