@@ -62,6 +62,18 @@ const unpairedSse = [
   block(4, { type: 'tool_use', id: 'toolu_docs', name: 'DocsSearch', input: { query: 'slash commands' } }),
   event('message_stop', { type: 'message_stop' }),
 ].join('');
+/** The common production shape of an uncapturable hosted response: the search that never got its result
+ *  sits BEFORE the only signed thinking block, so continuing without the hosted blocks leaves that block's
+ *  body exactly as Anthropic produced it and the next request is accepted. */
+const unpairedOutsideThinkingSse = [
+  block(0, { type: 'server_tool_use', id: 'srvtoolu_1', name: 'tool_search_tool_bm25', input: {} }, [
+    { type: 'input_json_delta', partial_json: '{"query":"Elowen docs"}' },
+  ]),
+  block(1, { type: 'text', text: 'Searching.' }),
+  block(2, { type: 'thinking', thinking: 'first', signature: SIGNATURE_A }),
+  block(3, { type: 'tool_use', id: 'toolu_docs', name: 'DocsSearch', input: { query: 'slash commands' } }),
+  event('message_stop', { type: 'message_stop' }),
+].join('');
 const mismatchedSse = sse.replace('"tool_use_id":"srvtoolu_1"', '"tool_use_id":"srvtoolu_unmatched"');
 const orphanResultSse = [
   block(0, { type: 'text', text: 'Searching.' }),
@@ -186,7 +198,7 @@ describe('Anthropic hosted tool-search replay', () => {
   });
 
   it('never persists incomplete, mismatched, orphaned, or duplicated tool-search pairs', () => {
-    for (const invalid of [unpairedSse, mismatchedSse, orphanResultSse, duplicateResultSse]) {
+    for (const invalid of [unpairedSse, unpairedOutsideThinkingSse, mismatchedSse, orphanResultSse, duplicateResultSse]) {
       expect(captureAnthropicHostedReplay(invalid)).toBeUndefined();
     }
   });
@@ -333,8 +345,39 @@ describe('Anthropic hosted tool-search replay', () => {
     expect(fixture.fetch).toHaveBeenCalledTimes(1);
   });
 
-  it('delivers an unpaired hosted response without poisoning the next provider request', async () => {
+  // The production failure this pins (sub-agent sub-dlg-8d05a1bc on claude-opus-5, 7 Sep 2026,
+  // req_011Cepdc8K2jvBD63449AKw3): a response whose incomplete search pair sat between two signed thinking
+  // blocks was delivered, its hosted blocks dropped, and the very next request came back
+  // "400 messages.1.content.6: `thinking` or `redacted_thinking` blocks in the latest assistant message
+  // cannot be modified" — a content index no message of that request even had, because the assistant turn
+  // on the wire was a 3-block projection of a 7-block response. The turn is unrecoverable at that point, so
+  // the boundary has to close here instead.
+  it('blocks the next request when an unpaired hosted response splits the signed thinking chain', async () => {
     const fixture = fakeSession(unpairedSse);
+    const firstEvents = [];
+    const first = fixture.agent.streamFunction(MODEL as never, { messages: [], tools: [] } as never, { fetch: fixture.fetch } as never);
+    for await (const current of first) firstEvents.push(current);
+
+    const done = firstEvents.find((current) => current.type === 'done');
+    expect(done?.type).toBe('done');
+    expect(firstEvents.some((current) => current.type === 'error')).toBe(false);
+    expect(done?.type === 'done' ? done.message.content : []).toEqual(fixture.final.content);
+    expect(done?.type === 'done' ? anthropicHostedReplayMetadata(done.message) : 'unset').toBeUndefined();
+
+    const secondEvents = [];
+    const second = fixture.agent.streamFunction(
+      MODEL as never,
+      { messages: [done?.type === 'done' ? done.message : assistant(null)], tools: [] } as never,
+      { fetch: fixture.fetch } as never,
+    );
+    for await (const current of second) secondEvents.push(current);
+    expect(fixture.fetch).toHaveBeenCalledTimes(1);
+    expect(secondEvents.at(-1)?.type === 'error' ? secondEvents.at(-1)?.error.errorMessage : '')
+      .toContain('could not be captured safely');
+  });
+
+  it('delivers an unpaired hosted response without poisoning the next provider request', async () => {
+    const fixture = fakeSession(unpairedOutsideThinkingSse);
     const firstEvents = [];
     const first = fixture.agent.streamFunction(MODEL as never, { messages: [], tools: [] } as never, { fetch: fixture.fetch } as never);
     for await (const current of first) firstEvents.push(current);

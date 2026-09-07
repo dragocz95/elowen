@@ -68,6 +68,26 @@ function hasCompleteToolSearchPairs(content: readonly JsonObject[]): boolean {
   return [...uses].every(([id, count]) => count === 1 && results.get(id) === 1);
 }
 
+const THINKING_TYPES = new Set(['thinking', 'redacted_thinking']);
+
+/** Whether continuing WITHOUT this response's server-owned blocks would modify the signed thinking chain
+ *  Anthropic checks on the next request.
+ *
+ *  An uncapturable hosted response is resent as pi's projection of it, which carries the signed thinking
+ *  blocks but none of the server-owned ones. Anthropic re-validates the latest assistant message against
+ *  the response it produced: the `block_binding.prefix_mismatch_behavior` control forgives a mismatching
+ *  PREFIX, never a modified message body. Content removed BETWEEN two signed thinking blocks breaks that
+ *  body and the next request dies with `thinking or redacted_thinking blocks in the latest assistant
+ *  message cannot be modified`. Hosted content before the first or after the last thinking block leaves
+ *  the chain intact, which is why the far more common single-thinking response replays without trouble. */
+function omittingHostedContentBreaksThinking(content: readonly JsonObject[]): boolean {
+  const thinking = content.flatMap((block, index) => (THINKING_TYPES.has(String(block.type)) ? [index] : []));
+  if (thinking.length < 2) return false;
+  const first = thinking[0]!;
+  const last = thinking[thinking.length - 1]!;
+  return content.some((block, index) => index > first && index < last && isAnthropicServerOwnedBlock(block));
+}
+
 interface CaptureOutcome {
   metadata?: AnthropicHostedReplayMetadata;
   /** Hosted content started on the wire but could not be captured as one complete assistant response. */
@@ -88,7 +108,8 @@ class AnthropicSseCapture {
    *  Everything here observes a stream the model's answer is riding on. A syntactically complete response
    *  can still be unsafe to replay: Anthropic accepts a hosted search while producing the answer, but rejects
    *  that assistant message on the next request unless every built-in tool-search call has its matching result.
-   *  Such a response survives without replay metadata; malformed or truncated hosted content remains fail-closed. */
+   *  Such a response survives without replay metadata as long as omitting its hosted blocks leaves the signed
+   *  thinking chain intact; malformed or truncated hosted content remains fail-closed. */
   feed(chunk: Uint8Array): void {
     try {
       this.buffer += this.decoder.decode(chunk, { stream: true });
@@ -112,6 +133,10 @@ class AnthropicSseCapture {
       if (!this.sawHostedContent) return { unsafeHostedContent: false };
       const content = indexes.map((index) => clone(this.blocks.get(index)!.block));
       if (!hasCompleteToolSearchPairs(content)) {
+        if (omittingHostedContentBreaksThinking(content)) {
+          log.warn('hosted-search replay not captured and unsafe to omit: an incomplete search pair sits between signed thinking blocks');
+          return { unsafeHostedContent: true };
+        }
         log.warn('hosted-search replay not captured, continuing without it: response contained an incomplete search pair');
         return { unsafeHostedContent: false };
       }
