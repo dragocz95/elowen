@@ -165,4 +165,48 @@ describe('AskUserQuestion — answer formatting', () => {
     expect(out).toContain('"Which colour?" = "Blue"');
     expect(out).toContain('"Pick tools?" = "A, B, and my note"');
   });
+
+  // The preview is the only part of the question the model never saw rendered, so an answer that names
+  // only the label leaves it reconstructing what the user actually compared.
+  it('carries the preview of the chosen option back with the answer', async () => {
+    const { formatAnswers } = await load();
+    const withPreviews = [{
+      question: 'Which layout?',
+      options: [
+        { label: 'Grid', description: 'cards', preview: 'A | B' },
+        { label: 'List', description: 'rows', preview: 'A\nB' },
+      ],
+    }];
+    const out = formatAnswers(withPreviews, [{ selected: ['List'] }]);
+    expect(out).toContain('"Which layout?" = "List"');
+    expect(out).toContain('selected preview: A\nB');
+    expect(out).not.toContain('A | B'); // only the CHOSEN option's preview comes back
+  });
+});
+
+describe('AskUserQuestion — batch validation', () => {
+  const ask = async (questions: unknown) => {
+    const tools: RegisteredTool[] = [];
+    const { register } = await load();
+    register({
+      registerTool: (tool: RegisteredTool) => tools.push(tool),
+      registerSystemPromptFragment: () => undefined,
+      askUser: async (qs: Normalized[]) => qs.map((q) => ({ header: q.header, selected: [q.options[0]!.label] })),
+      logger: { info: () => undefined },
+    });
+    return (await tools[0]!.execute('t', { questions })).content[0]!.text;
+  };
+  const question = (text: string) => ({
+    question: text,
+    header: 'Pick',
+    multiSelect: false,
+    options: [{ label: 'One', description: 'first' }, { label: 'Two', description: 'second' }],
+  });
+
+  it('rejects two questions with the same text in one batch', async () => {
+    // Answers are index-aligned, so a repeated question text makes the answer block ambiguous.
+    expect(await ask([question('Which one?'), question('Which one?')]))
+      .toContain('questions must have distinct question texts.');
+    expect(await ask([question('Which one?'), question('Which other one?')])).toContain('User answered:');
+  });
 });

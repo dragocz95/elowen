@@ -79,7 +79,7 @@ describe('files plugin — read-before-modify guard', () => {
     const path = join(dir, `${n}-brand-new.txt`);
     const res = await inSession('Write', { file_path: path, content: 'fresh' });
 
-    expect(res.content[0].text).toContain('Wrote');
+    expect(res.content[0].text).toMatch(/successfully/);
     expect(readFileSync(path, 'utf-8')).toBe('fresh');
   });
 
@@ -88,7 +88,7 @@ describe('files plugin — read-before-modify guard', () => {
     await inSession('Read', { file_path: path });
     expect((await inSession('Edit', { file_path: path, old_string: 'one', new_string: '1' })).content[0].text).toContain('Edited');
     expect((await inSession('Edit', { file_path: path, old_string: 'two', new_string: '2' })).content[0].text).toContain('Edited');
-    expect((await inSession('Write', { file_path: path, content: 'rewritten' })).content[0].text).toContain('Wrote');
+    expect((await inSession('Write', { file_path: path, content: 'rewritten' })).content[0].text).toMatch(/successfully/);
     expect(readFileSync(path, 'utf-8')).toBe('rewritten');
   });
 
@@ -103,7 +103,7 @@ describe('files plugin — read-before-modify guard', () => {
 
     await inSession('Read', { file_path: path }); // the agent catches up…
     const ok = await inSession('Write', { file_path: path, content: 'now informed' });
-    expect(ok.content[0].text).toContain('Wrote');                      // …and may now proceed
+    expect(ok.content[0].text).toMatch(/successfully/);                      // …and may now proceed
   });
 
   it('refuses to edit a file that changed on disk after the agent merely READ it', async () => {
@@ -199,7 +199,7 @@ describe('files plugin — read-before-modify guard', () => {
   it('a paged text Read authorizes a full-file Write, and still refuses one against moved bytes', async () => {
     const path = fixture('partial-write.txt', 'one\ntwo\nthree\nfour\n');
     await inSession('Read', { file_path: path, limit: 2 });
-    expect((await inSession('Write', { file_path: path, content: 'rewritten' })).content[0].text).toContain('Wrote');
+    expect((await inSession('Write', { file_path: path, content: 'rewritten' })).content[0].text).toMatch(/successfully/);
 
     const moved = fixture('partial-write-moved.txt', 'one\ntwo\nthree\nfour\n');
     await inSession('Read', { file_path: moved, limit: 2 });
@@ -441,6 +441,6 @@ describe('files plugin — read-before-modify guard', () => {
       + '01f15c4890000000a49444154789c6300010000050001', 'hex'));
     await inSession('Read', { file_path: png });
     const res = await inSession('Write', { file_path: png, content: 'replaced by text' });
-    expect(res.content[0].text).toContain('Wrote');
+    expect(res.content[0].text).toMatch(/successfully/);
   });
 });

@@ -1,13 +1,16 @@
 // MCP bridge plugin: connect external Model Context Protocol servers (stdio / HTTP / SSE) and expose
 // their tools as native brain tools. stdio servers are spawned in their OWN process group so cleanup
 // can kill the entire group — reaping npx grandchildren that a plain child.kill() would orphan.
-import { defineTool } from '@earendil-works/pi-coding-agent';
+import { defineTool, resizeImage } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { ReadBuffer, serializeMessage } from '@modelcontextprotocol/sdk/shared/stdio.js';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details: { ok: true, ...details } });
 const fail = (e) => ok(`Error: ${e instanceof Error ? e.message : String(e)}`, {
@@ -490,20 +493,66 @@ function setServerState(spec, patch) {
 /** Image mime types the brain can embed inline as real image blocks (same set as the files plugin). */
 const INLINE_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/gif', 'image/webp']);
 
+/** The dimension ceiling the model API enforces on an inline image. A server is free to hand back a full
+ *  4K screenshot, and forwarding it raw is how a whole turn fails on an image the API refuses. */
+const IMAGE_MAX_EDGE = 2000;
+
+/** Downsample a bridged image to the API's dimension limit. A resize that cannot run keeps the original
+ *  bytes: an image the model might still accept is a better answer than no image at all. */
+async function inlineImagePart(part) {
+  const raw = Buffer.from(part.data, 'base64');
+  const resized = await resizeImage(raw, part.mimeType, { maxWidth: IMAGE_MAX_EDGE, maxHeight: IMAGE_MAX_EDGE })
+    .catch(() => null);
+  if (resized && INLINE_IMAGE_TYPES.has(resized.mimeType)) {
+    return { type: 'image', data: resized.data, mimeType: resized.mimeType };
+  }
+  return { type: 'image', data: part.data, mimeType: part.mimeType };
+}
+
 /** Map an MCP tool-call result into the brain tool-result shape. Image parts become REAL image blocks
  *  (so a vision model actually sees a screenshot, and history stripping can placeholder them later);
  *  anything else non-text collapses to a short placeholder — never a stringified base64 payload. */
-function mapResult(res) {
+async function mapResult(res) {
   const parts = Array.isArray(res?.content) ? res.content : [];
-  const content = parts.map((p) => {
-    if (p?.type === 'text') return { type: 'text', text: String(p.text ?? '') };
+  const content = [];
+  for (const p of parts) {
+    if (p?.type === 'text') { content.push({ type: 'text', text: String(p.text ?? '') }); continue; }
     if (p?.type === 'image' && typeof p.data === 'string' && INLINE_IMAGE_TYPES.has(p.mimeType)) {
-      return { type: 'image', data: p.data, mimeType: p.mimeType };
+      content.push(await inlineImagePart(p));
+      continue;
     }
-    return { type: 'text', text: `[${typeof p?.type === 'string' ? p.type : 'unknown'} content omitted]` };
-  });
+    content.push({ type: 'text', text: `[${typeof p?.type === 'string' ? p.type : 'unknown'} content omitted]` });
+  }
   if (!content.length) content.push({ type: 'text', text: res?.isError ? 'MCP tool returned an error.' : '(no output)' });
   return { content, details: { ok: !res?.isError, isError: !!res?.isError } };
+}
+
+/** An OpenAPI-derived server can hand back tens of kilobytes of documentation as one tool description.
+ *  Cut it where the reference does, and SAY that it was cut — a silent slice reads as a complete sentence
+ *  that simply ends. */
+const MAX_MCP_DESCRIPTION_LENGTH = 2048;
+export function bridgedDescription(serverName, tool) {
+  const full = `[${serverName}] ${tool?.description ?? tool?.name ?? ''}`;
+  return full.length > MAX_MCP_DESCRIPTION_LENGTH
+    ? `${full.slice(0, MAX_MCP_DESCRIPTION_LENGTH)}… [truncated]`
+    : full;
+}
+
+const BLOB_EXTENSIONS = new Map([
+  ['image/png', '.png'], ['image/jpeg', '.jpg'], ['image/gif', '.gif'], ['image/webp', '.webp'],
+  ['application/pdf', '.pdf'], ['application/zip', '.zip'], ['text/csv', '.csv'], ['application/json', '.json'],
+]);
+
+/** Write a resource blob to the plugin's data directory and return the path. A base64 payload is useless
+ *  to the model inline — a path it can hand to Read or a shell tool is the only form it can act on. */
+export function persistResourceBlob(dir, uri, mimeType, blob) {
+  const bytes = Buffer.from(String(blob), 'base64');
+  const extension = BLOB_EXTENSIONS.get(String(mimeType)) ?? '.bin';
+  const name = `${createHash('sha256').update(`${uri}`).digest('hex').slice(0, 16)}${extension}`;
+  mkdirSync(dir, { recursive: true });
+  const path = join(dir, name);
+  writeFileSync(path, bytes);
+  return { path, bytes: bytes.length };
 }
 
 /** Register one remote MCP tool as a native brain tool (namespaced `mcp__<server>__<tool>`).
@@ -522,7 +571,7 @@ function registerBridgedTool(ctx, getClient, spec, tool) {
   ctx.registerTool(defineTool({
     name,
     label: tool.title || tool.name,
-    description: `[${spec.name}] ${tool.description ?? tool.name}`.slice(0, 1024),
+    description: bridgedDescription(spec.name, tool),
     parameters: params,
     execute: async (_id, args) => {
       try {
@@ -531,7 +580,7 @@ function registerBridgedTool(ctx, getClient, spec, tool) {
         // does — an error result the model can read, never a crash and never a silent empty answer.
         const client = await getClient();
         const res = await withTimeout(client.callTool({ name: tool.name, arguments: args ?? {} }), callTimeoutMs, `mcp call ${tool.name}`);
-        return mapResult(res);
+        return await mapResult(res);
       } catch (e) { return fail(e); }
     },
   }), {
@@ -922,8 +971,14 @@ function registerResourceTools(ctx, live, snapshot, ownerUserId) {
         const parts = Array.isArray(result?.contents) ? result.contents : [];
         const text = parts.map((c) => {
           if (c?.text != null) return String(c.text);
-          if (c?.blob != null) return `[binary content: ${c.mimeType ?? 'unknown'}, ${Buffer.from(String(c.blob), 'base64').length} bytes]`;
-          return '[empty content]';
+          if (c?.blob == null) return '[empty content]';
+          const mime = c.mimeType ?? 'unknown';
+          try {
+            const saved = persistResourceBlob(join(ctx.dataDir(), 'resources'), c.uri ?? p.uri, mime, c.blob);
+            return `[binary content: ${mime}, ${saved.bytes} bytes] saved to ${saved.path}`;
+          } catch (e) {
+            return `Binary content could not be saved to disk: ${e instanceof Error ? e.message : String(e)}`;
+          }
         }).join('\n\n');
         return ok(text || '(no content)', { server: p.server, uri: p.uri });
       } catch (e) { return fail(e); }
@@ -1093,3 +1148,4 @@ export async function reconnectMcpDisconnected() {
 }
 
 export { killTree, DetachedStdioTransport, sanitize, mapResult, configNumber };
+export { IMAGE_MAX_EDGE, MAX_MCP_DESCRIPTION_LENGTH };

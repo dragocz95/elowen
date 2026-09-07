@@ -59,6 +59,9 @@ function canonicalQuestions(value) {
   if (!Array.isArray(value) || value.length < 1 || value.length > 4) {
     throw new Error('questions must contain 1-4 questions.');
   }
+  // Two questions with the same text cannot be told apart in the answer block, so the model would read one
+  // pick as the answer to both. The reference rejects the batch for the same reason.
+  const questionTexts = new Set();
   return value.map((raw, questionIndex) => {
     const at = `questions[${questionIndex}]`;
     if (!raw || typeof raw !== 'object' || Array.isArray(raw)) throw new Error(`${at} must be an object.`);
@@ -67,6 +70,8 @@ function canonicalQuestions(value) {
     if (unknownQuestionField) throw new Error(`${at}.${unknownQuestionField} is not supported.`);
     if (typeof q.question !== 'string' || !q.question.trim()) throw new Error(`${at}.question must be a non-empty string.`);
     if (!q.question.endsWith('?')) throw new Error(`${at}.question must end with "?".`);
+    if (questionTexts.has(q.question.trim())) throw new Error('questions must have distinct question texts.');
+    questionTexts.add(q.question.trim());
     if (typeof q.header !== 'string' || !q.header.trim()) throw new Error(`${at}.header must be a non-empty string.`);
     if (q.header.length > 12) throw new Error(`${at}.header must be at most 12 characters.`);
     if (typeof q.multiSelect !== 'boolean') throw new Error(`${at}.multiSelect must be a boolean.`);
@@ -104,14 +109,24 @@ function canonicalQuestions(value) {
 }
 
 /** Format the user's picks into a compact, model-readable result: one `"<question>" = "<answer>"` line
- * per question. Answers are index-aligned to the validated pending questions. */
+ * per question. Answers are index-aligned to the validated pending questions.
+ *
+ * A chosen option's `preview` follows on its own line. The preview is the one part of the question the
+ * model wrote but never saw rendered, and it is what the user actually compared before deciding — without
+ * it the answer names a label whose content the model has to reconstruct from memory. */
 export function formatAnswers(questions, answers) {
   const list = Array.isArray(answers) ? answers : [];
-  const lines = questions.map((q, i) => {
+  const lines = [];
+  questions.forEach((q, i) => {
     const a = list[i] ?? { selected: [] };
-    const picks = [...(a.selected ?? [])];
+    const selected = [...(a.selected ?? [])];
+    const picks = [...selected];
     if (typeof a.other === 'string' && a.other.trim()) picks.push(a.other.trim());
-    return `"${q.question}" = "${picks.length ? picks.join(', ') : '(no answer)'}"`;
+    lines.push(`"${q.question}" = "${picks.length ? picks.join(', ') : '(no answer)'}"`);
+    for (const label of selected) {
+      const preview = (q.options ?? []).find((option) => option.label === label)?.preview;
+      if (preview) lines.push(`selected preview: ${preview}`);
+    }
   });
   return `User answered:\n${lines.join('\n')}\nYou can now continue with the user's answers in mind.`;
 }

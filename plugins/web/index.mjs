@@ -160,6 +160,17 @@ function redirectMessage(originalUrl, redirectUrl, res) {
   ].join('\n');
 }
 
+/** A redirect is followed when it stays on the same origin, where an optional leading `www.` is not a
+ * different host — `example.com -> www.example.com` is the single most common redirect on the web and
+ * bouncing it back to the model costs a whole round trip. The port must still match exactly, and the
+ * scheme is already pinned to https by `normalizeFetchUrl`, so this widens the followed set by the www
+ * variant alone. Every followed hop is still resolved and validated by the host transport. */
+export function isSameHostRedirect(from, to) {
+  if (from.port !== to.port) return false;
+  const bare = (host) => host.replace(/^www\./, '');
+  return bare(from.hostname) === bare(to.hostname);
+}
+
 /** Manual redirects keep SSRF validation on every hop. The host transport resolves once per request
  * and pins that exact validated address into the socket lookup, closing the DNS-rebinding gap. */
 async function fetchUncached(startUrl, signal, transport) {
@@ -179,7 +190,7 @@ async function fetchUncached(startUrl, signal, transport) {
       if (!location) throw new Error(`HTTP ${res.status} redirect without Location`);
       if (hop >= MAX_REDIRECTS) throw new Error('too many redirects');
       const target = normalizeFetchUrl(location, url);
-      if (target.host !== url.host) {
+      if (!isSameHostRedirect(url, target)) {
         const validated = new URL(await transport.validate(target.toString()));
         const text = redirectMessage(original.toString(), validated.toString(), res);
         return { kind: 'redirect', text, cacheBytes: Buffer.byteLength(text) };
@@ -510,6 +521,17 @@ export function resolveSearchProvider(config = {}) {
   return { id, provider: SEARCH_PROVIDERS[id], apiKey: keyOf(SEARCH_PROVIDERS[id].keyField) };
 }
 
+/** Recency guidance carries a date, so it is rendered per call rather than baked into the static tool
+ * description: a daemon that has been up since last month would otherwise hand the model the wrong year. */
+export function searchDateGuidance(now = new Date()) {
+  const monthYear = now.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+  return [
+    'IMPORTANT - Use the correct year in search queries:',
+    `  - The current month is ${monthYear}. You MUST use this year when searching for recent information, documentation, or current events.`,
+    '  - Example: If the user asks for "latest React docs", search for "React documentation" with the current year, NOT last year',
+  ].join('\n');
+}
+
 export function normalizeMaxResults(value) {
   const n = Number(value);
   return Number.isFinite(n) ? Math.min(Math.max(Math.floor(n), 1), 10) : 5;
@@ -522,7 +544,7 @@ export function register(ctx) {
 
   ctx.registerTool(defineTool({
     name: 'WebSearch', label: 'Web search',
-    description: 'Search the web. Returns result blocks with titles, URLs and snippets. Results are US-only where the selected provider supports a locale. allowed_domains and blocked_domains accept host names and filter subdomains; blocked domains take precedence. After answering from results, end with a Sources list containing the URLs you used as Markdown links.',
+    description: 'Search the web. Returns result blocks with titles, URLs and snippets. Results are US-only where the selected provider supports a locale. allowed_domains and blocked_domains accept host names and filter subdomains; blocked domains take precedence.\n\nCRITICAL REQUIREMENT - You MUST follow this:\n  - After answering the user\'s question, you MUST include a "Sources:" section at the end of your response\n  - In the Sources section, list all relevant URLs from the search results as markdown hyperlinks: [Title](URL)\n  - This is MANDATORY - never skip including sources in your response',
     parameters: Type.Object({
       query: Type.String({ minLength: 2, description: 'Search query, at least 2 characters.' }),
       allowed_domains: Type.Optional(Type.Array(Type.String(), { description: 'Only return these hosts and their subdomains. Host names only.' })),
@@ -546,14 +568,14 @@ export function register(ctx) {
         for (const result of filtered) {
           lines.push(`- ${result.title}\n  ${result.url}\n  ${String(result.snippet ?? '').slice(0, SNIPPET_CHARS)}`);
         }
-        return ok(lines.join('\n') || 'No results.');
+        return ok(`${lines.join('\n') || 'No results.'}\n\n${searchDateGuidance()}`);
       } catch (e) { return fail(e); }
     },
   }));
 
   ctx.registerTool(defineTool({
     name: 'WebFetch', label: 'Fetch web page',
-    description: 'Fetches a public URL, converts HTML to Markdown, and answers prompt against it through a host-owned inference route. Pages from configured documentation hosts are returned as Markdown without that inference step, so prompt is then only a statement of intent. HTTP is upgraded to HTTPS. Same-host redirects are followed after validating and pinning every hop; cross-host redirects are returned for a new explicit call. URL content is cached for 15 minutes within bounded memory. Non-global addresses are refused.',
+    description: 'Fetches a public URL, converts HTML to Markdown, and answers prompt against it through a host-owned inference route. Pages from configured documentation hosts are returned as Markdown without that inference step, so prompt is then only a statement of intent. HTTP is upgraded to HTTPS. Same-host redirects are followed after validating and pinning every hop; cross-host redirects are returned for a new explicit call. URL content is cached for 15 minutes within bounded memory. Non-global addresses are refused.\n\nUsage notes:\n  - IMPORTANT: If an MCP-provided web fetch tool is available, prefer using that tool instead of this one, as it may have fewer restrictions.\n  - IMPORTANT: WebFetch WILL FAIL for authenticated or private URLs. Before using this tool, check if the URL points to an authenticated service (e.g. Google Docs, Confluence, Jira, GitHub). If so, look for a specialized MCP tool that provides authenticated access.\n  - For GitHub URLs, prefer using the gh CLI via Bash instead (e.g., gh pr view, gh issue view, gh api).\n  - This tool is read-only and does not modify any files.',
     parameters: Type.Object({
       url: Type.String({ format: 'uri', maxLength: 2000, description: 'Fully formed public http(s) URL.' }),
       prompt: Type.String({ minLength: 1, maxLength: MAX_PROMPT_CHARS, description: 'What information to extract from the page.' }),
