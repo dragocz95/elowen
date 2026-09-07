@@ -12,6 +12,7 @@ import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { validateWorkflowNodes, mergeWorkflowNodes, readyNodeIds } from './dag.mjs';
 import { toolListCovers, toolPolicyAllows } from './toolLists.mjs';
+import { THINKING_LEVEL_HINT, resolveThinkingLevel } from './thinking.mjs';
 import {
   CONTEXT_HEADER,
   MAX_CONTEXT_CHUNK_CHARS,
@@ -217,6 +218,7 @@ const NODE_SHAPE = Type.Object({
   task: Type.String({ description: 'The complete, self-contained instruction for this node\'s sub-agent — it cannot see the conversation.' }),
   deps: Type.Optional(Type.Array(Type.String(), { description: 'Ids of nodes that must finish before this one starts. Omit for a root node.' })),
   model: Type.Optional(Type.String({ description: 'Run this node on a DIFFERENT model (value from DelegateModels). Omit to inherit yours.' })),
+  thinkingLevel: Type.Optional(Type.String({ description: THINKING_LEVEL_HINT })),
   read_only: Type.Optional(Type.Boolean({ description: 'Give this node read-only tools and the non-destructive shell clamp (explore/report, no delegation). The clamp denies destructive commands; it does not prevent writing a file through redirection.' })),
   tools: Type.Optional(Type.Array(Type.String(), { description: 'Give this node EXACTLY these tools (names from your own toolset). Narrows only.' })),
   subagent_type: Type.Optional(Type.String({ description: 'Run this node as a named sub-agent TYPE (from the delegate tool\'s type list) — it supplies the role prompt and toolset (a read-only type already includes the non-destructive shell clamp). Omit for a generic node.' })),
@@ -318,7 +320,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     try { unlinkSync(journalPath(workflowId)); } catch { /* already gone — the common case for a clean finish */ }
   };
 
-  const freshNodeState = () => ({ status: 'pending', sessionId: '', channelId: '', taskNote: '', tools: 0, detail: undefined, tokens: undefined, seconds: undefined, model: undefined, startedAt: undefined, result: undefined, handover: undefined, error: undefined });
+  const freshNodeState = () => ({ status: 'pending', sessionId: '', channelId: '', taskNote: '', tools: 0, detail: undefined, tokens: undefined, seconds: undefined, model: undefined, thinkingLevel: undefined, startedAt: undefined, result: undefined, handover: undefined, error: undefined });
 
   /** Appended to a node's task when a resume puts it back into the conversation it already worked in. It has
    *  to read sensibly BOTH ways: the child session usually survives (the node reads its own prior work and
@@ -400,6 +402,10 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         ...(s.seconds !== undefined ? { seconds: s.seconds } : {}),
         // The resolved model once the node has started; before that, the declared override if there is one.
         ...(s.model ?? n.model ? { model: s.model ?? n.model } : {}),
+        // Same rule for the reasoning effort: the EFFECTIVE level once the node started (which is where
+        // an inherited one becomes visible at all), the declaration before that. Without it a workflow
+        // node was the one child whose reasoning level the operator could not see anywhere.
+        ...(s.thinkingLevel ?? n.thinkingLevel ? { thinkingLevel: s.thinkingLevel ?? n.thinkingLevel } : {}),
         ...(s.startedAt !== undefined ? { startedAt: s.startedAt } : {}),
         ...(s.result ? { result: clip(s.result, SNAPSHOT_RESULT_PREVIEW) } : {}),
         ...(s.error ? { error: clip(s.error, SNAPSHOT_RESULT_PREVIEW) } : {}),
@@ -427,15 +433,20 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     const parentAccess = wf.nodeParentAccess.get(node.id) ?? wf.parentAccess;
     const parentModel = wf.nodeParentModel.get(node.id) ?? wf.parentModel;
     let model = parentModel ? { provider: parentModel.provider, model: parentModel.model } : undefined;
+    // One catalog read for the model override and the level check, which is measured against whichever
+    // model this node ends up on.
+    const list = node.model || node.thinkingLevel ? await ctx.listModels().catch(() => []) : [];
     if (node.model) {
-      const list = await ctx.listModels().catch(() => []);
       const hit = list.find((m) => `${m.provider}/${m.model}` === node.model || m.model === node.model);
       if (!hit) throw new Error(`model "${node.model}" is not available for node "${node.id}"`);
       model = { provider: hit.provider, model: hit.model };
     }
-    // Nodes inherit the workflow origin's reasoning effort by default (the host drops it if a node's own
-    // model has no such level), mirroring the delegate tool.
-    const thinkingLevel = parentModel?.thinkingLevel;
+    // A node's own `thinkingLevel` is validated against that model's ladder and fails the node loudly;
+    // without one the node inherits the workflow origin's reasoning effort (the host drops it if the
+    // node's model has no such level), mirroring the delegate tool.
+    const resolvedThinking = resolveThinkingLevel(node.thinkingLevel, parentModel?.thinkingLevel, model, list);
+    if (resolvedThinking.error) throw new Error(`${resolvedThinking.error} (node "${node.id}")`);
+    const thinkingLevel = resolvedThinking.level;
     // A named sub-agent TYPE, validated against the live catalog exactly as the delegate tool does — the
     // host resolves the name into the node's role prompt, toolset and (for a read-only type) boundary.
     let agentType;
@@ -602,6 +613,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
       // different one, so a node that inherits — the common case — would otherwise report nothing at all,
       // which is exactly when you most want to see what is actually running.
       ns.model = access.model ? `${access.model.provider}/${access.model.model}` : undefined;
+      ns.thinkingLevel = access.thinkingLevel;
       snapshot(wf);
       // A node's child session is keyed by this channel id (channelSessionId derives one from the other), so
       // reusing the id on a resume drops the retry back into the SAME conversation — transcript intact,
@@ -1035,7 +1047,7 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     description: [
       `Run a DAG of sub-agents whose complete definition lives in a JSON file. Before calling this tool, use Write to create that file, then pass its path as nodesFile. Do not pass nodes inline. When your session has unrestricted filesystem access, write it under ${workflowDir} (it already exists) so the run leaves nothing behind in the user's project. A project-scoped session cannot write there and must use a path inside an accessible repository — which is also the right choice for a definition you want to keep and version.`,
       'The file may contain either a JSON array of node objects, or an object shaped as { title?, context?, nodes: [...], background? }. Explicit title, context, or background tool arguments override the corresponding values from the file, so one file can be reused as a template.',
-      'Each node requires a short unique string id and a complete self-contained string task. Optional fields are deps, model, read_only, tools, subagent_type, and workspaceId. WorkflowStart.workspaceId sets the default explicit Sandbox workspace; a node workspaceId may only preserve or narrow its effective parent scope. At least one node must have no deps. Each node is a fresh sub-agent that cannot see this conversation; put everything it needs in task or shared context.',
+      'Each node requires a short unique string id and a complete self-contained string task. Optional fields are deps, model, thinkingLevel, read_only, tools, subagent_type, and workspaceId. thinkingLevel sets that node\'s reasoning effort — omit it (or keep it low) for mechanical nodes, raise it for a node that has to design, debug something unexplained or review security-sensitive work; omitted, the node inherits your own. WorkflowStart.workspaceId sets the default explicit Sandbox workspace; a node workspaceId may only preserve or narrow its effective parent scope. At least one node must have no deps. Each node is a fresh sub-agent that cannot see this conversation; put everything it needs in task or shared context.',
       'Use a workflow instead of several separate delegate calls when the subtasks have an ORDER or dependency between them (gather → analyze → write), or when a later step needs earlier steps\' results. Independent nodes run in parallel, and a dependent receives a short handover from each of its DIRECT dependencies (not their full results, and nothing from further upstream) — so a node whose task needs an earlier finding must be reachable from it through the deps chain. For fully independent tasks, plain parallel delegate calls are simpler.',
       'By default the call BLOCKS and returns every node\'s result. Set background=true (in the file or as an explicit argument) to return a handle immediately and receive the summary in a NEW turn. A node whose dependency failed is reported as skipped.',
       'If the result names failed or skipped nodes and the workflow is still held in memory, use WorkflowResume instead of starting over — it re-runs only unfinished nodes and leaves every completed node unchanged.',
