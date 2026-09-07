@@ -59,6 +59,12 @@ export interface PauseInterruption {
  *  its usage rows survive. */
 export const DISCARDED_MESSAGE = 2;
 
+/** Ceiling on the transcript a fork child may be seeded with. A fork inherits a whole conversation, so
+ *  this is deliberately generous — it exists to stop a corrupted caller writing an unbounded number of
+ *  rows inside one transaction, not to bound normal use. A real conversation reaches compaction long
+ *  before it reaches this. */
+const MAX_FORK_SEEDED_MESSAGES = 10_000;
+
 export interface BrainSessionRow {
   id: string; user_id: number; title: string; model: string; provider: string; work_dir: string; parent_session_id: string | null;
   delegated_access: string | null;
@@ -944,6 +950,51 @@ export class BrainStore {
         insert.run({ id: message.id, session_id: sessionId, role: message.role, content: JSON.stringify(message.content) });
       }
       this.touchSession(sessionId);
+      return messages.length;
+    })();
+  }
+
+  /** Seed a FORK child with the transcript it inherits: its parent's history followed by the fork
+   *  boundary. One transaction, so a crash can never leave a child holding half a conversation.
+   *
+   *  Separate from {@link seedMessages}, which validates for imported PLATFORM transcripts and therefore
+   *  accepts only plain user text and assistant text blocks. A fork boundary is made of the very things
+   *  that check rejects — an assistant message carrying tool calls, and a `toolResult` answering each of
+   *  them — because the child has to resume mid-turn exactly where the parent was. Widening the platform
+   *  check to admit them would also admit them on the import path, which has no business carrying tool
+   *  calls at all.
+   *
+   *  Refuses a session that already has messages: seeding is a spawn-time act, and re-running it over a
+   *  live child would prepend a second copy of the parent's history behind whatever the child has already
+   *  said. Returns how many rows were written, 0 when the child was not empty.
+   *
+   *  Rows are written non-pending: this is settled history the child starts FROM, not the remains of an
+   *  interrupted turn, and `settlePartialTurn` must not try to answer the boundary's tool calls a second
+   *  time. */
+  seedForkTranscript(sessionId: string, messages: readonly { role: string; content: unknown }[]): number {
+    if (!messages.length) return 0;
+    if (messages.length > MAX_FORK_SEEDED_MESSAGES) throw new TypeError('fork transcript too long');
+    for (const message of messages) {
+      if (message.role !== 'user' && message.role !== 'assistant' && message.role !== 'toolResult') {
+        throw new TypeError(`invalid seeded fork message role: ${String(message.role)}`);
+      }
+      if (message.content === undefined) throw new TypeError('invalid seeded fork message content');
+    }
+    return this.db.transaction(() => {
+      const exists = this.db.prepare('SELECT 1 FROM brain_messages WHERE session_id = ? LIMIT 1').get(sessionId);
+      if (exists) return 0;
+      const insert = this.db.prepare(
+        `INSERT INTO brain_messages (id, session_id, parent_id, role, content, usage_epoch)
+         VALUES (@id, @session_id, NULL, @role, @content,
+                 (SELECT COALESCE(r.usage_epoch, 0) FROM brain_sessions s
+                   LEFT JOIN brain_usage_reset_state r ON r.user_id = s.user_id WHERE s.id = @session_id))`,
+      );
+      for (const message of messages) {
+        insert.run({
+          id: randomUUID(), session_id: sessionId, role: message.role,
+          content: JSON.stringify(message.content),
+        });
+      }
       return messages.length;
     })();
   }
