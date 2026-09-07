@@ -280,23 +280,11 @@ html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-with
 .settings-row__trailing .settings-row__status { margin-top: 0; white-space: nowrap; }
 .settings-row__trailing .settings-row__control { min-width: 0; flex: 1 1 10rem; }
 .settings-row__trailing .settings-row__actions { display: flex; flex: 0 1 auto; align-items: center; justify-content: flex-end; gap: 0.5rem; }
-/* A translated risk badge plus a wide control (notably a three-option access-mode segment) can have a
-   combined min-content width larger than the whole plugin card. Right alignment then overflows LEFT,
-   directly across the field label. Only risk rows opt into this shape: the badge gets its own line and
-   the control keeps the full value column, while every ordinary inline settings record stays unchanged.
-   This is the ONE record that stays off the band: two full-width lines is precisely what it needs, and a
-   band is three columns by definition. */
-.settings-row.plugin-config-risk-row .settings-row__trailing { display: flex; grid-template-columns: none; flex-wrap: wrap; }
-.settings-row.plugin-config-risk-row .settings-row__trailing > .settings-row__status,
-.settings-row.plugin-config-risk-row .settings-row__trailing > .settings-row__control,
-.settings-row.plugin-config-risk-row .settings-row__trailing > .settings-row__actions { grid-column: auto; justify-self: auto; }
-.settings-row.plugin-config-risk-row .settings-row__control { flex: 1 1 100%; width: 100%; }
-.settings-row.plugin-config-risk-row .settings-row__status { white-space: normal; }
 /* PROVIDER RECORDS ALIGN ON A SHARED STATUS COLUMN. A provider row is a stacked record whose status
    block was sized by its own content, so a long Azure endpoint pulled its URL left while a short relay
    hugged the actions — every row started its value column at a different x and the card read as loose
-   rows instead of a table. `.brain-provider-row` (set by the provider call site, the same pattern as
-   `.plugin-config-risk-row` above) pins the block to one fixed width that holds the longest expected
+   rows instead of a table. `.brain-provider-row` (set by the provider call site) pins the block to one
+   fixed width that holds the longest expected
    endpoint URL, and the auto end margin absorbs the line's leftover space: the actions stay pinned
    right on every row regardless of how many it carries, so the status column starts at the same x
    everywhere. A longer URL truncates (its full text lives in the endpoint span's `title`) instead of

@@ -80,12 +80,18 @@ async function openRemoval() {
 }
 
 describe('PluginConfigEditor field layout', () => {
-  it('lets a risk badge wrap away from its control instead of overflowing across the label', () => {
+  it('keeps a risk row on one line: the badge beside the label, the control in the value column', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><RiskFixture /></Wrapper>);
 
-    expect(screen.getByText('high').closest('.settings-row')).toHaveAttribute('data-trailing', 'stack');
-    expect(screen.getByText('high').closest('.settings-row')).toHaveClass('plugin-config-risk-row');
+    // An ordinary inline record (owner, 7 Sep 2026): the stacked shape gave every risk row twice the
+    // height of its neighbours. The badge is the record's short status, so it reads on the label's line.
+    const riskRow = screen.getByText('high').closest<HTMLElement>('.settings-row')!;
+    expect(riskRow).toHaveAttribute('data-trailing', 'inline');
+    expect(riskRow.querySelector('.settings-row__title')!.contains(screen.getByText('high'))).toBe(true);
+    expect(riskRow.querySelector('.settings-row__trailing .settings-row__status')).toBeNull();
+    // A risk enum stays a compact select rather than a segmented track, which is what lets the row keep
+    // the one line at all.
     expect(screen.getByRole('combobox', { name: 'Access mode' })).toBeInTheDocument();
     expect(screen.queryByRole('radiogroup', { name: 'Access mode' })).toBeNull();
     expect(screen.getByText('Enabled').closest('.settings-row')).toHaveAttribute('data-trailing', 'inline');

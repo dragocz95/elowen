@@ -169,9 +169,9 @@ describe('settings row layout contract', () => {
     expect(block(studioNarrow, '.settings-row[data-trailing] .settings-row__trailing {')).toMatch(/display:\s*flex/);
     expect(studioNarrow).toMatch(/grid-column:\s*auto;\s*justify-self:\s*auto/);
 
-    // The one record that never joins the band: a risk field needs two full-width lines, and a band is
-    // three columns by definition.
-    expect(block(core, '.settings-row.plugin-config-risk-row .settings-row__trailing {')).toMatch(/display:\s*flex/);
+    // No record opts out of the band any more: a plugin's risk field used to take two full-width lines
+    // of its own, and that shape is gone with the rule that drew it (owner, 7 Sep 2026).
+    expect(core).not.toContain('plugin-config-risk-row');
   });
 
   it('folds every record to the two-line band in a narrow container', () => {

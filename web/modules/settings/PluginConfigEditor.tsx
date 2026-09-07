@@ -877,6 +877,10 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
     // The manifest's long-form `help` only earns the second HelpTip paragraph when it says something the
     // one-line hint does not.
     const help = f.help?.trim() && f.help.trim() !== description?.trim() ? f.help : undefined;
+    // The badge is the record's SHORT status, so it reads on the label's line like every other pill in a
+    // settings card. It used to push the row onto the stacked layout with the control on a line of its
+    // own, which doubled the height of every risk row (owner, 7 Sep 2026); that shape was for a risk enum
+    // drawn as a segmented track, and a risk enum has been a compact select since.
     const risk = f.risk ? <Badge tone={RISK_TONE[f.risk]}>{riskText(f.risk)}</Badge> : null;
     // The allowed range, shown only while the typed value would be refused: the daemon answers 400 to
     // it, and a footer that just says the save failed sent people looking for a broken connection.
@@ -898,10 +902,6 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
               {invalid ? <span className="text-destructive" role="alert">{t.pluginCfg.invalidJson}</span> : null}
             </span>
           ) : undefined}
-          // A risk badge plus a control are two trailing values. Let them wrap instead of letting their
-          // combined min-content width overflow left across the label in narrow plugin cards.
-          trailingLayout={risk ? 'stack' : undefined}
-          className={risk ? 'plugin-config-risk-row' : undefined}
           summary={editorSummary(f)}
           saveState={draft}
           fillsModal={f.type === 'code' || f.type === 'prompt'}
@@ -922,8 +922,6 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
             description={description}
             hint={[help, t.pluginCfg.secretKeepHint].filter(Boolean).join(' ')}
             status={<span className="flex flex-wrap items-center gap-2">{risk}<Badge tone="success">{t.pluginCfg.secretSet}</Badge></span>}
-            trailingLayout="stack"
-            className={risk ? 'plugin-config-risk-row' : undefined}
             actions={
               <Button type="button" variant="ghost" className="h-8" onClick={() => {
                 setSecretErrors((current) => { const next = { ...current }; delete next[f.key]; return next; });
@@ -948,8 +946,6 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
           description={description}
           hint={help}
           status={<span className="flex flex-wrap items-center gap-2">{risk}{error ? <span role="alert" className="text-destructive">{error}</span> : null}</span>}
-          trailingLayout="stack"
-          className={risk ? 'plugin-config-risk-row' : undefined}
           // The credential is the control and the commit is an action. They used to share one box in the
           // control slot, which put a button in the column the band reserves for values and left the
           // record's actions column empty beside it.
@@ -980,8 +976,6 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
         description={description}
         hint={help}
         status={risk || range ? <span className="flex flex-wrap items-center gap-2">{risk}{range}</span> : undefined}
-        trailingLayout={risk ? 'stack' : undefined}
-        className={risk ? 'plugin-config-risk-row' : undefined}
         control={renderField(f)}
       />
     );
