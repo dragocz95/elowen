@@ -130,8 +130,11 @@ const DEFAULT_DIRECTION: Record<SortKey, SortDirection> = { state: 'asc', model:
  *  the reader, so what the conversation last did is the only one of the two that carries information.
  *  The state leads, because it is a glyph and the eye reads the row from it. */
 const COLUMNS = '2.25rem minmax(0,1.2fr) minmax(0,2.4fr) 5.5rem 10rem 2.25rem';
+/** Below the full layout only the state, the title and the row actions survive, on a phone as on a
+ *  tablet. The model was shown on phones and took 1.6fr of a 390px screen, which left the conversation
+ *  name clipped to four characters — on the surface whose entire job is picking a conversation by name.
+ *  Nothing scrolls sideways here: what does not fit is dropped, never pushed off the edge. */
 const COMPACT_COLUMNS = '2.25rem minmax(0,1fr) 2.25rem';
-const MOBILE_COLUMNS = '2.25rem minmax(0,1.6fr) minmax(0,1fr) 2.25rem';
 
 /** One shared empty set for "nothing is expanded", so an unfiltered render keeps the same identities. */
 const EMPTY_IDS: ReadonlySet<string> = new Set<string>();
@@ -406,7 +409,7 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
   const renameRow = (row: ConversationRow): ReactNode => (
     <DataTableRow key={row.id} data-tree-row="root">
       <DataTableCell lines={1}>{null}</DataTableCell>
-      <DataTableCell priority="mobile" lines={1}>{null}</DataTableCell>
+      <DataTableCell priority="wide" lines={1}>{null}</DataTableCell>
       <DataTableCell lines="auto">
         <span className="flex min-w-0 items-center gap-2">
           <Input
@@ -442,20 +445,31 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
     const open = jobBranchOpen(row.id);
     return (
       // `data-tree-row` is what the page measurement reads: only a conversation is a page unit.
-      <DataTableRow key={row.id} data-tree-row="root" interactive className="group">
+      <DataTableRow
+        key={row.id}
+        data-tree-row="root"
+        className="group"
+        aria-current={session?.active ? 'page' : undefined}
+        onOpen={() => openSession({ session: row.id })}
+        openLabel={`${t.sessionsPanel.openInChat}: ${title}`}
+      >
         <DataTableCell lines={1}>
           <ActivityCell activity={session?.activity} labels={activityLabels} unread={unread} />
         </DataTableCell>
-        <DataTableCell priority="mobile" lines={1}>
+        <DataTableCell priority="wide" lines={1}>
           <span className="flex min-w-0 items-center gap-1.5" title={brainModelQualifiedLabel({ provider: session?.provider ?? '', model: row.model })}>
             <ModelIcon name={row.model} size={14} />
             <span className="truncate font-mono text-xs text-muted-foreground">{brainModelLabel({ model: row.model })}</span>
           </span>
         </DataTableCell>
-        <DataTableCell lines="auto">
+        {/* The row itself opens the conversation, so the title is TEXT. The cell still paints above the
+            row-wide button (any cell holding a control does), which would have swallowed a tap on the
+            name — it therefore passes its pointer events down and only the schedules toggle takes its
+            own back. */}
+        <DataTableCell lines="auto" className="pointer-events-none">
           <span className="flex min-w-0 items-center gap-1">
-            {/* Opening the schedules and opening the conversation are two different acts, so this is a
-                button of its own beside the title button, never inside it. */}
+            {/* Opening the schedules and opening the conversation are two different acts, so the branch
+                keeps a control of its own beside the name. */}
             {node.jobs.length > 0 ? (
               <button
                 type="button"
@@ -464,19 +478,13 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
                 aria-controls={open ? node.jobs.map((link) => jobRowDomId(row.id, link.jobId)).join(' ') : undefined}
                 aria-label={t.scheduledJobs.toggle.replace('{title}', title)}
                 title={t.scheduledJobs.branch}
-                className="flex shrink-0 items-center gap-0.5 rounded-md px-0.5 py-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+                className="pointer-events-auto flex shrink-0 items-center gap-0.5 rounded-md px-0.5 py-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
               >
                 <ChevronRight size={12} aria-hidden className={`transition-transform motion-reduce:transition-none ${open ? 'rotate-90' : ''}`} />
                 <span className="font-mono text-tiny tabular-nums">{node.jobs.length}</span>
               </button>
             ) : <span aria-hidden className="w-5 shrink-0" />}
-            <button
-              type="button"
-              onClick={() => openSession({ session: row.id })}
-              aria-current={session?.active ? 'page' : undefined}
-              aria-label={`${t.sessionsPanel.openInChat}: ${title}`}
-              className="flex w-full min-w-0 flex-col rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
-            >
+            <span className="flex min-w-0 flex-1 flex-col text-left">
               <span className="flex min-w-0 items-center gap-1.5">
                 <span className={`truncate text-sm text-foreground transition-colors group-hover:text-primary ${unread ? 'font-semibold' : 'font-normal'}`}>{title}</span>
                 {row.running ? <Circle size={7} className="shrink-0 fill-success text-success" aria-label={t.sessionsPanel.running} /> : null}
@@ -486,7 +494,7 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
               {snippet ? (
                 <span className="min-w-0 truncate text-tiny text-muted-foreground"><Highlight text={snippet} query={q} /></span>
               ) : null}
-            </button>
+            </span>
           </span>
         </DataTableCell>
         <DataTableCell priority="wide" lines={1} className="text-right font-mono text-tiny text-muted-foreground">
@@ -615,7 +623,6 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
               ariaLabel={t.chat.historyTitle}
               columns={COLUMNS}
               compactColumns={COMPACT_COLUMNS}
-              mobileColumns={MOBILE_COLUMNS}
               data-testid="conversation-history-list"
             >
               <DataTableRow header>
@@ -623,7 +630,7 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
                 <DataTableSortCell active={sort === 'state'} direction={direction} onSort={() => sortBy('state')}>
                   <span className="sr-only">{t.sessionsPanel.colState}</span>
                 </DataTableSortCell>
-                <DataTableSortCell priority="mobile" active={sort === 'model'} direction={direction} onSort={() => sortBy('model')}>{t.sessionsPanel.colModel}</DataTableSortCell>
+                <DataTableSortCell priority="wide" active={sort === 'model'} direction={direction} onSort={() => sortBy('model')}>{t.sessionsPanel.colModel}</DataTableSortCell>
                 <DataTableSortCell active={sort === 'title'} direction={direction} onSort={() => sortBy('title')}>{t.sessionsPanel.colTitle}</DataTableSortCell>
                 <DataTableSortCell priority="wide" align="end" active={sort === 'tokens'} direction={direction} onSort={() => sortBy('tokens')}>{t.sessionsPanel.colTokens}</DataTableSortCell>
                 <DataTableSortCell priority="wide" active={sort === 'updated'} direction={direction} onSort={() => sortBy('updated')}>{t.sessionsPanel.colUpdated}</DataTableSortCell>

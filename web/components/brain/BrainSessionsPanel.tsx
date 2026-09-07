@@ -77,9 +77,11 @@ function rowComparator(sort: SortKey, direction: SortDirection): (a: Conversatio
 }
 
 // Model first, then the conversation, its owner, the tokens it burned and when it last moved.
+// Below the full layout only the conversation and its row actions survive, on a phone as on a tablet:
+// the model used to take 1.6fr of a 390px screen and left the name clipped to a few characters, on the
+// surface whose whole job is picking a conversation by name. Nothing scrolls sideways.
 const COLUMNS = 'minmax(0,1.2fr) minmax(0,2.4fr) minmax(0,1.2fr) 5.5rem 10rem 2.25rem';
 const COMPACT_COLUMNS = 'minmax(0,1fr) 2.25rem';
-const MOBILE_COLUMNS = 'minmax(0,1.6fr) minmax(0,1fr) 2.25rem';
 
 /** The administrator's conversation register: every account's conversations, with delegated sessions
  *  nested under the conversation that started them. It is one of the two views of the conversation
@@ -249,7 +251,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
         // What the bare number beside the chevron counts. The accessible name already says it; this is
         // for the pointer, which otherwise reads a digit with nothing attached to it.
         title={delegated ? t.sessionsPanel.subAgents : undefined}
-        className="flex shrink-0 items-center gap-0.5 rounded-md px-0.5 py-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+        className="pointer-events-auto flex shrink-0 items-center gap-0.5 rounded-md px-0.5 py-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
       >
         <ChevronRight size={12} aria-hidden className={`transition-transform motion-reduce:transition-none ${open ? 'rotate-90' : ''}`} />
         {node.descendantCount > 0 ? (
@@ -283,34 +285,31 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
         key={s.id}
         id={rowDomId(s.id)}
         data-tree-row={node.depth === 0 ? 'root' : 'descendant'}
-        interactive
         className="group"
         onContextMenu={(event) => openRowContextMenu(event, s)}
+        onOpen={() => { openBrainSession(s.id, continuable); afterOpen?.(); }}
+        openLabel={`${label}: ${title}`}
       >
-        <DataTableCell priority="mobile" lines={1}>
+        <DataTableCell priority="wide" lines={1}>
           <span className="flex min-w-0 items-center gap-1.5" title={s.model}>
             <ModelIcon name={s.model} size={14} />
             <span className="truncate text-xs text-muted-foreground">{s.model}</span>
           </span>
         </DataTableCell>
-        {/* The title IS the row's control here, so the cell keeps its focus ring and its own
-            layout instead of being clipped; the label inside truncates on its own. */}
-        <DataTableCell lines="auto" style={indentOf(node.depth)}>
+        {/* The row itself opens the conversation, so the title is TEXT. The cell still paints above the
+            row-wide button (any cell holding a control does), which would have swallowed a click on the
+            name — it therefore passes its pointer events down and only the branch toggle takes its own
+            back. */}
+        <DataTableCell lines="auto" className="pointer-events-none" style={indentOf(node.depth)}>
           <span className="flex min-w-0 items-center gap-1">
             {branchToggle(node)}
-            <button
-              type="button"
-              onClick={() => { openBrainSession(s.id, continuable); afterOpen?.(); }}
-              title={label}
-              aria-label={`${label}: ${title}`}
-              className="flex w-full min-w-0 items-center gap-1.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
-            >
+            <span className="flex min-w-0 flex-1 items-center gap-1.5">
               <span className="truncate text-sm text-foreground transition-colors group-hover:text-primary">{title}</span>
               {/* WHERE the conversation happened. A web chat carries no mark — it is the norm
                   here and labelling every row would be noise. */}
               {s.platform ? <PlatformIcon platform={s.platform} /> : null}
               {s.running ? <Circle size={7} className="shrink-0 fill-success text-success" aria-label={t.sessionsPanel.running} /> : null}
-            </button>
+            </span>
           </span>
         </DataTableCell>
         <DataTableCell priority="wide" lines={1}>
@@ -472,9 +471,9 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
         : q.isError ? <p className="py-8 text-xs italic text-muted-foreground">{t.common.daemonUnreachable}</p>
         : visible.length === 0 ? <p className="py-8 text-xs italic text-muted-foreground">{sessions.length === 0 ? t.sessionsPanel.empty : t.sessionsPanel.noMatches}</p>
         : (
-          <DataTable ariaLabel={t.sessionsPanel.tab} columns={COLUMNS} compactColumns={COMPACT_COLUMNS} mobileColumns={MOBILE_COLUMNS} data-testid="brain-sessions-list">
+          <DataTable ariaLabel={t.sessionsPanel.tab} columns={COLUMNS} compactColumns={COMPACT_COLUMNS} data-testid="brain-sessions-list">
             <DataTableRow header>
-              <DataTableSortCell priority="mobile" active={sort === 'model'} direction={direction} onSort={() => sortBy('model')}>{t.sessionsPanel.colModel}</DataTableSortCell>
+              <DataTableSortCell priority="wide" active={sort === 'model'} direction={direction} onSort={() => sortBy('model')}>{t.sessionsPanel.colModel}</DataTableSortCell>
               <DataTableSortCell active={sort === 'title'} direction={direction} onSort={() => sortBy('title')}>{t.sessionsPanel.colTitle}</DataTableSortCell>
               <DataTableSortCell priority="wide" active={sort === 'owner'} direction={direction} onSort={() => sortBy('owner')}>{t.sessionsPanel.owner}</DataTableSortCell>
               <DataTableSortCell priority="wide" align="end" active={sort === 'tokens'} direction={direction} onSort={() => sortBy('tokens')}>{t.sessionsPanel.colTokens}</DataTableSortCell>

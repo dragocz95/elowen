@@ -90,8 +90,15 @@ describe('ConversationHistoryPanel', () => {
     expect(table).toHaveAttribute('role', 'table');
     const header = within(table).getAllByRole('row')[0]!;
     const names = within(header).getAllByRole('columnheader').map((cell) => cell.textContent);
-    expect(names).toEqual(['State', 'Model', 'Conversation', 'Tokens', 'Updated', 'Actions']);
+    // The trailing name belongs to the row-wide open control, which is the whole row's single tab stop.
+    expect(names).toEqual(['State', 'Model', 'Conversation', 'Tokens', 'Updated', 'Actions', 'Open']);
     expect(within(rowOf('First')).getByText('1.2k')).toBeInTheDocument();
+    // A phone keeps the state and the name and nothing else: the model, the tokens and the timestamp are
+    // all wide-only, so the title is never squeezed into a few characters on a 390px screen.
+    for (const column of ['Model', 'Tokens', 'Updated']) {
+      expect(within(header).getByRole('columnheader', { name: new RegExp(`^${column}`) })).toHaveAttribute('data-priority', 'wide');
+    }
+    expect(within(header).getByRole('columnheader', { name: /^Conversation/ })).toHaveAttribute('data-priority', 'always');
   });
 
   it('lists conversations with the bare structured model name', () => {
@@ -157,11 +164,15 @@ describe('ConversationHistoryPanel', () => {
   // Opening a conversation has to bring the CHAT on screen, not merely rebind the controller. Raised from
   // the dock over a plugin page — or on a phone, which has no dock at all — a bare switch left the reader
   // looking at the settings page they opened the switcher over, with the conversation loaded behind it.
+  // The WHOLE row opens the conversation, not a button around the title: on a phone a name-sized target
+  // in a 40px row is the difference between switching conversations and missing.
   it('opens a picked conversation through the shared open-in-chat request', () => {
     const opened = vi.fn();
     window.addEventListener(BRAIN_OPEN_EVENT, opened);
     renderPanel();
-    fireEvent.click(screen.getByText('Second'));
+    const open = within(rowOf('Second')).getByRole('button', { name: 'Open in web chat: Second' });
+    expect(open).toHaveClass('data-table-row-open');
+    fireEvent.click(open);
     expect(opened).toHaveBeenCalled();
     expect((opened.mock.calls[0]![0] as CustomEvent<BrainOpenRequest>).detail)
       .toEqual({ sessionId: 's2', continuable: true });
@@ -309,8 +320,8 @@ describe('ConversationHistoryPanel', () => {
     fireEvent.change(screen.getByRole('searchbox', { name: /Search conversations|Hledat v konverzacích/i }), { target: { value: 'he' } });
     const result = await screen.findByText('First');
     expect(result).toHaveClass('font-semibold');
-    expect(result.closest('button')).toHaveAttribute('aria-current', 'page');
     const row = result.closest('[role="row"]')!;
+    expect(row).toHaveAttribute('aria-current', 'page');
     expect(row.querySelector('[data-unread]')).toHaveAttribute('aria-hidden', 'true');
     expect(row.querySelector('[data-activity-state]')).toHaveAttribute('data-activity-state', 'done');
   });
@@ -375,7 +386,7 @@ describe('ConversationHistoryPanel', () => {
     ctrl.value.sessions.data[0]!.activity = { state: 'failed', seq: 6, at: null, detail: 'The provider rejected the request.', unread: false };
     renderPanel();
     const row = rowOf('First');
-    const rowButton = screen.getByText('First').closest('button')!;
+    const rowButton = within(row).getByRole('button', { name: 'Open in web chat: First' });
     expect(rowButton.querySelector('[data-slot="tooltip-content"]')).toBeNull();
     expect(rowButton.querySelector('[data-slot="tooltip-anchor"]')).toBeNull();
 
@@ -425,8 +436,7 @@ describe('ConversationHistoryPanel', () => {
 
   it('keeps active selection, action keyboard access and touch-visible actions', async () => {
     renderPanel();
-    const first = screen.getByText('First').closest('button')!;
-    expect(first).toHaveAttribute('aria-current', 'page');
+    expect(rowOf('First')).toHaveAttribute('aria-current', 'page');
     const trigger = screen.getAllByRole('button', { name: /More actions|Další akce/i })[0]!;
     expect(trigger).toHaveClass('pointer-coarse:opacity-100');
     trigger.focus();
@@ -506,8 +516,12 @@ describe('ConversationHistoryPanel — scheduled job branches', () => {
     renderPanel();
     fireEvent.click(await branch());
     expect(ctrl.switchSession).not.toHaveBeenCalled();
-    // The trigger is a sibling of the row button, never nested inside it.
-    expect(screen.getByText('First').closest('button')!.querySelector('[aria-expanded]')).toBeNull();
+    // The trigger is a sibling of the row-wide open control, never nested inside it, and it keeps its own
+    // pointer events while the title cell hands its clicks down to the row.
+    const row = rowOf('First');
+    expect(within(row).getByRole('button', { name: 'Open in web chat: First' }).querySelector('[aria-expanded]')).toBeNull();
+    expect(within(row).getByRole('button', { name: /Scheduled jobs of First/ })).toHaveClass('pointer-events-auto');
+    expect(screen.getByText('First').closest('[role="cell"]')).toHaveClass('pointer-events-none');
   });
 
   // Opening a schedule leaves the app on another surface, so the switcher covering it has to go — the

@@ -132,7 +132,8 @@ describe('ChatView (/chat page)', () => {
     await screen.findByPlaceholderText(/Write a message|Napište zprávu/i);
     const modal = await openSwitcher();
 
-    fireEvent.click(within(modal).getByText('Second chat'));
+    // The row itself is the control now, so the click lands on the row-wide open button.
+    fireEvent.click(within(modal).getByRole('button', { name: /Open in web chat: Second chat/i }));
     await waitFor(() => expect(screen.queryByRole('dialog', { name: /^(Conversations|Konverzace|Konverzácie)$/i })).toBeNull());
     expect(modal).not.toBeInTheDocument();
   });
