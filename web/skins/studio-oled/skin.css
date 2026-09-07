@@ -1,68 +1,31 @@
-/* "studio-oled" — the dark variant of the Studio design.
- *
- * Same design as studio-light, same structure (../studio/shared.css), inverted ink. The token block MUST
- * stay in this file: tests/lib/designTokens.test.ts reads `skins/<id>/skin.css` and nothing else, so a
- * token moved into the shared stylesheet would leave the WCAG gate measuring the built-in palette.
- *
- * The palette is openrouter.ai's dark theme, measured off the live product (workspaces, the model
- * catalog, a model page, the playground and the docs shell) rather than eyeballed — surfaces, hairlines,
- * ink ramp and status colours are theirs 1:1. The ONE substitution is the accent: their volt green
- * (#c8ff00) is a brand mark and ours is the mascot's ember, so every accent fill, focus ring, active
- * state and link resolves through --primary-rgb instead.
- *
- * Measured on --color-sticky, which derives to #121719 and is the lightest ground the ink ramp is
- * painted on: text 17.63:1, muted 7.14:1, subtle 4.81:1.
- *
- * There is no --color-scrim here: the inherited token mixes --color-background, and on this canvas that
- * IS the darkest colour the design owns, so the veil already darkens. studio-light has to override it. */
+/* "studio-oled" shares Studio's structure with studio-light. Keep its palette here so the
+ * design-token contrast tests measure the same colours the skin renders. */
 
 :root[data-skin='studio-oled'] {
-  /* Near-black tinted a few degrees toward cyan rather than neutral grey — that tint is what keeps a dark
-     UI from reading as switched-off glass. Card, popover and raised surfaces share ONE fill a single step
-     above the canvas: OpenRouter carries structure with hairlines rather than a ladder of greys, and
-     copying the greys without that discipline is how a dark theme ends up looking washed out. */
-  --color-background: #03080a;
+  color-scheme: dark;
+
+  /* Black canvas and cards; neutral raised surfaces and hairlines carry the hierarchy. */
+  --color-background: #000;
   --color-document: #03080a;
-  --color-card: #080d0f;
-  --color-muted: #080d0f;
-  --color-popover: #080d0f;
-  /* Their hairline is the off-white ink at 8% alpha; --color-border must stay OPAQUE because the frozen
-     chat surface reads it, so it ships as that same mix already resolved over the canvas. */
-  --color-border: #171c1e;
-  --color-border-strong: #3d3d42;
+  --color-card: #000;
+  --color-muted: #111;
+  --color-popover: #090909;
+  --color-border: #242424;
+  --color-border-strong: #383838;
 
-  /* The navigation column IS the canvas, as theirs is: the content's cards step UP from it, so a column
-     that stays at page level is the recessive surface. What separates it from the page is one hairline
-     down its right edge, continuing the top bar's line around the corner (--color-sidebar-rule in
-     tokens.css aliases --color-sidebar-border, so both halves of that frame are one value; owner
-     decision, 6 Sep 2026, overriding the transparent outer edge of 5 Sep).
-     The row fill is the reference's dark active step (neutral-850, oklch(0.23 0 0)) rather than the card
-     fill it borrowed before: an active row has to separate from a card sitting beside it, and #080d0f
-     WAS the card fill. It keeps this design's cyan tint instead of the reference's flat neutral, so the
-     column still reads as this dark mode and not as a grey panel dropped into it. Written as hex because
-     tests/lib/designTokens.test.ts must evaluate the token to check contrast.
-     Held at oklch L 0.221 rather than the reference's exact 0.23: at 0.23 the third text step measured
-     4.44:1 on the fill and missed AA, and the text ramp is the skin's identity — the fill is what moves.
-     Measured on the fill: text 16.81:1, muted 6.81:1, subtle 4.59:1.
-     The two INK tokens are the light variant's decisions inverted, and both are flat neutrals: the row
-     ink is the reference's own oklch(0.985 0 0) (19.29:1 on the column, 16.51:1 on the fill), and
-     --color-sidebar-foreground is the column's quiet ink for the group labels, a neutral grey at 6.23:1
-     rather than the tinted --color-subtle-foreground.
-     --color-sidebar-border is the column's ONE hairline — header, group seams, footer, and through
-     --color-sidebar-rule the frame down its right edge — and it is the reference's neutral rather than
-     this palette's tinted --color-border-strong. */
-  --color-sidebar: #03080a;
-  --color-sidebar-accent: #161c1e;
-  --color-sidebar-accent-foreground: #fafafa;
-  --color-sidebar-foreground: #8f8f8f;
-  --color-sidebar-border: #262626;
+  --color-sidebar: #000;
+  --color-sidebar-accent: #141414;
+  --color-sidebar-accent-foreground: #fff;
+  --color-sidebar-foreground: #c4c4c4;
+  --color-sidebar-border: #242424;
+  --color-sidebar-rule: #242424;
 
-  /* Off-white ink, with the muted step being that same white at 62.7% alpha, shipped already resolved
-     over the card fill. The subtle step is the ONE measurement not copied: theirs (43.9%, #737678) lands
-     at 3.95:1 on the sticky ground and fails AA, so it is lifted to the nearest value that passes. */
-  --color-foreground: #fcfcfe;
-  --color-muted-foreground: #a1a3a5;
+  --color-foreground: #fafafa;
+  --color-card-foreground: #fafafa;
+  --color-popover-foreground: #fafafa;
+  --color-muted-foreground: #c4c4c4;
   --color-subtle-foreground: #828486;
+  --studio-placeholder: #aaa;
 
   /* The substitution: ember where OpenRouter is volt. Same role in the design — fills, focus rings,
      active tabs, links — and the same near-black ink laid on top of it (6.24:1 on the fill). */
@@ -113,11 +76,7 @@
   --radius-2xl: 16px;
   --studio-radius-pill: 999px;
 
-  /* ---- Alpha-ink structure -------------------------------------------------------------------
-     The same system as studio-light, inverted: the ink here is off-white, so a hairline is that ink at a
-     low alpha rather than black at one. Both percentages are OpenRouter's own — 8% for a hairline, 30%
-     for the focus border — and 8% of #fcfcfe over the canvas resolves to the #171c1e that --color-border
-     ships opaque, because the frozen chat surface reads that token and cannot take a mix. */
+  /* Alpha-ink structure preserves Studio's hover, active and focus hierarchy. */
   --studio-line: color-mix(in srgb, var(--color-foreground) 8%, transparent);
   --studio-line-strong: color-mix(in srgb, var(--color-foreground) 30%, transparent);
   --studio-fill-quiet: color-mix(in srgb, var(--color-foreground) 6%, transparent);
@@ -138,24 +97,16 @@
   --glow-soft: none;
   --hairline: 1px solid rgb(252 252 254 / 0.08);
 
-  /* ---- Depth on a true-black canvas ------------------------------------------------------------
-     A black shadow is invisible here, so lift is carried by a brightened EDGE plus a wide, very dark
-     drop that only reads against the card's own fill. The glow is the one place this variant is allowed
-     to be loud: on near-black an ember halo is the only depth cue that survives, which is why the
-     design's signature here is a glow and not a shadow.
-     The mesh runs hotter than the inherited default for the same reason — 16% of ember reads over the
-     built-in #070707 and is nearly nothing over this #03080a. */
+  /* Raised edges and accent glows retain their existing interaction cues on the black canvas. */
   --shadow-lift: 0 0 0 1px rgb(252 252 254 / 0.09), 0 24px 64px rgb(0 0 0 / 0.72);
   /* On this canvas the drop under a button is invisible, so the ring carries the whole statement and is
      given full strength rather than the inherited 90%. */
   --shadow-primary: 0 0 0 1px rgb(var(--primary-rgb) / 1);
   --glow-accent: 0 0 0 1px rgb(var(--primary-rgb) / 0.42), 0 0 32px rgb(var(--primary-rgb) / 0.24);
-  --glass-surface: color-mix(in srgb, var(--color-card) 55%, transparent);
+  --glass-surface: #000;
   --glass-border: color-mix(in srgb, var(--color-foreground) 12%, transparent);
   --glass-blur: 22px;
-  --mesh-accent:
-    radial-gradient(58% 74% at 14% -10%, rgb(var(--primary-rgb) / 0.22), transparent 66%),
-    radial-gradient(48% 64% at 88% 2%, rgb(var(--primary-rgb) / 0.13), transparent 68%);
+  --mesh-accent: none;
 
   --motion-fast: 75ms;
   --motion-base: 150ms;
@@ -163,4 +114,10 @@
   --ease-out: cubic-bezier(0.4, 0, 0.2, 1);
   --studio-ask-panel-motion: 300ms;
   --studio-ask-panel-ease: cubic-bezier(0, 0, 0.2, 1);
+}
+
+/* Placeholder ink has no shared token seam; keep this palette-specific rule out of Light. */
+:root[data-skin='studio-oled'] :is(input, textarea)::placeholder {
+  color: var(--studio-placeholder);
+  opacity: 1;
 }
