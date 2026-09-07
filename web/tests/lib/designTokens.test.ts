@@ -55,7 +55,6 @@ describe('approved OLED palette', () => {
       '--color-border': '#242424',
       '--color-border-strong': '#383838',
       '--color-sidebar-border': '#242424',
-      '--color-sidebar-rule': '#242424',
       '--color-sidebar-accent': '#141414',
       '--color-sidebar-foreground': '#c4c4c4',
       '--color-sidebar-accent-foreground': '#fff',
@@ -71,6 +70,19 @@ describe('approved OLED palette', () => {
       '--studio-placeholder': '#aaa',
     });
     expect(stripComments(skinCss('studio-oled'))).toMatch(/color-scheme:\s*dark;/);
+  });
+
+  // The navigation column's outer rule is a token of the VOCABULARY, aliased to `--color-sidebar-border`
+  // in tokens.css so the vertical hairline and the top bar's horizontal one stay one frame turning a
+  // corner (owner decision, 6 Sep 2026). A design chooses that shade by moving the border token; restating
+  // the rule in a skin — even at the identical #242424 — is the regression to catch, because the next
+  // palette edit moves one of the two and not the other.
+  it('inherits the outer navigation rule from the border token instead of declaring one', () => {
+    const tokens = declarations(skinCss('studio-oled'));
+    expect(tokens['--color-sidebar-rule'], 'the rule is declared in tokens.css alone').toBeUndefined();
+    expect(baseTokens['--color-sidebar-rule']).toBe('var(--color-sidebar-border)');
+    // …so the rendered hairline is still the black canvas's neutral edge, unchanged by removing the line.
+    expect(tokens['--color-sidebar-border']).toBe('#242424');
   });
 
   it('keeps settings groups, provider tables and sticky headers on neutral surfaces', () => {
