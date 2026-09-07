@@ -4,6 +4,7 @@ import {
   type NoninteractivePermissionBoundary,
 } from './toolPermissions.js';
 import { buildReadOnlyBoundary } from './agents/readOnlyBoundary.js';
+import { FORK_EXECUTE_DENIES } from './session/forkPrefix.js';
 import type { SandboxWorkspaceRef } from '../plugins/workspaceTypes.js';
 
 /**
@@ -53,6 +54,14 @@ export interface DelegatedExecutionScope {
    * every one of them respawned the child on the model default (and `channels.thinkingChanged` disposed
    * the live session to do so). Absent = run on the model's default effort. */
   thinkingLevel?: string;
+  /** This child is a FORK of its parent: it was spawned to reuse the parent's warm prompt cache, so it
+   *  carries the parent's system prompt, tool schemas and history byte for byte.
+   *
+   *  Durable because every rebuild path has to know. A fork child advertises tools an ordinary delegated
+   *  child never may (see FORK_EXECUTE_DENIES) — that is a SCHEMA fact, not an authority one, and the
+   *  matching execute-time refusals hang off this same flag. A respawn that dropped it would keep the
+   *  wide tool block and lose the refusals, which is the one direction this must never fail. */
+  fork?: boolean;
 }
 
 const MAX_PROJECT_IDS = 10_000;
@@ -180,6 +189,11 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     thinkingLevel = value.thinkingLevel.trim();
     if (!thinkingLevel || thinkingLevel.length > MAX_THINKING_LEVEL_CHARS) return undefined;
   }
+  let fork: boolean | undefined;
+  if (own(value, 'fork')) {
+    if (typeof value.fork !== 'boolean') return undefined;
+    fork = value.fork;
+  }
   let workspaceRef: SandboxWorkspaceRef | undefined;
   if (own(value, 'workspaceRef')) {
     const rawWorkspace = value.workspaceRef;
@@ -206,6 +220,7 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     ...(contributionUserId !== undefined ? { contributionUserId } : {}),
     ...(workspaceRef ? { workspaceRef } : {}),
     ...(thinkingLevel ? { thinkingLevel } : {}),
+    ...(fork ? { fork: true } : {}),
   };
 }
 
@@ -382,6 +397,10 @@ export function promoteDelegatedScope(
     // Effort is not authority: a promoted child is the SAME conversation continuing with write access, so
     // it keeps thinking exactly as hard as it did while it was read-only.
     ...(scope.thinkingLevel ? { thinkingLevel: scope.thinkingLevel } : {}),
+    // Carried, unlike everything else here, precisely BECAUSE promotion mints from live access: a fork
+    // child's wide tool block is already on the wire, and the flag is what refuses those names at execute
+    // time. Dropping it would leave the schemas advertised with nothing enforcing them.
+    ...(scope.fork ? { fork: true } : {}),
   });
   if (!promoted) return { error: 'the resulting access could not be validated' };
   return { scope: promoted };
@@ -518,13 +537,24 @@ export function packDelegatedPromptAppend(sections: readonly string[]): PackedDe
 /** Tools that require a live user must never reach an unattended delegated turn. */
 const DELEGATED_INTERACTIVE_TOOL_DENIES = ['AskUserQuestion'] as const;
 
-/** Rehydrate the execution-time plugin-tool policy. An empty allow-list is preserved as a real empty Set. */
-export function delegatedToolPolicy(
+/** The policy that decides what a delegated child ADVERTISES, as opposed to what it may run.
+ *
+ *  For an ordinary child the two are the same object, and this returns exactly {@link delegatedToolPolicy}.
+ *  A FORK child is the one case where they part: its visible set must equal the parent's byte for byte, so
+ *  the interactive and fork denies are withheld here and enforced at execute time instead. */
+export function delegatedVisibilityToolPolicy(
   scope: DelegatedExecutionScope,
   currentDenied: Iterable<string> = [],
   currentAllow?: Iterable<string>,
 ): ToolPolicy | undefined {
-  const narrowed = withDelegatedDeniedTools(scope, [...currentDenied, ...DELEGATED_INTERACTIVE_TOOL_DENIES]);
+  if (!scope.fork) return delegatedToolPolicy(scope, currentDenied, currentAllow);
+  return toolPolicyFrom(withDelegatedDeniedTools(scope, currentDenied), currentAllow);
+}
+
+/** Intersect a scope's captured allow-list with the spawning account's current grant, and carry its denies.
+ *  Shared by the visibility and execution policies so the two can never disagree about anything except the
+ *  deny names each deliberately adds. */
+function toolPolicyFrom(narrowed: DelegatedExecutionScope, currentAllow?: Iterable<string>): ToolPolicy | undefined {
   const deny = narrowed.toolPolicy?.deny;
   // The captured scope stays authoritative, but the spawning ACCOUNT's current grant may still narrow it:
   // a tool an admin has since revoked must not keep reaching a long-lived child through its frozen
@@ -541,4 +571,18 @@ export function delegatedToolPolicy(
     ...(allow !== undefined ? { allow: new Set(allow) } : {}),
     ...(deny && deny.length ? { deny: new Set(deny) } : {}),
   };
+}
+
+/** Rehydrate the execution-time plugin-tool policy. An empty allow-list is preserved as a real empty Set. */
+export function delegatedToolPolicy(
+  scope: DelegatedExecutionScope,
+  currentDenied: Iterable<string> = [],
+  currentAllow?: Iterable<string>,
+): ToolPolicy | undefined {
+  const narrowed = withDelegatedDeniedTools(scope, [
+    ...currentDenied,
+    ...DELEGATED_INTERACTIVE_TOOL_DENIES,
+    ...(scope.fork ? FORK_EXECUTE_DENIES : []),
+  ]);
+  return toolPolicyFrom(narrowed, currentAllow);
 }

@@ -61,13 +61,20 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
   // clamp is compared against exactly what was sent; the editor then says so per row instead of leaving
   // the operator believing a refused value took effect. A field that saves unchanged drops out again.
   const [appliedLimits, setAppliedLimits] = useState<Partial<BrainLimits>>({});
+  // The instance default for Delegate's `fork` flag. It rides the same editor and the same auto-save as
+  // the limits, so an operator changing both in one visit produces one write rather than two.
+  const [forkParentContext, setForkParentContext] = useState(false);
   useEffect(() => {
-    if (config && !limitsSeeded) { setLimits(config.brain?.limits ?? BRAIN_LIMIT_DEFAULTS); setLimitsSeeded(true); }
+    if (config && !limitsSeeded) {
+      setLimits(config.brain?.limits ?? BRAIN_LIMIT_DEFAULTS);
+      setForkParentContext(config.brain?.forkParentContext === true);
+      setLimitsSeeded(true);
+    }
   }, [config, limitsSeeded]);
-  const { status: limitsStatus, retry: retryLimits, flush: flushLimits } = useAutoSaveStatus([limits], async () => {
+  const { status: limitsStatus, retry: retryLimits, flush: flushLimits } = useAutoSaveStatus([limits, forkParentContext], async () => {
     if (!limits) return;
     try {
-      const saved = await updateConfig.mutateAsync({ brain: { limits } });
+      const saved = await updateConfig.mutateAsync({ brain: { limits, forkParentContext } });
       const effective = saved.brain?.limits;
       const clamped: Partial<BrainLimits> = {};
       for (const key of Object.keys(limits) as (keyof BrainLimits)[]) {
@@ -226,6 +233,8 @@ export function BrainRuntimeSection({ config, onSaveState }: { config: ElowenCon
             <BrainLimitsModal
               limits={limits}
               applied={appliedLimits}
+              forkParentContext={forkParentContext}
+              onForkParentContextChange={setForkParentContext}
               onChange={(fn) => setLimits((cur) => (cur ? fn(cur) : cur))}
               onClose={() => setLimitsOpen(false)}
               status={limitsStatus}

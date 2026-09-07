@@ -1,4 +1,5 @@
 import type { AgentSession } from '@earendil-works/pi-coding-agent';
+import type { ForkMessage } from './forkPrefix.js';
 import type { Policy } from '../../plugins/policy.js';
 import type { BrainEvent } from '../events.js';
 import type { ProviderRequestProfile } from '../modelCapabilities.js';
@@ -294,6 +295,19 @@ export interface SpawnOpts {
   parentSessionId?: string;
   /** Immutable execution boundary minted by the delegating turn and checked on every child respawn. */
   delegatedAccess?: DelegatedExecutionScope;
+  /** This delegated child is a FORK: compose it exactly as its owner-chat parent was composed, so its
+   *  system prompt and tool schemas are byte-identical and the provider can read the parent's warm cache.
+   *
+   *  It overrides the `channel: true` shaping a delegated child otherwise takes — the platform overlay,
+   *  the per-turn skills block, the withheld sharing tools — because every one of those is a difference in
+   *  the cached prefix. It does NOT widen what the child may RUN: the delegated scope still carries the
+   *  fork deny set, enforced at execute time (see FORK_EXECUTE_DENIES). */
+  fork?: boolean;
+  /** The transcript a fork child starts from: the parent's history plus the fork boundary. Written once,
+   *  before the session manager rehydrates, and only for a brand-new child. */
+  forkSeed?: ForkMessage[];
+  /** What the fork's cache-verdict log line needs, measured on the child's first provider response. */
+  forkCache?: { parentSessionId: string; parentPrefix: number; sameModel: boolean };
   /** WHOSE personal settings compose this session — chat model, compaction model, auto-compact
    *  thresholds and advisor style. A shared room serves several people, so its caller names the VERIFIED
    *  WRITER of the turn that is spawning: a room's owner is only whoever opened it, and their personal

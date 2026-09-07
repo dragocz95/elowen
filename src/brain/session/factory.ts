@@ -1,4 +1,5 @@
 import { createAgentSession, DefaultResourceLoader, estimateTokens, SettingsManager } from '@earendil-works/pi-coding-agent';
+import { formatForkCacheLine, type ForkMessage } from './forkPrefix.js';
 import type { AgentSession, ExtensionAPI, PromptTemplate, ResourceLoader, Skill, ToolDefinition, ModelRuntime } from '@earendil-works/pi-coding-agent';
 import type { Model, Api } from '@earendil-works/pi-ai';
 import type { BrainStore } from '../../store/brainStore.js';
@@ -72,6 +73,24 @@ export interface SessionSpec {
   delegatedAccess?: DelegatedExecutionScope;
   /** Imported platform transcript rows inserted atomically before history rehydration. */
   seedMessages?: { id: string; role: 'user' | 'assistant'; content: unknown }[];
+  /** What a FORK child needs to report whether it actually read its parent's prompt cache, measured on its
+   *  FIRST provider response. Present only for a fork spawn.
+   *
+   *  It cannot ride the existing prefill observer: that one abstains once a session has more than two
+   *  messages, and a fork child starts with its parent's whole conversation — so it would never fire for
+   *  precisely the sessions this measures. */
+  forkCache?: {
+    parentSessionId: string;
+    /** The parent's last cacheRead + input: how big the warm prefix was when the fork was taken. 0 when
+     *  the parent's live record is gone, which the verdict then reports rather than guesses around. */
+    parentPrefix: number;
+    /** False when the child runs on a different model, which can share no cache whatever the prefix. */
+    sameModel: boolean;
+  };
+  /** A fork child's inherited transcript: the parent's history plus the fork boundary, inserted before
+   *  rehydration so the child's very first request carries the parent's prefix. Distinct from
+   *  `seedMessages` because it legitimately carries tool calls and their results (see seedForkTranscript). */
+  forkSeed?: ForkMessage[];
   runtime: ModelRuntime;
   model: Model<Api>;
   /** The CONFIG provider entry id this session runs on (BrainProviderEntry.id, from the resolved route —
@@ -584,6 +603,9 @@ export class BrainSessionFactory {
       this.d.store.setTitle(spec.sessionId, spec.title.slice(0, 60));
     }
     if (spec.seedMessages?.length) this.d.store.seedMessages(spec.sessionId, spec.seedMessages);
+    // Before settlePartialTurn and rehydration, so the fork boundary is already settled history by the time
+    // either runs — the boundary's tool calls are answered by construction and must not be re-answered.
+    if (spec.forkSeed?.length) this.d.store.seedForkTranscript(spec.sessionId, spec.forkSeed);
 
     // A session is only ever spawned when none is live for it, so any rows still marked pending are the
     // remains of a turn the daemon died in the middle of. Settle them into history BEFORE rehydrating, so
@@ -862,6 +884,36 @@ export class BrainSessionFactory {
     session.subscribe((event) => { try { measurePrefill(event); } catch (err) {
       logger('brain-compaction').warn(`prefill baseline measurement failed on ${spec.sessionId}: ${String(err)}`);
     } });
+    // The fork's cache verdict, on its OWN subscription and its own first-response rule. Fires once, on the
+    // first assistant message this child ever produces, and never throws for the same reason as above: a
+    // diagnostic must not be able to cost a turn.
+    const forkCache = spec.forkCache;
+    if (forkCache) {
+      let forkReported = false;
+      session.subscribe((event) => {
+        try {
+          if (forkReported || event.type !== 'message_end') return;
+          const message = (event as { message?: { role?: string; stopReason?: string; usage?: { cacheRead?: number; cacheWrite?: number; input?: number } } }).message;
+          if (message?.role !== 'assistant') return;
+          if (message.stopReason === 'error' || message.stopReason === 'aborted') return;
+          forkReported = true;
+          logger('brain-subagent').info(formatForkCacheLine({
+            childSessionId: spec.sessionId,
+            parentSessionId: forkCache.parentSessionId,
+            cacheRead: message.usage?.cacheRead ?? 0,
+            cacheWrite: message.usage?.cacheWrite ?? 0,
+            input: message.usage?.input ?? 0,
+            parentPrefix: forkCache.parentPrefix,
+            sameModel: forkCache.sameModel,
+            // Whether this wire reports cache accounting at all — the same classification cacheWatch is
+            // installed on, so the two can never disagree about which providers have a prompt cache.
+            providerCaches: cacheFlavor !== undefined,
+          }));
+        } catch (err) {
+          logger('brain-subagent').warn(`fork cache measurement failed on ${spec.sessionId}: ${String(err)}`);
+        }
+      });
+    }
     function measurePrefill(event: Parameters<Parameters<typeof session.subscribe>[0]>[0]): void {
       if (event.type === 'compaction_end') {
         // The transcript was rewritten and the tools or system prompt may have moved with it, so a

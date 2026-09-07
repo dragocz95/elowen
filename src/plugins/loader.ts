@@ -151,9 +151,9 @@ export interface LoadPluginsOptions {
   /** Host reloader exposed to plugins as ctx.requestReload() — a plugin that writes a skill/agent to disk
    *  asks the host to re-scan + apply it live (deferred to the end of the current turn). */
   requestReload?: () => void;
-  /** The operator's delegated-context budget (Settings → Elowen AI → Limits), exposed to plugins as
-   *  ctx.delegateContextChars(). Read live so a change applies without a reload. */
-  delegateContextChars?: () => number;
+  /** The operator's default for forking a delegated child (Settings → Elowen AI → Sub-agents), exposed to
+   *  plugins as ctx.forkParentContext(). Read live so a change applies without a reload. */
+  forkParentContext?: () => boolean;
   /** Durable sub-agent persistence, exposed to plugins as ctx.subagentRuns(), ctx.readSubagent(), and
    *  ctx.continueSubagent(). Absent (worker or unit-test wiring) → listing is empty and reads/continuations
    *  are refused. */
@@ -254,7 +254,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
           // surface-drawn picker (see pluginCommandDef), so dropping it here would republish every picker
           // as a prompt macro carrying no prompt.
           () => [...registry.commands.values()].map((c) => ({ name: c.name, description: c.description, kind: c.kind, prompt: c.prompt, surfaces: c.surfaces, plugin: registry.commandOwner.get(c.name) })),
-          opts.delegateContextChars, opts.delegatedChildren, opts.mcpBridgeSnapshot, opts.delegatedTurnsOutOfProcess,
+          opts.forkParentContext, opts.delegatedChildren, opts.mcpBridgeSnapshot, opts.delegatedTurnsOutOfProcess,
           opts.delegatedWorkflowExpansionAvailable,
           // Reverse mutation of a daemon-owned DAG is gated INSIDE contextFor by the manifest's declared
           // `mutates:['workflow-dag']` capability — a plugin that does not declare it gets null. The loader

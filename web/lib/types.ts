@@ -11,7 +11,7 @@ export interface ElowenConfig {
   autoUpdate: boolean;
   webPushContact?: string;
   plugins?: { enabled: string[]; removed?: string[] };
-  brain?: { providers: BrainProvider[]; agentName?: string; maxSteps?: number; modelContextWindows?: Record<string, number>; modelMaxTokens?: Record<string, number>; limits?: BrainLimits; hiddenOauth?: string[] };
+  brain?: { providers: BrainProvider[]; agentName?: string; maxSteps?: number; modelContextWindows?: Record<string, number>; modelMaxTokens?: Record<string, number>; limits?: BrainLimits; forkParentContext?: boolean; hiddenOauth?: string[] };
   /** Operator-tunable runtime knobs — the sibling group of `brain.limits`; absent on an older daemon. */
   runtime?: RuntimeConfig;
   /** Dashboard personalization (recap strip + agent-written hero); absent on an older daemon. */
@@ -353,7 +353,7 @@ export interface ConfigPatch {
   autoUpdate?: boolean;
   webPushContact?: string;
   /** Wholesale brain provider list; an entry may carry `apiKey` to (re)set that provider's secret. */
-  brain?: { providers?: (Omit<BrainProvider, 'apiKeySet'> & { apiKey?: string })[]; agentName?: string; maxSteps?: number; modelContextWindows?: Record<string, number>; modelMaxTokens?: Record<string, number>; limits?: Partial<BrainLimits>; hiddenOauth?: string[] };
+  brain?: { providers?: (Omit<BrainProvider, 'apiKeySet'> & { apiKey?: string })[]; agentName?: string; maxSteps?: number; modelContextWindows?: Record<string, number>; modelMaxTokens?: Record<string, number>; limits?: Partial<BrainLimits>; forkParentContext?: boolean; hiddenOauth?: string[] };
   /** Runtime knobs merged per-field by the daemon, like the brain limits above. */
   runtime?: { limits?: Partial<RuntimeLimits>; toolDeferralEnabled?: boolean; toolDeferralOverrides?: ToolDeferralOverrides; providerRequestCaptureEnabled?: boolean; memoryRetention?: Partial<MemoryRetentionConfig> };
   /** Dashboard personalization block, merged per-field by the daemon. */

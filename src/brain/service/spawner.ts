@@ -260,6 +260,17 @@ export class LiveSessionSpawner {
     // (the model would otherwise claim/act on that path). Same resolution as the per-turn workDir.
     const cwd = opts.pathView?.root
       ?? turnWorkDir(opts.policy, opts.clientCwd, this.d.projectPath) ?? this.d.cwd ?? process.cwd();
+    // A FORK child is composed as its parent was, not as a delegated child normally is. Every branch below
+    // that keys on `opts.channel` is a difference in the cached prefix — the platform overlay, the per-turn
+    // skills block, the withheld sharing tools, the missing project context — and a fork exists precisely
+    // to make that prefix identical. One flag, read in every one of those places, so the shape cannot
+    // drift apart between them.
+    //
+    // This is a composition decision, never an authority one: what a fork child may actually RUN is still
+    // the delegated scope, which carries the fork deny set enforced at execute time.
+    const forkChild = opts.fork === true;
+    /** Whether this session is composed the way owner chat is. A fork child is, despite being delegated. */
+    const ownerChatShape = opts.channel !== true || forkChild;
     // Enabled plugins contribute tools, skills, and system-prompt fragments. Their tools read the active
     // Policy at call time via AsyncLocalStorage (set around each prompt), no per-session construction.
     const plugins = await this.d.plugins();
@@ -297,7 +308,7 @@ export class LiveSessionSpawner {
     // widening — before it, a room simply had none of them and nothing said why.
     const perTurnContributions = resolvesContributionsPerTurn(sessionId, opts.direct === true);
     const rawPluginTools = plugins?.toolsFor(contributionOwnerUserId, contributionOwnerUser, {
-      grantsEnforcedPerTurn: opts.channel === true,
+      grantsEnforcedPerTurn: !ownerChatShape,
       allOwners: perTurnContributions,
     }) ?? [];
     const pluginTools = opts.pathView
@@ -325,7 +336,7 @@ export class LiveSessionSpawner {
     const toolDeferralOverrides = runtime?.toolDeferralOverrides;
     const planSafeToolNames = new Set([...BUILTIN_TOOL_PLAN_SAFE, ...(plugins?.toolPlanSafe ?? [])]);
     let toolSearchHandle: ToolSearchHandle | undefined;
-    const sessionKind = opts.channel ? (opts.trustedChannel ? 'trusted-channel' : 'foreign-channel') : 'owner-chat';
+    const sessionKind = ownerChatShape ? 'owner-chat' : (opts.trustedChannel ? 'trusted-channel' : 'foreign-channel');
     const allTools = composeSessionTools({
       kind: sessionKind,
       memoryTools: memStore && memService && memCats && memCategorizer && memProjects
@@ -362,7 +373,10 @@ export class LiveSessionSpawner {
       //
       // They also need somewhere to keep the bytes; an in-memory store has none, and the tool says so
       // rather than silently doing nothing.
-      shareImage: isSubagentSession(sessionId) ? undefined : () => [
+      // …except in a FORK child, which advertises them because its parent does and the tool block is the
+      // cached prefix. The capability does not follow the schema: `forkToolDenial` refuses both names at
+      // execute time, so the reasoning above still holds for what the child can actually do.
+      shareImage: isSubagentSession(sessionId) && !forkChild ? undefined : () => [
         buildShareImageTool({ store: this.d.store, imagesDir: this.d.chatImagesDir }),
         buildShareFileTool({ imagesDir: this.d.chatImagesDir }),
       ],
@@ -387,7 +401,7 @@ export class LiveSessionSpawner {
     const staticSkillToolPolicy = contributionOwnerUserId == null
       ? { allow: new Set<string>() }
       : this.d.toolAuthorityFor(contributionOwnerUserId);
-    const staticSkillLoadVisible = opts.channel !== true
+    const staticSkillLoadVisible = ownerChatShape
       && plugins?.toolOwner.get('SkillLoad') === 'skills'
       && allTools.some((tool) => tool.name === 'SkillLoad')
       && toolPermitted('SkillLoad', staticSkillToolPolicy);
@@ -481,10 +495,13 @@ export class LiveSessionSpawner {
     // opener's edited template, one line away from the style itself.
     const persona = opts.scheduled
       ? this.d.prompts.render('scheduled', { userName, personality, agentName }, settingsUserId)
-      : opts.channel
+      : ownerChatShape
         ? this.d.prompts.render('elowen', { userName, personality, agentName, productName }, settingsUserId)
-          + '\n\n' + this.d.prompts.render('elowen-platform', { ownerName: userName, agentName, productName }, settingsUserId)
-        : this.d.prompts.render('elowen', { userName, personality, agentName, productName }, settingsUserId);
+        // A FORK child takes the owner-chat branch above: the overlay tells a session it is answering OTHER
+        // people in a shared room, which is false for a fork and — being system-prompt bytes — would move
+        // the whole cached prefix out from under the parent's cache.
+        : this.d.prompts.render('elowen', { userName, personality, agentName, productName }, settingsUserId)
+          + '\n\n' + this.d.prompts.render('elowen-platform', { ownerName: userName, agentName, productName }, settingsUserId);
 
     // Create the image-carrying queue mirrors before the PI session. The boundary compaction adapter reads
     // these exact arrays just before every next-turn provider request, so queued text AND attachments are
@@ -506,7 +523,7 @@ export class LiveSessionSpawner {
     // writer fails closed instead of borrowing the room owner's preference. A delegated child has no writer
     // of its own, so it uses the contribution account captured as settingsUserId and re-reads that account in
     // both in-process and runner execution.
-    const fastUserId = (): number | null => opts.channel
+    const fastUserId = (): number | null => opts.channel && !forkChild
       ? opts.parentSessionId ? settingsUserId : live.turnWriterUserId ?? null
       : settingsUserId;
     const fastEnabled = (): boolean => {
@@ -529,6 +546,8 @@ export class LiveSessionSpawner {
     const { session, applyCompaction, assessColdCompaction } = await this.d.factory.create({
       sessionId, ownerUserId, parentSessionId: opts.parentSessionId, delegatedAccess: opts.delegatedAccess,
       seedMessages: opts.seedMessages,
+      ...(opts.forkSeed ? { forkSeed: opts.forkSeed } : {}),
+      ...(opts.forkCache ? { forkCache: opts.forkCache } : {}),
       runtime: this.d.runtime, model, providerId, compactionFallbackModel: route.compactionFallback, cwd,
       ...(opts.pathView ? { displayCwd: '.', contextRoot: opts.pathView.root, sanitizePaths: opts.pathView.sanitize } : {}),
       systemPrompt: persona, appendSystemPrompt: append,
@@ -593,7 +612,7 @@ export class LiveSessionSpawner {
       // (2) admin owner — a non-admin account with no repo of its own resolves cwd to the daemon's
       // project path, and PI walks it plus every ancestor up to `/`, so a plain user's chat would
       // otherwise inhale the operator's private CLAUDE.md (internal hosts, prod credentials).
-      contextFiles: opts.pathView ? true : !opts.channel && !!u?.is_admin,
+      contextFiles: opts.pathView ? true : ownerChatShape && !!u?.is_admin,
       // A conversation that gave up on compacting cannot recover on its own, so it goes out on the same
       // channel as any other terminal session failure rather than staying a log line nobody reads.
       onCompactionStopped: (message) => replay.publish({ type: 'error', message }),

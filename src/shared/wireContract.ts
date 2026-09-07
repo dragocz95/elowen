@@ -454,7 +454,6 @@ export interface BrainLimits {
   goalTurnBudget: number;
   goalMaxTurns: number;
   channelSessionCap: number;
-  delegateContextChars: number;
 }
 
 export type BrainDebugSurface = 'conversation' | 'channel' | 'subagent';

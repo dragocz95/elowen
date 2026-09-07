@@ -46,7 +46,6 @@ export const brainLimitsPatchSchema = z.object({
   goalTurnBudget: z.number().optional(),
   goalMaxTurns: z.number().optional(),
   channelSessionCap: z.number().optional(),
-  delegateContextChars: z.number().optional(),
 });
 
 /** The operator-tunable runtime limits, all optional for the same reason as the brain limits above —
@@ -133,6 +132,8 @@ export const configPatchSchema = z.object({
     // drops non-positive/non-finite entries and the runtime clamps the value against the shared window.
     modelMaxTokens: z.record(z.string(), z.number()).optional(),
     limits: brainLimitsPatchSchema.optional(),
+    /** Instance default for `Delegate`'s `fork` flag when a call omits it. */
+    forkParentContext: z.boolean().optional(),
     hiddenOauth: z.array(z.string()).optional(),
   }).optional(),
   runtime: z.object({

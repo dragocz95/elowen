@@ -562,7 +562,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       subagentTypes: () => subagentCatalog(getAgentRegistry()),
       // The operator's ceiling on the context a delegating plugin may attach to a child (Settings →
       // Elowen AI → Limits). Read live, so raising it applies to the next delegation without a restart.
-      delegateContextChars: () => config.get().brain.limits.delegateContextChars,
+      forkParentContext: () => config.get().brain.forkParentContext,
       // Sub-agent transcripts already outlive their delegation in SQLite; this is what lets the agent
       // that spawned them find them again and pick one back up. Both halves are keyed on the parent
       // session the registry reads off the live turn, so a plugin can only ever reach its OWN children.

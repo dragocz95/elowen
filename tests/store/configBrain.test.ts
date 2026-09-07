@@ -54,7 +54,6 @@ describe('ConfigStore brain limits', () => {
       memoryRecallCount: 10, memoryRecallChars: 20000,
       memoryLiveRecallPasses: 10, memoryLiveRecallCount: 2, memoryLiveRecallBytes: 20000,
       goalTurnBudget: 50, goalMaxTurns: 50, channelSessionCap: 32,
-      delegateContextChars: 40000,
     });
   });
 
@@ -167,17 +166,29 @@ describe('ConfigStore brain limits', () => {
     expect(cs.get().brain.limits.channelSessionCap).toBe(4);
   });
 
-  // The sub-agent context budget's ceiling is not the ±50% rule: packing re-trims anything above the
-  // delegated-scope prompt total, which is shared with the child's role prompt. Both were raised together
-  // (80 000 here against a 120 000 total) so the ceiling stays reachable rather than trimmed back off.
-  it('caps the sub-agent context budget at what a packed delegated scope can carry', () => {
+  // RETIRED with the parent-to-child text hand-over that forking replaced. A stored row written before
+  // the retirement still carries the key, and the sanitizer rebuilds limits from the CURRENT key set —
+  // so the drop has to be explicit or the dead key would ride along in every later write.
+  it('drops the retired sub-agent context budget instead of carrying it forward', () => {
     const cs = new ConfigStore(openDb(':memory:'));
-    cs.update({ brain: { limits: { delegateContextChars: 500_000 } } });
-    expect(cs.get().brain.limits.delegateContextChars).toBe(80000);
-    cs.update({ brain: { limits: { delegateContextChars: 10 } } });
-    expect(cs.get().brain.limits.delegateContextChars).toBe(20000);
-    cs.update({ brain: { limits: { delegateContextChars: 32_345 } } });
-    expect(cs.get().brain.limits.delegateContextChars).toBe(32345);
+    cs.update({ brain: { limits: { delegateContextChars: 40_000 } as never } });
+    expect(Object.keys(cs.get().brain.limits)).not.toContain('delegateContextChars');
+    // Still gone after an unrelated later patch, which is where a re-copied fallback would resurface.
+    cs.update({ brain: { limits: { goalTurnBudget: 12 } } });
+    expect(Object.keys(cs.get().brain.limits)).not.toContain('delegateContextChars');
+    expect(cs.get().brain.limits.goalTurnBudget).toBe(12);
+  });
+
+  // The instance default for Delegate's `fork` flag. Off out of the box, and only a real boolean moves it.
+  it('round-trips the fork-parent-context default and defaults it off', () => {
+    const cs = new ConfigStore(openDb(':memory:'));
+    expect(cs.get().brain.forkParentContext).toBe(false);
+    cs.update({ brain: { forkParentContext: true } });
+    expect(cs.get().brain.forkParentContext).toBe(true);
+    cs.update({ brain: { forkParentContext: 'yes' as never } });
+    expect(cs.get().brain.forkParentContext).toBe(true);
+    cs.update({ brain: { forkParentContext: false } });
+    expect(cs.get().brain.forkParentContext).toBe(false);
   });
 
   it('merges a partial patch per-field without resetting siblings, and clamps out-of-range values', () => {

@@ -1,5 +1,6 @@
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import { currentContributionUserId, currentSessionId, currentToolPolicy, currentTurnMode, currentTurnPermissions, listCovers, runWithApprovedCall, toolOwnedByOtherAccount, toolPermitted, toolVisibleUnderPolicy, type PersonalToolOwnership, type ToolPolicy } from '../../plugins/policyContext.js';
+import { currentContributionUserId, currentForkChild, currentSessionId, currentToolPolicy, currentTurnMode, currentTurnPermissions, listCovers, runWithApprovedCall, toolOwnedByOtherAccount, toolPermitted, toolVisibleUnderPolicy, type PersonalToolOwnership, type ToolPolicy } from '../../plugins/policyContext.js';
+import { forkToolDenial } from './forkPrefix.js';
 import { isSessionPlanPath } from '../../plugins/pathGuard.js';
 import type { ToolDeferralOverrides } from '../../shared/wireContract.js';
 import { buildExitPlanModeTool } from '../tools/exitPlanMode.js';
@@ -174,6 +175,11 @@ function gateDeniedTools(tool: ToolDefinition): ToolDefinition {
     // exactly here failed OPEN on precisely the entries `toolPermitted` refuses.
     const denied = currentToolPolicy()?.deny;
     if (denied && listCovers(denied, tool.name)) {
+      // A fork child advertises these schemas on purpose (the tool block is the cached prefix), so its
+      // refusal has to say WHY rather than claim the capability is absent — otherwise the model reads a
+      // tool it can see being refused as a glitch and retries it.
+      const forkDenial = currentForkChild() ? forkToolDenial(tool.name) : undefined;
+      if (forkDenial) return refused(forkDenial);
       // Name the mode when there is one: a model that reaches for a writing tool while planning needs to
       // know the refusal is the MODE, not a missing capability, or it will keep retrying.
       const mode = currentTurnMode();

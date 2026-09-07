@@ -150,7 +150,7 @@ export interface ElowenConfig {
    *  max context window per Elowen AI model (`providerId/model`) for endpoints that don't report one, and
    *  `modelMaxTokens` pins that model's max OUTPUT tokens per answer (same key shape). Both are advisory
    *  numbers the operator supplies; the runtime clamps the output cap against the window it shares. */
-  brain: { providers: BrainProviderPublic[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; modelMaxTokens: Record<string, number>; limits: BrainLimits; hiddenOauth: string[] };
+  brain: { providers: BrainProviderPublic[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; modelMaxTokens: Record<string, number>; limits: BrainLimits; forkParentContext: boolean; hiddenOauth: string[] };
   /** Operator-tunable runtime knobs (Settings → Elowen AI → Runtime): the `!` shell timeout, the memory
    *  relevance floor, the deferred-tool policy, activity-log retention and the memory-retention block
    *  (auto-eviction toggle, grace window, vitality floor and per-importance half-lives). `limits.eventRetentionDays` is
@@ -365,8 +365,15 @@ export const DEFAULT_BRAIN_LIMITS: BrainLimits = {
   goalTurnBudget: 50,
   goalMaxTurns: 50,
   channelSessionCap: 32,
-  delegateContextChars: 40_000,
 };
+
+/** Whether a `Delegate` call that says nothing about forking forks by default.
+ *
+ *  OFF. Forking is the right call when the child genuinely needs what the parent already knows, and the
+ *  wrong one for an unrelated errand — where it would carry a whole conversation the worker has no use
+ *  for. A default of ON would make the expensive-in-tokens choice the silent one, so the agent asks for a
+ *  fork per call and an operator who forks constantly can flip this instead. */
+const DEFAULT_FORK_PARENT_CONTEXT = false;
 
 /** Adjustable range of a tuning knob: its default ±50%, derived from the default so raising a default
  *  later carries its bound with it instead of leaving the two to drift apart. `maxOverride` exists for
@@ -406,11 +413,6 @@ const BRAIN_LIMIT_BOUNDS: Record<keyof BrainLimits, [min: number, max: number]> 
   memoryLiveRecallPasses: [0, 20],
   memoryLiveRecallCount: [0, 10],
   memoryLiveRecallBytes: band('memoryLiveRecallBytes', 40_000),
-  // Raised past the ±50% rule at the owner's request to ~20k tokens of ceiling. It is bounded by
-  // MAX_PROMPT_TOTAL_CHARS (brain/delegatedScope.ts), the budget packDelegatedPromptAppend fair-shares
-  // with the child's role prompt — that budget was raised to 120 000 alongside this, so the value here
-  // is now reachable rather than trimmed straight back off.
-  delegateContextChars: band('delegateContextChars', 80_000),
   // Deliberately exempt from the ±50% rule: for these four the wide range is load-bearing, not a tuning
   // margin. The elicitation range reaches 6 hours — a question may legitimately wait out a whole working
   // day, not just a session — and the default sits at that ceiling. A busy channel may hold many more
@@ -443,6 +445,12 @@ function clampBrainLimits(next: unknown, fallback: BrainLimits): BrainLimits {
   for (const key of Object.keys(BRAIN_LIMIT_BOUNDS) as (keyof BrainLimits)[]) {
     out[key] = clampBrainLimit(key, patch[key], out[key]);
   }
+  // RETIRED: the bounded-text hand-over a delegating agent used to pass to its child. Forking replaced it
+  // outright — a fork child inherits the parent's whole conversation and its warm cache instead of a
+  // budgeted excerpt — so there is nothing to migrate the value INTO. Dropped explicitly, and from
+  // `fallback` as well as the patch: a row written before the retirement carries the key inside the
+  // fallback object, where the rebuild above would preserve it forever.
+  delete (out as Record<string, unknown>).delegateContextChars;
 
   if (Object.hasOwn(patch, 'memoryLiveRecallChars')) {
     // The old count capped a whole turn. Reusing it as a batch size would multiply context growth on the
@@ -844,7 +852,7 @@ const DEFAULT_CONFIG: ElowenConfig = {
     ],
     removed: [],
   },
-  brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, modelMaxTokens: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, hiddenOauth: [] },
+  brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, modelMaxTokens: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, forkParentContext: DEFAULT_FORK_PARENT_CONTEXT, hiddenOauth: [] },
   runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_TOOL_DEFERRAL_ENABLED, toolDeferralOverrides: { sources: {}, tools: {} }, hostedToolSearch: {}, subagentRunnerEnabled: DEFAULT_SUBAGENT_RUNNER_ENABLED, subagentRunnerPoolMax: DEFAULT_SUBAGENT_RUNNER_POOL_MAX, remoteCompactionEnabled: DEFAULT_REMOTE_COMPACTION_ENABLED, providerRequestCaptureEnabled: DEFAULT_PROVIDER_REQUEST_CAPTURE_ENABLED, memoryRetention: defaultMemoryRetention() },
   embedding: { providerId: '', model: '', baseUrl: '', dimensions: null },
   categorization: { providerId: '', model: '', baseUrl: '' },
@@ -888,7 +896,7 @@ interface Stored {
   /** One-shot upgrade marker for the bundled release-notes plugin. See migrateChangelogPlugin(). */
   changelogPluginMigrated: boolean;
   /** Brain provider entries with plaintext API keys — stripped to `apiKeySet` in the public view. */
-  brain: { providers: BrainProviderStored[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; modelMaxTokens: Record<string, number>; limits: BrainLimits; hiddenOauth: string[] };
+  brain: { providers: BrainProviderStored[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; modelMaxTokens: Record<string, number>; limits: BrainLimits; forkParentContext: boolean; hiddenOauth: string[] };
   /** Runtime knobs. Holds no secret → surfaced verbatim in the public view. */
   runtime: RuntimeConfigWithRetention;
   /** Embedding provider config. Holds no secret (the key is reused from the brain provider), so this
@@ -946,7 +954,7 @@ const defaultStored = (): Stored => ({
   editorPluginMigrated: true,
   sandboxPluginMigrated: true,
   changelogPluginMigrated: true,
-  brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, modelMaxTokens: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, hiddenOauth: [] },
+  brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, modelMaxTokens: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, forkParentContext: DEFAULT_FORK_PARENT_CONTEXT, hiddenOauth: [] },
   runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_CONFIG.runtime.toolDeferralEnabled, toolDeferralOverrides: { sources: {}, tools: {} }, hostedToolSearch: {}, subagentRunnerEnabled: DEFAULT_CONFIG.runtime.subagentRunnerEnabled, subagentRunnerPoolMax: DEFAULT_CONFIG.runtime.subagentRunnerPoolMax, remoteCompactionEnabled: DEFAULT_CONFIG.runtime.remoteCompactionEnabled, providerRequestCaptureEnabled: DEFAULT_CONFIG.runtime.providerRequestCaptureEnabled, memoryRetention: defaultMemoryRetention() },
   embedding: { ...DEFAULT_CONFIG.embedding },
   categorization: { ...DEFAULT_CONFIG.categorization },
@@ -968,7 +976,7 @@ export interface ConfigPatch {
   plugins?: { enabled?: string[]; removed?: string[]; config?: Record<string, Record<string, unknown>> };
   /** Brain providers replace wholesale (the UI edits the full list). A patched entry with an empty/absent
    *  apiKey KEEPS the currently stored key for that id — the UI never sees (or resends) secrets. */
-  brain?: { providers?: unknown; agentName?: unknown; maxSteps?: number; modelContextWindows?: Record<string, number>; modelMaxTokens?: Record<string, number>; limits?: Partial<BrainLimits>; hiddenOauth?: string[] };
+  brain?: { providers?: unknown; agentName?: unknown; maxSteps?: number; modelContextWindows?: Record<string, number>; modelMaxTokens?: Record<string, number>; limits?: Partial<BrainLimits>; forkParentContext?: boolean; hiddenOauth?: string[] };
   /** Runtime knobs merged per-field (like the brain limits): a patch tuning one slider leaves the rest. */
   runtime?: { limits?: Partial<RuntimeLimits>; toolDeferralEnabled?: boolean; toolDeferralOverrides?: ToolDeferralOverrides; subagentRunnerEnabled?: boolean; subagentRunnerPoolMax?: number | null; remoteCompactionEnabled?: boolean; providerRequestCaptureEnabled?: boolean; memoryRetention?: Partial<MemoryRetentionConfig> };
   /** Embedding config is merged per-field; `dimensions: null` clears the width hint. */
@@ -1042,6 +1050,7 @@ export class ConfigStore {
           modelContextWindows: sanitizeModelTokenMap(p.brain?.modelContextWindows),
           modelMaxTokens: sanitizeModelTokenMap(p.brain?.modelMaxTokens),
           limits: clampBrainLimits(p.brain?.limits, d.brain.limits),
+          forkParentContext: typeof p.brain?.forkParentContext === 'boolean' ? p.brain.forkParentContext : d.brain.forkParentContext,
           hiddenOauth: sanitizeStringList(p.brain?.hiddenOauth),
         },
         runtime: {
@@ -1100,7 +1109,7 @@ export class ConfigStore {
       webPushContact: s.webPushContact,
       // Only the enabled + removed lists surface; per-plugin config (possible secrets) stays daemon-side.
       plugins: { enabled: s.plugins.enabled, removed: s.plugins.removed },
-      brain: { providers: s.brain.providers.map(({ apiKey, ...pub }) => ({ ...pub, apiKeySet: !!apiKey })), agentName: s.brain.agentName, maxSteps: s.brain.maxSteps, modelContextWindows: s.brain.modelContextWindows, modelMaxTokens: s.brain.modelMaxTokens, limits: s.brain.limits, hiddenOauth: s.brain.hiddenOauth },
+      brain: { providers: s.brain.providers.map(({ apiKey, ...pub }) => ({ ...pub, apiKeySet: !!apiKey })), agentName: s.brain.agentName, maxSteps: s.brain.maxSteps, modelContextWindows: s.brain.modelContextWindows, modelMaxTokens: s.brain.modelMaxTokens, limits: s.brain.limits, forkParentContext: s.brain.forkParentContext, hiddenOauth: s.brain.hiddenOauth },
       // No secret in the runtime block → expose verbatim (the CLI reads its `!` timeout from here).
       runtime: s.runtime,
       // No secret in the embedding block (the key is reused from the brain provider) → expose verbatim.
@@ -1328,6 +1337,9 @@ export class ConfigStore {
         // Limits merge per-field onto the current values (a partial patch tunes one knob without
         // resetting the rest) and each field is clamped to its bound.
         limits: clampBrainLimits(patch.brain?.limits, cur.brain.limits),
+        // Instance default for Delegate's `fork` flag; only a real boolean moves it.
+        forkParentContext: typeof patch.brain?.forkParentContext === 'boolean'
+          ? patch.brain.forkParentContext : cur.brain.forkParentContext,
         // Hidden OAuth types replace wholesale (the UI sends the full list); a display filter only, never
         // touching credentials or provider entries.
         hiddenOauth: patch.brain?.hiddenOauth !== undefined ? sanitizeStringList(patch.brain.hiddenOauth) : cur.brain.hiddenOauth,
