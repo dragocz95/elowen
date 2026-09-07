@@ -121,6 +121,28 @@ export function lastActivityMs(lastMessageAt: string | undefined, interactedAt: 
   return Math.max(parseDbTs(lastMessageAt), interactedAt ?? 0);
 }
 
+/** Was this conversation's prompt cache DEFINITELY cold when the turn started? One predicate, shared by
+ *  every trigger that rewrites a cold context at the start of a turn (the compaction below and the
+ *  tool-result clearing), because two hand-maintained copies of a cache rule drift and a drifted copy
+ *  rewrites a warm prefix.
+ *
+ *  No activity on record answers false: nothing may be rewritten on a conversation whose age cannot be
+ *  established. The equivalence it rests on — no stored row inside the TTL means no provider request
+ *  inside the TTL — holds within ONE session, because every request happens inside a prompt that writes
+ *  its rows within seconds. It does NOT hold across sessions: a running fork child re-sends its parent's
+ *  prefix and keeps that cache warm while the parent's own rows age. Callers therefore pair this with
+ *  {@link sessionHasWorkInFlight}, which is what sees the running child. */
+export function cacheDefinitelyCold(
+  lastMessageAt: string | undefined,
+  interactedAt: number | undefined,
+  lastRequestCacheTtlMs: number | undefined,
+  now: number,
+): boolean {
+  const lastActivity = lastActivityMs(lastMessageAt, interactedAt);
+  if (lastActivity === 0) return false;
+  return now - lastActivity >= coldCompactionGateMs(lastRequestCacheTtlMs);
+}
+
 const coldLog = logger('brain-compaction');
 
 /** What the trigger needs beyond the live session: the store it reads the last message time from, plus
@@ -162,8 +184,9 @@ export async function maybeColdStartCompaction(d: ColdStartCompactionDeps, live:
   const assess = live.assessColdCompaction;
   if (!assess) return;
   if (live.session.isStreaming || live.session.isCompacting) return;
-  const lastActivity = lastActivityMs(d.store.lastMessageAt(live.sessionId), live.interactedAt);
-  if (lastActivity === 0 || Date.now() - lastActivity < coldCompactionGateMs(live.lastRequestCacheTtlMs)) return;
+  if (!cacheDefinitelyCold(
+    d.store.lastMessageAt(live.sessionId), live.interactedAt, live.lastRequestCacheTtlMs, Date.now(),
+  )) return;
   // The shared fail-closed predicate (also the teardown's): a queued message, parked question,
   // running child/background job or armed goal means the context is not this turn's to rewrite.
   if (sessionHasWorkInFlight(d, live.sessionId)) return;

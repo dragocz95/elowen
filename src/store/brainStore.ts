@@ -149,6 +149,12 @@ export interface ToolResultSpillRecord {
   toolCallId: string; occurredAt: number; mode: 'time' | 'preview'; bytes: number; preview: string | null;
   path: string; placeholder: string | null; createdAt?: string;
 }
+/** One tool-result row to converge on what the conversation now sends: the occurrence to find it by, the
+ *  placeholder that replaces its content, and — when the caller has one — the `details` the cleared row
+ *  must carry, which is where the structural cleared marker lives. */
+export interface ClearedToolResultRow {
+  toolCallId: string; occurredAt: number; placeholder: string; details?: unknown;
+}
 /** One settled PI run, expressed without PI-specific types so the persistence layer remains the
  * only caller that translates agent messages. A `reusePreprojectedUser` entry keeps the clean user
  * row which was written before prompt() (and may differ from PI's ephemeral prompt framing). */
@@ -1080,38 +1086,59 @@ export class BrainStore {
       this.upsertToolResultSpill(sessionId, spill);
       return spill.placeholder === null
         ? 0
-        : this.rewriteToolResultRow(sessionId, spill.toolCallId, spill.occurredAt, spill.placeholder);
+        : this.clearToolResultRows(sessionId, [{
+          toolCallId: spill.toolCallId, occurredAt: spill.occurredAt, placeholder: spill.placeholder,
+        }]);
     })();
   }
 
-  /** Replace one tool-result row's content with the placeholder egress is sending for it. Matched on the
-   *  OCCURRENCE key (the model-minted id plus the message's own timestamp) — the same identity the latch
-   *  uses, because an id alone is not unique across a compaction. Every other field of the stored message
-   *  is preserved, so a rewritten row differs from its predecessor in nothing but the content blocks the
-   *  placeholder stands in for. */
-  private rewriteToolResultRow(sessionId: string, toolCallId: string, occurredAt: number, placeholder: string): number {
-    const rows = this.db.prepare(
-      `SELECT id, content FROM brain_messages WHERE session_id = ? AND role = 'toolResult' AND pending <> ${DISCARDED_MESSAGE} ORDER BY rowid ASC`
-    ).all(sessionId) as { id: string; content: string }[];
-    const update = this.db.prepare('UPDATE brain_messages SET content = ? WHERE session_id = ? AND id = ?');
-    let rewritten = 0;
-    for (const row of rows) {
-      let parsed: unknown;
-      try { parsed = JSON.parse(row.content); }
-      catch { continue; } // a corrupt row is skipped here exactly as rehydration skips it
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
-      const message = parsed as { toolCallId?: unknown; timestamp?: unknown };
-      if (message.toolCallId !== toolCallId) continue;
-      const at = typeof message.timestamp === 'number' && Number.isFinite(message.timestamp) && message.timestamp > 0
-        ? message.timestamp
-        : 0;
-      if (at !== occurredAt) continue;
-      const serialized = JSON.stringify({ ...message, content: [{ type: 'text', text: placeholder }] });
-      if (serialized === row.content) continue;
-      update.run(serialized, sessionId, row.id);
-      rewritten += 1;
-    }
-    return rewritten;
+  /** Replace the content of every named tool result with the placeholder that is now its wire truth, in
+   *  ONE transaction over ONE scan of the session's tool-result rows.
+   *
+   *  Batched because the cold-start pass clears a whole history at once: a per-entry rewrite re-read every
+   *  tool-result row of the conversation for each of them, which is quadratic in exactly the sessions that
+   *  need it most. One scan also makes the whole clearing atomic — a crash mid-pass cannot leave half the
+   *  history rewritten while the other half still holds the text the model has already stopped seeing.
+   *
+   *  Each entry is matched on the OCCURRENCE key (the model-minted id plus the message's own timestamp),
+   *  because an id alone is not unique across a compaction. `details` replaces the stored value when
+   *  given, which is how the structural cleared marker reaches the row; omitted, the row keeps its own.
+   *  Every other field of the stored message is preserved, so a rewritten row differs from its predecessor
+   *  in nothing but the blocks the placeholder stands in for. Returns how many rows changed; 0 is normal
+   *  rather than an error, because a row that already says the same thing has nothing left to write. */
+  clearToolResultRows(sessionId: string, entries: readonly ClearedToolResultRow[]): number {
+    if (entries.length === 0) return 0;
+    const byOccurrence = new Map<string, ClearedToolResultRow>();
+    for (const entry of entries) byOccurrence.set(`${entry.toolCallId}\u0000${entry.occurredAt}`, entry);
+    return this.db.transaction((): number => {
+      const rows = this.db.prepare(
+        `SELECT id, content FROM brain_messages WHERE session_id = ? AND role = 'toolResult' AND pending <> ${DISCARDED_MESSAGE} ORDER BY rowid ASC`
+      ).all(sessionId) as { id: string; content: string }[];
+      const update = this.db.prepare('UPDATE brain_messages SET content = ? WHERE session_id = ? AND id = ?');
+      let rewritten = 0;
+      for (const row of rows) {
+        let parsed: unknown;
+        try { parsed = JSON.parse(row.content); }
+        catch { continue; } // a corrupt row is skipped here exactly as rehydration skips it
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+        const message = parsed as { toolCallId?: unknown; timestamp?: unknown };
+        if (typeof message.toolCallId !== 'string') continue;
+        const at = typeof message.timestamp === 'number' && Number.isFinite(message.timestamp) && message.timestamp > 0
+          ? message.timestamp
+          : 0;
+        const entry = byOccurrence.get(`${message.toolCallId}\u0000${at}`);
+        if (!entry) continue;
+        const serialized = JSON.stringify({
+          ...message,
+          content: [{ type: 'text', text: entry.placeholder }],
+          ...(entry.details === undefined ? {} : { details: entry.details }),
+        });
+        if (serialized === row.content) continue;
+        update.run(serialized, sessionId, row.id);
+        rewritten += 1;
+      }
+      return rewritten;
+    })();
   }
 
   /** Drop one latch row by its occurrence key — toolResultClearing prunes a row whose occurrence a

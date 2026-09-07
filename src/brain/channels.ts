@@ -33,6 +33,7 @@ import { buildForkChildMessage, forkParentPrefixTokens, forkSeedMessages, forkSe
 import { turnSkillsBlock } from './session/turnSkills.js';
 import { settleTurn, titleTurnConversation } from './session/turnSettled.js';
 import { maybeColdStartCompaction } from './session/coldStartCompaction.js';
+import { clearColdToolResults } from './session/coldToolResultClearing.js';
 import { cacheTtlMs } from './session/cacheTiming.js';
 import { recallMemoryBlock } from './session/memoryBlock.js';
 import { pluginContextBlock } from './session/pluginContextBlock.js';
@@ -1021,10 +1022,15 @@ export class ChannelSessionService {
       // cold context actually accumulates. Runs before the user's message is projected, so that message
       // is never part of what gets summarized. An ordinary Discord room is rolled over long before the
       // gate opens; this bites exactly on the long-lived channels that disable or lengthen the rollover.
-      await maybeColdStartCompaction(
-        { store: this.d.store, sessions: this.d.registry, elicitation: this.d.elicitation ?? { pendingForSession: () => null } },
-        ch,
-      );
+      const coldDeps = {
+        store: this.d.store,
+        sessions: this.d.registry,
+        elicitation: this.d.elicitation ?? { pendingForSession: () => null },
+      };
+      // Lossless first: the spilled output stays on disk under the name the placeholder carries, and the
+      // summarization below then reads (and pays for) a smaller history.
+      await clearColdToolResults(coldDeps, ch);
+      await maybeColdStartCompaction(coldDeps, ch);
       // Same rule for mid-turn recall as for the turn-start block below: the verified sender's memories,
       // nobody's when they are unlinked. Never the channel owner's — that would surface their memories
       // into a stranger's turn in a shared room.

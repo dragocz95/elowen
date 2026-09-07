@@ -113,7 +113,13 @@ export const SPILL_PREVIEW_CHARS = 2000;
 
 /** How many trailing user turns keep their tool results intact: the current run (after the last user
  *  message) plus the whole previous turn. Everything older is eligible once the gate opens. */
-const KEEP_USER_TURNS = 2;
+export const KEEP_USER_TURNS = 2;
+
+/** The same retention measured at the START of a turn, BEFORE the user's new message is admitted. One
+ *  fewer, because that message is exactly what the egress-time count had and this one does not: keeping 2
+ *  here would silently retain three turns' worth of results and clear measurably less than the pass it
+ *  replaces. */
+export const TURN_START_KEEP_USER_TURNS = KEEP_USER_TURNS - 1;
 
 /** Identity of ONE toolResult occurrence in the history: the model-minted id PLUS the message's own
  *  timestamp. The id alone is not an identity — sequential styles (`call_0`) reset every turn on some
@@ -348,7 +354,7 @@ type ContentBlock = ToolResultMessage['content'][number];
 
 /** The exact text a spill file holds for a result: its text blocks joined by '\n'. Single source of truth
  *  for the write and the restore comparison — if these two ever disagreed, no latch would ever restore. */
-function toolResultText(message: ToolResultMessage): string {
+export function toolResultText(message: ToolResultMessage): string {
   return (Array.isArray(message.content) ? message.content : [])
     .filter((block: ContentBlock): block is Extract<ContentBlock, { type: 'text' }> => block.type === 'text')
     .map((block) => block.text)
@@ -366,12 +372,15 @@ function textBytes(message: ToolResultMessage): number {
 
 /** Index of the user message that starts the KEEP_USER_TURNS-th turn from the end, or -1 when the
  *  conversation is shorter. Messages before it are eligible for clearing. Exported for tests. */
-export function clearingCutIndex(messages: readonly PiAgentMessage[]): number {
+export function clearingCutIndex(
+  messages: readonly PiAgentMessage[],
+  keepUserTurns = KEEP_USER_TURNS,
+): number {
   let seen = 0;
   for (let index = messages.length - 1; index >= 0; index -= 1) {
     if (!isUserTurn(messages[index])) continue;
     seen += 1;
-    if (seen === KEEP_USER_TURNS) return index;
+    if (seen === keepUserTurns) return index;
   }
   return -1;
 }
@@ -396,8 +405,9 @@ function occurrenceKeyOf(message: ToolResultMessage): string {
 export function selectClearableToolResults(
   messages: PiAgentMessage[],
   alreadyCleared: ReadonlySet<string>,
+  keepUserTurns = KEEP_USER_TURNS,
 ): ClearableResult[] {
-  const cut = clearingCutIndex(messages);
+  const cut = clearingCutIndex(messages, keepUserTurns);
   if (cut <= 0) return [];
   const selection: ClearableResult[] = [];
   for (let index = 0; index < cut; index += 1) {
@@ -463,12 +473,12 @@ export interface ToolResultClearingOptions {
   latchStore?: ToolResultLatchStore;
 }
 
-async function defaultWriteSpill(path: string, text: string): Promise<void> {
+export async function defaultWriteSpill(path: string, text: string): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   await writeFile(path, text, { flag: 'wx' });
 }
 
-async function defaultReadSpill(path: string): Promise<string | null> {
+export async function defaultReadSpill(path: string): Promise<string | null> {
   try { return await readFile(path, 'utf8'); }
   catch { return null; }
 }

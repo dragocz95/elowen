@@ -2195,6 +2195,35 @@ describe('BrainStore', () => {
       expect(store.recordClearedToolResult('s1', latch('call-1', { occurredAt: 1_000 }))).toBe(0);
     });
 
+    it('clears a whole history in one call, matching each entry by its own occurrence', () => {
+      // The cold-start pass clears every eligible result at once. A per-entry rewrite re-read every
+      // tool-result row of the conversation for each of them, which is quadratic in exactly the sessions
+      // that need it; batching also makes the pass atomic, so a crash cannot leave half a history
+      // rewritten while the other half still holds text the model has stopped seeing.
+      store.createSession({ id: 's1', userId: 7, model: 'm' });
+      store.appendMessage(toolResultRow('m1', 'call-a', 1_000, 'first output'));
+      store.appendMessage(toolResultRow('m2', 'call-b', 2_000, 'second output'));
+      store.appendMessage(toolResultRow('m3', 'call-a', 3_000, 'a reused id, a different result'));
+
+      expect(store.clearToolResultRows('s1', [
+        { toolCallId: 'call-a', occurredAt: 1_000, placeholder: '[cleared a]', details: { cleared: true } },
+        { toolCallId: 'call-b', occurredAt: 2_000, placeholder: '[cleared b]' },
+      ])).toBe(2);
+
+      expect(storedMessage('m1').content).toEqual([{ type: 'text', text: '[cleared a]' }]);
+      expect(storedMessage('m2').content).toEqual([{ type: 'text', text: '[cleared b]' }]);
+      // The reused id belongs to a different occurrence and must keep its own output.
+      expect(storedMessage('m3').content).toEqual([{ type: 'text', text: 'a reused id, a different result' }]);
+      // `details` is replaced only where the caller supplied one — that is how the cleared marker lands.
+      expect((storedMessage('m1') as unknown as { details: unknown }).details).toEqual({ cleared: true });
+      expect((storedMessage('m2') as unknown as { details?: unknown }).details).toBeUndefined();
+      // Running the same pass again writes nothing further.
+      expect(store.clearToolResultRows('s1', [
+        { toolCallId: 'call-a', occurredAt: 1_000, placeholder: '[cleared a]', details: { cleared: true } },
+      ])).toBe(0);
+      expect(store.clearToolResultRows('s1', [])).toBe(0);
+    });
+
     it('deleteSession removes the session\'s latch rows and only those', () => {
       store.createSession({ id: 's1', userId: 7, model: 'm' });
       store.createSession({ id: 's2', userId: 7, model: 'm' });
