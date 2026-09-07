@@ -194,6 +194,34 @@ describe('message_update → assistant stream events', () => {
   });
 });
 
+/** The status note is not only a spinner label. A delegated child's rail row is built from its `tool`
+ *  events, so the note has to survive the authoring window and ride the start event too — same extraction,
+ *  one source. Additive: a client that ignores `reason` keeps rendering exactly what it did. */
+describe('tool_execution_start → tool (the model-authored note rides the start event)', () => {
+  const start = (toolName: string, args: unknown) =>
+    toBrainEvent({ type: 'tool_execution_start', toolName, toolCallId: 't1', args } as unknown as AgentSessionEvent, 1_000);
+
+  it('carries the note a call authored in `_reason`, alongside the derived name and detail', () => {
+    expect(start('Edit', { _reason: 'Upravuji soubor…', file_path: 'src/brain/events.ts' }))
+      .toEqual({ type: 'tool', name: 'Edit', detail: 'src/brain/events.ts', command: undefined, id: 't1', reason: 'Upravuji soubor…' });
+  });
+
+  it("uses Bash's canonical description as the note for the one tool that has no `_reason`", () => {
+    expect(start('Bash', { description: 'Run focused tests', command: 'npm test' }))
+      .toEqual({ type: 'tool', name: 'Bash', detail: 'npm test', command: 'npm test', id: 't1', reason: 'Run focused tests' });
+  });
+
+  it('omits `reason` entirely when the call carries no note', () => {
+    expect(start('Write', { file_path: 'a.ts' }))
+      .toEqual({ type: 'tool', name: 'Write', detail: 'a.ts', command: undefined, id: 't1' });
+  });
+
+  it('omits an empty note rather than emitting a blank label', () => {
+    expect(start('Write', { _reason: '   ', file_path: 'a.ts' }))
+      .toEqual({ type: 'tool', name: 'Write', detail: 'a.ts', command: undefined, id: 't1' });
+  });
+});
+
 describe('tool_execution_update → tool_progress (live Bash streaming)', () => {
   const update = (toolName: string, toolCallId: string, text: string, now?: number) =>
     toBrainEvent({ type: 'tool_execution_update', toolName, toolCallId, partialResult: { content: [{ type: 'text', text }], details: {} } } as unknown as AgentSessionEvent, now);
