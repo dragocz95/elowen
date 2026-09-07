@@ -34,8 +34,11 @@ export { cacheColdAtTurnStart, cacheTtlMs, idleThresholdMs };
  *
  *  The full text is spilled to `<dataDir>/tool-results/<spillNs>/<toolCallId>.v1-<mode>-<bytes>.txt` BEFORE the
  *  placeholder replaces it (write-once, `wx`), so clearing loses nothing the model could not re-read
- *  with the Read tool — pathGuard lets every session read its OWN spill dir. Persisted history in
- *  the store is untouched — this runs on PI's egress copy.
+ *  with the Read tool — pathGuard lets every session read its OWN spill dir. The transform itself runs on
+ *  PI's egress copy, but it does NOT leave the store behind: the same act writes the placeholder through
+ *  to the transcript row (`BrainStore.recordClearedToolResult`), so a respawn, an export and a fork seed
+ *  all rebuild the context this module is actually sending. Only where the row already says it — the cold
+ *  gate, or a result of the current run the provider has not seen yet — never over a warm prefix.
  *
  *  A SECOND trigger shares all of that machinery: a single result bigger than SPILL_MAX_RESULT_BYTES
  *  is spilled on SIZE at delivery, whatever the idle gate says (Claude Code's
@@ -569,8 +572,11 @@ export function installToolResultClearing(
    *  pass. */
   const duplicateWarned = new Set<string>();
   /** Restoration runs once, on the first pass, and only matters after a RESPAWN: the latch lives in this
-   *  closure, so a restart leaves it empty while the persisted history still holds the results in full.
-   *  Sending them whole again is what makes the first request of a warm conversation pay a full re-cache
+   *  closure, so a restart leaves it empty. The rows a CURRENT build cleared already carry the placeholder,
+   *  so restoring them keeps the in-memory latch consistent with what the store already says; the rows that
+   *  still hold the full text are the ones written before the store became the wire truth (and the ones the
+   *  one-time backfill has not reached). Sending those whole again is what makes the first request of a warm
+   *  conversation pay a full re-cache
    *  ($3.04 measured, against ~$0.12 for a normal turn). Doing it here rather than at construction time
    *  is deliberate — this is the first moment the post-hook message text exists to verify against. */
   let restored = false;
