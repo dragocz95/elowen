@@ -436,6 +436,16 @@ export function register(ctx) {
           + 'prompt as a stable, cache-friendly block — pass it to save the sub-agent re-exploring and to cut cost. '
           + 'Keep it to what matters for THIS task; the `task` field still carries the actual instruction.',
       })),
+      fork: Type.Optional(Type.Boolean({
+        description: 'FORK this conversation instead of starting a clean one. The child begins with your entire '
+          + 'context — the same system prompt, the same tools and every message so far — and your task text becomes '
+          + 'its directive. Fork when the work depends on what you already know here: a file you have read, a '
+          + 'decision made earlier, the shape of the bug you just traced. Do NOT fork for a fresh, unrelated task; '
+          + 'a clean child is cheaper and stays on topic. A fork reuses the prompt cache — and therefore costs '
+          + 'almost nothing to start — only while nothing narrows it, so `tools`, `read_only`, `subagent_type` and '
+          + '`workspaceId` are refused with a fork, and a different `model` runs fine but shares no cache. Forking '
+          + 'is available only in this conversation: a forked worker cannot fork again.',
+      })),
       model: Type.Optional(Type.String({
         description: 'Run the sub-agent on a DIFFERENT model — pass this ONLY when the user explicitly asked for it. '
           + 'Value from DelegateModels ("provider/model" or a bare model id). Omit it to inherit your own model.',
@@ -460,6 +470,30 @@ export function register(ctx) {
     }),
     execute: async (id, p) => {
       if (!run) return ok('Error: delegation is not wired up on this server.');
+      // FORK: the child inherits this conversation's prompt, tools and history verbatim so the provider can
+      // read the warm prompt cache. Anything that would narrow the child changes the request prefix, which
+      // rewrites the whole cache instead of reading it — so each of those is refused BY NAME rather than
+      // silently producing an expensive fork. The host enforces the same boundary; this is the half that
+      // explains itself. Omitted, the instance default decides.
+      const fork = p.fork === undefined ? ctx.forkParentContext?.() === true : p.fork === true;
+      if (fork) {
+        const conflict = Array.isArray(p.tools) ? 'tools'
+          : p.read_only === true ? 'read_only'
+            : p.subagent_type ? 'subagent_type'
+              : p.workspaceId ? 'workspaceId'
+                : undefined;
+        if (conflict) {
+          return ok(`Error: \`${conflict}\` cannot be combined with \`fork\`. A fork inherits your exact system `
+            + `prompt, toolset and working directory — narrowing any of them rewrites the prompt cache the fork `
+            + `exists to reuse. Drop \`${conflict}\`, or delegate a fresh sub-agent without \`fork\`.`);
+        }
+        // A forked worker keeps Delegate in its toolset (removing it would change the tool block and break
+        // the very cache the fork was spawned for), so the refusal has to happen here, when the call arrives.
+        if (ctx.currentIdentity()?.platform === 'subagent') {
+          return ok('Error: `fork` is not available inside a sub-agent — you ARE a worker already. '
+            + 'Carry out your directive directly with your own tools.');
+        }
+      }
       // Validate the requested type against the live catalog (a miss is a self-correctable error listing
       // the valid names). The host does the actual role/tool/boundary resolution from this name.
       let agentType;
@@ -485,6 +519,12 @@ export function register(ctx) {
           return ok(`Error: model "${want}" is not available. Available models:\n${list.map((m) => `- ${m.provider}/${m.model}`).join('\n') || '(none configured)'}`);
         }
         model = { provider: hit.provider, model: hit.model };
+        // A fork on another model is legal and sometimes what the user asked for, but a prompt cache belongs
+        // to one model: the child re-pays for the whole inherited prefix. Say so once, here, rather than
+        // leaving it to be discovered in the bill.
+        if (fork && (hit.provider !== parentTurn?.provider || hit.model !== parentTurn?.model)) {
+          ctx.logger.info(`subagent: fork on ${hit.provider}/${hit.model} differs from the parent model — no shared cache`);
+        }
       }
       // An explicit level is this delegation's own choice and is validated against the child model's
       // ladder (fail loudly, like an unknown `model`). Omitted, the child inherits the delegating turn's
@@ -529,9 +569,10 @@ export function register(ctx) {
         // applies it for a read-only agent TYPE, so both converge on one definition. Redundant with a
         // read-only type, harmless to pass alongside it.
         ...(p.read_only === true ? { readOnly: true } : {}),
-        // A typed sub-agent gets its role prompt from the host (resolved from `agentType`); only an
-        // untyped delegation uses the generic one-liner here.
-        ...(agentType
+        // A FORK carries NO role prompt at all: its system prompt is the parent's, byte for byte, and the
+        // worker rules travel in the directive message instead — where they cost one uncached block rather
+        // than moving the whole cached prefix.
+        ...(fork ? { fork: true } : agentType
           ? { agentType }
           : { prompt: 'You are a focused sub-agent. Complete the task and report the result concisely — no preamble.' }),
         // Optional parent-supplied background, added to the child's system-prompt prefix (cache-friendly).

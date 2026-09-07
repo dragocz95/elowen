@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import { openDb, type Db } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
-import { buildForkBoundaryMessages, FORK_PLACEHOLDER_RESULT } from '../../src/brain/session/forkPrefix.js';
+import { forkSeedMessages, FORK_PLACEHOLDER_RESULT } from '../../src/brain/session/forkPrefix.js';
 
 const SCOPE = { admin: true, projectIds: [], owner: true, permissionBoundary: null, fork: true };
 
@@ -21,33 +21,28 @@ describe('BrainStore.seedForkTranscript', () => {
     });
   });
 
-  const boundary = buildForkBoundaryMessages(
-    'audit the store',
-    { role: 'assistant', content: [{ type: 'toolCall', id: 'c1', name: 'Delegate' }] },
+  const boundary = forkSeedMessages(
+    [{ role: 'assistant', content: [{ type: 'toolCall', id: 'c1', name: 'Delegate' }] }],
     1_700_000_000_000,
   );
   const history = [
-    { role: 'user', content: { role: 'user', content: 'hello' } },
-    { role: 'assistant', content: { role: 'assistant', content: [{ type: 'text', text: 'hi' }] } },
+    { role: 'user', content: 'hello' },
+    { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
   ];
 
   it('writes the parent history and the fork boundary in order, as settled history', () => {
-    const written = store.seedForkTranscript('brain-ch-subagent-sub-1', [...history, ...boundary.map(
-      (message) => ({ role: message.role, content: message }),
-    )]);
+    const written = store.seedForkTranscript('brain-ch-subagent-sub-1', [...history, ...boundary]);
 
-    expect(written).toBe(5);
+    expect(written).toBe(4);
     const rows = store.getMessages('brain-ch-subagent-sub-1');
-    expect(rows.map((row) => row.role)).toEqual(['user', 'assistant', 'assistant', 'toolResult', 'user']);
+    expect(rows.map((row) => row.role)).toEqual(['user', 'assistant', 'assistant', 'toolResult']);
     // Settled, not pending: this is history the child starts FROM, and settlePartialTurn must not try to
     // answer the boundary's tool call a second time.
     expect(rows.every((row) => row.pending === 0)).toBe(true);
   });
 
   it('round-trips a toolResult answering the parent tool call', () => {
-    store.seedForkTranscript('brain-ch-subagent-sub-1', boundary.map(
-      (message) => ({ role: message.role, content: message }),
-    ));
+    store.seedForkTranscript('brain-ch-subagent-sub-1', boundary);
     const result = store.getMessages('brain-ch-subagent-sub-1').find((row) => row.role === 'toolResult');
     const parsed = JSON.parse(result!.content) as { toolCallId: string; content: { text: string }[] };
     expect(parsed.toolCallId).toBe('c1');
@@ -77,13 +72,13 @@ describe('BrainStore.seedForkTranscript', () => {
 
   it('rejects a role it cannot replay, leaving the child empty', () => {
     expect(() => store.seedForkTranscript('brain-ch-subagent-sub-1', [
-      { role: 'system', content: { role: 'system' } },
+      { role: 'system', content: 'nope' },
     ])).toThrow(/invalid seeded fork message role/);
     expect(store.getMessages('brain-ch-subagent-sub-1')).toHaveLength(0);
   });
 
   it('rejects an unbounded transcript rather than writing it in one transaction', () => {
-    const huge = Array.from({ length: 10_001 }, () => ({ role: 'user', content: { role: 'user', content: 'x' } }));
+    const huge = Array.from({ length: 10_001 }, () => ({ role: 'user', content: 'x' }));
     expect(() => store.seedForkTranscript('brain-ch-subagent-sub-1', huge)).toThrow(/too long/);
     expect(store.getMessages('brain-ch-subagent-sub-1')).toHaveLength(0);
   });

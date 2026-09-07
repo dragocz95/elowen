@@ -77,26 +77,35 @@ Output format (plain text labels, not markdown headers):
 ${FORK_DIRECTIVE_PREFIX}${directive}`;
 }
 
-/** The messages appended after the parent's history to close the fork boundary.
+/** The transcript a fork child is seeded with: the parent's history, then a placeholder result for every
+ *  tool call the parent's turn left unanswered.
  *
- *  The parent's assistant message is kept WHOLE — every tool call, not just the Delegate one that spawned
- *  this child. Dropping the siblings would renumber nothing but would change the assistant block the
- *  provider hashes, and the parent's own next request still contains them. Each call is then answered
- *  with the same placeholder, because a child cannot know what its siblings returned and inventing a
- *  result per call would give every fork a different prefix.
+ *  The parent's trailing assistant message is kept WHOLE — every tool call, not just the Delegate one that
+ *  spawned this child. Dropping the siblings would change the assistant block the provider hashes, and the
+ *  parent's own next request still contains them. Each is then answered with the SAME placeholder, because
+ *  a child cannot know what its siblings returned and inventing a result per call would give every fork of
+ *  one turn a different prefix.
  *
- *  A parent assistant message with no tool calls cannot happen on the spawn path (the fork is requested
- *  BY a tool call) but is handled rather than asserted: the child still gets its directive, and only its
- *  own last block differs from the parent's prefix. */
-export function buildForkBoundaryMessages(
-  directive: string,
-  parentAssistant: ForkMessage,
-  now: number,
-): ForkMessage[] {
-  const calls = toolCallsOf(parentAssistant);
-  const userMessage: ForkMessage = { role: 'user', content: buildForkChildMessage(directive) };
-  if (calls.length === 0) return [userMessage];
-  const results: ForkMessage[] = calls.map((call) => ({
+ *  The directive is deliberately NOT part of the seed. It arrives as the child's first prompt (see
+ *  {@link buildForkChildMessage}), which is what makes it the only block after the shared prefix — and
+ *  what lets the child's own per-turn context ride with it instead of being frozen into history.
+ *
+ *  A history that ends with nothing unanswered is returned untouched: the child then simply resumes a
+ *  settled conversation, which is still a byte-identical prefix. */
+export function forkSeedMessages(parentMessages: readonly ForkMessage[], now: number): ForkMessage[] {
+  const answered = new Set<string>();
+  for (const message of parentMessages) {
+    const id = message.role === 'toolResult' ? message.toolCallId : undefined;
+    if (typeof id === 'string') answered.add(id);
+  }
+  const outstanding: ToolCallBlock[] = [];
+  for (const message of parentMessages) {
+    if (message.role === 'toolResult') continue;
+    for (const call of toolCallsOf(message)) {
+      if (!answered.has(call.id)) outstanding.push(call);
+    }
+  }
+  const results: ForkMessage[] = outstanding.map((call) => ({
     role: 'toolResult',
     toolCallId: call.id,
     toolName: call.name ?? 'unknown',
@@ -105,7 +114,7 @@ export function buildForkBoundaryMessages(
     isError: false,
     timestamp: now,
   }));
-  return [parentAssistant, ...results, userMessage];
+  return [...parentMessages, ...results];
 }
 
 /** Whether this conversation is itself a fork child. Scans for the boilerplate tag in user text, which

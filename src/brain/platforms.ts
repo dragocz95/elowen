@@ -5,7 +5,7 @@ import type { Policy } from '../plugins/policy.js';
 import { narrowToolAllowList, type ToolPolicy, type TurnAutomation, type TurnIdentity } from '../plugins/policyContext.js';
 import type { IdentityResolver } from './identity.js';
 import type { ChannelSessionService } from './channels.js';
-import { channelSessionId } from './sessionId.js';
+import { channelSessionId, isChannelSession } from './sessionId.js';
 import { platformOrigin } from '../api/clientIp.js';
 import { openTurn, type TurnActivityFeed, type TurnOriginPin } from './session/turnSettled.js';
 import type { SessionListItem, SessionPage, SessionPageOpts } from './service/statusService.js';
@@ -183,6 +183,26 @@ export class PlatformOrchestrator {
           // ONE unified access decision, in two shapes: a DELEGATED turn runs under the immutable boundary
           // minted here and dispatched below, while an ordinary platform turn resolves its sender.
           if (src.platform === 'subagent') {
+            // A FORK inherits the parent's prompt, tools and history verbatim, so the host has to refuse
+            // anything that would make the child's request prefix differ from the parent's — and refuse a
+            // fork whose parent is not an owner chat at all. The subagent plugin says the same things in
+            // friendlier words; this is the boundary, and it must hold for any caller of the orchestrator.
+            const fork = src.access.fork === true;
+            if (fork) {
+              // The recursion guard AND the owner-chat rule in one check: a delegated child's session id is
+              // a subagent id, and a shared platform room's is a channel id. Only an owner conversation has
+              // neither, and only an owner conversation has a prefix worth inheriting.
+              if (!parentSessionId || isChannelSession(parentSessionId)) {
+                throw new Error('fork is only available in an owner conversation — a sub-agent or a platform channel cannot fork');
+              }
+              // Each of these would change the child's prefix: a narrower toolset rewrites the tool block,
+              // a role prompt or agent type rewrites the system prompt, and a workspace changes the cwd the
+              // prompt advertises. Refusing beats silently producing a fork that misses the cache.
+              if (src.access.readOnly === true) throw new Error('fork cannot be combined with read_only — a fork inherits the parent’s exact toolset');
+              if (src.access.agentType) throw new Error('fork cannot be combined with subagent_type — a fork inherits the parent’s own prompt');
+              if (src.access.workspaceId) throw new Error('fork cannot be combined with workspaceId — a fork inherits the parent’s working directory');
+              if (src.access.planMode === true) throw new Error('fork is not available from a planning turn — plan mode narrows what the child could inherit');
+            }
             // Capture one immutable boundary on the very first child spawn. The synthetic platform source
             // is internal but still validated like persisted JSON: a malformed scope must not fall back to
             // the owner's ambient policy. `owner` is independently authenticated, never inferred from an
@@ -231,7 +251,10 @@ export class PlatformOrchestrator {
             // of the three the normalizer below rejects the whole scope and the child never runs at all —
             // the least diagnosable failure this path can produce. Log whatever had to be cut, since the
             // child only learns it from a marker inside its own prompt.
-            const packed = packDelegatedPromptAppend(promptAppend);
+            // A fork appends NOTHING. Its system prompt is the parent's, and the parent has no role prompt,
+            // no handed-over context and no channel fragment; adding any of them here is exactly the byte
+            // that would move the cached prefix.
+            const packed = packDelegatedPromptAppend(fork ? [] : promptAppend);
             const workspaceBinding = resolveDelegatedWorkspace(
               this.d.sandbox?.(),
               {
@@ -270,6 +293,10 @@ export class PlatformOrchestrator {
               // otherwise put it back on the model default.
               ...(typeof src.access.thinkingLevel === 'string' && src.access.thinkingLevel
                 ? { thinkingLevel: src.access.thinkingLevel } : {}),
+              // Durable, because every rebuild path has to know: a fork child advertises a wider tool block
+              // than an ordinary child and is refused those names at execute time. A respawn that lost the
+              // flag would keep the block and drop the refusals.
+              ...(fork ? { fork: true } : {}),
             });
             if (!rawScope) throw new Error('invalid delegated access');
             // The account running the child can only make the captured scope narrower. Persist this union

@@ -9,6 +9,7 @@ import { runWithPolicy } from '../plugins/policyContext.js';
 import { createWorkspacePathView, type WorkspacePathView } from '../plugins/pathView.js';
 import {
   delegatedToolPolicy,
+  delegatedVisibilityToolPolicy,
   normalizeDelegatedExecutionScope,
   type DelegatedExecutionScope,
 } from './delegatedScope.js';
@@ -27,6 +28,7 @@ import { rolloverDue, SESSION_IDLE_ROLLOVER_MS } from './session/idleRollover.js
 import { decideAmbientBlock } from './session/ambientBlock.js';
 import { drainPostCompactionContext } from './continuity/postCompactionContext.js';
 import { composeTurnPrompt } from './session/turnPrompt.js';
+import { buildForkChildMessage, forkSeedMessages, type ForkMessage } from './session/forkPrefix.js';
 import { turnSkillsBlock } from './session/turnSkills.js';
 import { settleTurn, titleTurnConversation } from './session/turnSettled.js';
 import { maybeColdStartCompaction } from './session/coldStartCompaction.js';
@@ -376,6 +378,7 @@ export interface ChannelSendOpts {
   parentSessionId?: string;
   /** Immutable policy/identity boundary minted by the delegating turn. Required for a child send. */
   delegatedAccess?: DelegatedExecutionScope;
+
   /** The delegating turn's working directory, inherited by a delegated child session so its tools resolve
    *  relative paths against — and it advertises — the SAME project the parent runs in, not the daemon's
    *  `/`. Validated against the child's policy in the spawner like any client-reported cwd. Only set for a
@@ -561,11 +564,36 @@ export class ChannelSessionService {
     this.d.onDelegatedEdge?.(parentSessionId, childSessionId, false);
   }
 
+  /** The parent's durable transcript, in the shape the fork seed needs: the stored message bytes, with the
+   *  row's own role beside them.
+   *
+   *  A row whose content will not parse is dropped rather than guessed at. That is deliberately harsher
+   *  than it sounds — a fork exists to reproduce the parent's prefix exactly, and a prefix with a hole in
+   *  it is not a cheaper fork, it is a different conversation. Dropping keeps the transcript valid; the
+   *  fork simply misses the cache and says so in its own log line. */
+  private parentForkHistory(parentSessionId: string): ForkMessage[] {
+    const out: ForkMessage[] = [];
+    for (const row of this.d.store.getMessages(parentSessionId)) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(row.content); }
+      catch { continue; } // unreadable row — see above
+      // The stored bytes ARE the message. A row whose content is not one is not something to wrap and
+      // hope for: rehydration would skip it later and the fork would quietly lose that turn.
+      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+      if (typeof (parsed as { role?: unknown }).role !== 'string') continue;
+      out.push(parsed as ForkMessage);
+    }
+    return out;
+  }
+
   /** A child can only execute under the immutable scope minted by its original delegate call. This is
    * enforced here because this service owns first spawn, LRU revival, and idle drill-in continuations. */
   private delegatedExecution(opts: ChannelSendOpts, sessionId: string): {
     scope: DelegatedExecutionScope;
     toolPolicy: ToolPolicy | undefined;
+    /** What the child ADVERTISES. Identical to `toolPolicy` for every child except a fork, whose visible
+     *  set must equal its parent's or the prompt cache it was spawned to read is rewritten. */
+    visibilityToolPolicy: ToolPolicy | undefined;
     pathView?: WorkspacePathView;
   } {
     const scope = normalizeDelegatedExecutionScope(opts.delegatedAccess);
@@ -610,6 +638,7 @@ export class ChannelSessionService {
     return {
       scope,
       toolPolicy: delegatedToolPolicy(scope, opts.toolPolicy?.deny ?? [], opts.toolPolicy?.allow),
+      visibilityToolPolicy: delegatedVisibilityToolPolicy(scope, opts.toolPolicy?.deny ?? [], opts.toolPolicy?.allow),
       ...(pathView ? { pathView } : {}),
     };
   }
@@ -716,6 +745,11 @@ export class ChannelSessionService {
     const delegated = parentSessionId ? this.delegatedExecution(opts, sessionId) : undefined;
     const scheduledTurn = opts.scheduled === true || opts.identity?.automation === 'scheduled';
     const effectiveToolPolicy = delegated?.toolPolicy ?? opts.toolPolicy;
+    // What the model is SHOWN, which is the same object everywhere except in a fork child. Splitting the
+    // two is what lets a fork advertise its parent's exact tool block while still being refused the names
+    // a delegated turn must never run.
+    const visibleToolPolicy = delegated ? delegated.visibilityToolPolicy : opts.toolPolicy;
+    const forkChild = delegated?.scope.fork === true;
     // `pendingAbort` is deliberately observed (not consumed) on the owner-steer fast path: the original
     // child turn must still consume it after prompt() and report a terminal abort instead of success.
     const delegationAborted = () => !!parentSessionId && (
@@ -820,6 +854,13 @@ export class ChannelSessionService {
         this.d.registry.channelDispose(opts.channelId);
         ch = undefined;
       }
+      // A fork child's FIRST spawn inherits its parent's transcript. Read from the STORE rather than the
+      // parent's live session: a delegated turn may run in the runner process, where the parent has no live
+      // record at all, and the durable rows are the same bytes on either side. Skipped once the child has
+      // rows of its own — a respawn rehydrates them, and the store refuses a second seed anyway.
+      const forkSeed = forkChild && parentSessionId && this.d.store.getMessages(sessionId).length === 0
+        ? forkSeedMessages(this.parentForkHistory(parentSessionId), Date.now())
+        : undefined;
       if (!ch) {
         this.d.registry.channelEvictOldestIfFull(this.maxChannels());
         ch = await this.d.spawn({
@@ -833,6 +874,11 @@ export class ChannelSessionService {
           extraAppend: opts.promptAppend,
           ...(seedMessages.length ? { seedMessages } : {}),
           channel: true, // a shared platform channel is NEVER owner-chat — no Elowen* tools, no owner token
+          // …unless this child is a FORK, which is composed as its owner-chat parent was so the two share
+          // a prompt cache. The spawner reads this in every place that would otherwise shape the session
+          // as a channel; what the fork may RUN is still the delegated scope.
+          ...(forkChild ? { fork: true } : {}),
+          ...(forkSeed?.length ? { forkSeed } : {}),
           trustedChannel: opts.trusted, // admin-role sender → trusted-channel (all projects + full plugin toolset), still no Elowen*
           scheduled: opts.scheduled, // timer-driven turn → focused `scheduled` system prompt instead of the coding base
           thinkingLevel: opts.thinkingLevel,
@@ -1019,7 +1065,7 @@ export class ChannelSessionService {
           // this account, while ownership says whose personal MCP server is on the other end of a name the
           // room composed for everybody. Absent on every session composed for a single account.
           applyToolVisibility(
-            ch.session, ch.pluginToolNames, effectiveToolPolicy, ch.toolSearch,
+            ch.session, ch.pluginToolNames, visibleToolPolicy, ch.toolSearch,
             ch.personalToolOwners ? { owners: ch.personalToolOwners, contributionUserId: turnContributionUserId } : undefined,
           );
           // Granular permissions without an approval channel: ordinary platform turns read the verified
@@ -1085,7 +1131,10 @@ export class ChannelSessionService {
               // execution. A shared organization room intentionally carries its writers' tool activity in one
               // conversation; the digest avoids repeating an unchanged catalog on every turn.
               const skills = decideAmbientBlock({
-                rendered: await turnSkillsBlock({
+                // A FORK child already carries the catalog in its CACHED prompt, composed exactly as its
+                // parent's was. Rendering it per turn as well would announce every skill twice and add a
+                // block the parent's next request does not have.
+                rendered: forkChild ? '' : await turnSkillsBlock({
                   ...(this.d.plugins ? { plugins: this.d.plugins } : {}),
                   users: this.d.users,
                   contributionUserId: turnContributionUserId,
@@ -1107,7 +1156,9 @@ export class ChannelSessionService {
                   text: senderMsg,
                 }),
                 beforeUser: turnContext.beforeUser,
-                text: turnText,
+                // A FORK child's directive rides inside the standing worker rules, so the constant part is
+                // shared with every sibling fork and only the directive itself is new after the prefix.
+                text: forkChild ? buildForkChildMessage(turnText) : turnText,
                 afterUser: turnContext.afterUser,
                 workDirReorientation: workspaceReminder,
                 postCompaction,
@@ -1152,7 +1203,7 @@ export class ChannelSessionService {
               await ch.session.prompt(NO_REPLY_NUDGE);
               this.d.registry.throwIfPendingAbort(sessionId);
             }
-          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: effectiveWorkDir.workDir, resolveWorkDir: () => resolveWorkDir().workDir, ...(delegated?.pathView ? { pathView: delegated.pathView } : {}), settingsUserId: ch.settingsUserId, contributionUserId: turnContributionUserId, model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
+          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: effectiveWorkDir.workDir, resolveWorkDir: () => resolveWorkDir().workDir, ...(delegated?.pathView ? { pathView: delegated.pathView } : {}), settingsUserId: ch.settingsUserId, contributionUserId: turnContributionUserId, ...(forkChild ? { forkChild: true } : {}), model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
           // Deterministic settled idle (model + context fill) AFTER the turn — proactive footers depend on it.
           turnOnEvent?.({
             type: 'idle',

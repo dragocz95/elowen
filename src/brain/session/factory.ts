@@ -1,4 +1,5 @@
 import { createAgentSession, DefaultResourceLoader, estimateTokens, SettingsManager } from '@earendil-works/pi-coding-agent';
+import type { ForkMessage } from './forkPrefix.js';
 import type { AgentSession, ExtensionAPI, PromptTemplate, ResourceLoader, Skill, ToolDefinition, ModelRuntime } from '@earendil-works/pi-coding-agent';
 import type { Model, Api } from '@earendil-works/pi-ai';
 import type { BrainStore } from '../../store/brainStore.js';
@@ -72,6 +73,10 @@ export interface SessionSpec {
   delegatedAccess?: DelegatedExecutionScope;
   /** Imported platform transcript rows inserted atomically before history rehydration. */
   seedMessages?: { id: string; role: 'user' | 'assistant'; content: unknown }[];
+  /** A fork child's inherited transcript: the parent's history plus the fork boundary, inserted before
+   *  rehydration so the child's very first request carries the parent's prefix. Distinct from
+   *  `seedMessages` because it legitimately carries tool calls and their results (see seedForkTranscript). */
+  forkSeed?: ForkMessage[];
   runtime: ModelRuntime;
   model: Model<Api>;
   /** The CONFIG provider entry id this session runs on (BrainProviderEntry.id, from the resolved route —
@@ -584,6 +589,9 @@ export class BrainSessionFactory {
       this.d.store.setTitle(spec.sessionId, spec.title.slice(0, 60));
     }
     if (spec.seedMessages?.length) this.d.store.seedMessages(spec.sessionId, spec.seedMessages);
+    // Before settlePartialTurn and rehydration, so the fork boundary is already settled history by the time
+    // either runs — the boundary's tool calls are answered by construction and must not be re-answered.
+    if (spec.forkSeed?.length) this.d.store.seedForkTranscript(spec.sessionId, spec.forkSeed);
 
     // A session is only ever spawned when none is live for it, so any rows still marked pending are the
     // remains of a turn the daemon died in the middle of. Settle them into history BEFORE rehydrating, so

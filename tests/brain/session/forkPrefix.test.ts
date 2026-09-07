@@ -3,10 +3,10 @@ import {
   FORK_BOILERPLATE_TAG,
   FORK_DIRECTIVE_PREFIX,
   FORK_PLACEHOLDER_RESULT,
-  buildForkBoundaryMessages,
   buildForkChildMessage,
   buildForkWorktreeNotice,
   forkCacheVerdict,
+  forkSeedMessages,
   formatForkCacheLine,
   isInForkChild,
   type ForkCacheReading,
@@ -21,43 +21,56 @@ const parentAssistant = (...calls: ReturnType<typeof toolCall>[]): ForkMessage =
   stopReason: 'toolUse',
 });
 
-describe('fork boundary messages', () => {
-  it('answers EVERY tool call of the parent assistant with the same placeholder', () => {
-    const assistant = parentAssistant(toolCall('a', 'Delegate'), toolCall('b', 'Read'));
-    const built = buildForkBoundaryMessages('audit the store', assistant, 1_700_000_000_000);
+const history: ForkMessage[] = [
+  { role: 'user', content: 'hello' },
+  { role: 'assistant', content: [{ type: 'text', text: 'hi' }] },
+];
 
-    expect(built).toHaveLength(4);
-    expect(built[0]).toBe(assistant); // the parent's message, whole and unmodified
-    expect(built.slice(1, 3).map((m) => m.role)).toEqual(['toolResult', 'toolResult']);
-    expect(built.slice(1, 3).map((m) => m.toolCallId)).toEqual(['a', 'b']);
-    const texts = built.slice(1, 3).map((m) => (m.content as { text: string }[])[0]!.text);
+describe('fork seed messages', () => {
+  it('keeps the parent history verbatim and answers every unanswered tool call alike', () => {
+    const assistant = parentAssistant(toolCall('a', 'Delegate'), toolCall('b', 'Read'));
+    const seed = forkSeedMessages([...history, assistant], 1_700_000_000_000);
+
+    expect(seed).toHaveLength(5);
+    expect(seed.slice(0, 3)).toEqual([...history, assistant]);
+    expect(seed.slice(3).map((m) => m.role)).toEqual(['toolResult', 'toolResult']);
+    expect(seed.slice(3).map((m) => m.toolCallId)).toEqual(['a', 'b']);
+    const texts = seed.slice(3).map((m) => (m.content as { text: string }[])[0]!.text);
     expect(texts).toEqual([FORK_PLACEHOLDER_RESULT, FORK_PLACEHOLDER_RESULT]);
   });
 
-  it('puts the directive last, behind the constant boilerplate', () => {
-    const built = buildForkBoundaryMessages('audit the store', parentAssistant(toolCall('a', 'Delegate')), 1);
-    const last = built.at(-1)!;
-
-    expect(last.role).toBe('user');
-    expect(last.content).toBe(buildForkChildMessage('audit the store'));
-    expect(String(last.content)).toContain(`${FORK_DIRECTIVE_PREFIX}audit the store`);
-    expect(String(last.content).indexOf(`</${FORK_BOILERPLATE_TAG}>`))
-      .toBeLessThan(String(last.content).indexOf(FORK_DIRECTIVE_PREFIX));
+  it('leaves an already-answered tool call alone', () => {
+    const assistant = parentAssistant(toolCall('a', 'Read'));
+    const answered: ForkMessage = { role: 'toolResult', toolCallId: 'a', content: [{ type: 'text', text: 'ok' }] };
+    const seed = forkSeedMessages([...history, assistant, answered], 1);
+    expect(seed).toEqual([...history, assistant, answered]);
   });
 
-  it('gives two children of one parent turn an identical prefix and only a different directive', () => {
+  it('gives two children of one parent turn a byte-identical seed', () => {
     const assistant = parentAssistant(toolCall('a', 'Delegate'), toolCall('b', 'Delegate'));
-    const first = buildForkBoundaryMessages('first job', assistant, 7);
-    const second = buildForkBoundaryMessages('second job', assistant, 7);
-
-    expect(JSON.stringify(first.slice(0, -1))).toBe(JSON.stringify(second.slice(0, -1)));
-    expect(first.at(-1)!.content).not.toBe(second.at(-1)!.content);
+    const first = forkSeedMessages([...history, assistant], 7);
+    const second = forkSeedMessages([...history, assistant], 7);
+    expect(JSON.stringify(first)).toBe(JSON.stringify(second));
   });
 
-  it('still delivers the directive when the parent assistant carries no tool call', () => {
-    const built = buildForkBoundaryMessages('orphan', { role: 'assistant', content: [] }, 1);
-    expect(built).toHaveLength(1);
-    expect(built[0]!.role).toBe('user');
+  it('returns a settled history untouched', () => {
+    expect(forkSeedMessages(history, 1)).toEqual(history);
+  });
+});
+
+describe('the fork directive prompt', () => {
+  it('puts the directive behind the constant boilerplate', () => {
+    const text = buildForkChildMessage('audit the store');
+    expect(text).toContain(`${FORK_DIRECTIVE_PREFIX}audit the store`);
+    expect(text.indexOf(`</${FORK_BOILERPLATE_TAG}>`)).toBeLessThan(text.indexOf(FORK_DIRECTIVE_PREFIX));
+  });
+
+  it('differs between two children only after the boilerplate', () => {
+    const first = buildForkChildMessage('first job');
+    const second = buildForkChildMessage('second job');
+    const shared = `</${FORK_BOILERPLATE_TAG}>`;
+    expect(first.slice(0, first.indexOf(shared))).toBe(second.slice(0, second.indexOf(shared)));
+    expect(first).not.toBe(second);
   });
 });
 

@@ -292,6 +292,12 @@ export interface SessionSource {
      *  READ_ONLY_AGENT_TOOLS preset intersected with the caller's scope, plus a minted read-only permission
      *  boundary — the exact path a read-only agent TYPE takes, so there is one read-only definition. */
     readOnly?: boolean;
+    /** Spawn this child as a FORK of the delegating conversation: same system prompt, same tool schemas and
+     *  the parent's whole history, so the provider can read the parent's warm prompt cache instead of
+     *  paying for the prefix again. The host refuses it outright for anything that would change that
+     *  prefix — `readOnly`, `agentType`, `workspaceId`, a planning parent — and for a parent that is not an
+     *  owner conversation, which is also the recursion guard. It never widens what the child may RUN. */
+    fork?: boolean;
     /** The `readOnly` above originates in the delegating turn's own PLAN mode rather than in what it asked
      *  for. Stamped by pathGuard.currentAccess and forwarded untouched by every spawner, so the host can
      *  tell a clamp the caller CHOSE (liftable by a later promotion) from one it was subject to (never). */

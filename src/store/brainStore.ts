@@ -971,14 +971,13 @@ export class BrainStore {
    *  Rows are written non-pending: this is settled history the child starts FROM, not the remains of an
    *  interrupted turn, and `settlePartialTurn` must not try to answer the boundary's tool calls a second
    *  time. */
-  seedForkTranscript(sessionId: string, messages: readonly { role: string; content: unknown }[]): number {
+  seedForkTranscript(sessionId: string, messages: readonly { role: string }[]): number {
     if (!messages.length) return 0;
     if (messages.length > MAX_FORK_SEEDED_MESSAGES) throw new TypeError('fork transcript too long');
     for (const message of messages) {
       if (message.role !== 'user' && message.role !== 'assistant' && message.role !== 'toolResult') {
         throw new TypeError(`invalid seeded fork message role: ${String(message.role)}`);
       }
-      if (message.content === undefined) throw new TypeError('invalid seeded fork message content');
     }
     return this.db.transaction(() => {
       const exists = this.db.prepare('SELECT 1 FROM brain_messages WHERE session_id = ? LIMIT 1').get(sessionId);
@@ -990,10 +989,10 @@ export class BrainStore {
                    LEFT JOIN brain_usage_reset_state r ON r.user_id = s.user_id WHERE s.id = @session_id))`,
       );
       for (const message of messages) {
-        insert.run({
-          id: randomUUID(), session_id: sessionId, role: message.role,
-          content: JSON.stringify(message.content),
-        });
+        // The WHOLE message is the row content, exactly as every other writer stores it (appendMessage,
+        // appendPendingMessage) and exactly as rehydration expects to read it back — a bare content array
+        // parses, but rehydration skips it and the fork silently starts with no history at all.
+        insert.run({ id: randomUUID(), session_id: sessionId, role: message.role, content: JSON.stringify(message) });
       }
       return messages.length;
     })();
