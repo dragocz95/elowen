@@ -15,6 +15,7 @@ import {
   isClearedToolResult,
   selectClearableToolResults,
 } from '../../../src/brain/session/toolResultClearing.js';
+import { OPENAI_CACHE_MAX_RETENTION_MS } from '../../../src/brain/session/cacheTiming.js';
 import { HISTORY_IMAGE_PLACEHOLDER, type PiAgentMessage } from '../../../src/brain/session/historyImageStripping.js';
 import { markImagesRejected, resetImageRejections } from '../../../src/brain/session/imageRejection.js';
 import { providerPayloadHarness } from '../../helpers/providerPayloads.js';
@@ -154,8 +155,10 @@ describe('clearColdToolResults', () => {
   it('selects exactly what the egress pass selected one moment later', async () => {
     const atTurnStart = history();
     const atEgress = [...history(), user('four', 4_000)];
-    expect(selectClearableToolResults(atTurnStart, new Set(), TURN_START_KEEP_USER_TURNS).map((r) => r.toolCallId))
-      .toEqual(selectClearableToolResults(atEgress, new Set(), KEEP_USER_TURNS).map((r) => r.toolCallId));
+    const selected = selectClearableToolResults(atTurnStart, TURN_START_KEEP_USER_TURNS).map((r) => r.toolCallId);
+    expect(selected).toEqual(selectClearableToolResults(atEgress, KEEP_USER_TURNS).map((r) => r.toolCallId));
+    // …and it is not the empty set on both sides, which an argument list that no longer matches would be.
+    expect(selected).toEqual(['call-a', 'call-b']);
 
     const store = freshStore();
     const messages = history();
@@ -192,6 +195,92 @@ describe('clearColdToolResults', () => {
     // Control: the very same input clears the moment the child is gone, so the gate above is the reason.
     await clearColdToolResults(deps(store), session(messages), { ...spill.options, now: cold });
     expect(spill.files.size).toBe(2);
+  });
+
+  /** RED BEFORE THE FIX: the gate read the parent's own rows and asked whether a child was running RIGHT
+   *  NOW. A fork child that finished a minute ago satisfies both, and its requests re-sent the parent's
+   *  prefix — which the provider is still holding for the rest of the retention window. The parent's next
+   *  turn then rewrote bytes that were demonstrably still warm. */
+  it('does nothing when a fork child used the shared prefix, even after that child has finished', async () => {
+    const db = openDb(':memory:');
+    const store = new BrainStore(db);
+    store.createSession({ id: SESSION, userId: 7, model: 'm' });
+    stores.push(store);
+    const messages = history();
+    seedRows(store, messages);
+    // The parent has been quiet for hours: on its own rows alone this conversation is provably cold.
+    db.prepare("UPDATE brain_messages SET created_at = datetime('now', '-3 hours') WHERE session_id = ?").run(SESSION);
+    store.createSession({
+      id: `${SESSION}-fork`, userId: 7, model: 'm', parentSessionId: SESSION,
+      delegatedAccess: { admin: false, projectIds: [], owner: false, permissionBoundary: null, fork: true },
+    });
+    store.appendMessage({
+      id: 'fork-1', sessionId: `${SESSION}-fork`, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'text', text: 'child turn' }] },
+    });
+    const spill = spillFake();
+
+    // The child is FINISHED: no running children, nothing for the quiescence predicate to see.
+    await clearColdToolResults(deps(store), session(messages), { ...spill.options, now: () => Date.now() });
+    expect(spill.files.size).toBe(0);
+    expect(contentOf(messages[2]!)[0]!.text).toBe(BIG);
+
+    // Control: once the child's turn is as old as the parent's, the shared prefix really is cold.
+    db.prepare("UPDATE brain_messages SET created_at = datetime('now', '-3 hours') WHERE session_id = ?")
+      .run(`${SESSION}-fork`);
+    await clearColdToolResults(deps(store), session(messages), { ...spill.options, now: () => Date.now() });
+    expect(spill.files.size).toBe(2);
+  });
+
+  /** The other half of the same rule: an ordinary delegated child composes its own prompt and shares no
+   *  prefix, so its activity must not hold its parent's history hostage. */
+  it('still clears when the recent child was a plain sub-agent rather than a fork', async () => {
+    const db = openDb(':memory:');
+    const store = new BrainStore(db);
+    store.createSession({ id: SESSION, userId: 7, model: 'm' });
+    stores.push(store);
+    const messages = history();
+    seedRows(store, messages);
+    db.prepare("UPDATE brain_messages SET created_at = datetime('now', '-3 hours') WHERE session_id = ?").run(SESSION);
+    store.createSession({
+      id: `${SESSION}-sub`, userId: 7, model: 'm', parentSessionId: SESSION,
+      delegatedAccess: { admin: false, projectIds: [], owner: false, permissionBoundary: null },
+    });
+    store.appendMessage({
+      id: 'sub-1', sessionId: `${SESSION}-sub`, parentId: null, role: 'assistant',
+      content: { role: 'assistant', content: [{ type: 'text', text: 'child turn' }] },
+    });
+    const spill = spillFake();
+
+    await clearColdToolResults(deps(store), session(messages), { ...spill.options, now: () => Date.now() });
+    expect(spill.files.size).toBe(2);
+  });
+
+  /** RED BEFORE THE FIX: the conservative hour survived only on the image branch, so a text result was
+   *  rewritten six minutes into an OpenAI Responses conversation running on the short retention — while
+   *  that provider may still be serving the prefix the best part of an hour later. */
+  it('waits for the provider’s real retention, not only the TTL the request declared', async () => {
+    const sevenMinutes = (): number => Date.now() + 7 * 60_000;
+    const openai = freshStore();
+    const onOpenai = history();
+    seedRows(openai, onOpenai);
+    const openaiSpill = spillFake();
+    await clearColdToolResults(deps(openai), {
+      ...session(onOpenai), lastRequestCacheTtlMs: 5 * 60_000,
+      cacheRetentionFloorMs: OPENAI_CACHE_MAX_RETENTION_MS,
+    }, { ...openaiSpill.options, now: sevenMinutes });
+    expect(openaiSpill.files.size).toBe(0);
+    expect(contentOf(onOpenai[2]!)[0]!.text).toBe(BIG);
+
+    // Anthropic honours the TTL it was given, so the same seven minutes really are past the retention.
+    const anthropic = freshStore();
+    const onAnthropic = history();
+    seedRows(anthropic, onAnthropic);
+    const anthropicSpill = spillFake();
+    await clearColdToolResults(deps(anthropic), {
+      ...session(onAnthropic), lastRequestCacheTtlMs: 5 * 60_000, cacheRetentionFloorMs: 0,
+    }, { ...anthropicSpill.options, now: sevenMinutes });
+    expect(anthropicSpill.files.size).toBe(2);
   });
 
   it('does nothing while the session is streaming or compacting', async () => {

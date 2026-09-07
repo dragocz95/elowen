@@ -1223,6 +1223,34 @@ export class BrainStore {
     return row.ts ?? undefined;
   }
 
+  /** The newest message in any FORK descendant of this session, or undefined when it has none.
+   *
+   *  A fork child is seeded with a COPY of its parent's context, so every request it makes re-sends the
+   *  parent's prefix and keeps that server-side cache warm — while the parent's own rows quietly age past
+   *  the TTL. Any gate that rewrites the parent's history on the argument "nothing has been sent for
+   *  longer than the retention" has to count these requests as the parent's own, and a child that has
+   *  already FINISHED still leaves the prefix warm for the rest of the retention window, so "is a child
+   *  running right now" is not the same question.
+   *
+   *  Only forks: an ordinary delegated child composes its own prompt and shares no prefix. Recursive,
+   *  because a fork of a fork carries the original prefix too. Message time is the proxy for request
+   *  time, the same equivalence {@link lastMessageAt} rests on — a request happens inside a prompt that
+   *  writes its rows within seconds. */
+  lastForkChildMessageAt(sessionId: string): string | undefined {
+    const row = this.db.prepare(
+      `WITH RECURSIVE forks(id) AS (
+         SELECT s.id FROM brain_sessions s
+          WHERE s.parent_session_id = ? AND json_valid(s.delegated_access)
+            AND json_extract(s.delegated_access, '$.fork') = 1
+         UNION
+         SELECT s.id FROM brain_sessions s JOIN forks f ON s.parent_session_id = f.id
+          WHERE json_valid(s.delegated_access) AND json_extract(s.delegated_access, '$.fork') = 1
+       )
+       SELECT MAX(m.created_at) AS ts FROM brain_messages m WHERE m.session_id IN (SELECT id FROM forks)`
+    ).get(sessionId) as { ts: string | null };
+    return row.ts ?? undefined;
+  }
+
   /** Raw transcript rows, including provisional message_end mirrors. Recovery, compaction alignment and
    *  diagnostics need this exact on-disk state; user-facing history must use getSettledMessages instead. */
   getMessages(sessionId: string): BrainMessageRow[] {

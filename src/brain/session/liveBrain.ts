@@ -97,6 +97,11 @@ export interface LiveBrain {
    *  cache. Unset until this process runs a turn (rehydrated history): the gate then assumes the longest
    *  TTL, which can only delay the compaction. */
   lastRequestCacheTtlMs?: number;
+  /** The longest this session's provider may keep an inactive prompt cache whatever TTL the request
+   *  declared — see providerCacheRetentionFloorMs. Resolved at spawn from the model's wire API, because a
+   *  destructive turn-start rewrite must respect the provider's real retention, not only the one pi-ai
+   *  asked for. 0/unset on providers that honour the declared TTL. */
+  cacheRetentionFloorMs?: number;
   listeners: Set<(e: BrainEvent) => void>;
   /** Bounded current-run event journal + the canonical fan-out seam. Used by opt-in sub-agent stream
    *  snapshots to reconstruct output emitted before the user opened the drill-in view. */

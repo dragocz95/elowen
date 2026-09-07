@@ -24,6 +24,7 @@ import type { BrainSessionFactory } from '../session/factory.js';
 import { resolveAutoCompactPct } from '../session/factory.js';
 import { DEFAULT_AUTO_COMPACT_PCT, type LiveBrain, type SpawnOpts, type QueuedMsg, type TurnContextBlocks } from '../session/liveBrain.js';
 import { renderTurnContextFrame } from '../session/turnContextFrame.js';
+import { providerCacheRetentionFloorMs } from '../session/cacheTiming.js';
 import { liveSkillCommandExtension } from '../session/turnSkills.js';
 import type { BrainEvent } from '../events.js';
 import type { BrainDeps } from '../brainDeps.js';
@@ -722,6 +723,9 @@ export class LiveSessionSpawner {
       session, sessionId, ownerUserId, settingsUserId, contributionUserId: contributionOwnerUserId,
       direct: opts.direct === true,
       model: model.id, providerId, provider: model.provider, thinkingLevel: opts.thinkingLevel,
+      // What this provider may still be holding when the declared TTL has expired — the floor the cold
+      // turn-start rewrite adds to the stamped TTL before it touches anything.
+      cacheRetentionFloorMs: providerCacheRetentionFloorMs(model.api),
       requestProfile, fastAvailable: fastRoute !== undefined,
       thinkingLabels: Object.fromEntries(capabilities.levels.map((level) => [level, capabilities.labels[level] ?? level])),
       policy: opts.policy, applyCompaction, assessColdCompaction, listeners, replay, turnContext,
