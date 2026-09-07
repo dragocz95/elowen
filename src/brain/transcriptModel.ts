@@ -1,5 +1,6 @@
 import type { BrainEvent } from './events.js';
 import { isSubagentToolName } from './messageView.js';
+import { laterChildRunSpeaks } from './subagentRuns.js';
 import {
   submittedPlanOf,
   toolRunJoinMode,
@@ -665,15 +666,16 @@ export class TranscriptModel implements TranscriptRead {
     this.projectSubagent(sub.sessionId, clone);
   }
 
-  /** Refresh the ONE rail row a child owns, folded across its calls: the newest still-running call speaks
-   *  for it, else its newest call. Mirrors the daemon's `preferChildRun` and the web's `collectSubagents`
-   *  so the rail, the agents table and a reconnect cannot tell three different stories. */
+  /** Refresh the ONE rail row a child owns, folded across its calls with the daemon's own rule
+   *  ({@link laterChildRunSpeaks}), so the rail, the agents table and a reconnect cannot tell three
+   *  different stories. Insertion order is what "later" means here: the calls are replayed in the order
+   *  their events arrived, which is the only sequence a live projection has. */
   private projectSubagent(sessionId: string, clone: boolean): void {
     let speaking: SubagentState | undefined;
     for (const source of this.subagentSources.get(sessionId) ?? []) {
       const state = this.subagentCalls.get(source);
       if (!state) continue;
-      if (!speaking || state.status === 'running' || speaking.status !== 'running') speaking = state;
+      if (!speaking || laterChildRunSpeaks(speaking, state)) speaking = state;
     }
     if (!speaking) return;
     const index = this.subagentIndices.get(sessionId);

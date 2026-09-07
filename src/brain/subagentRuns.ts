@@ -13,11 +13,47 @@ import { recordSubagentFinishMarker } from './service/sessionEvents.js';
  *
  *  The alternative — letting whichever update landed last speak — is what froze a finished continuation
  *  on the CLI rail as a running sub-agent with no model and no elapsed time, and what reported a working
- *  child as finished when a recovering continuation followed a completed delegation. */
+ *  child as finished when a recovering continuation followed a completed delegation.
+ *
+ *  This is the rule itself, for a caller that already knows which of the two calls is the LATER one — a
+ *  projection built by replaying events in order, where arrival order is the only "newest" there is. The
+ *  daemon's rows carry a rowid instead, so {@link preferChildRun} orders the pair first and then applies
+ *  this. Both the read model and the CLI rail read the rule from here; the web keeps a mirrored copy
+ *  (`collectSubagents`) because the web toolchain cannot import daemon sources, pinned by its own test. */
+export function laterChildRunSpeaks(
+  current: { status: BrainSubagentRun['status'] },
+  later: { status: BrainSubagentRun['status'] },
+): boolean {
+  if (later.status === 'running') return true;
+  return current.status !== 'running';
+}
+
+/** Which of two calls on one child speaks for it, ordered by rowid — insertion order, because a
+ *  boot-claimed recovery keeps the pause's `updated_at` and the timestamp therefore cannot decide. */
 export function preferChildRun<T extends { status: BrainSubagentRun['status']; rowid: number }>(current: T, candidate: T): T {
-  if (current.status === 'running' && candidate.status !== 'running') return current;
-  if (candidate.status === 'running' && current.status !== 'running') return candidate;
-  return candidate.rowid > current.rowid ? candidate : current;
+  const later = candidate.rowid > current.rowid ? candidate : current;
+  const earlier = later === candidate ? current : candidate;
+  return laterChildRunSpeaks(earlier, later) ? later : earlier;
+}
+
+/** The ONE row per child a one-row-per-child view shows, in the order the store returned them.
+ *
+ *  `active` is the durable liveness answer (BrainStore.activeDelegationChildIds plus whatever the live
+ *  registry already claims). Filtering FIRST matters: a row whose display state is still `running` while
+ *  its lifecycle is long terminal — its final upsert never landed — is exactly what the filter hides, and
+ *  hiding it must not take a finished sibling row down with it; the child WAS finished, and that is what
+ *  the view should say. */
+export function speakingChildRuns<T extends { sessionId: string; status: BrainSubagentRun['status']; rowid: number }>(
+  runs: readonly T[],
+  active: ReadonlySet<string>,
+): T[] {
+  const speaking = new Map<string, T>();
+  for (const run of runs) {
+    if (run.status === 'running' && !active.has(run.sessionId)) continue;
+    const current = speaking.get(run.sessionId);
+    speaking.set(run.sessionId, current ? preferChildRun(current, run) : run);
+  }
+  return runs.filter((run) => speaking.get(run.sessionId) === run);
 }
 
 /** The status of ONE child as a one-row-per-child view shows it, folded across every call on it with

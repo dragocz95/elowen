@@ -401,6 +401,23 @@ describe('web transcript reducer', () => {
     expect(collectSubagents(view.turns)).toEqual([continued]);
   });
 
+  // The agents table renders the row's `detail`, and since 7 Sep that string is the child's own authored
+  // status note (the plugin settles `_reason` onto it) rather than a tool name and a path. The fold must
+  // hand the table the note of the call that is actually working — the returned steer carries none.
+  it('carries the working call\'s authored status note onto the child\'s row', () => {
+    const CHILD = 'brain-ch-subagent-note';
+    const main = { sessionId: CHILD, status: 'running' as const, task: 'redesign the panel', detail: 'Upravuji soubor…', tools: 12, seconds: 400 };
+    const steer = { sessionId: CHILD, status: 'done' as const, task: 'Owner decision (19:10)', tools: 0, seconds: 1 };
+    let view = fromHistory([{ role: 'assistant', text: '', segments: [
+      { kind: 'tool', id: 'delegate-3', name: 'Delegate' },
+      { kind: 'tool', id: 'continue-3', name: 'DelegateContinue' },
+    ] }]);
+    view = reduce(view, { type: 'subagent', id: 'delegate-3', ...main });
+    view = reduce(view, { type: 'subagent', id: 'continue-3', ...steer });
+
+    expect(collectSubagents(view.turns).map((agent) => agent.detail)).toEqual(['Upravuji soubor…']);
+  });
+
   it('ignores an unknown post-idle sub-agent id without creating a turn', () => {
     const before = fromHistory([{ role: 'assistant', text: 'settled' }]);
     const after = reduce(before, {

@@ -121,6 +121,22 @@ describe('a DelegateContinue steered into a running child settles its OWN call, 
     expect(runningSubagentsBlock(sessions, store, PARENT)).toBe('');
   });
 
+  it('names a child ONCE even while two of its calls are open at the same time', () => {
+    // A background Delegate keeps working while the parent sends a DelegateContinue between the child's
+    // turns: two genuinely running rows, one child, one piece of work. Listing rows instead of folding
+    // per child told the model it had delegated twice and invited it to abort a duplicate that never was.
+    const { store, sessions, emit } = harness();
+    sessions.setChildRunning(PARENT, CHILD, true);
+    emit(running(MAIN_CALL, { tools: 12, seconds: 400, background: true }));
+    emit(running(STEER_CALL, { task: 'Owner decision (19:10)', tools: 1, seconds: 2 }));
+
+    const block = runningSubagentsBlock(sessions, store, PARENT);
+    expect(block.match(/<subagent /g) ?? []).toHaveLength(1);
+    // Among equals the newest call speaks, exactly as the rail and the web table resolve the same child.
+    expect(block).toContain('Owner decision (19:10)');
+    expect(block).not.toContain('redesign the panel');
+  });
+
   it('keeps the transcript showing the child as running: the steer must not speak for it', () => {
     const { sessions, emit, subsOf } = harness();
     sessions.setChildRunning(PARENT, CHILD, true);

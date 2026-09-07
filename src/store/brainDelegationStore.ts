@@ -366,10 +366,11 @@ export class BrainDelegationStore {
         'SELECT child_session_id FROM brain_subagent_runs WHERE parent_session_id = ? AND tool_call_id = ?'
       ).get(parentSessionId, update.id) as { child_session_id: string } | undefined;
       if (prior && prior.child_session_id !== update.sessionId) return false;
-      // The JSON status is the DISPLAY projection, while lifecycle is the recovery authority. Usually they
-      // match. A DelegateContinue that finishes after steering into an older still-running child is the one
-      // exception: the UI deliberately keeps that row visibly running until the child's actual call claim
-      // ends, but the continuation tool call itself is already terminal and must never be restart-recovered.
+      // The JSON status is the DISPLAY projection, while lifecycle is the recovery authority. Callers now
+      // write both from one honest answer — a steered DelegateContinue records its own call as returned and
+      // the views choose which of a child's calls speaks (see preferChildRun). Until 21 Aug they diverged
+      // here: such a row was persisted visibly `running` under a closed lifecycle, and those rows are still
+      // in existing databases, which is why every reader asks the lifecycle rather than the JSON.
       // Stamp THIS boot only on genuinely running lifecycle rows; terminal rows retain their prior owner as
       // audit context and are excluded from recovery regardless of the visible JSON status.
       const lifecycle = durableStatus ?? state.status;
@@ -464,10 +465,11 @@ export class BrainDelegationStore {
    *  (BrainStatusService.subagentRuns), the DelegateList listing (listDelegatedChildren's `active_run`)
    *  and the settlement of a delegated call whose child delegated further (BrainService.settleDelegatedReply)
    *  — so the rail, the web card, the tool and the parent's blocking call cannot disagree about a child.
-   *  Lifecycle, not the JSON display status: a steered DelegateContinue leaves its own row visibly
-   *  `running` under a terminal lifecycle on purpose. ANY live row counts, not only the newest: the same
-   *  steered continuation is the newest row of a child whose original call still runs. A previous boot's
-   *  live rows are claimed (`recovering`) before any client attaches, so no filter on the owner is needed —
+   *  Lifecycle, not the JSON display status: rows written before 21 Aug still carry a stale `running`
+   *  display status under a closed lifecycle, and only the lifecycle is true for every row ever written.
+   *  ANY live row counts, not only the newest: a steered DelegateContinue that already returned is the
+   *  newest row of a child whose original call still runs. A previous boot's live rows are claimed
+   *  (`recovering`) before any client attaches, so no filter on the owner is needed —
    *  and none may be added: a row this boot is recovering in another process (the sub-agent runner stamps
    *  its own boot id) is as live as one it runs itself. Same parent/child owner validation as
    *  getSubagentRuns, so no reader can widen tenancy through it. */
@@ -878,7 +880,21 @@ export class BrainDelegationStore {
    *
    *  EVERY call on that parent must be terminal, not merely its newest row: a DelegateContinue steered
    *  into a running turn returns immediately, and reading that one row would retire an answer the child
-   *  still has a turn coming for. */
+   *  still has a turn coming for.
+   *
+   *  Terminal is read off the LIFECYCLE, never off the JSON display status. Lifecycle is the recovery
+   *  authority — it alone decides whether a call is still owed a turn — and it is the only one of the two
+   *  that is true for every row ever written. Between 9 and 21 Aug a steered continuation was persisted
+   *  with a `running` display status under a closed lifecycle, and nothing ever emitted for that call
+   *  again: reading the JSON there makes this sweep's own invariant unreachable, so a grandchild result
+   *  addressed to such a child would stay pending forever and the shutdown drain would burn its full
+   *  budget on every restart — the exact incident this sweep exists to end. It also removes the two
+   *  ambiguities the JSON read carried: a corrupt state extracts as NULL (silently "terminal"), and
+   *  `cancelled` was never a status normalizeSubagentState can produce.
+   *
+   *  Only `running`, `recovering` and `recovery_required` hold a result back, because only those are
+   *  claimed for respawn. `done`, `error`, `legacy_interrupted` and a NULL lifecycle (a pre-column row
+   *  whose malformed state the backfill skipped, which boot recovery leaves inert) never get a turn. */
   discardOrphanedDeliveries(): number {
     return withWriteLock(this.db, () => {
       const info = this.db.prepare(
@@ -891,7 +907,7 @@ export class BrainDelegationStore {
             AND NOT EXISTS (
               SELECT 1 FROM brain_subagent_runs r
                WHERE r.child_session_id = brain_subagent_results.parent_session_id
-                 AND json_extract(r.state, '$.status') NOT IN ('done', 'error', 'cancelled')
+                 AND r.lifecycle IN ('running', 'recovering', 'recovery_required')
             )`
       ).run();
       return info.changes;

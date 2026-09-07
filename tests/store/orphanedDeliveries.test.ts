@@ -61,4 +61,43 @@ describe('BrainStore.discardOrphanedDeliveries', () => {
     expect(store.discardOrphanedDeliveries()).toBe(0);
     expect(store.countPendingDeliveries()).toBe(1);
   });
+
+  /** Both directions of the one rule this sweep turns on: the durable lifecycle decides whether a call is
+   *  still owed a turn, and the JSON display status — which two production shapes contradict — never does. */
+  describe('the lifecycle decides, not the display status', () => {
+    it('retires a result held only by an Aug-era masked row: closed lifecycle, `running` display status', () => {
+      store.createSession({ id: 'root', userId: 1, model: 'm' });
+      const child = 'brain-ch-subagent-masked';
+      store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: 'root', delegatedAccess: SCOPE });
+      // How a steered DelegateContinue was persisted between 9 and 21 Aug: its own call had returned, but
+      // the row was written visibly running so that a per-child view would not mark the whole child done.
+      // Nothing ever emitted for that call again, so the display status stays `running` forever.
+      store.upsertSubagentRun('root', {
+        id: 'call-masked', sessionId: child, status: 'running', task: 't', tools: 1, seconds: 1, model: 'm',
+      }, 'done');
+      const row = db.prepare(
+        "SELECT lifecycle, json_extract(state, '$.status') AS display FROM brain_subagent_runs WHERE tool_call_id = 'call-masked'"
+      ).get() as { lifecycle: string; display: string };
+      expect(row).toEqual({ lifecycle: 'done', display: 'running' });
+
+      queueFor(child, 'call-masked-1', 'brain-ch-subagent-masked-child');
+      expect(store.discardOrphanedDeliveries()).toBe(1);
+      expect(store.countPendingDeliveries()).toBe(0);
+    });
+
+    it('leaves a result for a parked run alone: `recovery_required` under an `error` display status', () => {
+      store.createSession({ id: 'root', userId: 1, model: 'm' });
+      const child = 'brain-ch-subagent-parked';
+      subAgent(child, 'root', 'call-parked', 'running');
+      // What markRecoveryRequired writes: the run is not safe to replay, so it is parked as auditable and
+      // resumable by a later DelegateContinue — while its state JSON reads terminal for the UI.
+      db.prepare(
+        "UPDATE brain_subagent_runs SET lifecycle = 'recovery_required', state = json_set(state, '$.status', 'error') WHERE tool_call_id = 'call-parked'"
+      ).run();
+
+      queueFor(child, 'call-parked-1', 'brain-ch-subagent-parked-child');
+      expect(store.discardOrphanedDeliveries()).toBe(0);
+      expect(store.countPendingDeliveries()).toBe(1);
+    });
+  });
 });

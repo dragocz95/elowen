@@ -497,8 +497,10 @@ function attachToToolInTurns(
 }
 
 /** Collect the delegated sub-agents across the whole transcript, one row per child session — the source
- *  for the agents table + drill-in. Mirrors the CLI's `subagentStates()` scan and the daemon's
- *  `preferChildRun`.
+ *  for the agents table + drill-in. The daemon and the CLI share the rule itself (`laterChildRunSpeaks`
+ *  in src/brain/subagentRuns.ts); this is the one hand-mirrored copy, because the web toolchain compiles
+ *  only web/ and cannot import daemon sources at runtime. The tests below pin the same cases the daemon's
+ *  do, so a divergence fails here rather than showing a working sub-agent as finished.
  *
  *  A child can hold SEVERAL calls at once: the Delegate that is still working plus a DelegateContinue
  *  whose message was steered into that running turn, which returns within a second carrying neither the

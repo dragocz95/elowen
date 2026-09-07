@@ -1,5 +1,6 @@
 import type { BrainStore } from '../../store/brainStore.js';
 import { xmlEscape } from '../../shared/xml.js';
+import { speakingChildRuns } from '../subagentRuns.js';
 import type { LiveBrain } from './liveBrain.js';
 import type { LiveSessionRegistry } from './liveRegistry.js';
 
@@ -19,8 +20,12 @@ export function runningSubagentsBlock(
   // be told a child is finished that its own DelegateList would report running — a boot-claimed child whose
   // recovery turn has not registered yet was exactly such a gap.
   const active = new Set([...sessions.childrenOf(sessionId), ...store.activeDelegationChildIds(sessionId)]);
-  const running = store.getSubagentRuns(sessionId)
-    .filter((run) => run.status === 'running' && active.has(run.sessionId));
+  // ONE entry per CHILD, folded with the rule every other view uses. A run row is one CALL, and a child
+  // legitimately carries two at once — a background Delegate still working plus a DelegateContinue between
+  // the child's turns. Listing rows would hand the model the same job twice under two <subagent> entries
+  // and invite it to "resolve" a duplicate that never existed.
+  const running = speakingChildRuns(store.getSubagentRuns(sessionId), active)
+    .filter((run) => run.status === 'running');
   if (running.length === 0) return '';
   const rows = running.slice(0, 32).map((run) => {
     const attrs = `session="${xmlEscape(run.sessionId)}" background="${run.background === true}" auto-deliver="${run.autoDeliver === true}" tools="${run.tools}" seconds="${run.seconds}"`;
