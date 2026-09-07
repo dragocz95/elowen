@@ -55,6 +55,20 @@ describe('PromptService.render', () => {
     expect(template).toContain('When a tool schema offers an optional `_reason`');
     expect(template).toContain('Bash uses its canonical `description` argument instead of `_reason`');
     expect(template).toContain('Write `_reason`, or Bash `description`, ONLY where the call may take a noticeable moment');
+    // When to fork, and the one condition that decides it here: a fork buys the provider's cached prefix,
+    // so a child on another provider or model inherits the context and shares no cache at all. Without
+    // these lines the prompt says nothing about forking and the criterion lives only in a parameter.
+    expect(template).toMatch(/requested with `fork: true` on Delegate/);
+    expect(template).toMatch(
+      /reach for it when research or multi-step implementation work would\s+otherwise fill your context with raw output you won't need again/,
+    );
+    expect(template).toMatch(/The criterion is qualitative, "will\s+I need this output again", not task size/);
+    expect(template).toMatch(
+      /A fork pays off only when the child runs on the SAME provider and model as the parent/,
+    );
+    // The parent-facing criterion, never an unconditional rule — the child boilerplate tells a fork to
+    // ignore this guidance, and a blanket "always fork" would be wrong on every cross-model delegation.
+    expect(template).not.toContain('default to forking');
     expect(template).not.toContain('Write either status field');
     expect(template).not.toContain('Every tool call accepts an optional `_reason`');
     expect(template).not.toContain('Do exactly what was asked — no more, no less');
