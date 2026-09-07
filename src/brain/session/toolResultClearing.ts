@@ -414,7 +414,11 @@ export interface DeliverySpillDecision {
  *  small results would have no eligible candidate and could overrun the budget without limit.
  *
  *  The resulting guarantee is `group ≤ budget + n·placeholder`, where the placeholder is bounded under
- *  {@link CLEAR_MIN_BYTES} by construction ({@link spillPreview}). What it does NOT reproduce is the
+ *  {@link CLEAR_MIN_BYTES} by construction ({@link spillPreview}). It is an INDUCTION over the results of
+ *  one batch and therefore holds only while the decisions are taken one at a time, which the caller
+ *  guarantees by serializing them per batch — PI finalizes a batch in parallel, and concurrent decisions
+ *  each spend a budget the others have already spent. It counts TEXT bytes: an image block is neither
+ *  measured nor spilled here. What it does NOT reproduce is the
  *  egress pass's largest-first choice: the results of one batch are finalized in completion order and
  *  each decision is final by the time the next result arrives, so an early large result can fill the
  *  budget that a later, larger one would have used better. Both orders honour the budget; only the
@@ -485,16 +489,40 @@ export function installToolResultDeliverySpill(
    *  which is exactly one wire-level tool-result message after pi-ai coalesces the run — and weakly, so
    *  a long conversation's batches are collected with their messages. */
   const committed = new WeakMap<object, number>();
+  /** The tail of each batch's decision chain. PI finalizes a batch's tool calls with `Promise.all`, so
+   *  without this every result of one batch reads the same `committed` value, awaits its own spill, and
+   *  then writes a total that has forgotten every other result — the online budget an unserialized
+   *  counter enforces is no bound at all (a measured 352 kB against a declared 232 kB).
+   *
+   *  Serializing the DECISION restores the model the budget is actually derived from: one result at a
+   *  time, each seeing what the ones before it committed, which is what makes `group ≤ budget + n·placeholder`
+   *  an induction rather than a hope. Only the decision is serialized — the tools themselves ran in
+   *  parallel long before this hook, and the work between two links is one spill write. */
+  const decisions = new WeakMap<object, Promise<unknown>>();
   const inner = agent.afterToolCall;
   agent.afterToolCall = async (input, signal) => {
     const hooked = await inner?.(input, signal);
     try {
-      return await spillOnDelivery(input, hooked);
+      return await afterPreviousDecision(input, hooked);
     } catch (error) {
       log.warn(`delivery-time spill decision failed for ${input.toolCall?.id} — the result goes out whole`, error);
       return hooked;
     }
   };
+
+  /** Queue this result's decision behind the ones already taken for its batch. The stored tail is always
+   *  a SETTLED promise: a link that rejected must not take the rest of the batch down with it — those
+   *  results would then never be decided at all, which is the one failure this module must never cause. */
+  function afterPreviousDecision(
+    input: AfterToolCallInput,
+    hooked: Awaited<ReturnType<AfterToolCall>>,
+  ): Promise<Awaited<ReturnType<AfterToolCall>>> {
+    const batch = input.assistantMessage as unknown as object;
+    const previous = decisions.get(batch) ?? Promise.resolve();
+    const decision = previous.then(() => spillOnDelivery(input, hooked));
+    decisions.set(batch, decision.then(() => undefined, () => undefined));
+    return decision;
+  }
 
   async function spillOnDelivery(
     input: AfterToolCallInput,

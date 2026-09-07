@@ -140,6 +140,47 @@ describe('the afterToolCall wrapper', () => {
   it('is a no-op on a session without the agent seam', () => {
     expect(() => installToolResultDeliverySpill({}, 'sess-1')).not.toThrow();
   });
+
+  /** RED BEFORE THE FIX: PI finalizes a batch's tool calls with `Promise.all`, and each hook read the
+   *  group total, awaited its own spill and then wrote back `before + wireBytes`. Eight parallel 50 kB
+   *  results therefore all measured themselves against a budget none of them had spent yet, and a slow
+   *  spill finishing in the middle reset the total to its placeholder's size so the next ones fitted
+   *  again. Measured: 352 202 bytes against a declared bound of 232 768. */
+  it('holds the group budget when a whole batch is finalized in parallel', async () => {
+    const batch = { role: 'assistant', content: [] };
+    let release = (): void => {};
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let firstWrite = true;
+    const session = { agent: {} } as never;
+    installToolResultDeliverySpill(session, 'sess-par', {
+      spillDir: DIR,
+      // The first spill is the slow one — the window the unserialized counter lost its total in.
+      writeSpill: async () => { if (firstWrite) { firstWrite = false; await gate; } },
+    });
+    const hook = (session as { agent: { afterToolCall: (i: unknown) => Promise<{ content?: { type: string; text?: string }[] } | undefined> } }).agent.afterToolCall;
+    const deliver = (id: string, size: number): Promise<number> => {
+      const content = text(size);
+      return hook({
+        assistantMessage: batch, toolCall: { id, name: 'Big', arguments: {} },
+        args: {}, isError: false, context: {}, result: { content, details: {} },
+      }).then((out) => {
+        const blocks = out?.content ?? content;
+        return blocks.reduce((sum, block) => sum + (block.type === 'text' ? Buffer.byteLength(block.text ?? '', 'utf8') : 0), 0);
+      });
+    };
+
+    // One slow oversized result with four more in flight while it is still writing, and then — once its
+    // late commit has overwritten the group total with its own placeholder's size — four more.
+    const slow = deliver('slow', SPILL_MAX_RESULT_BYTES + 10_000);
+    const during = Array.from({ length: 4 }, (_, index) => deliver(`during-${index}`, 50_000));
+    release();
+    const first = await Promise.all([slow, ...during]);
+    const after = await Promise.all(Array.from({ length: 4 }, (_, index) => deliver(`after-${index}`, 50_000)));
+    const delivered = [...first, ...after].reduce((sum, bytes) => sum + bytes, 0);
+
+    // The declared bound: the budget plus one bounded placeholder per result in the batch.
+    expect(delivered).toBeLessThanOrEqual(TOOL_RESULT_GROUP_BUDGET_BYTES + 9 * CLEAR_MIN_BYTES);
+  });
 });
 
 describe('the spill directory in production wiring', () => {
