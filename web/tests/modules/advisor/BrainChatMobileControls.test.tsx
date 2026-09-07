@@ -172,7 +172,9 @@ describe('conversation bar controls', () => {
     const spans = [...line.querySelectorAll('span')];
     const model = spans.find((s) => s.textContent === 'claude-opus-5');
     expect(model?.className).toContain('truncate');
-    expect(model?.getAttribute('title')).toBe('claude-opus-5'); // truncation must not hide which model ran
+    // The model slot is the picker's trigger, so the full name is on the control the pointer rests on —
+    // still one hover away, which is what "truncation must not hide which model ran" asks for.
+    expect(model?.closest('[title]')?.getAttribute('title')).toBe('claude-opus-5');
 
     const metrics = spans.filter((s) => /26%|Σ|59\.08/.test(s.textContent ?? ''));
     expect(metrics).toHaveLength(3);

@@ -333,7 +333,7 @@ function StaticCard({ card, live }: { card: BrainCard; live: boolean }) {
 
 /** The card's row test ids: the shared `TodoRow` stamps these so the card's tests keep addressing it by
  *  the names it has always had. */
-const CARD_ROW_IDS: TodoRowIds = { row: 'chat-card-row', running: 'chat-card-running', elapsed: 'chat-card-elapsed', blocked: 'chat-card-blocked' };
+const CARD_ROW_IDS: TodoRowIds = { row: 'chat-card-row', running: 'chat-card-running', subject: 'chat-card-subject', elapsed: 'chat-card-elapsed', blocked: 'chat-card-blocked' };
 
 /** The conversation's checklist, where it has always been — the last thing above the composer — and now
  *  something the reader can work rather than only read.
@@ -1023,9 +1023,12 @@ function WorkModeSwitch({ variant }: { variant: 'full' | 'compact' }) {
  *  live here any more — the composer's WorkModeSwitch shows (and changes) the mode on every surface, so a
  *  second, read-only mention would be noise. Phone actions lead the shared collision-aware popover;
  *  pickers follow them. Narrow desktops retain the picker fallback without duplicating inline actions. */
-function BarOverflowMenu({ folded, onOpenTasks, onNewChat }: {
+function BarOverflowMenu({ folded, modelOwnedElsewhere, onOpenTasks, onNewChat }: {
   /** New chat folds here on phones; reasoning and telemetry remain directly on the bar. */
   folded: boolean;
+  /** The statusline is showing the model picker, so this menu leaves it out. Decided once by the surface;
+   *  see `statuslineOwnsModel` there. */
+  modelOwnedElsewhere: boolean;
   onOpenTasks: () => void;
   onNewChat: () => void;
 }) {
@@ -1075,8 +1078,10 @@ function BarOverflowMenu({ folded, onOpenTasks, onNewChat }: {
             <ListChecks size={16} className="text-muted-foreground" aria-hidden />
             <span>{t.chat.todos}</span>
           </button>
-          <div className="px-1 pt-1"><ModelPicker variant="full" /></div>
-          <div className="px-1 pb-1"><ProjectPicker variant="full" /></div>
+          {/* Folded away with the bar's inline copy: on a phone the statusline pill is the model control,
+              and this menu is where the bar's overflow goes, not a second home for it. */}
+          {modelOwnedElsewhere ? null : <div className="px-1 pt-1"><ModelPicker variant="full" /></div>}
+          <div className={`px-1 pb-1 ${modelOwnedElsewhere ? 'pt-1' : ''}`}><ProjectPicker variant="full" /></div>
       </PopoverContent>
     </Popover>
   );
@@ -1374,7 +1379,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
     turns, busy, ready, notice, ask, cards, artifacts, narration, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
     reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, pluginPicker, closePluginPicker,
     helpOpen, setHelpOpen, modelOpen, setModelOpen, queued, readOnly,
-    usage, goal, lineCfg, currentModel, provider, providerLabel, subagents, attachments, removeAttachment, switchSession,
+    usage, goal, lineCfg, currentModel, subagents, attachments, removeAttachment, switchSession,
     openReadOnly, exitReadOnly, onQueueRemove, onAnswer, sessions, activeSessionId, focusNonce,
     ensureAttached, loadOlder, hasMoreHistory, showThoughts,
     planDecision, implementPlan, dismissPlan, planSubmitting, renameOpen, closeRename, renameSession,
@@ -1423,6 +1428,14 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
   const railOwnsLiveWork = telemetryShown === true;
   const activeSurfaceGoal = goal?.status === 'active' && !railOwnsLiveWork ? goal : null;
   const hasStatuslineStats = !!lineCfg && (lineCfg.showModel || lineCfg.showContext || lineCfg.showTokens || lineCfg.showSpeed || lineCfg.showCost);
+  // The ONE answer to "who owns the model control". The daemon reports `statusline: null` when the plugin
+  // is disabled, so `lineCfg` is the plugin set as this surface sees it — no second source, no prop.
+  //
+  // It is not the plugin's presence alone. The statusline can be enabled while its model toggle is off, and
+  // the reader can collapse the whole row from its chevron; in either state the pill is not on screen, and
+  // a top bar that had already given up its picker would leave no way to change models at all. So the bar
+  // stands down exactly when the statusline is actually rendering the control, and takes it back otherwise.
+  const statuslineOwnsModel = Boolean(lineCfg?.showModel && hasStatuslineStats && statuslineShown);
   // `undefined` until the viewport has actually been measured. Every branch below therefore tests `=== true`
   // or `=== false` and renders NOTHING in between: the boolean-returning hook reports `false` first, which
   // on a phone painted one frame of the desktop controls (inline picker, mode pill, reasoning button) before
@@ -1977,7 +1990,8 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
             <ChevronDown size={14} className="shrink-0 text-muted-foreground" aria-hidden />
           </button>
           <ProjectPicker variant="compact" />
-          <ModelPicker variant="compact" />
+          {/* The statusline under the conversation carries the picker when it is showing one. */}
+          {statuslineOwnsModel ? null : <ModelPicker variant="compact" />}
           <ReasoningButton onOpen={() => setReasoningOpen(true)} />
           <button
             type="button"
@@ -2017,7 +2031,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
           {mobile === false ? (
             <div className="chat-page-toolbar__wide-controls flex shrink-0 items-center gap-1.5">
               <ProjectPicker variant="full" />
-              <ModelPicker variant="full" />
+              {statuslineOwnsModel ? null : <ModelPicker variant="full" />}
             </div>
           ) : null}
           {/* Reasoning and telemetry are one-tap actions at every width, beside the overflow. */}
@@ -2053,6 +2067,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
             <div className={mobile ? '' : 'chat-page-toolbar__overflow'}>
               <BarOverflowMenu
                 folded={mobile}
+                modelOwnedElsewhere={statuslineOwnsModel}
                 onOpenTasks={() => setTasksOpen(true)}
                 onNewChat={newChat}
               />
@@ -2234,19 +2249,22 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
           {activeSurfaceGoal ? <GoalStatusInline goal={activeSurfaceGoal} /> : null}
           {hasStatuslineStats && statuslineShown && lineCfg ? (
             <>
-              {lineCfg.showModel && (currentModel || active?.model) ? (() => {
-                const model = currentModel || active?.model || '';
-                const identity = {
-                  provider: currentModel ? provider : (active?.provider ?? ''),
-                  providerLabel: currentModel ? providerLabel : '',
-                  model,
-                };
-                return (
-                  <span data-stat="model" className="min-w-0 truncate" title={brainModelQualifiedLabel(identity)}>
-                    {brainModelLabel(identity)}
-                  </span>
-                );
-              })() : null}
+              {/* The model is a CONTROL here, not a read-out: the same picker the top bar used to carry,
+                  opening the same grouped catalog. The bar gives its copy up while this one is on screen
+                  (see `statuslineOwnsModel`), so the conversation has exactly one model switcher.
+                  A conversation the controller has not adopted yet — a history entry being previewed — has
+                  no model to switch, so that case stays the plain label it always was. */}
+              {lineCfg.showModel && currentModel ? (
+                <ModelPicker variant="statusline" />
+              ) : lineCfg.showModel && active?.model ? (
+                <span
+                  data-stat="model"
+                  className="min-w-0 truncate"
+                  title={brainModelQualifiedLabel({ provider: active.provider ?? '', providerLabel: '', model: active.model })}
+                >
+                  {brainModelLabel({ provider: active.provider ?? '', providerLabel: '', model: active.model })}
+                </span>
+              ) : null}
               {lineCfg.showContext && usage && usage.percent != null ? (
                 <span data-stat="context" className="shrink-0 whitespace-nowrap">{t.brainChat.context} {Math.round(usage.percent)}% ({formatTokens(usage.tokens ?? 0)}/{formatTokens(usage.contextWindow)})</span>
               ) : null}

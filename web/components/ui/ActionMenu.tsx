@@ -77,12 +77,19 @@ const TRIGGER_CLASS: Record<ActionMenuVariant, string> = {
   kebab: 'inline-flex h-8 w-8 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground data-[state=open]:bg-accent data-[state=open]:text-accent-foreground',
 };
 
-export function ActionMenu({ items, label, trigger, triggerClassName, align = 'right', variant = 'destructive', openOnHover }: {
+export function ActionMenu({ items, label, trigger, triggerClassName, className, align = 'right', variant = 'destructive', openOnHover }: {
   items: ActionMenuItem[];
   label?: string;
   trigger?: ReactNode;
   /** Override the trigger button styling. Wins over `variant`. */
   triggerClassName?: string;
+  /** Classes for the positioning wrapper — the menu's box in its parent's layout, not the trigger's skin.
+   *
+   *  It exists for one reason. The wrapper is `position: relative` and block-level, so a caller that puts
+   *  the menu in a flex ROW gets an item whose automatic minimum size is its content's min-content width.
+   *  A trigger holding nowrap text then refuses to shrink and runs past the end of the row, however
+   *  carefully the trigger's own children are set to truncate. Such a caller passes `min-w-0` here. */
+  className?: string;
   align?: 'left' | 'right';
   /** The trigger's shape. Defaults to the red destructive button the component shipped with, so no
    *  existing caller changes. */
@@ -127,7 +134,7 @@ export function ActionMenu({ items, label, trigger, triggerClassName, align = 'r
 
   return (
     <div
-      className="relative"
+      className={className ? `relative ${className}` : 'relative'}
       onMouseEnter={hoverOpens ? () => openMenu('none') : undefined}
       onMouseLeave={hoverOpens ? scheduleClose : undefined}
     >
