@@ -271,7 +271,7 @@ export class LiveSessionSpawner {
         // The same per-message estimator the compaction threshold runs on, so the guard and the thing it
         // protects cannot disagree about how big this conversation is.
         seedTokens: opts.forkSeed.reduce(
-          (total, message) => total + estimateTokens(message as Parameters<typeof estimateTokens>[0]), 0),
+          (total, message) => total + estimateTokens(message as unknown as Parameters<typeof estimateTokens>[0]), 0),
         parentModel: opts.forkCache?.parentModel ?? model.id,
         parentWindow: opts.forkCache?.parentWindow ?? 0,
         childModel: model.id,
