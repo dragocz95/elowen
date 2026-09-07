@@ -861,6 +861,9 @@ export class ChannelSessionService {
       const forkSeed = forkChild && parentSessionId && this.d.store.getMessages(sessionId).length === 0
         ? forkSeedMessages(this.parentForkHistory(parentSessionId), Date.now())
         : undefined;
+      // ONE lookup for both readings the fork-cache line needs below — the parent's live record carries
+      // the warm prefix AND the provider/model the fork has to match.
+      const forkParent = forkChild ? this.parentLive(parentSessionId) : undefined;
       if (!ch) {
         this.d.registry.channelEvictOldestIfFull(this.maxChannels());
         ch = await this.d.spawn({
@@ -885,8 +888,15 @@ export class ChannelSessionService {
           ...(forkChild && parentSessionId ? {
             forkCache: {
               parentSessionId,
-              parentPrefix: forkParentPrefixTokens((this.parentLive(parentSessionId)?.session.messages ?? []) as unknown as ForkMessage[]),
-              sameModel: !opts.model?.model || opts.model.model === this.parentLive(parentSessionId)?.model,
+              parentPrefix: forkParentPrefixTokens((forkParent?.session.messages ?? []) as unknown as ForkMessage[]),
+              // A prompt cache belongs to one model at ONE provider: two config entries commonly expose the
+              // same model id (an OpenAI-compatible relay next to the vendor), and a fork across them shares
+              // nothing. Comparing the id alone reported those as same-model, so the verdict blamed a
+              // "prefix mismatch" for a miss that was really a different route. Same rule as the delegate
+              // plugin's own cross-model notice, including that an unnamed provider is not assumed to be the
+              // parent's. No model named at all = the child inherits the parent's, which always matches.
+              sameModel: !opts.model?.model
+                || (opts.model.model === forkParent?.model && opts.model.provider === forkParent?.providerId),
             },
           } : {}),
           trustedChannel: opts.trusted, // admin-role sender → trusted-channel (all projects + full plugin toolset), still no Elowen*
