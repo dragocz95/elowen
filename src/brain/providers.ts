@@ -44,6 +44,10 @@ export interface BrainRuntimeConfig {
    *  in `modelEntry` so context-usage % and (auto-)compaction use the real window for endpoints that
    *  don't report one. Absent/0 for a model → the default placeholder. */
   contextWindows?: Record<string, number>;
+  /** Operator-set max OUTPUT tokens per model, keyed `providerId/model`. Overrides
+   *  {@link DEFAULT_MAX_OUTPUT_TOKENS} in `modelEntry`, clamped by {@link clampOutputTokens} because input
+   *  and output share one context window. Absent/0 for a model → the default. */
+  maxOutputTokens?: Record<string, number>;
 }
 
 /** Which built-in pi-ai provider an OAuth entry maps onto (models + streaming come from the built-in
@@ -151,6 +155,28 @@ export function openAiApiFor(p: Pick<BrainProviderEntry, 'api' | 'baseUrl'>): Br
  *  max — a safe placeholder the model list requires. */
 export const DEFAULT_CONTEXT_WINDOW = 200_000;
 
+/** Default max OUTPUT tokens per answer when the operator hasn't pinned one — the conservative value every
+ *  OpenAI-compatible endpoint accepts. Raise it per model in Settings → Models when the endpoint serves a
+ *  bigger answer budget (`brain.modelMaxTokens`). */
+export const DEFAULT_MAX_OUTPUT_TOKENS = 8_192;
+
+/** Tokens the prompt must keep for itself. Input and output share ONE context window, so an output cap
+ *  that leaves no room for the system prompt plus the conversation cannot be honoured: pi-ai would clamp
+ *  the request to `contextWindow - prompt - safety` anyway, and the operator's number would be a fiction. */
+const MIN_INPUT_HEADROOM_TOKENS = 8_192;
+
+/** The operator's max-output pin, bounded by the window it shares with the input.
+ *
+ *  Absent/invalid → {@link DEFAULT_MAX_OUTPUT_TOKENS}, byte-identical to the behaviour before the pin
+ *  existed. A pin is capped at `contextWindow - MIN_INPUT_HEADROOM_TOKENS`, and for a window too small to
+ *  grant that headroom at half the window instead — so a small pinned window still yields a usable (and
+ *  monotonically growing) answer budget rather than collapsing to one token. */
+export function clampOutputTokens(configured: number | undefined, contextWindow: number): number {
+  if (!configured || !Number.isFinite(configured) || configured <= 0) return DEFAULT_MAX_OUTPUT_TOKENS;
+  const ceiling = Math.max(Math.floor(contextWindow / 2), contextWindow - MIN_INPUT_HEADROOM_TOKENS);
+  return Math.max(1, Math.min(Math.floor(configured), ceiling));
+}
+
 /** `developer` is OpenAI's own rename of the `system` role, and pi-ai sends it in place of `system` for
  *  any REASONING model whose endpoint its compat detection doesn't recognise as non-standard — absent a
  *  known provider id or baseUrl (deepseek.com, api.z.ai, openrouter.ai, …) it assumes OpenAI semantics.
@@ -174,10 +200,15 @@ function openAiCompatibilityFor(
   return { ...DEFAULT_OPENAI_COMPATIBILITY, ...entry.compatibility };
 }
 
-function modelEntry(provider: string, id: string, contextWindow?: number, compat?: Model<Api>['compat']) {
+/** The operator's per-model pins for one provider entry's model: the context window and the max output
+ *  tokens. Both optional — an absent pin keeps the descriptor default. */
+interface ModelLimits { contextWindow?: number; maxTokens?: number }
+
+function modelEntry(provider: string, id: string, limits: ModelLimits, compat?: Model<Api>['compat']) {
   const capabilities = descriptorCapabilities(provider, id);
   // Declare vision unless the catalog KNOWS this model is text-only (see the descriptor-defaults note above).
   const input: ('text' | 'image')[] = catalogModelVision(provider, id) === false ? ['text'] : ['text', 'image'];
+  const contextWindow = limits.contextWindow && limits.contextWindow > 0 ? limits.contextWindow : DEFAULT_CONTEXT_WINDOW;
   return {
     id, name: id, reasoning: capabilities.reasoning, input,
     // Per-provider/model reasoning support lives in modelCapabilities.ts. In particular, an unknown
@@ -189,13 +220,19 @@ function modelEntry(provider: string, id: string, contextWindow?: number, compat
     // spend instead of $0. A provider-reported cost (the OpenRouter meter, persistence.ts) still overrides
     // this per turn; a catalog miss keeps $0 rather than inventing a figure.
     cost: catalogModelCost(provider, id) ?? { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
-    contextWindow: contextWindow && contextWindow > 0 ? contextWindow : DEFAULT_CONTEXT_WINDOW, maxTokens: 8_192,
+    contextWindow, maxTokens: clampOutputTokens(limits.maxTokens, contextWindow),
   };
 }
 
 /** The pinned context window for one provider entry's model, or undefined to use the default. */
 const windowFor = (cfg: BrainRuntimeConfig, providerId: string, model: string): number | undefined =>
   cfg.contextWindows?.[`${providerId}/${model}`];
+
+/** Both of one provider entry's model pins, read under the same `providerId/model` key. */
+const limitsFor = (cfg: BrainRuntimeConfig, providerId: string, model: string): ModelLimits => ({
+  contextWindow: windowFor(cfg, providerId, model),
+  maxTokens: cfg.maxOutputTokens?.[`${providerId}/${model}`],
+});
 
 /** The registry provider name a config entry registers/reads under. Custom endpoints get a stable
  *  `elowen-<id>` namespace; OAuth entries resolve to the built-in provider. */
@@ -236,7 +273,7 @@ export function buildBrainRegistry(cfg: BrainRuntimeConfig, runtime: ModelRuntim
         baseUrl: normOpenAiBase(p.baseUrl || 'https://api.openai.com/v1'),
         apiKey: p.apiKey ?? undefined,
         headers: { ...APP_IDENTITY_HEADERS },
-        models: p.models.map((m) => modelEntry(registryProviderName(p), m, windowFor(cfg, p.id, m), compat)),
+        models: p.models.map((m) => modelEntry(registryProviderName(p), m, limitsFor(cfg, p.id, m), compat)),
       });
     } else if (p.type === 'anthropic') {
       registry.registerProvider(registryProviderName(p), {
@@ -245,17 +282,17 @@ export function buildBrainRegistry(cfg: BrainRuntimeConfig, runtime: ModelRuntim
         baseUrl: p.baseUrl || 'https://api.anthropic.com',
         apiKey: p.apiKey ?? undefined,
         headers: { ...APP_IDENTITY_HEADERS },
-        models: p.models.map((m) => modelEntry(registryProviderName(p), m, windowFor(cfg, p.id, m))),
+        models: p.models.map((m) => modelEntry(registryProviderName(p), m, limitsFor(cfg, p.id, m))),
       });
     }
     // oauth-* types: built-in providers already carry their model catalogs; auth comes from AuthStorage.
-    // Their PINNED context windows still have to be applied — see applyPinnedWindows below.
+    // Their PINNED limits still have to be applied — see applyPinnedLimits below.
   }
-  applyPinnedWindows(registry, cfg);
+  applyPinnedLimits(registry, cfg);
   return registry;
 }
 
-/** Apply operator-pinned context windows to the OAUTH built-in providers.
+/** Apply the operator-pinned context windows and max output tokens to the OAUTH built-in providers.
  *
  *  A custom endpoint carries its pin in through `modelEntry`, but an OAuth entry registers no provider at
  *  all — PI owns its catalog and its auth — so the pin had nowhere to land and the runtime kept the
@@ -266,7 +303,7 @@ export function buildBrainRegistry(cfg: BrainRuntimeConfig, runtime: ModelRuntim
  *  Re-registering an extension config over a built-in COMPOSES onto it, and each model definition carries
  *  its own `api`/`baseUrl`, so passing models alone preserves the provider's name, endpoint and native
  *  OAuth. Providers with no pin are left untouched rather than re-registered for nothing. */
-function applyPinnedWindows(registry: ModelRegistry, cfg: BrainRuntimeConfig): void {
+function applyPinnedLimits(registry: ModelRegistry, cfg: BrainRuntimeConfig): void {
   for (const p of cfg.providers) {
     if (!(p.type in OAUTH_BUILTIN)) continue;
     const providerName = registryProviderName(p);
@@ -275,11 +312,20 @@ function applyPinnedWindows(registry: ModelRegistry, cfg: BrainRuntimeConfig): v
       registry.getRegisteredProviderConfig(providerName)?.models?.map((definition) => [definition.id, definition]) ?? [],
     );
     const pinned = models.map((m) => ({
-      def: catalogDefinition(m, configured.get(m.id)), window: windowFor(cfg, p.id, m.id),
+      def: catalogDefinition(m, configured.get(m.id)), ...limitsFor(cfg, p.id, m.id),
     }));
-    if (!pinned.some((m) => m.window && m.window > 0)) continue;
+    if (!pinned.some((m) => (m.contextWindow && m.contextWindow > 0) || (m.maxTokens && m.maxTokens > 0))) continue;
     registry.registerProvider(providerName, {
-      models: pinned.map(({ def, window }) => (window && window > 0 ? { ...def, contextWindow: window } : def)),
+      models: pinned.map(({ def, contextWindow, maxTokens }) => {
+        // The catalog's own window is what an unpinned output cap has to fit inside, so the clamp reads
+        // the effective window rather than the pin alone.
+        const window = contextWindow && contextWindow > 0 ? contextWindow : def.contextWindow;
+        return {
+          ...def,
+          ...(contextWindow && contextWindow > 0 ? { contextWindow } : {}),
+          ...(maxTokens && maxTokens > 0 ? { maxTokens: clampOutputTokens(maxTokens, window) } : {}),
+        };
+      }),
     });
   }
 }
@@ -358,7 +404,7 @@ function resolveEntryModel(
       baseUrl: entry.type === 'openai' ? normOpenAiBase(entry.baseUrl || 'https://api.openai.com/v1') : (entry.baseUrl || 'https://api.anthropic.com'),
       apiKey: entry.apiKey ?? undefined,
       headers: { ...APP_IDENTITY_HEADERS },
-      models: [...new Set([...entry.models, modelId])].map((m) => modelEntry(providerName, m, windowFor(cfg, entry.id, m), compat)),
+      models: [...new Set([...entry.models, modelId])].map((m) => modelEntry(providerName, m, limitsFor(cfg, entry.id, m), compat)),
     });
     const added = registry.find(providerName, modelId);
     if (added) return added;

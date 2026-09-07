@@ -6,7 +6,7 @@ import { Activity, useCallback, useEffect, useState, useRef, type ReactNode } fr
 import { SlidersHorizontal, Gauge, LayoutDashboard, Lock, RefreshCw, RotateCcw, Sparkles, KeyRound, Boxes, Blocks, HardDrive, Server, CalendarClock, ScrollText, BellRing, MessageSquareText, MemoryStick, Timer, ToggleRight } from 'lucide-react';
 import { ModelIcon } from '../../components/ui/ModelIcon';
 import { groupBrainModelsByProvider } from '../../components/ui/brainModelSelection';
-import { ContextWindowModal } from '../../modules/settings/ContextWindowModal';
+import { ModelLimitsModal, DEFAULT_MAX_OUTPUT_TOKENS } from '../../modules/settings/ModelLimitsModal';
 import { PluginsSection } from '../../modules/settings/PluginsSection';
 import { BrainSection } from '../../modules/settings/BrainSection';
 import { ModelRolesSection } from '../../modules/settings/ModelRolesSection';
@@ -216,12 +216,14 @@ export default function SettingsPage() {
   };
 
   const [allowed, setAllowed] = useState<string[]>([]);
-  // Per-model max context window overrides (Elowen AI models only), keyed `providerId/model`. Lives here
-  // in the Models section next to where models are enabled — one home for all Elowen AI model config.
+  // Per-model max context window and max output token overrides (Elowen AI models only), keyed
+  // `providerId/model`. Lives here in the Models section next to where models are enabled — one home for
+  // all Elowen AI model config.
   const [modelWindows, setModelWindows] = useState<Record<string, number>>({});
+  const [modelMaxTokens, setModelMaxTokens] = useState<Record<string, number>>({});
   const [modelQuery, setModelQuery] = useState('');
-  // The Elowen AI model whose context-window override is being edited (null = editor closed).
-  const [ctxFor, setCtxFor] = useState<{ model: string; key: string; effective: number } | null>(null);
+  // The Elowen AI model whose limits are being edited (null = editor closed).
+  const [ctxFor, setCtxFor] = useState<{ model: string; key: string; effectiveWindow: number; effectiveMaxTokens: number } | null>(null);
   const [defTokenTtl, setDefTokenTtl] = useState(30);
   const [tokenTtlOpen, setTokenTtlOpen] = useState(false);
   const [autoUpdate, setAutoUpdate] = useState(false);
@@ -245,6 +247,7 @@ export default function SettingsPage() {
       seeded.current = true;
       setAllowed(config.data.allowedExecs ?? []);
       setModelWindows(config.data.brain?.modelContextWindows ?? {});
+      setModelMaxTokens(config.data.brain?.modelMaxTokens ?? {});
       setDefTokenTtl(config.data.security?.tokenTtlDays ?? 30);
       setAutoUpdate(config.data.autoUpdate ?? false);
       setPushContact(config.data.webPushContact ?? '');
@@ -289,9 +292,10 @@ export default function SettingsPage() {
   // The apiKey secret rides along only when freshly typed, exactly as with the old buttons.
   const ready = seeded.current;
   const defaultsSave = useAutoSaveStatus([defTokenTtl], saveDefaults, { ready });
-  // Per-model context windows auto-persist like every other model setting (no Save button).
-  const windowsSave = useAutoSaveStatus([modelWindows], async () => {
-    try { await update.mutateAsync({ brain: { modelContextWindows: modelWindows } }); }
+  // Per-model limits auto-persist like every other model setting (no Save button). Both maps ride in ONE
+  // patch: the modal can change either, and two racing PUTs would collide on the config revision.
+  const windowsSave = useAutoSaveStatus([modelWindows, modelMaxTokens], async () => {
+    try { await update.mutateAsync({ brain: { modelContextWindows: modelWindows, modelMaxTokens } }); }
     catch (error) { toast(apiErrorMessage(error), 'error'); throw error; }
   }, { ready });
   const modelsSave = useAutoSaveStatus([allowed], async () => {
@@ -314,14 +318,23 @@ export default function SettingsPage() {
     const finalStatus = await retentionSave.flush();
     if (finalStatus !== 'error') setRetentionOpen(false);
   };
-  // Set (or clear, with null) one model's context-window override; the autosave above persists it.
-  const setWindow = (key: string, value: number | null) =>
-    setModelWindows((cur) => {
+  // Set (or clear, with null) one entry of a per-model override map; the autosave above persists it.
+  const setOverride = (
+    apply: (updater: (cur: Record<string, number>) => Record<string, number>) => void,
+    key: string,
+    value: number | null,
+  ) =>
+    apply((cur) => {
       const next = { ...cur };
       if (value != null && value >= 1) next[key] = Math.floor(value);
       else delete next[key];
       return next;
     });
+  // Both of one model's limits, from the single modal that edits them.
+  const setLimits = (key: string, limits: { contextWindow: number | null; maxTokens: number | null }) => {
+    setOverride(setModelWindows, key, limits.contextWindow);
+    setOverride(setModelMaxTokens, key, limits.maxTokens);
+  };
 
   if (config.isLoading) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><LoadingState /></ModuleShell>;
   if (config.isError) return <ModuleShell moduleId="settings"><ModuleHeader title={t.page.settings} icon={SlidersHorizontal} /><ErrorState message={t.common.daemonUnreachable} onRetry={() => config.refetch()} /></ModuleShell>;
@@ -389,7 +402,7 @@ export default function SettingsPage() {
         <WorkspaceMetric label={t.settings.metric.catalog} value={catalogExecs.length} icon={Boxes} />
         <WorkspaceMetric label={t.settings.metric.enabled} value={catalogExecs.filter((exec) => allowed.includes(exec)).length} icon={ToggleRight} />
         <WorkspaceMetric label={t.settings.metric.accounts} value={brainModelGroups.length} icon={Server} />
-        <WorkspaceMetric label={t.settings.metric.overrides} value={Object.keys(modelWindows).length} icon={Gauge} />
+        <WorkspaceMetric label={t.settings.metric.overrides} value={new Set([...Object.keys(modelWindows), ...Object.keys(modelMaxTokens)]).size} icon={Gauge} />
       </>
     ),
     plugins: (
@@ -523,7 +536,14 @@ export default function SettingsPage() {
                       // `contextWindowSet` derives from, then autosaved), so a just-set or just-cleared
                       // override renders immediately without waiting for a refetch.
                       const override = modelWindows[winKey];
-                      const overridden = override != null;
+                      const outputOverride = modelMaxTokens[winKey];
+                      const overridden = override != null || outputOverride != null;
+                      const effectiveMaxTokens = outputOverride ?? model.maxTokens ?? DEFAULT_MAX_OUTPUT_TOKENS;
+                      // The window alone unless an output cap is pinned — then both, so a pin the operator
+                      // set is visible on the row instead of only inside the editor.
+                      const limitsLabel = outputOverride != null
+                        ? `${formatTokens(override ?? model.contextWindow)} · ${formatTokens(outputOverride)}`
+                        : formatTokens(override ?? model.contextWindow);
                       return (
                         <div data-testid="model-row" key={model.exec} className="settings-model-row settings-model-row--elowen flex min-w-0 items-center gap-3 transition-colors">
                           <span className="settings-model-row__icon flex h-9 w-9 shrink-0 items-center justify-center text-muted-foreground"><ModelIcon name={model.model} size={20} /></span>
@@ -534,13 +554,13 @@ export default function SettingsPage() {
                           <div className="settings-model-row__controls ml-auto flex shrink-0 items-center gap-2">
                             <button
                               type="button"
-                              onClick={() => setCtxFor({ model: model.model, key: winKey, effective: model.contextWindow })}
-                              title={`${t.brain.contextWindowEdit} · ${formatTokens(override ?? model.contextWindow)}`}
-                              aria-label={`${t.brain.contextWindowEdit}: ${model.model}`}
+                              onClick={() => setCtxFor({ model: model.model, key: winKey, effectiveWindow: model.contextWindow, effectiveMaxTokens })}
+                              title={`${t.brain.modelLimitsEdit} · ${limitsLabel}`}
+                              aria-label={`${t.brain.modelLimitsEdit}: ${model.model}`}
                               className={`settings-model-row__context inline-flex h-8 shrink-0 items-center gap-1 px-2 font-mono text-[11px] transition-colors ${overridden ? 'text-primary' : 'text-muted-foreground hover:text-foreground'}`}
                             >
                               <Gauge size={12} aria-hidden />
-                              {formatTokens(override ?? model.contextWindow)}
+                              {limitsLabel}
                             </button>
                             <Toggle checked={allowed.includes(model.exec)} onChange={() => toggle(model.exec)} label={model.model} />
                           </div>
@@ -561,12 +581,14 @@ export default function SettingsPage() {
         </SettingsPanel>
 
         {ctxFor && (
-          <ContextWindowModal
+          <ModelLimitsModal
             model={ctxFor.model}
-            initial={modelWindows[ctxFor.key] ?? null}
-            effective={ctxFor.effective}
+            initialWindow={modelWindows[ctxFor.key] ?? null}
+            initialMaxTokens={modelMaxTokens[ctxFor.key] ?? null}
+            effectiveWindow={ctxFor.effectiveWindow}
+            effectiveMaxTokens={ctxFor.effectiveMaxTokens}
             onClose={() => setCtxFor(null)}
-            onSave={(v) => setWindow(ctxFor.key, v)}
+            onSave={(limits) => setLimits(ctxFor.key, limits)}
           />
         )}
 

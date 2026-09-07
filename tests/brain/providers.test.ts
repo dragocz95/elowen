@@ -694,6 +694,57 @@ describe('brain providers', () => {
 
 });
 
+describe('pinned max output tokens', () => {
+  // The exact pair from the owner's request, so the `provider/model` key shape the operator types in
+  // Settings is the one the descriptor is proven against.
+  const qwenCfg = (contextWindows?: Record<string, number>, maxOutputTokens?: Record<string, number>): BrainRuntimeConfig => ({
+    providers: [{ id: 'custom', label: 'Custom', type: 'openai', baseUrl: 'https://relay.example.test/v1', models: ['qwen3.6-35b-a3b'], apiKey: 'cs-x' }],
+    ...(contextWindows ? { contextWindows } : {}),
+    ...(maxOutputTokens ? { maxOutputTokens } : {}),
+  });
+
+  it('keeps the 8192 default when the operator pinned nothing', () => {
+    const registry = buildBrainRegistry(qwenCfg(), runtime);
+    expect(registry.find('elowen-custom', 'qwen3.6-35b-a3b')?.maxTokens).toBe(8_192);
+  });
+
+  it('carries the pin into the runtime descriptor next to the pinned window', () => {
+    const cfgWithLimits = qwenCfg({ 'custom/qwen3.6-35b-a3b': 262_144 }, { 'custom/qwen3.6-35b-a3b': 65_536 });
+    const model = buildBrainRegistry(cfgWithLimits, runtime).find('elowen-custom', 'qwen3.6-35b-a3b');
+    expect(model?.contextWindow).toBe(262_144);
+    expect(model?.maxTokens).toBe(65_536);
+  });
+
+  it('applies the pin to an ad-hoc (hand-typed) model registered on the fly', () => {
+    const cfgWithLimits: BrainRuntimeConfig = { ...cfg, maxOutputTokens: { 'relay/typed-x': 32_000 } };
+    const reg = buildBrainRegistry(cfgWithLimits, runtime);
+    expect(resolveBrainModel(reg, cfgWithLimits, { provider: 'relay', model: 'typed-x' }).maxTokens).toBe(32_000);
+  });
+
+  // Input and output share ONE window. A cap that leaves the prompt no room cannot be honoured: pi-ai
+  // clamps the request to `contextWindow - prompt - safety` anyway, so the descriptor must not advertise a
+  // budget the endpoint will never grant (that mismatch is exactly what makes a `length` stop look
+  // "recoverable" to the compaction path).
+  it('clamps a pin that would leave the prompt no headroom', () => {
+    const cfgWithLimits = qwenCfg({ 'custom/qwen3.6-35b-a3b': 32_000 }, { 'custom/qwen3.6-35b-a3b': 32_000 });
+    expect(buildBrainRegistry(cfgWithLimits, runtime).find('elowen-custom', 'qwen3.6-35b-a3b')?.maxTokens)
+      .toBe(32_000 - 8_192);
+  });
+
+  it('never collapses below half a window too small for the input floor', () => {
+    const cfgWithLimits = qwenCfg({ 'custom/qwen3.6-35b-a3b': 8_000 }, { 'custom/qwen3.6-35b-a3b': 8_000 });
+    expect(buildBrainRegistry(cfgWithLimits, runtime).find('elowen-custom', 'qwen3.6-35b-a3b')?.maxTokens).toBe(4_000);
+  });
+
+  it('reaches the runtime descriptor of an OAuth built-in model too', () => {
+    const oauth: BrainRuntimeConfig = {
+      providers: [{ id: 'openai-codex', label: 'ChatGPT', type: 'oauth-openai-codex', baseUrl: '', models: ['gpt-5.5'], apiKey: null }],
+      maxOutputTokens: { 'openai-codex/gpt-5.5': 40_000 },
+    };
+    expect(buildBrainRegistry(oauth, runtime).find('openai-codex', 'gpt-5.5')?.maxTokens).toBe(40_000);
+  });
+});
+
 describe('pinned context windows', () => {
   const oauthCfg = (contextWindows?: Record<string, number>): BrainRuntimeConfig => ({
     providers: [{

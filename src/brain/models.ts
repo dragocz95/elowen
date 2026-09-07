@@ -1,7 +1,7 @@
 import { APP_IDENTITY_HEADERS } from '../inference/appIdentity.js';
 import { trimTrailingSlash } from '../shared/url.js';
 import type { BrainProviderEntry, BrainRuntimeConfig } from './providers.js';
-import { buildBrainRegistry, inMemoryModelRuntime, openAiApiFor, registryProviderName, resolveBrainModel, OAUTH_BUILTIN, DEFAULT_CONTEXT_WINDOW } from './providers.js';
+import { buildBrainRegistry, inMemoryModelRuntime, openAiApiFor, registryProviderName, resolveBrainModel, OAUTH_BUILTIN, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS, clampOutputTokens } from './providers.js';
 import { catalogModelVision, inferredModelCapabilities, modelCapabilities } from './modelCapabilities.js';
 import { resolveFastModeRoute } from './fastMode.js';
 
@@ -16,6 +16,11 @@ export interface BrainModelOption {
   source: 'api-key' | 'oauth' | 'relay';
   contextWindow: number;
   contextWindowSet: boolean;
+  /** Effective max OUTPUT tokens per answer (operator override for `providerId/model`, else what the
+   *  registered descriptor carries, else the default); `maxTokensSet` tells the UI whether it is pinned.
+   *  Optional so a response from an older daemon still satisfies this contract. */
+  maxTokens?: number;
+  maxTokensSet?: boolean;
   /** PI-canonical reasoning ids plus provider-facing display labels (e.g. xhigh → ultra). */
   reasoningLevels?: string[];
   reasoningLabels?: Record<string, string>;
@@ -141,11 +146,19 @@ export async function listBrainModels(cfg: BrainRuntimeConfig, fetchImpl: typeof
       const fastAvailable = fastModel ? resolveFastModeRoute(p, fastModel) !== undefined : false;
       // Same static table the cost and modality lookups already consult, so this costs no request.
       const visionKnown = catalogModelVision(registryProviderName(p), e.id);
+      // Effective max output tokens, same precedence and the same clamp the runtime descriptor applies —
+      // a pin the window cannot honour must READ as the number that will actually be sent.
+      const pinnedOutput = cfg.maxOutputTokens?.[`${p.id}/${e.id}`];
+      const effectiveOutput = pinnedOutput && pinnedOutput > 0
+        ? clampOutputTokens(pinnedOutput, effective)
+        : (resolved?.maxTokens || DEFAULT_MAX_OUTPUT_TOKENS);
       return {
         provider: p.id, providerLabel: p.label, model: e.id,
         source: p.origin ?? 'api-key' as const,
         contextWindow: effective,
         contextWindowSet: !!(pinned && pinned > 0),
+        maxTokens: effectiveOutput,
+        maxTokensSet: !!(pinnedOutput && pinnedOutput > 0),
         ...(capabilities.reasoning ? {
           reasoningLevels: capabilities.levels,
           reasoningLabels: Object.fromEntries(capabilities.levels.map((level) => [level, capabilities.labels[level] ?? level])),

@@ -147,8 +147,10 @@ export interface ElowenConfig {
    *  there is no configured API-key provider. `agentName` is the assistant's display
    *  identity ("Elowen" by default) — it feeds the persona prompts everywhere the brain speaks.
    *  `maxSteps` caps the agent's per-run model round-trips; `modelContextWindows` lets the operator pin a
-   *  max context window per Elowen AI model (`providerId/model`) for endpoints that don't report one. */
-  brain: { providers: BrainProviderPublic[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; limits: BrainLimits; hiddenOauth: string[] };
+   *  max context window per Elowen AI model (`providerId/model`) for endpoints that don't report one, and
+   *  `modelMaxTokens` pins that model's max OUTPUT tokens per answer (same key shape). Both are advisory
+   *  numbers the operator supplies; the runtime clamps the output cap against the window it shares. */
+  brain: { providers: BrainProviderPublic[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; modelMaxTokens: Record<string, number>; limits: BrainLimits; hiddenOauth: string[] };
   /** Operator-tunable runtime knobs (Settings → Elowen AI → Runtime): the `!` shell timeout, the memory
    *  relevance floor, the deferred-tool policy, activity-log retention and the memory-retention block
    *  (auto-eviction toggle, grace window, vitality floor and per-importance half-lives). `limits.eventRetentionDays` is
@@ -649,9 +651,12 @@ function clampMemoryRetention(next: Partial<MemoryRetentionConfig> | undefined, 
   };
 }
 
-/** Per-model context-window overrides, keyed `providerId/model`. Some endpoints don't report a reliable
- *  max token count, so the operator can pin one. Keep only positive whole numbers; drop anything else. */
-function sanitizeContextWindows(input: unknown): Record<string, number> {
+/** A per-model token override map, keyed `providerId/model` — the context-window pins and the max-output
+ *  pins share this shape and this rule. Some endpoints don't report a reliable max token count, so the
+ *  operator can pin one. Keep only positive whole numbers; drop anything else. The output cap is NOT
+ *  cross-checked against the window here (a patch may carry either map alone, and the reported window may
+ *  come from the endpoint rather than from config) — `brain/providers.ts` clamps it where both are known. */
+function sanitizeModelTokenMap(input: unknown): Record<string, number> {
   if (!input || typeof input !== 'object' || Array.isArray(input)) return {};
   const out: Record<string, number> = {};
   for (const [k, v] of Object.entries(input as Record<string, unknown>)) {
@@ -839,7 +844,7 @@ const DEFAULT_CONFIG: ElowenConfig = {
     ],
     removed: [],
   },
-  brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, hiddenOauth: [] },
+  brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, modelMaxTokens: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, hiddenOauth: [] },
   runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_TOOL_DEFERRAL_ENABLED, toolDeferralOverrides: { sources: {}, tools: {} }, hostedToolSearch: {}, subagentRunnerEnabled: DEFAULT_SUBAGENT_RUNNER_ENABLED, subagentRunnerPoolMax: DEFAULT_SUBAGENT_RUNNER_POOL_MAX, remoteCompactionEnabled: DEFAULT_REMOTE_COMPACTION_ENABLED, providerRequestCaptureEnabled: DEFAULT_PROVIDER_REQUEST_CAPTURE_ENABLED, memoryRetention: defaultMemoryRetention() },
   embedding: { providerId: '', model: '', baseUrl: '', dimensions: null },
   categorization: { providerId: '', model: '', baseUrl: '' },
@@ -883,7 +888,7 @@ interface Stored {
   /** One-shot upgrade marker for the bundled release-notes plugin. See migrateChangelogPlugin(). */
   changelogPluginMigrated: boolean;
   /** Brain provider entries with plaintext API keys — stripped to `apiKeySet` in the public view. */
-  brain: { providers: BrainProviderStored[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; limits: BrainLimits; hiddenOauth: string[] };
+  brain: { providers: BrainProviderStored[]; agentName: string; maxSteps: number; modelContextWindows: Record<string, number>; modelMaxTokens: Record<string, number>; limits: BrainLimits; hiddenOauth: string[] };
   /** Runtime knobs. Holds no secret → surfaced verbatim in the public view. */
   runtime: RuntimeConfigWithRetention;
   /** Embedding provider config. Holds no secret (the key is reused from the brain provider), so this
@@ -941,7 +946,7 @@ const defaultStored = (): Stored => ({
   editorPluginMigrated: true,
   sandboxPluginMigrated: true,
   changelogPluginMigrated: true,
-  brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, hiddenOauth: [] },
+  brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, modelMaxTokens: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, hiddenOauth: [] },
   runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_CONFIG.runtime.toolDeferralEnabled, toolDeferralOverrides: { sources: {}, tools: {} }, hostedToolSearch: {}, subagentRunnerEnabled: DEFAULT_CONFIG.runtime.subagentRunnerEnabled, subagentRunnerPoolMax: DEFAULT_CONFIG.runtime.subagentRunnerPoolMax, remoteCompactionEnabled: DEFAULT_CONFIG.runtime.remoteCompactionEnabled, providerRequestCaptureEnabled: DEFAULT_CONFIG.runtime.providerRequestCaptureEnabled, memoryRetention: defaultMemoryRetention() },
   embedding: { ...DEFAULT_CONFIG.embedding },
   categorization: { ...DEFAULT_CONFIG.categorization },
@@ -963,7 +968,7 @@ export interface ConfigPatch {
   plugins?: { enabled?: string[]; removed?: string[]; config?: Record<string, Record<string, unknown>> };
   /** Brain providers replace wholesale (the UI edits the full list). A patched entry with an empty/absent
    *  apiKey KEEPS the currently stored key for that id — the UI never sees (or resends) secrets. */
-  brain?: { providers?: unknown; agentName?: unknown; maxSteps?: number; modelContextWindows?: Record<string, number>; limits?: Partial<BrainLimits>; hiddenOauth?: string[] };
+  brain?: { providers?: unknown; agentName?: unknown; maxSteps?: number; modelContextWindows?: Record<string, number>; modelMaxTokens?: Record<string, number>; limits?: Partial<BrainLimits>; hiddenOauth?: string[] };
   /** Runtime knobs merged per-field (like the brain limits): a patch tuning one slider leaves the rest. */
   runtime?: { limits?: Partial<RuntimeLimits>; toolDeferralEnabled?: boolean; toolDeferralOverrides?: ToolDeferralOverrides; subagentRunnerEnabled?: boolean; subagentRunnerPoolMax?: number | null; remoteCompactionEnabled?: boolean; providerRequestCaptureEnabled?: boolean; memoryRetention?: Partial<MemoryRetentionConfig> };
   /** Embedding config is merged per-field; `dimensions: null` clears the width hint. */
@@ -1034,7 +1039,8 @@ export class ConfigStore {
           providers: sanitizeBrainProviders(p.brain?.providers),
           agentName: sanitizeAgentName(p.brain?.agentName, 'Elowen'),
           maxSteps: clampMaxSteps(p.brain?.maxSteps, d.brain.maxSteps),
-          modelContextWindows: sanitizeContextWindows(p.brain?.modelContextWindows),
+          modelContextWindows: sanitizeModelTokenMap(p.brain?.modelContextWindows),
+          modelMaxTokens: sanitizeModelTokenMap(p.brain?.modelMaxTokens),
           limits: clampBrainLimits(p.brain?.limits, d.brain.limits),
           hiddenOauth: sanitizeStringList(p.brain?.hiddenOauth),
         },
@@ -1094,7 +1100,7 @@ export class ConfigStore {
       webPushContact: s.webPushContact,
       // Only the enabled + removed lists surface; per-plugin config (possible secrets) stays daemon-side.
       plugins: { enabled: s.plugins.enabled, removed: s.plugins.removed },
-      brain: { providers: s.brain.providers.map(({ apiKey, ...pub }) => ({ ...pub, apiKeySet: !!apiKey })), agentName: s.brain.agentName, maxSteps: s.brain.maxSteps, modelContextWindows: s.brain.modelContextWindows, limits: s.brain.limits, hiddenOauth: s.brain.hiddenOauth },
+      brain: { providers: s.brain.providers.map(({ apiKey, ...pub }) => ({ ...pub, apiKeySet: !!apiKey })), agentName: s.brain.agentName, maxSteps: s.brain.maxSteps, modelContextWindows: s.brain.modelContextWindows, modelMaxTokens: s.brain.modelMaxTokens, limits: s.brain.limits, hiddenOauth: s.brain.hiddenOauth },
       // No secret in the runtime block → expose verbatim (the CLI reads its `!` timeout from here).
       runtime: s.runtime,
       // No secret in the embedding block (the key is reused from the brain provider) → expose verbatim.
@@ -1312,10 +1318,13 @@ export class ConfigStore {
           : cur.brain.providers,
         agentName: sanitizeAgentName(patch.brain?.agentName, cur.brain.agentName),
         maxSteps: clampMaxSteps(patch.brain?.maxSteps, cur.brain.maxSteps),
-        // Context-window overrides replace wholesale (the UI edits the full map).
+        // Context-window and max-output overrides replace wholesale (the UI edits each full map).
         modelContextWindows: patch.brain?.modelContextWindows !== undefined
-          ? sanitizeContextWindows(patch.brain.modelContextWindows)
+          ? sanitizeModelTokenMap(patch.brain.modelContextWindows)
           : cur.brain.modelContextWindows,
+        modelMaxTokens: patch.brain?.modelMaxTokens !== undefined
+          ? sanitizeModelTokenMap(patch.brain.modelMaxTokens)
+          : cur.brain.modelMaxTokens,
         // Limits merge per-field onto the current values (a partial patch tunes one knob without
         // resetting the rest) and each field is clamped to its bound.
         limits: clampBrainLimits(patch.brain?.limits, cur.brain.limits),
