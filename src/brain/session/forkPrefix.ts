@@ -134,6 +134,50 @@ export function buildForkWorktreeNotice(parentCwd: string, childCwd: string): st
     + 'not affect the parent\'s files.';
 }
 
+/** What a FORK child may not run, even though it advertises every one of these.
+ *
+ *  A fork exists to read the parent's warm cache, and the tool block sits at the FRONT of the request, so
+ *  withholding a single schema re-bills the whole prefix and defeats the feature. The boundary therefore
+ *  moves off visibility and onto execution — the same trade plan mode already makes (see gateDeniedTools),
+ *  and the same one the reference implementation makes when it keeps its own agent tool in the fork pool
+ *  and refuses the call instead.
+ *
+ *  Each name is here for its own reason, not as belt-and-braces:
+ *  - `AskUserQuestion`: nobody is attached to a fork child, so the call could only hang or be answered by
+ *    nothing at all.
+ *  - `ShareImage` / `ShareFile`: whatever a child shares lands in the child's own panel, never in the
+ *    conversation that forked it, and publishing host files from an unattended run is an escalation path.
+ *  - `ExitPlanMode`: plan mode belongs to the conversation a person is watching, not to a worker.
+ *  - `Delegate` / `WorkflowStart`: the recursion guard. A fork keeps both schemas for cache identity, so
+ *    the refusal has to happen when the call arrives. */
+export const FORK_EXECUTE_DENIES: readonly string[] = [
+  'AskUserQuestion', 'ShareImage', 'ShareFile', 'ExitPlanMode', 'Delegate', 'WorkflowStart',
+];
+
+/** Why a fork child may not run this tool, or undefined when it may. The text names the FORK, because a
+ *  model that reads "not available in this conversation" retries; one that reads why it is a worker does
+ *  the useful thing instead, which for every name here is to report rather than call. */
+export function forkToolDenial(name: string): string | undefined {
+  switch (name) {
+    case 'AskUserQuestion':
+      return 'AskUserQuestion is not available in a forked sub-agent — there is nobody to answer; '
+        + 'report the question in your result instead.';
+    case 'ShareImage':
+    case 'ShareFile':
+      return `${name} is not available in a forked sub-agent — anything it shares lands in this worker's `
+        + 'own panel, not in the conversation that forked you; name the path in your result instead.';
+    case 'ExitPlanMode':
+      return 'ExitPlanMode is not available in a forked sub-agent — you are a worker, not a planning '
+        + 'conversation; carry out your directive and report.';
+    case 'Delegate':
+    case 'WorkflowStart':
+      return `${name} is not available in a forked sub-agent — you ARE the fork; carry out your directive `
+        + 'directly with your own tools.';
+    default:
+      return undefined;
+  }
+}
+
 /** The share of the parent's prefix a child must read back before the fork counts as cache-sharing.
  *  Not 100%: the directive block and the child's own per-turn context are new by construction, and a
  *  provider may round its own accounting. Below this the prefix genuinely diverged. */
