@@ -13,7 +13,7 @@ The daemon scans two plugin roots, in this order:
 
 Bundled folders win when both roots contain the same plugin name. Only names in the enabled-plugin configuration are loaded. Folders are scanned and loaded in deterministic name order. Each plugin is registered into an isolated staging registry and merged only after `register(ctx)` completes; a malformed or failing plugin is skipped without leaving partial tools or routes behind.
 
-The source checkout currently bundles `askuser`, `elowen-docs`, `files`, `mcp`, `runtime-context`, `sandbox`, `statusline`, `subagent`, `terminal`, and `web`. Optional integrations and extracted domain plugins are owned by the curated plugin registry at `https://github.com/dragocz95/elowen-plugins` and are installed from that registry. Marketplace installation is allowlisted by its `registry.json`; it does not accept arbitrary URLs or local folders. The daemon shallow-clones the registry, caches the last good checkout, and copies `plugins/<name>/` atomically into the instance plugin directory. An installed marketplace plugin is enabled separately and may require explicit capability acknowledgement. If an enabled plugin was moved out of the bundled package, boot reconciliation can restore it from the registry without changing the enabled set.
+The source checkout currently bundles `askuser`, `changelog`, `elowen-docs`, `files`, `mcp`, `runtime-context`, `sandbox`, `statusline`, `subagent`, `terminal`, and `web`. Optional integrations and extracted domain plugins are owned by the curated plugin registry at `https://github.com/dragocz95/elowen-plugins` and are installed from that registry. Marketplace installation is allowlisted by its `registry.json`; it does not accept arbitrary URLs or local folders. The daemon shallow-clones the registry, caches the last good checkout, and copies `plugins/<name>/` atomically into the instance plugin directory. An installed marketplace plugin is enabled separately and may require explicit capability acknowledgement. If an enabled plugin was moved out of the bundled package, boot reconciliation can restore it from the registry without changing the enabled set.
 
 A plugin reload replaces the whole registry generation. Do not retain a plugin control, configuration object, or other live registry value across reloads. Resolve live controls when they are used.
 
@@ -162,7 +162,7 @@ Capabilities are deny-by-default:
 
 `mutates` values currently include `prompt`, `turnContext`, `tools`, `memory`, `events`, `workflow-dag`, and `users`. The host requires explicit, all-or-nothing acknowledgement when enabling or re-enabling a plugin that declares `tools`, `memory`, `events`, `workflow-dag`, or `users` mutation authority. A warning badge is not consent; turning a plugin off needs no acknowledgement.
 
-`reads` gates host capabilities such as `db`, `controls`, `embeddings`, `providers`, `prompts`, `stores`, `git`, and `project-files`. Declare only the scopes the implementation needs. `network` records network intent; it is not a replacement for validating remote data. `workspaceSafe: true` is a positive declaration that every registered tool is safe inside an exact delegated workspace; omit it for mixed or unsafe plugins, or mark individual tools with `workspaceSafe: true`.
+`reads` gates host capabilities such as `db`, `controls`, `embeddings`, `providers`, `prompts`, `stores`, `git`, and `project-files`. Declare only the scopes the implementation needs. `network` records network intent; it is not a replacement for validating remote data. `workspaceSafe: true` is a positive declaration that every registered tool is safe inside an exact delegated workspace; omit it for mixed or unsafe plugins, or mark individual tools with `workspaceSafe: true`. Even a workspace-safe plugin cannot grant host-filesystem tools to an explicitly workspace-scoped child; the spawner withholds tools such as `WorkflowStart` whose definitions use the host workflow directory.
 
 ## Entry point and tools
 
@@ -549,7 +549,7 @@ A plugin browser bundle is declared in the manifest:
 "web": {
   "entry": "web/index.js",
   "css": "web/index.css",
-  "requiresApiVersion": 12,
+  "requiresApiVersion": 16,
   "label": "My plugin",
   "account": [
     { "id": "connection", "label": "Connection", "icon": "Settings" }
@@ -577,7 +577,7 @@ Register the bundle through the browser runtime:
 
 ```javascript
 window.__elowenRegisterPluginUi?.('my-plugin', {
-  requiresApiVersion: 12,
+  requiresApiVersion: 16,
   pages: { '': RootPage },
   account: { connection: ConnectionPanel },
   project: { overview: ProjectPanel },
@@ -585,9 +585,9 @@ window.__elowenRegisterPluginUi?.('my-plugin', {
 });
 ```
 
-Use the host-provided `window.ElowenUiRuntime` for React, components, hooks, utilities, authenticated API calls, and navigation. The current host runtime contract is API 12. Compatibility is a ceiling: a bundle loads when `requiresApiVersion <= 12`, so the host runtime may add names but must not remove or rename published components, hooks, or utilities. Build with `elowen-plugin-ui-kit` against the same contract. Never import from the host `web/` application; dependency-cruiser enforces this boundary so the bundle cannot ship a second React or query client.
+Use the host-provided `window.ElowenUiRuntime` for React, components, hooks, utilities, authenticated API calls, and navigation. The current host runtime contract is API 16. Compatibility is a ceiling: a bundle loads when `requiresApiVersion <= 16`, so the host runtime may add names but must not remove or rename published components, hooks, or utilities. Build with `elowen-plugin-ui-kit` against the same contract. Never import from the host `web/` application; dependency-cruiser enforces this boundary so the bundle cannot ship a second React or query client.
 
-API 12's public autosave contract is:
+API 16's public autosave contract is:
 
 - `SaveStatus`: `idle | saving | saved | pending | error`;
 - `components.AutoSaveStatus({ status, onRetry? })` for the shared indicator;
@@ -657,10 +657,10 @@ The request function is bound to the calling MCP client's token. A plugin MCP to
 
 Keep these version axes separate:
 
-- The daemon version is the root `package.json` version (`0.28.24` in this upcoming checkout; it is not published yet) and is the version used by `requiresCore` checks. Update it through the repository's normal release process; do not infer it from a plugin manifest or the marketplace catalog.
+- The daemon version is the root `package.json` version (`0.28.34` in this checkout) and is the version used by `requiresCore` checks. Update it through the repository's normal release process; do not infer it from a plugin manifest or the marketplace catalog.
 - A plugin's manifest `version` is that plugin's own release version. Bump it whenever its installed bytes change, so reload cache-busting and marketplace update detection see the new build. It does not need to match the daemon version.
 - `apiVersion` is the plugin API breaking-change axis and is currently `"1"`; `requiresCore` is a minimum daemon version for additive host APIs. `requiresSharedApi` is the exact shared-helper contract, currently `3`.
-- `web.requiresApiVersion` is the host browser-runtime compatibility ceiling, currently `12`; it must not be used to signal removals.
+- `web.requiresApiVersion` is the host browser-runtime compatibility ceiling, currently `16`; it must not be used to signal removals.
 
 ### Writing a changelog entry
 
@@ -718,6 +718,6 @@ npx vitest run \
 npm run check
 ```
 
-For route or access changes, also run the focused API and plugin-grant tests. For hooks, run the hooks end-to-end test. For changes to an extracted registry plugin, build and test that plugin in `/var/www/elowen-plugins`, then run the corresponding host contract tests here.
+For route or access changes, also run the focused API and plugin-grant tests. For hooks, run the hooks end-to-end test. For changes to an extracted registry plugin, build and test that plugin in its owning registry checkout, then run the corresponding host contract tests here.
 
 A new or changed manifest must parse successfully and the entry must be present in the built plugin tree. A browser plugin must produce the files named by its manifest `web.entry` and optional `web.css` fields. Inspect the daemon log after a reload if a plugin is skipped; the loader reports the plugin name and the validation or registration error.

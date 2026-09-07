@@ -6,7 +6,9 @@ production instance: a throwaway SQLite database, a demo admin (`alex`), two fic
 `design-system`) and an English demo backlog. No real account, project, conversation, memory or
 credential is ever loaded, so nothing needs redacting after the fact.
 
-All assets are captured at **2560×1440**, with the UI language set to English.
+All assets are captured at **2560×1440**, with the UI language set to English. The manifest records asset provenance and alt text only; it does not certify that a current production build or public landing-site build has rendered these files. The current documentation refresh did not run a linked-browser capture or a landing build, so treat these images as disposable documentation assets until a future capture records the source commit, route fixture, plugin versions, and checked build.
+
+The following existing PNGs are not referenced by the current numbered manual and are retained as unclassified assets rather than presented as current coverage: `web-ui-timeline.png`, `web-ui-tasks.png`, `web-ui-kanban.png`, `web-ui-escalations.png`, and `web-ui-sessions.png`.
 
 ## Web UI
 

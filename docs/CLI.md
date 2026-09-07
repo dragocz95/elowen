@@ -103,7 +103,7 @@ The following built-in commands are available to the CLI when their required plu
 | `/lsp` | Inspect or toggle language-server support when the plugin is installed and access permits it. |
 | `/mcp` | Inspect MCP servers and reconnect health when the plugin is installed. |
 | `/skills` | Inspect and load available skills when the plugin is installed. |
-| `/tools` | Inspect active plugin tools and ownership. |
+| `/tools` | Inspect active plugin tools and ownership. The current endpoint is administrator-only; non-administrator sessions may see the catalog entry but receive an authorization error. |
 | `/export [html\|jsonl]` | Save the current conversation in the launch directory. |
 | `/restart` | Restart the daemon; administrator-only. |
 | `/help` | Show the commands available to this CLI session. |

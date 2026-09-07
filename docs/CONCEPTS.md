@@ -122,7 +122,7 @@ Plugin APIs normally live under `/plugins/<name>/api/*`; plugin browser pages mo
 
 ## Memory
 
-Memory is a **private, per-account** durable store. Owner-chat tools and verified platform turns resolve memory using the acting linked account. An unlinked shared-channel sender gets no personal memory.
+Memory is a **private, per-account** durable store by default. An administrator can configure a Project shared pool whose eligible Project members can recall and manage that pool's rows. Owner-chat tools and verified platform turns resolve personal memory using the acting linked account, and an unlinked shared-channel sender gets no personal memory.
 
 Memory recall, deduplication, categories, post-turn curation, embeddings, and vitality are separate concerns:
 
@@ -177,7 +177,7 @@ A **platform channel** is a conversation delivered by a Discord, Telegram, Micro
 
 The channel service reuses the normal brain pipeline. It applies the linked writer's Project policy, plugin grants, tool rules, memory toggles, model settings, and Sandbox workspace where applicable. Shared rooms remain shared; scheduled direct delivery is still a channel turn rather than an owner-chat send.
 
-**Scheduling** is plugin-owned. Personal jobs execute as the owning account and report to that account's conversation. Instance jobs execute with operator authority and may notify configured channels. Ownership and grants are re-checked each time a job fires.
+**Scheduling** is plugin-owned. Personal jobs execute as the owning account and re-check ownership and grants when they fire. Owner-chat and Web-created recurring jobs use a dedicated job conversation; direct one-to-one platform jobs retain their direct origin, while shared-room jobs use the normal channel path. Instance jobs execute with operator authority and may notify configured channels. Filing a job under a conversation is organizational only and does not change execution context, model, permissions, or delivery.
 
 ## Source-of-truth rules
 

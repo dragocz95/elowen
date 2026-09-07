@@ -37,7 +37,7 @@ For a direct Next.js production build, use `npm --prefix web run build`. The roo
 | `/chat` | core | Full-page advisor chat. |
 | `/memory` | core | Account memory, categories, retrieval, and memory administration. |
 | `/projects` | core | Project registration, access, read-only Git state, and plugin project panels. |
-| `/settings` | core | Administrator-only system, brain, model, plugin, memory, and data settings. |
+| `/settings` | core | Administrator-only system, brain, model, plugin, and data settings. The retired `memory` category aliases to `models`. |
 | `/users` | core | Administrator-only account and access management. |
 | `/account` | core | The signed-in account's profile, security, notifications, defaults, and personal settings. |
 | `/p/<plugin>/<...rest>` | plugin host | A page contributed by an enabled plugin. |
@@ -62,8 +62,8 @@ Every route is dynamic (`dynamic = 'force-dynamic'`) because skin, branding, plu
 - **Chat** uses `BrainChatProvider` as the single controller for transcript state, draft text, attachments, queues, questions, plans, model selection, and the SSE stream. The dock and full-page chat share that controller, so opening or closing the dock does not create a second stream.
 - **Projects** displays registered filesystem roots and the daemon's read-only Git snapshot. Administrators can create, edit, remove, and assign Projects; members can only use Projects granted to them. Enabled plugins can add project panels, such as Sandbox workspaces or a GitHub repository mapping.
 - **Memory** operates on the signed-in account's memory. Categories, retrieval, embeddings, and categorization are separate server capabilities; a missing embedding model does not make the browser invent local memory state.
-- **Settings** has the core sections `system`, `brain`, `models`, `plugins`, `memory`, and `data`. Plugin-owned settings are pages in the plugin's own world rather than duplicate sections in core Settings.
-- **Account** has `profile`, `security`, `notifications`, `personality`, `cli`, `terminal`, and `memory` sections, plus plugin-contributed account panels and manifest-defined personal plugin configuration for the signed-in account.
+- **Settings** has the core sections `system`, `brain`, `models`, `plugins`, and `data`; the retired `memory` key aliases to `models`. Plugin-owned settings are pages in the plugin's own world rather than duplicate sections in core Settings.
+- **Account** has `profile`, `security`, `notifications`, `personality`, `cli` displayed as **Models**, `terminal`, and `memory` sections, plus plugin-contributed account panels and manifest-defined personal plugin configuration for the signed-in account.
 - **Users** is an administrator surface for accounts, Project assignments, and per-account tool access. Members do not receive this route's management authority.
 
 ## Authentication and the BFF proxy
@@ -91,11 +91,11 @@ The browser may also use bounded polling for slow-moving data such as health, us
 
 ## Plugin browser UIs
 
-The authenticated `/api/plugins/ui` listing describes enabled plugin navigation, account sections, User and Project panels, settings sections, bundle URLs, and API versions. `web/lib/pluginUi.tsx` loads a plugin bundle only after the listing says it is available and compatible. The host installs `window.ElowenUiRuntime` (currently API 12) with the host React/JSX runtime, curated components and hooks, authenticated API access, utilities, and SPA navigation; bundles must use `elowen-plugin-ui-kit` and must not import host `web/` modules.
+The authenticated `/api/plugins/ui` listing describes enabled plugin navigation, account sections, User and Project panels, settings sections, bundle URLs, and API versions. `web/lib/pluginUi.tsx` loads a plugin bundle only after the listing says it is available and compatible. The host installs `window.ElowenUiRuntime` (currently API 16) with the host React/JSX runtime, curated components and hooks, authenticated API access, utilities, and SPA navigation; bundles must use `elowen-plugin-ui-kit` and must not import host `web/` modules.
 
 The host route resolves pages under `/p/<plugin>/...`, renders plugin settings sections when addressed as `/p/<plugin>/settings/<id>`, and wraps plugin output in `PluginErrorBoundary`. A plugin that is disabled, not granted to the account, incompatible, or failed to load gets an explicit unavailable state instead of a fabricated empty page.
 
-Plugin pages share the host's authentication, React Query runtime, localization, navigation, overlay policy, and UI kit. API 12 exposes the host-owned `AutoSaveStatus`, `useAutoSaveStatus`, and `usePluginConfigDraft` contracts, including the `pending` state, retry/flush operations, revision forwarding, and explicit `commitValue` boundary for secrets or other values that must not debounce. A registration may contribute pages, account panels, administrator User panels, Project panels, and Settings sections; settings report save state through `onSaveState`, and a section that owns its page frame declares `ownsPageFrame`. Plugin code owns its domain behavior and calls its authenticated plugin API; core does not mirror plugin tables or silently create replacement routes.
+Plugin pages share the host's authentication, React Query runtime, localization, navigation, overlay policy, and UI kit. API 16 exposes the host-owned `AutoSaveStatus`, `useAutoSaveStatus`, and `usePluginConfigDraft` contracts, including the `pending` state, retry/flush operations, revision forwarding, and explicit `commitValue` boundary for secrets or other values that must not debounce. A registration may contribute pages, account panels, administrator User panels, Project panels, and Settings sections; settings report save state through `onSaveState`, and a section that owns its page frame declares `ownsPageFrame`. Plugin code owns its domain behavior and calls its authenticated plugin API; core does not mirror plugin tables or silently create replacement routes.
 
 The bundled `sandbox` plugin contributes a Project panel at `Sandbox` and an administrator User-detail panel at `Development environment`. It provides account-owned Git worktrees, persistent account HOME, process leases, explicit-path commits, and cleanup previews. The optional GitHub plugin contributes account and Project panels for an account's GitHub connection, Project repository mappings, pull requests, checks, reviews, branch publication, and explicitly confirmed merges. GitHub publication requires both a verified repository mapping and an active Sandbox workspace.
 

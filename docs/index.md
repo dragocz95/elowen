@@ -36,6 +36,8 @@ Elowen is a self-hosted AI agent with one daemon, durable SQLite state, a Web UI
 | [Security](SECURITY.md) | Authentication, authorization, path policy, secrets, and operational safeguards. |
 | [Testing](TESTING.md) | Daemon, web, contract, integration, and end-to-end verification. |
 | [Web UI](WEB.md) | Next.js routes, BFF authentication, data flow, plugin pages, and UI boundaries. |
+| [UX](UX.md) | Current web interaction, accessibility, responsive, overlay, and autosave contracts. |
+| [Brand](brand/README.md) | Contributor-facing brand asset usage and visual constraints. |
 
 ## System in one view
 
@@ -57,7 +59,7 @@ The daemon is the authority for authentication, account ownership, Project acces
 - **Sandbox** is account-scoped. It provides persistent HOME, Git worktrees, process leases, and guarded cleanup; non-operator confinement is enabled by default where supported.
 - **Permissions** combine account/plugin grants, tool allow/deny state, ordered per-call `allow`/`ask`/`deny` rules, Project policy, and execution-time identity checks.
 - **Plugins** own vertical slices and are loaded from manifests. Their tools, routes, services, browser pages, settings, secrets, and lifecycle are not silently recreated by core.
-- **Memory** is account-scoped and durable. Recall, categorization, and embeddings are separate capabilities; the browser is only a projection of server state.
+- **Memory** is account-owned and durable by default, with optional administrator-configured shared Project pools. Recall, categorization, and embeddings are separate capabilities; the browser is only a projection of server state.
 
 ## Where to start in the code
 
