@@ -5,7 +5,7 @@ import type { AgentSession, AgentSessionEvent } from '@earendil-works/pi-coding-
 import type { BrainMessageRow, BrainRunMessage, BrainStore } from '../store/brainStore.js';
 import { extractText, NO_REPLY_NUDGE } from './messageView.js';
 import { isSubagentSession } from './sessionId.js';
-import { HISTORY_IMAGE_PLACEHOLDER } from './session/historyImageStripping.js';
+import { collapseImageBlocks } from './session/historyImageStripping.js';
 import { externalizeImageBlocks } from './chatImages.js';
 import type { StoredChatImage } from './chatImages.js';
 import { applyTurnWireFrames, parseTurnWireFrames, type TurnWireFrames } from './session/turnPrompt.js';
@@ -802,20 +802,21 @@ function withTurnWireFrames(
 }
 
 /** Replay a row whose image bytes moved to disk. The bytes are deliberately NOT read back: a rehydrated
- *  history is old by definition, and `historyImageStripping` would collapse those blocks to this very
- *  placeholder on the first cold turn anyway — so restoring them would buy one turn of vision at the price
- *  of re-sending megabytes and making the replayed prefix depend on a file still being there. Uses the
- *  same wording as that stripper, so a message reads identically whichever path removed its image. */
+ *  history is old by definition, and the cold turn-start pass would collapse those blocks to this very
+ *  placeholder anyway — so restoring them would buy one turn of vision at the price of re-sending
+ *  megabytes and making the replayed prefix depend on a file still being there.
+ *
+ *  It runs the stripper's OWN function rather than a second version of it. A per-block rewrite is not the
+ *  same reconstruction: the live pass merges ADJACENT images into one placeholder (as PI's own downgrade
+ *  does), so a message carrying two pictures sent one placeholder and came back as two, and the replayed
+ *  prefix a fork child or a respawn starts from was no longer byte-identical to the parent's. */
 function withoutExternalizedImages(msg: { role: string; content: unknown }): { role: string; content: unknown } {
   if (!Array.isArray(msg.content)) return msg;
-  let changed = false;
-  const content = msg.content.map((part) => {
-    const block = part as { type?: unknown; ref?: unknown };
-    if (block?.type !== 'image' || typeof block.ref !== 'object' || block.ref === null) return part;
-    changed = true;
-    return { type: 'text', text: HISTORY_IMAGE_PLACEHOLDER };
+  const content = collapseImageBlocks(msg.content as never, (block) => {
+    const image = block as { type?: unknown; ref?: unknown };
+    return image?.type === 'image' && typeof image.ref === 'object' && image.ref !== null;
   });
-  return changed ? { ...msg, content } : msg;
+  return content ? { ...msg, content } : msg;
 }
 
 /** Replay one stored row into a session manager, restoring a compaction divider as a real compaction

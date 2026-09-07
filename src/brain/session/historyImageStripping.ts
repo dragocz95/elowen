@@ -13,13 +13,25 @@ export const HISTORY_IMAGE_PLACEHOLDER = '[image omitted from history]';
 
 /** Replace every image block with the placeholder, collapsing consecutive placeholders the same way
  *  PI's own `downgradeUnsupportedImages` does. Returns null when the content holds no image (so the
- *  caller keeps the original reference — this is also what makes the transform idempotent). */
-function collapseImages(content: readonly ContentBlock[]): ContentBlock[] | null {
-  if (!content.some((block) => block.type === 'image')) return null;
+ *  caller keeps the original reference — this is also what makes the transform idempotent).
+ *
+ *  The ONE canonical reconstruction, shared with the rehydration path: it does not care whether the image
+ *  block carries its bytes (the live message) or a reference to the file they moved to (the stored row),
+ *  because both are `{type:'image'}`. Two readings of "what this message looks like without its images"
+ *  is exactly how a replayed prefix stops being byte-identical to the live one — a message with two
+ *  adjacent images sent ONE placeholder live and came back as two. */
+export function collapseImageBlocks(
+  content: readonly ContentBlock[],
+  /** Which blocks are the images to replace. The live pass takes every image block; the rehydration path
+   *  narrows it to the ones whose bytes MOVED to disk, because a row an older build wrote still carries
+   *  its base64 inline and has always been replayed as it stands. */
+  collapses: (block: ContentBlock) => boolean = (block) => block.type === 'image',
+): ContentBlock[] | null {
+  if (!content.some((block) => collapses(block))) return null;
   const result: ContentBlock[] = [];
   let previousWasPlaceholder = false;
   for (const block of content) {
-    if (block.type === 'image') {
+    if (collapses(block)) {
       if (!previousWasPlaceholder) result.push({ type: 'text', text: HISTORY_IMAGE_PLACEHOLDER });
       previousWasPlaceholder = true;
       continue;
@@ -47,7 +59,7 @@ export function collapseHistoricalImages(messages: PiAgentMessage[]): number {
   for (const message of messages) {
     if (message.role !== 'user' && message.role !== 'toolResult' && message.role !== 'custom') continue;
     if (!Array.isArray(message.content)) continue;
-    const content = collapseImages(message.content);
+    const content = collapseImageBlocks(message.content);
     if (!content) continue;
     (message as { content: unknown }).content = content;
     changed += 1;
