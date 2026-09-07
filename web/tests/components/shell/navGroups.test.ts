@@ -16,15 +16,14 @@ describe('sidebarLayout', () => {
     expect(groups[0]!.entries.map((item) => item.id)).toEqual(['home', 'chat']);
   });
 
-  it('puts administration in its own group and the account alone at the end', () => {
-    const { groups, account } = sidebarLayout([
-      entry('home'), entry('memory'), entry('settings'), entry('users'), entry('account'),
+  it('puts administration and the account together in the instance group, in the reader\'s order', () => {
+    // The account is an ordinary member so it can be dragged among these rows (owner, 7 Sep 2026); it
+    // is no longer a fixed region of its own, so wherever the reader put it is where it is drawn.
+    const { groups } = sidebarLayout([
+      entry('home'), entry('memory'), entry('settings'), entry('account'), entry('users'),
     ]);
     expect(groups.map((group) => group.id)).toEqual(['primary', 'work', 'instance']);
-    expect(groups.at(-1)!.entries.map((item) => item.id)).toEqual(['settings', 'users']);
-    expect(account?.id).toBe('account');
-    // The account is never also a destination among the others.
-    expect(groups.flatMap((group) => group.entries).map((item) => item.id)).not.toContain('account');
+    expect(groups.at(-1)!.entries.map((item) => item.id)).toEqual(['settings', 'account', 'users']);
   });
 
   it('lands a plugin world in the work group without knowing its name', () => {
@@ -42,7 +41,7 @@ describe('sidebarLayout', () => {
   });
 
   it('drops a group nobody has entries in, rather than drawing an empty header', () => {
-    // A non-admin has no Settings or Users, so the instance group must not exist at all.
+    // A reader who hid the account and has no Settings or Users: the instance group must not exist.
     const { groups } = sidebarLayout([entry('home'), entry('memory')]);
     expect(groups.map((group) => group.id)).not.toContain('instance');
   });
@@ -55,9 +54,6 @@ describe('sidebarLayout', () => {
       .toEqual(['memory', 'projects']);
   });
 
-  it('reports no account row when the reader has hidden it', () => {
-    expect(sidebarLayout([entry('home')]).account).toBeUndefined();
-  });
 });
 
 describe('subMenuPages', () => {

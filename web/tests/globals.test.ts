@@ -128,14 +128,19 @@ describe('design tokens', () => {
   });
 
   // Inside the column a group is introduced by its LABEL and by the air the label carries — 16px above,
-  // 8px below — and by nothing else. The menu now draws NO hairline at all: the rule above the trailing
-  // account row was the last one, and the owner removed it on 5 Sep 2026, so the account is set apart by
-  // air alone. A separator element anywhere in this column is the regression to catch.
-  it('separates groups by their label and the account by air, drawing no hairline in the menu', () => {
+  // 8px below — and by nothing else. The menu draws NO hairline at all, and the account has no region of
+  // its own any more (owner, 7 Sep 2026): a rule addressing one is the regression to catch.
+  it('separates groups by their label alone, drawing no hairline in the menu', () => {
     expect(components).not.toMatch(/\.sidebar-nav__group \+ \.sidebar-nav__group\s*\{[^}]*border-top/);
     expect(components).toMatch(/\.sidebar-nav__group-label\s*\{[^}]*margin:\s*1rem 0 0\.5rem/);
     expect(components).not.toContain('sidebar-nav__separator');
-    expect(components).toMatch(/\.sidebar-nav__group\[data-group='account'\]\s*\{[^}]*margin-top:\s*0\.25rem/);
+    expect(components).not.toContain("[data-group='account']");
+  });
+
+  // The rows' entrance animation fills `both`, which keeps its final transform applied and outranks the
+  // inline transform a drag writes. Dropping this rule is how dragging silently stops moving anything.
+  it('switches the row entrance animation off while a row is being dragged', () => {
+    expect(components).toMatch(/\.sidebar-nav\[data-drag\] \.sidebar-nav__entry\s*\{[^}]*animation:\s*none/);
   });
 
   // The quick-search field is a white shape inside a light hairline at the row radius. Both halves are

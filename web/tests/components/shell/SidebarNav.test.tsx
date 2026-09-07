@@ -89,23 +89,22 @@ describe('SidebarNav destinations', () => {
     expect(screen.getByRole('link', { name: 'Home' }).querySelector('.sidebar-nav__badge')).toBeNull();
   });
 
-  it('groups the column the way the reference does, account last and flush under the instance block', () => {
+  it('groups the column the way the reference does, the account an ordinary row of the instance group', () => {
     const { container } = mount();
     const groups = Array.from(container.querySelectorAll<HTMLElement>('[data-group]'));
-    expect(groups.map((group) => group.dataset.group)).toEqual(['primary', 'work', 'instance', 'account']);
+    expect(groups.map((group) => group.dataset.group)).toEqual(['primary', 'work', 'instance']);
     // The first block carries no header: it is where the reader lands.
     expect(groups[0]!.querySelector('[data-sidebar="group-label"]')).toBeNull();
     expect(groups[1]!.querySelector('[data-sidebar="group-label"]')!.textContent).toBe('Work');
     expect(groups[2]!.querySelector('[data-sidebar="group-label"]')!.textContent).toBe('Instance');
-    // NO separator anywhere in the column. The rule above the account was the last one the menu drew and
-    // the owner removed it on 5 Sep 2026: every boundary here, the account's included, is carried by the
-    // group label and by air alone.
+    // NO separator anywhere in the column: every boundary is carried by a group label alone.
     expect(container.querySelectorAll('[data-sidebar="separator"]')).toHaveLength(0);
-    // And the account block is still the LAST thing in the menu, immediately after the instance group.
-    expect(groups[2]!.parentElement!.lastElementChild).toBe(groups[3]!);
-    // A disclosure, not a link: the account page is a deck, so its own sections hang under this row like
-    // any other world's pages.
-    expect(groups[3]!.contains(screen.getByRole('button', { name: 'Account' }))).toBe(true);
+    // The account is a row of the instance group like Settings — no region of its own under a hole
+    // (owner, 7 Sep 2026) — and a disclosure, not a link: the account page is a deck, so its own
+    // sections hang under this row like any other world's pages.
+    const account = screen.getByRole('button', { name: 'Account' }).closest<HTMLElement>('[data-nav-entry-id]')!;
+    expect(groups[2]!.contains(account)).toBe(true);
+    expect(account.parentElement!.querySelectorAll('[data-nav-entry-id]').length).toBeGreaterThan(1);
   });
 
   it('marks the current route with aria-current, through the world it belongs to', () => {
@@ -305,11 +304,46 @@ describe('SidebarNav customization', () => {
     fireEvent.pointerDown(home, { pointerType: 'mouse', button: 0, pointerId: 1, clientY: homeIndex * 40 + 17 });
     fireEvent.pointerMove(home, { pointerType: 'mouse', pointerId: 1, clientY: chatIndex * 40 + 17 });
     expect(home).toHaveAttribute('data-dragging', 'true');
+    // The carried row and the row making room both move by inline transform, and the column says a drag
+    // is on so the stylesheet can switch the rows' entrance animation off — an animation outranks an
+    // inline transform, which is why without the flag nothing visibly moved.
+    expect(home.style.transform).not.toBe('');
+    expect(chat.style.transform).not.toBe('');
+    expect(screen.getByTestId('sidebar-navigation')).toHaveAttribute('data-drag', 'true');
     fireEvent.pointerUp(home, { pointerType: 'mouse', pointerId: 1, clientY: chatIndex * 40 + 17 });
+    expect(screen.getByTestId('sidebar-navigation')).not.toHaveAttribute('data-drag');
 
     await waitFor(() => expect(savedLayouts).toHaveLength(1));
     const { order } = savedLayouts[0]!;
     expect(order.indexOf('chat')).toBeLessThan(order.indexOf('home'));
+  });
+
+  it('lets the account be dragged among the instance rows like any other', async () => {
+    // It used to be drawn outside the drag contract in a region of its own, so it could not move at all.
+    const { container } = mount();
+    const rows = Array.from(container.querySelectorAll<HTMLElement>('[data-group="instance"] [data-nav-entry-id]'));
+    expect(rows.length).toBeGreaterThan(1);
+    rows.forEach((row, index) => {
+      row.getBoundingClientRect = () => ({
+        x: 0, y: index * 40, top: index * 40, left: 0, right: 220,
+        bottom: index * 40 + 34, width: 220, height: 34, toJSON: () => ({}),
+      });
+    });
+    const account = screen.getByRole('button', { name: 'Account' }).closest<HTMLElement>('[data-nav-entry-id]')!;
+    const accountIndex = rows.indexOf(account);
+    const neighbour = rows.find((row) => row !== account)!;
+    const neighbourIndex = rows.indexOf(neighbour);
+
+    fireEvent.pointerDown(account, { pointerType: 'mouse', button: 0, pointerId: 1, clientY: accountIndex * 40 + 17 });
+    fireEvent.pointerMove(account, { pointerType: 'mouse', pointerId: 1, clientY: neighbourIndex * 40 + 17 });
+    expect(account).toHaveAttribute('data-dragging', 'true');
+    fireEvent.pointerUp(account, { pointerType: 'mouse', pointerId: 1, clientY: neighbourIndex * 40 + 17 });
+
+    await waitFor(() => expect(savedLayouts).toHaveLength(1));
+    const { order } = savedLayouts[0]!;
+    const neighbourId = neighbour.dataset.navEntryId!;
+    if (neighbourIndex < accountIndex) expect(order.indexOf('account')).toBeLessThan(order.indexOf(neighbourId));
+    else expect(order.indexOf('account')).toBeGreaterThan(order.indexOf(neighbourId));
   });
 });
 

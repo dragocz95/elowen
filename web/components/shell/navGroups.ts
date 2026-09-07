@@ -1,5 +1,4 @@
-/** How the one navigation model is laid out down the sidebar: which rows sit in which labelled group,
- *  and which row is the trailing account item under the separator.
+/** How the one navigation model is laid out down the sidebar: which rows sit in which labelled group.
  *
  *  The grouping is a PRESENTATION rule over the model, not a second model. Every entry here is still the
  *  same customizable entry the layout addresses by id (`lib/navLayout.ts`) — hiding, restoring and
@@ -18,13 +17,12 @@ const SIDEBAR_GROUP_ORDER: readonly SidebarGroupId[] = ['primary', 'work', 'inst
 
 /** Where you arrive. Everything the app opens on, before any of the work. */
 const PRIMARY_ENTRY_IDS = ['home', 'chat'];
-/** Administering the instance rather than working in it — and what the instance has to say for itself:
- *  the release notes of the version it runs (the bundled changelog plugin) sit here, not among the work
- *  (owner decision, 7 Sep 2026). Everything else is admin-only. */
-const INSTANCE_ENTRY_IDS = ['settings', 'users', 'plugin-changelog'];
-/** The account, drawn last, directly under the block above it — the reference's "Manage account". It is
- *  an ordinary entry, so it is still hidden, restored and reordered like the rest; only its region is fixed. */
-const ACCOUNT_ENTRY_ID = 'account';
+/** The instance rather than the work in it: administering it, what it has to say for itself (the release
+ *  notes of the version it runs, the bundled changelog plugin) and the reader's own account on it. The
+ *  account used to be a fixed region of its own under a separator, then under air; the owner asked for
+ *  it flush under Settings AND movable among these rows (7 Sep 2026), which is only possible as an
+ *  ordinary member of the group. Settings and Users are admin-only, the other two are for everyone. */
+const INSTANCE_ENTRY_IDS = ['settings', 'users', 'plugin-changelog', 'account'];
 
 interface SidebarGroup {
   readonly id: SidebarGroupId;
@@ -34,8 +32,6 @@ interface SidebarGroup {
 export interface SidebarLayout {
   /** The labelled groups, in draw order, with empty ones already dropped. */
   readonly groups: readonly SidebarGroup[];
-  /** The account row, when the reader has not hidden it. */
-  readonly account?: NavEntry;
 }
 
 function groupOf(entry: NavEntry): SidebarGroupId {
@@ -55,15 +51,11 @@ function groupOf(entry: NavEntry): SidebarGroupId {
  *  than a position. */
 export function sidebarLayout(entries: readonly NavEntry[]): SidebarLayout {
   const buckets = new Map<SidebarGroupId, NavEntry[]>(SIDEBAR_GROUP_ORDER.map((id) => [id, []]));
-  let account: NavEntry | undefined;
-  for (const entry of entries) {
-    if (entry.id === ACCOUNT_ENTRY_ID) { account = entry; continue; }
-    buckets.get(groupOf(entry))!.push(entry);
-  }
+  for (const entry of entries) buckets.get(groupOf(entry))!.push(entry);
   const groups = SIDEBAR_GROUP_ORDER
     .map<SidebarGroup>((id) => ({ id, entries: buckets.get(id)! }))
     .filter((group) => group.entries.length > 0);
-  return account ? { groups, account } : { groups };
+  return { groups };
 }
 
 /** The pages an entry contributes as an inline sub-menu, or null when it is a plain destination.

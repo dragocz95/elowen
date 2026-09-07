@@ -159,13 +159,12 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
   const sequence = useMemo<NavEntry[]>(() => (layout.order.length === 0
     ? [...worlds].sort((a, b) => navOrderIndex(a.href) - navOrderIndex(b.href))
     : worlds), [worlds, layout.order.length]);
-  const { groups, account } = useMemo(() => sidebarLayout(sequence), [sequence]);
+  const { groups } = useMemo(() => sidebarLayout(sequence), [sequence]);
   // THIS surface's own visible order, which is what the first edit seeds the stored order from. Handing
   // over the registry order instead would reshuffle the column the moment anything was hidden or moved.
   const displayOrder = useMemo(
-    () => [...groups.flatMap((group) => [...group.entries]), ...(account ? [account] : [])]
-      .flatMap((entry) => (entry.id ? [entry.id] : [])),
-    [groups, account],
+    () => groups.flatMap((group) => group.entries).flatMap((entry) => (entry.id ? [entry.id] : [])),
+    [groups],
   );
   const customization = useNavCustomization(allWorlds, layout, displayOrder);
 
@@ -480,6 +479,10 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
         data-side={side}
         data-open={drawer && drawerOpen ? true : undefined}
         data-ready={layoutReady || undefined}
+        // While a row is being carried the stylesheet switches the entrance animation off for every row:
+        // its `both` fill keeps the keyframes' own transform and opacity applied, and an animation beats
+        // an inline style, so without this the carried row and the rows making room never visibly move.
+        data-drag={drag ? true : undefined}
         // As a sheet this is a layer over the page that takes focus and traps Escape, so it says so.
         // `aria-modal` is claimed only while it is actually open — a closed sheet is inert chrome.
         role={drawer ? 'dialog' : undefined}
@@ -577,23 +580,6 @@ export function SidebarNav({ compact = false, measured = true, side = 'left', on
               </SidebarGroup>
             );
           })}
-          {/* The account sits alone at the end, set apart by AIR and by nothing else — the reference's
-              "Manage account", and no hairline above it (owner decision, 5 Sep 2026). It is still an
-              ordinary entry: the same context menu hides, restores and reorders it, and it discloses its
-              own sections exactly like every other row. Only the region it is drawn in is fixed, which is
-              why it is built from `rowBody` rather than from a link: the account page is a deck, and
-              drawing it as a plain destination is what would leave its sections with no way in at all. */}
-          {account ? (
-            <SidebarGroup className="sidebar-nav__group" data-group="account">
-              <SidebarGroupContent>
-                <SidebarMenu className="sidebar-nav__menu">
-                  <SidebarMenuItem className="sidebar-nav__entry" data-nav-entry-id={account.id}>
-                    {rowBody(account)}
-                  </SidebarMenuItem>
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-          ) : null}
         </SidebarContent>
 
         <SidebarFooter className="sidebar-nav__footer">

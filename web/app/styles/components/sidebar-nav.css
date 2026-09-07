@@ -254,14 +254,16 @@
 /* A group with no label of its own still needs the air a label would have carried, or it opens straight
    against the last row of the block above with nothing saying a new one began. */
 .sidebar-nav__group + .sidebar-nav__group:not(:has(> .sidebar-nav__group-label)) { padding-top: 0.5rem; }
-/* NO hairline above the account, so the menu draws none at all — and no air either: the account row
-   continues the block above it as if it were its last row (owner decision, 7 Sep 2026, after the 8px
-   above plus a 4px margin read as a hole under Settings). Same specificity as the rule above and written
-   after it, which is the whole reason it wins. */
-.sidebar-nav__group + .sidebar-nav__group[data-group='account'] { padding-top: 0; }
+/* NO hairline above the account either: it is an ordinary row of the instance group now (owner
+   decision, 7 Sep 2026), so the menu draws no separator of any kind. */
 
 .sidebar-nav__menu { display: flex; flex-direction: column; gap: 1px; list-style: none; }
 .sidebar-nav__entry { position: relative; transition: transform var(--motion-fast) var(--ease-out), opacity var(--motion-fast) var(--ease-out); }
+/* The entrance animation's `both` fill keeps its final keyframe (translateY(0), opacity 1) applied for
+   good, and an animation outranks the inline transform the drag writes — so with it on, neither the
+   carried row nor the rows making room ever visibly moved. Off for the length of a drag; the resting
+   state it pins is the natural one, so nothing jumps. */
+.sidebar-nav[data-drag] .sidebar-nav__entry { animation: none; }
 @media (pointer: fine) {
   .sidebar-nav:not([data-mode='drawer']) .sidebar-nav__entry { cursor: grab; }
 }
