@@ -1,12 +1,11 @@
-import { afterEach, describe, it, expect, vi } from 'vitest';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { afterEach, describe, it, expect } from 'vitest';
+import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import {
   CLEAR_MIN_BYTES,
   SPILL_MAX_RESULT_BYTES,
   SPILL_PREVIEW_CHARS,
-  TOOL_RESULT_GROUP_BUDGET_BYTES,
   applyToolResultClearing,
   cacheColdAtTurnStart,
   cacheTtlMs,
@@ -17,18 +16,13 @@ import {
   isClearedToolResult,
   spillPreview,
   installToolResultClearing,
-  selectBudgetedToolResults,
   selectClearableToolResults,
-  selectOversizedToolResults,
-  setSpillMaxResultBytes,
-  setToolResultGroupBudget,
   toolResultSpillPath,
   toolResultOccurrenceKey,
   parseSpillDescriptor,
   persistToolOutputSpill,
 } from '../../../src/brain/session/toolResultClearing.js';
 import type { PersistedToolResultLatch, ToolResultLatchStore } from '../../../src/brain/session/toolResultClearing.js';
-import { setSpillNamespaceResolver, toolResultSpillDir } from '../../../src/shared/paths.js';
 import { openDb } from '../../../src/store/db.js';
 import { BrainStore } from '../../../src/store/brainStore.js';
 import { HISTORY_IMAGE_PLACEHOLDER } from '../../../src/brain/session/historyImageStripping.js';
@@ -93,11 +87,6 @@ function spillPath(h: Harness, toolCallId: string): string {
   const found = [...h.writes.keys()].find((p) => p.startsWith(prefix));
   if (!found) throw new Error(`no spill written for ${toolCallId}`);
   return found;
-}
-
-/** Which results reached disk, by id — the behaviour these tests care about, independent of the file name. */
-function spilledIds(h: Harness): string[] {
-  return [...h.writes.keys()].map((p) => p.slice('/tmp/spill/sess-1/'.length).split('.v1-')[0]!).sort();
 }
 
 describe('selectClearableToolResults / clearingCutIndex', () => {
@@ -216,179 +205,6 @@ describe('the preview a placeholder quotes', () => {
 
   it('handles a short output without trimming anything', () => {
     expect(spillPreview('tiny', PATH, 4)).toBe('tiny');
-  });
-});
-
-describe('selectOversizedToolResults', () => {
-  it('selects only current-run results above the size trigger, with an id and not already latched', () => {
-    const messages: PiAgentMessage[] = [
-      user('one', T0),
-      toolResult('older-oversized', oversized, T0 + 1), // already sent to the provider — time gate's job
-      user('two', T0 + 2),
-      toolResult('fresh-big-but-under', big, T0 + 3),
-      toolResult('fresh-oversized', oversized, T0 + 4),
-      { role: 'toolResult', toolCallId: '', toolName: 'Bash', content: [{ type: 'text', text: oversized }], isError: false, timestamp: T0 + 5 } as PiAgentMessage,
-    ];
-    const selected = selectOversizedToolResults(messages, new Set());
-    expect(selected.map((s) => s.toolCallId)).toEqual(['fresh-oversized']);
-    expect(selected[0]?.bytes).toBe(oversized.length);
-    expect(selectOversizedToolResults(messages, new Set([toolResultOccurrenceKey('fresh-oversized', T0 + 4)]))).toEqual([]);
-  });
-
-  it('does not select a result exactly at the threshold', () => {
-    const exact = 'z'.repeat(SPILL_MAX_RESULT_BYTES);
-    const messages: PiAgentMessage[] = [user('one', T0), toolResult('exact', exact, T0 + 1)];
-    expect(selectOversizedToolResults(messages, new Set())).toEqual([]);
-  });
-
-  it('applies the live resolver threshold, not just the default constant', () => {
-    // Comfortably UNDER the default trigger — left in context while the default is in force.
-    const under = 'z'.repeat(SPILL_MAX_RESULT_BYTES - 10_000);
-    const messages: PiAgentMessage[] = [user('one', T0), toolResult('fresh', under, T0 + 1)];
-    expect(selectOversizedToolResults(messages, new Set())).toEqual([]);
-    // Lower the resolver below that size and the SAME result now spills. If the call site still read the
-    // constant this assertion would fail — the resolver would be ignored and nothing selected.
-    setSpillMaxResultBytes(() => under.length - 100);
-    try {
-      const selected = selectOversizedToolResults(messages, new Set());
-      expect(selected.map((s) => s.toolCallId)).toEqual(['fresh']);
-      expect(selected[0]?.bytes).toBe(under.length);
-    } finally {
-      setSpillMaxResultBytes(() => SPILL_MAX_RESULT_BYTES);
-    }
-  });
-});
-
-/** One wire-level group of medium results: every member is under the per-result trigger, but together
- *  they blow the aggregate budget — the exact shape (parallel searches in one turn) the budget exists for.
- *  Descending sizes so "largest first" is observable. */
-const GROUP_BYTES = [49_000, 48_000, 47_000, 46_000, 45_000, 15_000];
-const groupTotal = GROUP_BYTES.reduce((sum, bytes) => sum + bytes, 0);
-const groupResult = (index: number, timestamp: number): PiAgentMessage =>
-  toolResult(`g-${index}`, String.fromCharCode(97 + index).repeat(GROUP_BYTES[index]), timestamp);
-/** The occurrence key of groupResult(index, timestamp) — selections speak in occurrence keys now. */
-const gKey = (index: number, timestamp: number): string => toolResultOccurrenceKey(`g-${index}`, timestamp);
-/** A whole over-budget group delivered in one turn, at indices 2..7. */
-const overBudgetTurn = (): PiAgentMessage[] => [
-  user('one', T0), assistant('calling', T0 + 1_000),
-  ...GROUP_BYTES.map((_, index) => groupResult(index, T0 + 2_000 + index)),
-];
-
-describe('selectBudgetedToolResults', () => {
-  it('is a meaningful setup: every member is under the per-result trigger, the group is over budget', () => {
-    expect(GROUP_BYTES.every((bytes) => bytes <= SPILL_MAX_RESULT_BYTES)).toBe(true);
-    expect(groupTotal).toBeGreaterThan(TOOL_RESULT_GROUP_BUDGET_BYTES);
-  });
-
-  it('leaves a group under budget completely alone, but records every member as decided', () => {
-    const messages: PiAgentMessage[] = [
-      user('one', T0), assistant('calling', T0 + 1_000),
-      groupResult(3, T0 + 2_000), groupResult(4, T0 + 3_000), groupResult(5, T0 + 4_000),
-    ];
-    const selected = selectBudgetedToolResults(messages, new Set(), new Set());
-    expect(selected.spill).toEqual([]);
-    // Decided even though nothing spilled: these bytes are on their way to the provider, so the layer
-    // must never revisit them.
-    expect([...selected.decided].sort()).toEqual(
-      [gKey(3, T0 + 2_000), gKey(4, T0 + 3_000), gKey(5, T0 + 4_000)].sort(),
-    );
-  });
-
-  it('spills the largest members first, only until the group is back under budget', () => {
-    const selected = selectBudgetedToolResults(overBudgetTurn(), new Set(), new Set());
-    expect(selected.spill.map((item) => item.toolCallId)).toEqual(['g-0', 'g-1']);
-    const remaining = groupTotal - selected.spill.reduce((sum, item) => sum + item.bytes, 0);
-    expect(remaining).toBeLessThanOrEqual(TOOL_RESULT_GROUP_BUDGET_BYTES);
-    // One spill fewer would NOT have been enough — nothing is spilled beyond need.
-    expect(remaining + (selected.spill.at(-1)?.bytes ?? 0)).toBeGreaterThan(TOOL_RESULT_GROUP_BUDGET_BYTES);
-    expect([...selected.decided].sort()).toEqual(
-      GROUP_BYTES.map((_, index) => gKey(index, T0 + 2_000 + index)).sort(),
-    );
-  });
-
-  it('budgets each wire-level group separately — an assistant message between results splits them', () => {
-    // Both halves of the same over-budget set, but separated by an assistant turn: pi-ai emits two
-    // provider messages, so neither half is over budget on its own and nothing spills.
-    const messages: PiAgentMessage[] = [
-      user('one', T0), assistant('calling', T0 + 1_000),
-      groupResult(0, T0 + 2_000), groupResult(1, T0 + 3_000), groupResult(2, T0 + 4_000),
-      assistant('calling again', T0 + 5_000),
-      groupResult(3, T0 + 6_000), groupResult(4, T0 + 7_000), groupResult(5, T0 + 8_000),
-    ];
-    expect(selectBudgetedToolResults(messages, new Set(), new Set()).spill).toEqual([]);
-  });
-
-  it('ignores history: only the current run is eligible, whatever older groups weigh', () => {
-    const messages: PiAgentMessage[] = [
-      user('one', T0), assistant('calling', T0 + 1_000),
-      ...GROUP_BYTES.map((_, index) => groupResult(index, T0 + 2_000 + index)),
-      user('two', T0 + 9_000),
-    ];
-    expect(selectBudgetedToolResults(messages, new Set(), new Set())).toEqual({ spill: [], decided: [] });
-  });
-
-  it('counts a member without a toolCallId toward the group but can never spill it', () => {
-    const anonymous = {
-      role: 'toolResult', toolCallId: '', toolName: 'Bash', isError: false, timestamp: T0 + 2_000,
-      content: [{ type: 'text', text: 'n'.repeat(GROUP_BYTES[0]) }],
-    } as PiAgentMessage;
-    const messages: PiAgentMessage[] = [
-      user('one', T0), assistant('calling', T0 + 1_000), anonymous,
-      groupResult(1, T0 + 3_000), groupResult(2, T0 + 4_000), groupResult(3, T0 + 5_000), groupResult(4, T0 + 6_000),
-    ];
-    const selected = selectBudgetedToolResults(messages, new Set(), new Set());
-    // 49k + 48k + 47k + 46k + 45k = 235k: over budget, and the 49k anonymous member is what pushes it
-    // there — yet the spill has to come out of the members that actually have a spill path.
-    expect(selected.spill.map((item) => item.toolCallId)).toEqual(['g-1']);
-    expect(selected.decided).not.toContain('');
-  });
-
-  it('charges nothing for an already-spilled member', () => {
-    // g-0 spilled by the per-result layer: the group now costs 201k, one member over budget.
-    const selected = selectBudgetedToolResults(overBudgetTurn(), new Set([gKey(0, T0 + 2_000)]), new Set());
-    expect(selected.spill.map((item) => item.toolCallId)).toEqual(['g-1']);
-    expect(selected.decided).not.toContain(gKey(0, T0 + 2_000));
-  });
-
-  it('counts a decided member at full size but never spills it again', () => {
-    // g-0 is the largest and would be the first pick, but it has already been ruled on — it went to the
-    // provider whole, so the spilling has to come out of the members below it instead.
-    const selected = selectBudgetedToolResults(overBudgetTurn(), new Set(), new Set([gKey(0, T0 + 2_000)]));
-    expect(selected.spill.map((item) => item.toolCallId)).toEqual(['g-1', 'g-2']);
-    expect(selected.decided).not.toContain(gKey(0, T0 + 2_000));
-  });
-});
-
-describe('the aggregate budget comes from configuration, not from the constant', () => {
-  // Module state: a leaked override would retune every later test in this file.
-  afterEach(() => setToolResultGroupBudget(() => TOOL_RESULT_GROUP_BUDGET_BYTES));
-
-  it('re-reads the budget on every pass, so a Limits change applies without a respawn', () => {
-    // 46k + 45k + 15k = 106k: comfortably under the default budget, nothing to do.
-    const modest: PiAgentMessage[] = [
-      user('one', T0), assistant('calling', T0 + 1_000),
-      groupResult(3, T0 + 2_000), groupResult(4, T0 + 3_000), groupResult(5, T0 + 4_000),
-    ];
-    expect(selectBudgetedToolResults(modest, new Set(), new Set()).spill).toEqual([]);
-
-    let budget = 100_000;
-    setToolResultGroupBudget(() => budget);
-    // Same messages, tighter budget: the largest member goes out. A budget captured anywhere but here
-    // would leave this empty.
-    expect(selectBudgetedToolResults(modest, new Set(), new Set()).spill.map((item) => item.toolCallId))
-      .toEqual(['g-3']);
-
-    // And back: the knob moves both ways within one process, which a compile-time constant cannot.
-    budget = 500_000;
-    expect(selectBudgetedToolResults(overBudgetTurn(), new Set(), new Set()).spill).toEqual([]);
-  });
-
-  it('never applies a budget below the per-result threshold in force', () => {
-    // A group of ONE 46k result: the per-result layer deliberately keeps it inline (its threshold is
-    // 50k), so no aggregate setting may spill it merely for being alone in its group.
-    const single: PiAgentMessage[] = [user('one', T0), assistant('calling', T0 + 1_000), groupResult(3, T0 + 2_000)];
-    setToolResultGroupBudget(() => 1_000);
-    expect(selectBudgetedToolResults(single, new Set(), new Set()).spill).toEqual([]);
   });
 });
 
@@ -636,180 +452,6 @@ describe('installToolResultClearing', () => {
     expect(() => installToolResultClearing({}, 'sess-1')).not.toThrow();
   });
 
-  it('leaves a fresh result under the size trigger completely alone', async () => {
-    const h = harness();
-    const underBy1 = 'z'.repeat(SPILL_MAX_RESULT_BYTES);
-    const messages: PiAgentMessage[] = [
-      user('one', T0), assistant('calling', T0 + 1_000),
-      toolResult('fresh-big', big, T0 + 2_000), toolResult('fresh-at-limit', underBy1, T0 + 3_000),
-    ];
-    const result = await h.transform(messages);
-    expect(result).toBe(messages);
-    expect(h.writes.size).toBe(0);
-  });
-
-  it('spills an oversized fresh result on delivery, with a path and a bounded preview', async () => {
-    const h = harness();
-    const messages: PiAgentMessage[] = [
-      user('one', T0), assistant('calling', T0 + 1_000), toolResult('fresh', oversized, T0 + 2_000),
-    ];
-    // No idle gap anywhere: the size trigger fires regardless of the cache gate.
-    const result = await h.transform(messages);
-    const path = spillPath(h, 'fresh');
-    expect(h.writes.get(path)).toBe(oversized); // the FULL text reaches disk, tail included
-    const text = (result[2] as { content: { type: string; text?: string }[] }).content[0]?.text ?? '';
-    expect(text).toBe(clearedToolResultPlaceholder(path, oversized.length, oversized.slice(0, SPILL_PREVIEW_CHARS)));
-    expect(text).toContain(path);
-    expect(text).toContain('HEAD-zzz'); // the preview is really the head of the content
-    expect(text).not.toContain('-TAIL'); // …and it is bounded: the end only exists on disk
-    expect(text.length).toBeLessThan(SPILL_PREVIEW_CHARS + 500);
-    expect(result[0]).toBe(messages[0]); // nothing else in the turn is touched
-    expect(result[1]).toBe(messages[1]);
-  });
-
-  it('a size-spilled result stays spilled with byte-identical placeholder bytes', async () => {
-    const h = harness();
-    const turn1: PiAgentMessage[] = [
-      user('one', T0), assistant('calling', T0 + 1_000), toolResult('fresh', oversized, T0 + 2_000),
-    ];
-    const first = await h.transform(turn1);
-    const turn2: PiAgentMessage[] = [...turn1, assistant('done', T0 + 3_000), user('two', T0 + 4_000)];
-    const second = await h.transform(turn2);
-    expect(JSON.stringify(second.slice(0, first.length))).toBe(JSON.stringify(first));
-    expect(h.writes.size).toBe(1); // latched: no second write, no second spill file
-  });
-
-  it('leaves a whole group of medium results in place while it fits the budget', async () => {
-    const h = harness();
-    const messages: PiAgentMessage[] = [
-      user('one', T0), assistant('calling', T0 + 1_000),
-      groupResult(3, T0 + 2_000), groupResult(4, T0 + 3_000), groupResult(5, T0 + 4_000),
-    ];
-    const result = await h.transform(messages);
-    expect(result).toBe(messages);
-    expect(h.writes.size).toBe(0);
-  });
-
-  it('spills the largest members of an over-budget group, with the same preview placeholder', async () => {
-    const h = harness();
-    const messages = overBudgetTurn();
-    const result = await h.transform(messages);
-
-    const expectedIds = ['g-0', 'g-1'];
-    expect(spilledIds(h)).toEqual(expectedIds);
-    for (const [offset, id] of expectedIds.entries()) {
-      const path = spillPath(h, id);
-      const original = (messages[2 + offset] as { content: { text: string }[] }).content[0].text;
-      expect(h.writes.get(path)).toBe(original); // the full text reaches disk, recoverable with Read
-      const text = (result[2 + offset] as { content: { type: string; text?: string }[] }).content[0]?.text ?? '';
-      expect(text).toBe(clearedToolResultPlaceholder(path, original.length, original.slice(0, SPILL_PREVIEW_CHARS)));
-    }
-    // The smaller members keep their identity, and what is left really is under budget.
-    for (let index = 4; index < messages.length; index += 1) expect(result[index]).toBe(messages[index]);
-    const inline = result.slice(2).reduce(
-      (sum, message) => sum + Buffer.byteLength((message as { content: { text?: string }[] }).content[0]?.text ?? '', 'utf8'),
-      0,
-    );
-    expect(inline).toBeLessThanOrEqual(TOOL_RESULT_GROUP_BUDGET_BYTES);
-  });
-
-  it('a single oversized result stays the per-result path\'s business, and the budget layer then fits', async () => {
-    const h = harness();
-    // One result over the per-result trigger next to two ordinary ones: spilling that one alone already
-    // brings the group under budget, so the aggregate layer must not touch the others.
-    const messages: PiAgentMessage[] = [
-      user('one', T0), assistant('calling', T0 + 1_000),
-      toolResult('fresh', oversized, T0 + 2_000), groupResult(3, T0 + 3_000), groupResult(4, T0 + 4_000),
-    ];
-    const result = await h.transform(messages);
-    expect([...h.writes.keys()]).toEqual([spillPath(h, 'fresh')]);
-    expect(result[3]).toBe(messages[3]);
-    expect(result[4]).toBe(messages[4]);
-  });
-
-  it('idempotence: repeated passes over the same and the grown history are byte-identical', async () => {
-    const h = harness();
-    const turn = overBudgetTurn();
-    const first = await h.transform(turn);
-    const serialized = JSON.stringify(first);
-    // Same history again — the decisions are latched, so not one byte of the prefix may move. A pass
-    // that re-measured the group (counting an already-spilled member at its original size) would keep
-    // spilling members here and drift.
-    expect(JSON.stringify(await h.transform(turn))).toBe(serialized);
-    expect(JSON.stringify(await h.transform(turn))).toBe(serialized);
-    expect(h.writes.size).toBe(2); // latched: no second spill file either
-    // …and the same holds once the conversation moves on and the group scrolls into history.
-    const next: PiAgentMessage[] = [...turn, assistant('done', T0 + 9_000), user('two', T0 + 10_000)];
-    const grown = await h.transform(next);
-    expect(JSON.stringify(grown.slice(0, first.length))).toBe(serialized);
-  });
-
-  it('idempotence: a member already handed over whole is never re-judged when its group grows', async () => {
-    // The transform seam promises nothing about a group being complete the first time it is seen, and
-    // the budget of a partial group is not the budget of the finished one. What makes that harmless is
-    // the latch: whatever went out whole on an earlier pass stays whole, and the spilling comes out of
-    // the members the provider has not seen yet.
-    const h = harness();
-    const full = overBudgetTurn();
-    const partial = full.slice(0, 5); // user, assistant, g-0, g-1, g-2 — 144k, comfortably under budget
-    const first = await h.transform(partial);
-    expect(first).toBe(partial);
-    expect(h.writes.size).toBe(0);
-
-    const second = await h.transform(full);
-    expect(JSON.stringify(second.slice(0, partial.length))).toBe(JSON.stringify(partial));
-    expect(spilledIds(h)).toEqual(['g-3', 'g-4']);
-  });
-
-  it('idempotence: a failed spill never cascades to a different member on a later pass', async () => {
-    // Only the largest member fails to spill. Its group therefore stays over budget — but every member
-    // of it has already gone to the provider whole, so a second pass must NOT pick a new victim.
-    const writes = new Map<string, string>();
-    const h = harness({
-      writeSpill: async (path, text) => {
-        // Matched by prefix: the rest of the name carries the byte count, which this test has no reason
-        // to know.
-        if (path.startsWith('/tmp/spill/sess-1/g-0.v1-')) throw Object.assign(new Error('readonly'), { code: 'EACCES' });
-        writes.set(path, text);
-      },
-    });
-    const turn = overBudgetTurn();
-    const first = await h.transform(turn);
-    expect(JSON.stringify(first[2])).toContain('aaaa'); // g-0 still full: its spill failed
-    expect(writes.size).toBe(1); // only g-1 made it to disk
-    const serialized = JSON.stringify(first);
-    expect(JSON.stringify(await h.transform(turn))).toBe(serialized);
-    expect(writes.size).toBe(1);
-  });
-
-  it('spills into the real namespace dir, and the existing session cleanup removes it', async () => {
-    const home = mkdtempSync(join(tmpdir(), 'elowen-size-spill-'));
-    dirs.push(home);
-    vi.stubEnv('HOME', home);
-    try {
-      // Production wiring end to end: the store mints the conversation's immutable spill namespace, the
-      // resolver (exactly what buildBrainCore installs) hands it to the module's default spill dir, and
-      // the store's delete sweeps the SAME directory — so re-keying the session id can never separate
-      // the files from the conversation that owns them.
-      const store = new BrainStore(openDb(':memory:'));
-      store.createSession({ id: 'sess-fs', userId: 7, model: 'm' });
-      setSpillNamespaceResolver((id) => store.spillNamespace(id));
-      const session: Harness['session'] = { agent: {} };
-      installToolResultClearing(session, 'sess-fs', { idleMs: IDLE });
-      const messages: PiAgentMessage[] = [user('one', T0), toolResult('fresh', oversized, T0 + 1_000)];
-      const result = await session.agent.transformContext!(messages);
-      const text = (result[1] as { content: { type: string; text?: string }[] }).content[0]?.text ?? '';
-      const spilled = /Full output at: (\S+) — read it/.exec(text)?.[1];
-      expect(spilled).toBe(join(toolResultSpillDir(process.env, store.spillNamespace('sess-fs')), `fresh.v1-preview-${Buffer.byteLength(oversized, 'utf8')}.txt`));
-      expect(readFileSync(spilled!, 'utf8')).toBe(oversized);
-
-      store.deleteSession('sess-fs');
-      expect(existsSync(spilled!)).toBe(false);
-    } finally {
-      setSpillNamespaceResolver(undefined);
-      vi.unstubAllEnvs();
-    }
-  });
 });
 
 const TIME = { mode: 'time' as const, bytes: 42 };
@@ -834,11 +476,6 @@ describe('latch restoration across a respawn', () => {
     return (m: PiAgentMessage[]) => session.agent.transformContext!(m);
   };
 
-  // Emoji straddling the preview boundary: slice() cuts by UTF-16 unit, so the preview can end on half a
-  // surrogate pair. If that string did not survive the write/read round-trip the restored placeholder
-  // would differ by bytes — which is the whole failure this feature exists to prevent.
-  const previewBoundaryText = `${'p'.repeat(SPILL_PREVIEW_CHARS - 1)}😀${'q'.repeat(SPILL_MAX_RESULT_BYTES)}`;
-
   /** Three text blocks. `bytes` sums the BLOCKS while the spill file joins them with '\n', so the file is
    *  2 bytes larger — the case that proves the byte count is read from the name and not measured off the
    *  file. A single-block result would hide the difference. */
@@ -854,17 +491,14 @@ describe('latch restoration across a respawn', () => {
     user('two', T0 + 2_000),
     assistant('working', T0 + 3_000),
     user('three', T0 + IDLE + 4_000),
-    toolResult('fresh-huge', previewBoundaryText, T0 + IDLE + 5_000),
   ];
 
-  it('re-sends byte-identical placeholders after a restart, for both triggers', async () => {
+  it('re-sends byte-identical placeholders after a restart', async () => {
     const disk = new Map<string, string>();
     const before = await restartOver(disk)(history());
     const timeText = (before[1] as { content: { text: string }[] }).content[0]!.text;
     const multiText = (before[2] as { content: { text: string }[] }).content[0]!.text;
-    const previewText = (before[6] as { content: { text: string }[] }).content[0]!.text;
     expect(timeText).toContain('Older tool result cleared');
-    expect(previewText).toContain('saved to disk instead of the context');
     // The multi-block result's own placeholder must quote the summed BLOCK bytes, not the file size.
     expect(multiText).toContain(`${big.length * 3} bytes`);
 
@@ -873,7 +507,6 @@ describe('latch restoration across a respawn', () => {
     // path differed, and a single differing byte is a full re-cache of the whole conversation.
     expect((after[1] as { content: { text: string }[] }).content[0]!.text).toBe(timeText);
     expect((after[2] as { content: { text: string }[] }).content[0]!.text).toBe(multiText);
-    expect((after[6] as { content: { text: string }[] }).content[0]!.text).toBe(previewText);
   });
 
   it('does not rewrite the spill files it restored from', async () => {
@@ -1030,7 +663,12 @@ describe('durable latch across a respawn (store-backed)', () => {
     role: 'toolResult', toolCallId: 'shot', toolName: 'Screenshot', isError: false, timestamp: T0 + 2_000,
     content: [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }, { type: 'text', text: oversized }],
   } as PiAgentMessage;
-  const liveTurn: PiAgentMessage[] = [user('one', T0), assistant('calling', T0 + 1_000), liveImageResult];
+  /** The turn in which the cold gate clears that result: two user turns follow it, and the last one lands
+   *  a full idle threshold after the previous message. */
+  const liveTurn: PiAgentMessage[] = [
+    user('one', T0), assistant('calling', T0 + 1_000), liveImageResult,
+    user('two', T0 + 3_000), user('three', T0 + IDLE + 4_000),
+  ];
   /** The same result as `rehydrate` replays it after a crash: persistence externalized the image and
    *  `withoutExternalizedImages` replaced it with the placeholder TEXT block — the text of the very
    *  same result now differs from what was spilled. The new prompt lands after the settled history. */
@@ -1040,7 +678,7 @@ describe('durable latch across a respawn (store-backed)', () => {
       ...liveImageResult,
       content: [{ type: 'text', text: HISTORY_IMAGE_PLACEHOLDER }, { type: 'text', text: oversized }],
     } as PiAgentMessage,
-    user('two', promptAt),
+    user('two', T0 + 3_000), user('three', promptAt),
   ];
   /** Immediately after the crash — inside the idle threshold, so the time gate is SHUT and re-clearing
    *  afresh is not an option: restoration is the only path to a placeholder. */
@@ -1052,7 +690,7 @@ describe('durable latch across a respawn (store-backed)', () => {
     const disk = new Map<string, string>();
     const before = await restartOver(disk, storeAdapter(store))(liveTurn);
     const placeholder = (before[2] as { content: { text: string }[] }).content[0]!.text;
-    expect(placeholder).toContain('saved to disk instead of the context');
+    expect(placeholder).toContain('Older tool result cleared');
     expect(disk.size).toBe(1);
 
     const after = await restartOver(disk, storeAdapter(store), warmNow)(rehydratedTurn(warmNow()));

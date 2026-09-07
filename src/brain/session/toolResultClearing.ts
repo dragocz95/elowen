@@ -412,102 +412,12 @@ export function selectClearableToolResults(
   return selection;
 }
 
-/** Index of the message that opened the current run, or -1 when the conversation has no user message
- *  yet. Everything after it was produced during this turn. */
-function lastUserIndex(messages: readonly PiAgentMessage[]): number {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (isUserTurn(messages[index])) return index;
-  }
-  return -1;
-}
-
-/** Pure selection for the size trigger: results of the CURRENT run (after the last user message) that
- *  are too large to hand to the model at all. Deliberately the complement of
- *  selectClearableToolResults' region — a result the provider has already seen must not be rewritten
- *  outside the idle gate, however big it is. Exported for tests. */
-export function selectOversizedToolResults(
-  messages: PiAgentMessage[],
-  alreadyCleared: ReadonlySet<string>,
-): ClearableResult[] {
-  const selection: ClearableResult[] = [];
-  for (let index = lastUserIndex(messages) + 1; index < messages.length; index += 1) {
-    const message = messages[index];
-    if (message?.role !== 'toolResult') continue;
-    if (!message.toolCallId || alreadyCleared.has(occurrenceKeyOf(message))) continue;
-    const bytes = textBytes(message);
-    if (bytes <= spillMaxResultBytes()) continue;
-    selection.push({ index, toolCallId: message.toolCallId, occurredAt: messageOccurredAt(message), bytes });
-  }
-  return selection;
-}
-
 /** The aggregate budget in force right now, floored at the operator-tunable per-result threshold: a
  *  result the per-result layer deliberately keeps inline must not be spilled by the aggregate layer
  *  merely for being alone in its group. Both knobs move independently, so the floor is applied here at
  *  the point of use rather than trusted to hold in whatever was stored. */
 function groupBudgetBytes(): number {
   return Math.max(toolResultGroupBudget(), spillMaxResultBytes());
-}
-
-/** Indices of each maximal run of consecutive toolResult messages in the CURRENT run — one run is one
- *  wire-level message, and the current run is the only region whose results have not reached the
- *  provider yet (same boundary, and the same cache reason, as selectOversizedToolResults). */
-function currentRunToolResultGroups(messages: readonly PiAgentMessage[]): number[][] {
-  const groups: number[][] = [];
-  let group: number[] = [];
-  for (let index = lastUserIndex(messages) + 1; index < messages.length; index += 1) {
-    if (messages[index]?.role === 'toolResult') { group.push(index); continue; }
-    if (group.length > 0) { groups.push(group); group = []; }
-  }
-  if (group.length > 0) groups.push(group);
-  return groups;
-}
-
-export interface BudgetedSelection {
-  /** Results to spill, largest first — spilling them in this order brings each group back under budget. */
-  spill: ClearableResult[];
-  /** Occurrence keys of every candidate the budget layer weighed this pass, spilled or not. The caller
-   *  latches these: a result that has once been handed to the provider whole must never be reconsidered,
-   *  or a later pass (after a failed spill, or after a Limits change) would rewrite a prefix the
-   *  provider already cached. */
-  decided: string[];
-}
-
-/** Pure selection for the aggregate trigger: per wire-level group, spill the largest members until the
- *  group's total is back under budget. `spilled` members already reach the provider as a placeholder, so
- *  they cost the group nothing; `kept` members are latched decisions and count at full size without ever
- *  becoming candidates again. Both sets hold occurrence keys. A member without a toolCallId has no spill
- *  path, so it can only ever be weighed, never spilled. Exported for tests. */
-export function selectBudgetedToolResults(
-  messages: PiAgentMessage[],
-  spilled: ReadonlySet<string>,
-  kept: ReadonlySet<string>,
-): BudgetedSelection {
-  const budget = groupBudgetBytes();
-  const selection: BudgetedSelection = { spill: [], decided: [] };
-  for (const group of currentRunToolResultGroups(messages)) {
-    let total = 0;
-    const candidates: ClearableResult[] = [];
-    for (const index of group) {
-      const message = messages[index] as ToolResultMessage;
-      const key = message.toolCallId ? occurrenceKeyOf(message) : '';
-      if (message.toolCallId && spilled.has(key)) continue;
-      const bytes = textBytes(message);
-      total += bytes;
-      if (!message.toolCallId || kept.has(key)) continue;
-      candidates.push({ index, toolCallId: message.toolCallId, occurredAt: messageOccurredAt(message), bytes });
-    }
-    candidates.sort((a, b) => (b.bytes - a.bytes) || (a.index - b.index));
-    for (const candidate of candidates) {
-      if (total <= budget) break;
-      selection.spill.push(candidate);
-      total -= candidate.bytes;
-    }
-    for (const candidate of candidates) {
-      selection.decided.push(toolResultOccurrenceKey(candidate.toolCallId, candidate.occurredAt));
-    }
-  }
-  return selection;
 }
 
 /** Pure replacement: swap each indexed message's content for its placeholder text block. Input is
@@ -657,12 +567,6 @@ export function installToolResultClearing(
   /** Occurrence keys whose spill path is occupied by a DIFFERENT file. `wx` can never overwrite it, so
    *  retrying could only ever warn again — skip permanently (for this session's lifetime). */
   const foreignSpills = new Set<string>();
-  /** Occurrence keys the aggregate budget has already ruled on. The second half of the latch: a member
-   *  left in place goes to the provider whole, so re-weighing its group later — after a failed spill, or
-   *  after the threshold moved — could pick a DIFFERENT member and rewrite a prefix that is already
-   *  cached. A ruling stands for the session; the time trigger may still clear such a result once the
-   *  gate is cold, which is the only moment rewriting history is free. */
-  const budgetDecided = new Set<string>();
   let gateWasOpen = false;
   const previous = agent.transformContext;
   /** Restore one legacy row (occurredAt 0 — written before occurrence keying) by finding the occurrence
@@ -873,14 +777,6 @@ export function installToolResultClearing(
     if (gateOpen) {
       await spillSelected(selectClearableToolResults(base, new Set(latched.keys())), false, 'time');
     }
-    // Runs on every pass, gate or no gate: an oversized result of the current run has not reached the
-    // provider yet, so this is the only chance to keep it out of the context entirely.
-    await spillSelected(selectOversizedToolResults(base, new Set(latched.keys())), true, 'size');
-    // Then the aggregate layer, on what the per-result one left behind: many medium results in one
-    // wire-level message are individually under the per-result threshold but together are not.
-    const budgeted = selectBudgetedToolResults(base, new Set(latched.keys()), budgetDecided);
-    await spillSelected(budgeted.spill, true, 'group');
-    for (const key of budgeted.decided) budgetDecided.add(key);
     if (latched.size === 0) return base;
     // Resolve each latched occurrence to the message that carries it. Occurrence keys make this exact in
     // the common case; two occurrences can still share a key (same id AND same timestamp, or both
@@ -926,4 +822,190 @@ export function installToolResultClearing(
     for (const pick of chosen.values()) cleared.set(pick.index, pick.entry.placeholder);
     return applyToolResultClearing(base, cleared);
   };
+}
+
+/* ── Delivery-time spilling (size + group) ─────────────────────────────────────────────────────── */
+
+/** PI's `afterToolCall` hook, its input, and the content array it may replace — derived off the
+ *  AgentSession surface for the same reason the transform types are: pi-agent-core is not a direct
+ *  dependency of this package. */
+type AfterToolCall = NonNullable<AgentSession['agent']['afterToolCall']>;
+type AfterToolCallInput = Parameters<AfterToolCall>[0];
+type DeliveryContent = NonNullable<NonNullable<Awaited<ReturnType<AfterToolCall>>>['content']>;
+
+/** The text a spill file holds for a result that does not exist as a message yet: its text blocks joined
+ *  by '\n', exactly as {@link toolResultText} joins them once it does. */
+function deliveryText(content: readonly DeliveryContent[number][]): string {
+  return content.filter((block) => block.type === 'text').map((block) => block.text).join('\n');
+}
+
+function deliveryBytes(content: readonly DeliveryContent[number][]): number {
+  let total = 0;
+  for (const block of content) {
+    if (block.type === 'text') total += Buffer.byteLength(block.text, 'utf8');
+  }
+  return total;
+}
+
+/** What one result contributes to its wire-level group, and the spill it needs first (or none). */
+export interface DeliverySpillDecision {
+  /** Bytes this result will add to the group once the decision holds — the placeholder's when it is
+   *  spilled, the output's when it is not. The caller commits this only after the spill has succeeded. */
+  wireBytes: number;
+  spill: {
+    trigger: Extract<SpillTrigger, 'size' | 'group'>;
+    path: string;
+    text: string;
+    placeholder: string;
+    marker: ClearedToolResultMarker;
+    /** The original output's size, the number the placeholder quotes. */
+    bytes: number;
+  } | null;
+}
+
+/** Decide, at DELIVERY, whether one tool result reaches the model at all — the size trigger and the
+ *  aggregate group trigger in one pure function.
+ *
+ *  Deciding here rather than at egress is the whole point of this path: the placeholder exists BEFORE
+ *  `createToolResultMessage` builds the message, so the pending row, the agent state, the SessionManager
+ *  entry, the `tool_execution_end` UI event and the `agent_end` re-persist all carry it without a single
+ *  rewrite. The content has never been sent, so replacing it APPENDS a smaller block to the cached prefix
+ *  instead of rewriting one — the cache invariant holds by construction rather than by a gate.
+ *
+ *  `committedBytes` is what this result's wire-level group (one assistant message's batch of tool calls,
+ *  which pi-ai's converter coalesces into a single user message) has already committed. The group rule is
+ *  therefore ONLINE and irrevocable: a result is spilled when admitting it whole would take the group past
+ *  the budget. There is deliberately no lower size bound on that decision — with one, a group of many
+ *  small results would have no eligible candidate and could overrun the budget without limit.
+ *
+ *  The resulting guarantee is `group ≤ budget + n·placeholder`, where the placeholder is bounded under
+ *  {@link CLEAR_MIN_BYTES} by construction ({@link spillPreview}). What it does NOT reproduce is the
+ *  egress pass's largest-first choice: the results of one batch are finalized in completion order and
+ *  each decision is final by the time the next result arrives, so an early large result can fill the
+ *  budget that a later, larger one would have used better. Both orders honour the budget; only the
+ *  ordering differs, and the cold-start pass clears whatever the online order left behind. */
+export function decideDeliverySpill(
+  committedBytes: number,
+  spillDir: string,
+  toolCallId: string,
+  content: readonly DeliveryContent[number][],
+): DeliverySpillDecision {
+  const bytes = deliveryBytes(content);
+  const oversized = bytes > spillMaxResultBytes();
+  const overBudget = committedBytes + bytes > groupBudgetBytes();
+  // No id means no spill path (pathGuard could not let the model read it back), so such a result can
+  // only ever be counted toward its group, never removed from it.
+  if (!toolCallId || (!oversized && !overBudget)) return { wireBytes: bytes, spill: null };
+  const path = toolResultSpillPath(spillDir, toolCallId, { mode: 'preview', bytes });
+  const text = deliveryText(content);
+  const placeholder = clearedToolResultPlaceholder(path, bytes, spillPreview(text, path, bytes));
+  return {
+    wireBytes: Buffer.byteLength(placeholder, 'utf8'),
+    spill: {
+      trigger: oversized ? 'size' : 'group',
+      path, text, placeholder,
+      marker: { mode: 'preview', bytes, path },
+      bytes,
+    },
+  };
+}
+
+export interface ToolResultDeliverySpillOptions {
+  /** Directory the spill files land in; defaults to the session's resolved spill dir. */
+  spillDir?: string;
+  /** Spill writer injection for tests. Receives the absolute path and the full text. */
+  writeSpill?: (path: string, text: string) => Promise<void>;
+  /** Spill reader injection for tests; null = unreadable/missing. Used to verify an EEXIST survivor. */
+  readSpill?: (path: string) => Promise<string | null>;
+}
+
+/** Compose the delivery-time spill onto the session's `afterToolCall`, wrapping whatever is already
+ *  there (the extension `tool_result` hooks and image normalization PI installs) the same way the
+ *  `transformContext` installers wrap each other.
+ *
+ *  The added work is wrapped in try/catch and NOTHING escapes it. PI treats a throwing `afterToolCall`
+ *  as a failed tool call and replaces the whole result with an error string, so a single ENOSPC on the
+ *  spill would not merely leave the output unspilled — it would destroy it. Every failure path here
+ *  returns the inner hook's result untouched, which sends the full output to the model. A throw from the
+ *  INNER hook is deliberately left to propagate: that is PI's existing contract for those hooks and not
+ *  this module's to change.
+ *
+ *  Two tool-result paths bypass this hook entirely and are covered by the cold-start pass alone: PI's
+ *  `immediate` preparations (tool not found, invalid arguments, a blocked or aborted call) and the batch
+ *  failed after a truncated assistant message. Every one of them is a short generated error string, so
+ *  neither trigger would have fired on them anyway. */
+export function installToolResultDeliverySpill(
+  session: { agent?: { afterToolCall?: AfterToolCall } },
+  sessionId: string,
+  options: ToolResultDeliverySpillOptions = {},
+): void {
+  const agent = session.agent;
+  if (!agent) return;
+  const spillDir = options.spillDir ?? sessionToolResultSpillDir(process.env, sessionId);
+  const writeSpill = options.writeSpill ?? defaultWriteSpill;
+  const readSpill = options.readSpill ?? defaultReadSpill;
+  /** Wire bytes already committed per batch. Keyed by the assistant message that requested the calls,
+   *  which is exactly one wire-level tool-result message after pi-ai coalesces the run — and weakly, so
+   *  a long conversation's batches are collected with their messages. */
+  const committed = new WeakMap<object, number>();
+  const inner = agent.afterToolCall;
+  agent.afterToolCall = async (input, signal) => {
+    const hooked = await inner?.(input, signal);
+    try {
+      return await spillOnDelivery(input, hooked);
+    } catch (error) {
+      log.warn(`delivery-time spill decision failed for ${input.toolCall?.id} — the result goes out whole`, error);
+      return hooked;
+    }
+  };
+
+  async function spillOnDelivery(
+    input: AfterToolCallInput,
+    hooked: Awaited<ReturnType<AfterToolCall>>,
+  ): Promise<Awaited<ReturnType<AfterToolCall>>> {
+    const content = hooked?.content ?? input.result.content ?? [];
+    const batch = input.assistantMessage as unknown as object;
+    const before = committed.get(batch) ?? 0;
+    const decision = decideDeliverySpill(before, spillDir, input.toolCall.id, content);
+    if (!decision.spill) {
+      committed.set(batch, before + decision.wireBytes);
+      return hooked;
+    }
+    const { trigger, path, text, placeholder, marker, bytes } = decision.spill;
+    if (!await storeSpill(path, text, input.toolCall.id)) {
+      // The output could not be stored, so it must go out whole — a placeholder naming a file that does
+      // not exist would lose it. It costs its full size against the group, which is the honest number.
+      committed.set(batch, before + deliveryBytes(content));
+      return hooked;
+    }
+    committed.set(batch, before + decision.wireBytes);
+    // The one line that lets a cacheWatch warning be attributed to this module rather than to image
+    // stripping — the two rewrite different things and have completely different fixes.
+    log.info(`spilled ${input.toolCall.id} on delivery (${trigger} trigger, ${bytes} bytes)`);
+    return {
+      ...hooked,
+      content: [{ type: 'text', text: placeholder }],
+      details: clearedToolResultDetails(hooked?.details ?? input.result.details, marker),
+    };
+  }
+
+  /** Write the spill write-once, adopting an identical file already at the path. Same reconciliation as
+   *  {@link persistToolOutputSpill}: a toolCallId is not unique on its own, so a later call can land on
+   *  an existing name, and overwriting would swap the content under a path an earlier placeholder still
+   *  tells the model to read. Returns whether the path now holds this text. */
+  async function storeSpill(path: string, text: string, toolCallId: string): Promise<boolean> {
+    try {
+      await writeSpill(path, text);
+      return true;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'EEXIST') {
+        log.warn(`tool result spill failed for ${toolCallId} — leaving the result in context`, error);
+        return false;
+      }
+      const onDisk = await readSpill(path).catch(() => null);
+      if (onDisk === text) return true;
+      log.warn(`tool result spill for ${toolCallId} conflicts with a different file on disk — leaving the result in context`);
+      return false;
+    }
+  }
 }

@@ -104,6 +104,13 @@ export interface PayloadHarnessOptions {
   systemPrompt?: string;
   /** HTTP status handed to `after_provider_response`, per call (1-based). Defaults to 200. */
   statusFor?: (call: number) => number;
+  /** Executable tools the session may call, in addition to the constant `probe`. Pass the names in
+   *  `toolNames` as well — PI's `tools` option is an allow-list, not a registry. */
+  customTools?: readonly unknown[];
+  toolNames?: readonly string[];
+  /** What the fake assistant answers on each call (1-based). Return tool-call blocks to drive a real tool
+   *  execution round; the default is a plain text answer, which ends the turn. */
+  replyFor?: (call: number) => AssistantMessage['content'] | undefined;
 }
 
 export interface PayloadHarness {
@@ -135,7 +142,7 @@ export async function providerPayloadHarness(options: PayloadHarnessOptions = {}
       await request.onResponse?.({ status: options.statusFor?.(call) ?? 200, headers: {} } as never, model);
       const out = createAssistantMessageEventStream();
       const answer: AssistantMessage = {
-        role: 'assistant', content: [{ type: 'text', text: 'ok' }],
+        role: 'assistant', content: options.replyFor?.(call) ?? [{ type: 'text', text: 'ok' }],
         api: model.api, provider: model.provider, model: model.id,
         usage: {
           input: 10, output: 2, reasoning: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 12,
@@ -178,8 +185,8 @@ export async function providerPayloadHarness(options: PayloadHarnessOptions = {}
       name: 'probe', label: 'Probe', description: 'Unused; keeps the tool block non-empty',
       parameters: Type.Object({}),
       execute: async () => ({ content: [{ type: 'text', text: 'tool result' }], details: {} }),
-    })],
-    tools: ['probe'], noTools: 'builtin',
+    }), ...(options.customTools ?? [])] as never,
+    tools: ['probe', ...(options.toolNames ?? [])], noTools: 'builtin',
   });
 
   return {

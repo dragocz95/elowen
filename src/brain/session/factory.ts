@@ -19,7 +19,7 @@ import {
 import { assessColdCompaction, type AssessColdCompaction } from './coldStartCompaction.js';
 import { installHistoryImageStripping } from './historyImageStripping.js';
 import { imagesRejected } from './imageRejection.js';
-import { installToolResultClearing } from './toolResultClearing.js';
+import { installToolResultClearing, installToolResultDeliverySpill } from './toolResultClearing.js';
 import { createCachePayloadMonitor, installCacheWatch, type CachePayloadMonitor, type CacheWatchFlavor } from './cacheWatch.js';
 import { idleThresholdMs, OPENAI_CACHE_MAX_RETENTION_MS } from './cacheTiming.js';
 import { installCacheBreakpoints } from './cacheBreakpoints.js';
@@ -794,6 +794,13 @@ export class BrainSessionFactory {
       rejected: () => imagesRejected(spec.sessionId),
       ...(cacheIdleMs !== undefined ? { idleMs: cacheIdleMs } : {}),
     });
+    // Decided at DELIVERY, not at egress: a result too large on its own, or one that would take its
+    // batch past the aggregate budget, is written to a spill file and replaced by a placeholder BEFORE
+    // PI builds the tool-result message. The stored row, the agent state, the live UI event and the
+    // end-of-run re-persist therefore all carry the placeholder without anything being rewritten, and
+    // the content reaches the provider as a placeholder the first time rather than replacing bytes it
+    // has already cached.
+    installToolResultDeliverySpill(session, spec.sessionId);
     // Same egress seam: large tool results that have scrolled two user turns back are swapped for a
     // placeholder + spill-file path, but only once the prompt cache has provably expired (idle gate) —
     // history is never rewritten while a request could still cache-hit, and the per-session latch keeps
