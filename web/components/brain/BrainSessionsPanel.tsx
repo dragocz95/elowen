@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { Trash2, Circle, ChevronRight, CornerDownRight, FileCode, FileJson, MoreHorizontal } from 'lucide-react';
@@ -32,17 +32,7 @@ import { ActionMenu } from '../ui/ActionMenu';
 import { ContextMenu, type ContextMenuState } from '../ui/ContextMenu';
 import { ControlSurfaceRegister, ControlSurfaceToolbar } from '../ui/ControlSurface';
 import { LoadingLine } from '../ui/states';
-
-/** The page is sized to the dialog instead of being a fixed count. The register lives in a FIXED-height
- *  modal (`lg` is `h-[88dvh]`), so twelve rows left a dead band under the table on a large screen while
- *  still overflowing a short one — the table stopped where the dialog kept going.
- *
- *  Only the VIEWPORT is measured, never the content: the scroll box takes its height from flex, so how
- *  many rows are shown cannot feed back into how much room there is, and the observer cannot oscillate.
- *  Where nothing can be measured (a zero-height box, jsdom) the fallback stands. */
-const FALLBACK_PAGE_SIZE = 12;
-const MIN_PAGE_SIZE = 4;
-const FALLBACK_ROW_HEIGHT = 44;
+import { useMeasuredPageSize } from '../../lib/useMeasuredPageSize';
 
 /** How far one nesting level shifts a row, and how many levels are allowed to shift it. Past the cap the
  *  ancestry is still there — the rows are still nested under their parent and still only reachable
@@ -104,12 +94,9 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
   const myId = me.data?.user?.id;
   const [confirmId, setConfirmId] = useState<string | null>(null);
   const [confirmAll, setConfirmAll] = useState(false);
-  const [page, setPage] = useState(0);
-  const [pageSize, setPageSize] = useState(FALLBACK_PAGE_SIZE);
-  // The measurement's own view of the current size: the observer must compare against the latest value
-  // without re-subscribing, and reading it out of state would pin the callback to a stale render.
-  const pageSizeRef = useRef(FALLBACK_PAGE_SIZE);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // The page is sized to the dialog the register lives in, not fixed — see useMeasuredPageSize.
+  const { pageSize, page, setPage } = useMeasuredPageSize(scrollRef);
   const [search, setSearch] = useState('');
   const [sort, setSort] = useState<SortKey>('updated');
   const [direction, setDirection] = useState<SortDirection>('desc');
@@ -161,35 +148,6 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
   });
 
   useEffect(() => { setPage(0); }, [search, sort, direction]);
-
-  useLayoutEffect(() => {
-    const box = scrollRef.current;
-    if (!box || typeof ResizeObserver === 'undefined') return;
-    const measure = (): void => {
-      const available = box.clientHeight;
-      if (available <= 0) return; // hidden or unmeasurable — keep the last good answer rather than guessing
-      // The header row is inside the scroll box, so it eats from the same budget. Reading both heights off
-      // the live DOM keeps this honest when density, font size or zoom changes.
-      const rows = box.querySelectorAll('[role="row"]');
-      const headHeight = rows[0]?.getBoundingClientRect().height ?? 0;
-      // A ROOT row, explicitly marked, because the page counts roots. The first body row used to do, and
-      // stopped the day one of them could be a nested sub-agent or a job link: those are shorter and
-      // denser, so measuring one would claim more conversations fit than actually do.
-      const rowHeight = box.querySelector('[data-tree-row="root"]')?.getBoundingClientRect().height ?? FALLBACK_ROW_HEIGHT;
-      if (rowHeight <= 0) return;
-      const next = Math.max(MIN_PAGE_SIZE, Math.floor((available - headHeight) / rowHeight));
-      const prev = pageSizeRef.current;
-      if (prev === next) return;
-      pageSizeRef.current = next;
-      setPageSize(next);
-      // Keep the reader where they were: the first row on screen stays on screen across a resize.
-      setPage((p) => Math.floor((p * prev) / next));
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(box);
-    return () => observer.disconnect();
-  }, []);
 
   /** Clicking the active column reverses it; a different column starts at its own natural order. */
   const sortBy = (key: SortKey) => {

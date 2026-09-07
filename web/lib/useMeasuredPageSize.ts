@@ -8,7 +8,7 @@ import { useLayoutEffect, useRef, useState, type RefObject } from 'react';
  *  Only the VIEWPORT is measured, never the content: the scroll box takes its height from flex, so how
  *  many rows are shown cannot feed back into how much room there is and the observer cannot oscillate.
  *  Where nothing can be measured (a zero-height box, jsdom) the fallback stands. */
-export const FALLBACK_PAGE_SIZE = 12;
+const FALLBACK_PAGE_SIZE = 12;
 const MIN_PAGE_SIZE = 4;
 const FALLBACK_ROW_HEIGHT = 44;
 
