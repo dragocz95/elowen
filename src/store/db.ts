@@ -1,7 +1,8 @@
 import Database from 'better-sqlite3';
-import { readFileSync, mkdirSync } from 'node:fs';
+import { readFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
+import { dataDir, fsSafeSegment } from '../shared/paths.js';
 import type { Db } from './dbTypes.js';
 import { renameDocsTool, renameRegistryTool, renameTool, repairImageTool } from './toolRenames.js';
 import { execRefSpec, parseExecRef, PROGRAM_PREFIXES } from '../shared/execs.js';
@@ -102,6 +103,7 @@ function migrate(db: Db): void {
   // below it and skip them all in silence.
   makeProjectIdsMonotonic(db);
   dropBrainTerminals(db);
+  backfillClearedToolResultRows(db);
 }
 
 /** Run `apply` in an IMMEDIATE transaction, retrying while another process holds the write lock.
@@ -937,6 +939,167 @@ function repairImageToolNames(db: Db): void {
  *  sub-agent's frozen `toolPolicy` — are exact-string matches that stop matching rather than raise. */
 function migrateDocsToolName(db: Db): void {
   runOnce(db, 14, () => renameStoredToolNames(db, renameDocsTool));
+}
+
+/** How much of a size-spilled result the v1 placeholder quotes. FROZEN here, deliberately duplicating
+ *  `SPILL_PREVIEW_CHARS`: a migration has to produce the bytes its own format version promised, and the
+ *  `v1` in a spill file NAME is exactly that promise (a change to the wording or the preview budget mints
+ *  v2 rather than reinterpreting v1 names). Importing the live renderer would let a later wording change
+ *  silently rewrite history this migration already converged. */
+const V1_SPILL_PREVIEW_CHARS = 2000;
+
+/** The v1 placeholder, byte for byte as `clearedToolResultPlaceholder` rendered it. Frozen for the reason
+ *  above; the file-name version is what pins it. */
+function v1ClearedPlaceholder(spillPath: string, originalBytes: number, preview?: string): string {
+  if (preview === undefined) {
+    return `[Older tool result cleared to save context. Full output saved at: ${spillPath} — read it with the Read tool if needed. Original size: ${originalBytes} bytes.]`;
+  }
+  return `[Large tool result (${originalBytes} bytes) saved to disk instead of the context. Full output at: ${spillPath} — read it with the Read tool if needed. First ${preview.length} characters below.]\n${preview}`;
+}
+
+/** The text a spill file holds for one result: its text blocks joined by '\n'. Must stay identical to
+ *  `toolResultText` in toolResultClearing, because the file-derived half below compares against it. */
+function v1ToolResultText(content: unknown): string {
+  if (!Array.isArray(content)) return '';
+  return content
+    .filter((block): block is { type: 'text'; text: string } => {
+      const candidate = block as { type?: unknown; text?: unknown } | null;
+      return !!candidate && candidate.type === 'text' && typeof candidate.text === 'string';
+    })
+    .map((block) => block.text)
+    .join('\n');
+}
+
+/** One toolResult row, parsed once so both halves of the backfill share the pass. */
+interface ClearableRow { id: string; content: string; message: Record<string, unknown>; toolCallId: string; occurredAt: number }
+
+function toolResultRowsOf(db: Db, sessionId: string): ClearableRow[] {
+  const rows = db.prepare(
+    `SELECT id, content FROM brain_messages WHERE session_id = ? AND role = 'toolResult' AND pending <> 2 ORDER BY rowid ASC`
+  ).all(sessionId) as { id: string; content: string }[];
+  const parsed: ClearableRow[] = [];
+  for (const row of rows) {
+    let message: unknown;
+    try { message = JSON.parse(row.content); }
+    catch { continue; } // a corrupt row is skipped here exactly as rehydration skips it
+    if (!message || typeof message !== 'object' || Array.isArray(message)) continue;
+    const record = message as Record<string, unknown>;
+    if (typeof record.toolCallId !== 'string' || !record.toolCallId) continue;
+    const at = typeof record.timestamp === 'number' && Number.isFinite(record.timestamp) && record.timestamp > 0
+      ? record.timestamp
+      : 0;
+    parsed.push({ id: row.id, content: row.content, message: record, toolCallId: record.toolCallId, occurredAt: at });
+  }
+  return parsed;
+}
+
+/** v18 — write the placeholder into the transcript rows of tool results that were cleared BEFORE the
+ *  store became the wire truth.
+ *
+ *  Clearing used to keep its placeholder in memory (and, later, in a latch row) while the transcript row
+ *  kept the full result. Every store-derived rebuild therefore reconstructed a context the conversation no
+ *  longer sends — a respawn, an export, and above all a FORK seed, which is read through exactly this
+ *  history and would hand a child megabytes its parent had already replaced with a one-line placeholder.
+ *  Clearing writes the row through today, but only for results it clears from now on: a conversation
+ *  cleared before this ships never converges on its own, because the restore path merely re-latches those
+ *  rows in memory and the selection pass then skips them as already latched.
+ *
+ *  Two cohorts, one pass per session:
+ *
+ *  · Latch ROWS with a verbatim placeholder — the exact bytes that went to the provider. Matched by
+ *    OCCURRENCE (tool call id AND the message's own timestamp), never by id alone: sequential id styles
+ *    reset per turn, so after a compaction the same id can belong to a completely different result, and an
+ *    id-keyed rewrite would replace a live result with another call's placeholder. Rows carrying occurrence
+ *    0 (written before occurrence keying) are therefore left to the runtime's created-at heuristic, which
+ *    is the only reader that can tell which occurrence they meant.
+ *  · Spill FILES from before the latch table existed, whose byte count and mode live in the file name. Here
+ *    the file is the only evidence, so it must still hold exactly what the row holds — the same
+ *    `onDisk === text` anti-spoof comparison the runtime restore makes, because a session may write into
+ *    its own spill directory and a placeholder must never describe text that was never the tool's output.
+ *
+ *  A latch row's own file is required to EXIST before its row is rewritten: the placeholder tells the model
+ *  to read that path, and a placeholder pointing at nothing would lose the output for good. Text equality
+ *  is deliberately NOT required of that cohort — the daemon wrote the row, the occurrence key already
+ *  establishes identity, and a rehydrated result routinely differs from what was spilled (an externalized
+ *  image comes back as a placeholder text block), which is precisely the cohort this migration exists for.
+ *
+ *  Safe to run twice: a row whose content already equals the placeholder re-serializes to the same bytes
+ *  and is skipped, so a second pass rewrites nothing.
+ *
+ *  NUMBERED 18, and it must run LAST: versions 1-17 are all spent, and this file's runners share one
+ *  `user_version` counter, so a higher number placed earlier would skip every migration below it. */
+function backfillClearedToolResultRows(db: Db): void {
+  runOnce(db, 18, () => {
+    const sessions = db.prepare('SELECT id, spill_ns FROM brain_sessions').all() as { id: string; spill_ns: string }[];
+    const latched = db.prepare(
+      `SELECT session_id, tool_call_id, occurred_at, path, placeholder FROM brain_tool_result_spills
+        WHERE placeholder IS NOT NULL AND occurred_at <> 0`
+    ).all() as { session_id: string; tool_call_id: string; occurred_at: number; path: string; placeholder: string }[];
+    const bySession = new Map<string, typeof latched>();
+    for (const row of latched) {
+      const list = bySession.get(row.session_id);
+      if (list) list.push(row);
+      else bySession.set(row.session_id, [row]);
+    }
+    const update = db.prepare('UPDATE brain_messages SET content = ? WHERE session_id = ? AND id = ?');
+    let fromRows = 0;
+    let fromFiles = 0;
+    const rewrite = (sessionId: string, row: ClearableRow, placeholder: string): boolean => {
+      const serialized = JSON.stringify({ ...row.message, content: [{ type: 'text', text: placeholder }] });
+      if (serialized === row.content) return false;
+      update.run(serialized, sessionId, row.id);
+      row.content = serialized;
+      return true;
+    };
+    for (const session of sessions) {
+      const rows = bySession.get(session.id);
+      const spillDir = join(dataDir(process.env), 'tool-results', fsSafeSegment(session.spill_ns || session.id));
+      let names: string[] = [];
+      try { names = readdirSync(spillDir); }
+      catch { names = []; } // no spill directory is the normal case for a conversation that never cleared
+      if (!rows && names.length === 0) continue;
+      const parsed = toolResultRowsOf(db, session.id);
+      if (parsed.length === 0) continue;
+      const done = new Set<string>();
+      for (const latch of rows ?? []) {
+        const target = parsed.find((row) => row.toolCallId === latch.tool_call_id && row.occurredAt === latch.occurred_at);
+        if (!target || done.has(target.id)) continue;
+        if (!existsSync(latch.path)) continue;
+        done.add(target.id);
+        if (rewrite(session.id, target, latch.placeholder)) fromRows += 1;
+      }
+      if (names.length === 0) continue;
+      for (const row of parsed) {
+        if (done.has(row.id)) continue;
+        const prefix = `${fsSafeSegment(row.toolCallId)}.v1-`;
+        // `time` before `preview`: after a failed restore both files can exist with identical content, and
+        // the bytes already on the wire are the time-mode ones — the same order the runtime restore uses.
+        const candidates = names
+          .flatMap((name) => {
+            if (!name.startsWith(prefix)) return [];
+            const match = /^(time|preview)-(\d+)\.txt$/.exec(name.slice(prefix.length));
+            const bytes = match ? Number(match[2]) : NaN;
+            return match && Number.isSafeInteger(bytes) ? [{ name, mode: match[1] as 'time' | 'preview', bytes }] : [];
+          })
+          .sort((a, b) => (a.mode === b.mode ? 0 : a.mode === 'time' ? -1 : 1));
+        if (candidates.length === 0) continue;
+        const text = v1ToolResultText(row.message.content);
+        for (const candidate of candidates) {
+          const path = join(spillDir, candidate.name);
+          let onDisk: string | null = null;
+          try { onDisk = readFileSync(path, 'utf-8'); }
+          catch { continue; }
+          if (onDisk !== text) continue;
+          const preview = candidate.mode === 'preview' ? onDisk.slice(0, V1_SPILL_PREVIEW_CHARS) : undefined;
+          if (rewrite(session.id, row, v1ClearedPlaceholder(path, candidate.bytes, preview))) fromFiles += 1;
+          break;
+        }
+      }
+    }
+    if (fromRows + fromFiles > 0) {
+      console.warn(`database migration: converged ${fromRows + fromFiles} cleared tool-result row(s) on the placeholder already sent (${fromRows} from latch rows, ${fromFiles} from spill files)`);
+    }
+  });
 }
 
 /** Apply `mutate` to a parsed JSON object and re-serialize. A blob that is corrupt or not an object is
