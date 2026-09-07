@@ -15,7 +15,8 @@ import {
   isClearedToolResult,
   selectClearableToolResults,
 } from '../../../src/brain/session/toolResultClearing.js';
-import type { PiAgentMessage } from '../../../src/brain/session/historyImageStripping.js';
+import { HISTORY_IMAGE_PLACEHOLDER, type PiAgentMessage } from '../../../src/brain/session/historyImageStripping.js';
+import { markImagesRejected, resetImageRejections } from '../../../src/brain/session/imageRejection.js';
 import { providerPayloadHarness } from '../../helpers/providerPayloads.js';
 
 /** The time trigger, moved from the egress transform to the START of the turn.
@@ -280,6 +281,64 @@ describe('clearColdToolResults', () => {
     // Everything before the retained turn is a placeholder now, so a fork child inherits the parent's
     // size rather than the megabytes the parent had already stopped sending.
     expect(JSON.stringify(seeded.slice(0, 6))).not.toContain(BIG);
+  });
+});
+
+describe('historical images at a cold turn start', () => {
+  const image = { type: 'image', data: 'AAAA', mimeType: 'image/png' } as const;
+  const withImage = (): PiAgentMessage[] => [
+    { role: 'user', content: [{ type: 'text', text: 'look' }, image], timestamp: 1_000 } as PiAgentMessage,
+    user('two', 2_000),
+  ];
+  const blocksOf = (message: PiAgentMessage): { type: string }[] =>
+    (message as { content: { type: string }[] }).content;
+
+  afterEach(() => { resetImageRejections(); });
+
+  it('are collapsed in the live context, which is what the stored row already replays', async () => {
+    const store = freshStore();
+    const messages = withImage();
+    seedRows(store, messages);
+    await clearColdToolResults(deps(store), session(messages), { ...spillFake().options, now: cold });
+    expect(blocksOf(messages[0]!)).toEqual([
+      { type: 'text', text: 'look' },
+      { type: 'text', text: HISTORY_IMAGE_PLACEHOLDER },
+    ]);
+  });
+
+  it('stay while the cache could still be warm', async () => {
+    const store = freshStore();
+    const messages = withImage();
+    seedRows(store, messages);
+    await clearColdToolResults(deps(store), session(messages), { ...spillFake().options, now: warm });
+    expect(blocksOf(messages[0]!).some((block) => block.type === 'image')).toBe(true);
+  });
+
+  /** A refused image is permanent poison: it goes out with every later request and fails each one, so it
+   *  cannot wait for the gate — the conversation would answer the same error for a full hour. */
+  it('go immediately once the provider has refused one, gate or no gate', async () => {
+    const store = freshStore();
+    const messages = withImage();
+    seedRows(store, messages);
+    markImagesRejected(SESSION);
+    await clearColdToolResults(deps(store), session(messages), { ...spillFake().options, now: warm });
+    expect(blocksOf(messages[0]!).some((block) => block.type === 'image')).toBe(false);
+  });
+
+  /** OpenAI may hold an inactive prompt cache for a full hour whatever retention the request declared, so
+   *  the destructive image pass uses that upper bound rather than the TTL pi-ai asked for. */
+  it('wait for the longest retention any provider uses, not just the declared TTL', async () => {
+    const store = freshStore();
+    const messages = withImage();
+    seedRows(store, messages);
+    const shortTtl: ColdToolResultSession = {
+      ...session(messages), lastRequestCacheTtlMs: 5 * 60_000,
+    };
+    // Seven minutes: past the declared five-minute TTL, nowhere near the hour OpenAI may still be serving.
+    await clearColdToolResults(deps(store), shortTtl, {
+      ...spillFake().options, now: () => Date.now() + 7 * 60_000,
+    });
+    expect(blocksOf(messages[0]!).some((block) => block.type === 'image')).toBe(true);
   });
 });
 

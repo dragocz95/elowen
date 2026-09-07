@@ -600,34 +600,6 @@ describe('BrainSessionFactory context-saving installers', () => {
     );
   });
 
-  it('uses OpenAI maximum cache retention for destructive Responses transforms', async () => {
-    vi.stubEnv('PI_CACHE_RETENTION', 'long');
-    const { session } = await createWithProvider('openai', 'openai-responses');
-    try {
-      const transform = session.agent.transformContext;
-      expect(typeof transform).toBe('function');
-      const t0 = 1_700_000_000_000;
-      // Image stripping is the destructive egress transform this knob governs: OpenAI may hold an
-      // inactive prompt cache for a full hour, so seven minutes of idle must not be treated as cold.
-      const messagesAt = (thirdAt: number) => [
-        { role: 'user', content: 'first', timestamp: t0 },
-        { role: 'user', timestamp: t0 + 2,
-          content: [{ type: 'text', text: 'look' }, { type: 'image', data: 'AAAA', mimeType: 'image/png' }] },
-        { role: 'user', content: 'third', timestamp: thirdAt },
-      ];
-
-      const warm = messagesAt(t0 + 7 * 60_000);
-      const warmOut = await transform!(warm as never) as typeof warm;
-      expect(warmOut[1]).toBe(warm[1]);
-
-      const cold = messagesAt(t0 + 62 * 60_000);
-      const coldOut = await transform!(cold as never) as typeof cold;
-      expect((coldOut[1]?.content as { type: string }[]).some((block) => block.type === 'image')).toBe(false);
-    } finally {
-      vi.unstubAllEnvs();
-    }
-  });
-
   // The seam a plugin needs to restore per-conversation state that lives in daemon memory while its
   // evidence lives in the transcript (the files plugin's read-before-write guard). It has to carry the
   // REHYDRATED history and be awaited, or the first turn could run before the state is in place.
@@ -670,10 +642,10 @@ describe('BrainSessionFactory context-saving installers', () => {
     const { listeners, session, cacheMonitor } = await createWithProvider('kimi-coding');
     try {
       // The request recorder, compaction circuit breaker, prefill-baseline measurement and persistence
-      // projector are unconditional; cacheWatch did not subscribe. Clearing's transformContext is still
-      // installed.
+      // projector are unconditional; cacheWatch did not subscribe. Delivery-time spilling is installed
+      // for every provider.
       expect(listeners).toHaveLength(4);
-      expect(typeof session.agent.transformContext).toBe('function');
+      expect(typeof session.agent.afterToolCall).toBe('function');
       expect(cacheMonitor).toBeUndefined();
     } finally {
       vi.unstubAllEnvs();

@@ -1,10 +1,4 @@
-import { createHash } from 'node:crypto';
 import type { AgentSession } from '@earendil-works/pi-coding-agent';
-import { cacheColdAtTurnStart, idleThresholdMs } from './cacheTiming.js';
-import { isUserTurn } from './userTurn.js';
-import { logger } from '../../shared/logger.js';
-
-const log = logger('brain-image-strip');
 
 /** PI's `transformContext` hook signature and its message type, derived from the hook itself —
  *  `@earendil-works/pi-agent-core` (where AgentMessage lives) is not a direct dependency, so the
@@ -36,114 +30,27 @@ function collapseImages(content: readonly ContentBlock[]): ContentBlock[] | null
   return result;
 }
 
-/** Egress-only, source-agnostic image stripping for the provider request context.
+/** Collapse every image block in these messages to the placeholder, IN PLACE, and report how many
+ *  messages changed.
  *
- * PI never downgrades images for vision-capable models, so every historical screenshot/read image is
- * re-serialized into EVERY provider call and the context grows monotonically. This strips image blocks
- * from all messages BEFORE the last user message — i.e. images that have scrolled into history — while
- * the current run (the last user message and everything after it) keeps its real images, so the model
- * still sees a freshly-read image on the step that consumes it. Pure and non-mutating: unchanged
- * messages/arrays keep their references. */
-export function stripHistoricalImages(messages: PiAgentMessage[]): PiAgentMessage[] {
-  let lastUserIndex = -1;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (isUserTurn(messages[index])) { lastUserIndex = index; break; }
-  }
-  if (lastUserIndex <= 0) return messages;
-  let changed = false;
-  const next = messages.map((message, index): PiAgentMessage => {
-    if (index >= lastUserIndex) return message;
-    if (message.role !== 'user' && message.role !== 'toolResult' && message.role !== 'custom') return message;
-    if (!Array.isArray(message.content)) return message;
+ *  PI never downgrades images for vision-capable models, so every historical screenshot or read image is
+ *  re-serialized into every provider call and the context grows monotonically. This is the one pass that
+ *  stops that, and it runs at the START of a turn — where the whole conversation is "history", because the
+ *  user's new message has not been admitted yet and the previous run is complete.
+ *
+ *  In place, deliberately. The stored row already holds a REFERENCE to the image file rather than its
+ *  bytes, and a rehydration replays that reference as this very placeholder, so mutating the live message
+ *  is what makes the live context equal to what a respawn, an export and a fork seed would rebuild. The
+ *  row is untouched: the transcript keeps the reference, and the UI keeps rendering the image. */
+export function collapseHistoricalImages(messages: PiAgentMessage[]): number {
+  let changed = 0;
+  for (const message of messages) {
+    if (message.role !== 'user' && message.role !== 'toolResult' && message.role !== 'custom') continue;
+    if (!Array.isArray(message.content)) continue;
     const content = collapseImages(message.content);
-    if (!content) return message;
-    changed = true;
-    return { ...message, content };
-  });
-  return changed ? next : messages;
-}
-
-interface LatchedImageMessage {
-  sourceHash: string;
-  stripped: PiAgentMessage;
-}
-
-function messageHash(message: PiAgentMessage): string {
-  const serialized = JSON.stringify(message);
-  return createHash('sha256').update(serialized ?? '').digest('hex');
-}
-
-export interface HistoryImageStrippingOptions {
-  /** Idle gate in ms; defaults to the same shared threshold as tool-result clearing. */
-  idleMs?: number;
-  /** Clock injection for tests. */
-  now?: () => number;
-  /** Has the provider already REFUSED an image in this conversation? Such an image is re-sent with every
-   *  later request and fails the turn every time, so it must be stripped whether or not the cache is
-   *  cold — waiting for the idle gate would leave the conversation permanently broken. See
-   *  imageRejection.ts. */
-  rejected?: () => boolean;
-}
-
-/** Compose the stripper onto the session's `transformContext` — the hook PI runs before every provider
- * request, applied to a local copy only (persisted history is untouched). Historical images may first be
- * stripped on a definitely-cold turn, or as soon as the provider has refused an image in this
- * conversation (that one poisons every later request, so its cost outweighs the cache break). Each
- * replacement is then latched to its original message hash: old placeholders remain byte-stable, while
- * images first seen after that point stay intact until a later cold turn makes them eligible. */
-export function installHistoryImageStripping(
-  session: { agent?: { transformContext?: AgentTransformContext } },
-  options: HistoryImageStrippingOptions = {},
-): void {
-  // Injected/custom AgentSession implementations (tests) may expose only the public surface, without
-  // the underlying agent — same seam-missing tolerance as installTurnBoundaryAutoCompaction.
-  const agent = session.agent;
-  if (!agent) return;
-  const idleMs = options.idleMs ?? idleThresholdMs(process.env);
-  const now = options.now ?? Date.now;
-  const rejected = options.rejected ?? ((): boolean => false);
-  const latched = new Map<number, LatchedImageMessage>();
-  const previous = agent.transformContext;
-  agent.transformContext = async (messages, signal) => {
-    const base = previous ? await previous(messages, signal) : messages;
-    if (rejected() || cacheColdAtTurnStart(base, idleMs, now())) {
-      const stripped = stripHistoricalImages(base);
-      // Indexes latched for the FIRST time in this pass. Reported because a cacheWatch "REWRITTEN IN
-      // PLACE at <index>" warning otherwise cannot be attributed: this module and tool-result clearing
-      // both rewrite historical messages, and telling them apart is the whole diagnosis.
-      const fresh: number[] = [];
-      for (let index = 0; index < base.length; index += 1) {
-        const original = base[index];
-        const replacement = stripped[index];
-        if (original && replacement && replacement !== original) {
-          if (!latched.has(index)) fresh.push(index);
-          latched.set(index, { sourceHash: messageHash(original), stripped: replacement });
-        }
-      }
-      if (fresh.length > 0) {
-        log.info(`stripped images from ${fresh.length} historical message(s) at ${fresh.join(', ')}`
-          + ` (${rejected() ? 'provider refused an image' : 'idle gate open'})`);
-      }
-    }
-    if (latched.size === 0) return base;
-
-    for (const index of latched.keys()) {
-      if (index >= base.length) latched.delete(index);
-    }
-    let changed = false;
-    const next = base.map((message, index): PiAgentMessage => {
-      const entry = latched.get(index);
-      if (!entry) return message;
-      if (messageHash(message) !== entry.sourceHash) {
-        latched.delete(index);
-        // Something else rewrote this message under us, so the placeholder no longer belongs to it. Worth
-        // a line: it means two rewriters met on the same index, which is exactly how a warm prefix breaks.
-        log.info(`message at ${index} changed under the image latch — releasing it, its images go out again`);
-        return message;
-      }
-      changed = true;
-      return entry.stripped;
-    });
-    return changed ? next : base;
-  };
+    if (!content) continue;
+    (message as { content: unknown }).content = content;
+    changed += 1;
+  }
+  return changed;
 }

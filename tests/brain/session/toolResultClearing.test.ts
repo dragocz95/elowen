@@ -14,14 +14,13 @@ import {
   toolResultSpillPath,
   persistToolOutputSpill,
 } from '../../../src/brain/session/toolResultClearing.js';
-import { cacheColdAtTurnStart, cacheTtlMs, idleThresholdMs } from '../../../src/brain/session/cacheTiming.js';
+import { cacheTtlMs, idleThresholdMs } from '../../../src/brain/session/cacheTiming.js';
 import type { PiAgentMessage } from '../../../src/brain/session/historyImageStripping.js';
 
 let dirs: string[] = [];
 afterEach(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true }); dirs = []; });
 
 const T0 = 1_000_000;
-const IDLE = 60_000;
 
 const user = (text: string, timestamp: number): PiAgentMessage =>
   ({ role: 'user', content: [{ type: 'text', text }], timestamp });
@@ -172,37 +171,6 @@ describe('the preview a placeholder quotes', () => {
 
   it('handles a short output without trimming anything', () => {
     expect(spillPreview('tiny', PATH, 4)).toBe('tiny');
-  });
-});
-
-describe('cacheColdAtTurnStart', () => {
-  it('is false while the conversation is active and true after an idle gap', () => {
-    const active: PiAgentMessage[] = [user('one', T0), assistant('a', T0 + 1_000), user('two', T0 + 5_000)];
-    expect(cacheColdAtTurnStart(active, IDLE, T0 + 5_000)).toBe(false);
-    const idle: PiAgentMessage[] = [user('one', T0), assistant('a', T0 + 1_000), user('two', T0 + IDLE + 2_000)];
-    expect(cacheColdAtTurnStart(idle, IDLE, T0 + IDLE + 2_000)).toBe(true);
-  });
-
-  it('is false for the very first user message (nothing to compare against)', () => {
-    expect(cacheColdAtTurnStart([user('one', T0)], IDLE, T0)).toBe(false);
-  });
-
-  it('uses the real user timestamp when a recalled-memory meta message is appended', () => {
-    const recalled = { ...user('recalled memory', T0 + IDLE + 2_001), isMeta: true };
-    const messages: PiAgentMessage[] = [
-      user('one', T0), assistant('a', T0 + 1_000), user('two', T0 + IDLE + 2_000), recalled,
-    ];
-
-    expect(cacheColdAtTurnStart(messages, IDLE, T0 + IDLE + 2_000)).toBe(true);
-  });
-
-  it('bounds a future-stamped prompt by now (clock skew can only close the gate, never open it)', () => {
-    // The prompt claims a huge idle gap, but the clock says only 1s has passed — the gap is capped
-    // by `now`, so the gate stays closed.
-    const skewed: PiAgentMessage[] = [user('one', T0), assistant('a', T0 + 1_000), user('two', T0 + 10 * IDLE)];
-    expect(cacheColdAtTurnStart(skewed, IDLE, T0 + 2_000)).toBe(false);
-    // With an honest clock the same timestamps open the gate.
-    expect(cacheColdAtTurnStart(skewed, IDLE, T0 + 10 * IDLE)).toBe(true);
   });
 });
 

@@ -1,11 +1,3 @@
-import { isUserTurn } from './userTurn.js';
-
-interface TimedMessage {
-  role?: unknown;
-  isMeta?: unknown;
-  timestamp?: unknown;
-}
-
 /** The longest prompt-cache TTL pi-ai ever uses (PI_CACHE_RETENTION=long). Exported as the fail-closed
  * fallback for gates that need the TTL of a request they did not witness (see coldCompactionGateMs). */
 export const LONG_CACHE_TTL_MS = 60 * 60_000;
@@ -27,29 +19,4 @@ export function cacheTtlMs(env: NodeJS.ProcessEnv): number {
  * expiry, not a break. */
 export function idleThresholdMs(env: NodeJS.ProcessEnv, ttlMs = cacheTtlMs(env)): number {
   return ttlMs + 60_000;
-}
-
-function lastUserIndex(messages: readonly TimedMessage[]): number {
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (isUserTurn(messages[index])) return index;
-  }
-  return -1;
-}
-
-/** Was the cache definitely cold when this turn started? Compare the last real user message with the
- * message right before it. During an active tool loop the gap is seconds; after an idle longer than the
- * TTL the gap proves the prefix had expired. */
-export function cacheColdAtTurnStart(
-  messages: readonly TimedMessage[],
-  idleMs: number,
-  now: number,
-): boolean {
-  const lastUser = lastUserIndex(messages);
-  if (lastUser <= 0) return false;
-  const promptAt = messages[lastUser]?.timestamp;
-  const previousAt = messages[lastUser - 1]?.timestamp;
-  if (typeof promptAt !== 'number' || typeof previousAt !== 'number') return false;
-  // A rehydrated session's prompt is fresh while its history is old; `now` bounds a prompt stamped in
-  // the future (clock skew) so the gap cannot be inflated beyond the real idle time.
-  return Math.min(promptAt, now) - previousAt > idleMs;
 }

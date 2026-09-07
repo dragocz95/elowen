@@ -17,11 +17,8 @@ import {
   type PendingCompactionMessage,
 } from './turnBoundaryCompaction.js';
 import { assessColdCompaction, type AssessColdCompaction } from './coldStartCompaction.js';
-import { installHistoryImageStripping } from './historyImageStripping.js';
-import { imagesRejected } from './imageRejection.js';
 import { installToolResultDeliverySpill } from './toolResultClearing.js';
 import { createCachePayloadMonitor, installCacheWatch, type CachePayloadMonitor, type CacheWatchFlavor } from './cacheWatch.js';
-import { idleThresholdMs, OPENAI_CACHE_MAX_RETENTION_MS } from './cacheTiming.js';
 import { installCacheBreakpoints } from './cacheBreakpoints.js';
 import {
   createRemoteCompactionV2,
@@ -656,8 +653,6 @@ export class BrainSessionFactory {
     const cacheFlavor: CacheWatchFlavor | undefined = spec.model.provider === 'anthropic' ? 'anthropic'
       : spec.model.api === 'openai-codex-responses' || spec.model.api === 'openai-responses'
         ? 'openai-responses' : undefined;
-    const cacheIdleMs = cacheFlavor === 'openai-responses'
-      ? idleThresholdMs(process.env, OPENAI_CACHE_MAX_RETENTION_MS) : undefined;
     const cacheMonitor = cacheFlavor ? createCachePayloadMonitor() : undefined;
     // Provider-side compaction exists only on the ChatGPT backend. `usable` is read live — the operator
     // switch, not the spawn-time snapshot — so turning the feature off mid-conversation immediately stops
@@ -785,15 +780,8 @@ export class BrainSessionFactory {
       spec.toolSearch.session = session;
       seedActivatedFromHistory(spec.toolSearch, session.messages);
     }
-    // Egress-only: once the prompt cache is definitely cold, historical image blocks become latched text
-    // placeholders for ANY source — Read images, MCP screenshots, future plugins. Warm history and the
-    // current run's fresh images stay intact; persisted history is untouched. An image the provider has
-    // already REFUSED opens that gate immediately (imageRejection.ts): it fails every later request until
-    // it is gone, so leaving it in until the cache goes cold would brick the conversation for an hour.
-    installHistoryImageStripping(session, {
-      rejected: () => imagesRejected(spec.sessionId),
-      ...(cacheIdleMs !== undefined ? { idleMs: cacheIdleMs } : {}),
-    });
+    // Historical images are collapsed by the turn-start pass instead (coldToolResultClearing.ts), in the
+    // live context rather than on an egress copy, so what this session sends is what its rows say.
     // Decided at DELIVERY, not at egress: a result too large on its own, or one that would take its
     // batch past the aggregate budget, is written to a spill file and replaced by a placeholder BEFORE
     // PI builds the tool-result message. The stored row, the agent state, the live UI event and the

@@ -2,8 +2,10 @@ import { logger } from '../../shared/logger.js';
 import { sessionToolResultSpillDir } from '../../shared/paths.js';
 import type { BrainStore, ClearedToolResultRow } from '../../store/brainStore.js';
 import { sessionHasWorkInFlight, type SessionQuiescenceDeps } from '../service/sessionQuiescence.js';
+import { OPENAI_CACHE_MAX_RETENTION_MS } from './cacheTiming.js';
 import { cacheDefinitelyCold } from './coldStartCompaction.js';
-import type { PiAgentMessage } from './historyImageStripping.js';
+import { collapseHistoricalImages, type PiAgentMessage } from './historyImageStripping.js';
+import { imagesRejected } from './imageRejection.js';
 import {
   TURN_START_KEEP_USER_TURNS,
   clearedToolResultDetails,
@@ -72,7 +74,7 @@ export interface ColdToolResultClearingOptions {
   readSpill?: (path: string) => Promise<string | null>;
 }
 
-/** Never throws and never blocks the turn: a history that cannot be spilled simply goes out whole. */
+/** Never throws and never blocks the turn: a history that cannot be shrunk simply goes out whole. */
 export async function clearColdToolResults(
   d: ColdToolResultClearingDeps,
   live: ColdToolResultSession,
@@ -81,7 +83,7 @@ export async function clearColdToolResults(
   try {
     await clearCold(d, live, options);
   } catch (error) {
-    log.warn(`cold tool-result clearing failed on ${live.sessionId} — the history goes out whole`, error);
+    log.warn(`cold turn-start clearing failed on ${live.sessionId} — the history goes out whole`, error);
   }
 }
 
@@ -92,12 +94,29 @@ async function clearCold(
 ): Promise<void> {
   if (live.session.isStreaming || live.session.isCompacting) return;
   const now = options.now ?? Date.now;
-  if (!cacheDefinitelyCold(
-    d.store.lastMessageAt(live.sessionId), live.interactedAt, live.lastRequestCacheTtlMs, now(),
-  )) return;
+  const lastMessageAt = d.store.lastMessageAt(live.sessionId);
+  const cold = cacheDefinitelyCold(lastMessageAt, live.interactedAt, live.lastRequestCacheTtlMs, now());
+  // Images use the UPPER bound of every provider's retention, not the TTL pi-ai asked for: OpenAI may
+  // keep an inactive prompt cache for a full hour whatever retention the request declared, and this pass
+  // is the destructive one. A refused image is the exception that overrides the gate entirely — it fails
+  // every later request until it is gone, so leaving it in would brick the conversation for that hour.
+  const rejected = imagesRejected(live.sessionId);
+  const imagesCold = rejected || cacheDefinitelyCold(
+    lastMessageAt, live.interactedAt,
+    Math.max(live.lastRequestCacheTtlMs ?? 0, OPENAI_CACHE_MAX_RETENTION_MS), now(),
+  );
+  if (!cold && !imagesCold) return;
   if (sessionHasWorkInFlight(d, live.sessionId)) return;
 
   const messages = live.session.messages;
+  if (imagesCold) {
+    const collapsed = collapseHistoricalImages(messages);
+    if (collapsed > 0) {
+      log.info(`collapsed images in ${collapsed} message(s) on ${live.sessionId}`
+        + ` (${rejected ? 'the provider refused an image' : 'cold turn start'})`);
+    }
+  }
+  if (!cold) return;
   const selected = selectClearableToolResults(messages, TURN_START_KEEP_USER_TURNS);
   if (selected.length === 0) return;
 
