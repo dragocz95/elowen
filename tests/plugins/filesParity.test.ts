@@ -128,6 +128,18 @@ describe('files plugin — Edit size cap', () => {
   });
   afterAll(() => { rmSync(dir, { recursive: true, force: true }); });
 
+  it('answers a missing Edit target the way Read does, not with a raw ENOENT', async () => {
+    writeFileSync(join(dir, 'notes.md'), 'body\n');
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(
+      reg, 'Edit', { file_path: join(dir, 'notes.txt'), old_string: 'body', new_string: 'text' },
+    ));
+    expect(detailsOf(res).ok).toBe(false);
+    expect(textOf(res)).toContain('File does not exist.');
+    expect(textOf(res)).toContain('Note: your current working directory is');
+    expect(textOf(res)).toContain(`Did you mean ${join(dir, 'notes.md')}?`);
+    expect(textOf(res)).not.toContain('ENOENT');
+  });
+
   it('refuses a file over 1 GB before reading it into memory', async () => {
     const path = join(dir, 'huge.txt');
     writeFileSync(path, 'needle\n');

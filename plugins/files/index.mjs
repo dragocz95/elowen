@@ -1494,6 +1494,14 @@ export function register(ctx) {
               ...(newDiff ? { diff: newDiff } : {}), ...(newPatch ? { patch: newPatch } : {}),
             });
           }
+          // The same missing-path answer Read, Glob and Grep give, and the reference's own for this tool:
+          // a raw ENOENT from the stat below names neither the directory the path was resolved against nor
+          // the neighbour the caller probably meant.
+          if (!existsSync(abs)) {
+            return ok('Edit', `Error: ${pathNotFoundMessage(
+              'File does not exist.', abs, ctx.defaultCwd(), (value) => ctx.displayPath(value),
+            )}`, { ok: false, ...pathMeta(abs) });
+          }
           // Checked on the stat, before the slurp: reading a gigabyte-plus file into a single string is the
           // out-of-memory failure this refusal exists to prevent, so it cannot come after the read.
           const size = statSync(abs).size;
