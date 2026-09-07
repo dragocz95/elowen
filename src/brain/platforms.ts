@@ -202,6 +202,14 @@ export class PlatformOrchestrator {
               if (src.access.agentType) throw new Error('fork cannot be combined with subagent_type — a fork inherits the parent’s own prompt');
               if (src.access.workspaceId) throw new Error('fork cannot be combined with workspaceId — a fork inherits the parent’s working directory');
               if (src.access.planMode === true) throw new Error('fork is not available from a planning turn — plan mode narrows what the child could inherit');
+              // Handed-over context is a system-prompt append, and a fork appends nothing (see the packing
+              // below), so accepting it here would drop it without a trace — which is precisely how a fork
+              // workflow node lost its dependencies' results. A caller that has context to deliver must put
+              // it in the child's FIRST PROMPT, after the boundary, the way the subagent plugin's workflow
+              // engine does. Refusing beats losing it silently.
+              if (typeof src.access.context === 'string' || (src.access.context?.length ?? 0) > 0) {
+                throw new Error('fork cannot be combined with handed-over context — a fork inherits the parent’s exact system prompt; deliver the context in the child’s first prompt instead');
+              }
             }
             // Capture one immutable boundary on the very first child spawn. The synthetic platform source
             // is internal but still validated like persisted JSON: a malformed scope must not fall back to
@@ -251,9 +259,10 @@ export class PlatformOrchestrator {
             // of the three the normalizer below rejects the whole scope and the child never runs at all —
             // the least diagnosable failure this path can produce. Log whatever had to be cut, since the
             // child only learns it from a marker inside its own prompt.
-            // A fork appends NOTHING. Its system prompt is the parent's, and the parent has no role prompt,
-            // no handed-over context and no channel fragment; adding any of them here is exactly the byte
-            // that would move the cached prefix.
+            // A fork appends NOTHING. Its system prompt is the parent's, and a fork's parent is an owner
+            // conversation with no role prompt and no channel fragment; handed-over context is refused
+            // above rather than dropped here. Appending any of them would be exactly the byte that moves
+            // the cached prefix.
             const packed = packDelegatedPromptAppend(fork ? [] : promptAppend);
             const workspaceBinding = resolveDelegatedWorkspace(
               this.d.sandbox?.(),
