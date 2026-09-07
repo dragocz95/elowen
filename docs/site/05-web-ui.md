@@ -133,9 +133,10 @@ Only administrators can open `/users` and `/settings`.
 `/settings` contains the daemon-wide sections:
 
 - **System** — service readiness, updates, and token lifetime;
-- **configured assistant AI** — provider configuration, agent identity, limits, retention, runtime, and context windows. The label uses the configured assistant name;
+- **`<assistant name>` AI** — provider configuration, agent identity, limits, retention, runtime, and context windows. The label uses the configured assistant name;
 - **Models** — visible presets and custom model entries;
 - **Plugins** — installation, enable/disable state, grants, logs, and plugin configuration;
+- **Dashboard** — dashboard recap, digest, greeting, quick-action, and continuation settings;
 - **Data** — administrative maintenance and cleanup.
 
 The former Settings **Memory** path is retired and aliases to **Models**. Embedding and categorization controls are administered through the current Models and AI sections shown by the installation.

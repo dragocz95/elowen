@@ -12,19 +12,24 @@ The following existing PNGs are not referenced by the current numbered manual an
 
 ## Web UI
 
-| Asset | Surface and state | Alt text |
-| --- | --- | --- |
-| `web-ui-dashboard.png` | Dashboard (Home) | Dashboard with the hero mini-cosmos, the trunk filament and the activity journal |
-| `brain-memory.png` | Memory with a record selected | Memory workspace with a right-side memory detail drawer |
-| `brain-chat.png` | Chat with a technical conversation | Elowen answering a question about a rounding bug in the web chat |
-| `getting-started-chat.png` | Chat with the introduction conversation | Elowen introducing its capabilities in the web chat |
-| `projects-list.png` | Projects registry | Project registry with paths, notes and read-only Git context |
-| `projects-editor.png` | Editor with an open file | Built-in code editor with the project file tree and an open source file |
-| `users-rbac.png` | Users directory | User directory with roles, project boundaries and model permissions |
-| `settings-overview.png` | Settings → System | Elowen System settings with the section rail and service diagnostics |
-| `settings-models.png` | Settings → Models | Elowen model catalogue with provider groups and enabled models |
-| `plugins-overview.png` | Settings → Plugins | Installed plugins with their tools, platforms and health |
-| `account-settings.png` | Account | Account control surface with the owner's Elowen preferences |
+| Asset | Surface and state | Status | Alt text |
+| --- | --- | --- | --- |
+| `web-ui-dashboard.png` | Dashboard (Home) | Referenced by current manual | Dashboard with the hero mini-cosmos, the trunk filament and the activity journal |
+| `brain-memory.png` | Memory with a record selected | Referenced by current manual | Memory workspace with a right-side memory detail drawer |
+| `brain-chat.png` | Chat with a technical conversation | Referenced by current manual | Elowen answering a question about a rounding bug in the web chat |
+| `getting-started-chat.png` | Chat with the introduction conversation | Referenced by current manual | Elowen introducing its capabilities in the web chat |
+| `projects-list.png` | Projects registry | Referenced by current manual | Project registry with paths, notes and read-only Git context |
+| `projects-editor.png` | Editor with an open file | Referenced by current manual | Built-in code editor with the project file tree and an open source file |
+| `users-rbac.png` | Users directory | Referenced by current manual | User directory with roles, project boundaries and model permissions |
+| `settings-overview.png` | Settings → System | Referenced by current manual | Elowen System settings with the section rail and service diagnostics |
+| `settings-models.png` | Settings → Models | Referenced by current manual | Elowen model catalogue with provider groups and enabled models |
+| `plugins-overview.png` | Settings → Plugins | Referenced by current manual | Installed plugins with their tools, platforms and health |
+| `account-settings.png` | Account | Referenced by current manual | Account control surface with the owner's Elowen preferences |
+| `web-ui-timeline.png` | No current numbered-manual reference | Unreferenced/unclassified | Asset retained for future provenance review |
+| `web-ui-tasks.png` | No current numbered-manual reference | Unreferenced/unclassified | Asset retained for future provenance review |
+| `web-ui-kanban.png` | No current numbered-manual reference | Unreferenced/unclassified | Asset retained for future provenance review |
+| `web-ui-escalations.png` | No current numbered-manual reference | Unreferenced/unclassified | Asset retained for future provenance review |
+| `web-ui-sessions.png` | No current numbered-manual reference | Unreferenced/unclassified | Asset retained for future provenance review |
 
 ## CLI (`../../screenshots/cli`)
 

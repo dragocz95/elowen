@@ -192,7 +192,7 @@ A persistent goal is owned by a conversation and is driven by `GoalLoopService`.
 
 Memory is account-owned by default. An administrator can configure a Project shared pool whose eligible members can recall and manage the pool's rows; owner chat and verified platform turns still honor the acting identity. Uncategorized memories are never recalled. Embeddings and categorization are optional enhancements; keyword-based operation remains possible without an embedding model.
 
-Scheduling is plugin-owned. Personal jobs run with the owning account and re-check account/plugin access when they fire. Owner-chat and Web-created recurring jobs use a dedicated job conversation; direct one-to-one platform jobs retain their direct origin, while shared-room jobs use the normal channel path. Instance jobs are operator-owned. Filing a job under a conversation is organizational and does not change execution context, model, permissions, or delivery.
+Scheduling is plugin-owned. Personal jobs run with the owning account and re-check account/plugin access when they fire. Owner-chat and Web-created recurring jobs use a dedicated job conversation unless a permitted explicit notification channel is configured. Direct one-to-one platform jobs retain their direct origin, while shared-room jobs use the normal channel path. An explicit notification channel takes precedence over the normal ownership-based destination. Instance jobs are operator-owned. Filing a job under a conversation is organizational and does not change execution context, model, permissions, or delivery.
 
 ## Database, migrations, and maintenance
 

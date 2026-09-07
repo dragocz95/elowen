@@ -28,7 +28,7 @@ The `cronjob` plugin must be enabled, and an account needs access to it before i
 
 | Scope | Use it for | Execution and delivery |
 |---|---|---|
-| `personal` | Automation for the person asking | Runs as that host-verified Elowen account, with its project policy, tool restrictions, and plugin grants. Owner-chat and Web-created jobs use a dedicated job conversation. A job created in a direct 1:1 platform chat can retain that direct origin; a shared-room job has no private origin and uses the normal channel path. |
+| `personal` | Automation for the person asking | Runs as that host-verified Elowen account, with its project policy, tool restrictions, and plugin grants. Owner-chat and Web-created jobs use a dedicated job conversation unless a permitted `notifyChannelId` is configured. A job created in a direct 1:1 platform chat can retain that direct origin; a shared-room job has no private origin and uses the normal channel path. An explicit notification channel takes precedence over the normal ownership-based destination. |
 | `instance` | Automation belonging to the whole Elowen instance | Only the instance owner can create it. It has no account owner, runs with instance-owner powers, and reports through the notification channel unless an explicit destination is selected. |
 
 A broad administrator session does not by itself authorize an `instance` job. `scope` describes who the automation is for, not merely what the current caller is allowed to do; use `personal` when the schedule is for one person.
@@ -98,7 +98,7 @@ The scheduler checks for due work every 30 seconds by default. Five-field cron s
 | `plain` | Set `true` to omit the `⏰ **job name**` header from delivered results. |
 | `enabled` | Set `false` to create the job paused. |
 | `check` | An optional shell guard for an instance job or a sufficiently privileged personal job. |
-| `notifyChannelId` | An optional channel or thread destination. It is intended for instance or sufficiently privileged owner jobs; ordinary personal jobs report to their own conversation. Without a destination, an instance job uses the notification channel. |
+| `notifyChannelId` | An optional channel or thread destination. It is intended for instance or sufficiently privileged owner jobs; ordinary personal jobs report to their own conversation. When present and permitted, it overrides the normal ownership-based destination. Without a destination, an instance job uses the notification channel. |
 
 ### The `check` guard
 
@@ -163,6 +163,8 @@ CronAdd({
 ```
 
 **Instance-wide polling job with a guard:**
+
+Only the instance owner can create this schedule. Call `CronConversations` in that owner's eligible context and use one of the returned conversation ids for filing; filing does not grant instance authority.
 
 ```js
 CronAdd({

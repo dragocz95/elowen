@@ -61,7 +61,7 @@ A goal belongs to the conversation that created it and runs its kickoff and cont
 
 ### Goal limits and resuming
 
-The instance owner can adjust **Settings → configured assistant AI → Limits**:
+The instance owner can adjust **Settings → `<assistant name>` AI → Limits**:
 
 - **Goal turn budget** — the default number of autonomous turns before a supervised goal pauses;
 - **Goal safety ceiling** — the absolute maximum number of autonomous goal turns, including YOLO.

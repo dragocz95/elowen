@@ -67,7 +67,7 @@ Non-secret fields autosave with revision protection. If another tab or device sa
 
 ## Models
 
-The **Models** section controls personal model and execution preferences for the embedded assistant used by Web chat and `elowen chat` in the terminal. Instance-wide provider and runtime administration remains under **Settings → configured assistant AI**, where the label uses the configured assistant name.
+The **Models** section controls personal model and execution preferences for the embedded assistant used by Web chat and `elowen chat` in the terminal. Instance-wide provider and runtime administration remains under **Settings → `<assistant name>` AI**, where the label uses the configured assistant name.
 
 ### Default model
 

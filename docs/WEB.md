@@ -37,7 +37,7 @@ For a direct Next.js production build, use `npm --prefix web run build`. The roo
 | `/chat` | core | Full-page advisor chat. |
 | `/memory` | core | Account memory, categories, retrieval, and memory administration. |
 | `/projects` | core | Project registration, access, read-only Git state, and plugin project panels. |
-| `/settings` | core | Administrator-only system, brain, model, plugin, and data settings. The retired `memory` category aliases to `models`. |
+| `/settings` | core | Administrator-only system, brain, model, plugin, dashboard, and data settings. The retired `memory` category aliases to `models`. |
 | `/users` | core | Administrator-only account and access management. |
 | `/account` | core | The signed-in account's profile, security, notifications, defaults, and personal settings. |
 | `/p/<plugin>/<...rest>` | plugin host | A page contributed by an enabled plugin. |
@@ -62,7 +62,7 @@ Every route is dynamic (`dynamic = 'force-dynamic'`) because skin, branding, plu
 - **Chat** uses `BrainChatProvider` as the single controller for transcript state, draft text, attachments, queues, questions, plans, model selection, and the SSE stream. The dock and full-page chat share that controller, so opening or closing the dock does not create a second stream.
 - **Projects** displays registered filesystem roots and the daemon's read-only Git snapshot. Administrators can create, edit, remove, and assign Projects; members can only use Projects granted to them. Enabled plugins can add project panels, such as Sandbox workspaces or a GitHub repository mapping.
 - **Memory** operates on the signed-in account's memory. Categories, retrieval, embeddings, and categorization are separate server capabilities; a missing embedding model does not make the browser invent local memory state.
-- **Settings** has the core sections `system`, `brain`, `models`, `plugins`, and `data`; the retired `memory` key aliases to `models`. Plugin-owned settings are pages in the plugin's own world rather than duplicate sections in core Settings.
+- **Settings** has the core sections `system`, `brain`, `models`, `plugins`, `dashboard`, and `data`; the retired `memory` key aliases to `models`. Plugin-owned settings are pages in the plugin's own world rather than duplicate sections in core Settings.
 - **Account** has `profile`, `security`, `notifications`, `personality`, `cli` displayed as **Models**, `terminal`, and `memory` sections, plus plugin-contributed account panels and manifest-defined personal plugin configuration for the signed-in account.
 - **Users** is an administrator surface for accounts, Project assignments, and per-account tool access. Members do not receive this route's management authority.
 

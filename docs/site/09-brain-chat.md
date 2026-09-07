@@ -142,7 +142,7 @@ Dynamic plugin context is ephemeral: it is used for the current turn and is not 
 
 Turn-start recall searches from the message you send. When the work later moves through files, tools, and errors, Elowen can search again using the work already done in that turn. This **recall while working** is non-blocking: the model continues, and a result that arrives is available on a later model call.
 
-Both automatic recall and recall while working are enabled by default for user conversations. Change the personal switches in **Account → Memory**. Operators configure the recall budgets in **Settings → configured assistant AI → Limits**.
+Both automatic recall and recall while working are enabled by default for user conversations. Change the personal switches in **Account → Memory**. Operators configure the recall budgets in **Settings → `<assistant name>` AI → Limits**.
 
 In shared channel conversations, memory is scoped to the verified account associated with the sender. An unlinked sender does not recall that account's personal memories, and one sender's private memories are not exposed to another sender. An administrator-configured shared Project pool is available only to eligible Project members. See [Memory & Embeddings](memory) for retrieval, categories, retention, and project scope.
 

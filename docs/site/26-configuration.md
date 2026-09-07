@@ -70,14 +70,15 @@ Open **Settings** as an administrator. Changes normally save automatically; cont
 | Section | What it controls |
 | --- | --- |
 | **System** | Version and update status, daemon/web status, restart actions, automatic updates, push contact, CLI token lifetime, and conversation retention. |
-| **configured assistant AI** | Assistant name, AI provider accounts, per-run step limit, brain limits, runtime limits, tool loading, compaction, sub-agent execution, and memory retention. The label uses the configured assistant name. |
+| **`<assistant name>` AI** | Assistant name, AI provider accounts, per-run step limit, brain limits, runtime limits, tool loading, compaction, sub-agent execution, and memory retention. The label uses the configured assistant name. |
 | **Models** | Enabled model entries, custom models, context-window overrides, and the current embedding and categorization controls where available. The retired `memory` category aliases here. |
 | **Plugins** | Installed plugins, enable/disable state, marketplace installation, updates, removal, and plugin-specific settings. |
+| **Dashboard** | Dashboard recap, digest, greeting, quick-action, and continuation settings. |
 | **Data** | Provider request diagnostics and log viewing. |
 
 ## AI providers
 
-Go to **Settings → configured assistant AI**.
+Go to **Settings → `<assistant name>` AI**.
 
 ### API-key providers
 
@@ -98,7 +99,7 @@ API keys are write-only from the browser: the UI reports whether a key is stored
 
 ### OAuth accounts
 
-Supported OAuth connections are **Anthropic**, **OpenAI Codex**, **GitHub Copilot**, and **Kimi**. Start or disconnect them from the provider cards in **Settings → configured assistant AI**. Some flows open a provider authorization page or ask you to paste a code back into Elowen.
+Supported OAuth connections are **Anthropic**, **OpenAI Codex**, **GitHub Copilot**, and **Kimi**. Start or disconnect them from the provider cards in **Settings → `<assistant name>` AI**. Some flows open a provider authorization page or ask you to paste a code back into Elowen.
 
 Usage rails are available for the OAuth providers that expose a supported usage endpoint: Anthropic, OpenAI Codex, and Kimi. The rail is cached for 60 seconds, warns at 70%, and shows danger at 90%. GitHub Copilot can be connected and used, but it has no Elowen subscription-usage rail.
 
@@ -135,7 +136,7 @@ A configured vision model is a fallback, not a permanent second model. Elowen us
 
 ## Runtime limits
 
-The **configured assistant AI** section contains two limit editors. They protect the daemon from unbounded output, context growth, waits, and concurrent sessions.
+The **`<assistant name>` AI** section contains two limit editors. They protect the daemon from unbounded output, context growth, waits, and concurrent sessions.
 
 ### Brain limits
 
@@ -192,7 +193,7 @@ If embeddings are not configured, memory remains usable with keyword retrieval. 
 
 ### Automatic memory retention
 
-The retention editor is in **Settings → configured assistant AI → Retention**. It is enabled by default:
+The retention editor is in **Settings → `<assistant name>` AI → Retention**. It is enabled by default:
 
 | Setting | Default | Meaning |
 | --- | ---: | --- |

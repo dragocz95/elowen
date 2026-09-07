@@ -98,7 +98,7 @@ OAuth-backed providers can expose subscription or rate-limit windows instead of 
 Elowen displays those windows in two places:
 
 - the CLI telemetry rail for the active provider; and
-- **Settings → configured assistant AI**, on the connected OAuth account row.
+- **Settings → `<assistant name>` AI**, on the connected OAuth account row.
 
 A provider may report a five-hour window, weekly windows, or another shape. Elowen does not raise or reset these limits. Window meters become warning-colored at **70%** and danger-colored at **90%**; hovering the meter shows the provider's reset time.
 
@@ -130,7 +130,7 @@ Origin accounting is available only to administrators because it can contain cli
 
 An IP identifies a connection, not a person. Usage history from before origin tracking began has no origin attribution and cannot be reconstructed. Origin totals are intentionally not expected to match the model or day totals exactly.
 
-Runtime retention settings are under **Settings → configured assistant AI → Runtime**:
+Runtime retention settings are under **Settings → `<assistant name>` AI → Runtime**:
 
 - `runtime.limits.originIpRetentionDays` — how long an origin IP remains readable; default **30 days**, range **1–365**;
 - `runtime.limits.eventRetentionDays` — how long origin rows are retained; default **30 days**, range **1–365**.
