@@ -18,7 +18,7 @@ import { recordSubagentFinishMarker, recordWorkflowFinishMarker, visibleSubagent
 import { runCompaction, withDescendantUsage, sessionUsageSnapshot } from './events.js';
 import type { ElicitationRegistry } from './elicitation.js';
 import type { CardRegistry } from './cards.js';
-import { projectUserTurn } from './persistence.js';
+import { projectUserTurn, storedContextMessages } from './persistence.js';
 import { attachmentTurnNote, storeChannelAttachments, unstoredAttachmentTurnNote, type ChannelAttachment, type ChannelUploadDeps } from './channelAttachments.js';
 import { newCostMeter, runWithMeter } from './openrouterMeter.js';
 import { extractText, isThinkingOnlyReply, NO_REPLY_NUDGE, lastAssistant } from './messageView.js';
@@ -564,26 +564,20 @@ export class ChannelSessionService {
     this.d.onDelegatedEdge?.(parentSessionId, childSessionId, false);
   }
 
-  /** The parent's durable transcript, in the shape the fork seed needs: the stored message bytes, with the
-   *  row's own role beside them.
+  /** The parent's durable transcript, in the shape the fork seed needs.
    *
-   *  A row whose content will not parse is dropped rather than guessed at. That is deliberately harsher
-   *  than it sounds — a fork exists to reproduce the parent's prefix exactly, and a prefix with a hole in
-   *  it is not a cheaper fork, it is a different conversation. Dropping keeps the transcript valid; the
-   *  fork simply misses the cache and says so in its own log line. */
+   *  Read through {@link storedContextMessages} — the very function a REHYDRATION replays — rather than off
+   *  the raw rows. That is what makes the child's context the parent's rather than a near copy of it: the
+   *  raw rows still carry whatever a corrupt blob, an orphaned tool result or an externalized image would
+   *  contribute, none of which reaches the parent's own context, and the tool results egress has cleared
+   *  are placeholders in the rows precisely so this reading finds them cleared too.
+   *
+   *  A row the shared reading drops is dropped here as well. That is deliberately harsher than it sounds —
+   *  a fork exists to reproduce the parent's prefix exactly, and a prefix with a hole in it is not a
+   *  cheaper fork, it is a different conversation. The fork simply misses the cache and says so in its own
+   *  log line. */
   private parentForkHistory(parentSessionId: string): ForkMessage[] {
-    const out: ForkMessage[] = [];
-    for (const row of this.d.store.getMessages(parentSessionId)) {
-      let parsed: unknown;
-      try { parsed = JSON.parse(row.content); }
-      catch { continue; } // unreadable row — see above
-      // The stored bytes ARE the message. A row whose content is not one is not something to wrap and
-      // hope for: rehydration would skip it later and the fork would quietly lose that turn.
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
-      if (typeof (parsed as { role?: unknown }).role !== 'string') continue;
-      out.push(parsed as ForkMessage);
-    }
-    return out;
+    return storedContextMessages(this.d.store, parentSessionId) as ForkMessage[];
   }
 
   /** A child can only execute under the immutable scope minted by its original delegate call. This is
@@ -897,6 +891,13 @@ export class ChannelSessionService {
               // parent's. No model named at all = the child inherits the parent's, which always matches.
               sameModel: !opts.model?.model
                 || (opts.model.model === forkParent?.model && opts.model.provider === forkParent?.providerId),
+              // For the size guard's refusal, which has to name what this conversation is running on. The
+              // live record first, then the durable row — a delegated turn commonly runs in the runner,
+              // where the parent has no live record at all, and a refusal that cannot name the parent
+              // model is exactly as unhelpful as the transport error it replaces. The parent's WINDOW is
+              // not resolved here: it takes the model registry, and the guard decides on the child's.
+              parentModel: forkParent?.model ?? this.d.store.getSession(parentSessionId)?.model ?? 'the parent model',
+              parentWindow: 0,
             },
           } : {}),
           trustedChannel: opts.trusted, // admin-role sender → trusted-channel (all projects + full plugin toolset), still no Elowen*

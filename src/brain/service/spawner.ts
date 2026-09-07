@@ -14,7 +14,8 @@ import { makeToolIconResolver } from '../toolIcons.js';
 import { composeSessionTools } from '../session/capabilities.js';
 import { createToolSearchHandle, toolSearchTool, formatDeferredToolsBlock, formatHostedToolCatalogBlock, type ToolSearchHandle } from '../toolSearch/toolSearchTool.js';
 import { buildPromptTemplates } from '../slashCommands.js';
-import { formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
+import { estimateTokens, formatSkillsForPrompt } from '@earendil-works/pi-coding-agent';
+import { forkExceedsChildWindow, formatForkCacheLine, forkWindowRefusal } from '../session/forkPrefix.js';
 import type { Api, Model } from '@earendil-works/pi-ai';
 import { personalityText } from '../personality.js';
 import { currentWorkDir, toolPermitted, type ToolPolicy } from '../../plugins/policyContext.js';
@@ -260,6 +261,37 @@ export class LiveSessionSpawner {
     // (the model would otherwise claim/act on that path). Same resolution as the per-turn workDir.
     const cwd = opts.pathView?.root
       ?? turnWorkDir(opts.policy, opts.clientCwd, this.d.projectPath) ?? this.d.cwd ?? process.cwd();
+    // SIZE GUARD, before anything is built. A fork inherits the whole parent conversation, and the child
+    // may be running a different model: a 480k-token owner chat forked onto a 200k-window model produced a
+    // request the transport refused, which surfaced as `Connection error.` and named nothing. Refuse it
+    // here instead, with both windows in the message, and record the refusal on the fork's own log line so
+    // the evidence surface for a fork that never ran matches the one for a fork that did.
+    if (opts.forkSeed?.length) {
+      const fit = {
+        // The same per-message estimator the compaction threshold runs on, so the guard and the thing it
+        // protects cannot disagree about how big this conversation is.
+        seedTokens: opts.forkSeed.reduce(
+          (total, message) => total + estimateTokens(message as Parameters<typeof estimateTokens>[0]), 0),
+        parentModel: opts.forkCache?.parentModel ?? model.id,
+        parentWindow: opts.forkCache?.parentWindow ?? 0,
+        childModel: model.id,
+        childWindow: model.contextWindow ?? 0,
+      };
+      if (forkExceedsChildWindow(fit)) {
+        if (opts.forkCache) {
+          logger('brain-subagent').info(formatForkCacheLine({
+            childSessionId: sessionId,
+            parentSessionId: opts.forkCache.parentSessionId,
+            cacheRead: 0, cacheWrite: 0, input: 0,
+            parentPrefix: opts.forkCache.parentPrefix,
+            sameModel: opts.forkCache.sameModel,
+            providerCaches: false,
+            failure: `refused: ${fit.seedTokens} seed tokens exceed ${fit.childModel} (window ${fit.childWindow})`,
+          }));
+        }
+        throw new Error(forkWindowRefusal(fit));
+      }
+    }
     // A FORK child is composed as its parent was, not as a delegated child normally is. Every branch below
     // that keys on `opts.channel` is a difference in the cached prefix — the platform overlay, the per-turn
     // skills block, the withheld sharing tools, the missing project context — and a fork exists precisely

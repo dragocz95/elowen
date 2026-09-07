@@ -306,8 +306,12 @@ export interface SpawnOpts {
   /** The transcript a fork child starts from: the parent's history plus the fork boundary. Written once,
    *  before the session manager rehydrates, and only for a brand-new child. */
   forkSeed?: ForkMessage[];
-  /** What the fork's cache-verdict log line needs, measured on the child's first provider response. */
-  forkCache?: { parentSessionId: string; parentPrefix: number; sameModel: boolean };
+  /** What the fork's cache-verdict log line needs, measured on the child's first provider response — and
+   *  what the size guard names when it refuses the fork before there is any response to measure. The
+   *  parent's model travels with it because a cross-model fork is precisely the case the guard exists for
+   *  and the spawning process cannot always look it up: a delegated turn commonly runs in the sub-agent
+   *  runner, where the parent has no live record at all. */
+  forkCache?: { parentSessionId: string; parentPrefix: number; sameModel: boolean; parentModel: string; parentWindow: number };
   /** WHOSE personal settings compose this session — chat model, compaction model, auto-compact
    *  thresholds and advisor style. A shared room serves several people, so its caller names the VERIFIED
    *  WRITER of the turn that is spawning: a room's owner is only whoever opened it, and their personal
