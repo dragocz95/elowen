@@ -73,10 +73,14 @@ const MAX_PRINCIPAL_CHARS = 256;
 const MAX_THINKING_LEVEL_CHARS = 64;
 const MAX_PROMPT_CHUNKS = 16;
 const MAX_PROMPT_CHARS = 8_000;
-// Shared budget for ALL system-prompt sections of a delegated child (role prompt + parent-supplied
-// context + shared-channel fragment), fair-shared between them by packDelegatedPromptAppend. Raised from
-// 32k so the operator-tunable delegateContextChars can actually reach its 80k ceiling instead of being
-// trimmed straight back off. Hard ceiling above this is MAX_PROMPT_CHUNKS * CHUNK_BODY_CHARS = 127 616.
+// Shared budget for ALL system-prompt sections of a delegated child, fair-shared between them by
+// packDelegatedPromptAppend. Three residents today: a user-authored agent's role prompt, a workflow
+// node's dependency-context chunks (which the workflow engine already budgets at 40 000 of its own) and
+// the shared-channel fragment. It is the ceiling on their SUM, not on any one of them — no current
+// producer comes close alone, and it sits just under what the packing can physically hold
+// (MAX_PROMPT_CHUNKS * CHUNK_BODY_CHARS = 127 616) so an oversized scope is rejected for its size rather
+// than lost in the gap between the two bounds. Slack, deliberately: this normalizer fails a whole
+// delegation closed, so it is the wrong place to squeeze.
 const MAX_PROMPT_TOTAL_CHARS = 120_000;
 const own = (value: object, key: string): boolean => Object.prototype.hasOwnProperty.call(value, key);
 
