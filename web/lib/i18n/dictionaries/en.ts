@@ -1257,7 +1257,6 @@ export const en = {
     maxSteps: "Max steps",
     maxStepsHint: "Maximum model rounds per request. Prevents runaway loops. Range 100–1,000 in steps of 100; default 200.",
     subagents: {
-      title: "Sub-agents",
       forkParentContext: "Fork parent context",
       forkParentContextHint: "When a Delegate call does not say otherwise, start the sub-agent as a FORK of this conversation: the same system prompt, the same tools and the whole history, so the provider reads the cached prefix instead of billing it again. The cache is only shared while nothing narrows the child, so a forked sub-agent cannot be given its own toolset, read-only mode, a sub-agent type or a workspace, and a different model shares no cache at all.",
     },

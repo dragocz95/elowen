@@ -52,9 +52,10 @@ describe('BrainSection limits — collapsed into a drawer', () => {
     expect(screen.getByText('≈ 7.5k tokens')).toBeTruthy();
     // Raised inside the drawer, the way a real Escape arrives: the dialog is Radix-driven now and listens
     // on the document, which `window` sits above rather than inside.
-    // The retired sub-agent context budget is gone, and the Sub-agents group stands in its place.
+    // The retired sub-agent context budget is gone; the fork default is one more row of the same list,
+    // not a section with its own heading.
     expect(screen.queryByRole('slider', { name: 'Sub-agent context' })).toBeNull();
-    expect(screen.getByText('Sub-agents')).toBeTruthy();
+    expect(screen.queryByText('Sub-agents')).toBeNull();
     expect(screen.getByRole('switch', { name: 'Fork parent context' })).toBeTruthy();
     fireEvent.keyDown(screen.getByRole('slider', { name: 'Memory recall — count' }), { key: 'Escape' });
     await waitFor(() => expect(screen.queryByRole('slider', { name: 'Memory recall — count' })).toBeNull());
@@ -62,7 +63,7 @@ describe('BrainSection limits — collapsed into a drawer', () => {
 
   // The instance default rides the limits editor's own auto-save, so flipping it must reach the daemon
   // as part of the brain patch rather than needing an editor of its own.
-  it('saves the fork default from the Sub-agents group', async () => {
+  it('saves the fork default from the limits list', async () => {
     renderBrain();
     fireEvent.click(await screen.findByRole('button', { name: 'Edit limits' }));
     fireEvent.click(screen.getByRole('switch', { name: 'Fork parent context' }));

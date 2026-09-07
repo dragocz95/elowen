@@ -138,13 +138,10 @@ export function BrainLimitsModal({ limits, applied, forkParentContext = false, o
               </div>
             );
           })}
-        </div>
-        {onForkParentContextChange ? (
-          <div className="mt-6 border-t border-border pt-4">
-            <p className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-              {t.brain.subagents.title}
-            </p>
-            <div className="flex items-center gap-2.5 py-2">
+          {onForkParentContextChange ? (
+            // One more record in the same list: the fork default is a limit on what a sub-agent costs,
+            // not a section of its own.
+            <div className="flex items-center gap-2.5 py-3.5">
               <span className="flex h-7 w-7 shrink-0 items-center justify-center text-muted-foreground">
                 <GitFork size={18} aria-hidden />
               </span>
@@ -158,8 +155,8 @@ export function BrainLimitsModal({ limits, applied, forkParentContext = false, o
                 label={t.brain.subagents.forkParentContext}
               />
             </div>
-          </div>
-        ) : null}
+          ) : null}
+        </div>
       </ModalBody>
       <ModalFooter status={<AutoSaveStatus status={status} onRetry={retry} />}>
         <Button variant="accent" onClick={close} disabled={closeDisabled}>{t.common.done}</Button>
