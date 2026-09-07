@@ -95,6 +95,13 @@ describe('terminal plugin', () => {
     expect(bash.parameters.additionalProperties).toBe(false);
   });
 
+  it('tells the model how to run several commands: parallel calls, && for dependent, no newlines', () => {
+    const bash = reg.tools.find((tool) => tool.name === 'Bash') as unknown as { description: string };
+    expect(bash.description).toContain('if the commands are independent and can run in parallel, make multiple Bash tool calls in a single message');
+    expect(bash.description).toContain("use a single Bash call with '&&' to chain them together");
+    expect(bash.description).toContain('DO NOT use newlines to separate commands (newlines are ok in quoted strings).');
+  });
+
   it('maps a workspace guest cwd through the real workspace PathView contract', () => {
     const workspace = join(dir, 'workspace-host');
     mkdirSync(join(workspace, 'nested'), { recursive: true });
