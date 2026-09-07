@@ -48,32 +48,82 @@ function fakeCtx(config: Record<string, unknown>, mcpBridgeSnapshot?: unknown, d
   };
 }
 
+describe('mcp plugin — bridged content parity', () => {
+  it('downsamples a bridged image past the API dimension limit instead of forwarding it raw', async () => {
+    const sharp = (await import('sharp')).default;
+    const oversized = await sharp({ create: { width: 2400, height: 300, channels: 3, background: { r: 10, g: 120, b: 200 } } })
+      .png().toBuffer();
+    const raw = oversized.toString('base64');
+
+    const mapped = await mapResult({ content: [{ type: 'image', data: raw, mimeType: 'image/png' }] });
+
+    const part = mapped.content[0] as { type: string; data: string; mimeType: string };
+    expect(part.type).toBe('image');
+    expect(part.data).not.toBe(raw);
+    const metadata = await sharp(Buffer.from(part.data, 'base64')).metadata();
+    expect(metadata.width).toBeLessThanOrEqual(2000);
+  });
+
+  it('marks a bridged description that had to be cut instead of ending mid-sentence', async () => {
+    const { bridgedDescription, MAX_MCP_DESCRIPTION_LENGTH } = await import('../../plugins/mcp/index.mjs') as {
+      bridgedDescription: (server: string, tool: { name: string; description?: string }) => string;
+      MAX_MCP_DESCRIPTION_LENGTH: number;
+    };
+    expect(MAX_MCP_DESCRIPTION_LENGTH).toBe(2048);
+    const short = bridgedDescription('docs', { name: 'search', description: 'Search the docs.' });
+    expect(short).toBe('[docs] Search the docs.');
+    expect(short).not.toContain('[truncated]');
+
+    const long = bridgedDescription('docs', { name: 'search', description: 'x'.repeat(5000) });
+    expect(long).toHaveLength(MAX_MCP_DESCRIPTION_LENGTH + '… [truncated]'.length);
+    expect(long.endsWith('… [truncated]')).toBe(true);
+  });
+
+  it('writes a resource blob to disk and hands back the path it can be read from', async () => {
+    const { persistResourceBlob } = await import('../../plugins/mcp/index.mjs') as {
+      persistResourceBlob: (dir: string, uri: string, mime: string, blob: string) => { path: string; bytes: number };
+    };
+    const dir = mkdtempSync(join(tmpdir(), 'elowen-mcp-blob-'));
+    try {
+      const payload = Buffer.from('%PDF-1.4 not really a pdf');
+      const saved = persistResourceBlob(dir, 'file:///reports/q3.pdf', 'application/pdf', payload.toString('base64'));
+      expect(saved.bytes).toBe(payload.length);
+      expect(saved.path.endsWith('.pdf')).toBe(true);
+      expect(existsSync(saved.path)).toBe(true);
+      expect(readFileSync(saved.path)).toEqual(payload);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});
+
 describe('mcp plugin — helpers', () => {
   it('sanitize produces a safe tool-name token', () => {
     expect(sanitize('Chrome DevTools!')).toBe('chrome_devtools');
     expect(sanitize('')).toBe('x');
   });
 
-  it('mapResult maps MCP content to a brain tool result', () => {
-    expect(mapResult({ content: [{ type: 'text', text: 'hi' }] })).toEqual({ content: [{ type: 'text', text: 'hi' }], details: { ok: true, isError: false } });
-    expect(mapResult({ content: [], isError: true }).details.isError).toBe(true);
-    expect(mapResult({ content: [], isError: true }).details.ok).toBe(false);
+  it('mapResult maps MCP content to a brain tool result', async () => {
+    expect(await mapResult({ content: [{ type: 'text', text: 'hi' }] })).toEqual({ content: [{ type: 'text', text: 'hi' }], details: { ok: true, isError: false } });
+    expect((await mapResult({ content: [], isError: true })).details.isError).toBe(true);
+    expect((await mapResult({ content: [], isError: true })).details.ok).toBe(false);
   });
 
-  it('mapResult passes inline-supported image parts through as REAL image blocks', () => {
-    expect(mapResult({ content: [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }] }))
+  it('mapResult passes inline-supported image parts through as REAL image blocks', async () => {
+    // Not a decodable image, so the resize pass cannot run and the original bytes travel unchanged.
+    expect(await mapResult({ content: [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }] }))
       .toEqual({ content: [{ type: 'image', data: 'AAAA', mimeType: 'image/png' }], details: { ok: true, isError: false } });
   });
 
-  it('mapResult collapses non-inlineable parts to a short placeholder, never the raw payload', () => {
+  it('mapResult collapses non-inlineable parts to a short placeholder, never the raw payload', async () => {
     const audio = { type: 'audio', data: 'Q'.repeat(10_000), mimeType: 'audio/wav' };
-    expect(mapResult({ content: [audio] }).content).toEqual([{ type: 'text', text: '[audio content omitted]' }]);
+    expect((await mapResult({ content: [audio] })).content).toEqual([{ type: 'text', text: '[audio content omitted]' }]);
     const resource = { type: 'resource', resource: { uri: 'file:///x', blob: 'Z'.repeat(10_000) } };
-    expect(mapResult({ content: [resource] }).content).toEqual([{ type: 'text', text: '[resource content omitted]' }]);
+    expect((await mapResult({ content: [resource] })).content).toEqual([{ type: 'text', text: '[resource content omitted]' }]);
     // An image with an unsupported/inline-hostile mime type is placeholdered too, not stringified.
-    expect(mapResult({ content: [{ type: 'image', data: 'AAAA', mimeType: 'image/tiff' }] }).content)
+    expect((await mapResult({ content: [{ type: 'image', data: 'AAAA', mimeType: 'image/tiff' }] })).content)
       .toEqual([{ type: 'text', text: '[image content omitted]' }]);
-    expect(mapResult({ content: [{}] }).content).toEqual([{ type: 'text', text: '[unknown content omitted]' }]);
+    expect((await mapResult({ content: [{}] })).content).toEqual([{ type: 'text', text: '[unknown content omitted]' }]);
   });
 
   it('killTree kills the whole process group (negative pid)', () => {
