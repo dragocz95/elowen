@@ -2,43 +2,46 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, ChevronRight, Circle, Clock, Plus, Search, Trash2, MoreVertical, Pencil, Download, GitBranch, ArrowLeft } from 'lucide-react';
+import { CheckCircle2, ChevronRight, Circle, Clock, Plus, Trash2, MoreHorizontal, Pencil, FileCode, FileJson, GitBranch, ArrowLeft } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useToast } from '../../components/ui/Toast';
 import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '../../components/ui/shadcn/collapsible';
 import { elowenClient } from '../../lib/elowenClient';
 import { openBrainComposer, openBrainSession } from '../../lib/brainDock';
-import { formatTaskTime } from '../../lib/format';
-import { groupJobLinks } from '../../lib/conversationTree';
+import { localDateTime, formatTokens } from '../../lib/format';
+import {
+  buildConversationTree,
+  filterConversationTree,
+  groupJobLinks,
+  sortConversationTree,
+  type ConversationRow,
+  type ConversationTreeNode,
+} from '../../lib/conversationTree';
 import { useConversationJobLinks } from '../../lib/queries';
+import { useMeasuredPageSize } from '../../lib/useMeasuredPageSize';
 import { ScheduledJobLink, scheduledJobName } from '../../components/brain/ScheduledJobLink';
-import type { BrainSearchHit, ConversationJobLink } from '../../lib/types';
+import type { BrainSearchHit, BrainSessionInfo, ConversationJobLink } from '../../lib/types';
 import { useBrainChat } from './BrainChatProvider';
 import { brainModelLabel, brainModelQualifiedLabel } from '../../lib/modelProvider';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { Input } from '../../components/ui/shadcn/input';
-import {
-  SidebarMenu,
-  SidebarMenuBadge,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
-} from '../../components/ui/shadcn/sidebar';
+import { ModelIcon } from '../../components/ui/ModelIcon';
+import { Pager } from '../../components/ui/Pager';
+import { RegisterSearch } from '../../components/ui/RegisterSearch';
+import { ControlSurfaceRegister, ControlSurfaceToolbar } from '../../components/ui/ControlSurface';
+import { DataTable, DataTableCell, DataTableRow, DataTableSortCell, type SortDirection } from '../../components/ui/DataTable';
 import { Tooltip, TooltipAnchor, TooltipContent } from '../../components/ui/shadcn/tooltip';
 
 const ACTIVITY_STATES = ['idle', 'working', 'done', 'failed'] as const;
 type ActivityState = (typeof ACTIVITY_STATES)[number];
-type ActivityView = NonNullable<import('../../lib/types').BrainSessionInfo['activity']>;
+type ActivityView = NonNullable<BrainSessionInfo['activity']>;
 
 type ActivityLabels = {
   idle: string;
   working: string;
   done: string;
-  /** What a finished SCHEDULE says instead of the plain "completed" — see `ActivityStatus`. */
+  /** What a finished SCHEDULE says instead of the plain "completed" — see {@link ActivityCell}. */
   doneScheduled: string;
   failed: string;
   unread: string;
@@ -48,20 +51,21 @@ function activityStateOf(activity?: ActivityView): ActivityState {
   return activity?.state && ACTIVITY_STATES.includes(activity.state) ? activity.state : 'idle';
 }
 
-/** The leading state dot. Pure presentation: no tab stop, no handlers, no floating panel — everything
- *  here renders INSIDE the row's <button>, where none of those would be legal. `anchored` only marks the
- *  dot as the point `ActivityRow`'s tip is positioned against; a Radix anchor contributes a bare <span>
- *  and no behaviour of its own. */
-function ActivityStatus({ state, scheduled, unread, labels, anchored = false }: {
-  state: ActivityState;
-  /** The settled turn was run by a SCHEDULE, not asked for by the reader. A finished job wears the clock
-   *  the schedules themselves wear, because a tick reads as "your answer is ready" and this is not one.
-   *  Only the completed state distinguishes them: a failed run is a failed run whoever started it. */
-  scheduled: boolean;
-  unread: boolean;
-  labels: ActivityLabels;
-  anchored?: boolean;
-}) {
+/** The state column: what this conversation last did, and — when the last run FAILED — the reason.
+ *
+ *  A finished SCHEDULE wears the clock its schedules wear rather than the completed check: a tick reads
+ *  as "the answer you asked for is ready", and a job firing on its own is not one. Only the completed
+ *  state distinguishes them; a failed run is a failed run whoever started it.
+ *
+ *  The tip hangs off the icon, which is legal now that the state is a CELL of its own — it used to live
+ *  inside the row's button, where a second tab stop and a floating panel are both invalid markup. */
+function ActivityCell({ activity, labels, unread }: { activity?: ActivityView; labels: ActivityLabels; unread: boolean }) {
+  const [open, setOpen] = useState(false);
+  const tooltipId = useId();
+  const state = activityStateOf(activity);
+  const scheduled = activity?.automation === 'scheduled';
+  const failed = state === 'failed';
+  const detail = activity?.detail?.trim();
   const stateLabel = state === 'done' && scheduled ? labels.doneScheduled : labels[state];
   const accessibleLabel = unread ? `${stateLabel}, ${labels.unread}` : stateLabel;
 
@@ -71,88 +75,36 @@ function ActivityStatus({ state, scheduled, unread, labels, anchored = false }: 
     scheduled
       ? <Clock size={14} aria-hidden className="text-success" />
       : <CheckCircle2 size={14} aria-hidden className="text-success" />
-  ) : state === 'failed' ? (
+  ) : failed ? (
     <Circle size={8} aria-hidden className="fill-destructive text-destructive" />
   ) : null;
 
   return (
     <span data-activity-state={state} className="flex size-5 shrink-0 items-center justify-center">
       <span className="sr-only">{accessibleLabel}</span>
-      {anchored ? (
-        <TooltipAnchor asChild>
-          <span className="inline-flex size-4 shrink-0 items-center justify-center">{icon}</span>
-        </TooltipAnchor>
+      {failed ? (
+        <Tooltip open={open} onOpenChange={setOpen}>
+          <TooltipAnchor asChild>
+            <button
+              type="button"
+              aria-describedby={open ? tooltipId : undefined}
+              aria-label={accessibleLabel}
+              onMouseEnter={() => setOpen(true)}
+              onMouseLeave={() => setOpen(false)}
+              onFocus={() => setOpen(true)}
+              onBlur={() => setOpen(false)}
+              className="inline-flex size-4 shrink-0 items-center justify-center rounded-full focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+            >
+              {icon}
+            </button>
+          </TooltipAnchor>
+          <TooltipContent id={tooltipId} side="right" align="start" className="max-w-[min(16rem,calc(100vw-2rem))]">
+            <span className="block font-medium text-destructive">{labels.failed}</span>
+            {detail ? <span className="mt-1 block break-words">{detail}</span> : null}
+          </TooltipContent>
+        </Tooltip>
       ) : icon}
     </span>
-  );
-}
-
-type ActivityRowProps = {
-  onMouseEnter?: () => void;
-  onMouseLeave?: () => void;
-  onFocus?: () => void;
-  onBlur?: () => void;
-  'aria-describedby'?: string;
-};
-
-/** A row's activity presentation, and — when the last run FAILED — the tip carrying the reason.
- *
- *  The tip hangs off the ROW, never off a control inside it. The row is a <button>, so the dot that used
- *  to own this could not keep it: an element with its own tab stop and click handler nested in a button
- *  is invalid HTML, gives the row a second tab stop that announces nothing, and its tap never arrives
- *  because the row's own onClick switches the conversation first. The floating panel was nested in there
- *  too, which no button may contain.
- *
- *  So the dot is pure presentation and merely anchors the tip, while the row's own hover and focus open
- *  it — the keyboard reaches the row anyway, and `aria-describedby` is what the tooltip primitive is
- *  built for: a description OF the button, not a second thing to navigate into. */
-function ActivityRow({ activity, labels, children }: {
-  activity?: ActivityView;
-  labels: ActivityLabels;
-  children: (parts: { indicator: ReactNode; rowProps: ActivityRowProps }) => ReactNode;
-}) {
-  const [tooltipOpen, setTooltipOpen] = useState(false);
-  const tooltipId = useId();
-  const state = activityStateOf(activity);
-  const unread = activity?.unread === true;
-  const failed = state === 'failed';
-  const detail = activity?.detail?.trim();
-  const indicator = (
-    <ActivityStatus
-      state={state}
-      scheduled={activity?.automation === 'scheduled'}
-      unread={unread}
-      labels={labels}
-      anchored={failed}
-    />
-  );
-
-  // The `Tooltip` root is rendered whatever the state; only its CONTENT and the row's hover wiring are
-  // gated on failure. Returning a Fragment for one state and a Tooltip for another would put a different
-  // element type in the same position, so React would unmount and rebuild the entire row the moment a run
-  // failed — taking keyboard focus off that row at exactly the moment the failure appears. The root
-  // renders no DOM of its own, so keeping it mounted costs nothing.
-  return (
-    <Tooltip open={failed && tooltipOpen} onOpenChange={setTooltipOpen}>
-      {children({
-        indicator,
-        rowProps: failed
-          ? {
-              onMouseEnter: () => setTooltipOpen(true),
-              onMouseLeave: () => setTooltipOpen(false),
-              onFocus: () => setTooltipOpen(true),
-              onBlur: () => setTooltipOpen(false),
-              'aria-describedby': tooltipOpen ? tooltipId : undefined,
-            }
-          : {},
-      })}
-      {failed ? (
-        <TooltipContent id={tooltipId} side="right" align="start" className="max-w-[min(16rem,calc(100vw-2rem))]">
-          <span className="block font-medium text-destructive">{labels.failed}</span>
-          {detail ? <span className="mt-1 block break-words">{detail}</span> : null}
-        </TooltipContent>
-      ) : null}
-    </Tooltip>
   );
 }
 
@@ -169,20 +121,35 @@ function Highlight({ text, query }: { text: string; query: string }) {
   );
 }
 
-/** The caller's OWN conversations: the list, the fulltext search with its snippets, the activity and
- *  unread marks, switch / new / rename / branch / export / delete, and the collapsed branch of recurring
- *  jobs filed under each conversation.
+type SortKey = 'state' | 'model' | 'title' | 'tokens' | 'updated';
+/** The order a column takes when it is first clicked: text reads naturally A→Z, while a number and a
+ *  timestamp are almost always wanted biggest/newest first. */
+const DEFAULT_DIRECTION: Record<SortKey, SortDirection> = { state: 'asc', model: 'asc', title: 'asc', tokens: 'desc', updated: 'desc' };
+/** The register's columns, with the owner replaced by the STATE: on a personal list every row belongs to
+ *  the reader, so what the conversation last did is the only one of the two that carries information.
+ *  The state leads, because it is a glyph and the eye reads the row from it. */
+const COLUMNS = '2.25rem minmax(0,1.2fr) minmax(0,2.4fr) 5.5rem 10rem 2.25rem';
+const COMPACT_COLUMNS = '2.25rem minmax(0,1fr) 2.25rem';
+const MOBILE_COLUMNS = '2.25rem minmax(0,1.6fr) minmax(0,1fr) 2.25rem';
+
+/** How far the schedules under a conversation are shifted, and one shared empty set for "nothing is
+ *  expanded" so an unfiltered render keeps the same identities. */
+const INDENT_STEP = 16;
+const EMPTY_IDS: ReadonlySet<string> = new Set<string>();
+
+/** The caller's OWN conversations: the register's table, the fulltext search with its snippets, the
+ *  activity and unread marks, switch / new / rename / branch / export / delete, and the collapsed branch
+ *  of recurring jobs filed under each conversation.
  *
  *  It is a PANEL, not an overlay. The app has exactly one conversation switcher — the shared
- *  `ConversationSwitcherModal` — and this is what it shows under "Just mine"; an administrator's "All"
- *  is the register beside it. The persistent rail, the phone drawer and the dock's popover used to be
- *  three presentations of this same list, which is the duplication that modal removes, so the surface,
- *  its focus contract and its dismissal all belong to the modal now.
+ *  `ConversationSwitcherModal` — and this is what it shows under "Just mine"; an administrator's "All" is
+ *  the register beside it. Both are now the SAME table: same columns, same sort, same paging, same
+ *  schedule branches. Only the owner column differs, for the reason given at {@link COLUMNS}.
  *
  *  Everything here reads the ONE shared controller (BrainChatProvider), so there is never a second
  *  session list or a second mutation surface. Delete goes through the controller (it re-targets the
  *  active conversation); rename/branch/export/search hit the client directly (pure metadata /
- *  read-only), mirroring Fáze 1's search split. */
+ *  read-only). */
 export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
   /** Called once this panel has handed a conversation or a schedule on — the host modal closes on it. */
   onNavigate?: () => void;
@@ -207,7 +174,7 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
   const [results, setResults] = useState<BrainSearchHit[] | null>(null);
   // Which conversations have their scheduled-job branch open. Local to this mount and keyed by session
   // id: navigation state, not something to persist or sync across devices.
-  const [openJobs, setOpenJobs] = useState<ReadonlySet<string>>(() => new Set<string>());
+  const [openJobs, setOpenJobs] = useState<ReadonlySet<string>>(EMPTY_IDS);
   const [renameFor, setRenameFor] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string; active: boolean } | null>(null);
   const [deletePending, setDeletePending] = useState(false);
@@ -217,6 +184,13 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
   const deletePendingRef = useRef(false);
   const deleteOpRef = useRef(0);
   const [renameValue, setRenameValue] = useState('');
+  const [sort, setSort] = useState<SortKey>('updated');
+  const [direction, setDirection] = useState<SortDirection>('desc');
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const { pageSize, page, setPage } = useMeasuredPageSize(scrollRef);
+  // Prefix for the row ids the disclosure buttons point `aria-controls` at — the switcher can be mounted
+  // beside the register, and two rows may not share one id.
+  const uid = useId();
 
   // Debounced conversation search: ≥2 chars queries the daemon; anything shorter restores the list.
   useEffect(() => {
@@ -238,7 +212,7 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
   // Opening a conversation must also BRING THE CHAT ON SCREEN. Switching the controller alone only works
   // where a chat surface already is: from the dock over a plugin page — or on a phone, where the dock is
   // no surface at all — picking a conversation left the reader on the page they were on, looking at the
-  // settings they opened the switcher over. `openBrainSession` is the app's one request for that (the
+  // settings the switcher was covering. `openBrainSession` is the app's one request for that (the
   // register's rows use it too): the shell reveals the dock or routes to /chat, and the controller loads
   // the conversation and reports its own failure. On /chat it resolves to a plain switch.
   const openSession = (opts: { session?: string; fresh?: boolean }) => {
@@ -338,8 +312,8 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
   const actionItems = (session: { id: string; title?: string; active: boolean }): ActionMenuItem[] => [
     { label: t.chat.rename, icon: Pencil, onSelect: () => beginRename(session.id, session.title || '') },
     { label: t.chat.fork, icon: GitBranch, onSelect: () => { void forkSession(session.id); } },
-    { label: t.chat.exportHtml, icon: Download, onSelect: () => exportSession(session.id, 'html') },
-    { label: t.chat.exportJsonl, icon: Download, onSelect: () => exportSession(session.id, 'jsonl') },
+    { label: t.chat.exportHtml, icon: FileCode, onSelect: () => exportSession(session.id, 'html') },
+    { label: t.chat.exportJsonl, icon: FileJson, onSelect: () => exportSession(session.id, 'jsonl') },
     {
       label: t.brainChat.deleteChat,
       icon: Trash2,
@@ -350,82 +324,246 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
   ];
 
   const q = search.trim();
-  const listScroll = 'flex min-h-0 flex-1 flex-col overflow-y-auto';
 
   // The recurring jobs organized under THIS caller's conversations. The endpoint already bounds `mine` by
   // the personal session list; the render below still only asks the map for sessions that list holds, so
-  // a shared platform room can never appear here as a conversation the sidebar does not otherwise show.
+  // a shared platform room can never appear here as a conversation the switcher does not otherwise show.
   const jobLinks = useConversationJobLinks('mine');
   const jobsByConversation = useMemo(() => groupJobLinks(jobLinks.data?.links ?? []), [jobLinks.data]);
   const jobsFailed = jobLinks.data?.status === 'error' || jobLinks.isError;
 
-  /** Conversations whose SCHEDULES answer the query, each listed once with the jobs that matched.
-   *  Additive: the transcript hits above are untouched, and a conversation that answered there can still
-   *  appear here for a different reason — its schedule, which no transcript snippet would ever mention. */
-  const jobSearchGroups = useMemo(() => {
-    const needle = q.toLowerCase();
-    if (needle.length < 2) return [];
-    const groups: { session: { id: string; title?: string }; jobs: ConversationJobLink[] }[] = [];
-    for (const session of sessions.data ?? []) {
-      const matched = (jobsByConversation.get(session.id) ?? []).filter((link) => link.name.toLowerCase().includes(needle));
-      if (matched.length > 0) groups.push({ session, jobs: matched });
-    }
-    return groups;
-  }, [q, sessions.data, jobsByConversation]);
+  const sessionList = useMemo(() => sessions.data ?? [], [sessions.data]);
+  const sessionById = useMemo(() => new Map(sessionList.map((s) => [s.id, s])), [sessionList]);
+  // The register's row shape, so the shared tree, sort and filter helpers work on exactly one type. A
+  // personal conversation is never a channel and never nests, so `kind` is constant and no parent is set.
+  const rows: ConversationRow[] = useMemo(() => sessionList.map((s) => ({
+    id: s.id,
+    title: s.title,
+    model: s.model,
+    updated_at: s.updated_at,
+    running: s.running,
+    kind: 'conversation' as const,
+    tokens: s.tokens,
+  })), [sessionList]);
+  const tree = useMemo(() => buildConversationTree(rows, jobsByConversation), [rows, jobsByConversation]);
 
-  /** The collapsed schedules of one conversation, under its row. Radix owns the disclosure contract here
-   *  — `aria-expanded`, the trigger/content wiring, Enter and Space, and handing focus back to the
-   *  trigger when the branch that held it closes. The trigger is a SIBLING of the conversation row's
-   *  button, never inside it: opening a branch and opening a conversation are different acts, and a
-   *  control nested in another control is invalid markup. */
-  const jobBranch = (sessionId: string, title: string, jobs: readonly ConversationJobLink[]): ReactNode => {
-    const open = openJobs.has(sessionId);
+  /** The newest transcript snippet per conversation, for the rows a search leaves standing. The daemon
+   *  returns hits newest-first, so the first one seen for a conversation is the one worth showing. */
+  const snippetBySession = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const hit of results ?? []) if (!map.has(hit.sessionId)) map.set(hit.sessionId, hit.snippet);
+    return map;
+  }, [results]);
+
+  const needle = q.toLowerCase();
+  // A conversation answers the query through its own name or model — matched here, live, without waiting
+  // for the daemon — or through its transcript, which only the daemon can answer. A schedule name is
+  // matched by the shared filter itself, which also opens the branch that schedule sits in.
+  const filtered = useMemo(() => (needle.length >= 2
+    ? filterConversationTree(tree, needle, (r) =>
+      `${r.title} ${r.model}`.toLowerCase().includes(needle) || snippetBySession.has(r.id))
+    : { roots: tree, expanded: EMPTY_IDS, jobsExpanded: EMPTY_IDS }), [tree, needle, snippetBySession]);
+
+  const comparator = useMemo(() => {
+    const flip = direction === 'asc' ? 1 : -1;
+    const stateRank = (id: string): number => ACTIVITY_STATES.indexOf(activityStateOf(sessionById.get(id)?.activity));
+    return (a: ConversationRow, b: ConversationRow): number => {
+      switch (sort) {
+        case 'state': return flip * (stateRank(a.id) - stateRank(b.id)) || b.updated_at.localeCompare(a.updated_at);
+        case 'model': return flip * a.model.localeCompare(b.model) || b.updated_at.localeCompare(a.updated_at);
+        case 'title': return flip * a.title.localeCompare(b.title) || b.updated_at.localeCompare(a.updated_at);
+        case 'tokens': return flip * ((a.tokens ?? 0) - (b.tokens ?? 0)) || b.updated_at.localeCompare(a.updated_at);
+        default: return flip * a.updated_at.localeCompare(b.updated_at);
+      }
+    };
+  }, [sort, direction, sessionById]);
+
+  const visible = useMemo(() => sortConversationTree(filtered.roots, comparator), [filtered.roots, comparator]);
+  const pageCount = Math.max(1, Math.ceil(visible.length / pageSize));
+  const clampedPage = Math.min(page, pageCount - 1);
+  // A page is a page of CONVERSATIONS. Whatever an open schedules branch adds scrolls inside the same
+  // viewport and never pushes a conversation onto the next page.
+  const pageRows = visible.slice(clampedPage * pageSize, (clampedPage + 1) * pageSize);
+
+  useEffect(() => { setPage(0); }, [search, sort, direction, setPage]);
+
+  /** Clicking the active column reverses it; a different column starts at its own natural order. */
+  const sortBy = (key: SortKey) => {
+    if (key === sort) setDirection((d) => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSort(key); setDirection(DEFAULT_DIRECTION[key]); }
+  };
+
+  const jobsRowDomId = (sessionId: string) => `${uid}-jobs-${encodeURIComponent(sessionId)}`;
+  const jobRowDomId = (sessionId: string, jobId: string) => `${jobsRowDomId(sessionId)}-${encodeURIComponent(jobId)}`;
+  const jobBranchOpen = (id: string): boolean => openJobs.has(id) || filtered.jobsExpanded.has(id);
+  const toggleJobs = (id: string) => setOpenJobs((current) => {
+    const next = new Set(current);
+    if (next.has(id)) next.delete(id); else next.add(id);
+    return next;
+  });
+
+  /** The row being renamed keeps its place in the table and its columns; only the title cell becomes a
+   *  field, so the list does not jump under the reader while they type. */
+  const renameRow = (row: ConversationRow): ReactNode => (
+    <DataTableRow key={row.id} data-tree-row="root">
+      <DataTableCell lines={1}>{null}</DataTableCell>
+      <DataTableCell priority="mobile" lines={1}>{null}</DataTableCell>
+      <DataTableCell lines="auto">
+        <span className="flex min-w-0 items-center gap-2">
+          <Input
+            autoFocus
+            value={renameValue}
+            onChange={(e) => setRenameValue(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') { e.preventDefault(); void commitRename(row.id); }
+              if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
+            }}
+            onBlur={() => void commitRename(row.id)}
+            disabled={renamePending}
+            aria-label={t.chat.renamePlaceholder}
+            placeholder={t.chat.renamePlaceholder}
+            className="h-8 min-w-0 flex-1 bg-background px-2 py-1 focus-visible:border-primary focus-visible:ring-0"
+          />
+          <AutoSaveStatus status={renameStatus} onRetry={() => void commitRename(row.id)} />
+        </span>
+      </DataTableCell>
+      <DataTableCell priority="wide" lines={1}>{null}</DataTableCell>
+      <DataTableCell priority="wide" lines={1}>{null}</DataTableCell>
+      <DataTableCell lines="auto">{null}</DataTableCell>
+    </DataTableRow>
+  );
+
+  const conversationRow = (node: ConversationTreeNode): ReactNode => {
+    const row = node.row;
+    if (renameFor === row.id) return renameRow(row);
+    const session = sessionById.get(row.id);
+    const unread = session?.activity?.unread === true;
+    const title = row.title || t.brainChat.untitled;
+    const snippet = snippetBySession.get(row.id);
+    const open = jobBranchOpen(row.id);
     return (
-      <Collapsible
-        open={open}
-        onOpenChange={(next) => setOpenJobs((current) => {
-          const updated = new Set(current);
-          if (next) updated.add(sessionId); else updated.delete(sessionId);
-          return updated;
-        })}
-      >
-        <CollapsibleTrigger asChild>
-          <button
-            type="button"
-            aria-label={t.scheduledJobs.toggle.replace('{title}', title)}
-            className="flex w-full min-w-0 items-center gap-1 rounded-md py-1 pl-7 pr-2 text-left text-tiny text-muted-foreground transition-colors hover:bg-sidebar-accent hover:text-sidebar-accent-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
-          >
-            <ChevronRight size={11} aria-hidden className={`shrink-0 transition-transform motion-reduce:transition-none ${open ? 'rotate-90' : ''}`} />
-            <span className="truncate">{t.scheduledJobs.branch}</span>
-            <span className="font-mono tabular-nums">{jobs.length}</span>
-          </button>
-        </CollapsibleTrigger>
-        <CollapsibleContent>
-          {/* The border is the only hierarchy mark, and the indent is a fixed step rather than a per-level
-              one — this list is one level deep and stays legible on a 288px drawer. */}
-          <SidebarMenuSub className="ml-4 border-l border-sidebar-border pl-2">
-            {jobs.map((link) => (
-              <SidebarMenuSubItem key={link.jobId}>
-                <SidebarMenuSubButton asChild size="sm" className="rounded-md px-2 py-1">
-                  <Link
-                    href={link.href}
-                    onClick={dismiss}
-                    aria-label={scheduledJobName(link, t.scheduledJobs)}
-                    className="min-w-0"
-                  >
-                    <ScheduledJobLink link={link} labels={t.scheduledJobs} />
-                  </Link>
-                </SidebarMenuSubButton>
-              </SidebarMenuSubItem>
-            ))}
-          </SidebarMenuSub>
-        </CollapsibleContent>
-      </Collapsible>
+      // `data-tree-row` is what the page measurement reads: only a conversation is a page unit.
+      <DataTableRow key={row.id} data-tree-row="root" interactive className="group">
+        <DataTableCell lines={1}>
+          <ActivityCell activity={session?.activity} labels={activityLabels} unread={unread} />
+        </DataTableCell>
+        <DataTableCell priority="mobile" lines={1}>
+          <span className="flex min-w-0 items-center gap-1.5" title={brainModelQualifiedLabel({ provider: session?.provider ?? '', model: row.model })}>
+            <ModelIcon name={row.model} size={14} />
+            <span className="truncate font-mono text-xs text-muted-foreground">{brainModelLabel({ model: row.model })}</span>
+          </span>
+        </DataTableCell>
+        <DataTableCell lines="auto">
+          <span className="flex min-w-0 items-center gap-1">
+            {/* Opening the schedules and opening the conversation are two different acts, so this is a
+                button of its own beside the title button, never inside it. */}
+            {node.jobs.length > 0 ? (
+              <button
+                type="button"
+                onClick={() => toggleJobs(row.id)}
+                aria-expanded={open}
+                aria-controls={open ? node.jobs.map((link) => jobRowDomId(row.id, link.jobId)).join(' ') : undefined}
+                aria-label={t.scheduledJobs.toggle.replace('{title}', title)}
+                title={t.scheduledJobs.branch}
+                className="flex shrink-0 items-center gap-0.5 rounded-md px-0.5 py-0.5 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+              >
+                <ChevronRight size={12} aria-hidden className={`transition-transform motion-reduce:transition-none ${open ? 'rotate-90' : ''}`} />
+                <span className="font-mono text-tiny tabular-nums">{node.jobs.length}</span>
+              </button>
+            ) : <span aria-hidden className="w-5 shrink-0" />}
+            <button
+              type="button"
+              onClick={() => openSession({ session: row.id })}
+              aria-current={session?.active ? 'page' : undefined}
+              aria-label={`${t.sessionsPanel.openInChat}: ${title}`}
+              className="flex w-full min-w-0 flex-col rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+            >
+              <span className="flex min-w-0 items-center gap-1.5">
+                <span className={`truncate text-sm text-foreground transition-colors group-hover:text-primary ${unread ? 'font-semibold' : 'font-normal'}`}>{title}</span>
+                {row.running ? <Circle size={7} className="shrink-0 fill-success text-success" aria-label={t.sessionsPanel.running} /> : null}
+                {unread ? <span aria-hidden data-unread className="size-1.5 shrink-0 rounded-full bg-primary" /> : null}
+              </span>
+              {/* Why this row survived the search, when the reason is not its own name. */}
+              {snippet ? (
+                <span className="min-w-0 truncate text-tiny text-muted-foreground"><Highlight text={snippet} query={q} /></span>
+              ) : null}
+            </button>
+          </span>
+        </DataTableCell>
+        <DataTableCell priority="wide" lines={1} className="text-right font-mono text-tiny text-muted-foreground">
+          {row.tokens != null ? formatTokens(row.tokens) : ''}
+        </DataTableCell>
+        <DataTableCell priority="wide" lines={1} className="font-mono text-tiny text-muted-foreground">
+          {localDateTime(row.updated_at, locale, false)}
+        </DataTableCell>
+        <DataTableCell lines="auto">
+          <ActionMenu
+            label={`${title}: ${t.chat.moreActions}`}
+            items={actionItems({ id: row.id, title: row.title, active: session?.active === true })}
+            trigger={<MoreHorizontal size={16} aria-hidden />}
+            // Rename, branch, export and delete are reachable ONLY through this button, so it cannot be a
+            // hover affordance. Touch and keyboard always reveal it; fine pointers keep the quiet row
+            // treatment until hover, focus or Radix's open state.
+            triggerClassName="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100"
+          />
+        </DataTableCell>
+      </DataTableRow>
     );
   };
 
-  const body = (
-    <div className="flex min-h-0 flex-1 flex-col">
+  /** One schedule, under the conversation it is filed in.
+   *
+   *  Following it opens the conversation its runs actually landed in, which is where a reader who clicks a
+   *  job from a conversation list is going. Only where the daemon could not name that transcript — a job
+   *  that has never fired, or one whose runs land somewhere this account may not read — does the row fall
+   *  back to the schedule's own editor, which is what it always used to open. */
+  const jobRow = (node: ConversationTreeNode, link: ConversationJobLink): ReactNode => {
+    const label = scheduledJobName(link, t.scheduledJobs);
+    const cellClass = 'flex w-full min-w-0 items-center gap-1.5 rounded-md text-left text-xs text-foreground transition-colors hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70';
+    const run = link.run;
+    return (
+      <DataTableRow key={`${node.row.id}:job:${link.jobId}`} id={jobRowDomId(node.row.id, link.jobId)} data-tree-row="job">
+        <DataTableCell lines={1}>{null}</DataTableCell>
+        <DataTableCell priority="mobile" lines={1}>{null}</DataTableCell>
+        <DataTableCell lines="auto" style={{ paddingInlineStart: INDENT_STEP }}>
+          {run ? (
+            <button
+              type="button"
+              onClick={() => { dismiss(); openBrainSession(run.sessionId, run.continuable); }}
+              aria-label={label}
+              className={cellClass}
+            >
+              <ScheduledJobLink link={link} labels={t.scheduledJobs} />
+            </button>
+          ) : (
+            <Link href={link.href} onClick={dismiss} aria-label={label} className={cellClass}>
+              <ScheduledJobLink link={link} labels={t.scheduledJobs} />
+            </Link>
+          )}
+        </DataTableCell>
+        <DataTableCell priority="wide" lines={1}>{null}</DataTableCell>
+        <DataTableCell priority="wide" lines={1}>{null}</DataTableCell>
+        <DataTableCell lines="auto">{null}</DataTableCell>
+      </DataTableRow>
+    );
+  };
+
+  const renderNode = (node: ConversationTreeNode): ReactNode[] => {
+    const out: ReactNode[] = [conversationRow(node)];
+    if (node.jobs.length > 0 && jobBranchOpen(node.row.id)) {
+      for (const link of node.jobs) out.push(jobRow(node, link));
+    }
+    return out;
+  };
+
+  // What an empty table says depends on WHY it is empty: a query that matched nothing is a different
+  // answer from an account that has never chatted, and a search still in flight is neither.
+  const emptyText = q.length >= 2
+    ? (results === null ? null : t.brainChat.searchEmpty)
+    : t.chat.emptyHistory;
+
+  return (
+    <section className="flex min-h-0 min-w-0 flex-1 flex-col">
       {homeLink ? (
         <Link
           href="/dash"
@@ -436,212 +574,75 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
           <span className="truncate">{t.nav.dashboard}</span>
         </Link>
       ) : null}
-      {/* The host modal owns the title and the close control; what belongs to the LIST is starting a new
-          conversation, which is the one action here that is not about an existing row. */}
-      <div className="flex items-center justify-end gap-1 border-b border-border px-2 py-1.5">
-        <button
-          type="button"
-          onClick={() => openSession({ fresh: true })}
-          aria-label={t.brainChat.newChat}
-          title={t.brainChat.newChat}
-          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-        >
-          <Plus size={16} aria-hidden />
-        </button>
-      </div>
 
-      {/* Fulltext search across the caller's conversations; a live query swaps the list for hits. */}
-      <div className="m-1 flex items-center gap-1.5 rounded-md border border-border bg-background px-2">
-        <Search size={13} className="shrink-0 text-muted-foreground" aria-hidden />
-        <Input
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder={t.brainChat.searchPlaceholder}
-          aria-label={t.brainChat.searchPlaceholder}
-          // The host modal is a Radix surface whose focus policy runs after mount and anchors on the
-          // surface itself unless a control asks for the focus by name — so this one asks, and the
-          // modal's `onOpenAutoFocus` honours it. A bare `autoFocus` would be overruled a tick later.
-          data-autofocus=""
-          className="h-8 min-h-0 border-0 bg-transparent px-0 py-1.5 shadow-none placeholder:text-muted-foreground focus-visible:ring-0"
-        />
-      </div>
+      <ControlSurfaceToolbar testId="conversation-history-toolbar" layout="split">
+        <div className="flex min-w-0 items-baseline gap-2">
+          <h2 className="text-base font-semibold text-foreground">{t.sessionsPanel.viewMine}</h2>
+          {visible.length > 0 ? <span className="font-mono text-xs text-muted-foreground">{visible.length}</span> : null}
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <RegisterSearch
+            value={search}
+            onChange={setSearch}
+            label={t.brainChat.searchPlaceholder}
+            placeholder={t.brainChat.searchPlaceholder}
+            autoFocusInOverlay
+          />
+          <button
+            type="button"
+            onClick={() => openSession({ fresh: true })}
+            aria-label={t.brainChat.newChat}
+            title={t.brainChat.newChat}
+            className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+          >
+            <Plus size={16} aria-hidden />
+          </button>
+        </div>
+      </ControlSurfaceToolbar>
 
-      <div className={`${listScroll} px-1 pb-1`}>
-        {q.length >= 2 ? (
-          results === null ? null : results.length === 0 && jobSearchGroups.length === 0 ? (
-            <p className="px-2 py-2 text-xs text-muted-foreground">{t.brainChat.searchEmpty}</p>
+      <ControlSurfaceRegister className="flex min-h-0 flex-1 flex-col">
+        {/* A failed read is said out loud, once. A cron plugin that is absent, disabled or not granted
+            answers `unavailable` and shows nothing at all — but a read that FAILED must not be presented
+            as "no conversation has a schedule". */}
+        {jobsFailed ? <p role="status" className="px-1 pt-1 text-tiny text-muted-foreground">{t.scheduledJobs.error}</p> : null}
+        <div ref={scrollRef} data-testid="conversation-history-scroll" className="min-h-0 flex-1 overflow-y-auto">
+          {sessions.isLoading && !sessions.data ? null : visible.length === 0 ? (
+            emptyText ? <p className="py-8 text-xs italic text-muted-foreground">{emptyText}</p> : null
           ) : (
-            <>
-            <SidebarMenu>
-              {results.map((h, i) => {
-                const when = formatTaskTime(h.ts, Date.now(), locale);
-                const session = sessions.data?.find((candidate) => candidate.id === h.sessionId);
-                const unread = session?.activity?.unread === true;
-                return (
-                  <SidebarMenuItem key={`${h.sessionId}:${h.ts}:${i}`}>
-                    <ActivityRow activity={session?.activity} labels={activityLabels}>
-                      {({ indicator, rowProps }) => (
-                        <SidebarMenuButton
-                          asChild
-                          isActive={session?.active === true}
-                          className="h-auto min-h-12 items-start rounded-md px-2 py-1.5"
-                        >
-                          <button
-                            type="button"
-                            onClick={() => openSession({ session: h.sessionId })}
-                            aria-current={session?.active ? 'page' : undefined}
-                            className="text-left"
-                            {...rowProps}
-                          >
-                            {indicator}
-                            <span className="flex min-w-0 flex-1 flex-col">
-                              <span className={`truncate text-sm text-foreground ${unread ? 'font-semibold' : 'font-normal'}`}>
-                                {h.sessionTitle || t.brainChat.untitled}
-                              </span>
-                              <span className="flex min-w-0 items-baseline justify-between gap-2">
-                                <span className="min-w-0 truncate text-tiny text-muted-foreground">
-                                  <Highlight text={h.snippet} query={q} />
-                                </span>
-                                <span className="shrink-0 text-tiny text-muted-foreground" title={when.title}>{when.label}</span>
-                              </span>
-                            </span>
-                            {unread ? <SidebarMenuBadge aria-hidden data-unread className="mt-1.5 size-1.5 rounded-full bg-primary" /> : null}
-                          </button>
-                        </SidebarMenuButton>
-                      )}
-                    </ActivityRow>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
-            {/* Schedules whose NAME answers the query, grouped once under the conversation they are filed
-                in and placed after the transcript hits — those keep their snippets and their order, and a
-                conversation with three matching snippets still contributes exactly one group here. */}
-            {jobSearchGroups.length > 0 ? (
-              <div className="mt-1 border-t border-sidebar-border pt-1">
-                <p className="px-2 py-1 text-tiny text-muted-foreground">{t.scheduledJobs.branch}</p>
-                {jobSearchGroups.map((group) => (
-                  <div key={group.session.id}>
-                    <p className="truncate px-2 text-tiny text-muted-foreground">{group.session.title || t.brainChat.untitled}</p>
-                    <SidebarMenuSub className="ml-4 border-l border-sidebar-border pl-2">
-                      {group.jobs.map((link) => (
-                        <SidebarMenuSubItem key={link.jobId}>
-                          <SidebarMenuSubButton asChild size="sm" className="rounded-md px-2 py-1">
-                            <Link
-                              href={link.href}
-                              onClick={dismiss}
-                              aria-label={scheduledJobName(link, t.scheduledJobs)}
-                              className="min-w-0"
-                            >
-                              <ScheduledJobLink link={link} labels={t.scheduledJobs} />
-                            </Link>
-                          </SidebarMenuSubButton>
-                        </SidebarMenuSubItem>
-                      ))}
-                    </SidebarMenuSub>
-                  </div>
-                ))}
-              </div>
-            ) : null}
-            </>
-          )
-        ) : sessions.isLoading && !sessions.data ? null : (sessions.data ?? []).length === 0 ? (
-          <p className="px-2 py-2 text-xs text-muted-foreground">{t.chat.emptyHistory}</p>
-        ) : (
-          <SidebarMenu>
-            {(sessions.data ?? []).map((s) => {
-              const unread = s.activity?.unread === true;
-              const jobs = jobsByConversation.get(s.id) ?? [];
-              return (
-                <SidebarMenuItem key={s.id} className="group relative">
-                  {renameFor === s.id ? (
-                    <div className="m-1 flex min-w-0 items-center gap-2">
-                      <Input
-                        autoFocus
-                        value={renameValue}
-                        onChange={(e) => setRenameValue(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') { e.preventDefault(); void commitRename(s.id); }
-                          if (e.key === 'Escape') { e.preventDefault(); cancelRename(); }
-                        }}
-                        onBlur={() => void commitRename(s.id)}
-                        disabled={renamePending}
-                        aria-label={t.chat.renamePlaceholder}
-                        placeholder={t.chat.renamePlaceholder}
-                        className="h-8 min-w-0 flex-1 bg-background px-2 py-1 focus-visible:border-primary focus-visible:ring-0"
-                      />
-                      <AutoSaveStatus status={renameStatus} onRetry={() => void commitRename(s.id)} />
-                    </div>
-                  ) : (
-                    <>
-                      {/* The row and its action menu share one positioned box, so the absolutely placed
-                          menu centres on the ROW rather than on the row plus whatever branch hangs
-                          under it. */}
-                      <div className="relative">
-                        <ActivityRow activity={s.activity} labels={activityLabels}>
-                          {({ indicator, rowProps }) => (
-                            <SidebarMenuButton
-                              asChild
-                              isActive={s.active}
-                              className="h-auto min-h-12 items-start rounded-md px-2 py-1.5 pr-10"
-                            >
-                              <button
-                                type="button"
-                                onClick={() => openSession({ session: s.id })}
-                                aria-current={s.active ? 'page' : undefined}
-                                className="text-left"
-                                {...rowProps}
-                              >
-                                {indicator}
-                                <span className="flex min-w-0 flex-1 flex-col">
-                                  <span className={`truncate text-sm text-foreground ${unread ? 'font-semibold' : 'font-normal'}`}>
-                                    {s.title || t.brainChat.untitled}
-                                  </span>
-                                  <span
-                                    className="truncate font-mono text-tiny text-muted-foreground"
-                                    title={brainModelQualifiedLabel({ provider: s.provider ?? '', model: s.model })}
-                                  >
-                                    {brainModelLabel({ model: s.model })}
-                                  </span>
-                                </span>
-                                {unread ? <SidebarMenuBadge aria-hidden data-unread className="mt-1.5 size-1.5 rounded-full bg-primary" /> : null}
-                              </button>
-                            </SidebarMenuButton>
-                          )}
-                        </ActivityRow>
-                        {/* Centred by a flex box spanning the row, never by `top-1/2 -translate-y-1/2`.
-                            A transform CREATES A STACKING CONTEXT, and this element is the ancestor of the
-                            row's action menu: inside one, the menu's `overlay-layer-menu` z-index can only
-                            rank against its own siblings, so the panel ranked as this anchor does — a
-                            positioned element with z-index auto, painted in tree order. Every row BELOW
-                            this one then painted over the open menu, straight across Rename, Branch,
-                            Export and Delete. The geometry here is identical; what changes is that the
-                            menu's layer is free to reach the surface it belongs to. */}
-                        <div className="absolute inset-y-0 right-1 flex items-center">
-                          <ActionMenu
-                            label={`${s.title || t.brainChat.untitled}: ${t.chat.moreActions}`}
-                            items={actionItems(s)}
-                            trigger={<MoreVertical size={14} aria-hidden />}
-                            // Rename, branch, export and delete are reachable ONLY through this button, so it
-                            // cannot be a hover affordance. Touch and keyboard always reveal it; fine pointers keep
-                            // the quiet row treatment until hover, focus or Radix's open state.
-                            triggerClassName="overlay-touch-target flex h-7 w-7 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100"
-                          />
-                        </div>
-                      </div>
-                      {jobs.length > 0 ? jobBranch(s.id, s.title || t.brainChat.untitled, jobs) : null}
-                    </>
-                  )}
-                </SidebarMenuItem>
-              );
-            })}
-          </SidebarMenu>
-        )}
-        {/* A failed read is said out loud, once, under the list. A cron plugin that is absent, disabled or
-            not granted answers `unavailable` and shows nothing at all — but a read that FAILED must not
-            be presented as "no conversation has a schedule". */}
-        {jobsFailed ? <p role="status" className="px-2 py-1 text-tiny text-muted-foreground">{t.scheduledJobs.error}</p> : null}
-      </div>
+            <DataTable
+              ariaLabel={t.chat.historyTitle}
+              columns={COLUMNS}
+              compactColumns={COMPACT_COLUMNS}
+              mobileColumns={MOBILE_COLUMNS}
+              data-testid="conversation-history-list"
+            >
+              <DataTableRow header>
+                {/* The state column shows a glyph and has no room for a word; its name is still announced. */}
+                <DataTableSortCell active={sort === 'state'} direction={direction} onSort={() => sortBy('state')}>
+                  <span className="sr-only">{t.sessionsPanel.colState}</span>
+                </DataTableSortCell>
+                <DataTableSortCell priority="mobile" active={sort === 'model'} direction={direction} onSort={() => sortBy('model')}>{t.sessionsPanel.colModel}</DataTableSortCell>
+                <DataTableSortCell active={sort === 'title'} direction={direction} onSort={() => sortBy('title')}>{t.sessionsPanel.colTitle}</DataTableSortCell>
+                <DataTableSortCell priority="wide" align="end" active={sort === 'tokens'} direction={direction} onSort={() => sortBy('tokens')}>{t.sessionsPanel.colTokens}</DataTableSortCell>
+                <DataTableSortCell priority="wide" active={sort === 'updated'} direction={direction} onSort={() => sortBy('updated')}>{t.sessionsPanel.colUpdated}</DataTableSortCell>
+                {/* The actions column has no name to print, but it is still a cell: `role="presentation"`
+                    would leave a non-cell child inside role="row", which is invalid. */}
+                <DataTableCell header lines={1}><span className="sr-only">{t.common.actions}</span></DataTableCell>
+              </DataTableRow>
+              {pageRows.flatMap(renderNode)}
+            </DataTable>
+          )}
+        </div>
+        {visible.length > 0 ? (
+          <Pager
+            page={clampedPage}
+            pageSize={pageSize}
+            total={visible.length}
+            onPageChange={setPage}
+            ariaLabel={t.chat.historyTitle}
+          />
+        ) : null}
+      </ControlSurfaceRegister>
 
       <ConfirmDialog
         open={deleteTarget !== null}
@@ -652,8 +653,6 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
         onConfirm={confirmDelete}
         onClose={closeDelete}
       />
-    </div>
+    </section>
   );
-
-  return body;
 }

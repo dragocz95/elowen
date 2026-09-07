@@ -23,8 +23,8 @@ const ctrl = vi.hoisted(() => {
       closeHistory,
       sessions: {
         data: [
-          { id: 's1', title: 'First', model: 'sonnet', active: true },
-          { id: 's2', title: 'Second', model: 'sonnet', active: false },
+          { id: 's1', title: 'First', model: 'sonnet', updated_at: '2026-07-08T10:00:00.000Z', running: false, active: true },
+          { id: 's2', title: 'Second', model: 'sonnet', updated_at: '2026-07-07T10:00:00.000Z', running: false, active: false },
         ],
       },
       switchSession,
@@ -98,7 +98,7 @@ describe('ConversationSwitcherModal', () => {
     renderModal();
     const modal = await dialog();
     expect(within(modal).getByRole('button', { name: /New chat|Nová konverzace|Nová konverzácia/i })).toBeInTheDocument();
-    expect(within(modal).getByRole('textbox', { name: /Search conversations|Hledat v konverzacích|Hľadať v konverzáciách/i })).toBeInTheDocument();
+    expect(within(modal).getByRole('searchbox', { name: /Search conversations|Hledat v konverzacích|Hľadať v konverzáciách/i })).toBeInTheDocument();
 
     fireEvent.click(within(modal).getAllByRole('button', { name: /More actions|Další akce|Ďalšie akcie/i })[0]!);
     for (const name of [
@@ -200,7 +200,7 @@ describe('ConversationSwitcherModal', () => {
     renderModal();
     const modal = await dialog();
     await waitFor(() => {
-      expect(within(modal).getByRole('textbox', { name: /Search conversations|Hledat v konverzacích|Hľadať v konverzáciách/i })).toHaveFocus();
+      expect(within(modal).getByRole('searchbox', { name: /Search conversations|Hledat v konverzacích|Hľadať v konverzáciách/i })).toHaveFocus();
     });
   });
 });

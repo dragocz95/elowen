@@ -226,10 +226,8 @@ describe('ChatView (/chat page)', () => {
     scrollTo.mockClear();
 
     fireEvent.click(screen.getByRole('button', { name: /Conversation history|Historie konverzací/i }));
-    // ActivityStatus is intentionally part of the row's accessible name, so keep the selector exact and
-    // assert that the neutral activity state remains announced alongside the conversation identity.
-    const second = screen.getByRole('button', { name: /^No recent activity Second chat m2$/i });
-    expect(second).toHaveAccessibleName('No recent activity Second chat m2');
+    // The row's control says what following it DOES, and the state now lives in its own column beside it.
+    const second = screen.getByRole('button', { name: /^Open in web chat: Second chat$/i });
     fireEvent.click(second);
 
     await waitFor(() => expect(scrollTo).toHaveBeenCalledWith({ top: 1400 }));

@@ -358,6 +358,7 @@ export const sk = {
     owner: 'Vlastník',
     roomBadge: 'miestnosť',
     colTitle: 'Konverzácia',
+    colState: 'Stav',
     colModel: 'Model',
     colTokens: 'Tokeny',
     colUpdated: 'Aktualizované',

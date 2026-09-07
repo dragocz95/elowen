@@ -11,18 +11,21 @@ type TestSession = {
   title: string;
   provider?: string;
   model: string;
+  updated_at: string;
+  running: boolean;
   active: boolean;
+  tokens?: number;
   activity?: BrainActivityView;
 };
 
-// The rail reads the ONE controller (BrainChatProvider) and the client directly (search/rename/export,
-// mirroring Fáze 1); delete stays on the controller. We stub both so the test asserts the exact wiring.
+// The panel reads the ONE controller (BrainChatProvider) and the client directly (search/rename/export);
+// delete stays on the controller. We stub both so the test asserts the exact wiring.
 const ctrl = vi.hoisted(() => {
   const switchSession = vi.fn(() => Promise.resolve());
   const deleteSession = vi.fn(() => Promise.resolve());
   const data: TestSession[] = [
-    { id: 's1', title: 'First', provider: 'chatgpt-account', model: 'openai/gpt-5.6-sol', active: true },
-    { id: 's2', title: 'Second', model: 'sonnet', active: false },
+    { id: 's1', title: 'First', provider: 'chatgpt-account', model: 'openai/gpt-5.6-sol', updated_at: '2026-07-08T10:00:00.000Z', running: false, active: true, tokens: 1234 },
+    { id: 's2', title: 'Second', model: 'sonnet', updated_at: '2026-07-07T10:00:00.000Z', running: false, active: false, tokens: 10 },
   ];
   return {
     switchSession,
@@ -47,7 +50,7 @@ vi.mock('../../../lib/elowenClient', () => ({ elowenClient: client }));
 
 /** The panel as its only host renders it: bare inside the shared switcher modal. The surface, Escape, the
  *  focus trap and dismissal belong to that modal now and are pinned in its own test — what is pinned here
- *  is the list itself, which is the part that used to be duplicated across three presentations. */
+ *  is the table itself, which is the same table the administrator's register draws. */
 function renderPanel(props: { onNavigate?: () => void; homeLink?: boolean } = {}) {
   const { wrapper: Wrapper, client: qc } = createWrapper();
   const utils = render(
@@ -60,10 +63,13 @@ const openRowMenu = (rowIndex: number) => {
   fireEvent.click(screen.getAllByRole('button', { name: /More actions|Další akce/i })[rowIndex]!);
 };
 
+/** The table row a conversation title sits in. */
+const rowOf = (title: string): HTMLElement => screen.getByText(title).closest('[role="row"]') as HTMLElement;
+
 beforeEach(() => {
   ctrl.value.sessions.data = [
-    { id: 's1', title: 'First', provider: 'chatgpt-account', model: 'openai/gpt-5.6-sol', active: true },
-    { id: 's2', title: 'Second', model: 'sonnet', active: false },
+    { id: 's1', title: 'First', provider: 'chatgpt-account', model: 'openai/gpt-5.6-sol', updated_at: '2026-07-08T10:00:00.000Z', running: false, active: true, tokens: 1234 },
+    { id: 's2', title: 'Second', model: 'sonnet', updated_at: '2026-07-07T10:00:00.000Z', running: false, active: false, tokens: 10 },
   ];
   ctrl.switchSession.mockClear();
   ctrl.deleteSession.mockClear();
@@ -76,12 +82,24 @@ beforeEach(() => {
 });
 
 describe('ConversationHistoryPanel', () => {
+  // The personal list and the administrator's register are ONE table: same columns in the same order,
+  // with the owner replaced by the state, because every row here already belongs to the reader.
+  it('renders the register table with the state column in front of the model', () => {
+    renderPanel();
+    const table = screen.getByTestId('conversation-history-list');
+    expect(table).toHaveAttribute('role', 'table');
+    const header = within(table).getAllByRole('row')[0]!;
+    const names = within(header).getAllByRole('columnheader').map((cell) => cell.textContent);
+    expect(names).toEqual(['State', 'Model', 'Conversation', 'Tokens', 'Updated', 'Actions']);
+    expect(within(rowOf('First')).getByText('1.2k')).toBeInTheDocument();
+  });
+
   it('lists conversations with the bare structured model name', () => {
     renderPanel();
     expect(screen.getByText('First')).toBeInTheDocument();
     expect(screen.getByText('Second')).toBeInTheDocument();
     const model = screen.getByText('openai/gpt-5.6-sol');
-    expect(model).toHaveAttribute('title', 'chatgpt-account/openai/gpt-5.6-sol');
+    expect(model.closest('[title]')).toHaveAttribute('title', 'chatgpt-account/openai/gpt-5.6-sol');
     expect(screen.queryByText('chatgpt-account/openai/gpt-5.6-sol')).toBeNull();
   });
 
@@ -270,46 +288,36 @@ describe('ConversationHistoryPanel', () => {
     window.removeEventListener(BRAIN_OPEN_EVENT, opened);
   });
 
-  it('runs a fulltext search (≥2 chars) and highlights the match', async () => {
+  // A transcript hit does not add a row of its own: the conversation it belongs to stays one row, and the
+  // snippet says WHY that row survived the query.
+  it('runs a fulltext search (≥2 chars) and highlights the match under the conversation', async () => {
+    client.brainSearch.mockResolvedValueOnce([{ sessionId: 's1', sessionTitle: 'First', role: 'user', snippet: 'hello world', ts: '2026-07-08T00:00:00Z' }]);
     renderPanel();
-    fireEvent.change(screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i }), { target: { value: 'he' } });
+    fireEvent.change(screen.getByRole('searchbox', { name: /Search conversations|Hledat v konverzacích/i }), { target: { value: 'he' } });
     await waitFor(() => expect(client.brainSearch).toHaveBeenCalledWith('he'));
-    expect(await screen.findByText('Hit session')).toBeInTheDocument();
+    expect(await screen.findByText(/llo world/)).toBeInTheDocument();
     const mark = document.querySelector('mark');
     expect(mark?.textContent).toBe('he');
+    // The conversation that did NOT answer the query is gone from the table.
+    expect(screen.queryByText('Second')).toBeNull();
   });
 
-  it('carries the conversation activity state into search-result rows', async () => {
+  it('carries the conversation activity state and unread mark into a searched row', async () => {
     ctrl.value.sessions.data[0]!.activity = { state: 'done', seq: 8, at: null, detail: 'Finished', unread: true };
     client.brainSearch.mockResolvedValueOnce([{ sessionId: 's1', sessionTitle: 'First', role: 'assistant', snippet: 'hello', ts: '2026-07-08T00:00:00Z' }]);
     renderPanel();
-    fireEvent.change(screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i }), { target: { value: 'he' } });
+    fireEvent.change(screen.getByRole('searchbox', { name: /Search conversations|Hledat v konverzacích/i }), { target: { value: 'he' } });
     const result = await screen.findByText('First');
     expect(result).toHaveClass('font-semibold');
     expect(result.closest('button')).toHaveAttribute('aria-current', 'page');
-    expect(result.closest('li')?.querySelector('[data-slot="sidebar-menu-badge"]')).toHaveAttribute('aria-hidden', 'true');
-    expect(result.closest('li')?.querySelector('[data-activity-state]')).toHaveAttribute('data-activity-state', 'done');
-  });
-
-  it('uses the real shadcn menu anatomy for regular and search-result rows', async () => {
-    renderPanel();
-    expect(screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i })).toHaveAttribute('data-slot', 'input');
-    const menu = document.querySelector('[data-slot="sidebar-menu"]')!;
-    expect(menu).toHaveAttribute('data-slot', 'sidebar-menu');
-    const item = within(menu as HTMLElement).getAllByRole('listitem')[0]!;
-    expect(item).toHaveAttribute('data-slot', 'sidebar-menu-item');
-    expect(item.querySelector('[data-slot="sidebar-menu-button"]')).toBeTruthy();
-
-    fireEvent.change(screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i }), { target: { value: 'he' } });
-    expect(await screen.findByText('Hit session')).toBeInTheDocument();
-    const searchMenu = document.querySelector('[data-slot="sidebar-menu"]')!;
-    expect(searchMenu).toHaveAttribute('data-slot', 'sidebar-menu');
-    expect(within(searchMenu as HTMLElement).getAllByRole('listitem')[0]).toHaveAttribute('data-slot', 'sidebar-menu-item');
+    const row = result.closest('[role="row"]')!;
+    expect(row.querySelector('[data-unread]')).toHaveAttribute('aria-hidden', 'true');
+    expect(row.querySelector('[data-activity-state]')).toHaveAttribute('data-activity-state', 'done');
   });
 
   it('renders neutral activity without inventing a state icon', () => {
     renderPanel();
-    const state = screen.getByText('First').closest('li')!.querySelector('[data-activity-state]')!;
+    const state = rowOf('First').querySelector('[data-activity-state]')!;
     expect(state).toHaveAttribute('data-activity-state', 'idle');
     expect(state.querySelector('svg')).toBeNull();
     expect(state.querySelectorAll('.sr-only')).toHaveLength(1);
@@ -318,7 +326,7 @@ describe('ConversationHistoryPanel', () => {
   it('renders working activity as a reduced-motion-safe green pulse', () => {
     ctrl.value.sessions.data[0]!.activity = { state: 'working', seq: 3, at: null, detail: 'Running', unread: false };
     renderPanel();
-    const state = screen.getByText('First').closest('li')!.querySelector('[data-activity-state]')!;
+    const state = rowOf('First').querySelector('[data-activity-state]')!;
     const icon = state.querySelector('svg')!;
     expect(state).toHaveAttribute('data-activity-state', 'working');
     expect(icon).toHaveAttribute('width', '8');
@@ -329,11 +337,11 @@ describe('ConversationHistoryPanel', () => {
   it('keeps a read done check and does not render an unread badge', () => {
     ctrl.value.sessions.data[0]!.activity = { state: 'done', seq: 4, at: null, detail: 'Finished', unread: false };
     renderPanel();
-    const row = screen.getByText('First').closest('li')!;
+    const row = rowOf('First');
     const state = row.querySelector('[data-activity-state]')!;
     expect(state).toHaveAttribute('data-activity-state', 'done');
-    expect(state.querySelector('svg')).toHaveClass('text-success');
-    expect(row.querySelector('[data-slot="sidebar-menu-badge"]')).toBeNull();
+    expect(state.querySelector('svg')).toHaveClass('lucide-circle-check', 'text-success');
+    expect(row.querySelector('[data-unread]')).toBeNull();
   });
 
   // A tick reads as "the answer you asked for is ready". A schedule firing into a conversation produces
@@ -342,103 +350,102 @@ describe('ConversationHistoryPanel', () => {
   it('marks a completed SCHEDULED turn with the job clock instead of the done check', () => {
     ctrl.value.sessions.data[0]!.activity = { state: 'done', seq: 9, at: null, detail: 'Digest sent', automation: 'scheduled', unread: true };
     renderPanel();
-    const row = screen.getByText('First').closest('li')!;
+    const row = rowOf('First');
     const state = row.querySelector('[data-activity-state]')!;
     expect(state).toHaveAttribute('data-activity-state', 'done');
     expect(state.querySelector('svg')).toHaveClass('lucide-clock', 'text-success');
     expect(within(row).getByText('Scheduled job completed, Unread result')).toBeInTheDocument();
   });
 
-  it('renders a done unread result with a semibold title and an independent accent badge', () => {
+  it('renders a done unread result with a semibold title and an independent accent mark', () => {
     ctrl.value.sessions.data[0]!.activity = { state: 'done', seq: 5, at: null, detail: 'Finished', unread: true };
     renderPanel();
-    const row = screen.getByText('First').closest('li')!;
+    const row = rowOf('First');
     expect(screen.getByText('First')).toHaveClass('font-semibold');
-    const badge = row.querySelector('[data-slot="sidebar-menu-badge"]')!;
+    const badge = row.querySelector('[data-unread]')!;
     expect(badge).toHaveAttribute('aria-hidden', 'true');
-    expect(badge).toHaveAttribute('data-unread', 'true');
     expect(badge).toHaveClass('bg-primary', 'rounded-full');
     expect(within(row).getByText('Completed, Unread result')).toBeInTheDocument();
-    expect(row.querySelectorAll('.sr-only')).toHaveLength(1);
   });
 
-  // The tip describes the ROW and hangs off it. Nothing inside the row's <button> may own it: a nested
-  // tab stop is invalid there and announces nothing, the row's own onClick would eat the tap meant to
-  // reveal the tip, and the floating panel is content no button is allowed to contain.
-  it('exposes a bounded failed tooltip from the row itself, with no control nested in the row button', async () => {
+  // The failure tip hangs off the STATE cell, which is a cell of its own — inside the row's title button a
+  // second tab stop would be invalid markup, the row's own onClick would eat the tap meant to reveal the
+  // tip, and the floating panel is content no button may contain.
+  it('exposes a bounded failed tooltip from the state cell, never from inside the row button', async () => {
     ctrl.value.sessions.data[0]!.activity = { state: 'failed', seq: 6, at: null, detail: 'The provider rejected the request.', unread: false };
     renderPanel();
-    const row = screen.getByText('First').closest('li')!;
+    const row = rowOf('First');
     const rowButton = screen.getByText('First').closest('button')!;
-    expect(rowButton.querySelector('[tabindex="0"]')).toBeNull();
-    expect(rowButton.querySelector('[role="tooltip"]')).toBeNull();
     expect(rowButton.querySelector('[data-slot="tooltip-content"]')).toBeNull();
-    // The dot is the anchor and nothing more: it positions the tip and stays out of the tab order.
-    const anchor = row.querySelector('[data-slot="tooltip-anchor"]')!;
-    expect(anchor).toBeTruthy();
-    expect(anchor.getAttribute('tabindex')).toBeNull();
+    expect(rowButton.querySelector('[data-slot="tooltip-anchor"]')).toBeNull();
 
-    fireEvent.focus(rowButton);
+    const state = within(row).getByRole('button', { name: 'Run failed' });
+    fireEvent.focus(state);
     const tip = await screen.findByRole('tooltip');
     expect(tip).toHaveClass('w-64');
     expect(tip).toHaveTextContent('The provider rejected the request.');
-    expect(rowButton).toHaveAttribute('aria-describedby', tip.id);
-    expect(row.querySelector('[data-slot="sidebar-menu-badge"]')).toBeNull();
+    expect(state).toHaveAttribute('aria-describedby', tip.id);
+    expect(row.querySelector('[data-unread]')).toBeNull();
 
-    fireEvent.blur(rowButton);
+    fireEvent.blur(state);
     await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
-    expect(rowButton).not.toHaveAttribute('aria-describedby');
+    expect(state).not.toHaveAttribute('aria-describedby');
   });
 
-  it('opens the same failure tip from row hover', async () => {
+  it('opens the same failure tip from hover', async () => {
     ctrl.value.sessions.data[0]!.activity = { state: 'failed', seq: 6, at: null, detail: 'Connection refused.', unread: false };
     renderPanel();
-    const rowButton = screen.getByText('First').closest('button')!;
+    const state = within(rowOf('First')).getByRole('button', { name: 'Run failed' });
 
-    fireEvent.mouseEnter(rowButton);
+    fireEvent.mouseEnter(state);
     expect(await screen.findByRole('tooltip')).toHaveTextContent('Connection refused.');
-    fireEvent.mouseLeave(rowButton);
+    fireEvent.mouseLeave(state);
     await waitFor(() => expect(screen.queryByRole('tooltip')).toBeNull());
   });
 
-  // A row whose run did not fail carries no tip at all — no anchor, no panel, nothing describing it.
+  // A row whose run did not fail carries no tip at all — no anchor, no panel, and no control in the cell.
   it('adds no tooltip wiring to a row that did not fail', () => {
     ctrl.value.sessions.data[0]!.activity = { state: 'done', seq: 6, at: null, detail: 'Finished', unread: false };
     renderPanel();
-    const row = screen.getByText('First').closest('li')!;
-    const rowButton = screen.getByText('First').closest('button')!;
+    const row = rowOf('First');
     expect(row.querySelector('[data-slot="tooltip-anchor"]')).toBeNull();
-    expect(rowButton).not.toHaveAttribute('aria-describedby');
-    fireEvent.focus(rowButton);
+    expect(within(row).queryByRole('button', { name: /Completed/ })).toBeNull();
     expect(screen.queryByRole('tooltip')).toBeNull();
   });
 
   it('keeps failed unread state independent from the destructive tooltip', () => {
     ctrl.value.sessions.data[0]!.activity = { state: 'failed', seq: 7, at: null, detail: 'Failed to connect.', unread: true };
     renderPanel();
-    const row = screen.getByText('First').closest('li')!;
+    const row = rowOf('First');
     const state = row.querySelector('[data-activity-state]')!;
     expect(state.querySelector('svg')).toHaveClass('fill-destructive', 'text-destructive');
-    expect(row.querySelector('[data-slot="sidebar-menu-badge"]')).toHaveAttribute('aria-hidden', 'true');
+    expect(row.querySelector('[data-unread]')).toHaveAttribute('aria-hidden', 'true');
     expect(within(row).getByText('Run failed, Unread result')).toBeInTheDocument();
   });
 
-  it('keeps active selection, page current state, action keyboard access and touch-visible actions', async () => {
+  it('keeps active selection, action keyboard access and touch-visible actions', async () => {
     renderPanel();
     const first = screen.getByText('First').closest('button')!;
     expect(first).toHaveAttribute('aria-current', 'page');
-    expect(first).toHaveAttribute('data-active', 'true');
-    expect(first).toHaveClass('data-[active=true]:bg-sidebar-accent', 'data-[active=true]:text-sidebar-accent-foreground');
     const trigger = screen.getAllByRole('button', { name: /More actions|Další akce/i })[0]!;
-    expect(trigger).toHaveClass('overlay-touch-target', 'pointer-coarse:opacity-100');
+    expect(trigger).toHaveClass('pointer-coarse:opacity-100');
     trigger.focus();
     fireEvent.keyDown(trigger, { key: 'ArrowDown' });
     await waitFor(() => expect(screen.getByRole('menuitem', { name: /^Rename$|^Přejmenovat$/i })).toHaveFocus());
   });
+
+  // The table sorts on every column it shows, exactly as the register does.
+  it('sorts by a column and reverses it on a second click', () => {
+    renderPanel();
+    const titles = () => screen.getAllByRole('row').slice(1).map((r) => r.textContent);
+    fireEvent.click(screen.getByRole('button', { name: /^Conversation/ }));
+    expect(titles()[0]).toContain('First');
+    fireEvent.click(screen.getByRole('button', { name: /^Conversation/ }));
+    expect(titles()[0]).toContain('Second');
+  });
 });
 
-/** The recurring jobs filed under a conversation, as a collapsed branch under its row. Navigation only:
- *  a job row opens the schedule's own editor and nothing about the schedule changes. */
+/** The recurring jobs filed under a conversation, as a collapsed branch under its row. */
 describe('ConversationHistoryPanel — scheduled job branches', () => {
   const digest = { jobId: 'job-1', conversationId: 's1', name: 'Nightly digest', enabled: true, scope: 'personal', href: '/p/cronjob?job=job-1' };
   const report = { jobId: 'job-2', conversationId: 's1', name: 'Weekly report', enabled: false, scope: 'personal', href: '/p/cronjob?job=job-2' };
@@ -462,8 +469,24 @@ describe('ConversationHistoryPanel — scheduled job branches', () => {
     expect(links.map((a) => a.getAttribute('href'))).toEqual(['/p/cronjob?job=job-1', '/p/cronjob?job=job-2']);
     expect(screen.getByRole('link', { name: 'Open the schedule: Weekly report, paused' })).toBeInTheDocument();
     expect(trigger).toHaveAttribute('aria-expanded', 'true');
-    // Radix names the content the trigger controls, so the disclosure announces itself properly.
     expect(trigger).toHaveAttribute('aria-controls');
+  });
+
+  // Following a schedule is meant to land in the transcript its runs produced, which is where a reader who
+  // clicks a job from a conversation list is going. Only a schedule the daemon could not place that way —
+  // one that has never fired — keeps pointing at the schedule's own editor.
+  it('opens the conversation a schedule actually ran in when the daemon names one', async () => {
+    const opened = vi.fn();
+    window.addEventListener(BRAIN_OPEN_EVENT, opened);
+    withLinks({ ...digest, run: { sessionId: 'brain-ch-cron-job-1', continuable: false } });
+    const onNavigate = vi.fn();
+    renderPanel({ onNavigate });
+    fireEvent.click(await branch());
+    fireEvent.click(await screen.findByRole('button', { name: /Nightly digest/ }));
+    expect((opened.mock.calls.at(-1)?.[0] as CustomEvent<BrainOpenRequest>).detail)
+      .toEqual({ sessionId: 'brain-ch-cron-job-1', continuable: false });
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    window.removeEventListener(BRAIN_OPEN_EVENT, opened);
   });
 
   it('separates the disclosure from opening the conversation', async () => {
@@ -472,10 +495,10 @@ describe('ConversationHistoryPanel — scheduled job branches', () => {
     fireEvent.click(await branch());
     expect(ctrl.switchSession).not.toHaveBeenCalled();
     // The trigger is a sibling of the row button, never nested inside it.
-    expect(screen.getByText('First').closest('button')!.querySelector('[data-slot="collapsible-trigger"]')).toBeNull();
+    expect(screen.getByText('First').closest('button')!.querySelector('[aria-expanded]')).toBeNull();
   });
 
-  // Opening a schedule leaves the app on the cron editor, so the switcher covering it has to go — the
+  // Opening a schedule leaves the app on another surface, so the switcher covering it has to go — the
   // panel says so once, through the host's callback, and never dismisses anything itself.
   it('tells its host to close when a schedule is opened', async () => {
     withLinks(digest);
@@ -486,38 +509,30 @@ describe('ConversationHistoryPanel — scheduled job branches', () => {
     expect(onNavigate).toHaveBeenCalledTimes(1);
   });
 
-  it('adds job matches to the search without losing the transcript snippets', async () => {
+  it('adds job matches to the search without losing the transcript snippet', async () => {
     withLinks(digest, report);
     client.brainSearch.mockResolvedValueOnce([
       { sessionId: 's1', sessionTitle: 'First', role: 'user', snippet: 'a digest of the day', ts: '2026-07-08T00:00:00Z' },
-      { sessionId: 's1', sessionTitle: 'First', role: 'assistant', snippet: 'the digest again', ts: '2026-07-08T01:00:00Z' },
     ]);
     renderPanel();
-    fireEvent.change(screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i }), { target: { value: 'digest' } });
+    fireEvent.change(screen.getByRole('searchbox', { name: /Search conversations|Hledat v konverzacích/i }), { target: { value: 'digest' } });
 
-    // The snippets survive, highlight and all — the match itself sits in its own <mark>, so the
-    // surrounding text is what identifies each row.
+    // The snippet survives, highlight and all — the match itself sits in its own <mark>.
     expect(await screen.findByText(/of the day/)).toBeInTheDocument();
-    expect(screen.getByText(/again/)).toBeInTheDocument();
-    expect(document.querySelectorAll('mark')).toHaveLength(2);
-    // The schedule is offered once, under its conversation, however many snippets matched.
+    expect(document.querySelectorAll('mark')).toHaveLength(1);
+    // A matching schedule uncovers the branch it sits in, and a conversation that answered the query in
+    // its own right keeps its whole schedule list rather than being pruned down to the matching one.
     const jobRows = await screen.findAllByRole('link', { name: /Open the schedule/ });
-    expect(jobRows).toHaveLength(1);
-    expect(jobRows[0]).toHaveAttribute('href', '/p/cronjob?job=job-1');
-    expect(screen.queryByText('Weekly report')).toBeNull();
+    expect(jobRows.map((a) => a.getAttribute('href'))).toEqual(['/p/cronjob?job=job-1', '/p/cronjob?job=job-2']);
   });
 
-  it('never lists a conversation the sidebar does not hold', async () => {
+  it('never lists a conversation the switcher does not hold', async () => {
     // A direct platform chat is an eligible cron target but is NOT in the personal conversation list.
     withLinks({ ...digest, conversationId: 'brain-ch-telegram-42', name: 'Channel digest' });
     renderPanel();
     await screen.findByText('First');
     expect(screen.queryByText('Channel digest')).toBeNull();
     expect(screen.queryByRole('button', { name: /Scheduled jobs of/ })).toBeNull();
-
-    fireEvent.change(screen.getByRole('textbox', { name: /Search conversations|Hledat v konverzacích/i }), { target: { value: 'digest' } });
-    await screen.findByText('Hit session');
-    expect(screen.queryByText('Channel digest')).toBeNull();
   });
 
   it('says a job read failed instead of showing every conversation as unscheduled', async () => {
@@ -541,11 +556,9 @@ describe('ConversationHistoryPanel — scheduled job branches', () => {
  *  Rename, Branch, Export and Delete — every action those rows reach only through that menu.
  *
  *  The panel carries `overlay-layer-menu`, the app's menu z-index band, and that was never the problem.
- *  Its ANCHOR was: the action button sat in an absolutely positioned box centred with `top-1/2
- *  -translate-y-1/2`, and a transform CREATES A STACKING CONTEXT. Inside one, the panel's z-index can
- *  only rank against its own siblings — the subtree then ranks as the anchor does, a positioned element
- *  with z-index auto, painted in tree order, so every later row won. Raising the panel's z-index changed
- *  nothing, which is what makes this a stacking-context bug rather than a layer-value one.
+ *  Its ANCHOR was: a transform CREATES A STACKING CONTEXT, and inside one the panel's z-index can only
+ *  rank against its own siblings — the subtree then ranks as the anchor does, a positioned element with
+ *  z-index auto, painted in tree order, so every later row won.
  *
  *  jsdom paints nothing, so what is pinned here is that cause: no element between the open panel and its
  *  row may create a stacking context. The paint order itself is verified in a real browser. */
@@ -559,7 +572,7 @@ describe('ConversationHistoryPanel row menu — overlay stacking', () => {
     const panel = await screen.findByRole('menu');
     expect(panel).toHaveClass('overlay-layer-menu');
 
-    const row = panel.closest('[data-slot="sidebar-menu-item"]');
+    const row = panel.closest('[role="row"]');
     expect(row).not.toBeNull();
     const trapped: string[] = [];
     for (let node = panel.parentElement; node && node !== row; node = node.parentElement) {
@@ -568,12 +581,5 @@ describe('ConversationHistoryPanel row menu — overlay stacking', () => {
       }
     }
     expect(trapped).toEqual([]);
-  });
-
-  it('centres the action button on the row without a transform', () => {
-    renderPanel();
-    const anchor = screen.getAllByRole('button', { name: /More actions|Další akce/i })[0]!.closest('.absolute')!;
-    expect(anchor).toHaveClass('inset-y-0', 'right-1', 'flex', 'items-center');
-    expect(anchor.className).not.toMatch(/translate|top-1\/2/);
   });
 });

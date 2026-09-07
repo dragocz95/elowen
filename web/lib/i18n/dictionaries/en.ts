@@ -382,6 +382,7 @@ export const en = {
     owner: 'Owner',
     roomBadge: 'room',
     colTitle: 'Conversation',
+    colState: 'State',
     colModel: 'Model',
     colTokens: 'Tokens',
     colUpdated: 'Updated',

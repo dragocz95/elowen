@@ -35,6 +35,9 @@ import { conversationActivityAutomation } from '../session/conversationActivity.
 export interface SessionListItem {
   id: string; title: string; provider: string; model: string; updated_at: string;
   running: boolean; active: boolean; attached: number;
+  /** Everything this conversation has spent, so the personal listing can show the same figure the
+   *  register does rather than a second, differently-derived number. */
+  tokens: number;
   /** `automation` names what ran the projected turn — 'scheduled' for a cron job or a wake-up, null for a
    *  turn a person asked for. It outlives settlement, so a client can mark a conversation where a
    *  SCHEDULE finished differently from one that answered its reader. */
@@ -565,11 +568,14 @@ export class BrainStatusService {
   private ownedSessions(userId: number): SessionListItem[] {
     const activeId = this.d.lifecycle.activeSessionId(userId);
     const unspoken = this.d.store.unspokenSessionIds(userId);
+    // One rollup for the whole listing, the way the register already does it — never a query per row.
+    const tokens = this.d.store.tokenTotalsAll();
     return this.d.store.listSessions(userId)
       .filter((s) => !isNonUserSession(s.id) && !unspoken.has(s.id))
       .map((s) => ({
         id: s.id, title: s.title, provider: s.provider, model: s.model, updated_at: s.updated_at,
         running: this.d.sessions.has(s.id), active: s.id === activeId, attached: this.d.attachments.attachedCount(s.id),
+        tokens: tokens[s.id] ?? 0,
         activity: activityOf(s),
         working: s.activity_state === 'working' || this.d.sessions.hasActiveChildren(s.id),
       }));

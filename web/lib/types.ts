@@ -117,7 +117,7 @@ export interface BrainActivityView { state: 'idle' | 'working' | 'done' | 'faile
  *  delegated child still running under it. Optional so a payload from an older daemon still types; absent
  *  reads as false rather than being re-derived from `running`, which only reports that a live session
  *  object exists (see SessionListItem in src/brain/service/statusService.ts). */
-export interface BrainSessionInfo { id: string; title: string; provider?: string; model: string; updated_at: string; running: boolean; active: boolean; attached?: number; activity?: BrainActivityView; working?: boolean }
+export interface BrainSessionInfo { id: string; title: string; provider?: string; model: string; updated_at: string; running: boolean; active: boolean; attached?: number; tokens?: number; activity?: BrainActivityView; working?: boolean }
 /** A row in the admin session-management panel (all brain sessions the operator anchors). `platform` says
  *  WHERE it happened (null for web/CLI) and `direct` whether `ownerId` is the person talking there or only
  *  the account hosting a shared room — see ManagedSessionView in src/brain/service/statusService.ts.
@@ -742,7 +742,13 @@ export interface ConversationJobLink {
   name: string;
   enabled: boolean;
   scope: 'personal' | 'instance';
+  /** The schedule's own editor. Where `run` is absent this is the only place the row can go. */
   href: string;
+  /** The conversation this job's runs actually landed in, once the daemon verified the caller may open
+   *  it. Null for a schedule that has never fired, or one whose runs live somewhere this account may not
+   *  read. `continuable` is false for the job's own cron channel, which opens read-only. Optional so a
+   *  payload from an older daemon still types. */
+  run?: { sessionId: string; continuable: boolean } | null;
 }
 
 /** GET /brain/conversation-links?scope=mine|all. `mine` (the default) is bounded by the caller's own

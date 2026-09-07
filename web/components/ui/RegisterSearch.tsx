@@ -16,6 +16,9 @@ export interface RegisterSearchProps {
   count?: number;
   /** Accessible name for `count` (e.g. "12 results"); the bare number alone means nothing spoken. */
   countLabel?: string;
+  /** Mark this field as the one an overlay focuses on open — `Modal` honours `[data-autofocus]`, and a
+   *  bare `autoFocus` would be overruled a tick later by the dialog's own focus policy. */
+  autoFocusInOverlay?: boolean;
   className?: string;
 }
 
@@ -27,7 +30,7 @@ export interface RegisterSearchProps {
  * viewport the field alone claimed 240px and pushed every sibling control out of the toolbar.
  */
 export function RegisterSearch({
-  value, onChange, placeholder, label, onClear, clearLabel, count, countLabel, className = '',
+  value, onChange, placeholder, label, onClear, clearLabel, count, countLabel, autoFocusInOverlay = false, className = '',
 }: RegisterSearchProps) {
   const clearable = !!onClear && !!clearLabel && value !== '';
   const showCount = typeof count === 'number';
@@ -44,6 +47,7 @@ export function RegisterSearch({
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
         aria-label={label ?? placeholder}
+        {...(autoFocusInOverlay ? { 'data-autofocus': '' } : {})}
         className={`pl-9 pointer-coarse:h-[var(--touch-target)] [&::-webkit-search-cancel-button]:hidden${trailingPad ? ` ${trailingPad}` : ''}`}
       />
       <div className="pointer-events-none absolute right-2 flex items-center gap-1">
