@@ -14,6 +14,8 @@ export interface TodoRowIds {
   row: string;
   /** The turning spinner wrapped in a span on the in-progress row. */
   running: string;
+  /** The truncating task subject — the row's one elastic column. */
+  subject: string;
   /** The live `· 12m 3s` clock on the in-progress row. */
   elapsed: string;
   /** The blocked tooltip riding beside the trigger. */
@@ -56,8 +58,15 @@ export function TodoRow({ row, now, onStatus, onOpen, ids }: {
         label={`${t.tasksModal.taskActions}: ${row.label}${row.owner ? ` · ${row.owner}` : ''}`}
         align="left"
         openOnHover={false}
+        // The menu's wrapper is the row's shrinking column. Without `min-w-0` its automatic minimum size
+        // is the trigger's min-content width — the subject's nowrap text in full — so the wrapper keeps
+        // its max-content width, the subject truncates against a box wider than the rail, and the trailing
+        // meta after it is laid out past the right edge where nothing can scroll to it.
+        className="min-w-0 flex-1"
         // Only the row's own padding: the rows sit on each other with no fixed height, like the card.
-        triggerClassName="flex min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-left transition-colors hover:bg-accent"
+        // `w-full` so the trigger spans the column the wrapper now claims, which is what puts the meta on
+        // the right edge instead of trailing the subject's own width.
+        triggerClassName="flex w-full min-w-0 items-center gap-1.5 rounded px-1 py-0.5 text-left transition-colors hover:bg-accent"
         trigger={
           <>
             {/* The same vocabulary the tool rows use: a turning spinner for the task being worked on,
@@ -69,7 +78,13 @@ export function TodoRow({ row, now, onStatus, onOpen, ids }: {
             ) : (
               <Circle size={11} aria-hidden className="shrink-0 text-muted-foreground" />
             )}
-            <span className={`min-w-0 truncate ${row.status === 'completed' ? 'text-muted-foreground line-through' : blocked ? 'text-subtle-foreground' : 'text-foreground'}`}>
+            {/* The subject is the one part that gives: it takes the leftover width and clips, with the
+                full text on `title` so a truncated task is still readable without opening the list. */}
+            <span
+              data-testid={ids.subject}
+              title={row.label}
+              className={`min-w-0 flex-1 truncate ${row.status === 'completed' ? 'text-muted-foreground line-through' : blocked ? 'text-subtle-foreground' : 'text-foreground'}`}
+            >
               {row.label}
             </span>
             {elapsed ? (

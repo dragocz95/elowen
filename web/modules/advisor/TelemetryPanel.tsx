@@ -225,7 +225,12 @@ function LiveRow({ label, meta, tone, title, onClick, ariaLabel, muted = false }
       // `min-w-0 flex-1` rather than `w-full`: the row also carries a fixed-size icon (and, in the other-
       // processes section, a badge and a kill button), so a child asking for the row's FULL width starts
       // every layout pass over budget and only truncation inside it saves the row.
-      className="h-6 min-w-0 flex-1 justify-start gap-1.5 rounded px-1 text-left text-xs disabled:cursor-default disabled:opacity-100"
+      //
+      // `shrink` undoes the Button primitive's base `shrink-0`, which is right for a button in a toolbar
+      // and wrong for one that IS the row: with the siblings above at their natural widths there can be no
+      // free space left to grow into, and a row that cannot shrink either then lays its trailing token
+      // count past the rail's edge.
+      className="h-6 min-w-0 flex-1 shrink justify-start gap-1.5 rounded px-1 text-left text-xs disabled:cursor-default disabled:opacity-100"
     >
       {tone === 'none' ? null : <span className={`shrink-0 ${tone === 'running' ? 'text-success' : 'text-subtle-foreground'}`} aria-hidden>●</span>}
       <span className={`min-w-0 flex-1 truncate ${muted ? 'text-muted-foreground' : 'text-foreground'}`}>{label}</span>
@@ -235,7 +240,7 @@ function LiveRow({ label, meta, tone, title, onClick, ariaLabel, muted = false }
 }
 
 /** The rail's row test ids for the shared `TodoRow`: the names the rail's own tests have always used. */
-const RAIL_TASK_ROW_IDS: TodoRowIds = { row: 'telemetry-row', running: 'telemetry-task-running', elapsed: 'telemetry-task-elapsed', blocked: 'telemetry-task-blocked' };
+const RAIL_TASK_ROW_IDS: TodoRowIds = { row: 'telemetry-row', running: 'telemetry-task-running', subject: 'telemetry-task-subject', elapsed: 'telemetry-task-elapsed', blocked: 'telemetry-task-blocked' };
 
 /** The conversation's task list, as the rail reports it: a done/total meter, the work that matters now,
  *  and one menu control per row.
