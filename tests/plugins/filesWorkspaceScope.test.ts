@@ -62,7 +62,7 @@ describe('Files tools in an explicit workspace PathView', () => {
     expect(JSON.stringify(write)).not.toContain(root);
     const listed = await scoped(() => runTool(reg, 'ListDir', { path: 'src' }));
     expect(listed.content[0]!.text).toContain('new.ts');
-    const grep = await scoped(() => runTool(reg, 'Grep', { path: '.', pattern: 'value = 2' }));
+    const grep = await scoped(() => runTool(reg, 'Grep', { path: '.', pattern: 'value = 2', output_mode: 'content' }));
     expect(grep.content[0]!.text).toContain('src/same.ts');
     expect(JSON.stringify(grep)).not.toContain(root);
   });

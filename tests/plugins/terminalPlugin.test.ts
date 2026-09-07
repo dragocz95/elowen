@@ -21,6 +21,8 @@ const adminPolicy: Policy = { allowedProjectIds: 'all', allowedPaths: () => [] }
 const owner: TurnIdentity = { platform: 'elowen', userId: '1', admin: true, owner: true, conversation: 'own' };
 const terminalModule = await import(resolve(repoRoot, 'plugins/terminal/index.mjs')) as {
   mapReportedCwd(reported: string, prepared: { workspace?: { path: string } | null }, assertAllowed: (path: string) => string, workspacePathView?: boolean): string;
+  getDefaultBashTimeoutMs(env?: Record<string, string | undefined>): number;
+  getMaxBashTimeoutMs(env?: Record<string, string | undefined>): number;
 };
 
 const runTool = (reg: PluginRegistry, name: string, params: Record<string, unknown>) => {
@@ -957,6 +959,28 @@ describe('terminal plugin — per-call Bash timeout', () => {
     }), { identity: owner });
     expect(fast.content[0].text).toContain('milliseconds');
     expect(fast.content[0].text).toContain('[exit 0]');
+  });
+
+  it('defaults to the reference two-minute deadline with a ten-minute ceiling, and honours the env seams', () => {
+    const { getDefaultBashTimeoutMs, getMaxBashTimeoutMs } = terminalModule;
+    expect(getDefaultBashTimeoutMs({})).toBe(120_000);
+    expect(getMaxBashTimeoutMs({})).toBe(600_000);
+    expect(getDefaultBashTimeoutMs({ BASH_DEFAULT_TIMEOUT_MS: '5000' })).toBe(5_000);
+    expect(getMaxBashTimeoutMs({ BASH_MAX_TIMEOUT_MS: '900000' })).toBe(900_000);
+    // The ceiling is never allowed below the default, and garbage falls back rather than disabling either.
+    expect(getMaxBashTimeoutMs({ BASH_DEFAULT_TIMEOUT_MS: '800000' })).toBe(800_000);
+    expect(getMaxBashTimeoutMs({ BASH_DEFAULT_TIMEOUT_MS: '800000', BASH_MAX_TIMEOUT_MS: '10000' })).toBe(800_000);
+    expect(getDefaultBashTimeoutMs({ BASH_DEFAULT_TIMEOUT_MS: 'soon' })).toBe(120_000);
+    expect(getDefaultBashTimeoutMs({ BASH_DEFAULT_TIMEOUT_MS: '0' })).toBe(120_000);
+
+    // The model is told both numbers, in the description and on the parameter.
+    const bash = reg.tools.find((t) => t.name === 'Bash') as unknown as {
+      description: string; parameters: { properties: { timeout: { description: string; maximum: number } } };
+    };
+    expect(bash.description).toContain('defaults to 120000 (120s), and may not exceed 600000 (600s)');
+    expect(bash.parameters.properties.timeout.maximum).toBe(600_000);
+    expect(bash.parameters.properties.timeout.description).toContain('default 120000');
+    expect(bash.parameters.properties.timeout.description).toContain('which the default already is');
   });
 
   it('run_in_background ignores timeout and runtime-only legacy background conflicts safely', async () => {

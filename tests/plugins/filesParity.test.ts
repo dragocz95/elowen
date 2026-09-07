@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterEach, afterAll } from 'vitest';
-import { mkdtempSync, writeFileSync, mkdirSync, rmSync, truncateSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, mkdirSync, readFileSync, rmSync, truncateSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -16,10 +16,12 @@ const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
 const pluginEntry = pathToFileURL(join(repoRoot, 'plugins/files/index.mjs')).href;
 const userPolicy = (roots: string[]): Policy => ({ allowedProjectIds: new Set([1]), allowedPaths: () => roots });
 
-const runTool = (reg: PluginRegistry, name: string, params: Record<string, unknown>) => {
+const runTool = (reg: PluginRegistry, name: string, params: Record<string, unknown>, executionContext?: unknown) => {
   const tool = reg.tools.find((t) => t.name === name);
   if (!tool) throw new Error(`tool ${name} not registered`);
-  return (tool as unknown as { execute: (id: string, p: unknown) => Promise<{ content: { text: string }[] }> }).execute('t', params);
+  return (tool as unknown as {
+    execute: (id: string, p: unknown, signal?: AbortSignal, onUpdate?: unknown, context?: unknown) => Promise<{ content: { text: string }[] }>;
+  }).execute('t', params, undefined, undefined, executionContext);
 };
 const textOf = (res: { content: { text: string }[] }) => res.content[0].text;
 const detailsOf = (res: unknown) => (res as { details?: Record<string, unknown> }).details ?? {};
@@ -62,7 +64,7 @@ describe('files plugin — reference wording', () => {
     const glob = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Glob', { path: dir, pattern: '*.nothing' }));
     expect(textOf(glob)).toBe('No files found');
 
-    const content = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Grep', { path: dir, pattern: 'zzz-absent' }));
+    const content = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Grep', { path: dir, pattern: 'zzz-absent', output_mode: 'content' }));
     expect(textOf(content)).toBe('No matches found');
     const counted = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Grep', { path: dir, pattern: 'zzz-absent', output_mode: 'count' }));
     expect(textOf(counted)).toBe('No matches found');
@@ -178,14 +180,14 @@ describe('files plugin — Glob and Grep reach', () => {
 
   it('accepts context as an alias of -C and drops line numbers with -n false', async () => {
     const target = join(dir, 'src', 'a.ts');
-    const viaContext = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Grep', { path: target, pattern: 'needle', context: 2 }));
-    const viaDash = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Grep', { path: target, pattern: 'needle', '-C': 2 }));
+    const viaContext = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Grep', { path: target, pattern: 'needle', context: 2, output_mode: 'content' }));
+    const viaDash = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Grep', { path: target, pattern: 'needle', '-C': 2, output_mode: 'content' }));
     expect(textOf(viaContext)).toBe(textOf(viaDash));
     expect(textOf(viaContext)).toContain('third');
 
-    const numbered = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Grep', { path: target, pattern: 'needle' }));
+    const numbered = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Grep', { path: target, pattern: 'needle', output_mode: 'content' }));
     expect(textOf(numbered)).toBe('a.ts:1:const needle = 1;');
-    const unnumbered = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Grep', { path: target, pattern: 'needle', '-n': false }));
+    const unnumbered = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Grep', { path: target, pattern: 'needle', '-n': false, output_mode: 'content' }));
     expect(textOf(unnumbered)).toBe('a.ts:const needle = 1;');
   });
 
@@ -225,5 +227,128 @@ describe('files plugin — search helpers', () => {
     expect(splitGlobPatterns('*.js *.ts')).toEqual(['*.js', '*.ts']);
     expect(splitGlobPatterns('*.{ts,tsx}')).toEqual(['*.{ts,tsx}']);
     expect(splitGlobPatterns('')).toEqual([]);
+  });
+
+  it('separates ripgrep dying from ripgrep answering with an error', async () => {
+    const { ripgrepDied } = await import(pluginEntry) as { ripgrepDied: (error: unknown) => boolean };
+    expect(ripgrepDied(Object.assign(new Error('Command failed'), { killed: true, signal: 'SIGTERM' }))).toBe(true);
+    expect(ripgrepDied(Object.assign(new Error('crashed'), { signal: 'SIGSEGV' }))).toBe(true);
+    expect(ripgrepDied(Object.assign(new Error('timed out'), { code: 'ETIMEDOUT' }))).toBe(true);
+    // rg exiting 2 on a bad pattern is an answer the caller can act on, so it stays a text result.
+    expect(ripgrepDied(Object.assign(new Error('rg: unclosed group'), { code: 2 }))).toBe(false);
+  });
+});
+
+describe('files plugin — Write and Edit create what is missing', () => {
+  let reg: PluginRegistry;
+  let dir: string;
+  beforeAll(async () => {
+    reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['files'], logger: log });
+    dir = mkdtempSync(join(tmpdir(), 'elowen-parity-create-'));
+  });
+  afterAll(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it('Write creates the missing parent directories instead of refusing', async () => {
+    const path = join(dir, 'deep', 'nested', 'tree', 'file.txt');
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Write', { file_path: path, content: 'body\n' }));
+    expect(detailsOf(res).ok).toBe(true);
+    expect(textOf(res)).toBe(`File created successfully at: ${path}`);
+    expect(readFileSync(path, 'utf-8')).toBe('body\n');
+    expect(descriptionOf(reg, 'Write')).not.toContain('The parent directory must already exist');
+    expect(descriptionOf(reg, 'Write')).toContain('Missing parent directories are created for you.');
+  });
+
+  it('Edit with an empty old_string creates the file, and refuses when it already exists', async () => {
+    const path = join(dir, 'made', 'by-edit.txt');
+    const created = await runWithPolicy(userPolicy([dir]), () => runTool(
+      reg, 'Edit', { file_path: path, old_string: '', new_string: 'fresh content\n' },
+    ));
+    expect(detailsOf(created).ok).toBe(true);
+    expect(textOf(created)).toBe(`File created successfully at: ${path}`);
+    expect(readFileSync(path, 'utf-8')).toBe('fresh content\n');
+
+    // The reference's exact refusal, so creation can never become a silent overwrite.
+    const again = await runWithPolicy(userPolicy([dir]), () => runTool(
+      reg, 'Edit', { file_path: path, old_string: '', new_string: 'second attempt\n' },
+    ));
+    expect(detailsOf(again).ok).toBe(false);
+    expect(textOf(again)).toBe('Error: Cannot create new file - file already exists.');
+    expect(readFileSync(path, 'utf-8')).toBe('fresh content\n');
+  });
+});
+
+describe('files plugin — empty and over-offset reads', () => {
+  let reg: PluginRegistry;
+  let dir: string;
+  beforeAll(async () => {
+    reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['files'], logger: log });
+    dir = mkdtempSync(join(tmpdir(), 'elowen-parity-empty-'));
+  });
+  afterAll(() => { rmSync(dir, { recursive: true, force: true }); });
+  // The read-before-modify guard is per conversation, so these have to run inside a session for the
+  // authorization half of each case to mean anything.
+  const inSession = (sessionId: string, name: string, params: Record<string, unknown>) =>
+    runWithPolicy(userPolicy([dir]), () => runTool(reg, name, params), { sessionId });
+
+  it('answers an empty file with the reference warning, and counts it as read', async () => {
+    const path = join(dir, 'empty.txt');
+    writeFileSync(path, '');
+    const res = await inSession('parity-empty', 'Read', { file_path: path });
+    expect(detailsOf(res).ok).toBe(true);
+    expect(textOf(res)).toBe('<system-reminder>Warning: the file exists but the contents are empty.</system-reminder>');
+
+    // Having read it is what lets a Write replace it without a second round trip.
+    const write = await inSession('parity-empty', 'Write', { file_path: path, content: 'filled\n' });
+    expect(detailsOf(write).ok).toBe(true);
+    expect(textOf(write)).toBe(`The file ${path} has been updated successfully.`);
+  });
+
+  it('answers an offset past the end with the reference warning, and does NOT count as read', async () => {
+    const path = join(dir, 'short.txt');
+    writeFileSync(path, 'one\ntwo\n');
+    const res = await inSession('parity-offset', 'Read', { file_path: path, offset: 40 });
+    expect(detailsOf(res).ok).toBe(true);
+    expect(textOf(res)).toBe('<system-reminder>Warning: the file exists but is shorter than the provided offset (40). The file has 2 lines.</system-reminder>');
+    // It showed no content, so it must not vouch for any: no hash travels into the transcript either.
+    expect(detailsOf(res).contentHash).toBeUndefined();
+
+    const write = await inSession('parity-offset', 'Write', { file_path: path, content: 'blind\n' });
+    expect(detailsOf(write).ok).toBe(false);
+    expect(textOf(write)).toBe('Error: File has not been read yet. Read it first before writing to it.');
+    expect(readFileSync(path, 'utf-8')).toBe('one\ntwo\n');
+  });
+});
+
+describe('files plugin — the Search/Glob split and the Grep default', () => {
+  let reg: PluginRegistry;
+  let dir: string;
+  beforeAll(async () => {
+    reg = await loadPlugins({ dirs: [join(repoRoot, 'plugins')], enabled: ['files'], logger: log });
+    dir = mkdtempSync(join(tmpdir(), 'elowen-parity-split-'));
+    writeFileSync(join(dir, 'a.ts'), 'const needle = 1;\n');
+    writeFileSync(join(dir, 'b.ts'), 'const needle = 2;\n');
+  });
+  afterAll(() => { rmSync(dir, { recursive: true, force: true }); });
+
+  it('Grep defaults to files_with_matches and says so', async () => {
+    const res = await runWithPolicy(userPolicy([dir]), () => runTool(reg, 'Grep', { path: dir, pattern: 'needle' }));
+    expect(detailsOf(res).outputMode).toBe('files_with_matches');
+    expect(textOf(res).split('\n').sort()).toEqual(['a.ts', 'b.ts']);
+    const description = descriptionOf(reg, 'Grep');
+    expect(description).toContain('"files_with_matches" shows only file paths (default)');
+    const parameter = JSON.stringify((reg.tools.find((t) => t.name === 'Grep') as unknown as { parameters: unknown }).parameters);
+    expect(parameter).toContain('Defaults to \\"files_with_matches\\".');
+  });
+
+  it('Search claims content only and Glob claims names', () => {
+    const search = descriptionOf(reg, 'Search');
+    expect(search).toContain('Search UTF-8 file CONTENTS');
+    expect(search).toContain('use Glob for name patterns');
+    expect(search).not.toContain('Search file names');
+    // The files mode is gone from the schema too, not merely unmentioned.
+    expect(JSON.stringify((reg.tools.find((t) => t.name === 'Search') as unknown as { parameters: unknown }).parameters))
+      .not.toContain('files');
+
+    expect(descriptionOf(reg, 'Glob')).toContain('owns file-name search');
   });
 });

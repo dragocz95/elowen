@@ -27,6 +27,33 @@ const SNIPPET_CHARS = 300;
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
 const fail = (e) => ok(`Error: ${e instanceof Error ? e.message : String(e)}`);
 
+// Error delivery channel: transport and host faults (network and DNS/socket errors, an origin or search
+// backend answering 5xx, a failing host inference route) are THROWN so the host flags the result
+// `is_error`; anything the model can act on itself — bad arguments, an unconfigured provider, an HTTP 4xx
+// the origin answered with content — stays a text result. The rule is written out once, next to the same
+// helper in the files plugin (`plugins/files/index.mjs`); bundled plugins cannot import each other, so
+// keep these copies in step.
+const TRANSPORT_FAILURE = Symbol.for('elowen.transportFailure');
+export function markTransportFailure(error) {
+  const wrapped = error instanceof Error ? error : new Error(String(error));
+  wrapped[TRANSPORT_FAILURE] = true;
+  return wrapped;
+}
+export function isTransportFailure(error) {
+  return Boolean(error && typeof error === 'object' && error[TRANSPORT_FAILURE] === true);
+}
+/** Classify a failure raised while TALKING to a remote. Node's socket, DNS and TLS errors carry a string
+ * `code` (ECONNREFUSED, ENOTFOUND, ECONNRESET, EAI_AGAIN, CERT_HAS_EXPIRED …) and the fetch deadline
+ * arrives as a `TimeoutError`; the host transport's own refusals ("URL resolves to a non-global address")
+ * are plain Errors with neither. That is the line between "the wire failed" and "we declined to go
+ * there". A cancelled turn (`AbortError`) is the caller's own decision and is never painted red. */
+export function asTransportFailure(error) {
+  if (error instanceof Error && error.name === 'AbortError') return error;
+  const wireCode = error && typeof error === 'object' && typeof error.code === 'string';
+  const deadline = error instanceof Error && error.name === 'TimeoutError';
+  return wireCode || deadline ? markTransportFailure(error) : error;
+}
+
 /** One URL maps to one in-flight or recently completed retrieval. The caller prompt is deliberately not
  * part of this cache: every call still gets its own small-model inference over the shared page content. */
 const fetchCache = new Map();
@@ -177,13 +204,20 @@ async function fetchUncached(startUrl, signal, transport) {
   const original = normalizeFetchUrl(startUrl);
   let url = original;
   for (let hop = 0; ; hop++) {
-    const res = await transport.request(url.toString(), {
-      headers: {
-        'user-agent': 'elowen-web/1.0',
-        accept: 'text/html,text/plain,application/json;q=0.9,*/*;q=0.5',
-      },
-      signal,
-    });
+    let res;
+    try {
+      res = await transport.request(url.toString(), {
+        headers: {
+          'user-agent': 'elowen-web/1.0',
+          accept: 'text/html,text/plain,application/json;q=0.9,*/*;q=0.5',
+        },
+        signal,
+      });
+    } catch (error) {
+      // DNS, socket and TLS failures land here, as does the fetch deadline. None of them is something the
+      // model can phrase its way out of.
+      throw asTransportFailure(error);
+    }
     if (res.status >= 300 && res.status < 400) {
       await discardResponse(res);
       const location = res.headers.location;
@@ -200,7 +234,9 @@ async function fetchUncached(startUrl, signal, transport) {
     }
     if (res.status < 200 || res.status >= 300) {
       await discardResponse(res);
-      throw new Error(`HTTP ${res.status}`);
+      const status = new Error(`HTTP ${res.status}`);
+      // 5xx is the origin failing; 4xx is the origin ANSWERING, and the model can act on that itself.
+      throw res.status >= 500 ? markTransportFailure(status) : status;
     }
     const type = res.headers['content-type'] ?? '';
     const body = await responseText(res);
@@ -451,6 +487,19 @@ function filterSearchResults(results, allowed, blocked, maxResults) {
   }).slice(0, maxResults);
 }
 
+/** One call to a search backend, with the error channel applied in a single place: a dead socket or a
+ * backend answering 5xx is a transport failure, a 4xx is the backend's own answer about the request. */
+async function searchBackendFetch(label, url, init) {
+  let res;
+  try { res = await fetch(url, init); }
+  catch (error) { throw asTransportFailure(error); }
+  if (!res.ok) {
+    const status = new Error(`${label} HTTP ${res.status}`);
+    throw res.status >= 500 ? markTransportFailure(status) : status;
+  }
+  return res;
+}
+
 /** Each backend maps its response onto one normalized shape. Domain filters are still applied locally
  * after this call, even where a provider receives native filter fields. */
 export const SEARCH_PROVIDERS = {
@@ -461,13 +510,12 @@ export const SEARCH_PROVIDERS = {
       const body = { api_key: apiKey, query, max_results: maxResults, include_answer: false };
       if (filters.allowed.length) body.include_domains = filters.allowed;
       if (filters.blocked.length) body.exclude_domains = filters.blocked;
-      const res = await fetch('https://api.tavily.com/search', {
+      const res = await searchBackendFetch('tavily', 'https://api.tavily.com/search', {
         method: 'POST',
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify(body),
         signal,
       });
-      if (!res.ok) throw new Error(`tavily HTTP ${res.status}`);
       const data = await res.json();
       return (data.results ?? []).map((r) => ({ title: r.title, url: r.url, snippet: r.content }));
     },
@@ -483,14 +531,13 @@ export const SEARCH_PROVIDERS = {
           : `(${filters.allowed.map((domain) => `site:${domain}`).join(' OR ')})`;
       const blocked = filters.blocked.map((domain) => `-site:${domain}`).join(' ');
       const filteredQuery = [query, allowed, blocked].filter(Boolean).join(' ');
-      const res = await fetch('https://google.serper.dev/search', {
+      const res = await searchBackendFetch('serper', 'https://google.serper.dev/search', {
         method: 'POST',
         headers: { 'content-type': 'application/json', 'x-api-key': apiKey },
         // Serper owns this locale field. Tavily has no equivalent, so no synthetic locale is sent there.
         body: JSON.stringify({ q: filteredQuery, num: maxResults, gl: 'us' }),
         signal,
       });
-      if (!res.ok) throw new Error(`serper HTTP ${res.status}`);
       const data = await res.json();
       return (data.organic ?? []).map((r) => ({ title: r.title, url: r.link, snippet: r.snippet }));
     },
@@ -569,7 +616,10 @@ export function register(ctx) {
           lines.push(`- ${result.title}\n  ${result.url}\n  ${String(result.snippet ?? '').slice(0, SNIPPET_CHARS)}`);
         }
         return ok(`${lines.join('\n') || 'No results.'}\n\n${searchDateGuidance()}`);
-      } catch (e) { return fail(e); }
+      } catch (e) {
+        if (isTransportFailure(e)) throw e;
+        return fail(e);
+      }
     },
   }));
 
@@ -594,9 +644,15 @@ export function register(ctx) {
         }
         const inference = ctx.host.defaultInference();
         if (!inference) throw new Error('no host-owned inference route is available for WebFetch');
-        const result = await inference.decide(buildInferencePrompt(fetched.markdown, p.prompt), { signal });
+        // The summarizing route is a remote provider: when it fails, WebFetch failed, and rewording the
+        // prompt will not change that.
+        const result = await inference.decide(buildInferencePrompt(fetched.markdown, p.prompt), { signal })
+          .catch((error) => { throw asTransportFailure(error); });
         return ok(result.text, { url: fetched.url, model: inference.model });
-      } catch (e) { return fail(e); }
+      } catch (e) {
+        if (isTransportFailure(e)) throw e;
+        return fail(e);
+      }
     },
   }));
 

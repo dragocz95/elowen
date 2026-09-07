@@ -6,13 +6,13 @@
  * explore/plan prompts readable rather than pre-substituted.
  */
 
-/** Placeholder → Elowen tool name. Truth is `src/store/toolRenames.ts` (the snake_case → TitleCase map);
- *  Elowen has no distinct glob/find tool, so those map onto Search like grep. Unknown placeholders are
- *  left untouched so a typo is visible rather than silently blanked. */
+/** Placeholder → Elowen tool name. Truth is `src/store/toolRenames.ts` (the snake_case → TitleCase map).
+ *  The name/content split mirrors the reference's: Glob owns file-name patterns, Search and Grep own
+ *  contents. Unknown placeholders are left untouched so a typo is visible rather than silently blanked. */
 const TOOL_NAME_TOKENS: Readonly<Record<string, string>> = {
   GREP_TOOL_NAME: 'Search',
-  GLOB_TOOL_NAME: 'Search',
-  FIND_TOOL_NAME: 'Search',
+  GLOB_TOOL_NAME: 'Glob',
+  FIND_TOOL_NAME: 'Glob',
   SEARCH_TOOL_NAME: 'Search',
   SHELL_TOOL_NAME: 'Bash',
   BASH_TOOL_NAME: 'Bash',

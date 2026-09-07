@@ -13,9 +13,20 @@ import { StringDecoder } from 'node:string_decoder';
 import { isAbsolute, join } from 'node:path';
 
 const DEFAULT_MAX = 60_000;              // output cap per foreground run / background buffer
-const DEFAULT_TIMEOUT_MS = 20_000;       // canonical Fable foreground deadline
-// Safe Elowen superset for slow local builds. The argument stays unambiguously milliseconds.
-const MAX_TIMEOUT_MS = 600_000;
+/** The reference's foreground deadline and ceiling, with the reference's env seams
+ *  (`src/utils/timeouts.ts`): a positive integer in the variable wins, and the ceiling is never allowed
+ *  below the default. Both take milliseconds, like the `timeout` argument itself. */
+export function getDefaultBashTimeoutMs(env = process.env) {
+  const parsed = Number.parseInt(env.BASH_DEFAULT_TIMEOUT_MS ?? '', 10);
+  return Number.isNaN(parsed) || parsed <= 0 ? 120_000 : parsed;
+}
+export function getMaxBashTimeoutMs(env = process.env) {
+  const parsed = Number.parseInt(env.BASH_MAX_TIMEOUT_MS ?? '', 10);
+  const floor = getDefaultBashTimeoutMs(env);
+  return Number.isNaN(parsed) || parsed <= 0 ? Math.max(600_000, floor) : Math.max(parsed, floor);
+}
+const DEFAULT_TIMEOUT_MS = getDefaultBashTimeoutMs();
+const MAX_TIMEOUT_MS = getMaxBashTimeoutMs();
 const MIN_TIMEOUT_MS = 1;
 const MIN_TIMEOUT_S = 1;
 // Blocking `ProcessOutput` — wait for a background process to finish instead of polling it. Capped
@@ -28,11 +39,13 @@ const MIN_TIMEOUT_S = 1;
 const DEFAULT_BLOCK_S = 30;
 const MAX_BLOCK_S = 600;
 // How long a FOREGROUND run may hold the turn before it is moved to the background instead of being
-// killed at its deadline. Claude Code backgrounds at 15 s (BashTool.tsx:57); 30 s here for one reason: it
-// sits ABOVE the 20 s default timeout, so the rule is expressible in a sentence — a caller who did not
-// ask for a longer deadline sees exactly the behaviour it always had, and a caller who passed
-// `timeout` > 30 s gets its process preserved rather than killed. Anything at or under the default would
-// have quietly turned every slightly-slow command's RESULT into a process id.
+// killed at its deadline. The reference has the same idea with a smaller number (15 s, BashTool.tsx:57);
+// 30 s here is how long an interactive chat waits before a process id is worth more than the wait.
+// It now sits BELOW the 120 s default deadline rather than above it, so the budget is what an ordinary
+// call meets first: a slow command is PRESERVED as a process the caller can read, not killed two minutes
+// later with its output thrown away. The rule the description states is unchanged — a run detaches when
+// its `timeout` is longer than this budget — and the exclusions below still decide where that trade makes
+// sense at all.
 const AUTO_BACKGROUND_BUDGET_MS = 30_000;
 // …and WHERE that trade makes sense. Handing back a process id instead of the result only helps someone
 // who can ask for the rest: a person in their own chat, who sees the process card and can read the run
@@ -955,7 +968,7 @@ export function register(ctx) {
       'Prefer the dedicated file tools (Read, Edit, Write, Search, ListDir) over cat, head, tail, sed, awk, echo, grep or rg. A shell read does NOT satisfy Edit/Write\'s read-before-write check, so reading a file with cat just forces a second Read before you can edit it — Read it directly. Reach for the shell when the task genuinely needs it: builds, tests, git, service inspection, process management.',
       'Quote paths that contain spaces, and create a file\'s parent directory (mkdir -p) before writing into a new location — Write refuses a missing directory.',
       'Running multiple commands: if the commands are independent and can run in parallel, make multiple Bash tool calls in a single message. Example: if you need to run "git status" and "git diff", send a single message with two Bash tool calls in parallel. If the commands depend on each other and must run sequentially, use a single Bash call with \'&&\' to chain them together. Use \';\' only when you need to run commands sequentially but don\'t care if earlier commands fail. DO NOT use newlines to separate commands (newlines are ok in quoted strings).',
-      `\`timeout\` is milliseconds, defaults to ${DEFAULT_TIMEOUT_MS}, and may not exceed ${MAX_TIMEOUT_MS}. The larger Elowen ceiling supports slow finite local builds without changing units.`,
+      `\`timeout\` is milliseconds, defaults to ${DEFAULT_TIMEOUT_MS} (${durationLabel(DEFAULT_TIMEOUT_MS)}), and may not exceed ${MAX_TIMEOUT_MS} (${durationLabel(MAX_TIMEOUT_MS)}).`,
       `A foreground command whose \`timeout\` exceeds ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} is normally MOVED to the background at ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} instead of being killed at that deadline: the result then reports a process id, and ProcessOutput(id) waits for the rest. It is not moved when the user approved it at a permission prompt, when this conversation's background slots are full, or when the turn is not an interactive chat of its own (a sub-agent or workflow node, whose caller needs the output rather than a process id) — then the deadline still applies and the result says so.`,
       `Do not send a bare \`sleep N\` (N >= ${MIN_BLOCKED_SLEEP_S}) as the whole command to wait for something — that is refused. Start the work with run_in_background=true and wait for it with ProcessOutput(id).`,
       'Pass run_in_background=true for detached work. Manage detached work with ListProcesses, ProcessOutput, and KillProcess. backgroundMode="service" marks a long-lived server or watcher.',
@@ -968,7 +981,7 @@ export function register(ctx) {
       timeout: Type.Optional(Type.Number({
         minimum: MIN_TIMEOUT_MS,
         maximum: MAX_TIMEOUT_MS,
-        description: `Optional timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}, max ${MAX_TIMEOUT_MS}). Above ${AUTO_BACKGROUND_BUDGET_MS} it is not a kill deadline: the run is normally moved to the background at ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} and then continues with no time limit.`,
+        description: `Optional timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}, i.e. ${durationLabel(DEFAULT_TIMEOUT_MS)}; max ${MAX_TIMEOUT_MS}, i.e. ${durationLabel(MAX_TIMEOUT_MS)}). Above ${AUTO_BACKGROUND_BUDGET_MS} — which the default already is — it is not a kill deadline: the run is normally moved to the background at ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} and then continues with no time limit.`,
       })),
       description: Type.Optional(Type.String({ description: 'Clear, concise active-voice description of what the command does. Use 5-10 words for simple commands; add enough context for piped commands or obscure flags. Describe the action directly without labels such as "complex" or "risky".' })),
       run_in_background: Type.Optional(Type.Boolean({ description: 'Run the command in the background. You get a process id back and are notified when it completes — never poll. ProcessOutput(id) waits for it when you need the result now.' })),

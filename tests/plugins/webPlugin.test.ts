@@ -437,17 +437,49 @@ describe('web plugin WebFetch pipeline', () => {
     expect(text).toContain('https://1.1.1.1/final');
   });
 
-  it('cancels an HTTP error response before reporting it', async () => {
+  it('cancels an HTTP error response before reporting it, and throws when the origin failed', async () => {
     const { fetchTool, cancellations, inferenceCalls } = await mount({}, undefined, async () => new Response(
       'upstream failed', { status: 503 },
     ));
     const url = 'https://93.184.216.34/error-cleanup';
 
-    const text = textOf(await fetchTool.execute('f', { url, prompt: 'Summarize' }));
-
-    expect(text).toContain('HTTP 503');
+    // 5xx is the origin failing: it throws, so the host marks the tool result is_error.
+    await expect(fetchTool.execute('f', { url, prompt: 'Summarize' })).rejects.toThrow('HTTP 503');
     expect(cancellations.map((entry) => entry.url)).toEqual([url]);
     expect(inferenceCalls).toHaveLength(0);
+  });
+
+  it('keeps a 4xx an ordinary text result the model can act on', async () => {
+    const { fetchTool, cancellations } = await mount({}, undefined, async () => new Response(
+      'nope', { status: 404 },
+    ));
+    const url = 'https://93.184.216.34/missing';
+
+    const text = textOf(await fetchTool.execute('f', { url, prompt: 'Summarize' }));
+
+    expect(text).toBe('Error: HTTP 404');
+    expect(cancellations.map((entry) => entry.url)).toEqual([url]);
+  });
+
+  it('throws a socket failure and keeps a host policy refusal as text', async () => {
+    const dead = await mount({}, undefined, async () => {
+      throw Object.assign(new Error('connect ECONNREFUSED 93.184.216.34:443'), { code: 'ECONNREFUSED' });
+    });
+    await expect(dead.fetchTool.execute('f', { url: 'https://93.184.216.34/x', prompt: 'Summarize' }))
+      .rejects.toThrow('ECONNREFUSED');
+
+    // The transport declining to go somewhere is an answer, not a fault: it stays readable text.
+    const refused = await mount({}, undefined, async () => { throw new Error('URL resolves to a non-global address'); });
+    const text = textOf(await refused.fetchTool.execute('f', { url: 'https://93.184.216.34/y', prompt: 'Summarize' }));
+    expect(text).toBe('Error: URL resolves to a non-global address');
+  });
+
+  it('throws when the search backend fails and answers a 4xx as text', async () => {
+    const down = await mount({ serperApiKey: 'k' }, undefined, async () => new Response('boom', { status: 502 }));
+    await expect(down.search.execute('s', { query: 'anything' })).rejects.toThrow('serper HTTP 502');
+
+    const rejected = await mount({ serperApiKey: 'k' }, undefined, async () => new Response('bad key', { status: 401 }));
+    expect(textOf(await rejected.search.execute('s', { query: 'anything' }))).toBe('Error: serper HTTP 401');
   });
 
   it('follows a redirect that only adds or drops a leading www.', async () => {

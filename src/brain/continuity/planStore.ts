@@ -22,9 +22,11 @@ export const PLAN_MAX_CHARS = 16_000;
  *  once can be deleted afterwards. `mkdirSync` with `recursive` is idempotent and cheap, so paying it
  *  per plan turn buys a guarantee that holds no matter how the instance got here.
  *
- *  This matters because of what plan mode withholds: the model is told to write its plan to this path,
- *  but Write does not create parent directories and `mkdir -p` is denied by the non-destructive shell clamp.
- *  Without this the model would hit ENOENT with no tool able to fix it. */
+ *  It is what makes the path the model is told to write to usable no matter which tool it reaches for:
+ *  `mkdir -p` is denied by the non-destructive shell clamp, and Write is confined to the plan path
+ *  itself. Write creates its own parent tree now, so this is belt and braces rather than the only
+ *  thing standing between the model and an ENOENT it could not fix — and it still guarantees the
+ *  directory exists for readPlan on a turn that never wrote anything. */
 export function ensurePlanDir(sessionId: string): boolean {
   try {
     mkdirSync(dirname(planFilePath(process.env, sessionId)), { recursive: true });

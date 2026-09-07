@@ -17,6 +17,32 @@ const fail = (e) => ok(`Error: ${e instanceof Error ? e.message : String(e)}`, {
   ok: false,
   error: { message: e instanceof Error ? e.message : String(e) },
 });
+/** Structured result: the resource tools answer in JSON shaped like the reference's `outputSchema`, the
+ *  way the task tools already do, so the model parses fields instead of re-reading rendered prose. */
+const okJson = (value, details = {}) => ok(JSON.stringify(value, null, 2), details);
+
+// Error delivery channel: an MCP transport that dies, a call that times out and a server that fails a
+// request are THROWN so the host flags the result `is_error`; a server that is simply not connected, an
+// unknown name or a tool answering with its own error content stays a readable text result. The rule is
+// written out once, next to the same helper in the files plugin (`plugins/files/index.mjs`); bundled
+// plugins cannot import each other, so keep these copies in step.
+const TRANSPORT_FAILURE = Symbol.for('elowen.transportFailure');
+export function markTransportFailure(error) {
+  const wrapped = error instanceof Error ? error : new Error(String(error));
+  wrapped[TRANSPORT_FAILURE] = true;
+  return wrapped;
+}
+export function isTransportFailure(error) {
+  return Boolean(error && typeof error === 'object' && error[TRANSPORT_FAILURE] === true);
+}
+/** A server that ANSWERS with a JSON-RPC error — unknown method, invalid params, its own error code —
+ *  has given the model something to act on, and JSON-RPC codes are numbers. A failure with no such answer
+ *  is the transport itself: a closed pipe, a refused socket (whose Node `code` is a string), a dead
+ *  process. Only the second kind is thrown. */
+export function asMcpTransportFailure(error) {
+  const answered = error && typeof error === 'object' && typeof error.code === 'number';
+  return answered ? error : markTransportFailure(error);
+}
 
 const CONNECT_TIMEOUT_MS = 15_000; // default; overridable via config.connectTimeoutMs (global, all servers)
 const CALL_TIMEOUT_MS = 120_000; // default; overridable via config.callTimeoutMs (global, all servers)
@@ -412,10 +438,11 @@ function isMethodNotFound(e) {
 /** Sanitize a name fragment into a tool-name-safe token. */
 const sanitize = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40) || 'x';
 
-/** Reject `promise` if it doesn't settle within `ms` (so one wedged server can't hang the whole reload). */
+/** Reject `promise` if it doesn't settle within `ms` (so one wedged server can't hang the whole reload).
+ *  A server that never answers is a transport failure, not something the caller can rephrase. */
 function withTimeout(promise, ms, label) {
   let timer;
-  const t = new Promise((_, rej) => { timer = setTimeout(() => rej(new Error(`${label} timed out after ${ms}ms`)), ms); timer.unref?.(); });
+  const t = new Promise((_, rej) => { timer = setTimeout(() => rej(markTransportFailure(new Error(`${label} timed out after ${ms}ms`))), ms); timer.unref?.(); });
   return Promise.race([promise, t]).finally(() => clearTimeout(timer));
 }
 
@@ -576,12 +603,19 @@ function registerBridgedTool(ctx, getClient, spec, tool) {
     execute: async (_id, args) => {
       try {
         const callTimeoutMs = configNumber(ctx.config?.callTimeoutMs, CALL_TIMEOUT_MS, 30000, 300000);
-        // A connect that fails here surfaces through the same `fail(e)` a call against a dead client
-        // does — an error result the model can read, never a crash and never a silent empty answer.
-        const client = await getClient();
-        const res = await withTimeout(client.callTool({ name: tool.name, arguments: args ?? {} }), callTimeoutMs, `mcp call ${tool.name}`);
+        // The server has to be reachable for the call to mean anything, so a connect that fails here is
+        // the same kind of failure a dead client is: transport, thrown, never a silent empty answer.
+        const client = await getClient().catch((error) => { throw markTransportFailure(error); });
+        const res = await withTimeout(
+          client.callTool({ name: tool.name, arguments: args ?? {} })
+            .catch((error) => { throw asMcpTransportFailure(error); }),
+          callTimeoutMs, `mcp call ${tool.name}`,
+        );
         return await mapResult(res);
-      } catch (e) { return fail(e); }
+      } catch (e) {
+        if (isTransportFailure(e)) throw e;
+        return fail(e);
+      }
     },
   }), {
     ...(spec.ownerUserId == null ? {} : { ownerUserId: spec.ownerUserId }),
@@ -923,7 +957,7 @@ function registerResourceTools(ctx, live, snapshot, ownerUserId) {
 
   ctx.registerTool(defineTool({
     name: 'ListMcpResources', label: 'List MCP resources',
-    description: 'List available resources from connected MCP servers (optionally one server via `server`). Each resource has a server name, URI, name and description. Use ReadMcpResource to read a specific resource by its server and URI.',
+    description: 'List available resources from connected MCP servers (optionally one server via `server`). The result is JSON: a `resources` array whose entries carry uri, name, server and, when the server provides them, mimeType and description. A server that failed to answer appears in an `errors` array instead of being dropped. Use ReadMcpResource to read a specific resource by its server and URI.',
     parameters: Type.Object({
       server: Type.Optional(Type.String({ description: 'Only list resources from this MCP server (by name).' })),
     }),
@@ -931,32 +965,43 @@ function registerResourceTools(ctx, live, snapshot, ownerUserId) {
       await ensure(p?.server);
       const targets = p?.server ? visibleLive().filter((entry) => entry.name === p.server) : visibleLive();
       if (p?.server && targets.length === 0) return fail(new Error(`MCP server "${p.server}" is not connected. Use ListMcpResources with no server to see connected servers.`));
-      const results = [];
+      const resources = [];
       const errors = [];
       for (const entry of targets) {
         try {
           let cursor;
           do {
             const res = await withTimeout(entry.client.listResources(cursor ? { cursor } : undefined), 10_000, `mcp listResources ${entry.name}`);
-            for (const r of res?.resources ?? []) results.push({ server: entry.name, uri: r.uri, name: r.name, description: r.description ?? '', mimeType: r.mimeType ?? '' });
+            // Optional fields are OMITTED rather than defaulted to '' — the reference's shape, and the one
+            // that lets the model tell "no description" from "an empty description".
+            for (const r of res?.resources ?? []) {
+              resources.push({
+                uri: r.uri,
+                name: r.name,
+                ...(r.mimeType ? { mimeType: r.mimeType } : {}),
+                ...(r.description ? { description: r.description } : {}),
+                server: entry.name,
+              });
+            }
             cursor = res?.nextCursor;
           } while (cursor);
         } catch (e) {
           if (isMethodNotFound(e)) continue;
-          errors.push(`${entry.name}: ${e instanceof Error ? e.message : String(e)}`);
+          // Listing is fail-open across servers: one unreachable server must not hide the resources of
+          // the others, so its failure travels as DATA in the result rather than as a thrown error.
+          errors.push({ server: entry.name, message: e instanceof Error ? e.message : String(e) });
         }
       }
-      if (results.length === 0 && errors.length === 0) return ok('No MCP resources available. Either no servers are connected or they expose no resources.');
-      const parts = [];
-      if (results.length) parts.push(results.map((r) => `[${r.server}] ${r.name} (${r.uri})${r.description ? ` — ${r.description}` : ''}`).join('\n'));
-      if (errors.length) parts.push(`Errors:\n${errors.map((e) => `- ${e}`).join('\n')}`);
-      return ok(parts.join('\n\n'), { count: results.length, errors: errors.length });
+      if (resources.length === 0 && errors.length === 0) {
+        return ok('No resources found. MCP servers may still provide tools even if they have no resources.', { count: 0, errors: 0 });
+      }
+      return okJson({ resources, ...(errors.length ? { errors } : {}) }, { count: resources.length, errors: errors.length });
     },
   }), opts);
 
   ctx.registerTool(defineTool({
     name: 'ReadMcpResource', label: 'Read MCP resource',
-    description: 'Read a specific resource from a connected MCP server by its server name and URI. Returns the resource content as text. Use ListMcpResources first to discover available resources.',
+    description: 'Read a specific resource from a connected MCP server by its server name and URI. The result is JSON: a `contents` array whose entries carry uri, mimeType and either text or, for binary content, the on-disk path in blobSavedTo plus a text note naming it. Use ListMcpResources first to discover available resources.',
     parameters: Type.Object({
       server: Type.String({ description: 'Name of the MCP server to read from' }),
       uri: Type.String({ description: 'URI of the resource to read' }),
@@ -967,21 +1012,35 @@ function registerResourceTools(ctx, live, snapshot, ownerUserId) {
       const entry = spec ? visibleLive().find((candidate) => candidate.key === serverKey(spec.ownerUserId, spec.name)) : undefined;
       if (!entry) return fail(new Error(`MCP server "${p.server}" is not connected. Use ListMcpResources to see available servers.`));
       try {
-        const result = await withTimeout(entry.client.readResource({ uri: p.uri }), 30_000, `mcp readResource ${p.uri}`);
+        const result = await withTimeout(
+          entry.client.readResource({ uri: p.uri }).catch((error) => { throw asMcpTransportFailure(error); }),
+          30_000, `mcp readResource ${p.uri}`,
+        );
         const parts = Array.isArray(result?.contents) ? result.contents : [];
-        const text = parts.map((c) => {
-          if (c?.text != null) return String(c.text);
-          if (c?.blob == null) return '[empty content]';
-          const mime = c.mimeType ?? 'unknown';
+        const contents = parts.map((c) => {
+          const uri = c?.uri ?? p.uri;
+          const mimeType = c?.mimeType;
+          const head = { uri, ...(mimeType ? { mimeType } : {}) };
+          if (c?.text != null) return { ...head, text: String(c.text) };
+          if (c?.blob == null) return head;
           try {
-            const saved = persistResourceBlob(join(ctx.dataDir(), 'resources'), c.uri ?? p.uri, mime, c.blob);
-            return `[binary content: ${mime}, ${saved.bytes} bytes] saved to ${saved.path}`;
+            const saved = persistResourceBlob(join(ctx.dataDir(), 'resources'), uri, mimeType ?? 'unknown', c.blob);
+            return {
+              ...head,
+              blobSavedTo: saved.path,
+              text: `[Resource from ${p.server} at ${uri}] Binary content (${mimeType ?? 'unknown type'}, ${saved.bytes} bytes) saved to ${saved.path}`,
+            };
           } catch (e) {
-            return `Binary content could not be saved to disk: ${e instanceof Error ? e.message : String(e)}`;
+            // Losing the bytes is not losing the read: the entry still names the resource and says what
+            // went wrong, which is what the reference does too.
+            return { ...head, text: `Binary content could not be saved to disk: ${e instanceof Error ? e.message : String(e)}` };
           }
-        }).join('\n\n');
-        return ok(text || '(no content)', { server: p.server, uri: p.uri });
-      } catch (e) { return fail(e); }
+        });
+        return okJson({ contents }, { server: p.server, uri: p.uri, count: contents.length });
+      } catch (e) {
+        if (isTransportFailure(e)) throw e;
+        return fail(e);
+      }
     },
   }), opts);
 }

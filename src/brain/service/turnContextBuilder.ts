@@ -192,9 +192,10 @@ export class TurnContextBuilder {
           // The plan-mode directive NAMES the plan file, because the plan is authored as a document and
           // the model cannot write one to a path it was never told. Passed to both modes' templates: the
           // var is simply unused by the ones that do not mention it.
-          // Creating the directory is part of naming the path: Write does not create parents and the
-          // plan-mode shell clamp denies `mkdir -p`, so telling the model to write somewhere that does
-          // not exist would hand it an ENOENT it has no tool to resolve.
+          // Creating the directory is part of naming the path. Write brings its own parent tree along
+          // now, so this is no longer the only thing keeping the model out of an ENOENT it could not
+          // resolve (the plan-mode shell clamp denies `mkdir -p`) — it still guarantees the directory is
+          // there for a turn that reads the plan without ever having written one.
           if (mode === 'plan') ensurePlanDir(live.sessionId);
           let modeReminder = '';
           if (modeTemplate) {
