@@ -2074,8 +2074,8 @@ export class BrainService {
    *  delegating plugin's progress sink while the child waits on it. Real durable state, not a synthetic
    *  tick: the plugin's stall watchdog counts it as activity (a wait on live nested work is not a stall)
    *  and DelegateStatus / the rail render it as "waiting for its own sub-agent". Liveness is the
-   *  lifecycle's, not the display status': a steered continuation's row stays visibly running under a
-   *  closed lifecycle and must not be the one named here. */
+   *  lifecycle's, not the display status': a pre-21-Aug row can still read `running` long after its call
+   *  closed, and naming that one here would report a dead grandchild as the live work being waited on. */
   private publishNestedProgress(childSessionId: string, onEvent?: (e: BrainEvent) => void): void {
     if (!onEvent) return;
     const live = new Set(this.d.store.activeDelegationChildIds(childSessionId));
