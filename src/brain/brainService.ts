@@ -510,9 +510,6 @@ export class BrainService {
         // cross this boundary: a dedicated id is validated by the same owner-chat rule once it exists.
         const mayCreate = row === undefined && (sessionId === undefined || (dedicated !== undefined && !isNonUserSession(target)));
         if (!mayCreate && !isOwnedUserSession(row, userId, target)) return null;
-        // A dedicated conversation starts every run empty. The wipe goes through the same path as /clear,
-        // so a run still in flight there refuses instead of losing its transcript under itself.
-        if (dedicated && row) await this.clearSession(userId, target);
         // `send` only accepts a conversation that already has a row; spawning it here is what creates
         // the row under this account, the same way opening a fresh conversation does.
         if (mayCreate) await this.lifecycle.ensureLive(userId, target);

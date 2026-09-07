@@ -3881,7 +3881,7 @@ describe('BrainService', () => {
     expect(d.store.getMessages('brain-ch-cron-job-1').map((m) => JSON.parse(m.content).content)).toContain('wake three');
   });
 
-  it('a dedicated origin creates the job\'s own conversation, names it after the job and empties it before every run', async () => {
+  it('a dedicated origin creates the job\'s own conversation, names it after the job and keeps every run in it', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();
     const ctx = reg.contextFor('cron', {}, { info() {}, warn() {}, error() {} });
@@ -3904,10 +3904,11 @@ describe('BrainService', () => {
     const texts = () => d.store.getMessages('brain-1-job-1').map((m) => JSON.parse(m.content).content);
     expect(texts()).toContain('run one');
 
-    // Second run: the transcript is wiped first, so only the latest run is in the conversation.
+    // Second run: the history stays, so the model can see what it reported last time.
     expect(await fire('run two')).toBe('echo:run two');
     expect(texts()).toContain('run two');
-    expect(texts()).not.toContain('run one');
+    expect(texts()).toContain('run one');
+    expect(d.store.getSession('brain-1-job-1')?.title).toBe('Morning report');
     expect(d.store.getSession('brain-ch-cron-job-1')).toBeUndefined();
 
     // A dedicated id may never name a channel session, even one that does not exist yet.
