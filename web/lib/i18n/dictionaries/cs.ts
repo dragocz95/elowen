@@ -1568,6 +1568,8 @@ export const cs = {
     running: 'běží',
     done: 'hotovo',
     error: 'chyba',
+    steered: 'předáno do běhu',
+    steeredInto: 'předáno do běžícího tahu',
     openTranscript: 'Otevřít přepis sub-agenta',
     sandboxed: 'Běží v izolovaném sandboxu',
   },
