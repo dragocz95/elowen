@@ -59,13 +59,13 @@ Every human platform turn uses the linked account's current project policy and t
 
 The writer identity and its contribution scope are resolved for each shared-room turn, so personal skills, memory, and owner-scoped tools cannot leak from the room opener to another participant. Direct chats use their verified account consistently. Scheduled and delegated work carry host-authenticated scope rather than inventing a human platform identity.
 
-## Delivery, interruption, and rollover
+## Delivery, interruption, and stale context
 
 The normal response is returned to the originating adapter. Proactive delivery uses a host-validated destination envelope when a specific platform is selected; the host routes it to that platform's notification sink. Legacy raw IDs remain accepted by the adapters where supported. Failures are isolated across platforms, and delivery is reported as successful only when a sink accepted it.
 
 For an eligible interrupted human turn, the daemon persists the turn before the provider call. After restart, it resumes through the ordinary channel pipeline and then delivers the computed answer to the original destination. Delivery retries do not run the model again. Scheduled turns, unlinked turns, and image-bearing turns are not boot-resumable because their authority or prompt bytes cannot be reproduced safely.
 
-A channel that has been idle past the configured threshold (30 minutes by default) is rolled over before the next new turn when it is not streaming and has no active delegated children. The old live session is disposed and its transcript is re-keyed under a unique archived `brain-ch-*` ID; the stable channel key is then opened as a fresh session. The archived conversation remains browsable, while the channel continues under the same platform destination. A recent explicit interaction prevents rollover, and a resumed turn disables rollover so it can finish in the original session.
+A channel keeps one conversation for its whole life, however long it stays quiet. Rooms, direct chats, scheduled job channels, and sub-agent channels all continue where they left off, so a scheduled turn always finds the history it was set from. The cost of returning to a long-idle conversation is handled at the start of that turn instead: once the provider's prompt cache has provably expired, the daemon clears cold tool results to disk and then compacts the context before the first request. Both passes stand down while a turn is streaming, compacting, or waiting on delegated work.
 
 ## Commands shared by channels
 
