@@ -691,9 +691,19 @@ function useBrainChatController(): BrainChatValue {
             void elowenClient.brainStatus(boundSessionRef.current)
               .then((status) => { if (generation === genRef.current) setUsageIfFresh(status.usage, usageRead); })
               .catch(() => { /* best-effort */ });
+            // A delegation that just settled is a row of the switcher's sub-agent branch, and its status
+            // there comes from the durable lifecycle rather than from this event. Refresh the branch read
+            // instead of trying to fold a live event into a cached tree. Only on a settle: a running
+            // child emits progress continuously, and invalidating on each tick would be a poll.
+            void qc.invalidateQueries({ queryKey: QUERY_KEYS.brainConversationLinks });
           }
         },
-        workflow: (workflow) => applyEvent({ type: 'workflow', ...workflow }),
+        workflow: (workflow) => {
+          applyEvent({ type: 'workflow', ...workflow });
+          // Same reasoning as above, and the same restraint: the whole DAG re-fans on every node's tool
+          // event, so only a terminal snapshot refreshes the branch.
+          if (workflow.status !== 'running') void qc.invalidateQueries({ queryKey: QUERY_KEYS.brainConversationLinks });
+        },
         goal: setGoal,
         // The generated name landed after the provisional one. The rail's registry query is the one live
         // owner of conversation titles, so invalidate it exactly like a manual rename does — no transcript
@@ -987,8 +997,9 @@ function useBrainChatController(): BrainChatValue {
       throw error;
     }
     await qc.invalidateQueries({ queryKey: ['brain-sessions'] });
-    // A deleted conversation takes its collapsed job branch with it: the schedules stay, but the daemon
-    // no longer resolves their filing, so the navigation read has to be asked again.
+    // A deleted conversation takes both its collapsed branches with it: the schedules stay but the daemon
+    // no longer resolves their filing, and its delegated children are deleted with it. Either way the
+    // navigation read has to be asked again rather than patched.
     void qc.invalidateQueries({ queryKey: QUERY_KEYS.brainConversationLinks });
     // Deleting the open conversation re-targets to the most recent remaining one (or a fresh state).
     if (wasActive) await connect();
