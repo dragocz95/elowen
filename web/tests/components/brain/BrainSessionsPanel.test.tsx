@@ -5,6 +5,7 @@ import { http, HttpResponse } from 'msw';
 import { BrainSessionsPanel } from '../../../components/brain/BrainSessionsPanel';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
+import { BRAIN_OPEN_EVENT, type BrainOpenRequest } from '../../../lib/brainDock';
 
 // Moved from tests/pluginUi/agentsSessions.test.tsx when the register left the agents plugin's
 // Sessions page: the panel is core data and renders as the administrator's view of the conversation
@@ -27,19 +28,25 @@ const conversations = Array.from({ length: 13 }, (_, index) => ({
 let managedOverride: Record<string, unknown>[] | null = null;
 /** The collapsed scheduled-job branches. `available` with no links is the normal case for an instance
  *  whose cron plugin is installed but has nothing filed under a conversation. */
-let jobLinks: { status: string; links: Record<string, unknown>[] } = { status: 'available', links: [] };
+let jobLinks: Record<string, unknown> = { status: 'available', links: [] };
+/** Every `?ids` the register asked the branch read for, so a test can pin that it narrows to the page. */
+const branchRequests: (string | null)[] = [];
 const server = setupServer(
   http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 2, username: 'user', is_admin: admin } })),
   http.get('*/api/brain/sessions', () => HttpResponse.json(conversations)),
   http.get('*/api/brain/managed-sessions', () => HttpResponse.json(
     managedOverride ?? conversations.map((session) => ({ ...session, kind: 'conversation', tokens: 1200 })),
   )),
-  http.get('*/api/brain/conversation-links', () => HttpResponse.json(jobLinks)),
+  http.get('*/api/brain/conversation-links', ({ request }) => {
+    branchRequests.push(new URL(request.url).searchParams.get('ids'));
+    return HttpResponse.json(jobLinks);
+  }),
 );
 beforeEach(() => {
   admin = true;
   managedOverride = null;
   jobLinks = { status: 'available', links: [] };
+  branchRequests.length = 0;
   localStorage.clear();
 });
 beforeAll(() => server.listen()); afterAll(() => server.close());
@@ -518,5 +525,88 @@ describe('BrainSessionsPanel — the page fills the dialog', () => {
     } finally {
       Reflect.deleteProperty(globalThis as unknown as Record<string, unknown>, 'ResizeObserver');
     }
+  });
+});
+
+/** The administrator's view of the same branch. This register already nests a delegated session under the
+ *  conversation that started it, from the session ancestry alone — so the interesting property here is
+ *  that adding the branch does not make one sub-agent appear twice. */
+describe('BrainSessionsPanel — sub-agent branch', () => {
+  const branch = (subagents: Record<string, unknown[]>, over: Record<string, unknown> = {}) => {
+    jobLinks = { status: 'available', links: [], subagentStatus: 'available', subagents, subagentsTruncated: false, ...over };
+  };
+  const withNested = () => {
+    managedOverride = [
+      ...conversations.slice(0, 3).map((session) => ({ ...session, kind: 'conversation', tokens: 10, ownerId: 2, ownerLabel: 'Me' })),
+      { id: 'brain-ch-subagent-sub-a', title: 'Nested worker', model: 'gpt-5.5', updated_at: '2026-07-13T09:00:00.000Z', running: false, active: false, kind: 'conversation', tokens: 5, ownerId: 2, ownerLabel: 'Me', parentSessionId: 'brain-1' },
+    ];
+  };
+
+  it('shows a delegated session under the branch and not a second time through its ancestry', async () => {
+    withNested();
+    branch({ 'brain-1': [{ kind: 'delegate', key: 'sub:a', name: 'Nested worker', status: 'done', childSessionId: 'brain-ch-subagent-sub-a', children: [] }] });
+    renderPanel();
+    await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sub-agents of Conversation 1' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Sub-agent runs under Conversation 1' }));
+
+    // Exactly one row carries the name: the branch row, which knows the run status the ancestry cannot.
+    await waitFor(() => expect(screen.getAllByText('Nested worker')).toHaveLength(1));
+    expect(screen.getByRole('button', { name: 'Nested worker' })).toBeInTheDocument();
+    expect(screen.getByText('Completed')).toBeInTheDocument();
+  });
+
+  /** A session older than the run rows and the DAG snapshots has no branch row to move to. Yielding the
+   *  ancestry rendering unconditionally would simply lose it. */
+  it('keeps a delegated session the branch does not cover in its ancestry place', async () => {
+    withNested();
+    branch({});
+    renderPanel();
+    await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sub-agents of Conversation 1' }));
+
+    expect(await screen.findByText('Nested worker')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Sub-agent runs under/ })).toBeNull();
+  });
+
+  it('opens a sub-agent read-only and lets its host dismiss', async () => {
+    branch({ 'brain-1': [{ kind: 'delegate', key: 'sub:a', name: 'Audit auth', status: 'error', childSessionId: 'brain-ch-subagent-sub-a', children: [] }] });
+    const opened: BrainOpenRequest[] = [];
+    const listener = (event: Event) => opened.push((event as CustomEvent<BrainOpenRequest>).detail);
+    window.addEventListener(BRAIN_OPEN_EVENT, listener);
+    try {
+      renderPanel();
+      await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
+      fireEvent.click(screen.getByRole('button', { name: 'Sub-agents of Conversation 1' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Sub-agent runs under Conversation 1' }));
+      fireEvent.click(await screen.findByRole('button', { name: 'Audit auth' }));
+    } finally {
+      window.removeEventListener(BRAIN_OPEN_EVENT, listener);
+    }
+
+    expect(opened).toEqual([{ sessionId: 'brain-ch-subagent-sub-a', continuable: false }]);
+  });
+
+  /** The branch is a tree walk, and this register spans every account. It is asked for the page on
+   *  screen rather than for the whole instance. */
+  it('asks for the branches of the page on screen', async () => {
+    branch({});
+    renderPanel();
+    await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
+
+    await waitFor(() => expect(branchRequests.at(-1)).toBeTruthy());
+    const asked = branchRequests.at(-1)!.split(',');
+    expect(asked).toContain('brain-1');
+    // Page one holds twelve of the thirteen conversations, so the thirteenth is not asked about.
+    expect(asked).not.toContain('brain-13');
+  });
+
+  it('says a failed core read out loud rather than showing every conversation as having delegated nothing', async () => {
+    branch({}, { subagentStatus: 'error' });
+    renderPanel();
+
+    await waitFor(() => expect(screen.getByText('Sub-agents could not be loaded')).toBeInTheDocument());
   });
 });

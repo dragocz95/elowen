@@ -35,7 +35,7 @@ const ctrl = vi.hoisted(() => {
 
 const admin = vi.hoisted(() => ({ value: false }));
 const jobLinks = vi.hoisted(() => ({
-  value: { status: 'available', links: [] as Record<string, unknown>[] },
+  value: { status: 'available', links: [] as Record<string, unknown>[] } as Record<string, unknown>,
 }));
 
 const client = vi.hoisted(() => ({
@@ -202,5 +202,29 @@ describe('ConversationSwitcherModal', () => {
     await waitFor(() => {
       expect(within(modal).getByRole('searchbox', { name: /Search conversations|Hledat v konverzacích|Hľadať v konverzáciách/i })).toHaveFocus();
     });
+  });
+});
+
+/** Following a sub-agent hands its transcript to the chat surface BEHIND this modal, so the modal has to
+ *  get out of the way — otherwise the reader lands on the list still covering what they just opened. */
+describe('ConversationSwitcherModal — sub-agent rows', () => {
+  it('closes once a sub-agent row has been followed', async () => {
+    jobLinks.value = {
+      status: 'available',
+      links: [],
+      subagentStatus: 'available',
+      subagentsTruncated: false,
+      subagents: { s1: [{ kind: 'delegate', key: 'sub:a', name: 'Audit auth', status: 'done', childSessionId: 'brain-ch-subagent-sub-a', children: [] }] },
+    };
+    const { onClose } = renderModal();
+    await dialog();
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Sub-agent runs under First' }));
+    expect(onClose).not.toHaveBeenCalled();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Audit auth' }));
+    expect(onClose).toHaveBeenCalled();
+    // Reading a delegated child changes nothing about the conversation the reader was in.
+    expect(ctrl.switchSession).not.toHaveBeenCalled();
   });
 });

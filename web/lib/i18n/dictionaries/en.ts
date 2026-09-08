@@ -362,6 +362,26 @@ export const en = {
     paused: 'Paused',
     error: 'Scheduled jobs could not be loaded',
   },
+  /** The collapsed branch of sub-agents under a conversation, in both switcher views. Navigation into
+   *  what already ran: nothing on these rows starts, continues or deletes anything. */
+  subagentBranch: {
+    branch: 'Sub-agents',
+    toggle: 'Sub-agent runs under {title}',
+    expand: 'What {name} delegated',
+    workflow: 'Workflow',
+    /** A delegation whose transcript retention has already removed. The row still records that the work
+     *  happened; it simply has nowhere to go. */
+    unavailable: 'Transcript no longer available',
+    truncated: 'More rows than can be shown here',
+    error: 'Sub-agents could not be loaded',
+    statusPending: 'Waiting',
+    statusRunning: 'Working',
+    /** A run parked for a person to continue, which is neither finished nor still moving. */
+    statusBlocked: 'Needs attention',
+    statusDone: 'Completed',
+    statusError: 'Failed',
+    statusInterrupted: 'Interrupted',
+  },
   dashboard: {
     greetingMorning: 'Good morning',
     greetingAfternoon: 'Good afternoon',

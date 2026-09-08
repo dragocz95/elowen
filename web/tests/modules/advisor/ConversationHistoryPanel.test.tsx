@@ -42,7 +42,9 @@ const client = vi.hoisted(() => ({
   brainRenameSession: vi.fn(() => Promise.resolve({ id: 's1', title: 'Renamed' })),
   brainExportSession: vi.fn(() => Promise.resolve()),
   brainForkSession: vi.fn(() => Promise.resolve({ id: 's1-fork', title: 'First', forkedFrom: 's1' })),
-  brainConversationLinks: vi.fn(() => Promise.resolve({ status: 'available', links: [] as Record<string, unknown>[] })),
+  brainConversationLinks: vi.fn(() => Promise.resolve(
+    { status: 'available', links: [] as Record<string, unknown>[] } as Record<string, unknown>,
+  )),
 }));
 
 vi.mock('../../../modules/advisor/BrainChatProvider', () => ({ useBrainChat: () => ctrl.value }));
@@ -575,6 +577,142 @@ describe('ConversationHistoryPanel — scheduled job branches', () => {
     await screen.findByText('First');
     expect(screen.queryByText('Scheduled jobs could not be loaded')).toBeNull();
     expect(screen.queryByRole('button', { name: /Scheduled jobs of/ })).toBeNull();
+  });
+});
+
+/** The sub-agents that ran under a personal conversation, as a collapsed branch under it. Navigation into
+ *  what already ran: every row here either opens a transcript READ-ONLY or does nothing but expand. */
+describe('ConversationHistoryPanel — sub-agent branch', () => {
+  const agent = (over: Partial<Record<string, unknown>> = {}) => ({
+    kind: 'delegate', key: 'sub:c-a', name: 'Audit auth', status: 'done',
+    childSessionId: 'brain-ch-subagent-sub-a', children: [], ...over,
+  });
+  const withBranch = (subagents: Record<string, unknown[]>, over: Record<string, unknown> = {}) => {
+    client.brainConversationLinks.mockResolvedValue({
+      status: 'available', links: [], subagentStatus: 'available', subagents, subagentsTruncated: false, ...over,
+    });
+  };
+
+  it('files the branch under its own conversation, collapsed, and opens it on demand', async () => {
+    withBranch({ s1: [agent()] });
+    renderPanel();
+
+    const toggle = await screen.findByRole('button', { name: 'Sub-agent runs under First' });
+    // Only the group is on screen; what it holds is behind it, and no OTHER conversation grew one.
+    expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    expect(toggle).not.toHaveAttribute('aria-controls');
+    expect(screen.queryByText('Audit auth')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Sub-agent runs under Second' })).toBeNull();
+
+    fireEvent.click(toggle);
+    expect(toggle).toHaveAttribute('aria-expanded', 'true');
+    expect(toggle.getAttribute('aria-controls')).toBeTruthy();
+    // The disclosure names the rows it actually revealed, and each of those ids is really in the document.
+    for (const id of toggle.getAttribute('aria-controls')!.split(' ')) {
+      expect(document.getElementById(id)).not.toBeNull();
+    }
+    expect(screen.getByText('Audit auth')).toBeInTheDocument();
+    expect(screen.getByText('Completed')).toBeInTheDocument();
+  });
+
+  /** A finished delegation is a record of what happened, not a chat to resume — and the daemon would
+   *  refuse a post into it anyway. `continuable` must therefore be FALSE. */
+  it('opens a sub-agent read-only and dismisses the switcher behind it', async () => {
+    withBranch({ s1: [agent()] });
+    const opened = vi.fn();
+    const onNavigate = vi.fn();
+    window.addEventListener(BRAIN_OPEN_EVENT, opened);
+    try {
+      renderPanel({ onNavigate });
+      fireEvent.click(await screen.findByRole('button', { name: 'Sub-agent runs under First' }));
+      fireEvent.click(screen.getByRole('button', { name: 'Audit auth' }));
+    } finally {
+      window.removeEventListener(BRAIN_OPEN_EVENT, opened);
+    }
+
+    expect((opened.mock.calls[0]![0] as CustomEvent<BrainOpenRequest>).detail)
+      .toEqual({ sessionId: 'brain-ch-subagent-sub-a', continuable: false });
+    expect(onNavigate).toHaveBeenCalled();
+  });
+
+  /** Retention removes a child's transcript long before the parent's. The delegation still happened, so
+   *  the row stays — but a dead link is worse than a line that says why it cannot be followed. */
+  it('leaves a purged delegation as a plain row rather than a broken link', async () => {
+    withBranch({ s1: [{ ...agent({ name: 'Gone soon' }), childSessionId: undefined }] });
+    renderPanel();
+    fireEvent.click(await screen.findByRole('button', { name: 'Sub-agent runs under First' }));
+
+    expect(screen.queryByRole('button', { name: /Gone soon/ })).toBeNull();
+    expect(screen.getByText('Gone soon')).toBeInTheDocument();
+    expect(screen.getByText(/Transcript no longer available/)).toBeInTheDocument();
+  });
+
+  it('hides a nested delegation behind its own disclosure', async () => {
+    withBranch({ s1: [agent({ children: [agent({ key: 'sub:c-b', name: 'Nested probe', childSessionId: 'brain-ch-subagent-sub-b', status: 'running' })] })] });
+    renderPanel();
+    fireEvent.click(await screen.findByRole('button', { name: 'Sub-agent runs under First' }));
+
+    expect(screen.queryByText('Nested probe')).toBeNull();
+    const expand = screen.getByRole('button', { name: 'What Audit auth delegated' });
+    expect(expand).toHaveAttribute('aria-expanded', 'false');
+
+    fireEvent.click(expand);
+    expect(screen.getByText('Nested probe')).toBeInTheDocument();
+    // The lifecycle decides the glyph, and a running child says so in words too.
+    expect(screen.getByText('Working')).toBeInTheDocument();
+  });
+
+  /** A workflow fans out to N node sessions and never had a transcript of its own, so its row groups
+   *  rather than navigates. Its nodes are the rows worth following. */
+  it('groups a workflow and only lets its nodes be opened', async () => {
+    withBranch({
+      s1: [{
+        kind: 'workflow', key: 'wf:s1:call-9', name: 'Batch', status: 'running', children: [
+          { kind: 'workflowNode', key: 'wfn:1', name: 'Review', status: 'done', childSessionId: 'brain-ch-subagent-wf-1', children: [] },
+          { kind: 'workflowNode', key: 'wfn:2', name: 'Publish the summary', status: 'pending', children: [] },
+        ],
+      }],
+    });
+    renderPanel();
+    fireEvent.click(await screen.findByRole('button', { name: 'Sub-agent runs under First' }));
+
+    expect(screen.queryByRole('button', { name: 'Batch' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'What Batch delegated' }));
+    expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument();
+    // An undispatched node has no transcript to open, and nothing pretends otherwise.
+    expect(screen.queryByRole('button', { name: 'Publish the summary' })).toBeNull();
+    expect(screen.getByText('Publish the summary')).toBeInTheDocument();
+    expect(screen.getByText('Waiting')).toBeInTheDocument();
+  });
+
+  it('keeps a branch the reader opened across a refetch', async () => {
+    withBranch({ s1: [agent()] });
+    const { qc } = renderPanel();
+    fireEvent.click(await screen.findByRole('button', { name: 'Sub-agent runs under First' }));
+    expect(screen.getByText('Audit auth')).toBeInTheDocument();
+
+    await qc.invalidateQueries({ queryKey: ['brain-conversation-links'] });
+
+    await waitFor(() => expect(screen.getByText('Audit auth')).toBeInTheDocument());
+    expect(screen.getByRole('button', { name: 'Sub-agent runs under First' })).toHaveAttribute('aria-expanded', 'true');
+  });
+
+  it('says a failed core read out loud instead of showing every conversation as having delegated nothing', async () => {
+    client.brainConversationLinks.mockResolvedValue({
+      status: 'available', links: [], subagentStatus: 'error', subagents: {}, subagentsTruncated: false,
+    });
+    renderPanel();
+
+    expect(await screen.findByRole('status')).toHaveTextContent('Sub-agents could not be loaded');
+  });
+
+  it('shows no branch at all for a daemon that does not carry one', async () => {
+    client.brainConversationLinks.mockResolvedValue({ status: 'available', links: [] });
+    renderPanel();
+    await screen.findByText('First');
+
+    expect(screen.queryByRole('button', { name: /^Sub-agent runs under/ })).toBeNull();
+    expect(screen.queryByText('Sub-agents could not be loaded')).toBeNull();
   });
 });
 
