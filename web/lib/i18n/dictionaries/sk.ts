@@ -336,7 +336,9 @@ export const sk = {
   },
   subagentBranch: {
     branch: 'Sub-agenti',
-    toggle: 'Behy sub-agentov konverzácie {title}',
+    menu: 'Sub-agenti ({count})',
+    back: 'Späť na konverzácie',
+    empty: 'Táto konverzácia nedelegovala žiadneho sub-agenta.',
     expand: 'Čo delegoval sub-agent {name}',
     workflow: 'Workflow',
     unavailable: 'Prepis už nie je k dispozícii',

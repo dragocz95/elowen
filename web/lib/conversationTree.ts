@@ -1,9 +1,5 @@
 import type { ConversationJobLink, ConversationSubagentNode } from './types';
 
-/** The sub-agent branches of a whole listing, keyed by conversation id — the daemon's answer verbatim.
- *  Only conversations that HAVE a branch appear in it. */
-export type SubagentBranches = Readonly<Record<string, ConversationSubagentNode[]>>;
-
 /** One conversation as the register renders it. `parentSessionId` is the conversation that DELEGATED this
  *  one; everything else is the flat row the daemon already served. */
 export interface ConversationRow {
@@ -28,7 +24,7 @@ export interface ConversationRow {
  *  links are counted separately, because a schedule is not a conversation and must not enter the same
  *  identity namespace or token total.
  *
- *  The sub-agent branch is deliberately NOT a field here. It is fetched for the page of roots actually on
+ *  The sub-agent tree is deliberately NOT a field here. It is fetched for the page of roots actually on
  *  screen, so baking it into the forest the pagination is computed from would make the page depend on a
  *  read that depends on the page. Both registers look it up by conversation id at render time instead,
  *  through {@link countSubagentNodes} and the shared row renderer. */
@@ -40,28 +36,10 @@ export interface ConversationTreeNode {
   descendantCount: number;
 }
 
-/** How many ROWS a sub-agent branch renders, nested ones included — what the disclosure's digit counts. */
+/** How many ROWS a sub-agent tree renders, nested ones included — what the row menu's item counts, and
+ *  what decides whether it has anything to open at all. */
 export function countSubagentNodes(nodes: readonly ConversationSubagentNode[]): number {
   return nodes.reduce((total, node) => total + 1 + countSubagentNodes(node.children), 0);
-}
-
-/** Every transcript a set of branches can open, at any depth.
- *
- *  The admin register nests a delegated session under the conversation that started it, from the session
- *  ancestry alone. Those same sessions are now rows of the sub-agent branch, so the register asks this
- *  which ones the branch already shows and renders the rest — otherwise one sub-agent appears twice under
- *  one conversation. A row with nothing to open (a purged child, a workflow, an undispatched node) covers
- *  no session and is skipped. */
-export function subagentSessionIds(branches: SubagentBranches): Set<string> {
-  const out = new Set<string>();
-  const walk = (nodes: readonly ConversationSubagentNode[]): void => {
-    for (const node of nodes) {
-      if (node.childSessionId) out.add(node.childSessionId);
-      walk(node.children);
-    }
-  };
-  for (const nodes of Object.values(branches)) walk(nodes);
-  return out;
 }
 
 /** Group the flat link response by conversation, ordered by job name with the job id as the tiebreaker so

@@ -206,9 +206,10 @@ describe('ConversationSwitcherModal', () => {
 });
 
 /** Following a sub-agent hands its transcript to the chat surface BEHIND this modal, so the modal has to
- *  get out of the way — otherwise the reader lands on the list still covering what they just opened. */
-describe('ConversationSwitcherModal — sub-agent rows', () => {
-  it('closes once a sub-agent row has been followed', async () => {
+ *  get out of the way — otherwise the reader lands on the list still covering what they just opened. The
+ *  tree is a drill-down INSIDE this same modal, so getting to it must not close it. */
+describe('ConversationSwitcherModal — sub-agent tree', () => {
+  it('holds the tree inside the same modal and closes once a row has been followed', async () => {
     jobLinks.value = {
       status: 'available',
       links: [],
@@ -217,12 +218,15 @@ describe('ConversationSwitcherModal — sub-agent rows', () => {
       subagents: { s1: [{ kind: 'delegate', key: 'sub:a', name: 'Audit auth', status: 'done', childSessionId: 'brain-ch-subagent-sub-a', children: [] }] },
     };
     const { onClose } = renderModal();
-    await dialog();
+    const modal = await dialog();
 
-    fireEvent.click(await screen.findByRole('button', { name: 'Sub-agent runs under First' }));
+    fireEvent.click(await within(modal).findByRole('button', { name: /^First: (More actions|Další akce|Ďalšie akcie)/ }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Sub-agents (1)' }));
+    // The drill-down replaces the list in place — the switcher stays open and keeps its own frame.
+    expect(await within(modal).findByTestId('conversation-subagents-tree')).toBeInTheDocument();
     expect(onClose).not.toHaveBeenCalled();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Audit auth' }));
+    fireEvent.click(within(modal).getByRole('button', { name: 'Audit auth' }));
     expect(onClose).toHaveBeenCalled();
     // Reading a delegated child changes nothing about the conversation the reader was in.
     expect(ctrl.switchSession).not.toHaveBeenCalled();

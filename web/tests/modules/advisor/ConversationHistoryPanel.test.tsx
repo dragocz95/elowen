@@ -112,6 +112,19 @@ describe('ConversationHistoryPanel', () => {
     expect(screen.queryByText('chatgpt-account/openai/gpt-5.6-sol')).toBeNull();
   });
 
+  /** Rename, branch, export, delete and the sub-agent tree are reachable only through this button, so a
+   *  reader has to be able to SEE that the row has actions before touching it. It used to be painted at
+   *  `opacity-0` until the row was hovered. */
+  it('keeps the row action trigger visible without hover', () => {
+    renderPanel();
+    for (const trigger of screen.getAllByRole('button', { name: /More actions|Další akce|Ďalšie akcie/i })) {
+      expect(trigger.className).not.toMatch(/\bopacity-0\b/);
+      expect(trigger.className).not.toMatch(/group-hover:opacity-100/);
+      // Quiet, not invisible: muted at rest and the ordinary foreground wash on hover.
+      expect(trigger.className).toMatch(/\btext-muted-foreground\b/);
+    }
+  });
+
   it('uses the shared Radix action-menu keyboard contract and returns focus on Escape', async () => {
     renderPanel();
     const trigger = screen.getAllByRole('button', { name: /More actions|Další akce/i })[0]!;
@@ -436,11 +449,12 @@ describe('ConversationHistoryPanel', () => {
     expect(within(row).getByText('Run failed, Unread result')).toBeInTheDocument();
   });
 
-  it('keeps active selection, action keyboard access and touch-visible actions', async () => {
+  it('keeps active selection and action keyboard access', async () => {
     renderPanel();
     expect(rowOf('First')).toHaveAttribute('aria-current', 'page');
     const trigger = screen.getAllByRole('button', { name: /More actions|Další akce/i })[0]!;
-    expect(trigger).toHaveClass('pointer-coarse:opacity-100');
+    // The touch-only reveal it used to carry is gone: the trigger is visible on every pointer now.
+    expect(trigger).not.toHaveClass('pointer-coarse:opacity-100');
     trigger.focus();
     fireEvent.keyDown(trigger, { key: 'ArrowDown' });
     await waitFor(() => expect(screen.getByRole('menuitem', { name: /^Rename$|^Přejmenovat$/i })).toHaveFocus());
@@ -580,9 +594,11 @@ describe('ConversationHistoryPanel — scheduled job branches', () => {
   });
 });
 
-/** The sub-agents that ran under a personal conversation, as a collapsed branch under it. Navigation into
- *  what already ran: every row here either opens a transcript READ-ONLY or does nothing but expand. */
-describe('ConversationHistoryPanel — sub-agent branch', () => {
+/** The sub-agents that ran under a personal conversation. They are reached from the conversation's own
+ *  action menu and shown as a drill-down INSIDE the switcher — the register itself stays a list of
+ *  conversations, one row each. Navigation into what already ran: every row of the tree either opens a
+ *  transcript READ-ONLY or does nothing but expand. */
+describe('ConversationHistoryPanel — sub-agent tree', () => {
   const agent = (over: Partial<Record<string, unknown>> = {}) => ({
     kind: 'delegate', key: 'sub:c-a', name: 'Audit auth', status: 'done',
     childSessionId: 'brain-ch-subagent-sub-a', children: [], ...over,
@@ -592,27 +608,52 @@ describe('ConversationHistoryPanel — sub-agent branch', () => {
       status: 'available', links: [], subagentStatus: 'available', subagents, subagentsTruncated: false, ...over,
     });
   };
+  const menuOf = (title: string) => screen.findByRole('button', { name: new RegExp(`^${title}: (More actions|Další akce|Ďalšie akcie)`) });
+  /** Open a conversation's tree the only way the panel offers it. */
+  const openTree = async (title: string, count = 1) => {
+    fireEvent.click(await menuOf(title));
+    fireEvent.click(await screen.findByRole('menuitem', { name: `Sub-agents (${count})` }));
+  };
 
-  it('files the branch under its own conversation, collapsed, and opens it on demand', async () => {
+  /** The regression: every conversation grew a full-width branch row with a tree guide under it, on a
+   *  surface whose rows are supposed to be one conversation each. */
+  it('adds no branch row under the conversation and offers the tree in its menu instead', async () => {
     withBranch({ s1: [agent()] });
     renderPanel();
 
-    const toggle = await screen.findByRole('button', { name: 'Sub-agent runs under First' });
-    // Only the group is on screen; what it holds is behind it, and no OTHER conversation grew one.
-    expect(toggle).toHaveAttribute('aria-expanded', 'false');
-    expect(toggle).not.toHaveAttribute('aria-controls');
-    expect(screen.queryByText('Audit auth')).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Sub-agent runs under Second' })).toBeNull();
+    fireEvent.click(await menuOf('First'));
+    expect(await screen.findByRole('menuitem', { name: 'Sub-agents (1)' })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
 
-    fireEvent.click(toggle);
-    expect(toggle).toHaveAttribute('aria-expanded', 'true');
-    expect(toggle.getAttribute('aria-controls')).toBeTruthy();
-    // The disclosure names the rows it actually revealed, and each of those ids is really in the document.
-    for (const id of toggle.getAttribute('aria-controls')!.split(' ')) {
-      expect(document.getElementById(id)).not.toBeNull();
-    }
-    expect(screen.getByText('Audit auth')).toBeInTheDocument();
+    expect(document.querySelector('[data-tree-row="subagents"]')).toBeNull();
+    expect(document.querySelector('[data-tree-row="subagent"]')).toBeNull();
+    expect(screen.queryByText('Audit auth')).toBeNull();
+  });
+
+  it('drills into the tree of the conversation the menu belongs to, and back', async () => {
+    withBranch({ s1: [agent()] });
+    renderPanel();
+    await openTree('First');
+
+    // The drill-down takes the surface over: the conversation it belongs to is named at the top and the
+    // list of conversations is gone until the reader comes back.
+    expect(await screen.findByTestId('conversation-subagents-tree')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'First' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Audit auth' })).toBeInTheDocument();
     expect(screen.getByText('Completed')).toBeInTheDocument();
+    expect(screen.queryByTestId('conversation-history-list')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /Back to conversations|Zpět na konverzace|Späť na konverzácie/ }));
+    expect(await screen.findByTestId('conversation-history-list')).toBeInTheDocument();
+    expect(screen.queryByText('Audit auth')).toBeNull();
+  });
+
+  it('offers nothing to open for a conversation that delegated nothing', async () => {
+    withBranch({ s1: [agent()] });
+    renderPanel();
+
+    fireEvent.click(await menuOf('Second'));
+    expect(await screen.findByRole('menuitem', { name: 'Sub-agents (0)' })).toHaveAttribute('aria-disabled', 'true');
   });
 
   /** A finished delegation is a record of what happened, not a chat to resume — and the daemon would
@@ -624,8 +665,8 @@ describe('ConversationHistoryPanel — sub-agent branch', () => {
     window.addEventListener(BRAIN_OPEN_EVENT, opened);
     try {
       renderPanel({ onNavigate });
-      fireEvent.click(await screen.findByRole('button', { name: 'Sub-agent runs under First' }));
-      fireEvent.click(screen.getByRole('button', { name: 'Audit auth' }));
+      await openTree('First');
+      fireEvent.click(await screen.findByRole('button', { name: 'Audit auth' }));
     } finally {
       window.removeEventListener(BRAIN_OPEN_EVENT, opened);
     }
@@ -633,33 +674,6 @@ describe('ConversationHistoryPanel — sub-agent branch', () => {
     expect((opened.mock.calls[0]![0] as CustomEvent<BrainOpenRequest>).detail)
       .toEqual({ sessionId: 'brain-ch-subagent-sub-a', continuable: false });
     expect(onNavigate).toHaveBeenCalled();
-  });
-
-  /** Retention removes a child's transcript long before the parent's. The delegation still happened, so
-   *  the row stays — but a dead link is worse than a line that says why it cannot be followed. */
-  it('leaves a purged delegation as a plain row rather than a broken link', async () => {
-    withBranch({ s1: [{ ...agent({ name: 'Gone soon' }), childSessionId: undefined }] });
-    renderPanel();
-    fireEvent.click(await screen.findByRole('button', { name: 'Sub-agent runs under First' }));
-
-    expect(screen.queryByRole('button', { name: /Gone soon/ })).toBeNull();
-    expect(screen.getByText('Gone soon')).toBeInTheDocument();
-    expect(screen.getByText(/Transcript no longer available/)).toBeInTheDocument();
-  });
-
-  it('hides a nested delegation behind its own disclosure', async () => {
-    withBranch({ s1: [agent({ children: [agent({ key: 'sub:c-b', name: 'Nested probe', childSessionId: 'brain-ch-subagent-sub-b', status: 'running' })] })] });
-    renderPanel();
-    fireEvent.click(await screen.findByRole('button', { name: 'Sub-agent runs under First' }));
-
-    expect(screen.queryByText('Nested probe')).toBeNull();
-    const expand = screen.getByRole('button', { name: 'What Audit auth delegated' });
-    expect(expand).toHaveAttribute('aria-expanded', 'false');
-
-    fireEvent.click(expand);
-    expect(screen.getByText('Nested probe')).toBeInTheDocument();
-    // The lifecycle decides the glyph, and a running child says so in words too.
-    expect(screen.getByText('Working')).toBeInTheDocument();
   });
 
   /** A workflow fans out to N node sessions and never had a transcript of its own, so its row groups
@@ -674,10 +688,11 @@ describe('ConversationHistoryPanel — sub-agent branch', () => {
       }],
     });
     renderPanel();
-    fireEvent.click(await screen.findByRole('button', { name: 'Sub-agent runs under First' }));
+    // The count is every row the tree can draw, nested ones included.
+    await openTree('First', 3);
 
     expect(screen.queryByRole('button', { name: 'Batch' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'What Batch delegated' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'What Batch delegated' }));
     expect(screen.getByRole('button', { name: 'Review' })).toBeInTheDocument();
     // An undispatched node has no transcript to open, and nothing pretends otherwise.
     expect(screen.queryByRole('button', { name: 'Publish the summary' })).toBeNull();
@@ -685,16 +700,16 @@ describe('ConversationHistoryPanel — sub-agent branch', () => {
     expect(screen.getByText('Waiting')).toBeInTheDocument();
   });
 
-  it('keeps a branch the reader opened across a refetch', async () => {
+  it('keeps the tree on screen across a refetch', async () => {
     withBranch({ s1: [agent()] });
     const { qc } = renderPanel();
-    fireEvent.click(await screen.findByRole('button', { name: 'Sub-agent runs under First' }));
-    expect(screen.getByText('Audit auth')).toBeInTheDocument();
+    await openTree('First');
+    expect(await screen.findByText('Audit auth')).toBeInTheDocument();
 
     await qc.invalidateQueries({ queryKey: ['brain-conversation-links'] });
 
     await waitFor(() => expect(screen.getByText('Audit auth')).toBeInTheDocument());
-    expect(screen.getByRole('button', { name: 'Sub-agent runs under First' })).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByTestId('conversation-subagents-tree')).toBeInTheDocument();
   });
 
   it('says a failed core read out loud instead of showing every conversation as having delegated nothing', async () => {
@@ -706,12 +721,13 @@ describe('ConversationHistoryPanel — sub-agent branch', () => {
     expect(await screen.findByRole('status')).toHaveTextContent('Sub-agents could not be loaded');
   });
 
-  it('shows no branch at all for a daemon that does not carry one', async () => {
+  it('shows no tree at all for a daemon that does not carry one', async () => {
     client.brainConversationLinks.mockResolvedValue({ status: 'available', links: [] });
     renderPanel();
     await screen.findByText('First');
 
-    expect(screen.queryByRole('button', { name: /^Sub-agent runs under/ })).toBeNull();
+    fireEvent.click(await menuOf('First'));
+    expect(await screen.findByRole('menuitem', { name: 'Sub-agents (0)' })).toHaveAttribute('aria-disabled', 'true');
     expect(screen.queryByText('Sub-agents could not be loaded')).toBeNull();
   });
 });

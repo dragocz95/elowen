@@ -2,7 +2,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, ChevronRight, Circle, Clock, Plus, Trash2, MoreHorizontal, Pencil, FileCode, FileJson, GitBranch, ArrowLeft } from 'lucide-react';
+import { Bot, CheckCircle2, ChevronRight, Circle, Clock, Plus, Trash2, MoreHorizontal, Pencil, FileCode, FileJson, GitBranch, ArrowLeft } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useToast } from '../../components/ui/Toast';
 import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu';
@@ -12,6 +12,7 @@ import { openBrainComposer, openBrainSession } from '../../lib/brainDock';
 import { localDateTime, formatTokens } from '../../lib/format';
 import {
   buildConversationTree,
+  countSubagentNodes,
   filterConversationTree,
   groupJobLinks,
   sortConversationTree,
@@ -180,10 +181,10 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
   // Which conversations have their scheduled-job branch open. Local to this mount and keyed by session
   // id: navigation state, not something to persist or sync across devices.
   const [openJobs, setOpenJobs] = useState<ReadonlySet<string>>(EMPTY_IDS);
-  // The sub-agent branches the reader has opened — the group under a conversation, and the individual
-  // rows inside it whose own delegations are uncovered. Same lifetime and same reasoning as `openJobs`:
-  // navigation state, kept for as long as this mount lives so a refetch cannot fold it back.
-  const [openAgents, setOpenAgents] = useState<ReadonlySet<string>>(EMPTY_IDS);
+  // The conversation whose sub-agent tree the reader drilled into, and the rows inside that tree whose own
+  // delegations are uncovered. Same lifetime and same reasoning as `openJobs`: navigation state, kept for
+  // as long as this mount lives so a refetch cannot fold it back.
+  const [agentsFor, setAgentsFor] = useState<{ id: string; title: string } | null>(null);
   const [openAgentNodes, setOpenAgentNodes] = useState<ReadonlySet<string>>(EMPTY_IDS);
   // The conversations whose branches are worth reading: the page actually on screen. Held in state and
   // written by an effect below the pager rather than derived here, because the page is computed from the
@@ -324,8 +325,18 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
     }
   };
 
-  const actionItems = (session: { id: string; title?: string; active: boolean }): ActionMenuItem[] => [
+  /** The row's actions. The sub-agent tree is one of them rather than a branch under the row: a switcher
+   *  row is one conversation, and a tree hanging off every one of them turned the list into a forest.
+   *  It carries the number of runs it would open and stays present but unselectable at zero, so the menu
+   *  keeps the same shape on every row. */
+  const actionItems = (session: { id: string; title?: string; active: boolean }, agents: number): ActionMenuItem[] => [
     { label: t.chat.rename, icon: Pencil, onSelect: () => beginRename(session.id, session.title || '') },
+    {
+      label: t.subagentBranch.menu.replace('{count}', String(agents)),
+      icon: Bot,
+      disabled: agents === 0,
+      onSelect: () => setAgentsFor({ id: session.id, title: session.title || t.brainChat.untitled }),
+    },
     { label: t.chat.fork, icon: GitBranch, onSelect: () => { void forkSession(session.id); } },
     { label: t.chat.exportHtml, icon: FileCode, onSelect: () => exportSession(session.id, 'html') },
     { label: t.chat.exportJsonl, icon: FileJson, onSelect: () => exportSession(session.id, 'jsonl') },
@@ -352,8 +363,6 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
   const subagents = jobLinks.data?.subagents ?? EMPTY_BRANCHES;
   const subagentsFailed = jobLinks.data?.subagentStatus === 'error';
   const subagentLabels: SubagentBranchLabels = {
-    branch: t.subagentBranch.branch,
-    toggle: t.subagentBranch.toggle,
     expand: t.subagentBranch.expand,
     workflow: t.subagentBranch.workflow,
     unavailable: t.subagentBranch.unavailable,
@@ -483,6 +492,7 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
     const title = row.title || t.brainChat.untitled;
     const snippet = snippetBySession.get(row.id);
     const open = jobBranchOpen(row.id);
+    const agents = countSubagentNodes(subagents[row.id] ?? []);
     return (
       // `data-tree-row` is what the page measurement reads: only a conversation is a page unit.
       <DataTableRow
@@ -546,12 +556,13 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
         <DataTableCell lines="auto">
           <ActionMenu
             label={`${title}: ${t.chat.moreActions}`}
-            items={actionItems({ id: row.id, title: row.title, active: session?.active === true })}
+            items={actionItems({ id: row.id, title: row.title, active: session?.active === true }, agents)}
             trigger={<MoreHorizontal size={16} aria-hidden />}
-            // Rename, branch, export and delete are reachable ONLY through this button, so it cannot be a
-            // hover affordance. Touch and keyboard always reveal it; fine pointers keep the quiet row
-            // treatment until hover, focus or Radix's open state.
-            triggerClassName="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground opacity-0 transition-all hover:bg-accent hover:text-foreground group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100 pointer-coarse:opacity-100"
+            // Rename, branch, export, delete and the sub-agent tree are reachable ONLY through this
+            // button, so it is never hidden: a reader cannot go looking for actions they have no way of
+            // knowing are there. Quiet at rest, the ordinary foreground wash on hover, and filled while
+            // its own menu is open.
+            triggerClassName="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 data-[state=open]:bg-accent data-[state=open]:text-foreground"
           />
         </DataTableCell>
       </DataTableRow>
@@ -603,22 +614,61 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
     if (node.jobs.length > 0 && jobBranchOpen(node.row.id)) {
       node.jobs.forEach((link, i) => out.push(jobRow(node, link, i === node.jobs.length - 1)));
     }
-    // The sub-agents that ran under this conversation, as their own collapsed group. Following one opens
-    // its transcript READ-ONLY: a finished delegation is a record of what happened, not a chat to resume.
-    out.push(...subagentBranchRows({
-      conversation: { id: node.row.id, title: node.row.title || t.brainChat.untitled },
-      nodes: subagents[node.row.id] ?? [],
+    return out;
+  };
+
+  /** The sub-agents that ran under one conversation, as a view of their own inside this surface.
+   *
+   *  It is a drill-down rather than rows spliced into the list: the register is a list of conversations,
+   *  and hanging a tree off each row made every conversation two rows tall. Following a row opens its
+   *  transcript READ-ONLY — a finished delegation is a record of what happened, not a chat to resume. */
+  const agentsView = (target: { id: string; title: string }): ReactNode => {
+    const rows = subagentBranchRows({
+      conversation: target,
+      nodes: subagents[target.id] ?? [],
       labels: subagentLabels,
-      rowDomId: (suffix) => `${uid}-${encodeURIComponent(node.row.id)}-${suffix}`,
+      rowDomId: (suffix) => `${uid}-${encodeURIComponent(target.id)}-${suffix}`,
       indent: 0,
-      open: openAgents.has(node.row.id),
-      onToggleBranch: () => toggleIds(setOpenAgents, node.row.id),
       openKeys: openAgentNodes,
       onToggleNode: (key) => toggleIds(setOpenAgentNodes, key),
       forceOpen: false,
       onOpenSession: (sessionId) => { dismiss(); openBrainSession(sessionId, false); },
-    }));
-    return out;
+    });
+    return (
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <ControlSurfaceToolbar testId="conversation-subagents-toolbar" layout="split">
+          <div className="flex min-w-0 items-center gap-2">
+            {/* The way out of the drill-down, in the place the switcher already puts one. */}
+            <button
+              type="button"
+              onClick={() => setAgentsFor(null)}
+              aria-label={t.subagentBranch.back}
+              title={t.subagentBranch.back}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+            >
+              <ArrowLeft size={16} aria-hidden />
+            </button>
+            <h2 className="truncate text-base font-semibold text-foreground">{target.title}</h2>
+            <span className="shrink-0 text-xs text-muted-foreground">{t.subagentBranch.branch}</span>
+          </div>
+        </ControlSurfaceToolbar>
+        <ControlSurfaceRegister className="flex min-h-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {rows.length === 0 ? (
+              <p className="py-8 text-xs italic text-muted-foreground">{t.subagentBranch.empty}</p>
+            ) : (
+              <DataTable
+                ariaLabel={t.subagentBranch.branch}
+                columns="minmax(0,1fr)"
+                data-testid="conversation-subagents-tree"
+              >
+                {rows}
+              </DataTable>
+            )}
+          </div>
+        </ControlSurfaceRegister>
+      </section>
+    );
   };
 
   // What an empty table says depends on WHY it is empty: a query that matched nothing is a different
@@ -626,6 +676,10 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
   const emptyText = q.length >= 2
     ? (results === null ? null : t.brainChat.searchEmpty)
     : t.chat.emptyHistory;
+
+  // The drill-down takes the whole surface, so the reader reads one thing at a time and the modal keeps
+  // its shape — same window on a desktop, same full screen on a phone.
+  if (agentsFor) return agentsView(agentsFor);
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col">
