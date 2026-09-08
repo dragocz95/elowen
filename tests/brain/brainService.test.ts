@@ -3711,6 +3711,17 @@ describe('BrainService', () => {
       resolveWorkspace: async () => ({ ref: { workspaceId: 'ws-owner', projectId: 7 }, path: workspace, accountId: 1, label: 'Owner', branch: 'owner/topic', baseRef: 'main' }),
       acquireDelegationLease: async () => ({ heartbeat: () => {}, release: () => {} }),
       prepareExecution: async () => ({}),
+      // Required by the current control contract (ENVIRONMENT_CONTROL_METHODS); this turn-level test
+      // never reaches a managed environment, so any real call is an unexpected one.
+      environmentFor: async () => { throw new Error('environmentFor is not expected in this fixture'); },
+      requestEnvironment: async () => { throw new Error('requestEnvironment is not expected in this fixture'); },
+      environmentOperation: async () => { throw new Error('environmentOperation is not expected in this fixture'); },
+      projectFiles: async () => { throw new Error('projectFiles is not expected in this fixture'); },
+      revokeProjectAccess: async () => { throw new Error('revokeProjectAccess is not expected in this fixture'); },
+      environmentSnapshots: async () => { throw new Error('environmentSnapshots is not expected in this fixture'); },
+      environmentLogs: async () => { throw new Error('environmentLogs is not expected in this fixture'); },
+      managedWorktrees: async () => { throw new Error('managedWorktrees is not expected in this fixture'); },
+      projectPreviewBinding: async () => { throw new Error('projectPreviewBinding is not expected in this fixture'); },
     } satisfies KnownControls['sandbox'] as never);
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     let scopedCwd: string | undefined;

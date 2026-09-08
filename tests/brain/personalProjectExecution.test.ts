@@ -70,6 +70,12 @@ function setup() {
 const readyControl = () => ({
   prepareExecution: vi.fn(), environmentFor: vi.fn(), requestEnvironment: vi.fn(),
   environmentOperation: vi.fn(), projectFiles: vi.fn(), revokeProjectAccess: vi.fn(),
+  // Required by the current control contract (ENVIRONMENT_CONTROL_METHODS); these metadata-only tests
+  // never provision, so any real call is an unexpected one.
+  environmentSnapshots: async () => { throw new Error('environmentSnapshots is not expected in this fixture'); },
+  environmentLogs: async () => { throw new Error('environmentLogs is not expected in this fixture'); },
+  managedWorktrees: async () => { throw new Error('managedWorktrees is not expected in this fixture'); },
+  projectPreviewBinding: async () => { throw new Error('projectPreviewBinding is not expected in this fixture'); },
 } as unknown as SandboxControl);
 
 describe('new personal conversation execution defaults', () => {
