@@ -659,7 +659,7 @@ Keep these version axes separate:
 
 - The daemon version is the root `package.json` version (`0.28.34` in this checkout) and is the version used by `requiresCore` checks. Update it through the repository's normal release process; do not infer it from a plugin manifest or the marketplace catalog.
 - A plugin's manifest `version` is that plugin's own release version. Bump it whenever its installed bytes change, so reload cache-busting and marketplace update detection see the new build. It does not need to match the daemon version.
-- `apiVersion` is the plugin API breaking-change axis and is currently `"1"`; `requiresCore` is a minimum daemon version for additive host APIs. `requiresSharedApi` is the exact shared-helper contract, currently `3`.
+- `apiVersion` is the plugin API breaking-change axis and is currently `"1"`; `requiresCore` is a minimum daemon version for additive host APIs. `requiresSharedApi` is the exact shared-helper contract, currently `4`.
 - `web.requiresApiVersion` is the host browser-runtime compatibility ceiling, currently `16`; it must not be used to signal removals.
 
 ### Writing a changelog entry

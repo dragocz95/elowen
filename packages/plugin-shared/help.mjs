@@ -11,6 +11,7 @@ export const HELP_DESCRIPTIONS = {
   en: {
     model: 'pick the AI model for this {place}',
     context: 'continue this {place} in one of your conversations',
+    project: 'switch this {place} to one of your projects',
     reasoning: 'set the reasoning effort for this {place}',
     fast: 'set your account Fast preference',
     voice: 'toggle spoken audio replies here',
@@ -25,6 +26,7 @@ export const HELP_DESCRIPTIONS = {
   cs: {
     model: 'výběr AI modelu pro tento {place}',
     context: 'navázat v tomto {placeLoc} na jednu ze svých konverzací',
+    project: 'přepnout tento {place} na jeden ze svých projektů',
     reasoning: 'úroveň uvažování pro tento {place}',
     fast: 'nastavit Fast režim svého účtu',
     voice: 'přepnout mluvené odpovědi zde',
@@ -39,6 +41,7 @@ export const HELP_DESCRIPTIONS = {
   sk: {
     model: 'výber AI modelu pre tento {place}',
     context: 'nadviazať v tomto {placeLoc} na jednu zo svojich konverzácií',
+    project: 'prepnúť tento {place} na jeden zo svojich projektov',
     reasoning: 'úroveň uvažovania pre tento {place}',
     fast: 'nastaviť Fast režim svojho účtu',
     voice: 'prepnúť hovorené odpovede tu',

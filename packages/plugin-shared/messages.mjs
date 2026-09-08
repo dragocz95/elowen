@@ -1,13 +1,29 @@
 /** Service-message keys that are byte-identical across every chat adapter (Discord/Telegram/WhatsApp).
  *  These carry no per-surface wording ("channel" vs "chat") and no markdown emphasis, so one definition
  *  serves all three. Each adapter spreads these into its own `MESSAGES[lang]` and layers its
- *  surface-specific keys (and any deliberate override) on top. */
+ *  surface-specific keys (and any deliberate override) on top.
+ *
+ *  The two shared pickers (/context, /project) speak surface-neutral wording for the same reason: the
+ *  texts used to live per adapter (Discord said "channel", the chat transports "chat", each with its own
+ *  emphasis marks), and the shared picker core renders ONE descriptor for all of them, so the wording
+ *  moved in with the flow. */
 export const SHARED_MESSAGES = {
   en: {
     noModels: '❌ No models configured yet (Settings → Elowen AI).',
     modelForbidden: '🔒 Only the operator can change the model here.',
     contextError: (msg) => `⚠️ Couldn’t continue that conversation here: ${msg}`,
     noContextSessions: '📭 You have no conversations to continue here yet.',
+    pickContext: '💬 Continue this chat in one of your conversations:',
+    contextPlaceholder: 'Choose a conversation…',
+    contextBound: (title) => `🔗 This chat now continues “${title || 'your conversation'}”.`,
+    noProjects: '📭 You have no projects to switch to yet.',
+    pickProject: '🏗️ Switch this chat to one of your projects:',
+    projectPlaceholder: 'Choose a project…',
+    projectSwitched: (slug) => `🏗️ This chat now runs in project ${slug}.`,
+    projectNotFound: (arg) => arg ? `⚠️ No project “${arg}” is available to your account.` : '⚠️ No project was selected.',
+    projectError: (msg) => `⚠️ Couldn’t switch this chat to that project: ${msg}`,
+    projectUnavailable: '⚠️ Project switching is not available on this host yet.',
+    projectAccountRequired: '🔒 Link this platform identity to your Elowen account before switching this chat to a project.',
     reasoningDefaultValue: 'default',
     reasoningUnavailable: '⚠️ The selected model does not support configurable reasoning effort.',
     fastUnavailable: '⚠️ No configured model route supports Fast mode.',
@@ -29,6 +45,17 @@ export const SHARED_MESSAGES = {
     modelForbidden: '🔒 Model tady může měnit jen provozovatel.',
     contextError: (msg) => `⚠️ Nepodařilo se tu navázat na tuto konverzaci: ${msg}`,
     noContextSessions: '📭 Zatím tu nemáte žádnou konverzaci k navázání.',
+    pickContext: '💬 Navažte v tomto chatu na jednu ze svých konverzací:',
+    contextPlaceholder: 'Vyberte konverzaci…',
+    contextBound: (title) => `🔗 Tento chat nyní pokračuje v konverzaci „${title || 'vaší konverzaci'}“.`,
+    noProjects: '📭 Zatím nemáte žádný projekt, do kterého byste mohli tento chat přepnout.',
+    pickProject: '🏗️ Přepněte tento chat na jeden ze svých projektů:',
+    projectPlaceholder: 'Vyberte projekt…',
+    projectSwitched: (slug) => `🏗️ Tento chat nyní běží v projektu ${slug}.`,
+    projectNotFound: (arg) => arg ? `⚠️ Projekt „${arg}“ pro váš účet není dostupný.` : '⚠️ Nebyl vybrán žádný projekt.',
+    projectError: (msg) => `⚠️ Nepodařilo se přepnout tento chat na projekt: ${msg}`,
+    projectUnavailable: '⚠️ Přepínání projektů tady není dostupné.',
+    projectAccountRequired: '🔒 Nejdřív propojte tuto platformní identitu se svým účtem Elowen.',
     reasoningDefaultValue: 'výchozí',
     reasoningUnavailable: '⚠️ Vybraný model nepodporuje nastavitelnou úroveň uvažování.',
     fastUnavailable: '⚠️ Žádná nastavená cesta modelu nepodporuje Fast režim.',
@@ -50,6 +77,17 @@ export const SHARED_MESSAGES = {
     modelForbidden: '🔒 Model tu môže meniť iba prevádzkovateľ.',
     contextError: (msg) => `⚠️ Nepodarilo sa tu nadviazať na túto konverzáciu: ${msg}`,
     noContextSessions: '📭 Zatiaľ tu nemáte žiadnu konverzáciu na nadviazanie.',
+    pickContext: '💬 Nadviažte v tomto chate na jednu zo svojich konverzácií:',
+    contextPlaceholder: 'Vyberte konverzáciu…',
+    contextBound: (title) => `🔗 Tento chat teraz pokračuje v konverzácii „${title || 'vašej konverzácii'}“.`,
+    noProjects: '📭 Zatiaľ nemáte žiadny projekt, do ktorého by ste mohli tento chat prepnúť.',
+    pickProject: '🏗️ Prepnite tento chat na jeden zo svojich projektov:',
+    projectPlaceholder: 'Vyberte projekt…',
+    projectSwitched: (slug) => `🏗️ Tento chat teraz beží v projekte ${slug}.`,
+    projectNotFound: (arg) => arg ? `⚠️ Projekt „${arg}“ pre váš účet nie je dostupný.` : '⚠️ Nebol vybraný žiadny projekt.',
+    projectError: (msg) => `⚠️ Nepodarilo sa prepnúť tento chat na projekt: ${msg}`,
+    projectUnavailable: '⚠️ Prepnutie projektov tu nie je dostupné.',
+    projectAccountRequired: '🔒 Najprv prepojte túto platformovú identitu so svojím účtom Elowen.',
     reasoningDefaultValue: 'predvolené',
     reasoningUnavailable: '⚠️ Vybraný model nepodporuje nastaviteľnú úroveň uvažovania.',
     fastUnavailable: '⚠️ Žiadna nastavená cesta modelu nepodporuje Fast režim.',

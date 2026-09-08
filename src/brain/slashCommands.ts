@@ -92,6 +92,18 @@ export const SLASH_COMMANDS: readonly PublishedSlashCommand[] = [
   // `picker` (rendering) + `session-control` (execution): the chooser is drawn per surface, but listing and
   // binding are daemon operations on the CHANNEL session (PlatformControlApi.listContext/bindContext).
   { name: 'context', description: 'Continue this channel in one of your conversations', kind: 'picker', execution: 'session-control', surfaces: [...PLATFORM_SURFACES] },
+  // Move THIS channel conversation into one of the invoking sender's reachable Projects (/project): the
+  // same validated move owner chat's /cd performs, through PlatformControlApi.listProjects/switchProject.
+  // A `picker` (rendering) + `session-control` (execution) exactly like /context — both are served by the
+  // shared picker core, and each surface draws the descriptor and hands the choice back. The one
+  // deliberate difference is the gate: binding someone else's conversation history into a shared room is
+  // an operator decision (/context keeps its per-surface operator gate), while a project switch moves the
+  // conversation into a directory only the SWITCHING account itself reaches — the host resolves that
+  // sender's own project policy and re-validates it on the switch, so every linked writer may call it and
+  // `adminOnly` stays off. `argument: 'text'` is the typed short form: `/project <slug|id>` resolves an
+  // exact slug first, then a decimal id; the bare command opens the same shared chooser as /context.
+  // Platform-only like /context — the CLI and the web dock are not channels to move.
+  { name: 'project', description: 'Move this channel into one of your projects', kind: 'picker', execution: 'session-control', argument: { kind: 'text' }, surfaces: [...PLATFORM_SURFACES] },
   // Bare `/fast` atomically toggles the invoking account; explicit on/off/status are portable everywhere.
   { name: 'fast', description: 'Set the account Fast preference', kind: 'action', execution: 'session-control', argument: { kind: 'enum', values: ['on', 'off', 'status'] }, surfaces: ['cli', 'web', ...PLATFORM_SURFACES] },
   // Every surface wires its own picker: the CLI TUI's overlay, a native /reasoning command on Discord,
