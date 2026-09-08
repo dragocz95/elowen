@@ -42,6 +42,8 @@ describe('AskQuestionCard', () => {
     // still carries the header the question was created with — only the drawing is shortened.
     const onSubmit = renderCard([{ ...single, header: 'Authentication m' }]);
     expect(screen.getByText('Authenticat…')).toBeTruthy();
+    // The full header stays reachable on hover — the chip has a fixed budget, the wording does not.
+    expect(screen.getByText('Authenticat…').getAttribute('title')).toBe('Authentication m');
     expect(screen.queryByText('Authentication m')).toBeNull();
     fireEvent.click(screen.getByRole('radio', { name: /Blue/ }));
     fireEvent.click(screen.getByRole('button', { name: en.brainChat.askSubmit }));

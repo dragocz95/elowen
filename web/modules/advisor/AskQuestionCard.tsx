@@ -155,7 +155,10 @@ export function AskQuestionCard({ questions, kind, onSubmit }: { questions: AskQ
         return (
           <div key={qi} className="flex flex-col gap-1.5">
             <div className="flex items-baseline gap-2">
-              <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-tiny font-medium text-muted-foreground">
+              <span
+                className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-tiny font-medium text-muted-foreground"
+                title={wording || q.header.length <= CHIP_WIDTH ? undefined : q.header}
+              >
                 {wording ? t.brainChat.approvalHeader : chip(q.header)}
               </span>
               <span className="text-sm text-foreground">
