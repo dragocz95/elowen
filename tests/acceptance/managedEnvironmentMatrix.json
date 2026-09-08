@@ -312,9 +312,10 @@
     {
       "area": "editor",
       "capability": "office preview converters in a guest",
-      "evidence": "unverified",
-      "negative": "unverified",
-      "notes": "Split out so its absence is explicit."
+      "evidence": "unit",
+      "negative": "unit",
+      "notes": "Not supported rather than untested: the project image ships no office suite, so the endpoint now answers 501 with the reason instead of a generic command failure. Adding LibreOffice to every project image is a product decision, not a test gap.",
+      "suite": "editorManagedOperations"
     },
     {
       "area": "artifacts",
