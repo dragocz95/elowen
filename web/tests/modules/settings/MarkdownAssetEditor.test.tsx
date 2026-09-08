@@ -91,6 +91,30 @@ describe('MarkdownAssetEditor register', () => {
     expect(bodyRows(container)[0].querySelector('.data-table-chevron')).not.toBeNull();
   });
 
+  // Every register in the app puts a row's switch at the left edge, so the caller's row control leads
+  // the row rather than trailing beside the delete action.
+  it('renders the caller\'s row control as the first cell and the first interactive element of the row', () => {
+    const { container } = renderEditor(assets, {
+      renderRowControl: (item: TestAsset) => (
+        <button type="button" aria-label={`Toggle ${item.name}`}>toggle</button>
+      ),
+    });
+    const row = bodyRows(container)[0];
+    const cells = within(row).getAllByRole('cell');
+    expect(within(cells[0]).getByRole('button', { name: 'Toggle alpha-skill' })).toBeInTheDocument();
+    // The row-open overlay is a button too, so "first" is measured over every control the row carries.
+    expect(row.querySelectorAll('button')[0]).toHaveAttribute('aria-label', 'Toggle alpha-skill');
+    // The leading track exists only because a control was supplied.
+    const table = container.querySelector<HTMLElement>('[role="table"]')!;
+    expect(table.style.getPropertyValue('--data-table-columns').trim().startsWith('2.75rem')).toBe(true);
+  });
+
+  it('grows no leading track when the caller supplies no row control', () => {
+    const { container } = renderEditor();
+    const table = container.querySelector<HTMLElement>('[role="table"]')!;
+    expect(table.style.getPropertyValue('--data-table-columns').trim().startsWith('2.75rem')).toBe(false);
+  });
+
   it('keeps one row rhythm with several badges in the same cell', () => {
     const { container } = renderEditor();
     for (const row of bodyRows(container)) expect(row.dataset.rowHeight).toBe('standard');

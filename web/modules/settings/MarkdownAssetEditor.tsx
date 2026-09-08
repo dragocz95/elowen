@@ -92,7 +92,8 @@ export interface MarkdownAssetEditorProps<T extends MarkdownAsset, E> {
   extraValid?: (form: AssetForm<E>) => boolean;
   /** Read-only badges rendered after the source badge (e.g. tools mode, manual-only). */
   renderBadges?: (item: T) => ReactNode;
-  /** Extra per-row control for user entries, placed before the delete button (e.g. a toggle). */
+  /** Extra per-row control for user entries (e.g. a toggle), rendered in the register's LEADING column.
+   *  Supplying it is what creates that column at all. */
   renderRowControl?: (item: T) => ReactNode;
   /** Ownership column + scope filter, for assets that can belong to one account. Omitted → the register
    *  looks exactly as it did before ownership existed (no extra column, one filter). */
@@ -260,10 +261,16 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
             <div className="flex min-w-0 flex-col gap-3">
               <DataTable
                 ariaLabel={t.assetEditor.colName}
-                columns={ownership ? 'minmax(0,14rem) minmax(0,1fr) 7rem 10rem 6rem 3rem 1.25rem' : 'minmax(0,14rem) minmax(0,1fr) 10rem 6rem 3rem 1.25rem'}
+                // The row-control track LEADS the register, the same 2.75rem lane every other table in
+                // the app puts its row switch in. It exists only when the caller supplies a control:
+                // a page without one (sub-agents) would otherwise open every row with an empty gutter.
+                columns={`${renderRowControl ? '2.75rem ' : ''}${ownership ? 'minmax(0,14rem) minmax(0,1fr) 7rem 10rem 3rem 1.25rem' : 'minmax(0,14rem) minmax(0,1fr) 10rem 3rem 1.25rem'}`}
                 compactColumns="minmax(0,1fr) 3rem 1.25rem"
               >
                 <DataTableRow header>
+                  {renderRowControl ? (
+                    <DataTableCell header priority="wide" labelHidden lines={1}>{t.assetEditor.colOptions}</DataTableCell>
+                  ) : null}
                   <DataTableCell header lines={1}>{t.assetEditor.colName}</DataTableCell>
                   <DataTableCell header priority="wide" lines={1}>{t.assetEditor.colDescription}</DataTableCell>
                   {ownership ? <DataTableCell header priority="wide" lines={1}>{ownership.header}</DataTableCell> : null}
@@ -276,7 +283,6 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                       the two rows agreeing on their column count. A column is only hidden on BOTH sides
                       (see the chevron below), never on one. */}
                   <DataTableCell header priority="wide" labelHidden lines={1}>{t.assetEditor.colSource}</DataTableCell>
-                  <DataTableCell header priority="wide" labelHidden lines={1}>{t.assetEditor.colOptions}</DataTableCell>
                   <DataTableCell header labelHidden lines={1}>{t.common.actions}</DataTableCell>
                   {/* The trailing chevron track: an affordance, not a column, so its header is empty. */}
                   <DataTableCell header aria-hidden lines={1}>{null}</DataTableCell>
@@ -292,6 +298,11 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                   const isOpen = editing !== null && assetKey(editing) === assetKey(item);
                   const cells = (
                     <>
+                      {renderRowControl ? (
+                        <DataTableCell priority="wide" lines="auto" className="flex items-center justify-center">
+                          {editable ? renderRowControl(item) : null}
+                        </DataTableCell>
+                      ) : null}
                       <DataTableCell lines={1} className="font-mono text-sm text-foreground">{item.name}</DataTableCell>
                       {/* Preview, not wrap: a description is a sentence and would push every other row
                           out of alignment; the full text is on hover. */}
@@ -310,9 +321,6 @@ export function MarkdownAssetEditor<T extends MarkdownAsset, E>({
                       <DataTableCell priority="wide" lines={1} className="flex items-center gap-1.5">
                         <Badge tone={isUser ? 'accent' : 'default'}>{isUser ? labels.badgeUser : labels.badgeBuiltin}</Badge>
                         {renderBadges?.(item)}
-                      </DataTableCell>
-                      <DataTableCell priority="wide" lines="auto" className="flex items-center">
-                        {editable ? renderRowControl?.(item) : null}
                       </DataTableCell>
                       <DataTableCell lines="auto" reveal className="flex items-center justify-end">
                         {editable ? (
