@@ -819,6 +819,54 @@ describe('BrainStore', () => {
     ]);
   });
 
+  /** A run that died before writing its first message leaves a row NOTHING collects: dropIfUnspoken only
+   *  runs on a live conversation's dispose, and the sweep's "spoken in" requirement skipped it forever.
+   *  Judged on row age instead — but only for ephemeral runs, never for an owner conversation, whose empty
+   *  rows are shells the CLI leaves behind (and, when named or cleared, deliberately kept). */
+  it('staleConversationIds sweeps a messageless ephemeral run shell but never a messageless conversation', () => {
+    const age = (id: string) => db.prepare("UPDATE brain_sessions SET updated_at = datetime('now', '-90 days') WHERE id = ?").run(id);
+    const agedShell = (id: string) => { store.createSession({ id, userId: 7, model: 'm' }); age(id); };
+
+    agedShell('brain-ch-subagent-sub-dlg-empty');   // sub-agent shell, never spoke → collectable
+    agedShell('brain-ch-cron-job-nightly-empty');   // cron run shell, never spoke → collectable
+    agedShell('brain-7-empty');                     // owner conversation, never spoken in → kept
+    agedShell('brain-ch-discord-123#0');            // live channel shell → kept
+
+    expect(store.staleConversationIds(7, 30).sort()).toEqual([
+      'brain-ch-cron-job-nightly-empty',
+      'brain-ch-subagent-sub-dlg-empty',
+    ]);
+  });
+
+  /** The delegated-result inbox is swept on the retention horizon too. Every other row dies with its
+   *  session (deleteSession deletes by parent AND by child), so the only rows that outlive their subject
+   *  are sub-agent results whose child session is gone or was never recorded. A WORKFLOW row's empty child
+   *  id is its normal shape, so sweeping on the id alone would delete live conversations' summaries. */
+  it('purgeUndeliverableSubagentResults drops aged childless sub-agent rows and keeps workflow rows', () => {
+    store.createSession({ id: 'root', userId: 1, model: 'm' });
+    store.createSession({ id: 'child', userId: 1, model: 'm', parentSessionId: 'root' });
+    store.upsertSubagentRun('root', { id: 'live-call', sessionId: 'child', status: 'done', task: 'inspect', tools: 1, seconds: 1 });
+    store.upsertWorkflowRun('root', { id: 'wf-1', toolCallId: 'wf-call', status: 'done', nodes: [] });
+    expect(store.enqueueSubagentResult('root', {
+      id: 'live-result', toolCallId: 'live-call', sessionId: 'child', status: 'done', task: 'inspect', result: 'ok', tools: 1, seconds: 1,
+    })).toBe(true);
+    expect(store.enqueueWorkflowResult('root', { id: 'wf-1', toolCallId: 'wf-call', status: 'done', result: 'dag done' })).toBe(true);
+    // A delegation that failed before its child existed: accepted at enqueue (error results may carry no
+    // child id), deliverable while the parent still takes turns, sediment once it is past the horizon.
+    expect(store.enqueueSubagentResult('root', {
+      id: 'childless', toolCallId: 'ghost-call', sessionId: '', status: 'error', task: 'never started', error: 'no child', tools: 0, seconds: 0,
+    })).toBe(true);
+    const ids = () => (db.prepare('SELECT result_id FROM brain_subagent_results ORDER BY result_id').all() as { result_id: string }[])
+      .map((row) => row.result_id);
+    expect(ids()).toEqual(['childless', 'live-result', 'wf-1']);
+
+    expect(store.purgeUndeliverableSubagentResults(30)).toBe(0); // all rows are fresh → nothing to sweep
+    db.prepare("UPDATE brain_subagent_results SET created_at = datetime('now', '-90 days')").run();
+
+    expect(store.purgeUndeliverableSubagentResults(30)).toBe(1);
+    expect(ids()).toEqual(['live-result', 'wf-1']); // the live child's row and the workflow summary stay
+  });
+
   it('lastMessageAt returns the newest message timestamp, undefined for an empty session', () => {
     store.createSession({ id: 'a', userId: 1, model: 'm' });
     expect(store.lastMessageAt('a')).toBeUndefined();
