@@ -25,6 +25,20 @@ function runDuration(agent: SubagentState, now: number): string {
   return formatDuration(startedAt == null ? agent.seconds * 1000 : now - startedAt);
 }
 
+/** The status chip of one row. A DelegateContinue STEERED into the child's already running turn ran no
+ *  tools and finished nothing — the delegation it entered is what worked — so it must not wear the same
+ *  "done" chip as a run that completed. The chip says what happened instead, and the two tallies such a
+ *  call would show (its own tools and seconds) are suppressed with it: they are what made the row read as
+ *  a finished run in the first place. */
+function StatusBadge({ agent, label }: { agent: SubagentState; label: (key: 'running' | 'done' | 'error' | 'steered') => string }) {
+  return agent.steered
+    ? <Badge tone="muted">{label('steered')}</Badge>
+    : <Badge tone={STATUS_TONE[agent.status]}>{label(agent.status)}</Badge>;
+}
+
+/** A dash where a steered call's own counter would sit: it never ran, so there is no number to show. */
+const tally = (agent: SubagentState, value: string): string => (agent.steered ? '—' : value);
+
 function AgentMobileCard({ agent, now, onOpen }: { agent: SubagentState; now: number; onOpen: (sessionId: string) => void }) {
   const { locale, t } = useTranslation();
   const started = formatTaskTime(agent.startedAt, now, locale);
@@ -54,7 +68,7 @@ function AgentMobileCard({ agent, now, onOpen }: { agent: SubagentState; now: nu
       />
       <div className="pointer-events-none relative z-20 p-3">
         <div className="flex items-start justify-between gap-2">
-          <Badge tone={STATUS_TONE[agent.status]}>{t.agents[agent.status]}</Badge>
+          <StatusBadge agent={agent} label={(key) => t.agents[key]} />
           <ChevronRight size={15} aria-hidden className="mt-0.5 shrink-0 text-muted-foreground/65 transition-colors group-hover:text-foreground" />
         </div>
 
@@ -79,7 +93,7 @@ function AgentMobileCard({ agent, now, onOpen }: { agent: SubagentState; now: nu
           >
             <SquareTerminal size={12} aria-hidden className="mt-0.5 shrink-0 text-primary" />
             <span aria-hidden className="shrink-0 text-primary">$</span>
-            <span className="line-clamp-2 min-w-0 break-all">{agent.detail ?? '—'}</span>
+            <span className="line-clamp-2 min-w-0 break-all">{agent.steered ? t.agents.steeredInto : agent.detail ?? '—'}</span>
             {agent.status === 'running' ? <span aria-hidden className="mt-1 h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-primary motion-reduce:animate-none" /> : null}
           </div>
         </div>
@@ -95,7 +109,7 @@ function AgentMobileCard({ agent, now, onOpen }: { agent: SubagentState; now: nu
         <dl className="mt-3 space-y-2 border-t border-border/60 pt-3">
           <div className="flex items-baseline justify-between gap-2">
             <dt className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">{t.agents.runtime}</dt>
-            <dd className="text-[11px] tabular-nums text-foreground">{runDuration(agent, now)}</dd>
+            <dd className="text-[11px] tabular-nums text-foreground">{tally(agent, runDuration(agent, now))}</dd>
           </div>
           <div className="flex items-baseline justify-between gap-2">
             <dt className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">{t.agents.tokens}</dt>
@@ -103,7 +117,7 @@ function AgentMobileCard({ agent, now, onOpen }: { agent: SubagentState; now: nu
           </div>
           <div className="flex items-baseline justify-between gap-2">
             <dt className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">{t.agents.tools}</dt>
-            <dd className="text-[11px] tabular-nums text-foreground">{agent.tools}</dd>
+            <dd className="text-[11px] tabular-nums text-foreground">{tally(agent, String(agent.tools))}</dd>
           </div>
           <div className="flex items-baseline justify-between gap-2">
             <dt className="text-[9px] font-semibold uppercase tracking-wider text-muted-foreground">{t.agents.started}</dt>
@@ -201,7 +215,7 @@ export function AgentsTable({ agents, onOpen, onClose }: { agents: SubagentState
                   data-agent-session={agent.sessionId}
                 >
                   <DataTableCell lines="auto">
-                    <Badge tone={STATUS_TONE[agent.status]}>{t.agents[agent.status]}</Badge>
+                    <StatusBadge agent={agent} label={(key) => t.agents[key]} />
                   </DataTableCell>
                   <DataTableCell lines="auto" title={agent.task}>
                     <div className="min-w-0">
@@ -219,7 +233,9 @@ export function AgentsTable({ agents, onOpen, onClose }: { agents: SubagentState
                         ) : null}
                         <span className="truncate font-medium text-foreground">{agent.task}</span>
                       </div>
-                      <div className="truncate text-xs text-muted-foreground" title={agent.detail}>{agent.detail ?? '—'}</div>
+                      <div className="truncate text-xs text-muted-foreground" title={agent.steered ? t.agents.steeredInto : agent.detail}>
+                        {agent.steered ? t.agents.steeredInto : agent.detail ?? '—'}
+                      </div>
                     </div>
                   </DataTableCell>
                   <DataTableCell lines="auto">
@@ -236,8 +252,8 @@ export function AgentsTable({ agents, onOpen, onClose }: { agents: SubagentState
                   <DataTableCell lines={1} className="text-right tabular-nums text-muted-foreground">
                     {agent.tokens != null ? formatTokens(agent.tokens) : '—'}
                   </DataTableCell>
-                  <DataTableCell lines={1} className="text-right tabular-nums text-muted-foreground">{agent.tools}</DataTableCell>
-                  <DataTableCell lines={1} className="text-right tabular-nums text-muted-foreground">{runDuration(agent, now)}</DataTableCell>
+                  <DataTableCell lines={1} className="text-right tabular-nums text-muted-foreground">{tally(agent, String(agent.tools))}</DataTableCell>
+                  <DataTableCell lines={1} className="text-right tabular-nums text-muted-foreground">{tally(agent, runDuration(agent, now))}</DataTableCell>
                   <DataTableCell lines={1} title={started.title} className="tabular-nums text-muted-foreground">{started.label || '—'}</DataTableCell>
                   <DataTableCell lines={1} title={updated.title} className="tabular-nums text-muted-foreground">{updated.label || '—'}</DataTableCell>
                   <DataTableCell lines="auto">

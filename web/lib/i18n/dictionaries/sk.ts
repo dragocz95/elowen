@@ -1563,6 +1563,8 @@ export const sk = {
     running: 'beží',
     done: 'hotovo',
     error: 'chyba',
+    steered: 'odovzdané do behu',
+    steeredInto: 'odovzdané do bežiaceho ťahu',
     openTranscript: 'Otvoriť prepis sub-agenta',
     sandboxed: 'Beží v izolovanom sandboxe',
   },

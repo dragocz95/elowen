@@ -164,6 +164,38 @@ describe('a DelegateContinue steered into a running child settles its OWN call, 
     expect(JSON.parse(markers[0]!.detail)).toMatchObject({ session: CHILD, task: 'redesign the panel', status: 'done' });
   });
 
+  // The steer's own row is terminal and honest, but nothing FINISHED — so the fact has to reach the
+  // display. Without it the transcript row of that call rendered as a completed sub-agent ("✓ … 0 tools ·
+  // 10s") once it became the row speaking for the child.
+  it('records the steer as a steer, durably and on the transcript row', () => {
+    const { store, sessions, emit, subsOf } = harness();
+    sessions.setChildRunning(PARENT, CHILD, true);
+    emit(running(MAIN_CALL, { tools: 12, seconds: 400 }));
+    emit(running(STEER_CALL, { task: 'Owner decision (19:10)' }));
+    emit(running(STEER_CALL, { task: 'Owner decision (19:10)', status: 'done', seconds: 10, steered: true }));
+
+    const steer = store.getSubagentRuns(PARENT).find((run) => run.toolCallId === STEER_CALL);
+    expect(steer).toMatchObject({ status: 'done', steered: true });
+    // The delegation is untouched — it keeps carrying the live run, and carries no steer flag.
+    expect(store.getSubagentRuns(PARENT).find((run) => run.toolCallId === MAIN_CALL)?.steered).toBeUndefined();
+
+    // Once the delegation settles, the steer becomes the row that speaks for the child; it must still say
+    // it was a steer rather than report a run of its own.
+    emit(running(MAIN_CALL, { tools: 18, seconds: 900, status: 'done' }));
+    expect(subsOf(CHILD)).toEqual([expect.objectContaining({ steered: true, status: 'done' })]);
+  });
+
+  // The marker announces a CHILD finishing. A steer finishes nothing, so it must leave none even when it
+  // is the only row the store has for that child — the delegation's own row is what drops it later.
+  it('announces no finish for the steer even when it is the child\'s only recorded call', () => {
+    const { store, sessions, emit } = harness();
+    sessions.setChildRunning(PARENT, CHILD, true);
+    emit(running(STEER_CALL, { task: 'Owner decision (19:10)' }));
+    emit(running(STEER_CALL, { task: 'Owner decision (19:10)', status: 'done', seconds: 10, steered: true }));
+
+    expect(store.getSessionEvents(PARENT).filter((event) => event.kind === 'subagent')).toHaveLength(0);
+  });
+
   it('leaves a grandchild result queued for a child whose delegation is still running', () => {
     // discardOrphanedDeliveries answers "is anyone still waiting for this". Reading only the newest row
     // of the child would retire the answer over the steer's `done` while the child still has a turn coming.

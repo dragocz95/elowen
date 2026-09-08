@@ -1606,6 +1606,10 @@ export const en = {
     running: 'running',
     done: 'done',
     error: 'error',
+    /** A DelegateContinue whose message entered the sub-agent's already RUNNING turn: it ran nothing and
+     *  finished nothing, so its row says where the message went instead of reporting a completed run. */
+    steered: 'steered',
+    steeredInto: 'steered into the running turn',
     openTranscript: 'Open sub-agent transcript',
     sandboxed: 'Running in an isolated sandbox',
   },

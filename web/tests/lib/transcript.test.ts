@@ -388,6 +388,24 @@ describe('web transcript reducer', () => {
     expect(collectSubagents(view.turns)).toEqual([steer]);
   });
 
+  // Once every call on the child has settled, the returned steer is the row that speaks for it — so the
+  // fold has to hand the table the fact that this call never ran. Without it the row reports a completed
+  // run of "0 tools · 10s" for a child that did the work under its original delegation.
+  it('keeps a steered follow-up marked as a steer on the row it ends up speaking on', () => {
+    const CHILD = 'brain-ch-subagent-steer-flag';
+    const main = { sessionId: CHILD, status: 'running' as const, task: 'redesign the panel', tools: 12, seconds: 400 };
+    const steer = { sessionId: CHILD, status: 'done' as const, task: 'Owner decision (19:10)', tools: 0, seconds: 10, steered: true as const };
+    let view = fromHistory([{ role: 'assistant', text: '', segments: [
+      { kind: 'tool', id: 'delegate-4', name: 'Delegate' },
+      { kind: 'tool', id: 'continue-4', name: 'DelegateContinue' },
+    ] }]);
+    view = reduce(view, { type: 'subagent', id: 'delegate-4', ...main });
+    view = reduce(view, { type: 'subagent', id: 'continue-4', ...steer });
+    view = reduce(view, { type: 'subagent', id: 'delegate-4', ...main, status: 'done', tools: 18, seconds: 900 });
+
+    expect(collectSubagents(view.turns)).toEqual([steer]);
+  });
+
   it('reports a child running when a recovering continuation follows a finished delegation', () => {
     // 4 Sep: the newer run arrives as a PREPENDED synthetic anchor, so the older finished row is scanned
     // last — and last-wins reported a working sub-agent as done.
