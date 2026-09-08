@@ -1,11 +1,9 @@
 import type { ManagedProjectRef } from '../shared/projectExecution.js';
+import type { EnvironmentAction, EnvironmentLimits, EnvironmentOperation } from '../shared/wireContract.js';
 
-export interface EnvironmentLimits { cpus: number; memoryMb: number; pidsLimit: number; diskSoftMb: number }
-export type EnvironmentAction =
-  | { kind: 'start' | 'stop' | 'restart' | 'delete' }
-  | { kind: 'snapshot'; note?: string; includeData?: boolean }
-  | { kind: 'restore'; snapshotId: string; restoreData?: boolean }
-  | { kind: 'limits'; limits: EnvironmentLimits };
+// Declared in the wire contract because the web reads them off the wire, and re-exported here so the
+// daemon keeps importing them from the module that owns this domain.
+export type { EnvironmentAction, EnvironmentLimits, EnvironmentOperation };
 
 export interface ProjectEnvironment {
   projectId: number;
@@ -14,17 +12,6 @@ export interface ProjectEnvironment {
   desiredState: 'running' | 'stopped' | 'deleted';
   lastError: string | null;
   limits: EnvironmentLimits;
-}
-export interface EnvironmentOperation {
-  id: string;
-  requestId: string;
-  projectId: number;
-  accountUserId: number;
-  generation: number;
-  action: EnvironmentAction;
-  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
-  error: string | null;
-  snapshotId?: string;
 }
 export interface EnvironmentSnapshot {
   id: string;
