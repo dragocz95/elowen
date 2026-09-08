@@ -39,7 +39,7 @@ import { GoalLoopService } from './service/goalLoop.js';
 import { LiveSessionSpawner } from './service/spawner.js';
 import { ConversationLifecycle } from './service/lifecycle.js';
 import { recordSessionEvent, recordWorkflowFinishMarker, scheduleReasoningMarker } from './service/sessionEvents.js';
-import { clientDir, releaseWorkspacesForMove } from './service/workDir.js';
+import { moveSessionWorkDir, switchableProjects, type SwitchableProject } from './service/workDir.js';
 import { BrainTurnRunner, subagentResultReminder } from './service/turnRunner.js';
 import type { BoundClientRequest, TurnRequest } from './service/turnRequest.js';
 import { BrainStatusService } from './service/statusService.js';
@@ -534,6 +534,19 @@ export class BrainService {
         const linked = d.resolvePlatformUser?.(platform, platformUserId);
         if (!linked) throw new Error('unknown session'); // no linked account → none of their sessions exist here
         return this.bindChannelContext(linked.id, channelKey, sessionId);
+      },
+      // /project picker core (platform surfaces; no adapter draws the chooser yet): resolve the sender
+      // to their linked Elowen account, then list the Projects that account reaches and move the CHANNEL
+      // conversation into the chosen one — the same validated move owner chat's /cd performs. An
+      // unlinked sender has neither: listing returns null, the switch refuses.
+      listProjects: (platform, platformUserId) => {
+        const linked = d.resolvePlatformUser?.(platform, platformUserId);
+        return linked ? this.listSwitchableProjects(linked.id) : null;
+      },
+      switchProject: async (platform, platformUserId, channelKey, projectId) => {
+        const linked = d.resolvePlatformUser?.(platform, platformUserId);
+        if (!linked) throw new Error('project switching requires a linked account');
+        return this.switchChannelProject(linked.id, channelKey, projectId);
       },
     });
     // Destructive-lifecycle unit. Every collaborator is a live instance built above.
@@ -1565,34 +1578,44 @@ export class BrainService {
    *  must not be told the work moved somewhere it cannot go.
    *
    *  It is also the LATEST EXPLICIT statement of where this conversation works, so it wins over an earlier
-   *  Sandbox switch: the bindings that do not belong to the project being entered are released through the
-   *  plugin's own operation (see releaseWorkspacesForMove, which owns the rule and the inference). A
-   *  refusal — a process is still running in the bound workspace — refuses the MOVE, because reporting a
-   *  move whose next turn would run somewhere else is exactly the contradiction this closes. */
+   *  Sandbox switch. Everything that means — validation, releasing the bindings that do not belong to the
+   *  entered project, persisting the durable home (a cold respawn restores brain_sessions.work_dir), the
+   *  live update and the notice — is the one shared {@link moveSessionWorkDir}, which the channel project
+   *  switch runs too. */
   noteWorkDir(userId: number, dir: string, session?: string): { workDir: string } {
     const b = session ? this.sessions.get(this.lifecycle.ownedUserSession(userId, session)) : this.lifecycle.activeLive(userId);
     if (!b) throw new Error('brain not started');
-    const resolved = clientDir(b.policy, dir);
-    if (!resolved) throw new Error('directory is not readable or not allowed');
     const sandbox = this.d.plugins?.peek()?.control('sandbox');
-    releaseWorkspacesForMove({
+    return { workDir: moveSessionWorkDir({
+      store: this.d.store,
       policy: b.policy,
       accountUserId: b.contributionUserId ?? userId,
       sessionId: b.sessionId,
-      workDir: resolved,
+      live: b,
+      workDir: dir,
       ...(this.d.projects ? { projects: this.d.projects } : {}),
       ...(sandbox ? { sandbox } : {}),
-    });
-    // Assigning is what makes the comparison mean "has it moved since we last said so". `workDir` is
-    // otherwise written once at spawn and only carried across respawns, so without this the guard forever
-    // compares against the launch directory: it would re-announce every /cd to a directory that is not the
-    // launch one, and stay silent on a move BACK to it. It also keeps the per-turn fallback honest — a
-    // goal continuation carries no client cwd and would otherwise resolve where the session started.
-    if (resolved !== b.workDir) {
-      recordSessionEvent(this.d.store, b.sessionId, b, 'cwd', resolved);
-      b.workDir = resolved;
-    }
-    return { workDir: resolved };
+    }).workDir };
+  }
+
+  /** The Projects one account may move a conversation into — the platform /project picker's data.
+   *  Fails closed, like the delegated-boundary snapshot: a missing policy resolver is a wiring gap,
+   *  not an implicit admin grant. */
+  listSwitchableProjects(userId: number): SwitchableProject[] {
+    const policy = this.d.policy?.(userId);
+    if (!policy) return [];
+    return switchableProjects(policy, this.d.projects);
+  }
+
+  /** Move a CHANNEL conversation into one of the caller's own Projects (the /project switch's core) —
+   *  the policy gate uses the CALLER's account, the channel key is the exact registry key a message from
+   *  that channel targets, and the move runs through the same shared implementation a `/cd` does. The
+   *  target itself is resolved once, inside the channel lock (the caller re-validates there), so this
+   *  method only decides the policy question. */
+  async switchChannelProject(userId: number, channelKey: string, projectId: number): Promise<{ workDir: string; slug: string }> {
+    const policy = this.d.policy?.(userId);
+    if (!policy) throw new Error('project is not readable or not allowed');
+    return this.channelService.switchProject(channelKey, { policy, accountUserId: userId, projectId });
   }
 
   /** Set the reasoning effort of the ACTIVE conversation live (the /think command) — PI applies it to

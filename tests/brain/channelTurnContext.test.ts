@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ChannelSessionService } from '../../src/brain/channels.js';
@@ -12,6 +12,7 @@ import { CardRegistry } from '../../src/brain/cards.js';
 import type { BrainEvent } from '../../src/brain/events.js';
 import type { PluginHook } from '../../src/plugins/api.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
+import { recordSessionEvent } from '../../src/brain/service/sessionEvents.js';
 
 /** Same minimal fake LiveBrain the other channel suites use — only what send() touches. */
 function fakeBrain(sessionId: string, contributionUserId?: number) {
@@ -37,6 +38,11 @@ function fakeBrain(sessionId: string, contributionUserId?: number) {
     thinkingLabels: {}, pluginToolNames: new Set<string>(),
     turnSender: undefined as number | undefined, interactedAt: undefined as number | undefined,
     turnWriterUserId: undefined as number | null | undefined,
+    // The spawn-time advertised cwd and the live one, so a workspace reorientation and a project move
+    // are both drivable on the fake the way the real spawner composes them.
+    workDir: undefined as string | undefined,
+    advertisedWorkDir: undefined as string | undefined,
+    pendingSessionNotices: undefined as string[] | undefined,
     listeners, replay: new LiveEventReplay(listeners), turnContext: () => ({ beforeUser: '', afterUser: '' }),
   };
 }
@@ -375,5 +381,54 @@ describe('a room attachment reaches the turn as a real path', () => {
     const prompt = promptOf();
     expect(prompt).toContain('[Attachment: empty.pdf — not saved: the file arrived empty]');
     expect(prompt).toContain('smlouva.pdf (application/pdf) — saved to');
+  });
+});
+
+/** A project move (/cd on the platforms' core, the future /project switch) updates the LIVE record's
+ *  cwd but never the directory PI advertised when the session spawned — so the per-turn reorientation
+ *  must compare against the advertised one, and the queued session notice must actually reach the model. */
+describe('a channel move reorients the turn and is announced exactly once', () => {
+  const tempDirs: string[] = [];
+  afterEach(() => { for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+
+  it('supersedes the spawn-time directory while the moved one is effective', async () => {
+    const launched = realpathSync(mkdtempSync(join(tmpdir(), 'ch-cwd-a-')));
+    const moved = realpathSync(mkdtempSync(join(tmpdir(), 'ch-cwd-b-')));
+    tempDirs.push(launched, moved);
+    const { svc, opts, promptOf, registry } = setup({}, 'discord-cwd-move');
+    await svc.send(opts, 'first'); // spawn the channel
+
+    // What a project switch does to the live record: the cwd moves, the advertised one does not.
+    const ch = registry.channelGet('discord-cwd-move')!;
+    ch.advertisedWorkDir = launched;
+    ch.workDir = moved;
+
+    await svc.send(opts, 'second');
+
+    const prompt = promptOf();
+    expect(prompt).toContain('<current-workspace>');
+    expect(prompt).toContain(`The effective working directory for this turn is ${moved}`);
+  });
+
+  it('drains a queued session notice into the next turn, once', async () => {
+    const dest = realpathSync(mkdtempSync(join(tmpdir(), 'ch-cwd-notice-')));
+    tempDirs.push(dest);
+    const { store, sessionId, svc, opts, promptOf, registry } = setup({}, 'discord-cwd-notice');
+    await svc.send(opts, 'first');
+
+    const ch = registry.channelGet('discord-cwd-notice')!;
+    // What a validated move queues through recordSessionEvent — the cwd case, like a project switch.
+    recordSessionEvent(store, sessionId, ch as never, 'cwd', dest);
+    expect(ch.pendingSessionNotices).toEqual([`changed the working directory to ${dest}`]);
+
+    await svc.send(opts, 'second');
+    let prompt = promptOf();
+    expect(prompt).toContain('<session-changes>');
+    expect(prompt).toContain(`changed the working directory to ${dest}`);
+
+    await svc.send(opts, 'third');
+    prompt = promptOf();
+    expect(prompt).not.toContain('<session-changes>');
+    expect(prompt).not.toContain('changed the working directory');
   });
 });

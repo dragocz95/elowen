@@ -32,7 +32,7 @@ const NOTICE: Record<NoticeKind, (detail: string) => string> = {
  *  it simply shows the next time the transcript loads). Every caller goes through here so the
  *  empty-conversation guard cannot be bypassed by writing to the store directly. */
 export function recordSessionEvent(
-  store: BrainStore,
+  store: Pick<BrainStore, 'lastMessageAt' | 'appendSessionEvent'>,
   sessionId: string,
   live: LiveBrain | undefined,
   kind: NoticeKind,

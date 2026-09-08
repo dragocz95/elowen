@@ -1,4 +1,7 @@
-import { beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import type { AgentSession, ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { LiveSessionSpawner } from '../../src/brain/service/spawner.js';
 import { inMemoryModelRuntime } from '../../src/brain/providers.js';
@@ -42,12 +45,16 @@ function makeSpawner(settings: Settings | ((userId: number) => Settings | undefi
     session: fakeSession as unknown as AgentSession,
     applyCompaction: vi.fn(),
   }));
+  const store = new BrainStore(openDb(':memory:'));
+  // The durable row the cwd-restore tests below read; harmless to the selection tests, which never
+  // consult it.
+  store.createSession({ id: 'sess-1', userId: 1, title: 'T', model: 'm' });
   const spawner = new LiveSessionSpawner({
     config: { providers: [
       { id: 'img', label: 'Images', type: 'openai' as const, baseUrl: 'http://img.example/v1', models: ['gpt-image-2'], apiKey: 'k' },
       { id: 'relay', label: 'Relay', type: 'openai' as const, baseUrl: 'http://relay.example/v1', models: ['gpt-5', 'gpt-5.5'], apiKey: 'k' },
     ] },
-    store: new BrainStore(openDb(':memory:')),
+    store,
     runtime: sharedRuntime,
     users: { ensureAdvisorToken: () => 'token', get: () => ({ name: 'Filip', username: 'filip' }) },
     toolAuthorityFor: () => undefined,
@@ -73,8 +80,9 @@ function makeSpawner(settings: Settings | ((userId: number) => Settings | undefi
   const spec = () => create.mock.calls.at(-1)![0] as unknown as {
     model: { id: string }; providerId: string; autoCompactAtPct: number;
     systemPrompt: string; appendSystemPrompt: string[]; compactionFallbackModel?: { id: string };
+    cwd: string;
   };
-  return { spawn, create, spec, settingsReads, instructionReads, renderIds };
+  return { spawn, create, spec, settingsReads, instructionReads, renderIds, store, spawner };
 }
 
 describe('LiveSessionSpawner — chat-model selection fallback', () => {
@@ -269,5 +277,69 @@ describe('LiveSessionSpawner — the settings a session is composed from', () =>
     await spawn({}, 2);
 
     expect(spec().autoCompactAtPct).toBe(DEFAULT_AUTO_COMPACT_PCT);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------------
+// The directory a session advertises.
+//
+// A channel conversation (unlike an owner chat) respawns through the spawner WITHOUT a lifecycle
+// carrying the stored work_dir back in, so a spawn whose caller names no cwd must fall back to the
+// conversation's durable home before the policy-root fallback — otherwise a cold channel respawn
+// silently reverts a validated move the conversation had already made.
+// ---------------------------------------------------------------------------------------------------
+describe('LiveSessionSpawner — the directory a session advertises', () => {
+  const tempDirs: string[] = [];
+  afterAll(() => { for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
+  const tmpDir = (tag: string): string => { const dir = mkdtempSync(join(tmpdir(), `spawner-cwd-${tag}-`)); tempDirs.push(dir); return realpathSync(dir); };
+
+  it('restores the stored work_dir when the caller carries no cwd, and advertises it', async () => {
+    const home = tmpDir('home');
+    const { spawn, spec, store } = makeSpawner({});
+    store.setWorkDir('sess-1', home);
+
+    const live = await spawn({});
+
+    expect(spec().cwd).toBe(home);
+    expect(live.workDir).toBe(home);
+    // The immutable spawn-time copy the per-turn reorientation compares against.
+    expect(live.advertisedWorkDir).toBe(home);
+  });
+
+  it('an explicit client cwd still beats the stored work_dir', async () => {
+    const home = tmpDir('home');
+    const client = tmpDir('client');
+    const { spec, store, spawner } = makeSpawner({});
+    store.setWorkDir('sess-1', home);
+
+    await spawner.spawn({
+      sessionId: 'sess-1', ownerUserId: 1, selection: {}, policy,
+      autoCompact: false, clientCwd: client,
+    });
+
+    expect(spec().cwd).toBe(client);
+  });
+
+  it('an empty stored work_dir stays on the fallback instead of resolving an empty string', async () => {
+    const { spawn, spec, store } = makeSpawner({});
+    store.setWorkDir('sess-1', '');
+
+    await spawn({});
+
+    // The policy is all-access with no project path, so the spawner's own daemon cwd fallback answers.
+    expect(spec().cwd).toBe(process.cwd());
+  });
+
+  it('a caller cwd never rewrites the durable row', async () => {
+    // Stamping stays the lifecycle's job (only a validated CLIENT report may stamp): the spawner only
+    // READS the row, so a spawn cannot dress a fallback-resolved cwd up as client-confirmed.
+    const home = tmpDir('home');
+    const client = tmpDir('client');
+    const { store, spawner } = makeSpawner({});
+    store.setWorkDir('sess-1', home);
+
+    await spawner.spawn({ sessionId: 'sess-1', ownerUserId: 1, selection: {}, policy, autoCompact: false, clientCwd: client });
+
+    expect(store.getSession('sess-1')?.work_dir).toBe(home);
   });
 });

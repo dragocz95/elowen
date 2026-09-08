@@ -27,6 +27,7 @@ import { HookAuditBuffer } from '../../src/shared/hookAudit.js';
 import { processRegistry, type ProcessHandle } from '../../src/brain/processRegistry.js';
 import type { TurnRequest } from '../../src/brain/service/turnRequest.js';
 import { inMemoryModelRuntime } from '../../src/brain/providers.js';
+import { channelSessionId } from '../../src/brain/sessionId.js';
 
 let sharedRuntime: ModelRuntime;
 beforeAll(async () => { sharedRuntime = await inMemoryModelRuntime(); });
@@ -2210,6 +2211,25 @@ describe('BrainService', () => {
     expect(moves()).toEqual([elsewhere, launch]);
   });
 
+  // The durable home must follow the live one: a cold respawn (daemon restart, plugin reload, last
+  // client detach) restores brain_sessions.work_dir, so a move that only updated the live record
+  // silently reverted on the next boot.
+  it('noteWorkDir persists the move into brain_sessions.work_dir', async () => {
+    const launch = realpathSync(tmpDir('cwd-a'));
+    const elsewhere = realpathSync(tmpDir('cwd-b'));
+    const d = fakeDeps();
+    (d as unknown as { policy: () => unknown }).policy = () => ({ allowedProjectIds: 'all', allowedPaths: () => [] });
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1, { cwd: launch });
+    d.store.appendMessage({ id: 'm1', sessionId, parentId: null, role: 'user', content: 'hi' });
+
+    svc.noteWorkDir(1, elsewhere);
+    expect(d.store.getSession(sessionId)?.work_dir).toBe(elsewhere);
+
+    svc.noteWorkDir(1, launch);           // a move back persists too — no one-way ratchet
+    expect(d.store.getSession(sessionId)?.work_dir).toBe(launch);
+  });
+
   it('noteWorkDir refuses a directory the caller\'s policy does not reach', async () => {
     const allowed = realpathSync(tmpDir('cwd-scoped'));
     const outside = realpathSync(tmpDir('cwd-outside'));
@@ -2218,6 +2238,59 @@ describe('BrainService', () => {
     const svc = new BrainService(d as never);
     await svc.start(1, { cwd: allowed });
     expect(() => svc.noteWorkDir(1, outside)).toThrow(/not readable or not allowed/);
+  });
+
+  // Fail closed, like every other policy read in this file (the delegated-boundary snapshot above): a
+  // missing policy resolver is a wiring gap, not an implicit admin grant. The old fallback minted
+  // `allowedProjectIds: 'all'` — an ADMIN's policy — for any account whose resolver was not wired.
+  it('listSwitchableProjects fails closed when no policy resolver is wired', () => {
+    const dir = realpathSync(tmpDir('cwd-switchable'));
+    const d = fakeDeps();
+    (d as unknown as { projects: unknown }).projects = { list: () => [{ id: 7, slug: 'kolin', path: dir }] };
+    const svc = new BrainService(d as never);
+
+    expect(svc.listSwitchableProjects(1)).toEqual([]);
+  });
+
+  it('switchChannelProject refuses without a policy resolver instead of assuming admin', async () => {
+    const dir = realpathSync(tmpDir('cwd-switch-target'));
+    const d = fakeDeps();
+    (d as unknown as { projects: unknown }).projects = { list: () => [{ id: 7, slug: 'kolin', path: dir }] };
+    const svc = new BrainService(d as never);
+    // The conversation exists, so the ONLY refusal reason can be the missing policy.
+    d.store.createSession({ id: channelSessionId('c-1'), userId: 1, title: 'T', model: 'm' });
+
+    await expect(svc.switchChannelProject(1, 'c-1', 7)).rejects.toThrow(/not readable or not allowed/);
+  });
+
+  // The owner-chat half of the workspace reorientation the channel suite pins (channelTurnContext):
+  // PI's static prompt advertises the cwd the session spawned with, so a validated /cd must supersede
+  // it on EVERY following owner turn until a respawn re-advertises the restored durable home.
+  it('reorients owner turns after noteWorkDir and stops after the respawn re-advertises the home', async () => {
+    const launch = realpathSync(tmpDir('cwd-owner-a'));
+    const moved = realpathSync(tmpDir('cwd-owner-b'));
+    const d = fakeDeps();
+    (d as unknown as { policy: () => unknown }).policy = () => ({ allowedProjectIds: 'all', allowedPaths: () => [] });
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1, { cwd: launch });
+    d.store.appendMessage({ id: 'm1', sessionId, parentId: null, role: 'user', content: 'hi' });
+
+    await svc.send({ userId: 1, text: 'before the move' });
+    expect(d.session.prompt.mock.calls.at(-1)![0]).not.toContain('<current-workspace>');
+
+    svc.noteWorkDir(1, moved);
+    await svc.send({ userId: 1, text: 'after the move' });
+    let prompt = d.session.prompt.mock.calls.at(-1)![0];
+    expect(prompt).toContain('<current-workspace>');
+    expect(prompt).toContain(`The effective working directory for this turn is ${moved}`);
+
+    // The respawn recomposes the static prompt from the restored durable home, so the reorientation
+    // has nothing left to supersede and the following owner turns run without the block again.
+    await svc.restart(1);
+    await svc.send({ userId: 1, text: 'after the respawn' });
+    prompt = d.session.prompt.mock.calls.at(-1)![0];
+    expect(prompt).not.toContain('<current-workspace>');
+    expect(d.store.getSession(sessionId)?.work_dir).toBe(moved);
   });
 
   it('setThinkingLevel applies live (no respawn) and status reports it', async () => {
