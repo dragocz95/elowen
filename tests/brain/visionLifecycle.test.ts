@@ -50,7 +50,7 @@ describe('ConversationLifecycle vision fallback', () => {
       return next;
     });
     const lifecycle = new ConversationLifecycle({
-      store: { getSession: () => ({ id: 'brain-1', user_id: 1, work_dir: '' }) },
+      store: { getSession: () => ({ id: 'brain-1', user_id: 1, work_dir: '' }), getProjectExecution: () => undefined },
       sessions,
       attachments,
       elicitation: { cancelForSession: vi.fn() },
@@ -93,7 +93,7 @@ describe('ConversationLifecycle vision fallback', () => {
     sessions.set('brain-1', original);
     const spawn = vi.fn(async () => live({ provider: 'alibaba', model: 'qwen3.8-max' }));
     const lifecycle = new ConversationLifecycle({
-      store: { getSession: () => ({ id: 'brain-1', user_id: 1, work_dir: '' }) },
+      store: { getSession: () => ({ id: 'brain-1', user_id: 1, work_dir: '' }), getProjectExecution: () => undefined },
       sessions,
       attachments: new ClientAttachments(),
       elicitation: { cancelForSession: vi.fn() },
@@ -114,7 +114,7 @@ describe('ConversationLifecycle vision fallback', () => {
     const original = live({ provider: 'main', model: 'text' });
     sessions.set('brain-1', original);
     const lifecycle = new ConversationLifecycle({
-      store: { getSession: () => ({ id: 'brain-1', user_id: 1, work_dir: '' }) },
+      store: { getSession: () => ({ id: 'brain-1', user_id: 1, work_dir: '' }), getProjectExecution: () => undefined },
       sessions,
       attachments: new ClientAttachments(),
       elicitation: { cancelForSession: vi.fn() },
@@ -145,7 +145,7 @@ describe('ConversationLifecycle vision fallback', () => {
     sessions.set('brain-1', original);
     const spawn = vi.fn(async () => live({ provider: 'alibaba', model: 'qwen3.8-max' }));
     const lifecycle = new ConversationLifecycle({
-      store: { getSession: () => ({ id: 'brain-1', user_id: 1, work_dir: '' }) },
+      store: { getSession: () => ({ id: 'brain-1', user_id: 1, work_dir: '' }), getProjectExecution: () => undefined },
       sessions,
       attachments: new ClientAttachments(),
       elicitation: { cancelForSession: vi.fn() },
