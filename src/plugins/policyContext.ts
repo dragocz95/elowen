@@ -1,5 +1,6 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import type { Policy } from './policy.js';
+import type { ProjectExecutionRef } from '../shared/projectExecution.js';
 import type { AskAnswer, AskQuestion, SubagentCompletion, SubagentUpdate, WorkflowCompletion, WorkflowUpdate } from '../brain/events.js';
 import type { TurnPermissions } from '../brain/toolPermissions.js';
 import type { MemoryRecallScope } from '../brain/memoryRecallScope.js';
@@ -172,7 +173,7 @@ export function toolOwnedByOtherAccount(name: string, personal: PersonalToolOwne
  *  layer keeps its one-directional dependency; the brain's TurnMode is structurally identical. */
 export type TurnWorkMode = 'build' | 'plan' | 'workflow';
 
-interface TurnScope { policy?: Policy; workDir?: string; resolveWorkDir?: () => string | undefined; pathView?: WorkspacePathView; sessionId?: string; deliveryTarget?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; emitSubagentCompletion?: SubagentCompletionEmitter; emitWorkflow?: WorkflowEmitter; emitWorkflowCompletion?: WorkflowCompletionEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel; mode?: TurnWorkMode; memoryRecallScope?: MemoryRecallScope; settingsUserId?: number | null; contributionUserId?: number | null; forkChild?: boolean; approvedByAsk?: boolean }
+interface TurnScope { policy?: Policy; workDir?: string; projectRef?: ProjectExecutionRef; resolveProjectRef?: () => ProjectExecutionRef | undefined; resolveWorkDir?: () => string | undefined; pathView?: WorkspacePathView; sessionId?: string; deliveryTarget?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; emitSubagentCompletion?: SubagentCompletionEmitter; emitWorkflow?: WorkflowEmitter; emitWorkflowCompletion?: WorkflowCompletionEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel; mode?: TurnWorkMode; memoryRecallScope?: MemoryRecallScope; settingsUserId?: number | null; contributionUserId?: number | null; forkChild?: boolean; approvedByAsk?: boolean }
 
 /** pi tools have no per-call session context, so a plugin tool can't be told which user's policy applies
  *  through its arguments. We carry the resolved Policy (+ the sender's identity + their effective tool
@@ -184,8 +185,8 @@ const store = new AsyncLocalStorage<TurnScope>();
 /** Run `fn` (a brain prompt turn) with `policy` established for any plugin tool it invokes. `opts`
  *  carries the sender's identity, a turn-bound elicitor/card-emitter, and the effective tool policy —
  *  all read at tool-execute time via the `current*()` accessors. */
-export function runWithPolicy<T>(policy: Policy, fn: () => T, opts?: { workDir?: string; resolveWorkDir?: () => string | undefined; pathView?: WorkspacePathView; sessionId?: string; deliveryTarget?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; emitSubagentCompletion?: SubagentCompletionEmitter; emitWorkflow?: WorkflowEmitter; emitWorkflowCompletion?: WorkflowCompletionEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel; mode?: TurnWorkMode; memoryRecallScope?: MemoryRecallScope; settingsUserId?: number | null; contributionUserId?: number | null; forkChild?: boolean }): T {
-  return store.run({ policy, workDir: opts?.workDir, resolveWorkDir: opts?.resolveWorkDir, pathView: opts?.pathView, sessionId: opts?.sessionId, deliveryTarget: opts?.deliveryTarget, identity: opts?.identity, elicit: opts?.elicit, emitCard: opts?.emitCard, emitSubagent: opts?.emitSubagent, emitSubagentCompletion: opts?.emitSubagentCompletion, emitWorkflow: opts?.emitWorkflow, emitWorkflowCompletion: opts?.emitWorkflowCompletion, toolPolicy: opts?.toolPolicy, permissions: opts?.permissions, model: opts?.model, mode: opts?.mode, memoryRecallScope: opts?.memoryRecallScope, settingsUserId: opts?.settingsUserId, contributionUserId: opts?.contributionUserId, forkChild: opts?.forkChild }, fn);
+export function runWithPolicy<T>(policy: Policy, fn: () => T, opts?: { workDir?: string; projectRef?: ProjectExecutionRef; resolveProjectRef?: () => ProjectExecutionRef | undefined; resolveWorkDir?: () => string | undefined; pathView?: WorkspacePathView; sessionId?: string; deliveryTarget?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; emitSubagentCompletion?: SubagentCompletionEmitter; emitWorkflow?: WorkflowEmitter; emitWorkflowCompletion?: WorkflowCompletionEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel; mode?: TurnWorkMode; memoryRecallScope?: MemoryRecallScope; settingsUserId?: number | null; contributionUserId?: number | null; forkChild?: boolean }): T {
+  return store.run({ policy, workDir: opts?.workDir, projectRef: opts?.projectRef, resolveProjectRef: opts?.resolveProjectRef, resolveWorkDir: opts?.resolveWorkDir, pathView: opts?.pathView, sessionId: opts?.sessionId, deliveryTarget: opts?.deliveryTarget, identity: opts?.identity, elicit: opts?.elicit, emitCard: opts?.emitCard, emitSubagent: opts?.emitSubagent, emitSubagentCompletion: opts?.emitSubagentCompletion, emitWorkflow: opts?.emitWorkflow, emitWorkflowCompletion: opts?.emitWorkflowCompletion, toolPolicy: opts?.toolPolicy, permissions: opts?.permissions, model: opts?.model, mode: opts?.mode, memoryRecallScope: opts?.memoryRecallScope, settingsUserId: opts?.settingsUserId, contributionUserId: opts?.contributionUserId, forkChild: opts?.forkChild }, fn);
 }
 
 /** Run `fn` with only the caller's IDENTITY established — the shape an authenticated HTTP request has.
@@ -223,6 +224,12 @@ export function currentPolicy(): Policy | undefined {
 export function currentWorkDir(): string | undefined {
   const scope = store.getStore();
   return scope?.pathView ? scope.pathView.root : scope?.resolveWorkDir ? scope.resolveWorkDir() : scope?.workDir;
+}
+
+/** Selected execution target is resolved live so revocation never waits for a new model turn. */
+export function currentProjectRef(): ProjectExecutionRef | undefined {
+  const scope = store.getStore();
+  return scope?.resolveProjectRef ? scope.resolveProjectRef() : scope?.projectRef;
 }
 
 /** Exact logical filesystem view for an explicitly workspace-scoped delegated turn. */

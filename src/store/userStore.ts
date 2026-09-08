@@ -69,7 +69,7 @@ export class UsernameConflictError extends Error {
     this.name = 'UsernameConflictError';
   }
 }
-type Row = { id: number; username: string; created_at: string; is_admin: number; password_hash: string; allowed_execs: string; disabled_tools: string; allowed_tools: string; granted_plugins: string; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: number };
+type Row = { id: number; username: string; created_at: string; is_admin: number; password_hash: string; allowed_execs: string; disabled_tools: string; allowed_tools: string; granted_plugins: string; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: number; can_create_projects: number; can_share_projects: number; project_limit: number; default_project_id: number | null };
 type ExternalIdentityRow = Row & { external_provider: string; external_tenant_id: string; external_subject_id: string; external_created_at: string };
 const canonicalExec = (value: unknown): string => {
   if (typeof value !== 'string' || !value) return '';
@@ -83,7 +83,7 @@ const readAllowedExecs = (value: string): string[] => {
   try { raw = JSON.parse(value) as unknown[]; } catch { raw = value.split(','); }
   return Array.isArray(raw) ? raw.map(canonicalExec).filter(Boolean) : [];
 };
-const mask = (r: Row): User => ({ id: r.id, username: r.username, created_at: r.created_at, is_admin: !!r.is_admin, allowed_execs: readAllowedExecs(r.allowed_execs), disabled_tools: r.disabled_tools ? r.disabled_tools.split(',').filter(Boolean) : [], allowed_tools: r.allowed_tools ? r.allowed_tools.split(',').filter(Boolean) : [], granted_plugins: r.granted_plugins ? r.granted_plugins.split(',').filter(Boolean) : [], name: r.name ?? '', email: r.email ?? '', avatar: r.avatar ?? '', default_exec: canonicalExec(r.default_exec), advisor_exec: canonicalExec(r.advisor_exec), advisor_autostart: r.advisor_autostart === undefined ? true : !!r.advisor_autostart });
+const mask = (r: Row): User => ({ id: r.id, username: r.username, created_at: r.created_at, is_admin: !!r.is_admin, allowed_execs: readAllowedExecs(r.allowed_execs), disabled_tools: r.disabled_tools ? r.disabled_tools.split(',').filter(Boolean) : [], allowed_tools: r.allowed_tools ? r.allowed_tools.split(',').filter(Boolean) : [], granted_plugins: r.granted_plugins ? r.granted_plugins.split(',').filter(Boolean) : [], name: r.name ?? '', email: r.email ?? '', avatar: r.avatar ?? '', default_exec: canonicalExec(r.default_exec), advisor_exec: canonicalExec(r.advisor_exec), advisor_autostart: r.advisor_autostart === undefined ? true : !!r.advisor_autostart, can_create_projects: !!r.can_create_projects, can_share_projects: !!r.can_share_projects, project_limit: r.project_limit, default_project_id: r.default_project_id });
 
 function hashPassword(password: string): string {
   const salt = randomBytes(16);
@@ -123,6 +123,17 @@ function usernameStem(value: string): string {
 
 export class UserStore {
   constructor(private db: Db) {}
+
+  setProjectPermissions(actorId: number, userId: number, patch: { canCreateProjects?: boolean; canShareProjects?: boolean; projectLimit?: number }): void {
+    this.db.transaction(() => {
+      if (!readIsAdmin(this.db, actorId)) throw new Error('administrator permission required');
+      const user = this.get(userId);
+      if (!user) throw new Error('account not found');
+      if (patch.projectLimit !== undefined && (!Number.isSafeInteger(patch.projectLimit) || patch.projectLimit < 1)) throw new Error('invalid project limit');
+      this.db.prepare('UPDATE users SET can_create_projects = ?, can_share_projects = ?, project_limit = ? WHERE id = ?')
+        .run((patch.canCreateProjects ?? user.can_create_projects) ? 1 : 0, (patch.canShareProjects ?? user.can_share_projects) ? 1 : 0, patch.projectLimit ?? user.project_limit, userId);
+    }).immediate();
+  }
 
   create(username: string, password: string): User {
     const isAdmin = this.count() === 0 ? 1 : 0; // the first user ever created is the admin
@@ -440,6 +451,7 @@ export class UserStore {
       this.db.prepare('DELETE FROM brain_session_origins WHERE user_id = ?').run(id);
       this.db.prepare('DELETE FROM brain_usage_reset_state WHERE user_id = ?').run(id);
       this.db.prepare('DELETE FROM user_external_identities WHERE user_id = ?').run(id);
+      this.db.prepare('UPDATE projects SET creator_user_id = NULL WHERE creator_user_id = ?').run(id);
       this.db.prepare('DELETE FROM users WHERE id = ?').run(id);
     })();
   }

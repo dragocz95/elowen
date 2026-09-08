@@ -297,6 +297,7 @@ export class PlatformOrchestrator {
               ...(Number.isSafeInteger(src.access.contributionUserId) && src.access.contributionUserId! > 0
                 ? { contributionUserId: src.access.contributionUserId } : {}),
               ...(workspaceBinding ? { workspaceRef: bindingRef(workspaceBinding) } : {}),
+              ...(src.access.projectRef ? { projectRef: src.access.projectRef } : {}),
               // Spawn input, so it belongs in the immutable scope rather than only on this one dispatch:
               // continuation, eviction and boot recovery all rebuild the child from the scope and would
               // otherwise put it back on the model default.

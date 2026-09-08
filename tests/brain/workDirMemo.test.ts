@@ -12,7 +12,7 @@ describe('workspace status freshness', () => {
       let bound: SandboxWorkspace | null = null;
       let allowed = true;
       const service = new BrainStatusService({
-        store: { getSession: () => ({ work_dir: root }), getLatestTurn: () => [] },
+        store: { getSession: () => ({ work_dir: root }), getProjectExecution: () => undefined, getLatestTurn: () => [] },
         sessions: { get: () => undefined },
         lifecycle: { activeLive: () => undefined, activeSessionId: () => 'brain-1' },
         cards: { forSession: () => [] },

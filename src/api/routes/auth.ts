@@ -22,6 +22,7 @@ import { sanitizePermissionSettings } from '../../brain/toolPermissions.js';
 import { sanitizeNavSettings } from '../../store/navSettings.js';
 import { EmailConflictError, UsernameConflictError } from '../../store/userStore.js';
 import type { User } from '../../store/userStore.js';
+import { ProjectMembershipError } from '../../store/userProjectStore.js';
 import { clientOrigin } from '../clientIp.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 import { logger } from '../../shared/logger.js';
@@ -525,6 +526,9 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
         throw e;
       }
     }
+    if (b.can_create_projects !== undefined || b.can_share_projects !== undefined || b.project_limit !== undefined) {
+      users.setProjectPermissions(c.get('user')!.id, id, { canCreateProjects: b.can_create_projects, canShareProjects: b.can_share_projects, projectLimit: b.project_limit });
+    }
     if (typeof b.name === 'string') users.setProfile(id, { name: b.name.trim() });
     if (typeof b.is_admin === 'boolean') {
       // Refuse to demote the last admin — it would lock out role/assignment management.
@@ -663,7 +667,8 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       return c.json(up.forUser(Number(c.req.param('id'))));
     });
     app.post('/users/:id/projects', async (c) => {
-      if (denyNonAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+      const actor = c.get('user');
+      if (!actor) return c.json({ error: 'forbidden' }, 403);
       const { projectId } = await parseBody(c, projectAssignSchema);
       const userId = Number(c.req.param('id'));
       const pid = Number(projectId);
@@ -673,12 +678,39 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       // `projects` row for it.
       if (!users.get(userId)) return c.json({ error: 'user not found' }, 404);
       if (pid !== d.project.id && !d.projects?.get(pid)) return c.json({ error: 'project not found' }, 404);
-      up.assign(userId, pid);
+      if (!d.projects?.get(pid)) {
+        if (denyNonAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+        up.assign(userId, pid);
+      } else {
+        try { up.addMember(actor.id, userId, pid); }
+        catch (error) {
+          if (error instanceof ProjectMembershipError) return c.json({ error: error.message }, 403);
+          throw error;
+        }
+      }
       return c.json({ ok: true });
     });
-    app.delete('/users/:id/projects/:pid', (c) => {
-      if (denyNonAdmin(c)) return c.json({ error: 'forbidden' }, 403);
-      up.unassign(Number(c.req.param('id')), Number(c.req.param('pid')));
+    app.delete('/users/:id/projects/:pid', async (c) => {
+      const actor = c.get('user');
+      if (!actor) return c.json({ error: 'forbidden' }, 403);
+      const userId = Number(c.req.param('id')); const projectId = Number(c.req.param('pid'));
+      if (!Number.isSafeInteger(userId) || !Number.isSafeInteger(projectId)) return c.json({ error: 'invalid membership' }, 400);
+      const project = d.projects?.get(projectId);
+      if (project) {
+        try { up.removeMember(actor.id, userId, projectId); }
+        catch (error) {
+          if (error instanceof ProjectMembershipError) return c.json({ error: error.message }, 403);
+          throw error;
+        }
+      } else {
+        if (denyNonAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+        up.unassign(userId, projectId);
+      }
+      if (project?.executionKind === 'managed') {
+        const sandbox = (await d.plugins?.get())?.control('sandbox');
+        if (!sandbox) return c.json({ error: 'membership revoked; runtime cleanup unavailable' }, 503);
+        await sandbox.revokeProjectAccess({ projectId, accountUserId: userId });
+      }
       return c.json({ ok: true });
     });
   }

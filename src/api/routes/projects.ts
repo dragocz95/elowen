@@ -17,7 +17,7 @@ const INDICATOR_TONES = new Set(['muted', 'accent', 'success', 'warning', 'dange
 /** The one project API projection. Stored metadata stays untouched; current filesystem state is attached
  * asynchronously at the response boundary for every endpoint that returns a project. */
 async function toProjectView(project: StoredProject): Promise<ProjectView> {
-  return { ...project, pathExists: await projectPathExists(project.path) };
+  return project.executionKind === 'managed' ? { ...project } : { ...project, pathExists: await projectPathExists(project.path) };
 }
 
 /** Bound concurrent filesystem projections so a large registry cannot flood the libuv worker pool. */
@@ -119,9 +119,10 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
   // using the canonical /users/:id/projects routes so there is still only one mutation contract.
   app.get('/projects/:id/users', (c) => {
     if (!d.projects || !d.userProjects || !d.users) return c.json({ error: 'projects unavailable' }, 400);
-    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const id = Number(c.req.param('id'));
-    if (!d.projects.get(id)) return c.json({ error: 'project not found' }, 404);
+    const project = d.projects.get(id);
+    if (!project) return c.json({ error: 'project not found' }, 404);
+    if (project.executionKind === 'managed' ? !canAccessProject(c, id) : notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     return c.json(d.userProjects.forProject(id));
   });
   // Browse the server's directory tree to pick a new project's path (the new-project file manager).
@@ -149,20 +150,40 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
   });
   app.post('/projects', async (c) => {
     if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
-    // Only the admin may register projects (when multi-user auth is on).
+    const body = await parseBody(c, createProjectSchema);
+    if (body.executionKind === 'managed') {
+      const actor = c.get('user');
+      if (!actor || (!actor.is_admin && !actor.can_create_projects)) return c.json({ error: 'project creation is not permitted' }, 403);
+      try { return c.json(await toProjectView(d.projects.createForUser(actor.id, body)), 201); }
+      catch (error) {
+        if ((error as { code?: string }).code === 'SQLITE_CONSTRAINT_UNIQUE') return c.json({ error: 'slug taken' }, 409);
+        if (error instanceof Error && error.message === 'project creation limit reached') return c.json({ error: error.message }, 409);
+        throw error;
+      }
+    }
     if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
-    const { slug, path, notes } = await parseBody(c, createProjectSchema);
-    try { return c.json(await toProjectView(d.projects.create({ slug, path, notes })), 201); }
-    catch { return c.json({ error: 'slug taken' }, 409); }
+    try { return c.json(await toProjectView(d.projects.create(body)), 201); }
+    catch (error) {
+      if ((error as { code?: string }).code === 'SQLITE_CONSTRAINT_UNIQUE') return c.json({ error: 'slug taken' }, 409);
+      throw error;
+    }
   });
-  // Edit a project's path / notes (slug stays immutable). Admin-only, like registration.
+  app.post('/projects/default', async (c) => {
+    const actor = c.get('user');
+    if (!actor) return c.json({ error: 'forbidden' }, 403);
+    if (!d.projects) return c.json({ error: 'projects unavailable' }, 503);
+    return c.json(await toProjectView(d.projects.ensureDefault(actor.id)));
+  });
+  // Host path changes remain admin-only; managed metadata belongs to all project members.
   app.patch('/projects/:id', async (c) => {
     if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
-    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const id = Number(c.req.param('id'));
     const cur = d.projects.get(id);
     if (!cur) return c.json({ error: 'project not found' }, 404);
+    if (cur.executionKind === 'managed' ? !canAccessProject(c, id) : notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const b = await parseBody(c, updateProjectSchema);
+    if (cur.executionKind === 'managed' && b.path !== undefined) return c.json({ error: 'managed projects do not have a host path' }, 400);
+    if (cur.executionKind === 'managed' && b.icon) return c.json({ error: 'managed project icons require guest file validation' }, 503);
     const patch: { path?: string; notes?: string; icon?: string; memoryShared?: boolean } = {};
     if (typeof b.path === 'string' && b.path.trim()) patch.path = b.path.trim();
     if (typeof b.notes === 'string') patch.notes = b.notes;
@@ -203,11 +224,21 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
   // time must detect the missing Project in their own boot reconciliation when next enabled.
   app.delete('/projects/:id', async (c) => {
     if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
-    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const id = Number(c.req.param('id'));
     if (id === d.project.id) return c.json({ error: 'cannot remove the home project' }, 400);
-    if (!d.projects.get(id)) return c.json({ error: 'project not found' }, 404);
+    const target = d.projects.get(id);
+    if (!target) return c.json({ error: 'project not found' }, 404);
+    if (target.executionKind === 'managed' ? !canAccessProject(c, id) : notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const registry = await d.plugins?.get().catch(() => undefined);
+    if (target.executionKind === 'managed') {
+      const sandbox = registry?.control('sandbox');
+      if (!sandbox) return c.json({ error: 'project environment provider unavailable' }, 503);
+      const actor = c.get('user');
+      if (!actor) return c.json({ error: 'forbidden' }, 403);
+      const operation = await sandbox.requestEnvironment({ project: { kind: 'managed', projectId: id }, accountUserId: actor.id, action: { kind: 'delete' } });
+      d.projects.beginDeletion(id);
+      return c.json({ operation }, 202);
+    }
     for (const handler of registry?.projectRemovedHandlers ?? []) {
       try { await handler.fn(id); }
       catch (error) {
@@ -222,6 +253,7 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     const p = d.projects.get(Number(c.req.param('id')));
     if (!p) return c.json({ error: 'project not found' }, 404);
     if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
+    if (p.executionKind === 'managed') return c.json({ error: 'managed project Git inspection requires the environment provider' }, 503);
     return c.json(await d.git.read(p.path));
   });
 

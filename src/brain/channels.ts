@@ -1093,7 +1093,7 @@ export class ChannelSessionService {
         // their own Project, then Sandbox may select that account's active workspace.
         const baseWorkDir = delegated?.pathView?.root
           ?? turnWorkDir(opts.policy, opts.clientCwd ?? ch.workDir, this.d.projectPath);
-        const resolveWorkDir = () => delegated?.pathView
+        const resolveWorkDir = (): ReturnType<typeof effectiveTurnWorkDir> => delegated?.pathView
           ? { baseWorkDir, workDir: delegated.pathView.root, workspace: null }
           : effectiveTurnWorkDir({
               policy: opts.policy,
@@ -1101,6 +1101,8 @@ export class ChannelSessionService {
               accountUserId: turnContributionUserId,
               sessionId,
               projects: this.d.projects,
+              projectRef: delegated?.scope.projectRef ?? this.d.store.getProjectExecution(sessionId),
+              hostAuthorized: opts.identity?.owner === true,
               sandbox: this.d.sandbox?.(),
             });
         const effectiveWorkDir = resolveWorkDir();
@@ -1254,7 +1256,7 @@ export class ChannelSessionService {
               await ch.session.prompt(NO_REPLY_NUDGE);
               this.d.registry.throwIfPendingAbort(sessionId);
             }
-          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: effectiveWorkDir.workDir, resolveWorkDir: () => resolveWorkDir().workDir, ...(delegated?.pathView ? { pathView: delegated.pathView } : {}), settingsUserId: ch.settingsUserId, contributionUserId: turnContributionUserId, ...(forkChild ? { forkChild: true } : {}), model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
+          }, { identity: opts.identity, elicit, emitCard, emitSubagent, emitSubagentCompletion, emitWorkflow, emitWorkflowCompletion, toolPolicy: effectiveToolPolicy, permissions, sessionId, deliveryTarget: opts.deliveryTarget, workDir: effectiveWorkDir.workDir, resolveWorkDir: () => resolveWorkDir().workDir, projectRef: effectiveWorkDir.projectRef, resolveProjectRef: () => resolveWorkDir().projectRef, ...(delegated?.pathView ? { pathView: delegated.pathView } : {}), settingsUserId: ch.settingsUserId, contributionUserId: turnContributionUserId, ...(forkChild ? { forkChild: true } : {}), model: { provider: ch.providerId, model: ch.model, thinkingLevel: ch.thinkingLevel } }));
           // Deterministic settled idle (model + context fill) AFTER the turn — proactive footers depend on it.
           turnOnEvent?.({
             type: 'idle',

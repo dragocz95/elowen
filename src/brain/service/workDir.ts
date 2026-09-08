@@ -1,5 +1,7 @@
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { projectExecutionRefSchema, type ProjectExecutionRef } from '../../shared/projectExecution.js';
+import { ENVIRONMENT_CONTROL_METHODS } from '../../plugins/environmentTypes.js';
 import type { KnownControls, SandboxWorkspace } from '../../plugins/api.js';
 import type { Policy } from '../../plugins/policy.js';
 import { realPathWithin } from '../../plugins/pathGuard.js';
@@ -45,7 +47,7 @@ export function turnWorkDir(policy: Policy, clientCwd: string | undefined, proje
   return clientDir(policy, clientCwd) ?? policy.allowedPaths()[0] ?? projectPath?.();
 }
 
-interface ProjectView { id: number; path: string }
+interface ProjectView { id: number; path: string; executionKind?: 'host' | 'managed'; lifecycle?: 'active' | 'deleting' }
 
 export interface EffectiveTurnWorkDir {
   /** Registered Project/default directory before Sandbox selection. */
@@ -53,6 +55,7 @@ export interface EffectiveTurnWorkDir {
   /** Directory installed into the turn scope and inherited by delegation. */
   workDir?: string;
   workspace: SandboxWorkspace | null;
+  projectRef?: ProjectExecutionRef;
 }
 
 /** Resolve one turn's active Sandbox workspace without mutating the live PI session. The static session cwd
@@ -68,7 +71,22 @@ export function effectiveTurnWorkDir(input: {
   sessionId: string;
   projects?: { list(): ProjectView[] };
   sandbox?: KnownControls['sandbox'];
+  projectRef?: ProjectExecutionRef;
+  hostAuthorized?: boolean;
 }): EffectiveTurnWorkDir {
+  if (input.projectRef) {
+    const ref = projectExecutionRefSchema.parse(input.projectRef);
+    const project = ref.projectId === undefined ? undefined : input.projects?.list().find((p) => p.id === ref.projectId);
+    if (ref.kind === 'managed') {
+      if (!input.sandbox || typeof input.sandbox.prepareExecution !== 'function' || ENVIRONMENT_CONTROL_METHODS.some((method) => typeof input.sandbox?.[method] !== 'function')) throw new Error('project environment provider unavailable');
+      if (!project || project.executionKind !== 'managed' || project.lifecycle !== 'active') throw new Error('managed project unavailable');
+      if (input.accountUserId === null || !input.policy.canAccessProject?.(ref.projectId)) throw new Error('managed project access denied');
+      return { baseWorkDir: '/workspace', workDir: '/workspace', workspace: null, projectRef: ref };
+    }
+    if (!input.hostAuthorized || !input.policy.canExecuteHost?.()) throw new Error('explicit host execution requires administrator permission');
+    if (ref.projectId !== undefined && (!project || project.executionKind === 'managed' || project.lifecycle === 'deleting')) throw new Error('host project unavailable');
+    return { baseWorkDir: project?.path ?? input.baseWorkDir, workDir: project?.path ?? input.baseWorkDir, workspace: null, projectRef: ref };
+  }
   const fallback: EffectiveTurnWorkDir = { baseWorkDir: input.baseWorkDir, workDir: input.baseWorkDir, workspace: null };
   if (!input.baseWorkDir || input.accountUserId === null || !input.projects || !input.sandbox) return fallback;
 

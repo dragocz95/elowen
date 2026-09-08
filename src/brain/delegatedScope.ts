@@ -6,6 +6,7 @@ import {
 import { buildReadOnlyBoundary } from './agents/readOnlyBoundary.js';
 import { FORK_EXECUTE_DENIES } from './session/forkPrefix.js';
 import type { SandboxWorkspaceRef } from '../plugins/workspaceTypes.js';
+import { projectExecutionRefSchema, sameProjectExecution, type ProjectExecutionRef } from '../shared/projectExecution.js';
 
 /**
  * The immutable execution boundary minted for a delegated child.  A child is a durable conversation:
@@ -48,6 +49,7 @@ export interface DelegatedExecutionScope {
   /** Explicit Sandbox worktree assigned by the delegating turn. The durable scope stores only this
    * ownership tuple; every process resolves the canonical host path through Sandbox immediately before use. */
   workspaceRef?: SandboxWorkspaceRef;
+  projectRef?: ProjectExecutionRef;
   /** Reasoning effort this child was spawned on — the Delegate call's own `thinkingLevel`, or the level
    * inherited from the delegating turn. Captured here because it is spawn input, not display data: a
    * continuation, an eviction and a boot recovery all rebuild the child from this scope, and without it
@@ -211,6 +213,15 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     if (contributionUserId === undefined) return undefined;
   }
 
+  let projectRef: ProjectExecutionRef | undefined;
+  if (own(value, 'projectRef')) {
+    const parsed = projectExecutionRefSchema.safeParse(value.projectRef);
+    if (!parsed.success || workspaceRef) return undefined;
+    projectRef = parsed.data;
+    if (projectRef.kind === 'host' && (!value.admin || !value.owner)) return undefined;
+    if (projectRef.kind === 'managed' && (contributionUserId === undefined || (!value.admin && !canonicalProjectIds.includes(projectRef.projectId)))) return undefined;
+  }
+
   return {
     admin: value.admin,
     projectIds: canonicalProjectIds,
@@ -223,6 +234,7 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     ...(settingsUserId !== undefined ? { settingsUserId } : {}),
     ...(contributionUserId !== undefined ? { contributionUserId } : {}),
     ...(workspaceRef ? { workspaceRef } : {}),
+    ...(projectRef ? { projectRef } : {}),
     ...(thinkingLevel ? { thinkingLevel } : {}),
     ...(fork ? { fork: true } : {}),
   };
@@ -285,6 +297,7 @@ export interface DelegatingTurnAccess {
   accountUserId?: number | null;
   /** Present only inside a child already narrowed to an explicitly assigned Sandbox workspace. */
   workspaceRef?: SandboxWorkspaceRef;
+  projectRef?: ProjectExecutionRef;
 }
 
 /** Whether a PERSISTED child scope grants more than the delegating turn holds right now — returns the
@@ -320,6 +333,10 @@ export function scopeExceedsCurrentAccess(
   if (scope.contributionUserId !== undefined && scope.contributionUserId !== access.contributionUserId) {
     return 'it belongs to a different account contributor than the current turn';
   }
+  if (access.projectRef && (!scope.projectRef || !sameProjectExecution(access.projectRef, scope.projectRef))) {
+    return 'it is not scoped to the selected project execution target';
+  }
+  if (access.workspaceRef && scope.projectRef) return 'a managed project cannot replace a restricted workspace';
   if (access.workspaceRef) {
     if (!scope.workspaceRef) return 'it is not confined to this turn’s Sandbox workspace';
     if (scope.workspaceRef.workspaceId !== access.workspaceRef.workspaceId
@@ -398,6 +415,7 @@ export function promoteDelegatedScope(
     ...(scope.settingsUserId !== undefined ? { settingsUserId: scope.settingsUserId } : {}),
     ...(scope.contributionUserId !== undefined ? { contributionUserId: scope.contributionUserId } : {}),
     ...(scope.workspaceRef ? { workspaceRef: scope.workspaceRef } : {}),
+    ...(scope.projectRef ? { projectRef: scope.projectRef } : {}),
     // Effort is not authority: a promoted child is the SAME conversation continuing with write access, so
     // it keeps thinking exactly as hard as it did while it was read-only.
     ...(scope.thinkingLevel ? { thinkingLevel: scope.thinkingLevel } : {}),

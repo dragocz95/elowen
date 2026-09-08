@@ -1,5 +1,6 @@
 import { basename, dirname, join } from 'node:path';
-import { currentAccountUserId, currentContributionUserId, currentIdentity, currentPathView, currentPolicy, currentSessionId, currentSettingsUserId, currentToolPolicy, currentTurnMode, currentTurnPermissions, currentWorkDir, turnPrincipal } from './policyContext.js';
+import type { ProjectExecutionRef } from '../shared/projectExecution.js';
+import { currentAccountUserId, currentContributionUserId, currentIdentity, currentPathView, currentPolicy, currentProjectRef, currentSessionId, currentSettingsUserId, currentToolPolicy, currentTurnMode, currentTurnPermissions, currentWorkDir, turnPrincipal } from './policyContext.js';
 import { noninteractivePermissionBoundary, type NoninteractivePermissionBoundary } from '../brain/toolPermissions.js';
 import { forkParentToolResultSpillDir, planFilePath, sessionToolResultSpillDir } from '../shared/paths.js';
 import { realAbs, realPathWithin } from './pathUtils.js';
@@ -8,6 +9,7 @@ export { realPathWithin } from './pathUtils.js';
 /** The repo roots the current session may operate in. Empty for an admin (all-access) or outside a
  *  prompt turn. A tool uses this to default a working directory. */
 export function allowedRoots(): string[] {
+  if (currentProjectRef()?.kind === 'managed') return ['/workspace'];
   return currentPolicy()?.allowedPaths() ?? [];
 }
 
@@ -16,12 +18,13 @@ export function allowedRoots(): string[] {
  *  daemon's own cwd (admin all-access carries no roots). The bound path lives on the per-run turn
  *  scope, so it re-asserts itself at the start of every run regardless of where the agent moved. */
 export function defaultCwd(): string {
+  if (currentProjectRef()?.kind === 'managed') return currentWorkDir() ?? '/workspace';
   return currentPathView()?.root ?? currentWorkDir() ?? allowedRoots()[0] ?? process.cwd();
 }
 
 /** Whether the current session has unrestricted (admin) access to the filesystem. */
 export function isAllAccess(): boolean {
-  return currentPolicy()?.allowedProjectIds === 'all';
+  return currentProjectRef()?.kind !== 'managed' && currentPolicy()?.allowedProjectIds === 'all';
 }
 
 /** The current turn's complete access as a plain descriptor a plugin can safely forward to a sub-agent.
@@ -45,11 +48,12 @@ export function isAllAccess(): boolean {
  *  verified identity. `contributionUserId` keeps its exact, narrower meaning beside it — the delegated
  *  scope, personal tool ownership and the child's inherited contributions all depend on it being ONLY the
  *  contribution owner, never an identity fallback. */
-export function currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; settingsUserId: number | null; contributionUserId: number | null; accountUserId: number | null; readOnly?: boolean; planMode?: boolean; principal?: string; workspaceRef?: { workspaceId: string; projectId: number } } {
+export function currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; settingsUserId: number | null; contributionUserId: number | null; accountUserId: number | null; readOnly?: boolean; planMode?: boolean; principal?: string; workspaceRef?: { workspaceId: string; projectId: number }; projectRef?: ProjectExecutionRef } {
   const p = currentPolicy();
   const principal = turnPrincipal(currentIdentity());
   const tools = currentToolPolicy();
   const pathView = currentPathView();
+  const projectRef = currentProjectRef();
   const toolPolicy = tools ? {
     ...(tools.allow ? { allow: [...tools.allow] } : {}),
     ...(tools.deny ? { deny: [...tools.deny] } : {}),
@@ -66,6 +70,7 @@ export function currentAccess(): { projectIds: number[]; admin: boolean; owner: 
     ...(currentTurnMode() === 'plan' ? { readOnly: true, planMode: true } : {}),
     ...(principal ? { principal } : {}),
     ...(pathView ? { workspaceRef: pathView.workspace } : {}),
+    ...(projectRef ? { projectRef } : {}),
   };
 }
 
@@ -127,6 +132,7 @@ export function isSessionPlanPath(sessionId: string, candidate: string): boolean
  *  a conversation that is not its own, and the parent gains nothing over the child. Callers that omit the
  *  intent are treated as writers, so a new call site cannot widen this by forgetting about it. */
 export function assertPathAllowed(path: string, opts: { intent?: 'read' | 'write' } = {}): string {
+  if (currentProjectRef()?.kind === 'managed') throw new Error('managed project paths require the guest filesystem provider');
   const pathView = currentPathView();
   if (pathView) return pathView.resolve(path);
   if (isAllAccess()) return realAbs(path);

@@ -1,6 +1,8 @@
 import { readIsAdmin } from './userStore.js';
 import type { Db } from './db.js';
 
+export class ProjectMembershipError extends Error {}
+
 /** Assignments of users to projects (many-to-many). The bootstrap admin (users.is_admin) always
  *  has access to everything regardless of rows here — see `canAccess`. */
 export class UserProjectStore {
@@ -41,12 +43,35 @@ export class UserProjectStore {
     return readIsAdmin(this.db, userId);
   }
 
-  /** True when the user may see/operate the project: the admin always can; otherwise only when
-   *  explicitly assigned. (Assignment is the access boundary for non-admin users.) */
+  /** Access and management use current membership; creator attribution is not a role. */
   canAccess(userId: number, projectId: number): boolean {
+    const project = this.db.prepare('SELECT lifecycle FROM projects WHERE id = ?').get(projectId) as { lifecycle: string } | undefined;
+    if (!project || project.lifecycle !== 'active') return false;
     if (this.isAdmin(userId)) return true;
-    const r = this.db.prepare('SELECT 1 FROM user_projects WHERE user_id = ? AND project_id = ?').get(userId, projectId);
-    return !!r;
+    return !!this.db.prepare('SELECT 1 FROM user_projects WHERE user_id = ? AND project_id = ?').get(userId, projectId);
+  }
+
+  addMember(actorId: number, userId: number, projectId: number): void {
+    this.db.transaction(() => {
+      if (!this.canAccess(actorId, projectId)) throw new ProjectMembershipError('project access denied');
+      if (!this.isAdmin(actorId)) {
+        const user = this.db.prepare('SELECT can_share_projects FROM users WHERE id = ?').get(actorId) as { can_share_projects: number } | undefined;
+        if (!user?.can_share_projects) throw new ProjectMembershipError('project sharing is not permitted');
+        const project = this.db.prepare('SELECT execution_kind FROM projects WHERE id = ?').get(projectId) as { execution_kind: string };
+        if (project.execution_kind !== 'managed') throw new ProjectMembershipError('administrator permission required for host projects');
+      }
+      if (!this.db.prepare('SELECT 1 FROM users WHERE id = ?').get(userId)) throw new ProjectMembershipError('account not found');
+      this.assign(userId, projectId);
+    }).immediate();
+  }
+
+  removeMember(actorId: number, userId: number, projectId: number): void {
+    this.db.transaction(() => {
+      if (!this.canAccess(actorId, projectId)) throw new ProjectMembershipError('project access denied');
+      const project = this.db.prepare('SELECT execution_kind FROM projects WHERE id = ?').get(projectId) as { execution_kind: string };
+      if (project.execution_kind !== 'managed' && !this.isAdmin(actorId)) throw new ProjectMembershipError('administrator permission required for host projects');
+      this.unassign(userId, projectId);
+    }).immediate();
   }
 
   // --- Shared-memory share list (project_memory_members). An EMPTY list means every project member

@@ -29,6 +29,7 @@ import { realPathWithin } from '../../plugins/pathGuard.js';
 import { recoverablePartialTurnRows } from '../persistence.js';
 import type { KnownControls } from '../../plugins/api.js';
 import type { TurnAutomation } from '../../plugins/policyContext.js';
+import type { ProjectExecutionRef } from '../../shared/projectExecution.js';
 import { conversationActivityAutomation } from '../session/conversationActivity.js';
 
 /** One row in the caller's conversation list (the pickers' "attached" marker rides `attached`). */
@@ -93,6 +94,7 @@ export interface MessagePage { items: BrainMessageView[]; hasMore: boolean; next
 /** Chat-client status of a conversation — returned by both {@link BrainStatusService.status} and the
  *  BrainService facade that delegates to it. Named once so the ~15-field shape can't drift between them. */
 export interface BrainStatusView {
+  projectRef?: ProjectExecutionRef;
   running: boolean;
   sessionId: string | null;
   title: string;
@@ -477,12 +479,13 @@ export class BrainStatusService {
     // from the stored stamp: a directory stamped while the user still had the project must stop being
     // reported the moment that access is revoked.
     const policy = this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
-    const reported = clientDir(policy, b?.workDir ?? row?.work_dir ?? undefined) ?? null;
+    const projectRef = activeId ? this.d.store.getProjectExecution(activeId) : undefined;
+    const reported = projectRef?.kind === 'managed' ? '/workspace' : clientDir(policy, b?.workDir ?? row?.work_dir ?? undefined) ?? null;
     // Where the next turn actually runs — the resolver a turn uses, fed the same base directory it would
     // compute, so a bound Sandbox workspace shows here exactly when the turn would start inside it. The
     // account is the contribution owner of the live session, else the caller (the noteWorkDir rule).
     // Resolve mutable selection fresh: a single post-turn refresh must observe a release immediately.
-    const effective = activeId ? effectiveTurnWorkDir({
+    const effective = activeId && projectRef?.kind !== 'managed' ? effectiveTurnWorkDir({
       policy,
       baseWorkDir: turnWorkDir(policy, reported ?? undefined, this.d.projectPath),
       accountUserId: b?.contributionUserId ?? userId,
@@ -534,7 +537,8 @@ export class BrainStatusService {
       // Effective YOLO for the active conversation (session override, else the persisted default) —
       // drives the CLI's warning-toned indicator.
       yolo: this.d.permissions.effectiveYolo(userId, b),
-      project: { cwd, branch: cwd ? gitBranch(cwd, policy) : null, workspace },
+      ...(projectRef ? { projectRef } : {}),
+      project: { cwd, branch: cwd && projectRef?.kind !== 'managed' ? gitBranch(cwd, policy) : null, workspace },
     };
   }
 

@@ -39,7 +39,9 @@ import { GoalLoopService } from './service/goalLoop.js';
 import { LiveSessionSpawner } from './service/spawner.js';
 import { ConversationLifecycle } from './service/lifecycle.js';
 import { recordSessionEvent, recordWorkflowFinishMarker, scheduleReasoningMarker } from './service/sessionEvents.js';
-import { clientDir, releaseWorkspacesForMove } from './service/workDir.js';
+import { clientDir, releaseWorkspacesForMove, effectiveTurnWorkDir } from './service/workDir.js';
+import type { ProjectExecutionRef } from '../shared/projectExecution.js';
+import { runWithContributionUser } from '../plugins/policyContext.js';
 import { BrainTurnRunner, subagentResultReminder } from './service/turnRunner.js';
 import type { BoundClientRequest, TurnRequest } from './service/turnRequest.js';
 import { BrainStatusService } from './service/statusService.js';
@@ -1338,6 +1340,16 @@ export class BrainService {
         return { ok: false, reason: `the journaled Sandbox workspace is unavailable: ${error instanceof Error ? error.message : String(error)}` };
       }
     }
+    if (scope.projectRef) {
+      const actorId = contributionUserId ?? row.user_id;
+      const actorPolicy = this.d.policy?.(actorId);
+      if (!actorPolicy) return { ok: false, reason: 'project execution policy unavailable' };
+      try {
+        effectiveTurnWorkDir({ policy: actorPolicy, accountUserId: actorId, sessionId: originSessionId, projectRef: scope.projectRef, projects: this.d.projects, sandbox: this.d.plugins?.peek()?.control('sandbox'), hostAuthorized: this.d.users.get(actorId)?.is_admin === true, baseWorkDir: row.work_dir });
+      } catch (error) {
+        return { ok: false, reason: error instanceof Error ? error.message : 'project execution unavailable' };
+      }
+    }
     const access: DelegatingTurnAccess = {
       admin: policy?.allowedProjectIds === 'all',
       projectIds: !policy || policy.allowedProjectIds === 'all' ? [] : [...policy.allowedProjectIds],
@@ -1349,6 +1361,7 @@ export class BrainService {
         : null,
       ...(contributionUserId !== undefined ? { contributionUserId } : {}),
       ...(scope.workspaceRef ? { workspaceRef: scope.workspaceRef } : {}),
+      projectRef: this.d.store.getProjectExecution(originSessionId),
     };
     const exceeds = scopeExceedsCurrentAccess(scope, access);
     return exceeds ? { ok: false, reason: `the journaled boundary exceeds the origin's current authority: ${exceeds}` } : { ok: true };
@@ -1569,9 +1582,25 @@ export class BrainService {
    *  plugin's own operation (see releaseWorkspacesForMove, which owns the rule and the inference). A
    *  refusal — a process is still running in the bound workspace — refuses the MOVE, because reporting a
    *  move whose next turn would run somewhere else is exactly the contradiction this closes. */
+  selectProjectExecution(userId: number, ref: ProjectExecutionRef, session?: string): { projectRef: ProjectExecutionRef; workDir: string } {
+    const sessionId = session ? this.lifecycle.ownedUserSession(userId, session) : this.lifecycle.activeSessionId(userId);
+    const live = this.sessions.get(sessionId);
+    if (!live) throw new Error('brain not started');
+    if (live.session.isStreaming || this.sessions.hasActiveChildren(sessionId) || processRegistry.runningJobCountForSession(sessionId) > 0) throw new Error('conversation still has active work');
+    const sandbox = this.d.plugins?.peek()?.control('sandbox');
+    if (runWithContributionUser(userId, () => sandbox?.activeSessionWorkspace?.({ sessionId, projectIds: this.d.projects?.list().map((p) => p.id) ?? [] }))) throw new Error('release the restricted workspace before selecting a project environment');
+    const effective = effectiveTurnWorkDir({ policy: live.policy, baseWorkDir: live.workDir, accountUserId: userId, sessionId, projects: this.d.projects, sandbox, projectRef: ref, hostAuthorized: this.d.users.get(userId)?.is_admin === true });
+    if (!effective.workDir) throw new Error('execution target has no working directory');
+    this.d.store.setProjectExecution(sessionId, userId, ref);
+    live.workDir = effective.workDir;
+    recordSessionEvent(this.d.store, sessionId, live, 'cwd', effective.workDir);
+    return { projectRef: ref, workDir: effective.workDir };
+  }
+
   noteWorkDir(userId: number, dir: string, session?: string): { workDir: string } {
     const b = session ? this.sessions.get(this.lifecycle.ownedUserSession(userId, session)) : this.lifecycle.activeLive(userId);
     if (!b) throw new Error('brain not started');
+    if (this.d.store.getProjectExecution(b.sessionId)?.kind === 'managed') throw new Error('managed project directories must be selected through the environment');
     const resolved = clientDir(b.policy, dir);
     if (!resolved) throw new Error('directory is not readable or not allowed');
     const sandbox = this.d.plugins?.peek()?.control('sandbox');

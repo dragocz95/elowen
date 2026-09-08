@@ -68,7 +68,7 @@ export function delegatedChannelSendOpts(
 ): ChannelSendOpts {
   const scope = req.delegatedAccess;
   const policy: Policy = scope.admin
-    ? { allowedProjectIds: 'all' as const, allowedPaths: () => [] }
+    ? { allowedProjectIds: 'all' as const, allowedPaths: () => [], canExecuteHost: deps.policyForProjects?.([], scope.contributionUserId).canExecuteHost, ...(scope.projectRef?.kind === 'managed' ? { canAccessProject: deps.policyForProjects?.([scope.projectRef.projectId], scope.contributionUserId).canAccessProject } : {}) }
     : deps.policyForProjects?.(scope.projectIds, scope.contributionUserId)
       ?? { allowedProjectIds: new Set(scope.projectIds), allowedPaths: () => [] };
   return {
@@ -82,7 +82,7 @@ export function delegatedChannelSendOpts(
     ...(req.thinkingLevel !== undefined ? { thinkingLevel: req.thinkingLevel } : {}),
     parentSessionId: req.parentSessionId,
     delegatedAccess: scope,
-    ...(scope.workspaceRef ? {} : req.clientCwd !== undefined ? { clientCwd: req.clientCwd } : {}),
+    ...(scope.workspaceRef || scope.projectRef?.kind === 'managed' ? {} : req.clientCwd !== undefined ? { clientCwd: req.clientCwd } : {}),
     // The captured scope stays authoritative; the spawning account's CURRENT grant intersects it, exactly
     // as the drill-in continuation path does. Without this the forked runner and every first spawn were
     // the two paths on which a revoked tool kept reaching a child — one behaviour with three answers.

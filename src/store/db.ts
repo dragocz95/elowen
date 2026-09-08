@@ -106,6 +106,19 @@ function migrate(db: Db): void {
   backfillClearedToolResultRows(db);
   convergeLegacyClearedToolResults(db);
   dropRetiredTables(db);
+  // Historical table rebuilds precede new additive columns so an upgrade cannot discard them.
+  withWriteLock(db, () => { applyProjectEnvironmentColumns(db); });
+}
+
+function applyProjectEnvironmentColumns(db: Db): void {
+  addColumn(db, 'projects', 'execution_kind', "TEXT NOT NULL DEFAULT 'host'");
+  addColumn(db, 'projects', 'creator_user_id', 'INTEGER');
+  addColumn(db, 'projects', 'lifecycle', "TEXT NOT NULL DEFAULT 'active'");
+  addColumn(db, 'users', 'can_create_projects', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(db, 'users', 'can_share_projects', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(db, 'users', 'project_limit', 'INTEGER NOT NULL DEFAULT 3');
+  addColumn(db, 'users', 'default_project_id', 'INTEGER');
+  addColumn(db, 'brain_sessions', 'execution_ref', 'TEXT');
 }
 
 /** Run `apply` in an IMMEDIATE transaction, retrying while another process holds the write lock.
