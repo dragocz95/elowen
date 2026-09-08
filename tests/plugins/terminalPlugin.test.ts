@@ -11,6 +11,7 @@ import { runWithApprovedCall, runWithPolicy } from '../../src/plugins/policyCont
 import type { Policy } from '../../src/plugins/policy.js';
 import type { TurnIdentity } from '../../src/plugins/policyContext.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
+import { ENVIRONMENT_CONTROL_METHODS } from '../../src/plugins/environmentTypes.js';
 import { ungrantedPluginTools } from '../../src/plugins/toolGrants.js';
 import { processRegistry } from '../../src/brain/processRegistry.js';
 
@@ -747,6 +748,7 @@ describe('terminal plugin — atomic background capacity', () => {
     const gate = new Promise<void>((resolveGate) => { releasePrepare = resolveGate; });
     let prepares = 0;
     reg.controls.set('sandbox', {
+      ...Object.fromEntries(ENVIRONMENT_CONTROL_METHODS.map(name => [name, () => { throw new Error(`unexpected ${name}`); }])),
       workspaceRoots: () => [], resolveWorkspace: () => { throw new Error('unused'); },
       acquireDelegationLease: () => { throw new Error('unused'); }, workspacesFor: () => [], activeWorkspace: () => null,
       prepareExecution: async ({ command, cwd }: { command: { command: string }; cwd: string }) => {
@@ -780,6 +782,7 @@ describe('terminal plugin — atomic background capacity', () => {
     });
     let fail = true;
     reg.controls.set('sandbox', {
+      ...Object.fromEntries(ENVIRONMENT_CONTROL_METHODS.map(name => [name, () => { throw new Error(`unexpected ${name}`); }])),
       workspaceRoots: () => [], resolveWorkspace: () => { throw new Error('unused'); },
       acquireDelegationLease: () => { throw new Error('unused'); }, workspacesFor: () => [], activeWorkspace: () => null,
       prepareExecution: async ({ command, cwd }: { command: { command: string }; cwd: string }) => {

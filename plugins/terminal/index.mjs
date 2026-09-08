@@ -10,7 +10,30 @@ import { spawn } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
-import { isAbsolute, join } from 'node:path';
+import { isAbsolute, join, posix } from 'node:path';
+
+function guestCwd(path, base = '/workspace') {
+  if (typeof path !== 'string' || path.includes('\0')) throw new Error('invalid managed project cwd');
+  return posix.resolve(base, path);
+}
+
+function validatePreparedInput(input) {
+  if (input !== undefined && typeof input !== 'string' && !Buffer.isBuffer(input)) throw new Error('invalid prepared stdin');
+  if (input !== undefined && Buffer.byteLength(input) > 1024 * 1024) throw new Error('prepared stdin exceeds the 1 MiB limit');
+}
+
+function guestCancellation(prepared) {
+  if (prepared.cancel) return () => prepared.cancel();
+  if (prepared.lease.cancel) return () => prepared.lease.cancel();
+  if (prepared.mode === 'managed') throw new Error('managed execution requires verified guest cancellation');
+  return null;
+}
+
+function spawnPrepared(launch, options) {
+  return launch.type === 'argv'
+    ? spawn(launch.file, launch.args, { ...options, env: launch.env, shell: false })
+    : spawn(launch.command, { ...options, env: launch.env, shell: true });
+}
 
 const DEFAULT_MAX = 60_000;              // output cap per foreground run / background buffer
 /** The reference's foreground deadline and ceiling, with the reference's env seams
@@ -95,6 +118,10 @@ function resolveTimeoutMs(input) {
 /** Convert the cwd reported from inside a workspace namespace back to its host path, then run the ordinary
  * path authority check again. A guest path outside /workspace is never interpreted as a host path. */
 export function mapReportedCwd(reported, prepared, assertAllowed, workspacePathView = false) {
+  if (prepared.mode === 'managed') {
+    if (!posix.isAbsolute(reported)) throw new Error('reported guest cwd is not absolute');
+    return guestCwd(reported);
+  }
   let candidate = reported;
   if (prepared.workspace) {
     if (reported === '/workspace') candidate = workspacePathView ? '.' : prepared.workspace.path;
@@ -372,8 +399,8 @@ const waitForProcessGroupExit = async (pid) => {
   while (processGroupAlive(pid)) await new Promise((resolve) => setTimeout(resolve, 25));
 };
 
-const startLeaseHeartbeat = (lease) => {
-  const timer = setInterval(() => { void lease.heartbeat(); }, 5_000);
+const startLeaseHeartbeat = (lease, onFailure) => {
+  const timer = setInterval(() => { Promise.resolve().then(() => lease.heartbeat()).catch(onFailure); }, 5_000);
   timer.unref?.();
   let released = false;
   return async () => {
@@ -390,37 +417,43 @@ class BgProcess {
     this.id = id;
     this.cwd = prepared.displayCwd ?? cwd;
     this.spawnCwd = prepared.cwd ?? cwd;
-    this.workspaceScoped = !!prepared.workspace;
+    this.workspaceScoped = !!prepared.workspace || prepared.mode === 'managed';
+    this.projectRef = prepared.projectRef;
+    this.runtimeGeneration = prepared.lease.runtimeGeneration;
+    this.cancelGuest = guestCancellation(prepared);
+    this.stdin = prepared.stdin;
+    this.cancellation = null;
     this.output = '';
     this.outputBytes = 0;
     this.dropped = 0;
     this.outputCap = outputCap;
     this.readOffset = 0;
     this.exitCode = null;
+    this.finished = false;
     this.startedAt = new Date().toISOString();
     this.workspaceId = prepared.workspace?.workspaceId ?? null;
     this.homeGeneration = prepared.lease.homeGeneration;
-    if (prepared.launch.type !== 'shell') {
-      void prepared.lease.release();
-      throw new Error('Sandbox returned an unsupported launch type for Bash');
-    }
     if (prepared.mode === 'direct' && process.platform !== 'linux') {
-      void prepared.lease.release();
       throw new Error('direct-host background execution is unavailable on this platform because escaped descendants cannot be terminated safely');
     }
     const { launch, directToken, sanitizeOutput } = launchWithDirectToken(prepared);
     this.directToken = directToken;
     this.sanitizeOutput = sanitizeOutput;
     this.command = this.sanitizeOutput(command);
-    this.releaseLease = startLeaseHeartbeat(prepared.lease);
-    try {
-      // `detached: true` puts the child shell in its own process group. A direct Linux launch also carries a
-      // per-run token so kill() can reap descendants that deliberately create a different process group.
-      this.child = spawn(launch.command, { cwd: this.spawnCwd, shell: true, env: launch.env, detached: true });
-    } catch (error) {
-      void this.releaseLease();
-      throw error;
+    // `detached: true` puts the child shell in its own process group. A direct Linux launch also carries a
+    // per-run token so kill() can reap descendants that deliberately create a different process group.
+    this.child = spawnPrepared(launch, { cwd: this.spawnCwd, detached: true });
+    if (this.stdin !== undefined) {
+      this.child.stdin.on('error', (error) => {
+        // A command may deliberately stop reading before the supplied script ends.
+        if (error.code !== 'EPIPE') this.appendOutput(`\n[stdin error: ${this.sanitizeOutput(error.message)}]`);
+      });
+      this.child.stdin.end(this.stdin);
     }
+    this.releaseLease = startLeaseHeartbeat(prepared.lease, (error) => {
+      this.appendOutput(`\n[execution lease failed: ${this.sanitizeOutput(error.message)}]`);
+      this.kill().catch((cause) => this.appendOutput(`\n[guest cancellation failed: ${this.sanitizeOutput(cause.message)}]`));
+    });
     this.stdoutDecoder = new StringDecoder('utf8');
     this.stderrDecoder = new StringDecoder('utf8');
     const onData = (decoder) => (d) => { this.appendOutput(decoder.write(d)); };
@@ -430,13 +463,20 @@ class BgProcess {
     const finish = async (code, error) => {
       if (settled) return;
       settled = true;
-      if (error) killProcessGroup(this.child, this.directToken);
+      if (error) {
+        try { await this.kill(); }
+        catch (cause) { this.appendOutput(`\n[guest cancellation failed: ${this.sanitizeOutput(cause.message)}]`); }
+      }
       await waitForProcessGroupExit(this.child.pid);
       await waitForDirectTokenExit(this.directToken);
       this.appendOutput(this.stdoutDecoder.end() + this.stderrDecoder.end());
       if (error) this.appendOutput(`\n[spawn error: ${error.message}]`);
       this.exitCode = code ?? -1;
-      await this.releaseLease();
+      try { if (this.cancellation) await this.cancellation; }
+      catch (cause) { this.appendOutput(`\n[guest cancellation failed: ${this.sanitizeOutput(cause.message)}]`); this.exitCode = -1; }
+      try { await this.releaseLease(); }
+      catch (cause) { this.appendOutput(`\n[execution cleanup failed: ${this.sanitizeOutput(cause.message)}]`); this.exitCode = -1; }
+      this.finished = true;
       onClose?.();
     };
     this.child.on('close', (code) => { void finish(code); });
@@ -457,9 +497,12 @@ class BgProcess {
     this.output = cut;
     this.outputBytes = keptBytes;
   }
-  get running() { return this.exitCode === null; }
+  get running() { return !this.finished; }
   kill() {
-    killProcessGroup(this.child, this.directToken);
+    if (!this.cancelGuest) { killProcessGroup(this.child, this.directToken); return Promise.resolve(); }
+    this.cancellation ??= Promise.resolve().then(() => this.cancelGuest())
+      .finally(() => killProcessGroup(this.child, this.directToken));
+    return this.cancellation;
   }
 }
 
@@ -470,7 +513,12 @@ class ForegroundRun {
     this.id = id;
     this.cwd = prepared.displayCwd ?? cwd;
     this.spawnCwd = prepared.cwd ?? cwd;
-    this.workspaceScoped = !!prepared.workspace;
+    this.workspaceScoped = !!prepared.workspace || prepared.mode === 'managed';
+    this.projectRef = prepared.projectRef;
+    this.runtimeGeneration = prepared.lease.runtimeGeneration;
+    this.cancelGuest = guestCancellation(prepared);
+    this.stdin = prepared.stdin;
+    this.cancellation = null;
     this.startedAt = new Date().toISOString();
     this.output = '';
     this.readOffset = 0;
@@ -481,6 +529,7 @@ class ForegroundRun {
      *  is about to return actually spans the seam. `null` until something is dropped. */
     this.seamAt = null;
     this.exitCode = null;
+    this.finished = false;
     this.outputCap = outputCap;
     this.timeoutMs = timeoutMs;
     this.detached = false;
@@ -490,17 +539,16 @@ class ForegroundRun {
     this.child = null;
     this.workspaceId = prepared.workspace?.workspaceId ?? null;
     this.homeGeneration = prepared.lease.homeGeneration;
-    if (prepared.launch.type !== 'shell') {
-      void prepared.lease.release();
-      throw new Error('Sandbox returned an unsupported launch type for Bash');
-    }
     const { launch, directToken, sanitizeOutput } = launchWithDirectToken(prepared);
     this.launch = launch;
     this.directToken = directToken;
     this.sanitizeOutput = sanitizeOutput;
     this.command = this.sanitizeOutput(command);
     this.canDetach = prepared.mode !== 'direct' || process.platform === 'linux';
-    this.releaseLease = startLeaseHeartbeat(prepared.lease);
+    this.releaseLease = startLeaseHeartbeat(prepared.lease, (error) => {
+      this.spawnError = `execution lease failed: ${this.sanitizeOutput(error.message)}`;
+      this.kill().catch((cause) => { this.spawnError += `; guest cancellation failed: ${this.sanitizeOutput(cause.message)}`; });
+    });
     // One decoder PER STREAM. A single shared decoder holds the bytes of an incomplete UTF-8 character
     // until the next write completes it — and the next write may come from the other stream, so a
     // character split across stdout chunks gets finished with stderr's bytes and both come out mojibake.
@@ -512,7 +560,7 @@ class ForegroundRun {
     this._resolveDetached = null;
     this.detachedPromise = new Promise((resolve) => { this._resolveDetached = resolve; });
   }
-  get running() { return this.exitCode === null; }
+  get running() { return !this.finished; }
   get reportedCwd() {
     const end = this._reportedCwd.indexOf('\0');
     return end < 0 ? null : this._reportedCwd.slice(0, end);
@@ -524,10 +572,13 @@ class ForegroundRun {
     this._resolveDetached();
   }
   kill() {
-    if (this.killed) return;
+    if (this.killed) return this.cancellation ?? Promise.resolve();
     this.killed = true;
     if (this._timer) { clearTimeout(this._timer); this._timer = null; }
-    killProcessGroup(this.child, this.directToken);
+    if (!this.cancelGuest) { killProcessGroup(this.child, this.directToken); return Promise.resolve(); }
+    this.cancellation = Promise.resolve().then(() => this.cancelGuest())
+      .finally(() => killProcessGroup(this.child, this.directToken));
+    return this.cancellation;
   }
   async run(onProgress) {
     let lastEmit = 0;
@@ -573,7 +624,10 @@ class ForegroundRun {
       }
       emitProgress();
     };
-    this._timer = setTimeout(() => { this.timedOut = true; killProcessGroup(this.child, this.directToken); }, this.timeoutMs);
+    this._timer = setTimeout(() => {
+      this.timedOut = true;
+      this.kill().catch((error) => { this.spawnError = `guest cancellation failed: ${this.sanitizeOutput(error.message)}`; });
+    }, this.timeoutMs);
     try {
       await new Promise((resolveRun, rejectRun) => {
         let settled = false;
@@ -583,10 +637,16 @@ class ForegroundRun {
           if (error) rejectRun(error); else resolveRun();
         };
         try {
-          this.child = spawn(this.launch.command, {
-            cwd: this.spawnCwd, shell: true, env: this.launch.env, detached: true,
-            stdio: ['ignore', 'pipe', 'pipe', 'pipe'],
+          this.child = spawnPrepared(this.launch, {
+            cwd: this.spawnCwd, detached: true,
+            stdio: [this.stdin === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe', 'pipe'],
           });
+          if (this.stdin !== undefined) {
+            this.child.stdin.on('error', (error) => {
+              if (error.code !== 'EPIPE') this.spawnError = `stdin error: ${this.sanitizeOutput(error.message)}`;
+            });
+            this.child.stdin.end(this.stdin);
+          }
         } catch (error) {
           finish(error);
           return;
@@ -606,12 +666,21 @@ class ForegroundRun {
       });
     } catch (error) {
       this.spawnError = this.sanitizeOutput(error instanceof Error ? error.message : String(error));
-      killProcessGroup(this.child, this.directToken);
+      try { await this.kill(); }
+      catch (cause) { this.spawnError += `; guest cancellation failed: ${this.sanitizeOutput(cause.message)}`; }
     } finally {
       if (this._timer) { clearTimeout(this._timer); this._timer = null; }
       this.output += this._stdoutDecoder.end() + this._stderrDecoder.end();
       this._reportedCwd += this._cwdDecoder.end();
-      await this.releaseLease();
+      try { if (this.cancellation) await this.cancellation; }
+      catch (error) { this.spawnError = `guest cancellation failed: ${this.sanitizeOutput(error.message)}`; }
+      try { await this.releaseLease(); }
+      catch (error) { this.spawnError = `execution cleanup failed: ${this.sanitizeOutput(error.message)}`; }
+      if (this.spawnError) {
+        this.output += `\n[${this.spawnError}]`;
+        this.exitCode = -1;
+      }
+      this.finished = true;
     }
   }
 }
@@ -749,7 +818,7 @@ async function formatRunResult(command, cwd, out, exitCode, note, outputCap, dro
   // `retained`, not `full`, once the rolling buffer has already dropped bytes mid-run: the file then holds
   // everything that survived plus the notice naming the loss, and calling that the full output would be
   // the exact dishonesty this banner exists to avoid.
-  const saved = spill
+  const saved = spill?.error ? `; output export failed: ${spill.error}` : spill
     ? `; ${dropped > 0 ? 'retained' : 'full'} output (${formatSize(spill.bytes)}) saved to ${spill.path} — read it with the Read tool, offset/limit for a slice`
     : '';
   const budget = spendable - TRUNCATION_BANNER_RESERVE - Buffer.byteLength(saved, 'utf8');
@@ -796,8 +865,10 @@ export function register(ctx) {
     const sessionId = currentSessionId();
     // A remembered shell cd belongs to this effective root, not every later binding of the conversation.
     // Capture this key before launch so a finishing old turn cannot overwrite the new root's cwd.
-    const workspaceId = ctx.currentAccess().workspaceRef?.workspaceId ?? '';
-    return sessionId ? `${currentAccountUserId() ?? 'accountless'}\0${sessionId}\0${workspaceId}\0${ctx.defaultCwd()}` : null;
+    const access = ctx.currentAccess();
+    const workspaceId = access.workspaceRef?.workspaceId ?? '';
+    const project = access.projectRef;
+    return sessionId ? `${currentAccountUserId() ?? 'accountless'}\0${sessionId}\0${project?.kind ?? ''}:${project?.projectId ?? ''}\0${workspaceId}\0${ctx.defaultCwd()}` : null;
   };
   const rememberCwd = (key, cwd) => {
     if (!key) return;
@@ -811,13 +882,22 @@ export function register(ctx) {
   // left a ghost row here that still occupied a cap slot and could be read. The plugin now only owns the
   // BgProcess object captured in each handle's closures (spawn/output/kill); everything else goes through
   // the registry.
-  const scopedHandle = (id) => {
+  const authorizeProcess = async (handle) => {
+    if (handle.projectRef?.kind !== 'managed') return;
+    const sandbox = ctx.control('sandbox');
+    if (!sandbox) throw new Error('managed process access requires the Sandbox plugin');
+    const environment = await sandbox.environmentFor({ project: handle.projectRef, accountUserId: currentAccountUserId() });
+    if (handle.runtimeGeneration !== undefined && environment.generation !== handle.runtimeGeneration) {
+      throw new Error('managed process belongs to a stale environment generation');
+    }
+  };
+  const scopedHandle = async (id) => {
     const handle = ctx.processes.get(id);
     const accountUserId = currentAccountUserId();
-    return handle && handle.sessionId === currentSessionId()
-      && (handle.accountUserId ?? handle.userId ?? null) === accountUserId
-      ? handle
-      : undefined;
+    if (!handle || handle.sessionId !== currentSessionId()
+      || (handle.accountUserId ?? handle.userId ?? null) !== accountUserId) return undefined;
+    await authorizeProcess(handle);
+    return handle;
   };
 
   // The thin handle the registry gets: metadata + callbacks into the BgProcess this closure owns.
@@ -826,6 +906,7 @@ export function register(ctx) {
   const handleFor = (id, bg, accountUserId, sessionId, completionMode, workspaceId = null, homeGeneration = null) => ({
     id, command: bg.command, cwd: bg.cwd, startedAt: bg.startedAt,
     accountUserId, sessionId, workspaceId, homeGeneration, completionMode,
+    projectRef: bg.projectRef, runtimeGeneration: bg.runtimeGeneration,
     running: () => bg.running, exitCode: () => bg.exitCode,
     readAll: () => withDropNotice(bg, bg.sanitizeOutput(bg.output)),
     readNew: (all) => {
@@ -844,7 +925,11 @@ export function register(ctx) {
         : (bg.dropped ?? 0) > 0 && (whole || from === 0);
       return includesLoss ? withDropNotice(bg, text) : text;
     },
-    kill: () => bg.kill(),
+    kill: () => {
+      const pending = bg.kill();
+      pending.catch((error) => ctx.logger.error(`terminal: process ${id} cancellation failed: ${bg.sanitizeOutput(error.message)}`));
+      return pending;
+    },
   });
   // Re-emit the pinned "Background processes" card listing what's still running (empty card → removed).
   // No-op outside an interactive turn (emitCard wires no emitter for worker/cron), which is fine — the
@@ -931,7 +1016,8 @@ export function register(ctx) {
     const key = cwdStateKey();
     const requested = cwd ?? (key ? sessionCwds.get(key) : undefined)
       ?? (ctx.currentAccess().workspaceRef ? '.' : ctx.defaultCwd());
-    return ctx.assertPathAllowed(requested);
+    return ctx.currentAccess().projectRef?.kind === 'managed'
+      ? guestCwd(requested, ctx.defaultCwd()) : ctx.assertPathAllowed(requested);
   };
 
   /** Resolve the live Sandbox owner for every command. A disabled/missing owner never becomes an implicit
@@ -939,10 +1025,29 @@ export function register(ctx) {
   const prepareLaunch = async (command, cwd) => {
     const access = ctx.currentAccess();
     const sandbox = ctx.control('sandbox');
-    if (sandbox) return sandbox.prepareExecution({
-      command: { type: 'shell', command }, cwd, leaseKind: 'terminal',
-      ...(access.workspaceRef ? { workspace: access.workspaceRef } : {}),
-    });
+    if (access.projectRef?.kind === 'managed' && !sandbox) {
+      throw new Error('managed project execution is unavailable because it requires the Sandbox plugin');
+    }
+    if (sandbox) {
+      const prepared = await sandbox.prepareExecution({
+        command: { type: 'shell', command }, cwd, leaseKind: 'terminal',
+        ...(access.projectRef ? { projectRef: access.projectRef } : {}),
+        ...(access.workspaceRef ? { workspace: access.workspaceRef } : {}),
+      });
+      if (access.projectRef?.kind === 'managed' && (prepared.mode !== 'managed'
+        || prepared.projectRef?.kind !== 'managed' || prepared.projectRef.projectId !== access.projectRef.projectId)) {
+        await prepared.lease.release();
+        throw new Error('managed project provider returned a different execution target');
+      }
+      try {
+        validatePreparedInput(prepared.stdin);
+        guestCancellation(prepared);
+      } catch (error) {
+        await prepared.lease.release();
+        throw error;
+      }
+      return prepared;
+    }
     if (access.workspaceRef) {
       throw new Error('the shell is unavailable because exact workspace confinement requires the Sandbox plugin');
     }
@@ -1051,6 +1156,9 @@ export function register(ctx) {
             foregroundRuns.set(id, foregroundEntry);
           }
           const execPromise = run.run(onProgress);
+          const abortRun = () => { run.kill().catch((error) => ctx.logger.error(`terminal: abort failed: ${run.sanitizeOutput(error.message)}`)); };
+          _signal?.addEventListener('abort', abortRun, { once: true });
+          if (_signal?.aborted) abortRun();
           // A DETACHED run that later exits wakes the conversation to read its output — the exact lifecycle
           // Bash(run_in_background:true) gets via BgProcess.onClose. A foreground completion uses
           // remove() below instead, which never notifies.
@@ -1091,6 +1199,7 @@ export function register(ctx) {
             // past this point could detach a run whose tool call has returned — it holds `foregroundEntry`
             // directly, so leaving `foregroundRuns` is not enough to stop it.
             if (budgetTimer) clearTimeout(budgetTimer);
+            _signal?.removeEventListener('abort', abortRun);
           }
           if (run.detached) {
             foregroundRuns.delete(id);
@@ -1148,10 +1257,23 @@ export function register(ctx) {
           const visible = run.sanitizeOutput(run.output);
           const persistFullOutput = async () => {
             try {
-              return await ctx.persistToolOutput({ toolCallId, text: withDropNotice(run, visible) });
+              const text = withDropNotice(run, visible);
+              if (prepared.projectRef?.kind === 'managed') {
+                const sandbox = ctx.control('sandbox');
+                if (!sandbox) throw new Error('managed output export requires the Sandbox plugin');
+                const path = `/tmp/elowen-output-${randomBytes(16).toString('hex')}.txt`;
+                const result = await sandbox.projectFiles({
+                  project: prepared.projectRef, accountUserId: foregroundAccountUserId,
+                  operation: { kind: 'write', path, base64: Buffer.from(text, 'utf8').toString('base64'), expectedVersion: null },
+                });
+                if (result.kind !== 'write') throw new Error('managed output export returned an invalid result');
+                return { path, bytes: Buffer.byteLength(text, 'utf8') };
+              }
+              return await ctx.persistToolOutput({ toolCallId, text });
             } catch (error) {
               ctx.logger.warn(`failed to persist the full output of ${id}`, error);
-              return null;
+              return prepared.projectRef?.kind === 'managed'
+                ? { error: truncateTailBytes(run.sanitizeOutput(error instanceof Error ? error.message : String(error)), 200) } : null;
             }
           };
           const res = ok(await formatRunResult(run.command, run.cwd, visible, run.exitCode, note, outputCap, run.dropped, persistFullOutput));
@@ -1169,7 +1291,13 @@ export function register(ctx) {
           // exits (markExited on close). Field is `elowenUserId` (was mis-typed as the pre-rebrand `orcaUserId`,
           // which is undefined → the wake never fired).
           const prepared = await prepareLaunch(p.command, cwd);
-          const bg = new BgProcess(id, p.command, cwd, outputCap, () => { emitProcCard(sessionId, accountUserId); ctx.processes.markExited(id); }, prepared);
+          let bg;
+          try { bg = new BgProcess(id, p.command, cwd, outputCap, () => { emitProcCard(sessionId, accountUserId); ctx.processes.markExited(id); }, prepared); }
+          catch (error) {
+            try { await prepared.lease.release(); }
+            catch (cleanup) { throw new AggregateError([error, cleanup], 'Background launch cleanup failed'); }
+            throw error;
+          }
           ctx.processes.register(handleFor(id, bg, accountUserId, sessionId, p.backgroundMode === 'service' ? 'service' : 'job', bg.workspaceId, bg.homeGeneration));
           emitProcCard();
           return ok(`Started background process ${id}: ${bg.command}\n(cwd: ${bg.cwd})\nYou will be notified when it completes — do not poll. If you need its result now, ProcessOutput("${id}") waits for it.`);
@@ -1196,6 +1324,7 @@ export function register(ctx) {
         ? ctx.processes.listForSessionAccount(sessionId, currentAccountUserId()).filter((proc) => proc.completionMode !== 'foreground')
         : [];
       if (own.length === 0) return ok('No background processes.');
+      for (const process of own) await authorizeProcess(process);
       return ok(own.map((proc) =>
         `- ${proc.id} ${proc.running ? 'RUNNING' : `exited(${proc.exitCode})`} since ${proc.startedAt}\n  $ ${proc.command}`
       ).join('\n'));
@@ -1219,7 +1348,7 @@ export function register(ctx) {
       timeout: Type.Optional(Type.Number({ description: `Seconds to wait for the exit (default ${DEFAULT_BLOCK_S}, max ${MAX_BLOCK_S}). Ignored with block=false.` })),
     }),
     execute: async (_id, p) => {
-      const handle = scopedHandle(p.id);
+      const handle = await scopedHandle(p.id);
       if (!handle) return ok(`Error: no background process ${p.id}.`);
       // Waiting is the default: a model that gets "(no new output) [still running]" back instantly
       // calls again at once and burns a turn step per poll (seen in production after auto-background).
@@ -1236,6 +1365,7 @@ export function register(ctx) {
       // Sample `running` BEFORE reading: a process that exits between the read and the check would
       // otherwise be collected here while output written after our read is still lost. Reading first from a
       // handle we then keep (because it looked alive) at worst costs one more read call.
+      await authorizeProcess(handle); // Membership may have changed while ProcessOutput was waiting.
       const running = handle.running();
       const text = handle.readNew(p.all === true);
       const state = running
@@ -1258,9 +1388,10 @@ export function register(ctx) {
       id: Type.String({ description: 'Process id from Bash(run_in_background=true) or ListProcesses. The tracked process tree is SIGKILLed immediately and its output buffer is discarded.' }),
     }),
     execute: async (_id, p) => {
-      const handle = scopedHandle(p.id);
+      const handle = await scopedHandle(p.id);
       if (!handle) return ok(`Error: no background process ${p.id}.`);
-      ctx.processes.kill(p.id); // kills the child AND drops the entry
+      await handle.kill();
+      ctx.processes.remove(p.id); // remove only after verified cancellation succeeds
       emitProcCard();
       return ok(`Killed ${p.id} ($ ${handle.command}).`);
     },
@@ -1290,7 +1421,7 @@ export function register(ctx) {
       for (const entry of foregroundRuns.values()) {
         if (entry.run.detached || entry.run.killed) continue;
         if (entry.sessionId !== sessionId || entry.principal !== principal) continue;
-        entry.run.kill();
+        entry.run.kill().catch((error) => ctx.logger.error(`terminal: foreground cancellation failed: ${entry.run.sanitizeOutput(error.message)}`));
         killed += 1;
       }
       return { killed };

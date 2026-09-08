@@ -46,11 +46,15 @@ export function safeProjectPath(root: string, rel: string, forWrite = false): st
 // Image extensions a project icon may point at. Matches what `/raw` serves and what the picker shows.
 const IMAGE_EXT = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp', 'svg', 'ico', 'bmp', 'avif']);
 
+export function isProjectImageExtension(path: string): boolean {
+  return IMAGE_EXT.has((path.split('.').pop() ?? '').toLowerCase());
+}
+
 /** True when `rel` resolves to a regular image file strictly inside the project root — used to validate
  *  a chosen project icon before persisting it. Never throws: a traversal/symlink escape, a missing
  *  file, a directory or a non-image extension all return false. */
 export function isProjectImage(root: string, rel: string): boolean {
-  if (!IMAGE_EXT.has((rel.split('.').pop() ?? '').toLowerCase())) return false;
+  if (!isProjectImageExtension(rel)) return false;
   try {
     const abs = safeProjectPath(root, rel);
     return statSync(abs).isFile();

@@ -1,3 +1,5 @@
+import type { ProjectExecutionRef } from '../shared/projectExecution.js';
+
 /** Daemon-level registry of background shell processes started by the terminal plugin's
  *  `Bash(run_in_background:true)`. The plugin used to keep these in a per-registration closure Map, which
  *  no UI or API could reach; lifting the registry into the daemon makes them listable, killable and
@@ -24,6 +26,8 @@ export interface ProcessHandle {
    * lease carrying the same tuple; the in-memory handle keeps process UI/caps aligned with it. */
   workspaceId?: string | null;
   homeGeneration?: number | null;
+  projectRef?: ProjectExecutionRef;
+  runtimeGeneration?: number;
   /** The brain session it was started in (e.g. `brain-<uid>`) — the wake is bound to THIS conversation. */
   sessionId?: string | null;
   /** `foreground` is the transient mode of a still-in-flight `Bash` tool call that the CLI's Ctrl+B can
@@ -55,6 +59,8 @@ export interface ProcessInfo {
   completionMode?: 'job' | 'service' | 'foreground';
   workspaceId?: string | null;
   homeGeneration?: number | null;
+  projectRef?: ProjectExecutionRef;
+  runtimeGeneration?: number;
 }
 
 const toInfo = (h: ProcessHandle): ProcessInfo => ({
@@ -64,6 +70,8 @@ const toInfo = (h: ProcessHandle): ProcessInfo => ({
   completionMode: h.completionMode,
   workspaceId: h.workspaceId ?? null,
   homeGeneration: h.homeGeneration ?? null,
+  ...(h.projectRef ? { projectRef: h.projectRef } : {}),
+  ...(h.runtimeGeneration !== undefined ? { runtimeGeneration: h.runtimeGeneration } : {}),
 });
 
 /** Explicit contribution ownership is authoritative. `userId` is the pre-contract compatibility field;

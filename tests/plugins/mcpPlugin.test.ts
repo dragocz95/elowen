@@ -39,6 +39,7 @@ function fakeCtx(config: Record<string, unknown>, mcpBridgeSnapshot?: unknown, d
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     db: () => makePluginDb(db, 'mcp', { canMigrate: true }),
     currentIdentity: () => typeof identity === 'function' ? identity() : identity,
+    currentAccess: () => ({}),
     requestReload: vi.fn(),
     registerTool: (t: { name: string; execute: (id: string, args: unknown) => Promise<unknown> }, opts?: { ownerUserId?: number }) => tools.push({ ...t, ...opts }),
     registerHook: (h: { name: string; run: (p: unknown) => unknown }) => hooks.push(h),
@@ -544,6 +545,64 @@ describe('mcp plugin — declaring bridged tools from an inherited snapshot', ()
   const teardown = async (ctx: ReturnType<typeof fakeCtx>): Promise<void> => {
     await ctx.hooks.find((h) => h.name === 'plugin.reload.before')!.run({});
   };
+
+  it('routes managed stdio tool calls through their project instead of the inherited host client', async () => {
+    const ctx = fakeCtx({ servers: [{ name: 'mock', enabled: true, transport: 'stdio', command: process.execPath, args: [MOCK_SERVER] }] },
+      [{ serverName: 'mock', tools: [{ name: 'echo', inputSchema: { type: 'object' } }] }]);
+    const release = vi.fn();
+    const prepareExecution = vi.fn(async () => ({
+      mode: 'managed', projectRef: { kind: 'managed', projectId: 11 }, cwd: tmpdir(), displayCwd: '/workspace',
+      launch: { type: 'argv', file: process.execPath, args: [MOCK_SERVER], env: {} },
+      lease: { id: 'mcp-test', heartbeat() {}, release }, cancel: vi.fn(async () => {}), sanitizeOutput: (text: string) => text,
+    }));
+    const managed = { ...ctx, currentAccess: () => ({ projectRef: { kind: 'managed', projectId: 11 } }),
+      currentAccountUserId: () => 1, defaultCwd: () => '/workspace', control: () => ({ prepareExecution }) };
+    try {
+      await register(managed as never);
+      const result = await ctx.tools.find(t => t.name === 'mcp__mock__echo')!.execute('t', { text: 'guest reply' });
+      expect(JSON.stringify(result)).toContain('guest reply');
+      expect(prepareExecution).toHaveBeenCalledWith(expect.objectContaining({ leaseKind: 'mcp', projectRef: { kind: 'managed', projectId: 11 } }));
+      expect(release).toHaveBeenCalledOnce();
+    } finally { await teardown(ctx); ctx.rawDb.close(); rmSync(ctx.dataDirPath, { recursive: true, force: true }); }
+  });
+
+  it('routes managed resource listings and binary exports without using the central filesystem', async () => {
+    const ctx = fakeCtx({ servers: [{ name: 'resources', enabled: true, transport: 'stdio', command: 'guest-resources' }] }, []);
+    const release = vi.fn();
+    const prepareExecution = vi.fn(async () => ({
+      mode: 'managed', projectRef: { kind: 'managed', projectId: 12 }, cwd: tmpdir(), displayCwd: '/workspace',
+      launch: { type: 'argv', file: process.execPath, args: [RESOURCE_MOCK_SERVER], env: {} },
+      lease: { id: 'mcp-resource-test', heartbeat() {}, release }, cancel: vi.fn(async () => {}), sanitizeOutput: (text: string) => text,
+    }));
+    const projectFiles = vi.fn(async ({ operation }) => ({ kind: 'write', entry: { path: operation.path } }));
+    const managed = { ...ctx, currentAccess: () => ({ projectRef: { kind: 'managed', projectId: 12 } }),
+      currentAccountUserId: () => 1, defaultCwd: () => '/workspace', control: () => ({ prepareExecution, projectFiles }),
+      dataDir: () => { throw new Error('HOST FILESYSTEM REACHED'); } };
+    try {
+      await register(managed as never);
+      const listing = await ctx.tools.find(t => t.name === 'ListMcpResources')!.execute('list', {});
+      expect(JSON.stringify(listing)).toContain('file:///picture.png');
+      const read = await ctx.tools.find(t => t.name === 'ReadMcpResource')!.execute('read', { server: 'resources', uri: 'file:///picture.png' });
+      expect(JSON.stringify(read)).toContain('/tmp/elowen-mcp-');
+      expect(projectFiles).toHaveBeenCalledWith(expect.objectContaining({ project: { kind: 'managed', projectId: 12 }, accountUserId: 1,
+        operation: expect.objectContaining({ kind: 'write', expectedVersion: null, base64: Buffer.from('binary-bytes').toString('base64') }) }));
+      expect(release).toHaveBeenCalledTimes(2);
+    } finally { await teardown(ctx); ctx.rawDb.close(); rmSync(ctx.dataDirPath, { recursive: true, force: true }); }
+  });
+
+  it('refuses centrally stored stdio credentials before requesting a managed launch', async () => {
+    const ctx = fakeCtx({ servers: [{ name: 'mock', enabled: true, transport: 'stdio', command: process.execPath, args: [MOCK_SERVER], env: { PRIVATE_TOKEN: 'do-not-export' } }] },
+      [{ serverName: 'mock', tools: [{ name: 'echo', inputSchema: { type: 'object' } }] }]);
+    const control = vi.fn();
+    const managed = { ...ctx, currentAccess: () => ({ projectRef: { kind: 'managed', projectId: 11 } }), control };
+    try {
+      await register(managed as never);
+      const result = await ctx.tools.find(t => t.name === 'mcp__mock__echo')!.execute('t', { text: 'guest reply' });
+      expect(JSON.stringify(result)).toContain('cannot import centrally stored');
+      expect(JSON.stringify(result)).not.toContain('do-not-export');
+      expect(control).not.toHaveBeenCalled();
+    } finally { await teardown(ctx); ctx.rawDb.close(); rmSync(ctx.dataDirPath, { recursive: true, force: true }); }
+  });
 
   const visibleTools = (ctx: ReturnType<typeof fakeCtx>, ownerUserId: number | null) => {
     const selected = new Map<string, (typeof ctx.tools)[number]>();
