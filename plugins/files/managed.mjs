@@ -39,13 +39,19 @@ export function managedFiles(ctx, signal) {
     }
     return { ...result, bytes };
   };
-  async function* chunks(path) {
+  // `initialVersion` pins the first chunk to a stat the caller already took (the read wrapper's),
+  // so a mutation between that stat and the transport cannot slip past; without it, chunk-to-chunk
+  // consistency and the final stat below still bound the whole iteration.
+  async function* chunks(path, initialVersion) {
     let offset = 0;
     let version;
     let total;
     do {
       const result = await chunk(path, offset, CHUNK_BYTES);
       if (version !== undefined && (version !== result.version || total !== result.totalBytes)) {
+        throw new Error('file changed while it was being read; retry the Read');
+      }
+      if (version === undefined && initialVersion !== undefined && initialVersion !== result.version) {
         throw new Error('file changed while it was being read; retry the Read');
       }
       version = result.version;
@@ -64,13 +70,11 @@ export function managedFiles(ctx, signal) {
     if (before.size > maxBytes) throw new Error(`File exceeds the ${maxBytes} byte read limit`);
     const parts = [];
     let length = 0;
-    for await (const bytes of chunks(path)) {
+    for await (const bytes of chunks(path, before.version)) {
       length += bytes.length;
       if (length > maxBytes) throw new Error(`File exceeds the ${maxBytes} byte read limit`);
       parts.push(bytes);
     }
-    const after = await stat(path);
-    if (!after || before.version !== after.version) throw new Error('file changed while it was being read; retry the Read');
     return { bytes: Buffer.concat(parts), version: before.version };
   };
   const write = async (path, bytes, expectedVersion) => {

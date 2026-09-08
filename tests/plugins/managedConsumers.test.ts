@@ -10,8 +10,14 @@ import { ProcessRegistry } from '../../src/brain/processRegistry.js';
 
 interface Result { content: { text?: string }[]; details?: Record<string, unknown> }
 interface Tool { name: string; execute(id: string, params: Record<string, unknown>): Promise<Result> }
+interface ManagedGuestFiles {
+  stat(path: string): Promise<GuestFileStat | null>;
+  read(path: string, maxBytes: number): Promise<{ bytes: Buffer; version: string }>;
+  chunks(path: string): AsyncGenerator<Buffer, void, unknown>;
+}
 const files = await import(resolve('plugins/files/index.mjs')) as { register(ctx: PluginContext): void };
 const terminal = await import(resolve('plugins/terminal/index.mjs')) as { register(ctx: PluginContext): void };
+const { managedFiles } = await import(resolve('plugins/files/managed.mjs')) as { managedFiles: (ctx: unknown, signal?: unknown) => ManagedGuestFiles };
 
 function fixture(plugin: typeof files, provider: unknown) {
   const tools: Tool[] = [];
@@ -310,5 +316,79 @@ describe('managed builtin consumer routing', () => {
     expect(bytes.toString()).toBe('\ufeffALPHA\r\nbeta\r\n');
     expect(hostGuard).not.toHaveBeenCalled();
     expect(projectFiles).toHaveBeenCalledWith(expect.objectContaining({ project: { kind: 'managed', projectId: 7 }, accountUserId: 1 }));
+  });
+});
+
+describe('managed guest read version consolidation', () => {
+  const CHUNK_BYTES = 128 * 1024;
+
+  // Minimal managedFiles context over a content-hash versioned file whose provider can mutate the
+  // bytes right before the nth operation of a kind, reproducing each window of a racing writer.
+  function versioningProvider(initial: string) {
+    const data = new Map<string, Buffer>([['/etc/log', Buffer.from(initial)]]);
+    const version = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
+    const stat = (path: string): GuestFileStat | null => {
+      const bytes = data.get(path);
+      return bytes ? { path, kind: 'file', size: bytes.length, modifiedAt: '2026-01-01T00:00:00Z', version: version(bytes) } : null;
+    };
+    const ops: string[] = [];
+    const seen = new Map<string, number>();
+    let mutation: { on: string; nth: number; apply(): void } | null = null;
+    const projectFiles = vi.fn(async ({ operation: op }): Promise<GuestFileResult> => {
+      const count = (seen.get(op.kind) ?? 0) + 1;
+      seen.set(op.kind, count);
+      ops.push(op.kind);
+      if (mutation?.on === op.kind && count >= mutation.nth) { const apply = mutation.apply; mutation = null; apply(); }
+      if (op.kind === 'stat') return { kind: 'stat', entry: stat(op.path) };
+      if (op.kind === 'read') {
+        const bytes = data.get(op.path)!;
+        const part = bytes.subarray(op.offset ?? 0, (op.offset ?? 0) + (op.length ?? op.maxBytes));
+        if (part.length > op.maxBytes) throw new Error('byte cap exceeded');
+        return { kind: 'read', base64: part.toString('base64'), totalBytes: bytes.length, version: version(bytes) };
+      }
+      throw new Error(`unexpected ${op.kind}`);
+    });
+    const guest = managedFiles({
+      currentAccess: () => ({ projectRef: { kind: 'managed', projectId: 7 } }),
+      currentAccountUserId: () => 1, control: () => ({ projectFiles }), defaultCwd: () => '/workspace',
+    });
+    return { guest, ops, data, mutateBeforeNext: (on: string, nth: number, apply: () => void) => { mutation = { on, nth, apply }; } };
+  }
+
+  it('rejects a read whose file changes between the initial stat and the first chunk', async () => {
+    const p = versioningProvider('first');
+    p.mutateBeforeNext('read', 1, () => p.data.set('/etc/log', Buffer.from('second')));
+    await expect(p.guest.read('/etc/log', 1024 * 1024)).rejects.toThrow('file changed while it was being read; retry the Read');
+  });
+
+  it('rejects a read whose file changes between chunks', async () => {
+    const p = versioningProvider('x'.repeat(CHUNK_BYTES + 16));
+    p.mutateBeforeNext('read', 2, () => p.data.set('/etc/log', Buffer.from('y'.repeat(CHUNK_BYTES + 16))));
+    await expect(p.guest.read('/etc/log', 1024 * 1024)).rejects.toThrow('file changed while it was being read; retry the Read');
+  });
+
+  it('rejects a standalone chunks read whose file changes before the final stat', async () => {
+    const p = versioningProvider('payload');
+    p.mutateBeforeNext('stat', 1, () => p.data.set('/etc/log', Buffer.from('mutated')));
+    const collected: Buffer[] = [];
+    await expect((async () => { for await (const bytes of p.guest.chunks('/etc/log')) collected.push(bytes); })())
+      .rejects.toThrow('file changed while it was being read; retry the Read');
+    expect(collected.map(bytes => bytes.toString())).toEqual(['payload']);
+  });
+
+  it('answers an unchanged read with one initial and one final stat', async () => {
+    const p = versioningProvider('stable guest bytes');
+    const snapshot = await p.guest.read('/etc/log', 1024 * 1024);
+    expect(snapshot.bytes.toString()).toBe('stable guest bytes');
+    expect(snapshot.version).toBe(createHash('sha256').update('stable guest bytes').digest('hex'));
+    expect(p.ops).toEqual(['stat', 'read', 'stat']);
+  });
+
+  it('keeps standalone chunks free of an initial stat while validating the final version', async () => {
+    const p = versioningProvider('payload');
+    const collected: Buffer[] = [];
+    for await (const bytes of p.guest.chunks('/etc/log')) collected.push(bytes);
+    expect(collected.map(bytes => bytes.toString())).toEqual(['payload']);
+    expect(p.ops).toEqual(['read', 'stat']);
   });
 });
