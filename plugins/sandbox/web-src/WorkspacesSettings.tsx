@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+import { ProjectEnvironmentSettings } from './ProjectEnvironmentSettings';
 import { GitBranch, Plus, Search, Activity, FileWarning, FolderGit2 } from 'lucide-react';
 import { jsonBody, localizedError, runtime, type Overview, type Project, type Workspace } from './runtime';
 
@@ -11,7 +12,12 @@ type RemovePreview = {
   activeProcesses: number; files: string[]; previewHash: string; phrase: string;
 };
 
-export function WorkspacesSettings({ surface, project }: { surface: 'page' | 'deck' | 'project'; project?: Project }) {
+export function WorkspacesSettings(props: { surface: 'page' | 'deck' | 'project'; project?: Project }) {
+  if (props.project?.executionKind === 'managed') return <ProjectEnvironmentSettings key={props.project.id} project={props.project} />;
+  return <ProjectWorkspacesSettings {...props} />;
+}
+
+function ProjectWorkspacesSettings({ surface, project }: { surface: 'page' | 'deck' | 'project'; project?: Project }) {
   const { components: C, hooks, api } = runtime();
   const projectMode = surface === 'project' && project !== undefined;
   const s = hooks.usePluginStrings('sandbox');

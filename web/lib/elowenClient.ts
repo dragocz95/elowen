@@ -262,8 +262,9 @@ export const elowenClient = {
   /** Switch the conversation's model (the `/model` picker). Server rebuilds the session; `session` targets
    *  the caller's own bound conversation. */
   brainSetModel: (sel: { provider?: string; model?: string }, session?: string) => req<{ model: string }>('/brain/model', json({ ...sel, ...(session ? { session } : {}) })),
-  // Move the conversation's working directory (the seam the CLI's /cd uses). The daemon validates the
-  // directory against the caller's policy and refuses one they may not reach, so this never filters here.
+  /** Select a durable execution identity. The daemon rechecks project membership and host authority. */
+  brainSetExecution: (target: import('./types').ProjectExecutionRef, session: string) => req<{ projectRef: import('./types').ProjectExecutionRef; workDir: string }>('/brain/execution', json({ target, session })),
+  // Legacy cwd selection, used by the CLI's /cd; never selects a managed environment.
   brainSetCwd: (dir: string, session?: string) => req<{ workDir: string }>('/brain/cwd', json({ dir, ...(session ? { session } : {}) })),
   /** Set the conversation's reasoning effort live (the `/reasoning` picker). Applies to the running
    *  conversation AND becomes the account default shown in Account → Elowen AI — one value, so the
@@ -419,9 +420,10 @@ export const elowenClient = {
   },
   projects: () => req<Project[]>('/projects'),
   projectSummaries: () => req<ProjectSummary[]>('/projects/summary'),
-  createProject: (v: { slug: string; path: string; notes?: string }) => req<Project>('/projects', json(v)),
+  defaultProject: () => req<Project>('/projects/default', json({})),
+  createProject: (v: { slug: string; path: string; notes?: string; executionKind?: 'host' } | { slug: string; notes?: string; executionKind: 'managed' }) => req<Project>('/projects', json(v)),
   updateProject: (id: number, patch: { path?: string; notes?: string; icon?: string; memoryShared?: boolean }) => req<Project>(`/projects/${id}`, json(patch, 'PATCH')),
-  removeProject: (id: number) => req<{ ok: boolean }>(`/projects/${id}`, { method: 'DELETE' }),
+  removeProject: (id: number) => req<{ ok: boolean } | { operation: import('../../src/plugins/environmentTypes').EnvironmentOperation }>(`/projects/${id}`, { method: 'DELETE' }),
   projectGit: (id: number) => req<ProjectGit>(`/projects/${id}/git`),
   projectUsers: (id: number) => req<number[]>(`/projects/${id}/users`),
   /** The project's shared-memory share list (admin-only). Empty = every project member shares. */

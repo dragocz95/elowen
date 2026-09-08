@@ -17,6 +17,7 @@ import { createWrapper } from '../../test-utils';
 import type { Project, User } from '../../../lib/types';
 
 const server = setupServer(
+  http.get('*/api/brain/models', () => HttpResponse.json([])),
   http.get('*/api/users/:id/stats', () => HttpResponse.json({ memoryCount: 0, sessionCount: 0, topModel: null })),
   http.get('*/api/users/:id/tools', () => HttpResponse.json([])),
   http.get('*/api/plugins', () => HttpResponse.json([])),
@@ -51,6 +52,22 @@ function mount(u: User, projects: Project[] = []) {
 }
 
 describe('UserDetailPane', () => {
+  it('saves account project creation, sharing and limit through the user API', async () => {
+    let patch: unknown;
+    server.use(
+      http.get('*/api/users/2/projects', () => HttpResponse.json([])),
+      http.get('*/api/brain/models', () => HttpResponse.json([])),
+      http.patch('*/api/users/2', async ({ request }) => { patch = await request.json(); return HttpResponse.json(user({ can_create_projects: true, can_share_projects: true, project_limit: 5 })); }),
+    );
+    mount(user({ project_limit: 3 }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Allow additional projects' }));
+    fireEvent.click(screen.getByRole('switch', { name: 'Allow project invitations' }));
+    fireEvent.change(screen.getByLabelText('Managed project limit'), { target: { value: '0' } });
+    expect(screen.getByRole('button', { name: 'Save project permissions' })).toBeDisabled();
+    fireEvent.change(screen.getByLabelText('Managed project limit'), { target: { value: '5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save project permissions' }));
+    await waitFor(() => expect(patch).toEqual({ can_create_projects: true, can_share_projects: true, project_limit: 5 }));
+  });
   it('summarizes an unrestricted user from the live brain catalog', async () => {
     server.use(
       http.get('*/api/users/2/projects', () => HttpResponse.json([])),

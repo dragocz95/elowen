@@ -14,6 +14,7 @@ const server = setupServer(
     indicators: [{ plugin: 'demo', label: 'Connected', value: 'main', icon: 'GitBranch', tone: 'success' }],
   }])),
   http.get('*/api/projects/1/git', () => HttpResponse.json({ isRepo: true, status: { branch: 'master', ahead: 0, behind: 0, dirty: 3, clean: false }, branches: [{ name: 'master', current: true }], commits: [{ hash: 'deadbee', subject: 'feat: x', author: 'me', relative: '2 hours ago' }] })),
+  http.get('*/api/projects/3/git', () => HttpResponse.json({ error: 'managed project Git inspection requires the environment provider' }, { status: 503 })),
   http.get('*/api/projects/1/files', () => HttpResponse.json([])),
   http.get('*/api/projects/1/commit/deadbee', () => HttpResponse.json({ diff: '', files: [] })),
   http.get('*/api/projects/1/changed', () => HttpResponse.json({ changed: [] })),
@@ -23,11 +24,64 @@ const server = setupServer(
     { id: 2, username: 'bob', name: 'Bob', is_admin: false, created_at: '', allowed_execs: [], disabled_tools: [], allowed_tools: [], granted_plugins: [], email: '', avatar: '', default_exec: '', advisor_exec: '', advisor_autostart: false },
   ])),
   http.get('*/api/projects/1/users', () => HttpResponse.json([2])),
+  http.get('*/api/projects/1/memory-members', () => HttpResponse.json([])),
   http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin', is_admin: true } })),
 );
 beforeAll(() => server.listen()); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
 describe('ProjectsView', () => {
+  it('opens the server-owned default project without requesting container provisioning', async () => {
+    let opened = false;
+    let environmentRequested = false;
+    const project = { id: 3, slug: 'private-default', path: '', notes: '', icon: '', executionKind: 'managed' };
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 4, is_admin: false } })),
+      http.get('*/api/projects', () => HttpResponse.json(opened ? [project] : [])),
+      http.post('*/api/projects/default', () => { opened = true; return HttpResponse.json(project); }),
+      http.post('*/api/plugins/sandbox/api/projects/3/environment', () => { environmentRequested = true; return HttpResponse.json({}); }),
+      http.get('*/api/projects/3/git', () => { environmentRequested = true; return HttpResponse.json({ isRepo: false }); }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+    const open = await screen.findByRole('button', { name: 'Open default project' });
+    await waitFor(() => expect(open).toBeEnabled());
+    expect(opened).toBe(false);
+    fireEvent.click(open);
+    expect(await screen.findByRole('dialog', { name: 'private-default' })).toBeInTheDocument();
+    expect(opened).toBe(true);
+    expect(environmentRequested).toBe(false);
+  });
+
+  it('lets a granted member create a private managed project without a host path', async () => {
+    let body: unknown;
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 4, is_admin: false, can_create_projects: true } })),
+      http.post('*/api/projects', async ({ request }) => { body = await request.json(); return HttpResponse.json({ id: 3, slug: 'analysis', path: '', notes: '', executionKind: 'managed' }); }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+    fireEvent.click(await screen.findByRole('button', { name: 'New project' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'New project' }));
+    expect(dialog.queryByRole('button', { name: 'Browse' })).toBeNull();
+    expect(dialog.getByText(/private until/)).toBeInTheDocument();
+    fireEvent.change(dialog.getByLabelText(/Slug/), { target: { value: 'analysis' } });
+    fireEvent.click(dialog.getByRole('button', { name: 'Create' }));
+    await waitFor(() => expect(body).toEqual({ slug: 'analysis', notes: '', executionKind: 'managed' }));
+  });
+
+  it('offers equal managed-project editing rights without host path controls', async () => {
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 4, is_admin: false } })),
+      http.get('*/api/projects', () => HttpResponse.json([{ id: 3, slug: 'analysis', path: '', notes: '', executionKind: 'managed' }])),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open project analysis' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit project' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'Edit project' }));
+    expect(dialog.queryByRole('button', { name: 'Browse' })).toBeNull();
+    expect(dialog.getByRole('button', { name: 'Save' })).toBeEnabled();
+  });
   it('lists projects and shows git on select', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
@@ -181,6 +235,8 @@ describe('ProjectsView', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'New project' }));
     let editor = await screen.findByRole('dialog', { name: 'New project' });
+    fireEvent.keyDown(within(editor).getByRole('combobox', { name: 'Execution target' }), { key: 'ArrowDown' });
+    fireEvent.click(await screen.findByRole('option', { name: 'Host directory' }));
     fireEvent.click(within(editor).getByRole('button', { name: 'Browse' }));
     let picker = await screen.findByRole('dialog', { name: 'Pick the project folder' });
     expect(within(picker).getByRole('button', { name: 'New folder' })).toBeInTheDocument();
@@ -216,6 +272,8 @@ describe('ProjectsView', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'New project' }));
     const editor = await screen.findByRole('dialog', { name: 'New project' });
+    fireEvent.keyDown(within(editor).getByRole('combobox', { name: 'Execution target' }), { key: 'ArrowDown' });
+    fireEvent.click(await screen.findByRole('option', { name: 'Host directory' }));
     fireEvent.click(within(editor).getByRole('button', { name: 'Browse' }));
     const picker = await screen.findByRole('dialog', { name: 'Pick the project folder' });
     const newFolder = within(picker).getByRole('button', { name: 'New folder' });
@@ -254,6 +312,8 @@ describe('ProjectsView', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'New project' }));
     const editor = await screen.findByRole('dialog', { name: 'New project' });
+    fireEvent.keyDown(within(editor).getByRole('combobox', { name: 'Execution target' }), { key: 'ArrowDown' });
+    fireEvent.click(await screen.findByRole('option', { name: 'Host directory' }));
     fireEvent.click(within(editor).getByRole('button', { name: 'Browse' }));
     const picker = await screen.findByRole('dialog', { name: 'Pick the project folder' });
     const newFolder = within(picker).getByRole('button', { name: 'New folder' });
@@ -288,6 +348,8 @@ describe('ProjectsView', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: 'New project' }));
     const editor = await screen.findByRole('dialog', { name: 'New project' });
+    fireEvent.keyDown(within(editor).getByRole('combobox', { name: 'Execution target' }), { key: 'ArrowDown' });
+    fireEvent.click(await screen.findByRole('option', { name: 'Host directory' }));
     fireEvent.click(within(editor).getByRole('button', { name: 'Browse' }));
     const picker = await screen.findByRole('dialog', { name: 'Pick the project folder' });
     const newFolder = within(picker).getByRole('button', { name: 'New folder' });

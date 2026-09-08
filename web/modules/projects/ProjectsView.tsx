@@ -1,5 +1,9 @@
 'use client';
-import { useDeferredValue, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useMutation, useQueryClient } from '@tanstack/react-query';
+import { apiErrorMessage, elowenClient } from '../../lib/elowenClient';
+import { SelectMenu } from '../../components/ui/SelectMenu';
+import { managedProjectStrings } from './managedProjectStrings';
 import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, MoreHorizontal, Code2, Copy, Pencil, Trash2, ImageIcon, Search, FileText } from 'lucide-react';
 import { useProjects, useProjectSummaries, useProjectGit, usePluginPresent, useMe } from '../../lib/queries';
 import { useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
@@ -73,11 +77,17 @@ export function ProjectsView() {
   const projects = useProjects();
   const projectSummaries = useProjectSummaries();
   const editorEnabled = usePluginPresent('editor');
-  // Registering, editing and removing a project is admin-only on the daemon (notAdmin guards POST,
-  // PATCH and DELETE /projects). Offering those actions to a member produced a button that could only
-  // ever answer 403, and implied members hand themselves new roots -- a project IS the path boundary
-  // for a non-admin, so it is an admin who assigns them.
-  const isAdmin = useMe().data?.user?.is_admin ?? false;
+  const me = useMe();
+  const isAdmin = me.data?.user?.is_admin ?? false;
+  const canCreate = isAdmin || me.data?.user?.can_create_projects === true;
+  const canManage = (project: Project) => (isAdmin || project.executionKind === 'managed') && project.lifecycle !== 'deleting';
+  const [executionKind, setExecutionKind] = useState<'managed' | 'host'>('managed');
+  const qc = useQueryClient();
+  const defaultProject = useMutation({
+    mutationFn: elowenClient.defaultProject,
+    onSuccess: async (project) => { await qc.invalidateQueries({ queryKey: ['projects'] }); setSelectedId(project.id); },
+    onError: (error) => toast(apiErrorMessage(error), 'error'),
+  });
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState('');
@@ -92,14 +102,18 @@ export function ProjectsView() {
   };
   const openEditor = (commit: string | null) => openProjectEditor(selectedId, commit);
   const openWorking = () => openProjectEditor(selectedId, null, true);
-  const git = useProjectGit(selectedId);
+  const [managedGitProjectId, setManagedGitProjectId] = useState<number | null>(null);
+  useEffect(() => { setManagedGitProjectId(null); }, [selectedId]);
+  const managedGitDeferred = projects.data?.find((p) => p.id === selectedId)?.executionKind === 'managed' && managedGitProjectId !== selectedId;
+  const git = useProjectGit(managedGitDeferred ? null : selectedId);
 
   const { toast } = useToast();
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
+  const s = managedProjectStrings[locale];
   const createProject = useCreateProject();
   const updateProject = useUpdateProject();
   const removeProject = useRemoveProject();
-  // Removal detaches the project from Elowen but never touches files on disk.
+  // Host removal detaches metadata; managed removal requests durable environment teardown.
   const [removing, setRemoving] = useState<Project | null>(null);
   const removePendingRef = useRef(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
@@ -139,10 +153,10 @@ export function ProjectsView() {
   const projectActionGroups = (p: Project): ActionMenuItem[][] => [
     [
       ...(editorEnabled ? [{ label: t.projects.ctxOpenEditor, icon: Code2, onSelect: () => openProjectEditor(p.id, null) }] : []),
-      ...(isAdmin ? [{ label: t.projects.ctxEditProject, icon: Pencil, onSelect: () => { setSelectedId(p.id); openEdit(p); } }] : []),
+      ...(canManage(p) ? [{ label: t.projects.ctxEditProject, icon: Pencil, onSelect: () => { setSelectedId(p.id); openEdit(p); } }] : []),
     ],
-    [{ label: t.projects.ctxCopyPath, icon: Copy, onSelect: () => { void copyText(p.path).then((ok) => { if (ok) toast(t.projects.ctxPathCopied); else toast(t.projects.copyFailed, 'error'); }); } }],
-    ...(isAdmin ? [[{ label: t.projects.ctxRemove, icon: Trash2, tone: 'danger' as const, onSelect: () => setRemoving(p) }]] : []),
+    ...(p.executionKind === 'managed' ? [] : [[{ label: t.projects.ctxCopyPath, icon: Copy, onSelect: () => { void copyText(p.path).then((ok) => { if (ok) toast(t.projects.ctxPathCopied); else toast(t.projects.copyFailed, 'error'); }); } }]]),
+    ...(canManage(p) && p.executionKind !== 'managed' ? [[{ label: t.projects.ctxRemove, icon: Trash2, tone: 'danger' as const, onSelect: () => setRemoving(p) }]] : []),
   ];
   const projectActions = (p: Project): ActionMenuItem[] => projectActionGroups(p).flat();
   // Project whose icon is being chosen (drives the icon-picker modal, stacked over the edit modal).
@@ -150,7 +164,7 @@ export function ProjectsView() {
 
   function handleCreate() {
     createProject.mutate(
-      { slug, path, notes },
+      executionKind === 'managed' ? { slug: slug.trim(), notes, executionKind } : { slug, path, notes },
       {
         onSuccess: (created) => {
           setCreating(false);
@@ -159,9 +173,9 @@ export function ProjectsView() {
           setNotes('');
           toast(t.projects.created);
           // The picker reads through the optional editor's project-file routes.
-          if (editorEnabled) setIconFor(created);
+          if (editorEnabled && created.executionKind !== 'managed') setIconFor(created);
         },
-        onError: (e) => toast(String(e), 'error'),
+        onError: (e) => toast(apiErrorMessage(e), 'error'),
       }
     );
   }
@@ -169,10 +183,10 @@ export function ProjectsView() {
   function handleUpdate() {
     if (!editProject) return;
     updateProject.mutate(
-      { id: editProject.id, path: editPath, notes: editNotes },
+      { id: editProject.id, ...(editProject.executionKind === 'managed' ? {} : { path: editPath }), notes: editNotes },
       {
         onSuccess: () => { setEditProject(null); toast(t.projects.updated); },
-        onError: (e) => toast(String(e), 'error'),
+        onError: (e) => toast(apiErrorMessage(e), 'error'),
       }
     );
   }
@@ -183,13 +197,13 @@ export function ProjectsView() {
     removePendingRef.current = true;
     const id = target.id;
     try {
-      await removeProject.mutateAsync(id);
+      const result = await removeProject.mutateAsync(id);
       setRemoving((current) => current?.id === id ? null : current);
       setEditProject((current) => current?.id === id ? null : current);
-      setSelectedId((current) => current === id ? null : current);
-      toast(t.projects.removed);
+      setSelectedId((current) => current === id && !('operation' in result) ? null : current);
+      toast('operation' in result ? s.deleting : t.projects.removed);
     } catch (e) {
-      toast(String(e), 'error');
+      toast(apiErrorMessage(e), 'error');
     } finally {
       removePendingRef.current = false;
     }
@@ -234,7 +248,7 @@ export function ProjectsView() {
           description: t.projects.workspaceIntro,
           mascot: projects.isLoading ? 'saving' : projects.isError ? 'error' : 'idle',
           status: !projects.isLoading && !projects.isError ? <span className="workspace-status">{t.projects.registryReady}</span> : undefined,
-          action: isAdmin ? <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.projects.newProject}</Button> : undefined,
+          action: <div className="flex flex-wrap gap-2"><Button onClick={() => defaultProject.mutate()} disabled={defaultProject.isPending || !me.data?.user} title={s.defaultHint}>{s.defaultProject}</Button>{canCreate ? <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.projects.newProject}</Button> : null}</div>,
           metrics: <>
             <WorkspaceMetric label={t.projects.metricProjects} value={projects.data?.length ?? 0} icon={FolderGit2} />
             <WorkspaceMetric label={t.projects.metricIcons} value={summary.icons} icon={ImageIcon} />
@@ -259,7 +273,7 @@ export function ProjectsView() {
         <ControlSurfaceDocument>
           {projects.isLoading ? <ControlSurfaceState><LoadingState variant="list" /></ControlSurfaceState>
             : projects.isError ? <ControlSurfaceState tone="danger"><ErrorState message={t.projects.loadError} onRetry={() => projects.refetch()} /></ControlSurfaceState>
-            : !projects.data || projects.data.length === 0 ? <ControlSurfaceState><EmptyState title={t.projects.empty} icon={FolderGit2} action={isAdmin ? <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.projects.newProject}</Button> : undefined} /></ControlSurfaceState>
+            : !projects.data || projects.data.length === 0 ? <ControlSurfaceState><EmptyState title={t.projects.empty} icon={FolderGit2} action={canCreate ? <Button variant="accent" icon={Plus} onClick={() => setCreating(true)}>{t.projects.newProject}</Button> : undefined} /></ControlSurfaceState>
             : (
               <ControlSurfaceRegister className="workspace-master-detail" data-detail={selectedProject != null}>
                 <div className="min-w-0">
@@ -308,7 +322,7 @@ export function ProjectsView() {
                                 <span className="truncate text-sm font-semibold text-foreground transition-colors group-hover:text-primary">{project.slug}</span>
                                 <span data-project-compact-path className="flex min-w-0 items-center gap-1.5 @min-[56rem]:hidden">
                                   <Folder size={10} className="shrink-0 text-muted-foreground" aria-hidden />
-                                  <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground">{project.path}</span>
+                                  <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground">{project.executionKind === 'managed' ? s.managed : project.path}</span>
                                   {project.pathExists === false ? <MissingProjectPathBadge label={t.projects.pathMissing} /> : null}
                                 </span>
                               </span>
@@ -316,7 +330,7 @@ export function ProjectsView() {
                             <DataTableCell priority="wide" lines="auto" title={project.path} className="font-mono text-xs text-muted-foreground">
                               <span className="flex min-w-0 items-center gap-1.5">
                                 <Folder size={11} className="shrink-0" aria-hidden />
-                                <span className="min-w-0 flex-1 truncate">{project.path}</span>
+                                <span className="min-w-0 flex-1 truncate">{project.executionKind === 'managed' ? s.managed : project.path}</span>
                                 {project.pathExists === false ? <MissingProjectPathBadge label={t.projects.pathMissing} /> : null}
                               </span>
                             </DataTableCell>
@@ -343,16 +357,17 @@ export function ProjectsView() {
                 {selectedProject ? (
                   <WorkspaceDetailRail
                     label={selectedProject.slug}
-                    description={selectedProject.path}
+                    description={selectedProject.executionKind === 'managed' ? s.managed : selectedProject.path}
                     closeLabel={t.common.close}
                     onClose={() => setSelectedId(null)}
                   >
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border/70 py-3">
                       {editorEnabled ? <button type="button" onClick={() => openEditor(null)} className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-foreground"><Code2 size={13} aria-hidden />{t.projects.openEditor}</button> : null}
-                      {isAdmin ? <button type="button" onClick={() => openEdit(selectedProject)} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"><Pencil size={13} aria-hidden />{t.projects.editProject}</button> : null}
+                      {canManage(selectedProject) ? <button type="button" onClick={() => openEdit(selectedProject)} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"><Pencil size={13} aria-hidden />{t.projects.editProject}</button> : null}
                     </div>
 
                     <ProjectDetailTabs project={selectedProject} isAdmin={isAdmin} overview={<>
+                      {managedGitDeferred ? <div className="py-3"><Button onClick={() => setManagedGitProjectId(selectedProject.id)}>{s.inspectGit}</Button></div> : null}
                       {selectedProject.notes ? <p className="border-b border-border/70 py-4 text-xs leading-relaxed text-muted-foreground">{selectedProject.notes}</p> : null}
                       {git.isLoading ? <LoadingLine /> : null}
                       {git.data && !git.data.isRepo ? <div className="py-4"><Badge tone="muted">{t.projects.notGit}</Badge></div> : null}
@@ -413,21 +428,22 @@ export function ProjectsView() {
             <Field label={t.projects.fieldSlug} hint={t.help.projectSlug} required>
               {(control) => <Input value={slug} onChange={(e) => setSlug(e.target.value)} placeholder={t.projects.slugPlaceholder} autoFocus {...control} />}
             </Field>
-            <Field label={t.projects.fieldPath} hint={t.help.projectPath} required>
+            {isAdmin ? <Field label={s.executionKind}><SelectMenu label={s.executionKind} value={executionKind} onChange={(value) => setExecutionKind(value as 'managed' | 'host')} options={[{ value: 'managed', label: s.managed }, { value: 'host', label: s.host }]} /></Field> : null}
+            {executionKind === 'managed' ? <p className="text-xs text-muted-foreground">{s.privateHint}</p> : <Field label={t.projects.fieldPath} hint={t.help.projectPath} required>
               {(control) => (
                 <div className="flex items-center gap-2">
                   <Input value={path} onChange={(e) => setPath(e.target.value)} placeholder={t.projects.pathPlaceholder} className="flex-1 font-mono text-xs" {...control} />
                   <Button icon={Folder} variant="default" onClick={() => setBrowseTarget('create')}>{t.projects.browse}</Button>
                 </div>
               )}
-            </Field>
+            </Field>}
             <Field label={t.projects.fieldNotes} hint={t.help.projectNotes}>
               <textarea value={notes} onChange={(e) => setNotes(e.target.value)} rows={4} className="w-full resize-none rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none" />
             </Field>
           </ModalBody>
           <ModalFooter>
             <Button variant="ghost" onClick={() => setCreating(false)}>{t.common.cancel}</Button>
-            <Button variant="accent" onClick={handleCreate} disabled={createProject.isPending || !slug.trim() || !path.trim()}>{t.projects.create}</Button>
+            <Button variant="accent" onClick={handleCreate} disabled={createProject.isPending || !canCreate || !slug.trim() || (executionKind === 'host' && (!isAdmin || !path.trim()))}>{t.projects.create}</Button>
           </ModalFooter>
           {browseTarget === 'create' ? (
             <DirectoryPicker
@@ -455,30 +471,30 @@ export function ProjectsView() {
                     <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted">
                       <ProjectIcon project={live} size={live.icon ? 36 : 22} className="text-muted-foreground" />
                     </span>
-                    {editorEnabled ? <Button icon={ImageIcon} onClick={() => setIconFor(live)}>{t.projects.chooseIcon}</Button> : null}
+                    {editorEnabled && live.executionKind !== 'managed' ? <Button icon={ImageIcon} onClick={() => setIconFor(live)}>{t.projects.chooseIcon}</Button> : null}
                     {live.icon ? <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground" title={live.icon}>{live.icon}</span> : null}
                   </div>
                 );
               })()}
             </Field>
-            <Field label={t.projects.fieldPath} hint={t.help.projectPath} required>
+            {editProject.executionKind === 'managed' ? <Badge tone="accent">{s.managed}</Badge> : <Field label={t.projects.fieldPath} hint={t.help.projectPath} required>
               {(control) => (
                 <div className="flex items-center gap-2">
                   <Input value={editPath} onChange={(e) => setEditPath(e.target.value)} className="flex-1 font-mono text-xs" {...control} />
                   <Button icon={Folder} variant="default" onClick={() => setBrowseTarget('edit')}>{t.projects.browse}</Button>
                 </div>
               )}
-            </Field>
+            </Field>}
             <Field label={t.projects.fieldNotes} hint={t.help.projectNotes}>
               <textarea value={editNotes} onChange={(e) => setEditNotes(e.target.value)} rows={4} className="w-full resize-none rounded-md border border-border bg-card px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:border-primary focus:outline-none" />
             </Field>
 
           </ModalBody>
           <ModalFooter>
-            <Button variant="danger" icon={Trash2} onClick={() => setRemoving(editProject)}>{t.projects.removeProject}</Button>
+            {editProject.executionKind !== 'managed' ? <Button variant="danger" icon={Trash2} onClick={() => setRemoving(editProject)}>{t.projects.removeProject}</Button> : null}
             <div className="flex-1" />
             <Button variant="ghost" onClick={() => setEditProject(null)}>{t.common.cancel}</Button>
-            <Button variant="accent" onClick={handleUpdate} disabled={updateProject.isPending || !editPath.trim()}>{t.common.save}</Button>
+            <Button variant="accent" onClick={handleUpdate} disabled={updateProject.isPending || !canManage(editProject) || (editProject.executionKind !== 'managed' && !editPath.trim())}>{t.common.save}</Button>
           </ModalFooter>
           {browseTarget === 'edit' ? (
             <DirectoryPicker
@@ -495,7 +511,7 @@ export function ProjectsView() {
       <ConfirmDialog
         open={removing !== null}
         title={t.projects.removeConfirmTitle}
-        description={removing ? t.projects.removeConfirmBody.replace('{slug}', removing.slug) : undefined}
+        description={removing?.executionKind === 'managed' ? s.deleteWarning : removing ? t.projects.removeConfirmBody.replace('{slug}', removing.slug) : undefined}
         confirmLabel={t.projects.removeConfirmBtn}
         onConfirm={handleRemove}
         onClose={() => { if (!removePendingRef.current) setRemoving(null); }}

@@ -6,6 +6,7 @@ import { setupServer } from 'msw/node';
 import manifest from '../../../plugins/sandbox/elowen-plugin.json';
 import { WorkspacesSettings } from '../../../plugins/sandbox/web-src/WorkspacesSettings';
 import { EnvironmentSettings } from '../../../plugins/sandbox/web-src/EnvironmentSettings';
+import { ProjectEnvironmentSettings } from '../../../plugins/sandbox/web-src/ProjectEnvironmentSettings';
 import { ensurePluginUiRuntime } from '../../lib/pluginUi';
 import { ToastProvider } from '../../components/ui/Toast';
 import { createWrapper } from '../test-utils';
@@ -44,7 +45,7 @@ const server = setupServer(
   http.get('*/api/plugins/sandbox/api/environment', () => HttpResponse.json(environment)),
 );
 beforeAll(() => server.listen({ onUnhandledRequest }));
-afterEach(() => server.resetHandlers());
+afterEach(() => { server.resetHandlers(); localStorage.clear(); });
 afterAll(() => server.close());
 
 function mount(node: ReactNode) {
@@ -53,6 +54,21 @@ function mount(node: ReactNode) {
 }
 
 describe('sandbox Project workspaces', () => {
+  it('shows managed project lifecycle instead of account HOME and reports pending operations honestly', async () => {
+    let submitted: unknown;
+    const environment = { projectId: 1, generation: 2, state: 'stopped', desiredState: 'stopped', lastError: null, limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 4096 } };
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: false } })),
+      http.get('*/api/plugins/sandbox/api/projects/1/environment', () => HttpResponse.json({ environment, snapshots: [], operations: [] })),
+      http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => { submitted = await request.json(); return HttpResponse.json({ id: 'op-1', requestId: (submitted as { requestId: string }).requestId, projectId: 1, generation: 2, accountUserId: 1, action: { kind: 'start' }, status: 'pending', error: null }); }),
+    );
+    mount(<WorkspacesSettings surface="project" project={{ ...overview.projects[0]!, executionKind: 'managed' }} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Start environment' }));
+    await waitFor(() => expect(submitted).toEqual({ action: { kind: 'start' }, expectedGeneration: 2, requestId: expect.any(String) }));
+    expect(await screen.findByText('Operation requested. Completion is reported by the environment.')).toBeInTheDocument();
+    expect(screen.queryByText('Environment started.')).toBeNull();
+    expect(screen.queryByText('Account HOME')).toBeNull();
+  });
   it('opens a row through its single named control and renders the live patch in a Project modal', async () => {
     mount(<WorkspacesSettings surface="project" project={overview.projects[0]} />);
     // Opening a row is the row contract: ONE real button spanning it, carrying a short accessible name
@@ -85,6 +101,86 @@ describe('sandbox Project workspaces', () => {
     server.use(http.get('*/api/plugins/sandbox/api/overview', () => HttpResponse.json({ error: 'broken' }, { status: 500 })));
     mount(<WorkspacesSettings surface="project" project={overview.projects[0]} />);
     expect(await screen.findByText(strings.loadError!)).toBeInTheDocument();
+  });
+});
+
+describe('managed environment lifecycle', () => {
+  const project = { id: 1, slug: 'demo', path: '', executionKind: 'managed' as const };
+  const environment = { projectId: 1, generation: 2, state: 'stopped', desiredState: 'stopped', lastError: null, limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 4096 } };
+  const detail = { environment, operations: [], snapshots: [{ id: 'complete', generation: 2, consistency: 'crash-consistent', createdAt: '2026-09-08', note: 'Before change', completeProject: true }, { id: 'partial', generation: 2, consistency: 'crash-consistent', createdAt: '2026-09-08', note: 'Incomplete', completeProject: false }] };
+  const setup = () => server.use(http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: false } })), http.get('*/api/plugins/sandbox/api/projects/1/environment', () => HttpResponse.json(detail)));
+
+  it('reuses persisted request identity after a lost response', async () => {
+    setup();
+    const requests: { requestId: string; expectedGeneration: number }[] = [];
+    server.use(http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => {
+      const body = await request.json() as { requestId: string; expectedGeneration: number };
+      requests.push(body);
+      if (requests.length === 1) return HttpResponse.json({ error: 'Response lost' }, { status: 503 });
+      return HttpResponse.json({ id: 'op-retry', requestId: body.requestId, projectId: 1, generation: 2, accountUserId: 1, action: { kind: 'start' }, status: 'pending', error: null });
+    }));
+    mount(<ProjectEnvironmentSettings project={project} />);
+    fireEvent.click(await screen.findByRole('button', { name: strings.startEnvironment }));
+    expect(await screen.findByText('Response lost')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: strings.startEnvironment }));
+    await waitFor(() => expect(requests).toHaveLength(2));
+    expect(requests[0]).toEqual(requests[1]);
+    expect(requests[0]?.requestId).toEqual(expect.any(String));
+  });
+
+  it('sends admin resource limits as a durable lifecycle action', async () => {
+    setup();
+    let submitted: unknown;
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: true } })),
+      http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => { submitted = await request.json(); return HttpResponse.json({ id: 'op-limits', requestId: (submitted as { requestId: string }).requestId, projectId: 1, generation: 2, accountUserId: 1, action: { kind: 'limits' }, status: 'pending', error: null }); }),
+    );
+    mount(<ProjectEnvironmentSettings project={project} />);
+    fireEvent.click(await screen.findByRole('button', { name: strings.editLimits }));
+    const dialog = within(await screen.findByRole('dialog', { name: strings.editLimits }));
+    fireEvent.change(dialog.getByLabelText(strings.memoryLimit!), { target: { value: '2048' } });
+    fireEvent.click(dialog.getByRole('button', { name: strings.saveLimits }));
+    await waitFor(() => expect(submitted).toEqual({ action: { kind: 'limits', limits: { ...environment.limits, memoryMb: 2048 } }, expectedGeneration: 2, requestId: expect.any(String) }));
+  });
+
+  it('fails visibly without exposing actions when the provider is unavailable', async () => {
+    setup();
+    server.use(http.get('*/api/plugins/sandbox/api/projects/1/environment', () => HttpResponse.json({ error: 'project environment provider unavailable' }, { status: 503 })));
+    mount(<ProjectEnvironmentSettings project={project} />);
+    expect(await screen.findByText('project environment provider unavailable')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: strings.startEnvironment })).toBeNull();
+  });
+
+  it('only restores complete snapshots after explicit destructive confirmation', async () => {
+    setup();
+    let submitted: unknown;
+    server.use(http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => { submitted = await request.json(); return HttpResponse.json({ id: 'op-restore', requestId: (submitted as { requestId: string }).requestId, projectId: 1, accountUserId: 1, generation: 2, status: 'pending', action: { kind: 'restore', snapshotId: 'complete' }, error: null }); }));
+    mount(<ProjectEnvironmentSettings project={project} />);
+    const select = await screen.findByRole('combobox', { name: strings.snapshots });
+    fireEvent.keyDown(select, { key: 'ArrowDown' });
+    expect(screen.queryByRole('option', { name: /Incomplete/ })).toBeNull();
+    fireEvent.click(await screen.findByRole('option', { name: /Before change/ }));
+    fireEvent.click(screen.getByRole('button', { name: strings.restoreEnvironment }));
+    const dialog = within(await screen.findByRole('alertdialog'));
+    expect(dialog.getByText(strings.restoreWarning!)).toBeInTheDocument();
+    expect(submitted).toBeUndefined();
+    fireEvent.click(dialog.getByRole('button', { name: strings.restoreEnvironment }));
+    await waitFor(() => expect(submitted).toEqual({ action: { kind: 'restore', snapshotId: 'complete' }, expectedGeneration: 2, requestId: expect.any(String) }));
+    expect(screen.queryByRole('button', { name: strings.editLimits })).toBeNull();
+  });
+
+  it('requests durable project deletion through core instead of deleting only the container', async () => {
+    setup();
+    let deleted = false;
+    server.use(http.delete('*/api/projects/1', async ({ request }) => { const body = await request.json() as { requestId: string }; expect(body).toEqual({ requestId: expect.any(String), expectedGeneration: 2 }); deleted = true; return HttpResponse.json({ operation: { id: 'op-delete', requestId: body.requestId, projectId: 1, generation: 2, accountUserId: 1, action: { kind: 'delete' }, status: 'pending', error: null } }, { status: 202 }); }));
+    mount(<ProjectEnvironmentSettings project={project} />);
+    fireEvent.click(await screen.findByRole('button', { name: strings.deleteProject }));
+    const dialog = within(await screen.findByRole('alertdialog'));
+    expect(dialog.getByText(strings.deleteProjectWarning!)).toBeInTheDocument();
+    expect(deleted).toBe(false);
+    fireEvent.click(dialog.getByRole('button', { name: strings.deleteProject }));
+    await waitFor(() => expect(deleted).toBe(true));
+    expect(await screen.findByText(strings.operationRequested!)).toBeInTheDocument();
   });
 });
 

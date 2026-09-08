@@ -198,7 +198,7 @@ export const useActivity = (type?: string, limit?: number) =>
   });
 
 export const useProjects = () =>
-  useQuery({ queryKey: ['projects'], queryFn: elowenClient.projects, staleTime: 60_000 });
+  useQuery({ queryKey: ['projects'], queryFn: elowenClient.projects, staleTime: 60_000, refetchInterval: (query) => query.state.data?.some((project) => project.lifecycle === 'deleting') ? 3000 : false });
 
 export const useProjectSummaries = () =>
   useQuery({ queryKey: ['project-summaries'], queryFn: elowenClient.projectSummaries, staleTime: 30_000 });

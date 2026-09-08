@@ -324,7 +324,8 @@ export interface McpServerStatus { name: string; status: string }
  *  display name — render `providerLabel || provider`. `usageProvider` is the internal pi provider that
  *  keys GET /brain/rate-limits/all and is never shown; PI's `elowen-<id>` registry namespace lives only
  *  in that field. Both are optional for rolling compatibility with an older daemon. */
-export interface BrainStatus { running: boolean; sessionId: string | null; model: string; provider?: string; providerLabel?: string; usageProvider?: string; usage: BrainUsage | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; thinkingLevelLabels?: Record<string, string>; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; workMode?: BrainWorkMode; pendingPlan?: BrainPendingPlan | null; cards?: BrainCard[]; artifacts?: BrainInlineArtifact[]; queued?: { id: string; text: string }[]; yolo?: boolean; project?: BrainProject; lspEnabled?: boolean; mcp?: McpServerStatus[] | null }
+export type { ProjectExecutionRef } from '../../src/shared/projectExecution';
+export interface BrainStatus { projectRef?: import('../../src/shared/projectExecution').ProjectExecutionRef; running: boolean; sessionId: string | null; model: string; provider?: string; providerLabel?: string; usageProvider?: string; usage: BrainUsage | null; statusline: StatuslineConfig | null; thinkingLevel?: string; thinkingLevels?: string[]; thinkingLevelLabels?: Record<string, string>; pendingAsk?: { id: string; questions: AskQuestion[]; kind?: 'approval' } | null; workMode?: BrainWorkMode; pendingPlan?: BrainPendingPlan | null; cards?: BrainCard[]; artifacts?: BrainInlineArtifact[]; queued?: { id: string; text: string }[]; yolo?: boolean; project?: BrainProject; lspEnabled?: boolean; mcp?: McpServerStatus[] | null }
 /** One subscription rate-limit window of a connected OAuth account (mirrors the daemon's providerUsage). */
 interface UsageWindow { usedPercent: number; windowMinutes: number | null; resetsAt: number | null }
 /** A connected OAuth account's usage rail: its windows (ordered shortest-first) plus plan/freshness meta. */
@@ -359,7 +360,7 @@ export interface ConfigPatch {
   /** Dashboard personalization block, merged per-field by the daemon. */
   dashboard?: { recapEnabled?: boolean; digestEnabled?: boolean; greetingEnabled?: boolean; pillsEnabled?: boolean; continueEnabled?: boolean; digestPerDay?: number; digestVariants?: number; digest?: { providerId?: string; model?: string } };
 }
-export interface UserPatch { is_admin?: boolean; name?: string; username?: string; allowed_execs?: string[]; disabled_tools?: string[]; allowed_tools?: string[]; granted_plugins?: string[] }
+export interface UserPatch { can_create_projects?: boolean; can_share_projects?: boolean; project_limit?: number; is_admin?: boolean; name?: string; username?: string; allowed_execs?: string[]; disabled_tools?: string[]; allowed_tools?: string[]; granted_plugins?: string[] }
 export interface ProfilePatch { name?: string; email?: string; default_exec?: string }
 
 /** Per-user CLI/brain settings surfaced in Account. `model` empty → the configured brain default.
