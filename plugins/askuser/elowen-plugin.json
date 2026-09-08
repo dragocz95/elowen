@@ -1,6 +1,6 @@
 {
   "name": "askuser",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "apiVersion": "1",
   "description": "Ask one or more structured questions and wait for the real user response. Interactive surfaces show clickable controls; text-only surfaces may use numbered input. Supports single or multiple selection, optional custom input, and single-select previews.",
   "entry": "index.mjs",
