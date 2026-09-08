@@ -46,6 +46,7 @@ function accessibleProjectIds(ctx, explicit) {
 function assertProjectAccess(ctx, projectId, explicit) {
   const project = ctx.host.stores().projects.get(projectId);
   if (!project) throw coded('project not found', 'project_not_found', 404);
+  if (project.executionKind === 'managed') throw coded('Use organizational worktrees inside the managed environment', 'managed_worktree_required', 409);
   if (!accessibleProjectIds(ctx, explicit).includes(projectId)) throw coded('project is not accessible to this account', 'project_forbidden', 403);
   return project;
 }

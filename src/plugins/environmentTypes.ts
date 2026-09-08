@@ -45,7 +45,7 @@ export interface GuestFileStat {
 /** Decoded bytes per upload chunk; every chunk except the last has exactly this size. */
 export const GUEST_FILE_CHUNK_BYTES = 524288;
 export type GuestFileOperation =
-  | { kind: 'stat'; path: string }
+  | { kind: 'stat'; path: string; followSymlinks?: boolean }
   | { kind: 'list'; path: string; limit: number; cursor?: string }
   | { kind: 'read'; path: string; maxBytes: number; offset?: number; length?: number }
   | { kind: 'write'; path: string; base64: string; expectedVersion: string | null }

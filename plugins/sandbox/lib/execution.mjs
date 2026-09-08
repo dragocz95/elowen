@@ -309,10 +309,15 @@ export function workspaceForCwd(workspaces, accountUserId, cwd) {
     .find((workspace) => within(real, resolve(workspace.path))) ?? null;
 }
 
-export function createExecutionService({ ctx, db, dataDir, listWorkspaces }) {
+export function createExecutionService({ ctx, db, dataDir, listWorkspaces, managedRuntime }) {
   const githubSeam = { warned: false };
   const prepare = async (input, options = {}) => {
     const access = ctx.currentAccess();
+    const projectRef = input.projectRef ?? access.projectRef;
+    if (projectRef?.kind === 'managed') {
+      if (!managedRuntime) throw new Error('managed environment provider is unavailable');
+      return await managedRuntime.prepareExecution({ ...input, projectRef }, options.accountUserId ?? ctx.currentAccountUserId());
+    }
     const explicitWorkspace = options.workspace ?? null;
     const accountUserId = explicitWorkspace?.userId ?? (options.accountUserId !== undefined
       ? options.accountUserId
@@ -431,18 +436,26 @@ export async function runPrepared(prepared, opts = {}) {
   const cap = opts.outputCap ?? 2_000_000;
   let output = '';
   let settled = false;
-  const heartbeat = setInterval(() => { void prepared.lease.heartbeat(); }, 5_000);
+  let heartbeatFailure;
+  const heartbeat = setInterval(() => {
+    Promise.resolve().then(() => prepared.lease.heartbeat()).catch(async (cause) => {
+      heartbeatFailure = cause;
+      try { await prepared.cancel?.(); } catch (cancelError) { heartbeatFailure = new AggregateError([cause, cancelError], 'Execution revocation failed'); }
+    });
+  }, 5_000);
   heartbeat.unref?.();
   try {
     const child = prepared.launch.type === 'argv'
-      ? spawn(prepared.launch.file, prepared.launch.args, { cwd: prepared.cwd, env: prepared.launch.env, stdio: ['ignore', 'pipe', 'pipe'] })
-      : spawn(prepared.launch.command, { cwd: prepared.cwd, env: prepared.launch.env, shell: true, stdio: ['ignore', 'pipe', 'pipe'] });
+      ? spawn(prepared.launch.file, prepared.launch.args, { cwd: prepared.cwd, env: prepared.launch.env, stdio: ['pipe', 'pipe', 'pipe'] })
+      : spawn(prepared.launch.command, { cwd: prepared.cwd, env: prepared.launch.env, shell: true, stdio: ['pipe', 'pipe', 'pipe'] });
     const append = (chunk) => {
       output += chunk.toString();
       if (output.length > cap) output = output.slice(output.length - cap);
     };
     child.stdout.on('data', append);
     child.stderr.on('data', append);
+    child.stdin.on('error', (cause) => { if (cause.code !== 'EPIPE' && cause.code !== 'ERR_STREAM_DESTROYED') heartbeatFailure = cause; });
+    child.stdin.end(prepared.stdin);
     const result = await new Promise((resolveResult, reject) => {
       child.once('error', reject);
       // Sanitised HERE rather than at each call site: the same transform hides workspace host paths and
@@ -451,6 +464,7 @@ export async function runPrepared(prepared, opts = {}) {
       child.once('close', (code, signal) => resolveResult({ code: code ?? -1, signal, output: prepared.sanitizeOutput(output) }));
     });
     settled = true;
+    if (heartbeatFailure) throw heartbeatFailure;
     if (result.code !== 0 && opts.allowFailure !== true) {
       const error = new Error(result.output.trim() || `command exited ${result.code}`);
       error.code = result.code;

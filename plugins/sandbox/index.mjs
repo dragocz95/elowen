@@ -6,6 +6,9 @@ import {
 } from './lib/execution.mjs';
 import { createWorkspaceService } from './lib/workspaces.mjs';
 import { registerSandboxApi } from './lib/api.mjs';
+import { createEnvironmentRuntime } from './lib/environmentRuntime.mjs';
+import { registerEnvironmentApi } from './lib/environmentApi.mjs';
+import { registerEnvironmentTools } from './lib/environmentTools.mjs';
 
 const ok = (text, details = {}) => ({ content: [{ type: 'text', text }], details });
 const fail = (error) => ok(`Error: ${error instanceof Error ? error.message : String(error)}`, {
@@ -34,7 +37,8 @@ export async function register(ctx) {
     ? { collisions: [], migrated: 0, retainedSessions: [] }
     : migrateLegacyHomes(dataDir);
   let workspaces;
-  const execution = createExecutionService({ ctx, db, dataDir, listWorkspaces: () => workspaces?.listWorkspaces() ?? [] });
+  const environments = createEnvironmentRuntime({ ctx, db, dataDir });
+  const execution = createExecutionService({ ctx, db, dataDir, managedRuntime: environments, listWorkspaces: () => workspaces?.listWorkspaces() ?? [] });
   workspaces = createWorkspaceService({ ctx, db, dataDir, execution });
 
   const accountId = () => ctx.currentAccountUserId();
@@ -63,6 +67,7 @@ export async function register(ctx) {
   }, { placement: 'before-user' });
 
   ctx.registerControl('sandbox', {
+    ...environments.control,
     workspaceRoots: ({ projectIds }) => {
       const accountUserId = accountId();
       return accountUserId === null ? [] : workspaces.workspaceRoots({ accountUserId, projectIds });
@@ -148,6 +153,8 @@ export async function register(ctx) {
     // for, so an explicit request is always confined. `skipHomeLock` stays internal too: the lease has
     // to be minted under the HOME lock or a reset can race a launch.
     prepareExecution: (input, options) => {
+      const projectRef = input.projectRef ?? ctx.currentAccess().projectRef;
+      if (projectRef?.kind === 'managed') return environments.prepareExecution({ ...input, projectRef }, options?.accountUserId ?? accountId());
       if (input.workspace) {
         const accountUserId = accountId();
         if (accountUserId === null) throw new Error('a linked Elowen account is required');
@@ -322,6 +329,8 @@ export async function register(ctx) {
   });
 
   registerSandboxApi({ ctx, db, dataDir, workspaces, execution, migrationState });
+  registerEnvironmentApi(ctx, environments.control);
+  registerEnvironmentTools(ctx, environments.control);
 
   ctx.registerReadinessCheck(() => {
     if (migrationState.collisions.length > 0) return {
@@ -353,11 +362,13 @@ export async function register(ctx) {
       removeUserData(dataDir, userId);
     }
     await workspaces.reconcile();
+    await environments.reconcile();
   });
 
-  ctx.registerInterval('lease-reconcile', () => { reconcileStaleLeases(db); }, 10_000);
+  ctx.registerInterval('lease-reconcile', async () => { reconcileStaleLeases(db); await environments.reconcile(); }, 10_000);
 
   ctx.registerUserRemoved(async (userId) => {
+    await environments.revokeAccount(userId);
     await workspaces.removeAccount(userId);
     removeUserData(dataDir, userId);
   });
@@ -365,7 +376,8 @@ export async function register(ctx) {
 
   ctx.registerHook({
     name: 'plugin.reload.before',
-    run: () => {
+    run: async () => {
+      await environments.dispose();
       // The durable rows intentionally survive a reload. Only stale owners are reaped; live children keep
       // their leases until their real exit so workspace/HOME deletion remains blocked across generations.
       reconcileStaleLeases(db);

@@ -28,17 +28,45 @@ function inspected(spec: any) {
 }
 function fake(spec: any) {
   const row = inspected(spec);
+  // Model the store's container-existence state, including removal, instead of always reporting
+  // existence: production verifies `rm` by absence, so the fake must be able to observe it.
+  const containers = new Map<string, string>([[spec.name, row.Id]]);
   const volumes = new Map<string, any>(spec.volumes.map((volume: any) => [volume.name, { Name: volume.name, Labels: volumeLabels(spec, volume.component), Driver: 'local', Options: { type: 'none', o: 'bind', device: volume.path } }]));
   const executor = { run: vi.fn(async (_file: string, args: string[], _options: any) => {
-    if (args[0] === 'container' && args[1] === 'exists') return { code: 0, stdout: '', stderr: '' };
+    if (args[0] === 'container' && args[1] === 'exists') return { code: containers.has(args[2]!) ? 0 : 1, stdout: '', stderr: '' };
+    if (args[0] === 'rm') { for (const [name, id] of containers) if (id === args[1]) containers.delete(name); return { code: 0, stdout: '', stderr: '' }; }
     if (args[0] === 'inspect') return { code: 0, stdout: JSON.stringify([row]), stderr: '' };
     if (args[0] === 'volume' && args[1] === 'exists') return { code: volumes.has(args[2]!) ? 0 : 1, stdout: '', stderr: '' };
     if (args[0] === 'volume' && args[1] === 'inspect') return { code: 0, stdout: JSON.stringify([volumes.get(args[2]!)]), stderr: '' };
     if (args[0] === 'exec') return { code: 0, stdout: 'LoadState=masked\nActiveState=inactive\nSubState=dead\nControlGroup=\n', stderr: '' };
     return { code: 0, stdout: '', stderr: '' };
   }) };
-  return { row, volumes, executor, client: new PodmanClient({ executor }) };
+  return { row, containers, volumes, executor, client: new PodmanClient({ executor }) };
 }
+
+it('mounts a new local-bind restore volume inside the same rootless namespace as import', async () => {
+  const { spec, paths } = fixture();
+  const target = createContainerSpec({ resource: spec.resource, generation: 3, image: spec.image }, paths);
+  mkdirSync(join(spec.storageRoot, 'snapshots/import-test'), { recursive: true });
+  writeFileSync(join(spec.storageRoot, 'snapshots/import-test/workspace.tar'), 'opaque archive');
+  const state = fake(target);
+  state.volumes.clear();
+  const original = state.executor.run.getMockImplementation()!;
+  state.executor.run.mockImplementation(async (file, args, options) => {
+    if (args[0] === 'container' && args[1] === 'exists') return { code: 1, stdout: '', stderr: '' };
+    if (args[0] === 'volume' && args[1] === 'create') {
+      const volume = target.volumes[0];
+      state.volumes.set(volume.name, { Name: volume.name, Labels: volumeLabels(target, 'workspace'), Driver: 'local', Options: { type: 'none', o: 'bind', device: volume.path } });
+    }
+    if (args[0] === 'volume' && args[1] === 'import') return { code: 125, stdout: '', stderr: 'volume is using a driver local and volume is not mounted' };
+    return original(file, args, options);
+  });
+  await state.client.importSnapshotVolume(spec, 'import-test', target, 'workspace');
+  const archiveCall = state.executor.run.mock.calls.find((call) => call[1][0] === 'unshare');
+  expect(archiveCall?.[1][3]).toContain('volume mount');
+  expect(archiveCall?.[1][3]).toContain('volume unmount');
+  expect(archiveCall?.[1]).toContain(target.volumes[0].name);
+});
 
 describe('trusted container specifications', () => {
   it('derives exclusive project storage, persistent HOME and real Git mounts', () => {
@@ -273,6 +301,17 @@ describe('clean and confined Podman client', () => {
     const { spec } = fixture();
     const executor = { run: vi.fn(async () => ({ code: 125, stdout: '', stderr: 'storage permission denied' })) };
     await expect(new PodmanClient({ executor }).inspect(spec)).rejects.toThrow(/125/);
+  });
+  it('verifies container removal against modeled store state instead of a constant exists', async () => {
+    const { spec } = fixture();
+    const { client, row, executor } = fake(spec);
+    row.State.Status = 'stopped';
+    await client.remove(spec);
+    const removal = executor.run.mock.calls.find(([, args]) => args[0] === 'rm')!;
+    expect(removal![1]).toEqual(['rm', 'a'.repeat(64)]);
+    await expect(client.inspect(spec)).resolves.toBeNull();
+    await expect(client.remove(spec)).rejects.toThrow(/missing/i);
+    expect(executor.run.mock.calls.filter(([, args]) => args[0] === 'rm')).toHaveLength(1);
   });
   it('bounds command input before launching and retains truncation metadata', async () => {
     const { spec } = fixture();

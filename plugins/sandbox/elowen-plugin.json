@@ -11,9 +11,18 @@
       "SandboxUseWorkspace",
       "SandboxReleaseWorkspace",
       "SandboxCommit",
-      "SandboxRemoveWorkspace"
+      "SandboxRemoveWorkspace",
+      "EnvironmentStatus",
+      "EnvironmentStart",
+      "EnvironmentStop",
+      "EnvironmentSnapshot",
+      "EnvironmentRestore",
+      "EnvironmentLogs",
+      "EnvironmentOperation",
+      "EnvironmentWorktrees"
     ],
     "apiRoutes": [
+      "projects",
       "overview",
       "workspaces/create",
       "workspaces/use",
@@ -25,7 +34,14 @@
       "environment",
       "environment/author",
       "environment/reset-preview",
-      "environment/reset"
+      "environment/reset",
+      "environments/status",
+      "environments/request",
+      "environments/operation",
+      "environments/snapshots",
+      "environments/logs",
+      "environments/files",
+      "environments/worktrees"
     ]
   },
   "icons": {

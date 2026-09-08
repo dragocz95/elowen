@@ -10,7 +10,8 @@ const createWorkspace = vi.hoisted(() => vi.fn(async (input: Record<string, unkn
   if (input.sessionId) state.bindings.set(String(input.sessionId), state.workspace.id);
   return state.workspace;
 }));
-vi.mock('../../plugins/sandbox/lib/db.mjs', () => ({
+vi.mock('../../plugins/sandbox/lib/db.mjs', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../plugins/sandbox/lib/db.mjs')>(),
   initSandboxDb: () => ({}), createExecutionLease: vi.fn(), reconcileStaleLeases: vi.fn(),
 }));
 vi.mock('../../plugins/sandbox/lib/execution.mjs', () => ({
@@ -38,7 +39,7 @@ beforeEach(async () => {
     currentAccountUserId: () => 1, currentSessionId: () => state.session,
     currentAccess: () => ({ admin: false, projectIds: [1] }),
     registerTurnContext: vi.fn(), registerControl: vi.fn(), registerCommand: vi.fn(), registerReadinessCheck: vi.fn(),
-    registerBootReconcile: vi.fn(), registerInterval: vi.fn(), registerUserRemoved: vi.fn(),
+    registerBootReconcile: vi.fn(), registerInterval: vi.fn(), registerUserRemoved: vi.fn(), registerApiRoute: vi.fn(),
     registerProjectRemoved: vi.fn(), registerHook: vi.fn(), logger: { info: vi.fn() },
     registerTool: (tool: any) => state.tools.set(tool.name, tool),
   });
