@@ -95,9 +95,10 @@
     {
       "area": "execution",
       "capability": "background/foreground/cwd/output-limit behaviour in a guest",
-      "evidence": "unverified",
-      "negative": "unverified",
-      "notes": "Only host-mode coverage exists."
+      "evidence": "real-guest",
+      "negative": "real-guest",
+      "notes": "Real Bash tool: foreground in the guest cwd, guest filesystem, non-zero exit reported, oversized output truncated, background run tracked by ListProcesses and killed by KillProcess.",
+      "suite": "managedToolCallers.podman"
     },
     {
       "area": "guest-files",

@@ -20,6 +20,7 @@ import type { PluginContext } from '../../src/plugins/api.js';
  *  real plugins and runs their real `execute` against a container.
  */
 const files = await import(resolvePath('plugins/files/index.mjs')) as { register(ctx: PluginContext): void };
+const terminal = await import(resolvePath('plugins/terminal/index.mjs')) as { register(ctx: PluginContext): void };
 
 type Tool = { name: string; execute(id: string, params: Record<string, unknown>): Promise<any> };
 
@@ -79,6 +80,7 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
         control: () => provider,
       };
       files.register(ctx as PluginContext);
+      terminal.register(ctx as PluginContext);
       return { hostGuard, run: (name: string, params: Record<string, unknown>) => tools.find((t) => t.name === name)!.execute('t', params) };
     };
 
@@ -108,6 +110,30 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
     stage = 'no host path guard was ever consulted';
     // A managed turn must never fall back to a host filesystem decision.
     expect(hostGuard).not.toHaveBeenCalled();
+
+    stage = 'Bash runs in the guest, in the guest cwd';
+    const hello = await run('Bash', { command: 'echo guest-shell; pwd; id -u', description: 'probe' });
+    expect(hello.content[0].text).toContain('guest-shell');
+    expect(hello.content[0].text).toContain('/workspace');
+
+    stage = 'Bash sees the guest filesystem, not the host';
+    const seen = await run('Bash', { command: 'cat /workspace/alpha.ts', description: 'read written file' });
+    expect(seen.content[0].text).toContain('alpha = 42');
+
+    stage = 'Bash reports a non-zero exit rather than hiding it';
+    const failed = await run('Bash', { command: 'exit 3', description: 'failing command' });
+    expect(JSON.stringify(failed)).toMatch(/3/);
+
+    stage = 'Bash truncates oversized output instead of returning it whole';
+    const flood = await run('Bash', { command: 'head -c 400000 /dev/zero | tr "\\0" "x"', description: 'flood stdout' });
+    expect(flood.content[0].text.length).toBeLessThan(200_000);
+
+    stage = 'Bash background work is tracked and can be killed';
+    const bg = await run('Bash', { command: 'sleep 60', description: 'background sleeper', run_in_background: true });
+    const listed = await run('ListProcesses', {});
+    expect(JSON.stringify(listed)).toMatch(/sleep|background/i);
+    const pid = String(JSON.stringify(bg).match(/"id":"([^"]+)"/)?.[1] ?? '');
+    if (pid) await run('KillProcess', { id: pid });
 
     stage = 'a managed project without a provider refuses instead of falling back';
     const orphan = fixture(null);
