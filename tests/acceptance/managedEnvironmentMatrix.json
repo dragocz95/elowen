@@ -237,7 +237,8 @@
       "area": "mcp",
       "capability": "project MCP install, reconnect, schema visibility",
       "evidence": "unverified",
-      "negative": "unverified"
+      "negative": "unverified",
+      "notes": "Not implemented rather than untested: the MCP plugin accepts only the personal and instance scopes (ownerForScope in plugins/mcp/index.mjs rejects anything else) and never resolves the sandbox control, so no MCP server runs inside a managed environment. The row stays as the record that this capability does not exist."
     },
     {
       "area": "cron",
@@ -264,15 +265,18 @@
     {
       "area": "credentials",
       "capability": "Git and publishing credential separation",
-      "evidence": "unverified",
-      "negative": "unverified"
+      "evidence": "real-guest",
+      "negative": "real-guest",
+      "suite": "managedToolCallers.podman",
+      "notes": "The guest exec unit carries only PATH, LANG and its own systemd bookkeeping; daemon environment sentinels including GH_TOKEN are absent. The other half of separation is a gap rather than a pass: no account GitHub token reaches a managed guest at all, so authenticated git push from a managed project is not supported."
     },
     {
       "area": "codebase",
       "capability": "codebase indexing/search inside a managed project",
-      "evidence": "unverified",
-      "negative": "unverified",
-      "notes": "Registry-local plugin found by inventory."
+      "evidence": "unit",
+      "negative": "unit",
+      "notes": "The semantic index now refuses on a managed turn. Before the fix it resolved the guest path /workspace against the host, so on a host owning that directory a managed project's search would have returned host content as its own code.",
+      "suite": "codebase"
     },
     {
       "area": "integrations",
