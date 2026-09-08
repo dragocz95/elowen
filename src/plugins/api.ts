@@ -22,7 +22,8 @@ import type { ProjectGitSnapshot } from '../git/gitReader.js';
 import type { ProjectExecutionRef } from '../shared/projectExecution.js';
 import type { ProjectEnvironmentControl, SiteEnvironmentControl } from './environmentTypes.js';
 export type { ProjectExecutionRef, ManagedProjectRef } from '../shared/projectExecution.js';
-export type { ProjectEnvironmentControl, ProjectEnvironment, EnvironmentAction, EnvironmentOperation, GuestFileOperation, GuestFileResult, GuestFileStat, EnvironmentLimits, EnvironmentSnapshot, ManagedWorktree, ManagedWorktreeAction, SiteEnvironmentControl, SiteEnvironmentRegistration, SiteRuntimeAuthority, SiteEnvironment, SiteEnvironmentOperation, SiteEnvironmentAction, SiteRuntimeArtifact, SiteImageRecipe, SiteImageKind, ProjectPreviewBinding } from './environmentTypes.js';
+export { GUEST_FILE_CHUNK_BYTES } from './environmentTypes.js';
+export type { ProjectEnvironmentControl, ProjectEnvironment, EnvironmentAction, EnvironmentOperation, GuestFileOperation, GuestFileResult, GuestFileStat, EnvironmentLimits, EnvironmentSnapshot, ManagedWorktree, ManagedWorktreeAction, SiteEnvironmentControl, SiteEnvironmentRegistration, SiteRuntimeAuthority, SiteEnvironment, SiteEnvironmentOperation, SiteEnvironmentAction, SiteRuntimeArtifact, SiteImageRecipe, SiteImageKind, SiteImageStatus, SiteImageOperation, ProjectPreviewBinding } from './environmentTypes.js';
 
 export type { DelegatedChildSummary, PluginSecretBag };
 
@@ -1257,6 +1258,9 @@ export interface SandboxPreparedExecution {
     | { type: 'argv'; file: string; args: string[]; env: Record<string, string> };
   /** Bounded guest stdin. A managed consumer must pipe this into the canonical launch. */
   stdin?: string | Buffer;
+  /** Read once after process exit and before lease.release. Null means no trustworthy guest cwd was recorded.
+   * Bound to the originating account, Project and generation; never inferred from command stdout. */
+  completionMetadata?: () => Promise<{ cwd: string | null }>;
   cancel?: () => Promise<void>;
   workspace: SandboxWorkspace | null;
   lease: SandboxExecutionLease;
