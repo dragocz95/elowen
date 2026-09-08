@@ -3,10 +3,12 @@ import { cpSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-// @ts-expect-error — plain .mjs package entry, no types
-import { PLUGIN_SHARED_API_VERSION } from 'elowen-plugin-shared';
 import { MarketplaceService } from '../../src/plugins/marketplace.js';
 import { discoverPlugins } from '../../src/plugins/loader.js';
+// This test's own side reads the checkout's SOURCE — the version this checkout ships — while the
+// installed plugin resolves the bare specifier through the installer's host node_modules symlink. See
+// the assertion below.
+import { PLUGIN_SHARED_API_VERSION } from '../../packages/plugin-shared/index.mjs';
 
 /** The rest of the marketplace suite stops at "the files landed in the right place" — it never imports
  *  what it installed, and says so (marketplace.ts: "Unset in tests (they never import the copied
@@ -93,11 +95,10 @@ describe('a marketplace-installed plugin actually loads', () => {
       probe: (t: string) => string;
       contract: number;
     };
-    // Against the package's own constant, not a literal — and resolved through the same node_modules
-    // walk the installed copy does, so the two agreeing IS the resolution working: a bare specifier from
-    // this test file and one from the installed plugin both land in the host's shared package. A literal
-    // here would just be a second place to bump the contract version, and a relative import would compare
-    // this checkout's source against whatever checkout the host node_modules symlink resolves to.
+    // Against the checkout's source, not a literal — a literal would be a second place to bump the
+    // contract version. The two sides resolving DIFFERENTLY is the point: the installed copy must carry
+    // the same shared API this checkout ships, and a host node_modules that answers with an older
+    // checkout's shared package is exactly the release-order break this test exists to catch.
     expect(mod.contract).toBe(PLUGIN_SHARED_API_VERSION);
     expect(typeof mod.contract).toBe('number');
     expect(mod.probe('<thinking>hidden</thinking>visible')).not.toContain('hidden');
