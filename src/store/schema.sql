@@ -680,12 +680,6 @@ CREATE TABLE IF NOT EXISTS dash_digests (
   PRIMARY KEY (user_id, day)
 );
 
--- Durable binding for an admin's interactive `elowen chat` terminal (BrainTerminalService): the tmux
--- session name → the brain conversation it resumes + the per-terminal auth token minted for it. The token
--- is stored verbatim (not hashed) because the tmux session survives a daemon restart and teardown must be
--- able to revoke the exact live token; this table is private, out of every wire/log path. One terminal per
--- (admin, conversation) via the UNIQUE constraint; the tmux name is the stable handle the DELETE/stream
-
 -- Elowen RAW memory (v1: user-scoped only). Durable facts/preferences/instructions/corrections about a
 -- user. Vectors live inline as packed Float32 BLOBs in memory_embeddings (no external vector DB).
 -- Deletes are SOFT (status='deleted') so the UI can restore; every mutation is audited in memory_events.
