@@ -6,12 +6,22 @@
  *  workflow `wf` segment, the `kind`/`detail` event rows, the sub-agent state fields, and the /auth/me
  *  `User` all diverged while these were hand-copied).
  *
- *  It carries TYPES only and imports nothing, so:
+ *  It carries TYPES only, so:
  *   - the daemon (NodeNext) and web (Bundler) resolvers both accept `../shared/wireContract.js`;
  *   - a type-only import erases at build time, adding zero runtime code to the Next bundle.
  *
+ *  The two `export type ... from` lines below are the only references it makes, and they hold that
+ *  same property: a type-only re-export is erased before the bundler resolves it, so the web still
+ *  bundles none of the runtime code (a zod schema, the control method lists) that lives beside those
+ *  shapes in their owning modules. They are re-exported here rather than redeclared because the web
+ *  reads both off the wire — the selected execution target on brain status, the lifecycle operation in
+ *  the managed delete response — and a second declaration is the drift this file exists to end.
+ *
  *  The owning daemon modules (src/store/*, src/brain/events.ts, src/integrations/projectFiles.ts) and
  *  `web/lib/types.ts` re-export these to their own sides; none redeclares the shapes. */
+
+export type { ProjectExecutionRef } from './projectExecution.js';
+export type { EnvironmentOperation } from '../plugins/environmentTypes.js';
 
 export interface ToolOutputView {
   title: string;
