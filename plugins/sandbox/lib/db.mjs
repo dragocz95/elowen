@@ -1,5 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
+import { environmentMigration } from './environmentDb.mjs';
+import { guestFileMigration } from './guestFileTransport.mjs';
 
 const EXECUTION_LEASE_MS = 20_000;
 const REPO_LEASE_MS = 30_000;
@@ -99,7 +101,7 @@ export function initSandboxDb(ctx) {
           ON p_sandbox_execution_leases(workspace_id, expires_at);
       `);
     },
-  }]);
+  }, environmentMigration, guestFileMigration]);
   return db;
 }
 
@@ -126,7 +128,7 @@ export function processIdentity(pid = process.pid) {
   }
 }
 
-function ownerProvablyDead(row) {
+export function ownerProvablyDead(row) {
   const pid = Number(row.outer_pid);
   const exists = processExists(pid);
   if (exists === false) return true;
@@ -142,7 +144,7 @@ function ownerProvablyDead(row) {
 // owners, and compares the observed identity when deleting so it cannot remove a successor's lease.
 export function reconcileStaleLeases(db) {
   let executionRemoved = 0;
-  const execution = db.prepare('SELECT id, outer_pid, runner_identity FROM p_sandbox_execution_leases').all();
+  const execution = db.prepare('SELECT id, outer_pid, runner_identity FROM p_sandbox_execution_leases WHERE resource_kind IS NULL').all();
   for (const row of execution) {
     if (!ownerProvablyDead(row)) continue;
     executionRemoved += db.prepare(`DELETE FROM p_sandbox_execution_leases

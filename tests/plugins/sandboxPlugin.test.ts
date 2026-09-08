@@ -1111,6 +1111,7 @@ describe('sandbox ownership contracts', () => {
     expect(manifest.userGrantable).toBeUndefined();
     expect(manifest.provides.tools).toEqual([
       'SandboxListWorkspaces', 'SandboxCreateWorkspace', 'SandboxUseWorkspace', 'SandboxReleaseWorkspace', 'SandboxCommit', 'SandboxRemoveWorkspace',
+      'EnvironmentStatus', 'EnvironmentStart', 'EnvironmentStop', 'EnvironmentSnapshot', 'EnvironmentRestore', 'EnvironmentLogs', 'EnvironmentOperation', 'EnvironmentWorktrees',
     ]);
     const registrations = readdirSync(join(repoRoot, 'plugins')).flatMap((name) => {
       const entry = join(repoRoot, 'plugins', name, 'index.mjs');

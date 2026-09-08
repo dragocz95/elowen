@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { closeSync, fsyncSync, lstatSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, copyFileSync, constants, fsyncSync, lstatSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { assertContainerSpec, resourceToken, snapshotReference } from './containerSpec.mjs';
 import { checkedHostPath } from './containerPaths.mjs';
@@ -49,6 +49,7 @@ export class ContainerStorage {
     assertContainerSpec(spec);
     if (spec.legacy) { await this.#podman.inspectBinding(spec); return; }
     checkedHostPath(spec.storageRoot, { create: true });
+    if (spec.resource.kind === 'project') for (const mount of spec.mounts.filter((entry) => entry.type === 'bind')) checkedHostPath(mount.source, { create: true });
     for (const volume of spec.volumes) checkedHostPath(volume.path, { create: true });
     for (const volume of spec.volumes) await this.#podman.ensureVolume(spec, volume.component);
   }
@@ -59,11 +60,18 @@ export class ContainerStorage {
     if (typeof includeData !== 'boolean' || (spec.resource.kind === 'project' && !includeData)) throw new Error('Project snapshots require all storage components');
     const parent = checkedHostPath(join(spec.storageRoot, 'snapshots'), { create: true });
     const directory = join(parent, snapshotId);
+    try {
+      checkedHostPath(directory);
+      const pending = checkedHostPath(join(directory, 'pending.json'), { file: true });
+      const previous = JSON.parse(readFileSync(pending, 'utf8'));
+      if (previous.resumeRunning && (await this.#podman.inspect(spec))?.state === 'paused') await this.#podman.unpause(spec);
+      await this.#podman.discardIncompleteSnapshot(spec, snapshotId);
+    } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
     absent(directory);
     const row = await this.#podman.inspect(spec);
     if (!row || !['running', 'stopped', 'exited', 'created'].includes(row.state)) throw new Error('Container cannot be quiesced for snapshot');
     checkedHostPath(directory, { create: true });
-    writeDurable(join(directory, 'pending.json'), { snapshotId, resource: spec.resource, generation: spec.generation, specHash: spec.specHash });
+    writeDurable(join(directory, 'pending.json'), { snapshotId, resource: spec.resource, generation: spec.generation, specHash: spec.specHash, resumeRunning: row.state === 'running' });
     syncPath(directory);
     syncPath(parent);
     const manifest = {
@@ -112,23 +120,61 @@ export class ContainerStorage {
       || (sourceSpec.resource.id === targetSpec.resource.id && sourceSpec.generation === targetSpec.generation)) throw new Error('Restore needs a new resource or generation');
     if (targetSpec.image !== manifest.image.id && targetSpec.image !== manifest.image.reference) throw new Error('Restore target must use the snapshot root image');
     if (manifest.components.length !== targetSpec.volumes.length) throw new Error('Restore requires a snapshot with all mounted storage components');
-    // Preflight every destination before any import. Interrupted work leaves a checkpoint directory and
-    // is deliberately not replayed into partially populated volumes by this primitive.
-    for (const volume of targetSpec.volumes) absent(volume.path);
     const directory = checkedHostPath(join(targetSpec.storageRoot, 'restores', String(targetSpec.generation)), { create: true });
     const pending = join(directory, 'pending.json');
-    writeDurable(pending, { snapshotId, source: sourceSpec.resource, sourceGeneration: sourceSpec.generation, target: targetSpec.resource, targetGeneration: targetSpec.generation });
-    syncPath(directory);
-    for (const entry of manifest.components) {
-      await this.#podman.importSnapshotVolume(sourceSpec, snapshotId, targetSpec, entry.component);
-      writeDurable(join(directory, `${entry.component}.json`), entry);
-      syncPath(directory);
+    const expected = { snapshotId, source: sourceSpec.resource, sourceGeneration: sourceSpec.generation, target: targetSpec.resource, targetGeneration: targetSpec.generation, targetSpecHash: targetSpec.specHash };
+    const read = (path) => { try { checkedHostPath(path, { file: true }); return JSON.parse(readFileSync(path, 'utf8')); } catch (cause) { if (cause.code === 'ENOENT') return null; throw cause; } };
+    const complete = read(join(directory, 'complete.json'));
+    if (complete) {
+      if (JSON.stringify(complete) !== JSON.stringify({ ...expected, image: manifest.image })) throw new Error('Restore completion ownership mismatch');
+      for (const volume of targetSpec.volumes) await this.#podman.inspectVolume(targetSpec, volume.component);
+      return manifest;
     }
-    writeDurable(join(directory, 'complete.json'), { snapshotId, image: manifest.image });
-    syncPath(directory);
-    unlinkSync(pending);
-    syncPath(directory);
+    const previous = read(pending);
+    if (previous && JSON.stringify(previous) !== JSON.stringify(expected)) throw new Error('Restore checkpoint ownership mismatch');
+    if (!previous) {
+      for (const volume of targetSpec.volumes) absent(volume.path);
+      writeDurable(pending, expected); syncPath(directory);
+    }
+    for (const entry of manifest.components) {
+      const receiptPath = join(directory, `${entry.component}.json`);
+      const receipt = read(receiptPath);
+      if (receipt) {
+        if (JSON.stringify(receipt) !== JSON.stringify(entry)) throw new Error('Restore component checkpoint mismatch');
+        await this.#podman.inspectVolume(targetSpec, entry.component);
+        continue;
+      }
+      // A failed import is replaced only in this checkpoint-owned, never activated generation.
+      await this.#podman.importSnapshotVolume(sourceSpec, snapshotId, targetSpec, entry.component, { resume: previous !== null });
+      writeDurable(receiptPath, entry); syncPath(directory);
+    }
+    writeDurable(join(directory, 'complete.json'), { ...expected, image: manifest.image });
+    syncPath(directory); unlinkSync(pending); syncPath(directory);
     return manifest;
+  }
+
+  async importRetainedSiteSnapshot(spec, snapshotId, artifact) {
+    assertContainerSpec(spec); resourceToken(snapshotId);
+    if (spec.resource.kind !== 'site') throw new Error('Only Sites may import retained release snapshots');
+    const imageId = await this.#podman.inspectRetainedSiteImage(spec, artifact.imageReference, artifact.imageId);
+    const directory = checkedHostPath(join(spec.storageRoot, 'snapshots', snapshotId), { create: true });
+    const manifest = { version: 1, snapshotId, resource: spec.resource, generation: spec.generation, specHash: spec.specHash,
+      consistency: 'crash-consistent', completeProject: false, retained: true,
+      image: { reference: artifact.imageReference, id: imageId }, components: [] };
+    if (artifact.archivePath) {
+      const original = await fingerprint(artifact.archivePath, this.#maxArchiveBytes);
+      const archive = join(directory, 'data.tar');
+      try { copyFileSync(artifact.archivePath, archive, constants.COPYFILE_EXCL); }
+      catch (cause) { if (cause.code !== 'EEXIST') throw cause; }
+      const copied = await fingerprint(archive, this.#maxArchiveBytes);
+      if (JSON.stringify(original) !== JSON.stringify(copied)) throw new Error('Retained snapshot archive differs from the original');
+      syncPath(archive); manifest.components.push({ component: 'data', ...copied });
+    }
+    const path = join(directory, 'manifest.json');
+    try { writeDurable(path, manifest); }
+    catch (cause) { if (cause.code !== 'EEXIST') throw cause; checkedHostPath(path, { file: true }); if (readFileSync(path, 'utf8') !== JSON.stringify(manifest)) throw new Error('Retained snapshot binding changed'); }
+    syncPath(directory);
+    return await this.readSnapshot(spec, snapshotId);
   }
 
   async readSnapshot(spec, snapshotId) {
@@ -141,12 +187,15 @@ export class ContainerStorage {
     if (manifest.version !== 1 || manifest.snapshotId !== snapshotId || manifest.resource?.kind !== spec.resource.kind
       || manifest.resource?.id !== spec.resource.id || manifest.generation !== spec.generation || manifest.specHash !== spec.specHash
       || manifest.consistency !== 'crash-consistent' || manifest.completeProject !== (spec.resource.kind === 'project')
-      || manifest.image?.reference !== snapshotReference(spec, snapshotId) || !Array.isArray(manifest.components)) throw new Error('Snapshot manifest ownership mismatch');
+      || (manifest.retained ? spec.resource.kind !== 'site' : manifest.image?.reference !== snapshotReference(spec, snapshotId)) || !Array.isArray(manifest.components)) throw new Error('Snapshot manifest ownership mismatch');
     const components = manifest.components.map((entry) => entry?.component);
     const expected = spec.volumes.map((volume) => volume.component);
     if (new Set(components).size !== components.length || components.some((component) => !expected.includes(component))
       || (manifest.completeProject && JSON.stringify(components) !== JSON.stringify(expected))) throw new Error('Snapshot storage components mismatch');
-    if (await this.#podman.inspectSnapshotImage(spec, snapshotId) !== manifest.image.id) throw new Error('Snapshot image changed');
+    const imageId = manifest.retained
+      ? await this.#podman.inspectRetainedSiteImage(spec, manifest.image.reference, manifest.image.id)
+      : await this.#podman.inspectSnapshotImage(spec, snapshotId);
+    if (imageId !== manifest.image.id) throw new Error('Snapshot image changed');
     for (const entry of manifest.components) {
       const digest = await fingerprint(join(directory, `${entry.component}.tar`), this.#maxArchiveBytes);
       if (digest.sizeBytes !== entry.sizeBytes || digest.sha256 !== entry.sha256) throw new Error('Snapshot archive integrity mismatch');

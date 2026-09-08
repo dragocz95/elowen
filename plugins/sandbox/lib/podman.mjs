@@ -1,10 +1,12 @@
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { userInfo } from 'node:os';
 import { lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { PROJECT_BASE_IMAGE_TAG, PROJECT_CONTAINERFILE } from './containerBaseImage.mjs';
-import { assertContainerSpec, executionUnit, hostPath, resourceToken, snapshotReference, volumeLabels } from './containerSpec.mjs';
+import { assertContainerSpec, executionUnit, hostPath, resourceToken, snapshotReference, volumeLabels, withContainerLimits, createLegacySiteSpec } from './containerSpec.mjs';
 import { checkedHostPath } from './containerPaths.mjs';
+import { COMPLETION_CWD_LIMIT, completionArtifact, completionPrelude, parseCompletionCwd } from './managedCompletion.mjs';
 
 const SYSTEM_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 const INPUT_LIMIT = 1024 * 1024;
@@ -231,7 +233,7 @@ export class PodmanClient {
     const networkMatches = host?.NetworkMode === spec.network
       || (spec.network === 'slirp4netns:allow_host_loopback=false' && host?.NetworkMode === 'slirp4netns');
     const cpus = host?.NanoCpus > 0 ? host.NanoCpus / 1e9 : host?.CpuPeriod > 0 ? host.CpuQuota / host.CpuPeriod : 0;
-    if (!/^[a-f0-9]{64}$/.test(row.Id) || row.Name?.replace(/^\//, '') !== spec.name
+    if (!/^[a-f0-9]{64}$/.test(row.Id) || (spec.expectedId && row.Id !== spec.expectedId) || row.Name?.replace(/^\//, '') !== spec.name
       || !labelsMatch(row.Config?.Labels, spec.labels) || row.ImageName !== spec.image || !mountsMatch || !networkMatches
       || (spec.legacy && (row.Id !== spec.legacy.containerId || String(row.Image).replace(/^sha256:/, '') !== spec.legacy.imageId.replace(/^sha256:/, '')
         || !legacyLabelsMatch(row.Config?.Labels, spec.resource.id)))
@@ -265,6 +267,7 @@ export class PodmanClient {
   async create(spec) {
     this.#assertScope(spec);
     if (spec.legacy) throw new Error('Legacy bindings cannot create or recreate a container');
+    if (spec.expectedId) throw new Error('An immutable container binding cannot be recreated');
     const rootless = await this.#run(['info', '--format', '{{.Host.Security.Rootless}}']);
     if (rootless.stdout.trim() !== 'true') throw new Error('Rootless Podman is required');
     if (await this.#exists('container', spec.name)) throw new Error('Container already exists; lifecycle adoption must validate it');
@@ -292,6 +295,7 @@ export class PodmanClient {
     const row = await this.#owned(spec);
     if (!['created', 'configured', 'stopped', 'exited'].includes(row.state)) throw new Error('Stop the container before removal');
     await this.#run(['rm', row.id]);
+    if (await this.#exists('container', spec.name)) throw new Error('Container removal was not verified');
   }
   async pause(spec) {
     const row = await this.#owned(spec);
@@ -335,30 +339,211 @@ export class PodmanClient {
     const output = join(directory, `${component}.tar`);
     try { lstatSync(output); throw new Error('Snapshot archive already exists'); }
     catch (error) { if (error.code !== 'ENOENT') throw error; }
-    await this.#run(['volume', 'export', '--output', output, volume.name]);
+    await this.#volumeArchive(volume, 'export', output);
   }
 
   /** Import only into an entirely new storage generation. A partial import is retained for the
    * lifecycle owner to inspect; this primitive never destroys the previous recoverable storage. */
-  async importSnapshotVolume(sourceSpec, snapshotId, targetSpec, component) {
+  async importSnapshotVolume(sourceSpec, snapshotId, targetSpec, component, { resume = false } = {}) {
     resourceToken(snapshotId);
     this.#volumeFor(sourceSpec, component);
     const target = this.#volumeFor(targetSpec, component);
     if (targetSpec.legacy) throw new Error('A legacy binding cannot be a restore destination');
     if (sourceSpec.resource.kind !== targetSpec.resource.kind
       || (sourceSpec.resource.id === targetSpec.resource.id && sourceSpec.generation === targetSpec.generation)) throw new Error('Restore needs a new resource or generation');
-    if (await this.#exists('container', targetSpec.name) || await this.#exists('volume', target.name)) throw new Error('Restore destination already exists');
+    if (await this.#exists('container', targetSpec.name)) throw new Error('Restore destination already exists');
+    if (await this.#exists('volume', target.name)) {
+      if (!resume) throw new Error('Restore destination already exists');
+      await this.removeVolume(targetSpec, component);
+    }
+    if (resume) {
+      try {
+        checkedHostPath(target.path);
+        await this.#run(['unshare', '/usr/bin/rm', '-rf', '--', target.path], { timeoutMs: 120000 });
+      } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
+    }
     const archive = checkedHostPath(join(sourceSpec.storageRoot, 'snapshots', snapshotId, `${component}.tar`), { file: true });
     checkedHostPath(dirname(target.path), { create: true });
     mkdirSync(target.path, { mode: 0o700 });
     await this.ensureVolume(targetSpec, component);
-    await this.#run(['volume', 'import', target.name, archive]);
+    await this.#volumeArchive(target, 'import', archive);
+  }
+
+  async #volumeArchive(volume, operation, archive) {
+    if (!['import', 'export'].includes(operation)) throw new Error('Invalid volume archive operation');
+    // Local-bind volumes must be mounted in the rootless mount namespace. Keep mount, archive I/O
+    // and balanced unmount in ONE unshare process; only Podman extracts the guest archive.
+    const script = 'set -eu\noperation=$1; volume=$2; archive=$3; shift 3\nengine=("$@")\n"${engine[@]}" volume mount "$volume" >/dev/null\ntrap \'status=$?; trap - EXIT; "${engine[@]}" volume unmount "$volume" >/dev/null || exit 125; exit "$status"\' EXIT\nif [ "$operation" = import ]; then "${engine[@]}" volume import "$volume" "$archive"; else "${engine[@]}" volume export --output "$archive" "$volume"; fi\n';
+    await this.#run(['unshare', '/bin/bash', '-c', script, 'elowen-volume-archive', operation, volume.name, archive, '/usr/bin/podman', ...this.#prefix], { timeoutMs: 120000 });
   }
 
   async removeVolume(spec, component) {
+    const target = this.#volumeFor(spec, component);
+    if (!await this.#exists('volume', target.name)) return;
     const volume = await this.inspectVolume(spec, component);
     await this.#run(['volume', 'rm', volume.name]);
-    // Local-driver bind contents are intentionally retained for checkpointed lifecycle deletion.
+    if (await this.#exists('volume', volume.name)) throw new Error('Volume removal was not verified');
+  }
+
+  async update(spec, requested) {
+    const next = withContainerLimits(spec, requested);
+    let row;
+    try { row = await this.#owned(spec); }
+    catch (cause) {
+      // Recover a completed engine update whose durable acknowledgement was interrupted.
+      try { await this.#owned(next); return next; } catch { throw cause; }
+    }
+    await this.#run(['update', `--memory=${next.limits.memoryMb}m`, `--memory-swap=${next.limits.memoryMb}m`, `--cpus=${next.limits.cpus}`, `--pids-limit=${next.limits.pidsLimit}`, row.id]);
+    await this.#owned(next);
+    return next;
+  }
+
+  async discardIncompleteSnapshot(spec, snapshotId) {
+    this.#assertScope(spec); resourceToken(snapshotId);
+    const directory = checkedHostPath(join(spec.storageRoot, 'snapshots', snapshotId));
+    const pending = checkedHostPath(join(directory, 'pending.json'), { file: true });
+    const record = JSON.parse(readFileSync(pending, 'utf8'));
+    if (record.snapshotId !== snapshotId || record.resource?.kind !== spec.resource.kind || record.resource?.id !== spec.resource.id || record.generation !== spec.generation || record.specHash !== spec.specHash) throw new Error('Incomplete snapshot ownership mismatch');
+    try { lstatSync(join(directory, 'manifest.json')); throw new Error('A completed snapshot cannot be discarded as incomplete'); }
+    catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
+    await this.removeSnapshotImage(spec, snapshotId);
+    await this.#run(['unshare', '/usr/bin/rm', '-rf', '--', directory]);
+  }
+
+  async removeSnapshotStorage(spec, snapshotId) {
+    this.#assertScope(spec); resourceToken(snapshotId);
+    const directory = join(spec.storageRoot, 'snapshots', snapshotId);
+    try { checkedHostPath(directory); } catch (cause) { if (cause.code === 'ENOENT') return; throw cause; }
+    const file = checkedHostPath(join(directory, 'manifest.json'), { file: true });
+    const manifest = JSON.parse(readFileSync(file, 'utf8'));
+    if (manifest.snapshotId !== snapshotId || manifest.resource?.kind !== spec.resource.kind || manifest.resource?.id !== spec.resource.id || manifest.generation !== spec.generation || manifest.specHash !== spec.specHash) throw new Error('Snapshot cleanup ownership mismatch');
+    await this.#run(['unshare', '/usr/bin/rm', '-rf', '--', directory]);
+    try { lstatSync(directory); } catch (cause) { if (cause.code === 'ENOENT') return; throw cause; }
+    throw new Error('Snapshot cleanup was not verified');
+  }
+
+  async removeSnapshotImage(spec, snapshotId) {
+    const reference = snapshotReference(spec, snapshotId);
+    if (!await this.#exists('image', reference)) return;
+    const id = await this.inspectSnapshotImage(spec, snapshotId);
+    await this.#run(['image', 'rm', id]);
+    if (await this.#exists('image', reference)) throw new Error('Snapshot image removal was not verified');
+  }
+
+  async removeStorage(spec) {
+    this.#assertScope(spec);
+    if (await this.#exists('container', spec.name)) throw new Error('Container still owns environment storage');
+    for (const volume of spec.volumes) if (await this.#exists('volume', volume.name)) throw new Error('A volume still owns environment storage');
+    try { checkedHostPath(spec.storageRoot); } catch (cause) { if (cause.code === 'ENOENT') return; throw cause; }
+    // The path is derived from the immutable resource record. Only unshare can remove subordinate-UID
+    // contents; rm does not follow guest-created symlinks and this root never names the Site source.
+    await this.#run(['unshare', '/usr/bin/rm', '-rf', '--', spec.storageRoot], { timeoutMs: 120000 });
+    try { lstatSync(spec.storageRoot); } catch (cause) { if (cause.code === 'ENOENT') return; throw cause; }
+    throw new Error('Environment storage removal was not verified');
+  }
+
+  async discoverLegacySite(input, binding) {
+    if (input.resource.kind !== 'site') throw new Error('Site identity is required');
+    resourceToken(input.resource.id);
+    const name = `elowen-site-${input.resource.id}`;
+    if (!await this.#exists('container', name)) return null;
+    const container = oneJson(await this.#run(['inspect', name]));
+    const volume = oneJson(await this.#run(['volume', 'inspect', `${name}-data`]));
+    const pins = { containerId: container.Id, imageId: container.Image, volumeMountpoint: volume.Mountpoint };
+    const spec = createLegacySiteSpec(input, { ...binding, ...pins });
+    const verified = await this.#owned(spec);
+    return { ...pins, state: verified.state === 'running' ? 'running' : verified.state === 'paused' ? 'paused' : 'stopped' };
+  }
+
+  async ensureSiteImage(dataDir, recipe) {
+    if (!recipe || typeof recipe.tag !== 'string' || !/^localhost\/[a-z0-9][a-zA-Z0-9._/:-]{1,240}$/.test(recipe.tag)
+      || !recipe.files || typeof recipe.files.Containerfile !== 'string') throw new Error('A fixed Sites image recipe is required');
+    const files = Object.entries(recipe.files).sort(([a], [b]) => a.localeCompare(b));
+    if (files.length > 32 || files.some(([name, content]) => !/^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,100}$/.test(name) || typeof content !== 'string')
+      || files.reduce((sum, [, content]) => sum + Buffer.byteLength(content), 0) > 4 * 1024 * 1024) throw new Error('Invalid Sites image recipe files');
+    const hash = createHash('sha256').update(JSON.stringify(files)).digest('hex');
+    const context = checkedHostPath(join(hostPath(dataDir), 'site-image-recipes', hash), { create: true });
+    for (const [name, content] of files) {
+      const path = join(context, name);
+      try { writeFileSync(path, content, { flag: 'wx', mode: 0o600 }); }
+      catch (cause) { if (cause.code !== 'EEXIST') throw cause; checkedHostPath(path, { file: true }); if (readFileSync(path, 'utf8') !== content) throw new Error('Sites image recipe changed'); }
+    }
+    if (!await this.#exists('image', recipe.tag)) await this.#run(['build', '--tag', recipe.tag, context], { timeoutMs: 900000 });
+    if (!await this.#exists('image', recipe.tag)) throw new Error('Sites image provisioning was not verified');
+    return recipe.tag;
+  }
+
+  async imageStatus(reference) {
+    if (typeof reference !== 'string' || !/^localhost\/[a-z0-9][a-zA-Z0-9._/:-]{1,240}$/.test(reference)) throw new Error('A fixed local Sites image reference is required');
+    if (!await this.#exists('image', reference)) return { present: false, imageId: null };
+    const row = oneJson(await this.#run(['image', 'inspect', reference]));
+    if (!/^(sha256:)?[a-f0-9]{64}$/.test(row.Id)) throw new Error('Invalid image identity');
+    return { present: true, imageId: row.Id };
+  }
+
+  async discoverRetainedSiteImage(spec, reference) {
+    this.#assertScope(spec);
+    if (spec.resource.kind !== 'site' || typeof reference !== 'string' || !/^[a-z0-9][a-zA-Z0-9._/@:-]{0,255}$/.test(reference)) throw new Error('Invalid retained Sites image reference');
+    const row = oneJson(await this.#run(['image', 'inspect', reference]));
+    if (!/^(sha256:)?[a-f0-9]{64}$/.test(row.Id) || !labelsMatch(row.Labels ?? row.Config?.Labels, { 'io.elowen.site': spec.resource.id })) throw new Error('Retained Sites image ownership mismatch');
+    return row.Id;
+  }
+
+  async removeOrphanLegacySiteData(spec) {
+    this.#assertScope(spec);
+    if (spec.resource.kind !== 'site') throw new Error('Sites lifecycle authority is required');
+    const name = `elowen-site-${spec.resource.id}`;
+    if (await this.#exists('container', name)) throw new Error('An unretired legacy Sites container still exists');
+    const volumeName = `${name}-data`;
+    if (!await this.#exists('volume', volumeName)) return;
+    const volume = oneJson(await this.#run(['volume', 'inspect', volumeName]));
+    if (volume.Name !== volumeName || volume.Driver !== 'local' || !volume.Options || Object.keys(volume.Options).length || !legacyLabelsMatch(volume.Labels, spec.resource.id)) throw new Error('Orphan legacy volume ownership mismatch');
+    checkedHostPath(volume.Mountpoint);
+    await this.#run(['volume', 'rm', volumeName]);
+    if (await this.#exists('volume', volumeName)) throw new Error('Legacy volume cleanup was not verified');
+  }
+
+  async inspectRetainedSiteImage(spec, reference, imageId) {
+    this.#assertScope(spec);
+    if (spec.resource.kind !== 'site' || typeof reference !== 'string' || !/^[a-z0-9][a-zA-Z0-9._/@:-]{0,255}$/.test(reference)
+      || !/^(sha256:)?[a-f0-9]{64}$/.test(imageId)) throw new Error('Invalid retained Sites image binding');
+    const row = oneJson(await this.#run(['image', 'inspect', reference]));
+    if (String(row.Id).replace(/^sha256:/, '') !== imageId.replace(/^sha256:/, '') || !labelsMatch(row.Labels ?? row.Config?.Labels, { 'io.elowen.site': spec.resource.id })) throw new Error('Retained Sites image ownership mismatch');
+    return row.Id;
+  }
+
+  async removeRetainedSiteImage(spec, reference, imageId) {
+    this.#assertScope(spec);
+    if (!await this.#exists('image', reference)) return;
+    await this.inspectRetainedSiteImage(spec, reference, imageId);
+    // Remove the retained reference, not every alias of an image shared by another release.
+    await this.#run(['image', 'rm', reference]);
+    if (await this.#exists('image', reference)) throw new Error('Retained image removal was not verified');
+  }
+
+  async siteDataArchive(spec, operation, archivePath) {
+    this.#assertScope(spec);
+    if (spec.resource.kind !== 'site') throw new Error('Sites data authority is required');
+    const current = await this.inspect(spec);
+    if (operation === 'import' && current && !['created', 'configured', 'stopped', 'exited'].includes(current.state)) throw new Error('Stop the staging container before importing data');
+    const volume = await this.inspectVolume(spec, 'data');
+    const archive = hostPath(archivePath);
+    if (operation === 'import') checkedHostPath(archive, { file: true });
+    else {
+      checkedHostPath(dirname(archive), { create: true });
+      try { lstatSync(archive); throw new Error('Archive destination already exists'); } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
+    }
+    await this.#volumeArchive(volume, operation, archive);
+  }
+
+  async removeGenerationStorage(spec) {
+    this.#assertScope(spec);
+    if (spec.legacy) throw new Error('Legacy storage cannot be staging storage');
+    if (await this.inspect(spec)) throw new Error('Remove the staging container before its storage');
+    for (const volume of spec.volumes) if (await this.#exists('volume', volume.name)) throw new Error('A volume still owns staging storage');
+    const directory = join(spec.storageRoot, 'storage', String(spec.generation));
+    try { checkedHostPath(directory); } catch (cause) { if (cause.code === 'ENOENT') return; throw cause; }
+    await this.#run(['unshare', '/usr/bin/rm', '-rf', '--', directory]);
   }
 
   async ensureProjectImage(dataDir) {
@@ -396,37 +581,40 @@ export class PodmanClient {
     return row.Id;
   }
 
-  async cancelExecution(spec, executionId) {
+  async cancelExecution(spec, executionId, { persistent = false } = {}) {
     const unit = executionUnit(spec, executionId);
     const row = await this.#owned(spec);
     if (row.state !== 'running') throw new Error('Guest termination cannot be verified in this container state');
     // The runtime mask is a tombstone: it blocks StartTransientUnit arriving after cancellation.
     // Keep it until the runtime generation ends, rather than reopening a late-launch race.
-    await this.#run(['exec', row.id, 'systemctl', 'mask', '--runtime', unit]);
+    await this.#run(['exec', row.id, 'systemctl', 'mask', ...(persistent ? [] : ['--runtime']), unit]);
     const stop = await this.#run(['exec', row.id, 'systemctl', 'stop', unit], { allowFailure: true });
     // Collecting a transient unit after stop invalidates its loaded mask state. Re-establish the
     // tombstone after collection and verify it; not-found alone is not proof against late starts.
-    await this.#run(['exec', row.id, 'systemctl', 'mask', '--runtime', unit]);
+    await this.#run(['exec', row.id, 'systemctl', 'mask', ...(persistent ? [] : ['--runtime']), unit]);
     const shown = await this.#run(['exec', row.id, 'systemctl', 'show', '--property=LoadState,ActiveState,SubState,ControlGroup', unit]);
     const fields = Object.fromEntries(shown.stdout.trim().split('\n').map((line) => { const at = line.indexOf('='); return [line.slice(0, at), line.slice(at + 1)]; }));
     if (shown.truncated || fields.LoadState !== 'masked' || !['inactive', 'failed'].includes(fields.ActiveState)
       || !['dead', 'failed'].includes(fields.SubState) || fields.ControlGroup !== '' || (stop.code !== 0 && stop.code !== 5)) {
       throw new Error('Guest execution termination could not be verified');
     }
+    // The completion artifact is derived from the execution ID, so removal can never touch another
+    // execution's state. Best effort only: a leftover is benign tmpfs state scoped to this container.
+    await this.#run(['exec', row.id, '/usr/bin/rm', '-f', '--', completionArtifact(executionId)], { allowFailure: true, timeoutMs: 30000 });
     return { terminated: true, unit };
   }
 
   /** Only after the owning launcher has settled and the durable lease forbids redispatch. Timed-out
    * launchers keep their tombstone until daemon recovery establishes that fact or retires the runtime. */
-  async releaseExecution(spec, executionId) {
-    await this.cancelExecution(spec, executionId);
+  async releaseExecution(spec, executionId, { persistent = false } = {}) {
+    await this.cancelExecution(spec, executionId, { persistent });
     const row = await this.#owned(spec);
-    await this.#run(['exec', row.id, 'systemctl', 'unmask', '--runtime', executionUnit(spec, executionId)]);
+    await this.#run(['exec', row.id, 'systemctl', 'unmask', ...(persistent ? [] : ['--runtime']), executionUnit(spec, executionId)]);
   }
 
   /** Persist the host-generated executionId in the existing lease BEFORE calling. A timeout or aborted
    * Podman client is followed by guest-side cancellation; inability to verify it is an explicit failure. */
-  async exec(spec, executionId, argv, options = {}) {
+  async #prepareGuest(spec, executionId, argv, options = {}) {
     const unit = executionUnit(spec, executionId);
     validateInput(options.input);
     if (!Array.isArray(argv) || argv.length === 0 || argv.length > 256 || argv.some((arg) => typeof arg !== 'string' || arg.includes('\0'))
@@ -437,16 +625,82 @@ export class PodmanClient {
     options.signal?.throwIfAborted();
     const row = await this.#owned(spec);
     if (row.state !== 'running') throw new Error('Container is not running');
+    return { timeoutMs, args: ['exec', '--interactive', row.id, 'systemd-run', '--quiet', '--pipe', '--wait', '--collect', `--unit=${unit}`,
+      '--service-type=exec', '--property=KillMode=control-group', '--property=TimeoutStopSec=5s', `--property=RuntimeMaxSec=${Math.ceil(timeoutMs / 1000)}s`,
+      `--working-directory=${workdir}`, '--', ...argv] };
+  }
+
+  async startPreview(spec, executionId, argv) {
+    if (spec.resource.kind !== 'project' || !spec.mounts.some((mount) => mount.target === '/run/elowen')) throw new Error('Project preview transport is unavailable');
+    const prepared = await this.#prepareGuest(spec, executionId, argv);
+    const args = prepared.args.filter((arg) => !['--pipe', '--wait'].includes(arg) && !arg.startsWith('--property=RuntimeMaxSec='));
+    await this.#run(args);
+    const row = await this.#owned(spec);
+    const shown = await this.#run(['exec', row.id, 'systemctl', 'is-active', executionUnit(spec, executionId)]);
+    if (shown.stdout.trim() !== 'active') throw new Error('Preview service did not start');
+  }
+
+  /** Arms completion cwd capture for a canonical managed user shell execution. The returned `stdin`
+   * is the capture prelude composed ahead of the caller's script: the guest shell records its final
+   * physical working directory into a dedicated execution-owned artifact instead of an fd3 trap,
+   * which cannot survive the podman/systemd transport. `completion.artifact` is internal transport
+   * for the runtime's completionMetadata callback; consumers never see it. */
+  async prepareExecution(spec, executionId, argv, options = {}) {
+    if (options.completionCwd !== undefined && typeof options.completionCwd !== 'boolean') throw new Error('Invalid completion cwd option');
+    const capture = options.completionCwd === true;
+    const prepared = await this.#prepareGuest(spec, executionId, argv, options);
+    let { input } = options;
+    if (capture) {
+      // Only the canonical managed shell consumes the user script from stdin, so only it can host the
+      // EXIT trap. Anything else is refused instead of silently reporting a pretended cwd.
+      if (argv.length !== 2 || argv[0] !== '/bin/bash' || argv[1] !== '-s') throw new Error('Completion cwd capture requires the canonical managed shell');
+      const prelude = completionPrelude(executionId);
+      input = Buffer.isBuffer(input) ? Buffer.concat([Buffer.from(prelude), input]) : input == null ? prelude : prelude + input;
+    }
+    if (this.#userBus) validateUserSessionBus(this.#userBus);
+    return {
+      launch: { type: 'argv', file: '/usr/bin/podman', args: [...this.#prefix, ...prepared.args], env: { ...this.#env } },
+      stdin: input,
+      ...(capture ? { completion: { artifact: completionArtifact(executionId) } } : {}),
+    };
+  }
+
+  /** Resolves the captured final physical cwd of a canonical prepared execution. Call only AFTER the
+   * guest process has exited and BEFORE lease release: cancel/release remove the artifact. The read
+   * is guest resolution inside the same ownership-validated, immutable container — stat bounds the
+   * artifact, then it is read whole; user stdout is never parsed. Returns `{ cwd: null }` for a
+   * genuinely unavailable artifact (never created, already cleaned up, container not running, or
+   * invalid content); ownership mismatches still throw. */
+  async readCompletionCwd(spec, executionId) {
+    const artifact = completionArtifact(executionId);
+    const row = await this.inspect(spec);
+    if (!row || row.state !== 'running') return { cwd: null };
+    const stat = await this.#run(['exec', row.id, '/usr/bin/stat', '-c', '%F %s', '--', artifact], { allowFailure: true, timeoutMs: 30000 });
+    if (stat.code !== 0) {
+      if (stat.code === 1) return { cwd: null };
+      throw new Error(`Completion artifact inspection failed (${stat.code})`);
+    }
+    const fields = stat.stdout.trim().split(' ');
+    const size = Number(fields.pop());
+    if (fields.join(' ') !== 'regular file' || !Number.isSafeInteger(size) || size < 1 || size > COMPLETION_CWD_LIMIT) return { cwd: null };
+    const read = await this.#run(['exec', row.id, '/bin/cat', '--', artifact], { allowFailure: true, timeoutMs: 30000 });
+    if (read.code !== 0) {
+      if (read.code === 1) return { cwd: null };
+      throw new Error(`Completion artifact read failed (${read.code})`);
+    }
+    return { cwd: parseCompletionCwd(read.stdout, { truncated: read.truncated }) };
+  }
+
+  async exec(spec, executionId, argv, options = {}) {
+    const prepared = await this.#prepareGuest(spec, executionId, argv, options);
     let result;
     let failure;
     try {
-      result = await this.#run(['exec', '--interactive', row.id, 'systemd-run', '--quiet', '--pipe', '--wait', '--collect', `--unit=${unit}`,
-        '--service-type=exec', '--property=KillMode=control-group', '--property=TimeoutStopSec=5s', `--property=RuntimeMaxSec=${Math.ceil(timeoutMs / 1000)}s`,
-        `--working-directory=${workdir}`, '--', ...argv], { input: options.input, timeoutMs, signal: options.signal, allowFailure: true });
+      result = await this.#run(prepared.args, { input: options.input, timeoutMs: prepared.timeoutMs, signal: options.signal, allowFailure: true });
     } catch (error) { failure = error; }
     try {
-      if (failure) await this.cancelExecution(spec, executionId);
-      else await this.releaseExecution(spec, executionId);
+      if (failure) await this.cancelExecution(spec, executionId, { persistent: options.persistent === true });
+      else await this.releaseExecution(spec, executionId, { persistent: options.persistent === true });
     } catch (error) { throw new AggregateError([...(failure ? [failure] : []), error], `Guest command cleanup failed: ${error.message}`); }
     if (failure) throw failure;
     return result;

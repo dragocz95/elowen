@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, realpathSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { ENVIRONMENT_CONTROL_METHODS } from './environmentTypes.js';
+import { ENVIRONMENT_CONTROL_METHODS, SITE_ENVIRONMENT_CONTROL_METHODS } from './environmentTypes.js';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
 import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessRows, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginChatArtifactRef, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginNavBadge, PluginProjectIndicatorProvider, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginUiVisibility, PluginWebSocketRoute, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import { webSocketTickets } from './wsTickets.js';
@@ -127,7 +127,7 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
   workflow: ['cancelForSession', 'detachForeground', 'activeCount', 'isWorkflowLive', 'addNodesFromSession', 'resumeInterrupted'],
   mcp: ['listServers', 'bridgeSnapshot'],
   lsp: ['diagnosticsEnabled'],
-  sandbox: ['workspaceRoots', 'resolveWorkspace', 'acquireDelegationLease', 'workspacesFor', 'activeWorkspace', 'prepareExecution', ...ENVIRONMENT_CONTROL_METHODS],
+  sandbox: ['workspaceRoots', 'resolveWorkspace', 'acquireDelegationLease', 'workspacesFor', 'activeWorkspace', 'prepareExecution', ...ENVIRONMENT_CONTROL_METHODS, ...SITE_ENVIRONMENT_CONTROL_METHODS],
   microsoftIdentity: ['identityFor', 'driveGraphFor'],
   github: ['sessionCredential'],
   publishedSitesGateway: [
@@ -1060,7 +1060,15 @@ export class PluginRegistry {
           scoped.warn(`control('${key}') denied: plugin '${name}' is not an approved consumer`);
           return undefined;
         }
-        return resolveControl?.(key);
+        const control = resolveControl?.(key);
+        if (key === 'sandbox' && control && name !== 'sites') {
+          // Replace capabilities in a separate facade. A get-only Proxy would still expose the real
+          // functions through Object.getOwnPropertyDescriptor.
+          return Object.assign({}, control, Object.fromEntries(SITE_ENVIRONMENT_CONTROL_METHODS.map(method => [method,
+            () => { throw new Error('Site runtime methods are restricted to the Sites plugin'); },
+          ])));
+        }
+        return control;
       },
       registerCommand: (command) => {
         const clean = command.name?.trim() ?? '';

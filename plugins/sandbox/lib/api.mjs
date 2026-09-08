@@ -58,7 +58,7 @@ export function registerSandboxApi({ ctx, db, dataDir, workspaces, execution, mi
     const allowed = accessibleProjects(req, stores);
     const projects = await Promise.all(stores.projects.list()
       .filter((project) => allowed.includes(project.id))
-      .map(async (project) => ({ ...project, defaultRef: await defaultRefFor(project.path) })));
+      .map(async (project) => ({ ...project, defaultRef: project.executionKind === 'managed' ? null : await defaultRefFor(project.path) })));
     const sessions = workspaces.sessionListForUser(userId);
     const rows = workspaces.listWorkspaces({ userId }).filter((workspace) => allowed.includes(workspace.projectId));
     const items = await Promise.all(rows.map(async (workspace) => {

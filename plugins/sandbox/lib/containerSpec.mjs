@@ -37,17 +37,37 @@ export function createContainerSpec(input, paths) {
  * containerId, imageId, volumeMountpoint and the resulting specHash with the handover generation;
  * the daemon must revalidate that record before dispatch. This does not relabel or recreate anything. */
 export function createLegacySiteSpec(input, binding) {
-  closed(binding, ['sitesDataDir', 'sourcePath', 'brokerDir', 'containerId', 'imageId', 'volumeMountpoint']);
+  closed(binding, ['sitesDataDir', 'sourcePath', 'brokerDir', 'containerId', 'imageId', 'volumeMountpoint', 'namespace']);
   if (input?.resource?.kind !== 'site') throw new Error('A legacy binding must identify a Site');
   for (const key of ['sitesDataDir', 'sourcePath', 'brokerDir', 'volumeMountpoint']) hostPath(binding[key]);
   if (!/^[a-f0-9]{64}$/.test(binding.containerId) || !/^(sha256:)?[a-f0-9]{64}$/.test(binding.imageId)) throw new Error('Invalid legacy container/image identity');
   return buildSpec(input, {
-    sitesDataDir: binding.sitesDataDir, siteSourcesDir: dirname(binding.sourcePath), siteBrokerDir: dirname(binding.brokerDir),
+    namespace: binding.namespace, sitesDataDir: binding.sitesDataDir, siteSourcesDir: dirname(binding.sourcePath), siteBrokerDir: dirname(binding.brokerDir),
   }, { ...binding });
 }
 
-function buildSpec(input, paths, legacy) {
-  closed(input, ['resource', 'generation', 'image', 'limits', 'network', 'workspaceReadOnly']);
+export function createBoundSiteSpec(input, binding) {
+  closed(binding, ['sitesDataDir', 'sourcePath', 'brokerDir', 'legacy', 'namespace']);
+  if (binding.legacy) return createLegacySiteSpec(input, { ...binding.legacy, namespace: binding.namespace, sitesDataDir: binding.sitesDataDir, sourcePath: binding.sourcePath, brokerDir: binding.brokerDir });
+  if (input?.resource?.kind !== 'site') throw new Error('A Site binding is required');
+  for (const key of ['sitesDataDir', 'sourcePath', 'brokerDir']) hostPath(binding[key]);
+  return buildSpec(input, { namespace: binding.namespace, sitesDataDir: binding.sitesDataDir, siteSourcesDir: dirname(binding.sourcePath), siteBrokerDir: dirname(binding.brokerDir) }, null, binding);
+}
+
+/** Keep creation ownership labels stable while validating the effective cgroup settings. */
+export function withContainerLimits(spec, requested) {
+  assertContainerSpec(spec);
+  closed(requested, ['cpus', 'memoryMb', 'pidsLimit', 'diskSoftMb']);
+  const limits = { cpus: requested.cpus, memoryMb: requested.memoryMb, pidsLimit: requested.pidsLimit };
+  if (!Number.isFinite(limits.cpus) || limits.cpus <= 0 || limits.cpus > 1024 || !Number.isSafeInteger(limits.cpus * 1e6)) throw new Error('Invalid CPU limit');
+  for (const key of ['memoryMb', 'pidsLimit']) if (!Number.isSafeInteger(limits[key]) || limits[key] < 1 || limits[key] > 2 ** 30) throw new Error(`Invalid ${key} limit`);
+  const next = { ...spec, limits, specHash: createHash('sha256').update(JSON.stringify({ creation: spec.labels['io.elowen.spec'] ?? spec.specHash, limits })).digest('hex') };
+  freeze(next); trustedSpecs.add(next); return next;
+}
+
+function buildSpec(input, paths, legacy, binding = null) {
+  closed(input, ['resource', 'generation', 'image', 'limits', 'network', 'workspaceReadOnly', 'previewBroker']);
+  if (input.previewBroker !== undefined && (input.resource?.kind !== 'project' || typeof input.previewBroker !== 'boolean')) throw new Error('Invalid preview broker policy');
   closed(input.resource, ['kind', 'id']);
   const { kind, id } = input.resource;
   if (kind !== 'project' && kind !== 'site') throw new Error('Invalid container resource kind');
@@ -78,11 +98,12 @@ function buildSpec(input, paths, legacy) {
   const mounts = kind === 'project'
     ? volumes.map((volume) => ({ type: 'volume', source: volume.name, target: { workspace: '/workspace', home: '/root', data: '/data' }[volume.component], readOnly: false }))
     : [
-      { type: 'bind', source: legacy ? legacy.sourcePath : join(hostPath(paths.siteSourcesDir), id), target: '/workspace', readOnly: input.workspaceReadOnly ?? false },
+      { type: 'bind', source: legacy ? legacy.sourcePath : binding?.sourcePath ?? join(hostPath(paths.siteSourcesDir), id), target: '/workspace', readOnly: input.workspaceReadOnly ?? false },
       { type: 'bind', source: join(storageRoot, 'git-stub'), target: '/workspace/.git', readOnly: true },
-      { type: 'bind', source: legacy ? legacy.brokerDir : join(hostPath(paths.siteBrokerDir), id), target: '/run/elowen', readOnly: false },
+      { type: 'bind', source: legacy ? legacy.brokerDir : binding?.brokerDir ?? join(hostPath(paths.siteBrokerDir), id), target: '/run/elowen', readOnly: false },
       { type: 'volume', source: volumes[0].name, target: '/data', readOnly: false },
     ];
+  if (input.previewBroker) mounts.push({ type: 'bind', source: join(storageRoot, 'broker'), target: '/run/elowen', readOnly: false });
   const settings = {
     resource, generation, namespace, name, image: input.image, limits, legacy,
     ipcMode: legacy ? 'shareable' : 'private',
@@ -100,6 +121,13 @@ function buildSpec(input, paths, legacy) {
   freeze(spec);
   trustedSpecs.add(spec);
   return spec;
+}
+
+export function bindContainerIdentity(spec, containerId) {
+  assertContainerSpec(spec);
+  if (!/^[a-f0-9]{64}$/.test(containerId)) throw new Error('Invalid immutable container identity');
+  const bound = { ...spec, expectedId: containerId };
+  freeze(bound); trustedSpecs.add(bound); return bound;
 }
 
 export function assertContainerSpec(spec) {

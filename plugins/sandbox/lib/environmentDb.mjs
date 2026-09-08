@@ -1,0 +1,111 @@
+import { randomBytes, randomUUID } from 'node:crypto';
+
+export const environmentMigration = {
+  version: 3,
+  up(m) {
+    m.exec(`
+      ALTER TABLE p_sandbox_execution_leases RENAME TO p_sandbox_execution_leases_old;
+      CREATE TABLE p_sandbox_execution_leases (
+        id TEXT PRIMARY KEY, user_id INTEGER, workspace_id TEXT, home_generation INTEGER,
+        outer_pid INTEGER NOT NULL, runner_identity TEXT NOT NULL, kind TEXT NOT NULL,
+        heartbeat_at INTEGER NOT NULL, expires_at INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        resource_kind TEXT, resource_id TEXT, runtime_generation INTEGER, execution_id TEXT,
+        cancel_requested INTEGER NOT NULL DEFAULT 0
+      );
+      INSERT INTO p_sandbox_execution_leases (id,user_id,workspace_id,home_generation,outer_pid,runner_identity,kind,heartbeat_at,expires_at,created_at)
+        SELECT id,user_id,workspace_id,home_generation,outer_pid,runner_identity,kind,heartbeat_at,expires_at,created_at FROM p_sandbox_execution_leases_old;
+      DROP TABLE p_sandbox_execution_leases_old;
+      CREATE INDEX p_sandbox_execution_leases_user ON p_sandbox_execution_leases(user_id,home_generation,expires_at);
+      CREATE INDEX p_sandbox_execution_leases_workspace ON p_sandbox_execution_leases(workspace_id,expires_at);
+      CREATE INDEX p_sandbox_execution_leases_resource ON p_sandbox_execution_leases(resource_kind,resource_id,runtime_generation);
+      CREATE TABLE p_sandbox_runtimes (
+        kind TEXT NOT NULL CHECK(kind IN ('project','site')), resource_id TEXT NOT NULL, project_id INTEGER NOT NULL,
+        generation INTEGER NOT NULL DEFAULT 1, state TEXT NOT NULL DEFAULT 'unprovisioned', desired_state TEXT NOT NULL DEFAULT 'running',
+        spec_json TEXT NOT NULL, limits_json TEXT NOT NULL, error TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(kind,resource_id)
+      );
+      CREATE TABLE p_sandbox_runtime_operations (
+        id TEXT PRIMARY KEY, kind TEXT NOT NULL, resource_id TEXT NOT NULL, user_id INTEGER,
+        request_key TEXT NOT NULL, generation INTEGER NOT NULL, action_json TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending', checkpoint_json TEXT NOT NULL DEFAULT '{}',
+        owner_pid INTEGER, owner_identity TEXT, error TEXT, snapshot_id TEXT, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        UNIQUE(kind,resource_id,user_id,request_key)
+      );
+      CREATE UNIQUE INDEX p_sandbox_runtime_operation_active ON p_sandbox_runtime_operations(kind,resource_id) WHERE status IN ('pending','running');
+      CREATE TABLE p_sandbox_runtime_snapshots (
+        id TEXT NOT NULL, kind TEXT NOT NULL, resource_id TEXT NOT NULL, generation INTEGER NOT NULL,
+        spec_json TEXT NOT NULL, manifest_json TEXT NOT NULL, note TEXT NOT NULL DEFAULT '',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY(kind,resource_id,id)
+      );
+      CREATE TABLE p_sandbox_runtime_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, kind TEXT NOT NULL, resource_id TEXT NOT NULL,
+        message TEXT NOT NULL, created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE p_sandbox_managed_worktrees (
+        id TEXT PRIMARY KEY, project_id INTEGER NOT NULL, created_by INTEGER NOT NULL,
+        label TEXT NOT NULL, path TEXT NOT NULL, branch TEXT NOT NULL, base_ref TEXT NOT NULL,
+        base_commit TEXT NOT NULL, state TEXT NOT NULL DEFAULT 'creating',
+        UNIQUE(project_id,path), UNIQUE(project_id,branch)
+      );
+    `);
+  },
+};
+
+const runtime = (row) => row ? { ...row, generation: Number(row.generation), spec: JSON.parse(row.spec_json), limits: JSON.parse(row.limits_json) } : null;
+const operation = (row) => row ? { ...row, action: JSON.parse(row.action_json), checkpoint: JSON.parse(row.checkpoint_json) } : null;
+export function createEnvironmentStore(db, identity) {
+  const get = (kind, id) => runtime(db.prepare('SELECT * FROM p_sandbox_runtimes WHERE kind=? AND resource_id=?').get(kind, String(id)));
+  const getOperation = (id) => operation(db.prepare('SELECT * FROM p_sandbox_runtime_operations WHERE id=?').get(id));
+  return {
+    db, get, getOperation,
+    transaction: (fn) => db.transaction(fn),
+    all: () => db.prepare('SELECT * FROM p_sandbox_runtimes').all().map(runtime),
+    insert(kind, id, projectId, spec, limits) {
+      db.prepare('INSERT OR IGNORE INTO p_sandbox_runtimes(kind,resource_id,project_id,spec_json,limits_json) VALUES (?,?,?,?,?)')
+        .run(kind, String(id), projectId, JSON.stringify(spec), JSON.stringify(limits));
+      return get(kind, id);
+    },
+    save(row) {
+      db.prepare('UPDATE p_sandbox_runtimes SET generation=?,state=?,desired_state=?,spec_json=?,limits_json=?,error=?,updated_at=CURRENT_TIMESTAMP WHERE kind=? AND resource_id=?')
+        .run(row.generation, row.state, row.desired_state, JSON.stringify(row.spec), JSON.stringify(row.limits), row.error ?? null, row.kind, row.resource_id);
+    },
+    active(kind, id) { return operation(db.prepare("SELECT * FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=? AND status IN ('pending','running')").get(kind, String(id))); },
+    prior(kind, id, userId, key) { return operation(db.prepare('SELECT * FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=? AND user_id IS ? AND request_key=?').get(kind, String(id), userId, key)); },
+    enqueue(row, userId, action, key = randomUUID()) {
+      const id = `env_${randomUUID()}`;
+      db.prepare('INSERT INTO p_sandbox_runtime_operations(id,kind,resource_id,user_id,request_key,generation,action_json) VALUES(?,?,?,?,?,?,?)')
+        .run(id, row.kind, row.resource_id, userId, key, row.generation, JSON.stringify(action));
+      return getOperation(id);
+    },
+    operations: () => db.prepare("SELECT * FROM p_sandbox_runtime_operations WHERE status IN ('pending','running') ORDER BY created_at,id").all().map(operation),
+    saveOperation(op) {
+      db.prepare('UPDATE p_sandbox_runtime_operations SET status=?,checkpoint_json=?,owner_pid=?,owner_identity=?,error=?,snapshot_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
+        .run(op.status, JSON.stringify(op.checkpoint), op.owner_pid ?? null, op.owner_identity ?? null, op.error ?? null, op.snapshot_id ?? null, op.id);
+    },
+    log(kind, id, message) {
+      db.prepare('INSERT INTO p_sandbox_runtime_logs(kind,resource_id,message) VALUES(?,?,?)').run(kind, String(id), String(message).slice(0, 2000));
+      db.prepare('DELETE FROM p_sandbox_runtime_logs WHERE kind=? AND resource_id=? AND id NOT IN (SELECT id FROM p_sandbox_runtime_logs WHERE kind=? AND resource_id=? ORDER BY id DESC LIMIT 200)')
+        .run(kind, String(id), kind, String(id));
+    },
+    logs(kind, id) { return db.prepare('SELECT created_at,message FROM p_sandbox_runtime_logs WHERE kind=? AND resource_id=? ORDER BY id').all(kind, String(id)).map((entry) => `${entry.created_at} ${entry.message}`).join('\n'); },
+    snapshots(kind, id) { return db.prepare('SELECT * FROM p_sandbox_runtime_snapshots WHERE kind=? AND resource_id=? ORDER BY julianday(created_at) DESC,id').all(kind, String(id)); },
+    snapshot(kind, id, snapshotId) { return db.prepare('SELECT * FROM p_sandbox_runtime_snapshots WHERE kind=? AND resource_id=? AND id=?').get(kind, String(id), snapshotId); },
+    saveSnapshot(row, id, manifest, note) {
+      db.prepare('INSERT OR IGNORE INTO p_sandbox_runtime_snapshots(id,kind,resource_id,generation,spec_json,manifest_json,note) VALUES(?,?,?,?,?,?,?)')
+        .run(id, row.kind, row.resource_id, row.generation, JSON.stringify(row.spec), JSON.stringify(manifest), note ?? '');
+    },
+    leases(kind, id, userId) {
+      return db.prepare(`SELECT * FROM p_sandbox_execution_leases WHERE resource_kind=? AND resource_id=?${userId === undefined ? '' : ' AND user_id=?'}`)
+        .all(kind, String(id), ...(userId === undefined ? [] : [userId]));
+    },
+    mintLease(row, userId, kind) {
+      const id = `sxl_${randomUUID()}`;
+      const executionId = randomBytes(16).toString('hex');
+      const now = Date.now();
+      db.prepare('INSERT INTO p_sandbox_execution_leases(id,user_id,outer_pid,runner_identity,kind,heartbeat_at,expires_at,resource_kind,resource_id,runtime_generation,execution_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+        .run(id, userId, process.pid, identity() ?? 'unverifiable', kind, now, now + 20000, row.kind, row.resource_id, row.generation, executionId);
+      return db.prepare('SELECT * FROM p_sandbox_execution_leases WHERE id=?').get(id);
+    },
+  };
+}
