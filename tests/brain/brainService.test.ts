@@ -2210,6 +2210,25 @@ describe('BrainService', () => {
     expect(moves()).toEqual([elsewhere, launch]);
   });
 
+  // The durable home must follow the live one: a cold respawn (daemon restart, plugin reload, last
+  // client detach) restores brain_sessions.work_dir, so a move that only updated the live record
+  // silently reverted on the next boot.
+  it('noteWorkDir persists the move into brain_sessions.work_dir', async () => {
+    const launch = realpathSync(tmpDir('cwd-a'));
+    const elsewhere = realpathSync(tmpDir('cwd-b'));
+    const d = fakeDeps();
+    (d as unknown as { policy: () => unknown }).policy = () => ({ allowedProjectIds: 'all', allowedPaths: () => [] });
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1, { cwd: launch });
+    d.store.appendMessage({ id: 'm1', sessionId, parentId: null, role: 'user', content: 'hi' });
+
+    svc.noteWorkDir(1, elsewhere);
+    expect(d.store.getSession(sessionId)?.work_dir).toBe(elsewhere);
+
+    svc.noteWorkDir(1, launch);           // a move back persists too — no one-way ratchet
+    expect(d.store.getSession(sessionId)?.work_dir).toBe(launch);
+  });
+
   it('noteWorkDir refuses a directory the caller\'s policy does not reach', async () => {
     const allowed = realpathSync(tmpDir('cwd-scoped'));
     const outside = realpathSync(tmpDir('cwd-outside'));
