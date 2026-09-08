@@ -630,7 +630,7 @@ export interface PluginHostStores {
    *  outside a request — a background worker has no ambient policy to consult — and re-deriving it from
    *  the `user_projects` table would put a copy of an access decision inside the very component that
    *  decision governs. Callers get the predicate, never the rows. */
-  userProjects: { canAccess(userId: number, projectId: number): boolean };
+  userProjects: { canAccess(userId: number, projectId: number): boolean; canManage(userId: number, projectId: number): boolean };
   /** The daemon's home project row (its own checkout). */
   homeProject(): Project;
   usersRead: {

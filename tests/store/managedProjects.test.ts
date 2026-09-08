@@ -52,6 +52,7 @@ describe('managed project foundation', () => {
     projects.beginDeletion(p.id);
     expect(projects.get(p.id)?.lifecycle).toBe('deleting');
     expect(memberships.canAccess(member.id, p.id)).toBe(false);
+    expect(memberships.canManage(member.id, p.id)).toBe(true);
     expect(() => projects.remove(p.id)).toThrow(/cleanup/);
     expect(projects.finishDeletion(p.id)).toBe(true);
     expect(projects.get(p.id)).toBeNull();

@@ -228,7 +228,7 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (id === d.project.id) return c.json({ error: 'cannot remove the home project' }, 400);
     const target = d.projects.get(id);
     if (!target) return c.json({ error: 'project not found' }, 404);
-    if (target.executionKind === 'managed' ? !canAccessProject(c, id) : notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    if (target.executionKind === 'managed' ? !(c.get('user') && d.userProjects?.canManage(c.get('user')!.id, id)) : notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const registry = await d.plugins?.get().catch(() => undefined);
     if (target.executionKind === 'managed') {
       const sandbox = registry?.control('sandbox');

@@ -46,7 +46,12 @@ export class UserProjectStore {
   /** Access and management use current membership; creator attribution is not a role. */
   canAccess(userId: number, projectId: number): boolean {
     const project = this.db.prepare('SELECT lifecycle FROM projects WHERE id = ?').get(projectId) as { lifecycle: string } | undefined;
-    if (!project || project.lifecycle !== 'active') return false;
+    return project?.lifecycle === 'active' && this.canManage(userId, projectId);
+  }
+
+  /** Pending deletion denies execution but its existing members may still observe/retry cleanup. */
+  canManage(userId: number, projectId: number): boolean {
+    if (!this.db.prepare('SELECT 1 FROM projects WHERE id = ?').get(projectId)) return false;
     if (this.isAdmin(userId)) return true;
     return !!this.db.prepare('SELECT 1 FROM user_projects WHERE user_id = ? AND project_id = ?').get(userId, projectId);
   }

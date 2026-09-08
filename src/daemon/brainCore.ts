@@ -654,7 +654,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
             id: homeProject.id, slug: homeProject.slug, path: homeProject.path, notes: '', icon: '', memoryShared: false,
             executionKind: 'host', creatorUserId: null, lifecycle: 'active',
           },
-          userProjects: { canAccess: (userId, projectId) => userProjects.canAccess(userId, projectId) },
+          userProjects: { canAccess: (userId, projectId) => userProjects.canAccess(userId, projectId), canManage: (userId, projectId) => userProjects.canManage(userId, projectId) },
           usersRead: {
             list: () => users.list().map(asPluginUser),
             isAdmin: (id) => users.isAdmin(id),
