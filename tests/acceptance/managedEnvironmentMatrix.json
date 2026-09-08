@@ -283,7 +283,7 @@
       "capability": "central personal integrations (onedrive, github, voice-bot, image-gen, image-edit, todo, stats, skills, web)",
       "evidence": "unverified",
       "negative": "unverified",
-      "notes": "Explicitly central/account-scoped: they do not run in a project container. Listed so their absence from the guest matrix is a stated decision, not an omission."
+      "notes": "Central personal integrations do not read project files and have no managed path; listed as the record that they were reviewed and found out of the environment boundary, not as work left undone."
     },
     {
       "area": "authority",
@@ -327,10 +327,11 @@
     },
     {
       "area": "plans",
-      "capability": "transcripts and share links under a managed project",
-      "evidence": "unverified",
-      "negative": "unverified",
-      "notes": "Split from the plan row rather than claimed by association."
+      "capability": "conversation transcripts and tool-result spills under a managed project",
+      "evidence": "unit",
+      "negative": "unit",
+      "notes": "Transcripts are central storage and have no guest side. The guest-side piece is the tool-result spill, which writes into the environment's artifact prefix and is covered by managedColdClearing and managedDeliverySpill. Not promoted to real-guest: driving it needs a full live session rather than a tool caller.",
+      "suite": "managedColdClearing"
     }
   ]
 }
