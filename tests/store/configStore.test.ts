@@ -53,12 +53,12 @@ describe('ConfigStore', () => {
     expect(cfg.get().brain.hiddenOauth).toEqual([]);
   });
   it('exposes only the VAPID public key, never the private one', () => {
-    expect(cfg.get().webPush).toEqual({ publicKey: '', publicKeySet: false });
+    expect(cfg.get().webPush).toEqual({ publicKey: '' });
     expect(cfg.webPushKeys()).toBeNull();
 
     cfg.setWebPushKeys({ publicKey: 'pub-key', privateKey: 'priv-key' });
     const c = cfg.get();
-    expect(c.webPush).toEqual({ publicKey: 'pub-key', publicKeySet: true });
+    expect(c.webPush).toEqual({ publicKey: 'pub-key' });
     expect(JSON.stringify(c)).not.toContain('priv-key');
     expect(cfg.webPushKeys()).toEqual({ publicKey: 'pub-key', privateKey: 'priv-key' });
   });
@@ -68,11 +68,11 @@ describe('ConfigStore', () => {
     expect(cfg.webPushKeys()).toEqual({ publicKey: 'pub', privateKey: 'priv' });
   });
   it('defaults launch settings', () => {
-    expect(cfg.get().defaults).toEqual({ exec: 'sonnet', autonomy: 'L3', maxSessions: 2 });
+    expect(cfg.get().defaults).toEqual({ exec: 'sonnet', maxSessions: 2 });
   });
   it('update merges launch defaults', () => {
     cfg.update({ defaults: { exec: 'codex:gpt-5.4', maxSessions: 3 } });
-    expect(cfg.get().defaults).toEqual({ exec: 'codex:gpt-5.4', autonomy: 'L3', maxSessions: 3 });
+    expect(cfg.get().defaults).toEqual({ exec: 'codex:gpt-5.4', maxSessions: 3 });
   });
   it('seeds modelNotes from the built-in defaults and lets user edits win', () => {
     const seeded = cfg.get().modelNotes;
@@ -143,7 +143,26 @@ describe('ConfigStore', () => {
     // write a raw pre-L2-8 row that lacks notes and defaults fields
     db.prepare("INSERT INTO settings (id, data) VALUES (1, ?)").run(JSON.stringify({ allowedExecs: ['sonnet'], autopilot: { model: 'm', apiUrl: 'u' }, apiKey: null }));
     const c = cfg.get();
-    expect(c.defaults).toEqual({ exec: 'sonnet', autonomy: 'L3', maxSessions: 2 });
+    expect(c.defaults).toEqual({ exec: 'sonnet', maxSessions: 2 });
+  });
+  it('ignores the retired defaults.autonomy key left in a stored row', () => {
+    // Live installs still carry the key in `settings.data` from before the agents plugin was retired.
+    // Reading such a row must neither throw nor rewrite the row behind the caller's back (the janitor
+    // reads config on every boot, so a read-triggered write would be a revision-bumping loop).
+    db.prepare('INSERT INTO settings (id, data, revision) VALUES (1, ?, 4)')
+      .run(JSON.stringify({ allowedExecs: ['sonnet'], defaults: { exec: 'sonnet', autonomy: 'L3', maxSessions: 2 } }));
+    const c = cfg.get();
+    expect(c.defaults).toEqual({ exec: 'sonnet', maxSessions: 2 });
+    expect(c.defaults).not.toHaveProperty('autonomy');
+    cfg.get();
+    const row = db.prepare('SELECT data, revision FROM settings WHERE id = 1').get() as { data: string; revision: number };
+    expect(row.revision).toBe(4);
+    expect(JSON.parse(row.data)).toHaveProperty('defaults.autonomy', 'L3');
+
+    // The first real write drops it, and the surviving siblings are untouched.
+    cfg.update({ autoUpdate: true });
+    const after = JSON.parse((db.prepare('SELECT data FROM settings WHERE id = 1').get() as { data: string }).data) as { defaults: Record<string, unknown> };
+    expect(after.defaults).toEqual({ exec: 'sonnet', maxSessions: 2 });
   });
   it('reads an old row without customModels as empty array', () => {
     db.prepare("INSERT INTO settings (id, data) VALUES (1, ?)").run(JSON.stringify({ allowedExecs: ['sonnet'], autopilot: { model: 'm', apiUrl: 'u' }, apiKey: null }));

@@ -28,7 +28,7 @@ export function keepProvider(e: PublicProvider): { id: string; label: string; ty
 /** Point the default task executor at the embedded (in-process) engine on a provider. PUTs ONLY the
  *  `exec` field — the config store merges `defaults` per-field, so re-reading and re-sending the whole
  *  block (as this used to) was both wasted work and a check-then-act race that could revert a concurrent
- *  edit of autonomy/maxSessions. Single source for the wizard AND headless setup. Returns whether it saved. */
+ *  edit of maxSessions. Single source for the wizard AND headless setup. Returns whether it saved. */
 export async function putEmbeddedExec(ctx: WizardCtx, providerId: string, model: string): Promise<boolean> {
   const r = await apiJson(ctx, 'PUT', '/config', { defaults: { exec: elowenExec(providerId, model) } });
   return r.ok;

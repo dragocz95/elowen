@@ -256,7 +256,7 @@ export default function SettingsPage() {
     }
   }, [config.data]);
 
-  // The run defaults (executor/autonomy/max sessions) moved to the agents plugin's settings deck;
+  // The run defaults (executor/max sessions) moved to the agents plugin's settings deck;
   // only the token TTL stays with the core System section. autoUpdate is NOT bundled here — the
   // System toggle is its single writer (it persists inline).
   const saveDefaults = async () => {
