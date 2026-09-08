@@ -103,6 +103,8 @@ export interface SiteEnvironmentRegistration {
   /** Copied from the Sites lifecycle checkpoint, not inferred from current container state. */
   initialIntent?: { desiredState: 'running' | 'stopped'; pendingAction: 'start' | 'stop' | 'restart' | null; restartSequence?: number };
   snapshotRetention?: number;
+  /** An unpublished conversion target; only this binding may accept cleanup-stage. */
+  staging?: boolean;
 }
 export type SiteRuntimeArtifact =
   | { kind: 'data'; archivePath: string }
@@ -127,6 +129,8 @@ export interface SiteRuntimeAuthority {
   imageRecipe?(kind: SiteImageKind): SiteImageRecipe;
   /** Includes every published runtime type, including stopped Sites and conversions. */
   projectDependents?(projectId: number): Promise<{ siteId: string }[]>;
+  /** Prepare the existing Sites env-file/git-stub contract without starting a container or ingress. */
+  beforeCreate?(siteId: string): Promise<void>;
   /** Sites owns privileged ingress preparation and application readiness, never the Podman lifecycle. */
   beforeStart(siteId: string): Promise<void>;
   afterStop(siteId: string): Promise<void>;
