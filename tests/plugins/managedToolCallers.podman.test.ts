@@ -12,6 +12,8 @@ import { makePluginDb } from '../../src/store/pluginDb.js';
 import { ProcessRegistry } from '../../src/brain/processRegistry.js';
 import type { PluginContext } from '../../src/plugins/api.js';
 import { buildShareFileTool } from '../../src/brain/tools/shareFileTool.js';
+import { buildExitPlanModeTool } from '../../src/brain/tools/exitPlanMode.js';
+import { guestPlanPath, writeGuestFile } from '../../src/brain/managedArtifacts.js';
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
 
 /** The file and shell TOOLS against a real guest, not the runtime underneath them.
@@ -36,7 +38,11 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
   const client = new PodmanClient(isolation);
   const sql = openDb(':memory:');
   let engineVerified = false;
+  const began = Date.now();
+  // Printed as each stage BEGINS: a runner timeout kills the test before any catch, so a stage recorded
+  // only on failure tells you nothing about where the time went.
   let stage = 'engine';
+  const enter = (next: string) => { stage = next; console.log(`[${String(Math.round((Date.now() - began) / 1000)).padStart(4)}s] ${next}`); };
   try {
     const info = await client.info();
     assert.equal(info.graphRoot, paths.storage);
@@ -53,7 +59,7 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
     initSandboxDb(runtimeCtx);
     const runtime = createEnvironmentRuntime({ ctx: runtimeCtx, db, dataDir: join(scratch, 'sandbox'), namespace: paths.namespace, podman: client, daemon: true });
 
-    stage = 'environment start';
+    enter('environment start');
     const started = await runtime.requestEnvironment({ project: projectRef, accountUserId: ACTOR, action: { kind: 'start' } });
     await runtime.reconcile();
     const startOp = await runtime.environmentOperation({ accountUserId: ACTOR, operationId: started.id });
@@ -88,56 +94,56 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
 
     const { run, hostGuard } = fixture(sandbox);
 
-    stage = 'Write then Read through the real tools';
+    enter('Write then Read through the real tools');
     const written = await run('Write', { file_path: '/workspace/alpha.ts', content: 'export const alpha = 1;\n' });
     expect(written.details?.ok).toBe(true);
     const read = await run('Read', { file_path: '/workspace/alpha.ts' });
     expect(read.content[0].text).toContain('export const alpha = 1;');
 
-    stage = 'Edit requires a prior read and applies in the guest';
+    enter('Edit requires a prior read and applies in the guest');
     const edited = await run('Edit', { file_path: '/workspace/alpha.ts', old_string: 'alpha = 1', new_string: 'alpha = 42' });
     expect(edited.details?.ok).toBe(true);
     expect((await run('Read', { file_path: '/workspace/alpha.ts' })).content[0].text).toContain('alpha = 42');
 
-    stage = 'ListDir, FileInfo, Glob and Grep answer from the guest';
+    enter('ListDir, FileInfo, Glob and Grep answer from the guest');
     expect((await run('ListDir', { path: '/workspace' })).content[0].text).toContain('alpha.ts');
     expect((await run('FileInfo', { path: '/workspace/alpha.ts' })).details).toMatchObject({ type: 'file' });
     expect((await run('Glob', { pattern: '**/*.ts', path: '/workspace' })).content[0].text).toContain('alpha.ts');
     expect((await run('Grep', { pattern: 'alpha = 42', path: '/workspace' })).content[0].text).toContain('alpha.ts');
 
-    stage = 'GitStatus reports the guest repository';
+    enter('GitStatus reports the guest repository');
     const git = await run('GitStatus', { path: '/workspace' });
     expect(typeof git.content[0].text).toBe('string');
 
-    stage = 'no host path guard was ever consulted';
+    enter('no host path guard was ever consulted');
     // A managed turn must never fall back to a host filesystem decision.
     expect(hostGuard).not.toHaveBeenCalled();
 
-    stage = 'Bash runs in the guest, in the guest cwd';
+    enter('Bash runs in the guest, in the guest cwd');
     const hello = await run('Bash', { command: 'echo guest-shell; pwd; id -u', description: 'probe' });
     expect(hello.content[0].text).toContain('guest-shell');
     expect(hello.content[0].text).toContain('/workspace');
 
-    stage = 'Bash sees the guest filesystem, not the host';
+    enter('Bash sees the guest filesystem, not the host');
     const seen = await run('Bash', { command: 'cat /workspace/alpha.ts', description: 'read written file' });
     expect(seen.content[0].text).toContain('alpha = 42');
 
-    stage = 'Bash reports a non-zero exit rather than hiding it';
+    enter('Bash reports a non-zero exit rather than hiding it');
     const failed = await run('Bash', { command: 'exit 3', description: 'failing command' });
     expect(JSON.stringify(failed)).toMatch(/3/);
 
-    stage = 'Bash truncates oversized output instead of returning it whole';
+    enter('Bash truncates oversized output instead of returning it whole');
     const flood = await run('Bash', { command: 'head -c 400000 /dev/zero | tr "\\0" "x"', description: 'flood stdout' });
     expect(flood.content[0].text.length).toBeLessThan(200_000);
 
-    stage = 'Bash background work is tracked and can be killed';
+    enter('Bash background work is tracked and can be killed');
     const bg = await run('Bash', { command: 'sleep 60', description: 'background sleeper', run_in_background: true });
     const listed = await run('ListProcesses', {});
     expect(JSON.stringify(listed)).toMatch(/sleep|background/i);
     const pid = String(JSON.stringify(bg).match(/"id":"([^"]+)"/)?.[1] ?? '');
     if (pid) await run('KillProcess', { id: pid });
 
-    stage = 'ShareFile copies a guest artifact into conversation storage';
+    enter('ShareFile copies a guest artifact into conversation storage');
     const imagesDir = join(scratch, 'chat-images');
     const shareOk: any = await runWithPolicy(
       { allowedProjectIds: 'all', allowedPaths: () => [] } as any,
@@ -148,7 +154,7 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
     expect(shareOk.details?.sharedFile?.name, JSON.stringify(shareOk.content)).toBe('alpha.ts');
     expect(shareOk.details?.sharedFile?.size).toBeGreaterThan(0);
 
-    stage = 'ShareFile refuses a relative path on a managed turn without touching the host';
+    enter('ShareFile refuses a relative path on a managed turn without touching the host');
     const shareBad: any = await runWithPolicy(
       { allowedProjectIds: 'all', allowedPaths: () => [] } as any,
       () => buildShareFileTool({ imagesDir, sandbox: async () => sandbox as any })
@@ -157,7 +163,7 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
     );
     expect(JSON.stringify(shareBad)).toMatch(/absolute guest path/i);
 
-    stage = 'ShareFile on a managed turn refuses when no provider resolves';
+    enter('ShareFile on a managed turn refuses when no provider resolves');
     const shareNoProvider: any = await runWithPolicy(
       { allowedProjectIds: 'all', allowedPaths: () => [] } as any,
       () => buildShareFileTool({ imagesDir, sandbox: async () => undefined })
@@ -166,14 +172,40 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
     );
     expect(JSON.stringify(shareNoProvider)).toMatch(/ShareFile:/);
 
-    stage = 'a managed project without a provider refuses instead of falling back';
+    enter('the plan mirror lives in the guest and ExitPlanMode reads it from there');
+    const planSession = 'plan-session';
+    const planPath = guestPlanPath(planSession);
+    // The product's own central writer, so the artifact prefix guard and the parent walk are exercised
+    // rather than bypassed by a hand-rolled mkdir.
+    const planWritten = await writeGuestFile(
+      { sandbox: sandbox as any, projectRef, accountUserId: ACTOR },
+      planPath, Buffer.from('# Guest plan\n\nStep one.\n'),
+    );
+    expect(typeof planWritten, String(planWritten)).toBe('object');
+    const planTool = buildExitPlanModeTool({ sandbox: async () => sandbox as any });
+    const submitted: any = await runWithPolicy(
+      { allowedProjectIds: 'all', allowedPaths: () => [] } as any,
+      () => planTool.execute('plan-1', {} as never, undefined as never, undefined as never, {} as never) as never,
+      { sessionId: planSession, projectRef, mode: 'plan', identity: { owner: true, admin: true, elowenUserId: ACTOR } as any },
+    );
+    // The plan the tool submits must be the one sitting in the guest, not an empty-file refusal.
+    expect(JSON.stringify(submitted), JSON.stringify(submitted)).toContain('Step one.');
+
+    enter('a central write outside the artifact prefix is refused');
+    const strayWrite = await writeGuestFile(
+      { sandbox: sandbox as any, projectRef, accountUserId: ACTOR },
+      '/workspace/stray.md', Buffer.from('nope'),
+    );
+    expect(typeof strayWrite).toBe('string');
+
+    enter('a managed project without a provider refuses instead of falling back');
     const orphan = fixture(null);
     const refused = await orphan.run('Read', { file_path: '/workspace/alpha.ts' });
     expect(refused.details?.ok).toBe(false);
     expect(JSON.stringify(refused)).toMatch(/sandbox|unavailable/i);
     expect(orphan.hostGuard).not.toHaveBeenCalled();
 
-    stage = 'teardown';
+    enter('teardown');
     const deleted = await runtime.requestEnvironment({ project: projectRef, accountUserId: ACTOR, action: { kind: 'delete' } });
     await runtime.reconcile();
     assert.equal((await runtime.environmentOperation({ accountUserId: ACTOR, operationId: deleted.id }))?.status, 'succeeded');
@@ -193,4 +225,4 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
     }
     rmSync(scratch, { recursive: true, force: true });
   }
-}, 900_000);
+}, 1_800_000);
