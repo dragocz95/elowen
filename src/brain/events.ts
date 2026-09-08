@@ -126,8 +126,12 @@ export type BrainEvent =
    *  The delegating plugin emits these while the child session works (see `ctx.subagentEmitter`):
    *  `detail` mirrors the child's current tool, `tools`/`tokens`/`seconds` accumulate, and `sessionId`
    *  lets a client drill into the child's transcript (`GET /brain/messages?session=…`). Synthetic —
-   *  fanned out to the PARENT conversation's listeners; ignoring it is always safe. */
-  | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string; thinkingLevel?: string; thinkingLabel?: string; startedAt?: string; updatedAt?: string; background?: boolean; autoDeliver?: boolean; resultDelivery?: 'pending' | 'acknowledged'; workspaceId?: string }
+   *  fanned out to the PARENT conversation's listeners; ignoring it is always safe.
+   *
+   *  `name` is the delegation's short label (Delegate's `name`, or one derived from the opening words of
+   *  the task): what every row calls this child instead of repeating its whole task text, and the handle
+   *  the parent can name it by. Absent for a run recorded before the field existed. */
+  | { type: 'subagent'; id: string; sessionId: string; status: 'running' | 'done' | 'error'; task: string; name?: string; detail?: string; tools: number; tokens?: number; seconds: number; model?: string; thinkingLevel?: string; thinkingLabel?: string; startedAt?: string; updatedAt?: string; background?: boolean; autoDeliver?: boolean; resultDelivery?: 'pending' | 'acknowledged'; workspaceId?: string }
   /** Live snapshot of a declarative sub-agent WORKFLOW (a DAG the delegating agent authored via
    *  `WorkflowStart`). One event per state change carries the WHOLE workflow — its overall status and
    *  the full node list with each node's dependencies, live status, and the child session/tokens/tool

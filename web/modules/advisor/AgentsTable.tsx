@@ -65,7 +65,12 @@ function AgentMobileCard({ agent, now, onOpen }: { agent: SubagentState; now: nu
                 <GitBranch size={12} className="text-muted-foreground" aria-hidden />
               </span>
             ) : null}
-            <h3 className="line-clamp-4 min-w-0 break-words text-sm font-semibold leading-snug text-foreground" title={agent.task}>{agent.task}</h3>
+            <div className="min-w-0">
+              {agent.name ? (
+                <div className="truncate font-mono text-[10px] text-muted-foreground" title={t.agents.name}>{agent.name}</div>
+              ) : null}
+              <h3 className="line-clamp-4 min-w-0 break-words text-sm font-semibold leading-snug text-foreground" title={agent.task}>{agent.task}</h3>
+            </div>
           </div>
           <div
             className="mt-2 flex min-w-0 items-start gap-1.5 rounded-md border border-border bg-muted/40 px-2 py-1.5 font-mono text-[10px] leading-relaxed text-muted-foreground"
@@ -205,6 +210,12 @@ export function AgentsTable({ agents, onOpen, onClose }: { agents: SubagentState
                           <span className="shrink-0" title={t.agents.sandboxed}>
                             <GitBranch size={12} className="text-muted-foreground" aria-hidden />
                           </span>
+                        ) : null}
+                        {/* The short name the delegation runs under, ahead of the task rather than
+                            instead of it: this is the one view whose job is to show what was delegated,
+                            and the name is how every other surface refers to the same child. */}
+                        {agent.name ? (
+                          <span className="shrink-0 font-mono text-xs text-muted-foreground" title={t.agents.name}>{agent.name}</span>
                         ) : null}
                         <span className="truncate font-medium text-foreground">{agent.task}</span>
                       </div>

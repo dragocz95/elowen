@@ -1606,6 +1606,7 @@ export const sk = {
     link: { one: 'agent', few: 'agenti', many: 'agentov' },
     linkDone: { one: 'hotový agent', few: 'hotoví agenti', many: 'hotových agentov' },
     status: 'Stav',
+    name: 'Názov',
     task: 'Úloha',
     model: 'Model',
     tokens: 'Tokeny',

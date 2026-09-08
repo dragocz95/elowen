@@ -171,7 +171,11 @@ describe('telemetry rail — a task row keeps its trailing meta on screen', () =
     const section = await screen.findByTestId('telemetry-agents');
     const row = within(section).getByTestId('telemetry-row');
     // The row's own label gives, the token count does not — the same two-column contract as a task row.
-    expect(classesOf(within(row).getByText(LONG_COMMAND))).toEqual(expect.arrayContaining(['min-w-0', 'flex-1', 'truncate']));
+    // The label is no longer the item that GROWS (a sub-agent row now carries a second text beside it, the
+    // child's live status note, and a spacer takes the slack so the two stay adjacent), but it is still
+    // the item that clips: it can shrink below its own min-content width and truncates when it does.
+    expect(classesOf(within(row).getByText(LONG_COMMAND))).toEqual(expect.arrayContaining(['min-w-0', 'shrink', 'truncate']));
+    expect(classesOf(within(row).getByText(LONG_COMMAND))).not.toContain('shrink-0');
     const meta = within(row).getByText('40.1M');
     expect(classesOf(meta)).toContain('shrink-0');
     // The row itself must be able to shrink; the Button primitive's base says `shrink-0`.

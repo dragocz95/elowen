@@ -199,8 +199,11 @@ function LiveSection({ label, count, testId, meter, listClassName = 'flex flex-c
  *  `title` rather than a `Tooltip` for the truncated label — the app's Tooltip is a CONTROLLED popover
  *  (see components/ui/shadcn/tooltip.tsx), which would need open state per row in a list that can hold
  *  dozens, while the native attribute is what a truncated cell is for. */
-function LiveRow({ label, meta, tone, title, onClick, ariaLabel, muted = false }: {
+function LiveRow({ label, secondary, meta, tone, title, onClick, ariaLabel, muted = false }: {
   label: string;
+  /** Quieter text that follows the label on the same 24px row — what a sub-agent row uses for the child's
+   *  live status note beside its name. It yields the width first, so the label is never squeezed by it. */
+  secondary?: string;
   meta?: string;
   /** `none` leaves the dot off, for a section whose row already carries a status control of its own — the
    *  Tasks section puts a checkbox there, and a dot beside it would state the same thing twice. */
@@ -233,7 +236,12 @@ function LiveRow({ label, meta, tone, title, onClick, ariaLabel, muted = false }
       className="h-6 min-w-0 flex-1 shrink justify-start gap-1.5 rounded px-1 text-left text-xs disabled:cursor-default disabled:opacity-100"
     >
       {tone === 'none' ? null : <span className={`shrink-0 ${tone === 'running' ? 'text-success' : 'text-subtle-foreground'}`} aria-hidden>●</span>}
-      <span className={`min-w-0 flex-1 truncate ${muted ? 'text-muted-foreground' : 'text-foreground'}`}>{label}</span>
+      {/* Label and secondary both truncate and both give width back under pressure; the spacer between
+          them and the meta column is what keeps the counters pinned right on a wide rail. Without a row
+          that can shrink at all, a long label lays the trailing token count past the rail's edge. */}
+      <span className={`min-w-0 shrink truncate ${muted ? 'text-muted-foreground' : 'text-foreground'}`}>{label}</span>
+      {secondary ? <span className="min-w-0 shrink truncate text-muted-foreground">{secondary}</span> : null}
+      <span className="min-w-0 flex-1" aria-hidden />
       {meta ? <span className="shrink-0 font-mono tabular-nums text-muted-foreground">{meta}</span> : null}
     </Button>
   );
@@ -504,8 +512,12 @@ function TelemetryBody({ onOpenWorkflow }: { onOpenWorkflow?: (id: string) => vo
                   <GitBranch size={10} className="text-subtle-foreground" aria-hidden />
                 </span>
               ) : null}
+              {/* Label = the delegation's short name (its task text is the fallback for a run recorded
+                  before the field); secondary = what the child last said it is doing. The full task stays
+                  on the row's title, which is where a paragraph belongs. */}
               <LiveRow
-                label={agent.detail || agent.task}
+                label={agent.name || agent.task}
+                secondary={agent.detail}
                 meta={agent.tokens != null ? formatTokens(agent.tokens) : undefined}
                 tone={agent.status === 'running' ? 'running' : 'idle'}
                 title={agent.task}

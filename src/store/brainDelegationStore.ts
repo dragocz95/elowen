@@ -9,6 +9,10 @@ import { logger } from '../shared/logger.js';
 interface BrainSubagentRunState {
   status: 'running' | 'done' | 'error';
   task: string;
+  /** The delegation's short label (Delegate's `name`, or one derived from the task). Durable because a
+   *  rail rebuilt after a restart must call a child the same thing it did before. Mirrors
+   *  BrainSubagentView; absent on rows written before the field existed. */
+  name?: string;
   detail?: string;
   tools: number;
   tokens?: number;
@@ -68,6 +72,9 @@ export interface DelegatedChildSummary {
   sessionId: string;
   title: string;
   task?: string;
+  /** The short label this delegation ran under, when its run row recorded one — the same name the rail
+   *  and the running-subagents reminder use, so the listing names a child the way the parent saw it. */
+  name?: string;
   status?: 'running' | 'done' | 'error';
   /** Turns already in the child's transcript — what a continuation would resume on top of. */
   messages: number;
@@ -244,6 +251,7 @@ function normalizeSubagentState(raw: unknown): BrainSubagentRunState | undefined
   if (typeof o.seconds !== 'number' || !Number.isSafeInteger(o.seconds) || o.seconds < 0) return undefined;
   if (o.tokens !== undefined && (typeof o.tokens !== 'number' || !Number.isSafeInteger(o.tokens) || o.tokens < 0)) return undefined;
   if (o.detail !== undefined && typeof o.detail !== 'string') return undefined;
+  if (o.name !== undefined && typeof o.name !== 'string') return undefined;
   if (o.model !== undefined && typeof o.model !== 'string') return undefined;
   if (o.thinkingLevel !== undefined && typeof o.thinkingLevel !== 'string') return undefined;
   if (o.thinkingLabel !== undefined && typeof o.thinkingLabel !== 'string') return undefined;
@@ -254,6 +262,9 @@ function normalizeSubagentState(raw: unknown): BrainSubagentRunState | undefined
   return {
     status: o.status,
     task: bounded(o.task, 8_000),
+    // Bounded far tighter than the task: this is a row LABEL, and the plugin already clips it to 40 —
+    // the ceiling here only stops a hand-written row from widening every rail that renders it.
+    ...(typeof o.name === 'string' && o.name ? { name: bounded(o.name, 64) } : {}),
     ...(typeof o.detail === 'string' ? { detail: bounded(o.detail, 2_000) } : {}),
     tools: o.tools,
     ...(typeof o.tokens === 'number' ? { tokens: o.tokens } : {}),
@@ -596,6 +607,7 @@ export class BrainDelegationStore {
         sessionId: row.id,
         title: row.title,
         ...(state ? { task: state.task, status: lifecycleStatus ?? state.status } : {}),
+        ...(state?.name ? { name: state.name } : {}),
         ...(node ? { task: node.task, status: node.status } : {}),
         ...(model ? { model } : {}),
         messages: Number(row.messages) || 0,

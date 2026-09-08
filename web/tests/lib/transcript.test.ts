@@ -418,6 +418,23 @@ describe('web transcript reducer', () => {
     expect(collectSubagents(view.turns).map((agent) => agent.detail)).toEqual(['Upravuji soubor…']);
   });
 
+  // The rail and the agents table label a row with the delegation's short NAME. It travels on the same
+  // payload as `detail`, and the same fold decides which of a child's calls speaks — so the name a row
+  // shows is the working call's, never the returned steer's.
+  it('carries the working call\'s delegation name onto the child\'s row', () => {
+    const CHILD = 'brain-ch-subagent-named';
+    const main = { sessionId: CHILD, status: 'running' as const, name: 'panel-redesign', task: 'redesign the panel', tools: 12, seconds: 400 };
+    const steer = { sessionId: CHILD, status: 'done' as const, name: 'owner-decision', task: 'Owner decision (19:10)', tools: 0, seconds: 1 };
+    let view = fromHistory([{ role: 'assistant', text: '', segments: [
+      { kind: 'tool', id: 'delegate-4', name: 'Delegate' },
+      { kind: 'tool', id: 'continue-4', name: 'DelegateContinue' },
+    ] }]);
+    view = reduce(view, { type: 'subagent', id: 'delegate-4', ...main });
+    view = reduce(view, { type: 'subagent', id: 'continue-4', ...steer });
+
+    expect(collectSubagents(view.turns).map((agent) => agent.name)).toEqual(['panel-redesign']);
+  });
+
   it('ignores an unknown post-idle sub-agent id without creating a turn', () => {
     const before = fromHistory([{ role: 'assistant', text: 'settled' }]);
     const after = reduce(before, {

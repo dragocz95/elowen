@@ -1611,6 +1611,7 @@ export const cs = {
     link: { one: 'agent', few: 'agenti', many: 'agentů' },
     linkDone: { one: 'hotový agent', few: 'hotoví agenti', many: 'hotových agentů' },
     status: 'Stav',
+    name: 'Název',
     task: 'Úkol',
     model: 'Model',
     tokens: 'Tokeny',

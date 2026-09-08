@@ -47,6 +47,9 @@ export interface SubagentState {
   sessionId: string;
   status: 'running' | 'done' | 'error';
   task: string;
+  /** The delegation's short label — what a row shows instead of the whole task text. Mirrors
+   *  BrainSubagentView; absent for a run recorded before the field existed. */
+  name?: string;
   detail?: string;
   tools: number;
   tokens?: number;
