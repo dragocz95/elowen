@@ -85,6 +85,7 @@ function buildSpec(input, paths, legacy) {
     ];
   const settings = {
     resource, generation, namespace, name, image: input.image, limits, legacy,
+    ipcMode: legacy ? 'shareable' : 'private',
     network: network === 'isolated' ? 'none' : 'slirp4netns:allow_host_loopback=false',
     storageRoot, volumes, mounts, envFile: kind === 'site' ? join(storageRoot, 'container.env') : null,
   };

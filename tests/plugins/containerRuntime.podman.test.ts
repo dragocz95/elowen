@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
@@ -14,7 +14,7 @@ const storageOnly = process.env.ELOWEN_TEST_PODMAN_STAGE === 'storage';
 it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only private Podman storage metadata' : 'runs the managed runtime in a fresh private Podman store', async () => {
   // Podman limits runroot to 50 bytes; long worktree paths cannot hold its runtime sockets.
   const scratch = mkdtempSync(join(tmpdir(), 'ep-'));
-  const isolation = isolatedPodmanOptions(join(scratch, 'podman'), `test-${randomBytes(6).toString('hex')}`);
+  const isolation = isolatedPodmanOptions(join(scratch, 'podman'), `test-${randomBytes(6).toString('hex')}`, { useUserSessionBus: true });
   const paths = isolation.isolation;
   const expectedPrefix = ['--root', paths.storage, '--runroot', paths.runroot, '--tmpdir', paths.tmp, '--storage-driver', 'vfs'];
   const native = new SpawnExecutor();
@@ -28,18 +28,26 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
     assert.equal(options.env.HOME, paths.home);
     assert.equal(options.env.XDG_RUNTIME_DIR, paths.runtime);
     assert.equal(options.env.TMPDIR, paths.tmp);
-    for (const key of ['CONTAINER_HOST', 'CONTAINER_CONNECTION', 'CONTAINERS_STORAGE_CONF', 'GH_TOKEN', 'GITHUB_TOKEN', 'DBUS_SESSION_BUS_ADDRESS']) assert.equal(options.env[key], undefined);
+    for (const key of ['CONTAINER_HOST', 'CONTAINER_CONNECTION', 'CONTAINERS_STORAGE_CONF', 'GH_TOKEN', 'GITHUB_TOKEN']) assert.equal(options.env[key], undefined);
+    assert.ok(paths.userBus);
+    assert.equal(paths.userBus.path, `/run/user/${process.getuid?.()}/bus`);
+    const bus = lstatSync(paths.userBus.path);
+    assert.equal(bus.isSocket(), true);
+    assert.equal(bus.uid, process.getuid?.());
+    assert.equal(bus.ino, paths.userBus.ino);
+    assert.equal(bus.dev, paths.userBus.dev);
+    assert.equal(options.env.DBUS_SESSION_BUS_ADDRESS, `unix:path=${paths.userBus.path}`);
     verifiedLaunch = { ...options, input: undefined, signal: undefined };
     const command = args.slice(expectedPrefix.length);
     const result = await native.run(file, args, options);
-    if (command[0] === 'inspect' || (command[0] === 'volume' && command[1] === 'inspect') || command.includes('show')) observations.push({ command, ...result });
+    if (command[0] === 'inspect' || (command[0] === 'volume' && command[1] === 'inspect') || command.includes('show') || command.includes('mask') || command.includes('stop')) observations.push({ command, ...result });
     if (command[0] === 'info') observations.push({ command, code: result.code, stderr: result.stderr });
     return result;
   } };
   const client = new PodmanClient({ ...isolation, executor: guarded });
   const execute = async (spec: any, script: string) => client.exec(spec, randomBytes(16).toString('hex'), ['/bin/bash', '-s'], { input: script, timeoutMs: 30_000 });
   try {
-    console.log('Verified isolated Podman launch:', JSON.stringify({ args: expectedPrefix, HOME: paths.home, XDG_RUNTIME_DIR: paths.runtime, TMPDIR: paths.tmp }));
+    console.log('Verified isolated Podman launch:', JSON.stringify({ args: expectedPrefix, HOME: paths.home, XDG_RUNTIME_DIR: paths.runtime, TMPDIR: paths.tmp, userBus: paths.userBus }));
     const info = await client.info();
     assert.equal(info.graphRoot, paths.storage);
     assert.equal(info.runRoot, paths.runroot);
@@ -70,6 +78,10 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
     assert.ok(result);
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /git version/);
+    const limits = await execute(spec, 'cat /sys/fs/cgroup/cpu.max /sys/fs/cgroup/memory.max /sys/fs/cgroup/pids.max');
+    assert.ok(limits);
+    assert.equal(limits.code, 0, limits.stderr);
+    assert.equal(limits.stdout.trim(), '100000 100000\n1073741824\n512');
     stage = 'stop/start persistence';
     await client.stop(spec);
     await client.start(spec);

@@ -1,0 +1,6 @@
+{
+  "code": 0,
+  "stdout": "ControlGroup=\nLoadState=not-found\nActiveState=inactive\nSubState=dead\n",
+  "stderr": "",
+  "truncated": false
+}

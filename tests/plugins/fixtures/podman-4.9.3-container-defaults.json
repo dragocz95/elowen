@@ -1,0 +1,38 @@
+{
+  "Image": "2e6d80d74bed757c6919a478e809c9e95990140a3b682ab68d6c53afd20963e3",
+  "ImageDigest": "sha256:2b7f25dd2722e540b27b285edcffb8412079dc102761499bc59c5458a3d5bd85",
+  "ImageName": "localhost/elowen-project-base:5b66890e6eba3678",
+  "Config": {
+    "User": "",
+    "Env": ["container=podman", "HOME=/root", "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"],
+    "WorkingDir": "/workspace",
+    "Entrypoint": "/sbin/init",
+    "SystemdMode": true
+  },
+  "HostConfig": {
+    "CgroupManager": "systemd",
+    "CgroupMode": "private",
+    "NetworkMode": "slirp4netns",
+    "PortBindings": {},
+    "AutoRemove": false,
+    "CapAdd": [],
+    "CapDrop": [],
+    "IpcMode": "shareable",
+    "Cgroups": "default",
+    "PidMode": "private",
+    "Privileged": false,
+    "PublishAllPorts": false,
+    "ReadonlyRootfs": false,
+    "SecurityOpt": [],
+    "Tmpfs": {},
+    "UTSMode": "private",
+    "UsernsMode": "",
+    "Memory": 1073741824,
+    "NanoCpus": 1000000000,
+    "CpuPeriod": 100000,
+    "CpuQuota": 100000,
+    "Devices": [],
+    "MemorySwap": 1073741824,
+    "PidsLimit": 512
+  }
+}

@@ -30,9 +30,24 @@ export function cleanPodmanEnv(input = {}) {
   };
 }
 
+function validateUserSessionBus(expected = null) {
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || uid <= 0) throw new Error('Test user session bus requires a rootless account');
+  const directory = checkedHostPath(`/run/user/${uid}`);
+  const parent = lstatSync(directory);
+  const path = `${directory}/bus`;
+  const socket = lstatSync(path);
+  if (parent.uid !== uid || (parent.mode & 0o022) !== 0 || !socket.isSocket() || socket.isSymbolicLink() || socket.uid !== uid) throw new Error('Untrusted user session bus');
+  if (expected && (expected.uid !== uid || expected.path !== path || expected.dev !== socket.dev || expected.ino !== socket.ino)) throw new Error('The validated user session bus changed');
+  return Object.freeze({ uid, path, dev: socket.dev, ino: socket.ino });
+}
+
 /** Optional integration harnesses must use this complete, private namespace, never account defaults.
  * The caller creates a fresh disposable parent with mkdtemp and retains responsibility for cleanup. */
-export function isolatedPodmanOptions(directory, namespace) {
+export function isolatedPodmanOptions(directory, namespace, options = {}) {
+  if (!options || Object.keys(options).some((key) => key !== 'useUserSessionBus')
+    || (options.useUserSessionBus !== undefined && typeof options.useUserSessionBus !== 'boolean')) throw new Error('Invalid test isolation options');
+  const userBus = options.useUserSessionBus ? validateUserSessionBus() : null;
   hostPath(directory);
   resourceToken(namespace);
   if (Buffer.byteLength(join(directory, 'runroot')) > 50) throw new Error('Isolated Podman runroot must fit within 50 bytes; use a short private temporary parent');
@@ -42,7 +57,7 @@ export function isolatedPodmanOptions(directory, namespace) {
   const location = (part) => checkedHostPath(join(directory, part), { create: true });
   const isolation = Object.freeze({
     storage: location('storage'), runroot: location('runroot'), tmp: location('tmp'),
-    runtime: location('runtime'), home: location('home'), namespace,
+    runtime: location('runtime'), home: location('home'), namespace, userBus,
   });
   isolatedStores.add(isolation);
   return { isolation };
@@ -129,6 +144,7 @@ export class PodmanClient {
   #timeoutMs;
   #outputLimit;
   #namespace;
+  #userBus;
 
   constructor(options = {}) {
     if (!options.executor && process.getuid?.() === 0) throw new Error('Rootless Podman service account is required');
@@ -148,11 +164,15 @@ export class PodmanClient {
       this.#namespace = isolation.namespace;
       this.#prefix = ['--root', isolation.storage, '--runroot', isolation.runroot, '--tmpdir', isolation.tmp, '--storage-driver', 'vfs'];
       this.#env = { ...this.#env, HOME: isolation.home, XDG_RUNTIME_DIR: isolation.runtime, TMPDIR: isolation.tmp };
-      delete this.#env.DBUS_SESSION_BUS_ADDRESS;
+      if (isolation.userBus) {
+        this.#userBus = validateUserSessionBus(isolation.userBus);
+        this.#env.DBUS_SESSION_BUS_ADDRESS = `unix:path=${this.#userBus.path}`;
+      } else delete this.#env.DBUS_SESSION_BUS_ADDRESS;
     }
   }
 
   async #run(args, options = {}) {
+    if (this.#userBus) validateUserSessionBus(this.#userBus);
     if (args.some((arg) => typeof arg !== 'string' || arg.includes('\0'))) throw new Error('Invalid Podman argument');
     validateInput(options.input);
     const result = await this.#executor.run('/usr/bin/podman', [...this.#prefix, ...args], {
@@ -218,7 +238,7 @@ export class PodmanClient {
       || host.Privileged !== false || host.ReadonlyRootfs !== false
       || (host.CapAdd && host.CapAdd.length !== 0) || (host.Devices && host.Devices.length !== 0)
       || (host.SecurityOpt && host.SecurityOpt.length !== 0)
-      || !['', 'private'].includes(host.PidMode) || !['', 'private'].includes(host.IpcMode)
+      || !['', 'private'].includes(host.PidMode) || host.IpcMode !== spec.ipcMode
       || (host.PortBindings && Object.keys(host.PortBindings).length > 0)
       || host.Memory !== spec.limits.memoryMb * 1024 * 1024 || host.MemorySwap !== host.Memory
       || host.PidsLimit !== spec.limits.pidsLimit || !Number.isFinite(cpus) || Math.abs(cpus - spec.limits.cpus) > 0.000001) {
@@ -253,7 +273,7 @@ export class PodmanClient {
     if (spec.envFile) checkedHostPath(spec.envFile, { file: true });
     const args = ['create', '--name', spec.name];
     for (const [key, value] of Object.entries(spec.labels)) args.push('--label', `${key}=${value}`);
-    args.push('--cgroups=split', '--systemd=always', `--memory=${spec.limits.memoryMb}m`, `--memory-swap=${spec.limits.memoryMb}m`,
+    args.push('--cgroups=split', '--systemd=always', `--ipc=${spec.ipcMode}`, `--memory=${spec.limits.memoryMb}m`, `--memory-swap=${spec.limits.memoryMb}m`,
       `--cpus=${spec.limits.cpus}`, `--pids-limit=${spec.limits.pidsLimit}`, `--network=${spec.network}`, '--workdir=/workspace', '--env=HOME=/root');
     if (spec.envFile) args.push('--env-file', spec.envFile);
     for (const mount of spec.mounts) args.push('--mount', `type=${mount.type},src=${mount.source},dst=${mount.target}${mount.readOnly ? ',ro' : ''}`);
@@ -384,6 +404,9 @@ export class PodmanClient {
     // Keep it until the runtime generation ends, rather than reopening a late-launch race.
     await this.#run(['exec', row.id, 'systemctl', 'mask', '--runtime', unit]);
     const stop = await this.#run(['exec', row.id, 'systemctl', 'stop', unit], { allowFailure: true });
+    // Collecting a transient unit after stop invalidates its loaded mask state. Re-establish the
+    // tombstone after collection and verify it; not-found alone is not proof against late starts.
+    await this.#run(['exec', row.id, 'systemctl', 'mask', '--runtime', unit]);
     const shown = await this.#run(['exec', row.id, 'systemctl', 'show', '--property=LoadState,ActiveState,SubState,ControlGroup', unit]);
     const fields = Object.fromEntries(shown.stdout.trim().split('\n').map((line) => { const at = line.indexOf('='); return [line.slice(0, at), line.slice(at + 1)]; }));
     if (shown.truncated || fields.LoadState !== 'masked' || !['inactive', 'failed'].includes(fields.ActiveState)

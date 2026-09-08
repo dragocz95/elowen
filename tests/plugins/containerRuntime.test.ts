@@ -22,7 +22,7 @@ function inspected(spec: any) {
   return { Id: 'a'.repeat(64), Name: spec.name, ImageName: spec.image, Config: { Labels: spec.labels },
     State: { Status: 'running' }, HostConfig: { Privileged: false, NetworkMode: spec.network, Memory: spec.limits.memoryMb * 1024 * 1024,
       MemorySwap: spec.limits.memoryMb * 1024 * 1024, NanoCpus: spec.limits.cpus * 1e9, PidsLimit: spec.limits.pidsLimit,
-      PidMode: 'private', IpcMode: 'private', ReadonlyRootfs: false, PortBindings: {} },
+      PidMode: 'private', IpcMode: spec.ipcMode, ReadonlyRootfs: false, PortBindings: {} },
     Mounts: spec.mounts.map((mount: any) => ({ Type: mount.type, Destination: mount.target, Source: mount.source, Name: mount.type === 'volume' ? mount.source : undefined, RW: !mount.readOnly })),
   };
 }
@@ -101,6 +101,16 @@ describe('explicit legacy Site handover binding', () => {
     expect(spec.specHash).toMatch(/^[a-f0-9]{64}$/);
     await expect(client.inspectBinding(spec)).resolves.toEqual({ id: binding.containerId, state: 'running' });
     expect(executor.run.mock.calls.every(([, args]) => ['inspect', 'container', 'volume'].includes(args[0]!))).toBe(true);
+  });
+  it('accepts the recorded isolated IPC default only in an explicit legacy binding', async () => {
+    const { spec, client, row } = legacyFixture();
+    const recorded = JSON.parse(readFileSync(new URL('./fixtures/podman-4.9.3-container-defaults.json', import.meta.url), 'utf8'));
+    Object.assign(row.HostConfig, recorded.HostConfig);
+    await expect(client.inspectBinding(spec)).resolves.toMatchObject({ state: 'running' });
+    const project = fixture().spec;
+    const managed = fake(project);
+    Object.assign(managed.row.HostConfig, recorded.HostConfig);
+    await expect(managed.client.inspectBinding(project)).rejects.toThrow(/mismatch/);
   });
   it.each(['containerId', 'imageId', 'labels', 'volumeLabels', 'volumePath', 'source', 'gitWritable'])('rejects mismatched legacy %s', async (field) => {
     const { spec, client, row, volumes } = legacyFixture();
@@ -278,7 +288,24 @@ describe('clean and confined Podman client', () => {
     const guest = executor.run.mock.calls.filter(([, args]) => args[0] === 'exec').map(([, args]) => args.slice(2));
     expect(guest[0]).toEqual(['systemctl', 'mask', '--runtime', executionUnit(spec, id)]);
     expect(guest[1]).toEqual(['systemctl', 'stop', executionUnit(spec, id)]);
-    expect(guest[2]).toContain('show');
+    expect(guest[2]).toEqual(['systemctl', 'mask', '--runtime', executionUnit(spec, id)]);
+    expect(guest[3]).toContain('show');
+  });
+  it('re-establishes the cancellation mask after the recorded transient-unit collection', async () => {
+    const { spec } = fixture();
+    const { client, executor } = fake(spec);
+    const collected = JSON.parse(readFileSync(new URL('./fixtures/podman-4.9.3-collected-unit.json', import.meta.url), 'utf8'));
+    const original = executor.run.getMockImplementation()!;
+    let stopped = false;
+    let remasked = false;
+    executor.run.mockImplementation(async (file, args, opts) => {
+      if (args.includes('stop')) stopped = true;
+      if (args.includes('mask') && stopped) remasked = true;
+      if (args.includes('show') && stopped && !remasked) return collected;
+      return original(file, args, opts);
+    });
+    await expect(client.cancelExecution(spec, 'a'.repeat(32))).resolves.toMatchObject({ terminated: true });
+    expect(remasked).toBe(true);
   });
   it('reports failed guest termination instead of equating client exit to cancellation', async () => {
     const { spec } = fixture();
