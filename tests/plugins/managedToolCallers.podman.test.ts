@@ -11,6 +11,8 @@ import { openDb } from '../../src/store/db.js';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { ProcessRegistry } from '../../src/brain/processRegistry.js';
 import type { PluginContext } from '../../src/plugins/api.js';
+import { buildShareFileTool } from '../../src/brain/tools/shareFileTool.js';
+import { runWithPolicy } from '../../src/plugins/policyContext.js';
 
 /** The file and shell TOOLS against a real guest, not the runtime underneath them.
  *
@@ -134,6 +136,35 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
     expect(JSON.stringify(listed)).toMatch(/sleep|background/i);
     const pid = String(JSON.stringify(bg).match(/"id":"([^"]+)"/)?.[1] ?? '');
     if (pid) await run('KillProcess', { id: pid });
+
+    stage = 'ShareFile copies a guest artifact into conversation storage';
+    const imagesDir = join(scratch, 'chat-images');
+    const shareOk: any = await runWithPolicy(
+      { allowedProjectIds: 'all', allowedPaths: () => [] } as any,
+      () => buildShareFileTool({ imagesDir, sandbox: async () => sandbox as any })
+        .execute('share-1', { path: '/workspace/alpha.ts' } as never, undefined as never, undefined as never, {} as never) as never,
+      { sessionId: 'share-session', projectRef, identity: { owner: true, admin: true, elowenUserId: ACTOR } as any },
+    );
+    expect(shareOk.details?.sharedFile?.name, JSON.stringify(shareOk.content)).toBe('alpha.ts');
+    expect(shareOk.details?.sharedFile?.size).toBeGreaterThan(0);
+
+    stage = 'ShareFile refuses a relative path on a managed turn without touching the host';
+    const shareBad: any = await runWithPolicy(
+      { allowedProjectIds: 'all', allowedPaths: () => [] } as any,
+      () => buildShareFileTool({ imagesDir, sandbox: async () => sandbox as any })
+        .execute('share-2', { path: 'alpha.ts' } as never, undefined as never, undefined as never, {} as never) as never,
+      { sessionId: 'share-session', projectRef, identity: { owner: true, admin: true, elowenUserId: ACTOR } as any },
+    );
+    expect(JSON.stringify(shareBad)).toMatch(/absolute guest path/i);
+
+    stage = 'ShareFile on a managed turn refuses when no provider resolves';
+    const shareNoProvider: any = await runWithPolicy(
+      { allowedProjectIds: 'all', allowedPaths: () => [] } as any,
+      () => buildShareFileTool({ imagesDir, sandbox: async () => undefined })
+        .execute('share-3', { path: '/workspace/alpha.ts' } as never, undefined as never, undefined as never, {} as never) as never,
+      { sessionId: 'share-session', projectRef, identity: { owner: true, admin: true, elowenUserId: ACTOR } as any },
+    );
+    expect(JSON.stringify(shareNoProvider)).toMatch(/ShareFile:/);
 
     stage = 'a managed project without a provider refuses instead of falling back';
     const orphan = fixture(null);
