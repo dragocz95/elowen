@@ -535,10 +535,10 @@ export class BrainService {
         if (!linked) throw new Error('unknown session'); // no linked account → none of their sessions exist here
         return this.bindChannelContext(linked.id, channelKey, sessionId);
       },
-      // /project picker core (platform surfaces; no adapter draws the chooser yet): resolve the sender
-      // to their linked Elowen account, then list the Projects that account reaches and move the CHANNEL
-      // conversation into the chosen one — the same validated move owner chat's /cd performs. An
-      // unlinked sender has neither: listing returns null, the switch refuses.
+      // /project picker core (platform surfaces; the shared control core draws the chooser per surface):
+      // resolve the sender to their linked Elowen account, then list the Projects that account reaches and
+      // move the CHANNEL conversation into the chosen one — the same validated move owner chat's /cd
+      // performs. An unlinked sender has neither: listing returns null, the switch refuses.
       listProjects: (platform, platformUserId) => {
         const linked = d.resolvePlatformUser?.(platform, platformUserId);
         return linked ? this.listSwitchableProjects(linked.id) : null;

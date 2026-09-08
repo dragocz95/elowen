@@ -1733,8 +1733,8 @@ export class ChannelSessionService {
    *  Serialized under the channel lock like `/compact`, so a running turn holds the lock for its whole
    *  duration and the move waits rather than straddling it. Returns the validated directory plus the
    *  project's slug (the reply's label); throws when no durable conversation exists here, or the
-   *  project is unknown or unreachable. No adapter draws this chooser yet — the shared control core
-   *  deliberately leaves pickers per-surface — so today only the PlatformControlApi methods call it. */
+   *  project is unknown or unreachable. The chat surfaces reach it through the shared control core's
+   *  /project (which draws the chooser per surface); the PlatformControlApi still calls it directly. */
   async switchProject(channelId: string, input: { policy: Policy; accountUserId: number; projectId: number }): Promise<{ workDir: string; slug: string }> {
     const sessionId = channelSessionId(channelId);
     return this.d.registry.withLock(sessionId, async () => {
