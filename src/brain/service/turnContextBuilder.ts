@@ -144,7 +144,7 @@ export class TurnContextBuilder {
         // prompt has reached the provider. A turn rejected before that showed the model nothing.
         let commitMode = (): void => { live.lastTurnMode = mode; };
         if (!isPromptCommand(request.text, live.session)) {
-          const turnContext = live.turnContext();
+          const turnContext = await live.turnContext();
           // One-shot notice of any session-state change (model/mode/rename/reasoning) since the last reply —
           // prepared here so the agent is told exactly once, committed (see below) only after delivery.
           // Rides under the user message like the mode reminder (volatile per-turn context, cache-friendly),

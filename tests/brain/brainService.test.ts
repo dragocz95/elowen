@@ -3816,6 +3816,79 @@ describe('BrainService', () => {
     expect(storedContextMessages(d.store as never, 'brain-ch-disc-context')[0]?.content).toBe(prompt);
   });
 
+  it('resolves async turn-context providers in registration order alongside sync ones', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('rt', {}, { info() {}, warn() {}, error() {} });
+    let beforeCalls = 0;
+    let asyncCalls = 0;
+    ctx.registerTurnContext(() => { beforeCalls += 1; return 'SYNC NOW'; });
+    ctx.registerTurnContext(async () => { asyncCalls += 1; return 'ASYNC STATUS'; });
+    ctx.registerTurnContext(async () => 'ASYNC TODO', { placement: 'after-user' });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    await svc.send({ userId: 1, text: 'kolik je hodin?' });
+    const prompt = d.session.prompt.mock.calls.at(-1)![0] as string;
+    expect(prompt).toContain('SYNC NOW');
+    expect(prompt).toContain('ASYNC STATUS');
+    expect(prompt).toContain('ASYNC TODO');
+    // Registration order is preserved across the sync/async mix; each provider is sampled once.
+    expect(prompt.indexOf('SYNC NOW')).toBeLessThan(prompt.indexOf('ASYNC STATUS'));
+    expect(prompt.indexOf('ASYNC STATUS')).toBeLessThan(prompt.indexOf('kolik je hodin?'));
+    expect(prompt.indexOf('kolik je hodin?')).toBeLessThan(prompt.indexOf('ASYNC TODO'));
+    expect(beforeCalls).toBe(1);
+    expect(asyncCalls).toBe(1);
+  });
+
+  it('isolates a rejected async turn-context provider instead of failing the turn', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('rt', {}, { info() {}, warn() {}, error() {} });
+    ctx.registerTurnContext(() => 'HEALTHY PROVIDER');
+    ctx.registerTurnContext(async () => { throw new Error('lsp revalidation blew up'); });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    // The same isolation a throwing sync provider already gets: one broken optional provider must not
+    // fail the turn, and the healthy ones still render.
+    await svc.send({ userId: 1, text: 'status?' });
+    const prompt = d.session.prompt.mock.calls.at(-1)![0] as string;
+    expect(prompt).toContain('HEALTHY PROVIDER');
+    expect(prompt).not.toContain('lsp revalidation blew up');
+    const stored = svc.history(1).find((m) => m.role === 'user');
+    expect(stored?.text).toBe('status?');
+  });
+
+  it('awaits a pending async turn-context provider before dispatching the prompt', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('rt', {}, { info() {}, warn() {}, error() {} });
+    const order: string[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    ctx.registerTurnContext(async () => {
+      order.push('ctx:called');
+      await gate;
+      order.push('ctx:resolved');
+      return 'GATED CONTEXT';
+    });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    const send = svc.send({ userId: 1, text: 'hello' });
+    // Wait until the assembly actually reached the provider, then prove the turn is PARKED on it.
+    for (let i = 0; i < 200 && order.length === 0; i += 1) await new Promise((r) => setTimeout(r, 5));
+    expect(order).toEqual(['ctx:called']);
+    expect(d.session.prompt).not.toHaveBeenCalled();
+    release();
+    await send;
+    // The gated context rode the prompt the provider's resolution made possible.
+    expect(order).toEqual(['ctx:called', 'ctx:resolved']);
+    expect(d.session.prompt).toHaveBeenCalled();
+    expect(d.session.prompt.mock.calls.at(-1)![0] as string).toContain('GATED CONTEXT');
+  });
+
   it('channelSend throws on a provider-errored turn instead of returning an empty reply', async () => {
     // PI resolves prompt() even when the provider call failed (stopReason 'error', no content). An empty
     // return here made Discord react ✅ with no message — the failure must surface as an exception so the

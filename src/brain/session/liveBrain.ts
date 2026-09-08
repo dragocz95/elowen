@@ -106,7 +106,10 @@ export interface LiveBrain {
   /** Bounded current-run event journal + the canonical fan-out seam. Used by opt-in sub-agent stream
    *  snapshots to reconstruct output emitted before the user opened the drill-in view. */
   replay: LiveEventReplay;
-  turnContext: () => TurnContextBlocks;
+  /** Resolves the session's plugin-contributed per-turn context. Async so providers may render
+   *  asynchronously (e.g. a plugin revalidating a live subsystem before reporting); the prompt dispatch
+   *  awaits this before it composes and sends. */
+  turnContext: () => Promise<TurnContextBlocks>;
   /** Names of the plugin tools composed into this session — the subset a per-turn ToolPolicy allow-list
    *  may hide (the built-in elowen_ and memory_ tools stay visible). Used by applyToolVisibility to slice
    *  the model's advertised tools to what the current sender may use. */

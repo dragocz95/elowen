@@ -710,14 +710,16 @@ export class LiveSessionSpawner {
     }));
 
     // Ephemeral per-turn context (date/time, …) is injected into each user message — see send() — so it
-    // stays fresh WITHOUT invalidating the cached system-prompt prefix.
+    // stays fresh WITHOUT invalidating the cached system-prompt prefix. A provider may render
+    // asynchronously (string | Promise<string>); awaiting in registration order keeps the contribution
+    // order and placement identical to a sync-only registry.
     const providers = plugins?.turnContexts ?? [];
-    const turnContext = (): TurnContextBlocks => {
+    const turnContext = async (): Promise<TurnContextBlocks> => {
       const beforeUser: string[] = [];
       const afterUser: string[] = [];
       for (const provider of providers) {
         let value = '';
-        try { value = provider.render(); } catch { /* A broken optional provider must not fail the turn. */ }
+        try { value = await provider.render(); } catch { /* A broken optional provider must not fail the turn. */ }
         if (!value?.trim()) continue;
         (provider.placement === 'after-user' ? afterUser : beforeUser).push(value);
       }
