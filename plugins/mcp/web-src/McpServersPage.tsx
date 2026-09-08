@@ -5,8 +5,9 @@ import {
   type McpScope, type McpServer, type McpServersResponse, type McpTransport, type PageFilterField,
 } from './runtime';
 
-/** One page of servers, matching the register size every workspace page in the app uses. */
-const PAGE_SIZE = 20;
+/** Rows per page until the reader chooses another step in the pager's own select, matching the register
+ *  size every workspace page in the app starts at. */
+const DEFAULT_PAGE_SIZE = 20;
 
 type ScopeFilter = 'all' | McpScope;
 
@@ -152,6 +153,20 @@ function McpServerRow({ server, showScope, selected, canToggle, toggling, onOpen
       aria-selected={selected}
       {...(onOpen ? { onOpen, openLabel: s.openServer.replace('{name}', server.name) } : {})}
     >
+      {/* The switch states whether the server is CONFIGURED on, which is not what the status dot beside
+          it says: that one reports the live connection, and an enabled server can still be disconnected
+          or failing. Two facts, two controls, neither restating the other. It leads the row because every
+          register in the app puts its row switch there, and it keeps the `wide` priority it had among the
+          columns it came from — the compact fold is the dot, the name and its state, and the editor
+          carries the same switch. */}
+      <C.DataTableCell priority="wide" lines="auto" className="flex items-center justify-center">
+        <C.Toggle
+          checked={server.enabled}
+          onChange={onToggle}
+          label={`${server.name}: ${s.enabled}`}
+          disabled={!canToggle || toggling}
+        />
+      </C.DataTableCell>
       <C.DataTableCell lines="auto" title={label} className="flex items-center justify-center">
         <span className={`h-2 w-2 rounded-full ${statusDot(server)}`} aria-hidden />
         {/* The dot carries the state in colour alone. `title` is not reliably announced, so the state
@@ -181,19 +196,6 @@ function McpServerRow({ server, showScope, selected, canToggle, toggling, onOpen
           <span className="shrink-0">{server.lastError ? <TriangleAlert size={DATA_TABLE_ICON_SIZE} aria-hidden /> : <PlugZap size={DATA_TABLE_ICON_SIZE} aria-hidden />}</span>
           <span className={`truncate ${server.lastError ? 'text-destructive' : ''}`}>{server.lastError ?? label}</span>
         </span>
-      </C.DataTableCell>
-      {/* The switch states whether the server is CONFIGURED on, which is not what the leading dot says:
-          that one reports the live connection, and an enabled server can still be disconnected or
-          failing. Two facts, two controls, neither restating the other. It keeps the `wide` priority of
-          the columns around it — the compact fold is the name and its state, and the editor carries the
-          same switch. */}
-      <C.DataTableCell priority="wide" lines="auto" className="flex items-center justify-center">
-        <C.Toggle
-          checked={server.enabled}
-          onChange={onToggle}
-          label={`${server.name}: ${s.enabled}`}
-          disabled={!canToggle || toggling}
-        />
       </C.DataTableCell>
       <C.DataTableChevronCell />
     </C.DataTableRow>
@@ -360,6 +362,10 @@ export function McpServersPage() {
   const [query, setQuery] = useState('');
   const [scope, setScope] = useState<ScopeFilter>('all');
   const [page, setPage] = useState(0);
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  // Back to the first page: growing the window would otherwise land the reader on a page they never
+  // asked for, and shrinking it can leave the page past the end of the register.
+  const changePageSize = (next: number) => { setPageSize(next); setPage(0); };
   /** The open editor: the key of the server it belongs to (null = a server being added) and its draft. */
   const [editor, setEditor] = useState<{ key: string | null; draft: ServerDraft }>();
   const [saving, setSaving] = useState(false);
@@ -390,9 +396,9 @@ export function McpServersPage() {
   // A narrowed list can be shorter than the page the user is on; landing on an empty page reads as
   // "nothing matches" when the matches are simply on page 1.
   useEffect(() => { setPage(0); }, [query, scope]);
-  const pageCount = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE));
+  const pageCount = Math.max(1, Math.ceil(filtered.length / pageSize));
   const clampedPage = Math.min(page, pageCount - 1);
-  const pageItems = useMemo(() => filtered.slice(clampedPage * PAGE_SIZE, clampedPage * PAGE_SIZE + PAGE_SIZE), [filtered, clampedPage]);
+  const pageItems = useMemo(() => filtered.slice(clampedPage * pageSize, clampedPage * pageSize + pageSize), [filtered, clampedPage, pageSize]);
 
   const connected = rows.filter((server) => server.status === 'connected').length;
   const failing = rows.filter((server) => server.status === 'error').length;
@@ -614,10 +620,13 @@ export function McpServersPage() {
     <div className="flex min-w-0 flex-col gap-3">
       <C.DataTable
         ariaLabel={s.title}
-        columns={canManageInstance ? '2rem minmax(0,1fr) 6rem 7rem 5rem minmax(0,10rem) 2.75rem 1.25rem' : '2rem minmax(0,1fr) 6rem 5rem minmax(0,10rem) 2.75rem 1.25rem'}
+        columns={canManageInstance ? '2.75rem 2rem minmax(0,1fr) 6rem 7rem 5rem minmax(0,10rem) 1.25rem' : '2.75rem 2rem minmax(0,1fr) 6rem 5rem minmax(0,10rem) 1.25rem'}
         compactColumns="2rem minmax(0,1fr)"
       >
         <C.DataTableRow header>
+          {/* Named for assistive technology alone, like the dot column below: the switches speak for
+              themselves on screen and a visible "Enabled" would head a column of them. */}
+          <C.DataTableCell header priority="wide" labelHidden lines={1}>{s.enabled}</C.DataTableCell>
           {/* Both this column and the one carrying the failure text state the connection. Only one of
               them can be called "Status" out loud, so the dot column's name is for assistive
               technology alone rather than a second visible header with the same word. */}
@@ -627,9 +636,6 @@ export function McpServersPage() {
           {canManageInstance ? <C.DataTableCell header priority="wide" lines={1}>{s.scope}</C.DataTableCell> : null}
           <C.DataTableCell header priority="wide" lines={1}>{s.tools}</C.DataTableCell>
           <C.DataTableCell header priority="wide" lines={1}>{s.colStatus}</C.DataTableCell>
-          {/* Named for assistive technology alone, like the dot column above: the switches speak for
-              themselves on screen and a visible "Enabled" would head a column of them. */}
-          <C.DataTableCell header priority="wide" labelHidden lines={1}>{s.enabled}</C.DataTableCell>
           {/* The chevron track carries no header: its cell is decorative. */}
         </C.DataTableRow>
         {pageItems.map((server) => (
@@ -646,7 +652,14 @@ export function McpServersPage() {
         ))}
       </C.DataTable>
 
-      <C.Pager page={clampedPage} pageSize={PAGE_SIZE} total={filtered.length} onPageChange={setPage} ariaLabel={s.title} />
+      <C.Pager
+        page={clampedPage}
+        pageSize={pageSize}
+        total={filtered.length}
+        onPageChange={setPage}
+        onPageSizeChange={changePageSize}
+        ariaLabel={s.title}
+      />
     </div>
   );
 

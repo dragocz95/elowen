@@ -171,6 +171,25 @@ describe('mcp register row switch', () => {
     await waitFor(() => expect(screen.getAllByText(strings.statusDisabled!).length).toBeGreaterThan(0));
   });
 
+  // Every register in the app carries its row switch at the left edge. The live status dot follows it and
+  // still sits beside the name; the two state different things and neither may take the other's place.
+  it('leads the row with the switch, ahead of every other cell and control', async () => {
+    msw.use(http.get('*/api/plugins/mcp/api/servers', () => HttpResponse.json({
+      personal: [remoteServer], instance: [], canManageInstance: false,
+    })));
+    mount();
+    await screen.findByText('docs');
+
+    const row = within(screen.getByRole('table')).getByText('docs').closest('[role="row"]') as HTMLElement;
+    const cells = within(row).getAllByRole('cell');
+    expect(within(cells[0]).getByRole('switch')).toBe(rowSwitch('docs'));
+    // The row-open overlay is a button of its own, so "first" is measured over every control in the row.
+    expect(row.querySelectorAll('button')[0]).toBe(rowSwitch('docs'));
+    // The switch track leads both the header row and the grid template it is measured against.
+    const table = screen.getByRole('table');
+    expect(table.style.getPropertyValue('--data-table-columns').trim().startsWith('2.75rem')).toBe(true);
+  });
+
   it('puts the switch back, with the daemon\'s reason, when the write is refused', async () => {
     msw.use(
       http.get('*/api/plugins/mcp/api/servers', () => HttpResponse.json({ personal: [remoteServer], instance: [], canManageInstance: false })),
@@ -196,5 +215,20 @@ describe('mcp register row switch', () => {
 
     expect(rowSwitch('github')).toBeDisabled();
     expect(rowSwitch('docs')).toBeEnabled();
+  });
+});
+
+// The register's footer is the app's one pager, page-size select included, so /p/mcp reads exactly like
+// the skills register rather than growing a footer of its own.
+describe('mcp register footer', () => {
+  it('offers the rows-per-page select beside the range', async () => {
+    msw.use(http.get('*/api/plugins/mcp/api/servers', () => HttpResponse.json({
+      personal: [remoteServer], instance: [], canManageInstance: false,
+    })));
+    mount();
+    await screen.findByText('docs');
+
+    const pager = screen.getByRole('navigation', { name: strings.title! });
+    expect(within(pager).getByRole('combobox', { name: 'Per page' })).toBeInTheDocument();
   });
 });
