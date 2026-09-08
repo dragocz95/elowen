@@ -43,7 +43,6 @@ export interface DelegatedTurnRequest {
   /** The delegating turn's working directory, inherited so the child's tools resolve relative paths
    *  against the same project the parent runs in. */
   clientCwd?: string;
-  idleRolloverMs?: number;
 }
 
 export interface DelegatedTurnDeps {
@@ -84,7 +83,6 @@ export function delegatedChannelSendOpts(
     parentSessionId: req.parentSessionId,
     delegatedAccess: scope,
     ...(scope.workspaceRef ? {} : req.clientCwd !== undefined ? { clientCwd: req.clientCwd } : {}),
-    ...(req.idleRolloverMs !== undefined ? { idleRolloverMs: req.idleRolloverMs } : {}),
     // The captured scope stays authoritative; the spawning account's CURRENT grant intersects it, exactly
     // as the drill-in continuation path does. Without this the forked runner and every first spawn were
     // the two paths on which a revoked tool kept reaching a child — one behaviour with three answers.
@@ -208,9 +206,8 @@ export function parseDelegatedTurnRequest(raw: unknown): DelegatedTurnRequest | 
   if (v.thinkingLevel !== undefined && typeof v.thinkingLevel !== 'string') return undefined;
   if (v.clientCwd !== undefined && typeof v.clientCwd !== 'string') return undefined;
   if (scope.workspaceRef && v.clientCwd !== undefined) return undefined;
-  // JSON has no Infinity: the plugin already pins its "never roll over" value to MAX_SAFE_INTEGER for
-  // exactly this reason, so anything non-finite arriving here is corruption, not a legitimate sentinel.
-  if (v.idleRolloverMs !== undefined && (typeof v.idleRolloverMs !== 'number' || !Number.isFinite(v.idleRolloverMs))) return undefined;
+  // A request minted before the channel idle cutoff was removed may still carry `idleRolloverMs`. It is an
+  // unknown key now, and unknown keys are dropped rather than refused — a runner mid-upgrade still runs.
   return {
     channelId,
     ownerUserId: v.ownerUserId as number,
@@ -221,6 +218,5 @@ export function parseDelegatedTurnRequest(raw: unknown): DelegatedTurnRequest | 
     ...(model ? { model } : {}),
     ...(typeof v.thinkingLevel === 'string' ? { thinkingLevel: v.thinkingLevel } : {}),
     ...(typeof v.clientCwd === 'string' ? { clientCwd: v.clientCwd } : {}),
-    ...(typeof v.idleRolloverMs === 'number' ? { idleRolloverMs: v.idleRolloverMs } : {}),
   };
 }

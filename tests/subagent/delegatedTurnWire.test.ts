@@ -38,7 +38,6 @@ const request = (): DelegatedTurnRequest => ({
   model: { provider: 'e2e', model: 'mock-model' },
   thinkingLevel: 'high',
   clientCwd: '/repo/3',
-  idleRolloverMs: Number.MAX_SAFE_INTEGER,
 });
 
 /** Every function value reachable from a value, by path. What the runner receives is JSON, so a closure
@@ -125,13 +124,12 @@ describe('the delegated-turn wire payload', () => {
       expect(parseDelegatedTurnRequest('nope')).toBeUndefined();
     });
 
-    it('refuses a non-finite idle cutoff rather than inventing one', () => {
-      // JSON has no Infinity — the delegate plugin pins MAX_SAFE_INTEGER for exactly this reason, so a
-      // null/NaN arriving here is corruption, and silently defaulting it would roll a child's transcript
-      // over mid-delegation.
-      expect(parseDelegatedTurnRequest({ ...request(), idleRolloverMs: null })).toBeUndefined();
-      expect(parseDelegatedTurnRequest({ ...request(), idleRolloverMs: Number.MAX_SAFE_INTEGER })?.idleRolloverMs)
-        .toBe(Number.MAX_SAFE_INTEGER);
+    it('drops the retired idle cutoff from an older request instead of refusing it', () => {
+      // A request minted before the channel idle cutoff was removed still carries `idleRolloverMs`. A
+      // runner mid-upgrade must run it, not refuse it, and the value must not reach the send opts.
+      const legacy = { ...request(), idleRolloverMs: Number.MAX_SAFE_INTEGER };
+      expect(parseDelegatedTurnRequest(legacy)).toBeDefined();
+      expect(parseDelegatedTurnRequest(legacy)).not.toHaveProperty('idleRolloverMs');
     });
 
     it('never carries a Fast snapshot into fresh, runner or resumed child sessions', () => {

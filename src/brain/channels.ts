@@ -23,9 +23,8 @@ import { projectTurnWireFrames, projectUserTurn, storedContextMessages } from '.
 import { attachmentTurnNote, storeChannelAttachments, unstoredAttachmentTurnNote, type ChannelAttachment, type ChannelUploadDeps } from './channelAttachments.js';
 import { newCostMeter, runWithMeter } from './openrouterMeter.js';
 import { extractText, isThinkingOnlyReply, NO_REPLY_NUDGE, lastAssistant } from './messageView.js';
-import { resolvesContributionsPerTurn, channelSessionId, archivedChannelSessionId, contributionOwnerForSession, isChannelSession, isSubagentSession, channelIdOf, mayDeliverToSession } from './sessionId.js';
+import { resolvesContributionsPerTurn, channelSessionId, contributionOwnerForSession, isChannelSession, isSubagentSession, channelIdOf, mayDeliverToSession } from './sessionId.js';
 import { isPromptCommand } from './slashCommands.js';
-import { rolloverDue, SESSION_IDLE_ROLLOVER_MS } from './session/idleRollover.js';
 import { decideAmbientBlock } from './session/ambientBlock.js';
 import { drainPostCompactionContext } from './continuity/postCompactionContext.js';
 import { composeTurnWire } from './session/turnPrompt.js';
@@ -111,8 +110,8 @@ export interface PlatformTurnResumeEnvelope {
   /** The orchestrator's registry channel key (`<platform>-<thread-or-channel>`), from which the durable
    *  session id is re-derived (channelSessionId). */
   channelId: string;
-  /** The session owner resolved for THIS turn (post-rollover): prompt composition (personal skills,
-   *  account instructions, auto-compact threshold) keys on it. */
+  /** The session owner resolved for THIS turn: prompt composition (personal skills, account instructions,
+   *  auto-compact threshold) keys on it. */
   ownerUserId: number;
   direct: boolean;
   /** The live turn ran as trusted-channel (admin ROOM role). Recorded because it shaped the live
@@ -140,7 +139,6 @@ export interface PlatformTurnResumeEnvelope {
   deniedTools?: string[];
   model?: { provider?: string; model?: string };
   thinkingLevel?: string;
-  idleRolloverMs?: number;
   /** Opaque outbound destination — present only for verified direct chats, exactly as on the live turn. */
   deliveryTarget?: string;
   historyPlatform?: string;
@@ -190,7 +188,6 @@ export function normalizePlatformTurnEnvelope(raw: unknown): PlatformTurnResumeE
   if (model !== undefined && (typeof model !== 'object' || model === null
     || !isOptionalString(model.provider) || !isOptionalString(model.model))) return null;
   if (!isOptionalString(e.thinkingLevel)) return null;
-  if (e.idleRolloverMs !== undefined && !(typeof e.idleRolloverMs === 'number' && Number.isFinite(e.idleRolloverMs))) return null;
   if (!isOptionalString(e.deliveryTarget) || !isOptionalString(e.historyPlatform)) return null;
   if (typeof e.promptCommand !== 'boolean') return null;
   if (typeof e.turnText !== 'string' || typeof e.senderText !== 'string') return null;
@@ -222,7 +219,6 @@ export function normalizePlatformTurnEnvelope(raw: unknown): PlatformTurnResumeE
       ...(model.model !== undefined ? { model: model.model as string } : {}),
     } } : {}),
     ...(e.thinkingLevel !== undefined ? { thinkingLevel: e.thinkingLevel } : {}),
-    ...(e.idleRolloverMs !== undefined ? { idleRolloverMs: e.idleRolloverMs } : {}),
     ...(e.deliveryTarget !== undefined ? { deliveryTarget: e.deliveryTarget } : {}),
     ...(e.historyPlatform !== undefined ? { historyPlatform: e.historyPlatform } : {}),
     promptCommand: e.promptCommand,
@@ -397,18 +393,11 @@ export interface ChannelSendOpts {
    *  refusal throws: an attachment the sender can see in the channel and the agent never receives is the
    *  exact silence this exists to end. */
   attachments?: ChannelAttachment[];
-  /** Idle cutoff for THIS surface: a channel that went quiet longer than this before the current
-   *  message has a long-expired prompt cache, so its session is rolled over (the stale transcript is
-   *  archived under a fresh id and a new empty session takes its place) rather than dragging the whole
-   *  stale context back in at full price. Unset → SESSION_IDLE_ROLLOVER_MS (Discord's 30 min). Cron
-   *  passes a shorter value so a frequent job past the cache window starts fresh — or `Infinity` to
-   *  disable rollover entirely for a job that must keep continuity across runs. */
-  idleRolloverMs?: number;
   /** Dispose this channel's live session before the turn so it is reassembled from current state, keeping
    *  the durable transcript (it rehydrates from SQLite). Set only where something the live session baked
    *  in at construction has changed underneath it — today a promoted delegated scope, whose new toolset
-   *  the already-assembled session would otherwise ignore. NOT a rollover: nothing is archived and the
-   *  session id is unchanged. */
+   *  the already-assembled session would otherwise ignore. Nothing is archived and the session id is
+   *  unchanged. */
   rebuildSession?: boolean;
   identity?: TurnIdentity;
   /** Host-verified platform author. Shared-room turns serialize it with the clean text; direct chats and
@@ -820,34 +809,13 @@ export class ChannelSessionService {
     const reply = steered !== null ? steered : await this.d.registry.withLock(sessionId, async () => {
       if (parentSessionId && this.d.registry.isParentAborting(parentSessionId)) throw this.d.registry.delegationAbortError(sessionId, parentSessionId);
       this.d.registry.throwIfPendingAbort(sessionId);
-      // Idle rollover (cache-cost fix): a channel that sat quiet past the idle cutoff has a long-expired
-      // prompt cache, so continuing would re-send its whole stale transcript at full price for no benefit.
-      // Drop the live PI session and ARCHIVE the old transcript+title under a fresh unique id — the
-      // deterministic channel id is freed, so the fall
-      // through below spawns a fresh, empty session under it (the registry and slash commands key on
-      // channelId, so the id stays stable). The old conversation stays browsable in the sessions view.
-      // MUST run before the getMessages() backfill check so a reset channel re-triggers its history
-      // backfill + titler. A streaming turn is never cut — the lock already serializes this channel's
-      // turns, so this only guards against a live record left mid-flight. `interactedAt` is the live
-      // session's own last deliberate touch (compact/model switch): a recent interaction vetoes the
-      // rollover even when the last stored message is stale. This cutoff is a PLATFORM-only rule — owner
-      // chat has no equivalent, so a scheduled turn bound to an owner conversation never moves.
-      const live = this.d.registry.channelGet(opts.channelId);
-      // The caller resolved this from the row that existed when the turn arrived. The rollover below can
-      // rename that row out from under it, which is the one moment the value goes stale.
-      let ownerUserId = opts.ownerUserId;
-      if (!live?.session.isStreaming
-          && !this.d.registry.hasActiveChildren(sessionId)
-          && rolloverDue({ lastMessageAt: this.d.store.lastMessageAt(sessionId), interactedAt: live?.interactedAt, now: Date.now() }, opts.idleRolloverMs ?? SESSION_IDLE_ROLLOVER_MS)) {
-        this.d.registry.channelDispose(opts.channelId);
-        this.d.store.reassignSession(sessionId, archivedChannelSessionId(opts.channelId));
-        // The previous conversation has just been archived under its own owner, and the canonical id is
-        // free again. Whoever is writing now is therefore OPENING a room, not joining one, and owns what
-        // they open — the same rule the orchestrator applies when no row exists at all. It cannot apply it
-        // here itself: the rollover is decided inside this method, after the owner was already resolved.
-        // An unlinked sender carries no account, so the channel owner stands.
-        if (opts.writerUserId != null) ownerUserId = opts.writerUserId;
-      }
+      // A channel keeps ONE conversation for its whole life, however long it sits quiet. There is no idle
+      // cutoff on any surface: a room, a 1:1 DM, a cron job's own channel and a sub-agent channel all
+      // continue where they left off, so a scheduled wake-up bound to a conversation always finds the
+      // history it was set from. The cost of returning to a long-cold context is paid at the START of the
+      // turn instead, by cold tool-result clearing and cold-start compaction below — both gated on the
+      // provably expired prompt cache, so nothing warm is ever rewritten.
+      const ownerUserId = opts.ownerUserId;
       // The post-turn curator must distill ONLY this sender's own words. Imported platform history is
       // seeded separately, so it can never land in THIS sender's private memory or conversation title.
       const senderMessage = senderText;
@@ -1017,12 +985,11 @@ export class ChannelSessionService {
       ch.turnSender = opts.identity?.userId; // whose turn this is → mid-run injection only steers same-sender messages in
       ch.turnWriterUserId = opts.writerUserId ?? null;
       try {
-      // First turn after this room's prompt cache expired: shrink the context BEFORE the provider
-      // re-caches it. Owner chat has had this since the idle sweep was retired; a room did not, even
-      // though a room — a cron channel that keeps one conversation for weeks — is where the expensive
-      // cold context actually accumulates. Runs before the user's message is projected, so that message
-      // is never part of what gets summarized. An ordinary Discord room is rolled over long before the
-      // gate opens; this bites exactly on the long-lived channels that disable or lengthen the rollover.
+      // First turn after this channel's prompt cache expired: shrink the context BEFORE the provider
+      // re-caches it. This is the WHOLE answer to a stale channel context — every platform surface keeps
+      // its conversation across any amount of idle time, so a room, a DM, a cron channel that has held one
+      // conversation for weeks and a sub-agent channel all arrive here. Runs before the user's message is
+      // projected, so that message is never part of what gets summarized.
       const coldDeps = {
         store: this.d.store,
         sessions: this.d.registry,
@@ -1356,9 +1323,6 @@ export class ChannelSessionService {
             ...(opts.model.model !== undefined ? { model: opts.model.model } : {}),
           } } : {}),
           ...(opts.thinkingLevel !== undefined ? { thinkingLevel: opts.thinkingLevel } : {}),
-          // `Infinity` (cron's "never roll over") does not survive JSON — omitted, like unset.
-          ...(opts.idleRolloverMs !== undefined && Number.isFinite(opts.idleRolloverMs)
-            ? { idleRolloverMs: opts.idleRolloverMs } : {}),
           ...(opts.deliveryTarget !== undefined ? { deliveryTarget: opts.deliveryTarget } : {}),
           ...(opts.historyPlatform !== undefined ? { historyPlatform: opts.historyPlatform } : {}),
           promptCommand: opts.promptCommand === true,

@@ -318,7 +318,7 @@ describe('subagent plugin', () => {
     });
 
     // Capture the handler the way the host does, then delegate under a scoped policy.
-    let seen: { access?: { projectIds: number[]; admin: boolean; owner: boolean; parentSessionId?: string; sessionIdleMs?: number; toolPolicy?: { allow?: string[]; deny?: string[] } } } | null = null;
+    let seen: { access?: { projectIds: number[]; admin: boolean; owner: boolean; parentSessionId?: string; toolPolicy?: { allow?: string[]; deny?: string[] } } } | null = null;
     reg.platforms[0]!.listen(async (src, text) => { seen = src; return `sub did: ${text}`; });
     await runWithPolicy(LIMITED, async () => {
       const out = asText(await delegate.execute('t', { task: 'najdi bug' }, undefined as never, undefined as never));
@@ -330,8 +330,6 @@ describe('subagent plugin', () => {
     });
     expect(seen!.access).toMatchObject({
       projectIds: [1], admin: false, owner: false, parentSessionId: 'brain-parent-1',
-      // The delegate transcript never rolls over into a fresh session mid-flight.
-      sessionIdleMs: Number.MAX_SAFE_INTEGER,
       toolPolicy: { allow: ['Delegate'], deny: ['DiscordApi'] },
     });
   });

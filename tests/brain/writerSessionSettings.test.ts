@@ -18,7 +18,7 @@ import type { DelegatedExecutionScope } from '../../src/brain/delegatedScope.js'
  *  is composed from has to be resolved there, after the rollover, rather than by the caller. */
 
 const agedTs = (agoMs: number): string => new Date(Date.now() - agoMs).toISOString().replace('T', ' ').slice(0, 19);
-const THIRTY_ONE_MIN = 31 * 60 * 1000;
+const TWO_HOURS = 2 * 60 * 60 * 1000;
 
 function fakeBrain(sessionId: string, ownerUserId: number, settingsUserId: number) {
   const messages: { role?: string; content?: unknown }[] = [];
@@ -111,17 +111,18 @@ describe('a room composes its session from the writer, not from whoever opened i
     expect(t.settingsIdOf(1)).toBe(2);
   });
 
-  it('follows the writer that an idle rollover just made the new owner', async () => {
+  it('is unaffected by an idle gap — the room keeps its owner and its live composition', async () => {
     const t = setup();
 
     await t.turn(2, 'Michal opens the room');
-    t.ageLastMessage(THIRTY_ONE_MIN);
-    await t.turn(3, 'Sabina writes half an hour later');
+    t.ageLastMessage(TWO_HOURS);
+    await t.turn(3, 'Sabina writes two hours later');
 
-    // The rollover archives Michal's conversation and Sabina opens a fresh one: both the row and the
-    // composition must move to her, and the stale owner the orchestrator passed in must not win.
-    expect(t.store.getSession(t.sessionId)?.user_id).toBe(3);
-    expect(t.settingsIdOf(1)).toBe(3);
+    // Idle time moves nothing: the row keeps Michal, and Sabina joined the session already composed for
+    // him — it was never respawned. Composition follows a new writer only when something does respawn it.
+    expect(t.store.getSession(t.sessionId)?.user_id).toBe(2);
+    expect(t.spawn).toHaveBeenCalledOnce();
+    expect(t.settingsIdOf(0)).toBe(2);
   });
 
   it('gives a delegated child the settings its PARENT composed from, not the room opener’s', async () => {

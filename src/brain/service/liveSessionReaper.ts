@@ -1,3 +1,8 @@
+/** How long a live PI session may sit unwatched and idle before the sweep disposes the RUNTIME. Purely a
+ *  memory bound: the durable conversation is untouched and the next message respawns it from SQLite.
+ *  Nothing about it moves or replaces a conversation — no surface has an idle cutoff on its history. */
+export const IDLE_LIVE_SESSION_TTL_MS = 30 * 60 * 1000;
+
 /** One live conversation as the reaper sees it: its id and whether it currently qualifies for reaping
  *  (nobody attached, nothing running). The caller owns that predicate — this module owns only WHEN. */
 export interface ReapCandidate {

@@ -315,11 +315,6 @@ export interface SessionSource {
      *  resolved against THIS, so a turn that can CREATE a Sandbox workspace can also delegate into it.
      *  Kept beside `contributionUserId`, which retains its narrower "whose personal contributions" meaning. */
     accountUserId?: number | null;
-    /** Idle cutoff (ms) for THIS surface's channel session — forwarded to ChannelSessionService.send as
-     *  `idleRolloverMs`. Set by cron (shorter than the default 30 min) so a frequent job whose gap between
-     *  ticks exceeds the prompt-cache window starts a fresh session instead of re-sending a growing context
-     *  at full price. Unset → the host default (SESSION_IDLE_ROLLOVER_MS). */
-    sessionIdleMs?: number;
     /** Additional per-turn tool denies supplied by a platform. This can only NARROW the resolved account
      *  or role policy; synthetic relays use it to prevent autonomous agent-to-agent message loops. */
     denyTools?: string[] };
@@ -651,7 +646,7 @@ export interface PluginHostStores {
  *
  *  `id` is the CURRENT session id and is what navigation uses — but it is not stable, so it must not be
  *  the only thing a durable association stores. `key` is: it is the row's immutable identity, minted once
- *  and carried through a channel rollover's re-key, and it dies with the conversation. Store both, resolve
+ *  and carried through a `/context` bind's re-key, and it dies with the conversation. Store both, resolve
  *  by `key`, navigate by the `id` that resolution returns. */
 export interface PluginConversationTarget {
   id: string;

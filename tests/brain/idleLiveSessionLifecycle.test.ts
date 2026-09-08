@@ -4,7 +4,7 @@ import { BrainService } from '../../src/brain/brainService.js';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { inMemoryModelRuntime } from '../../src/brain/providers.js';
-import { SESSION_IDLE_ROLLOVER_MS } from '../../src/brain/session/idleRollover.js';
+import { IDLE_LIVE_SESSION_TTL_MS } from '../../src/brain/service/liveSessionReaper.js';
 
 // A web tab going away is NOT a stop. The browser fires `pagehide` when iOS freezes the page into the
 // bfcache (screen lock), and the beacon that followed it used to abort + dispose the running turn — the
@@ -177,10 +177,10 @@ describe('idle live-session reaper', () => {
     await svc.send({ userId: 1, text: 'hello' });
 
     expect(await svc.reapIdleLiveSessions(t0)).toEqual([]);
-    expect(await svc.reapIdleLiveSessions(t0 + SESSION_IDLE_ROLLOVER_MS - 1)).toEqual([]);
+    expect(await svc.reapIdleLiveSessions(t0 + IDLE_LIVE_SESSION_TTL_MS - 1)).toEqual([]);
     expect(d.session.dispose).not.toHaveBeenCalled();
 
-    expect(await svc.reapIdleLiveSessions(t0 + SESSION_IDLE_ROLLOVER_MS)).toEqual(['brain-1']);
+    expect(await svc.reapIdleLiveSessions(t0 + IDLE_LIVE_SESSION_TTL_MS)).toEqual(['brain-1']);
     expect(d.session.dispose).toHaveBeenCalled();
     expect(svc.status(1).running).toBe(false);
     expect(d.store.getSession('brain-1')).toBeDefined(); // history stays resumable
@@ -195,13 +195,13 @@ describe('idle live-session reaper', () => {
 
     // Busy for well over the TTL with no client attached: nothing may be reaped, and no stamp may accrue.
     expect(await svc.reapIdleLiveSessions(t0)).toEqual([]);
-    expect(await svc.reapIdleLiveSessions(t0 + SESSION_IDLE_ROLLOVER_MS * 2)).toEqual([]);
+    expect(await svc.reapIdleLiveSessions(t0 + IDLE_LIVE_SESSION_TTL_MS * 2)).toEqual([]);
 
     d.session.isStreaming = false; // the turn finally settles
-    expect(await svc.reapIdleLiveSessions(t0 + SESSION_IDLE_ROLLOVER_MS * 2)).toEqual([]);
+    expect(await svc.reapIdleLiveSessions(t0 + IDLE_LIVE_SESSION_TTL_MS * 2)).toEqual([]);
     // The TTL is measured from THAT moment, not from when the client left.
-    expect(await svc.reapIdleLiveSessions(t0 + SESSION_IDLE_ROLLOVER_MS * 3 - 1)).toEqual([]);
-    expect(await svc.reapIdleLiveSessions(t0 + SESSION_IDLE_ROLLOVER_MS * 3)).toEqual(['brain-1']);
+    expect(await svc.reapIdleLiveSessions(t0 + IDLE_LIVE_SESSION_TTL_MS * 3 - 1)).toEqual([]);
+    expect(await svc.reapIdleLiveSessions(t0 + IDLE_LIVE_SESSION_TTL_MS * 3)).toEqual(['brain-1']);
   });
 
   it('a client attaching mid-window resets the countdown', async () => {
@@ -212,10 +212,10 @@ describe('idle live-session reaper', () => {
 
     expect(await svc.reapIdleLiveSessions(t0)).toEqual([]);
     const off = svc.tapSession(1, 'brain-1', () => {}, 'web-x', 1);
-    expect(await svc.reapIdleLiveSessions(t0 + SESSION_IDLE_ROLLOVER_MS)).toEqual([]);
+    expect(await svc.reapIdleLiveSessions(t0 + IDLE_LIVE_SESSION_TTL_MS)).toEqual([]);
     off();
-    expect(await svc.reapIdleLiveSessions(t0 + SESSION_IDLE_ROLLOVER_MS + 1)).toEqual([]);
-    expect(await svc.reapIdleLiveSessions(t0 + SESSION_IDLE_ROLLOVER_MS * 2 + 1)).toEqual(['brain-1']);
+    expect(await svc.reapIdleLiveSessions(t0 + IDLE_LIVE_SESSION_TTL_MS + 1)).toEqual([]);
+    expect(await svc.reapIdleLiveSessions(t0 + IDLE_LIVE_SESSION_TTL_MS * 2 + 1)).toEqual(['brain-1']);
   });
 
   it('never reaps a session a client is still watching', async () => {
@@ -226,7 +226,7 @@ describe('idle live-session reaper', () => {
     await svc.send({ userId: 1, text: 'hello' });
 
     expect(await svc.reapIdleLiveSessions(t0)).toEqual([]);
-    expect(await svc.reapIdleLiveSessions(t0 + SESSION_IDLE_ROLLOVER_MS * 10)).toEqual([]);
+    expect(await svc.reapIdleLiveSessions(t0 + IDLE_LIVE_SESSION_TTL_MS * 10)).toEqual([]);
     expect(d.session.dispose).not.toHaveBeenCalled();
   });
 });

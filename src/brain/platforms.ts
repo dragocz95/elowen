@@ -339,9 +339,6 @@ export class PlatformOrchestrator {
               // A delegated child inherits the delegating turn's working directory so its tools run in —
               // and it advertises — the SAME project as the parent, not the daemon's `/`.
               ...(!workspaceBinding && src.access.cwd !== undefined ? { clientCwd: src.access.cwd } : {}),
-              // Surface-tuned idle cutoff (the delegate plugin pins it so a child's transcript is never
-              // rolled over mid-delegation).
-              ...(src.access.sessionIdleMs !== undefined ? { idleRolloverMs: src.access.sessionIdleMs } : {}),
             }, text, onEvent);
           }
           // A platform sender has only the permissions of their linked Elowen account. Room roles still
@@ -494,8 +491,6 @@ export class PlatformOrchestrator {
             scheduled: src.access.scheduled === true,
             model: src.access.model,
             thinkingLevel: src.access.thinkingLevel,
-            // Surface-tuned idle cutoff (cron passes a shorter one; Discord omits it → host default).
-            idleRolloverMs: src.access.sessionIdleMs,
             toolPolicy,
             images: src.images,
             attachments: src.attachments,
