@@ -391,7 +391,7 @@ describe('openDb — snake_case → TitleCase tool rename', () => {
     mid.close();
     const db = openDb(path);
     expect((db.prepare('SELECT disabled_tools FROM users WHERE id = 1').get() as { disabled_tools: string }).disabled_tools).toBe('run_command');
-    expect(db.pragma('user_version', { simple: true })).toBe(19); // every one-shot migration is done
+    expect(db.pragma('user_version', { simple: true })).toBe(20); // every one-shot migration is done
   });
 
   it("leaves a platform role's stale tool list alone — the host stopped reading it, so it is inert", () => {
@@ -435,7 +435,7 @@ describe('openDb — snake_case → TitleCase tool rename', () => {
     const db = openDb(path);
     expect((db.prepare('SELECT disabled_tools FROM users WHERE id = 1').get() as { disabled_tools: string }).disabled_tools)
       .toBe('mcp__chrome_devtools__click,mcp__chrome_devtools__performance_analyze_insight,mcp_ghost_thing,Bash');
-    expect(db.pragma('user_version', { simple: true })).toBe(19);
+    expect(db.pragma('user_version', { simple: true })).toBe(20);
   });
 
   it('prefers the longest matching server, so one name cannot be split by another\'s prefix', () => {
@@ -459,7 +459,7 @@ describe('openDb — snake_case → TitleCase tool rename', () => {
     const db = openDb(path);
     expect((db.prepare('SELECT disabled_tools FROM users WHERE id = 1').get() as { disabled_tools: string }).disabled_tools)
       .toBe('mcp_chrome_devtools_click');
-    expect(db.pragma('user_version', { simple: true })).toBe(19); // still marked done — there was nothing to do
+    expect(db.pragma('user_version', { simple: true })).toBe(20); // still marked done — there was nothing to do
   });
 
   it('leaves a corrupt permissions blob exactly as found', () => {
@@ -544,7 +544,7 @@ describe('openDb — registry plugin tool rename (v3)', () => {
     const db = openDb(path);
     expect((db.prepare('SELECT disabled_tools FROM users WHERE id = 1').get() as { disabled_tools: string }).disabled_tools)
       .toBe('Bash,todo_write');
-    expect(db.pragma('user_version', { simple: true })).toBe(19);
+    expect(db.pragma('user_version', { simple: true })).toBe(20);
   });
 
   it('names the image tools verb-first, the way a one-tool plugin is named', () => {
@@ -568,7 +568,7 @@ describe('openDb — registry plugin tool rename (v3)', () => {
     const db = openDb(path);
     expect((db.prepare('SELECT disabled_tools FROM users WHERE id = 1').get() as { disabled_tools: string }).disabled_tools)
       .toBe('GenerateImage,EditImage,Bash');
-    expect(db.pragma('user_version', { simple: true })).toBe(19);
+    expect(db.pragma('user_version', { simple: true })).toBe(20);
   });
 });
 
@@ -602,7 +602,7 @@ describe('openDb — session-event kinds (v5)', () => {
   it('accepts a cwd marker on a database that predates the kind, carrying the old markers across', () => {
     const path = seedPre5();
     const db = openDb(path);
-    expect(db.pragma('user_version', { simple: true })).toBe(19);
+    expect(db.pragma('user_version', { simple: true })).toBe(20);
 
     expect(() => insertCwd(db)).not.toThrow();
     expect(db.prepare('SELECT event_id, kind, detail, created_at FROM brain_session_events ORDER BY event_id').all())
@@ -622,7 +622,7 @@ describe('openDb — session-event kinds (v5)', () => {
     const path = seedPre5();
     openDb(path).close();     // v5 runs here
     const db = openDb(path);  // ...and must not rebuild the table a second time
-    expect(db.pragma('user_version', { simple: true })).toBe(19);
+    expect(db.pragma('user_version', { simple: true })).toBe(20);
     expect(() => insertCwd(db)).not.toThrow();
     expect(db.prepare('SELECT COUNT(*) AS n FROM brain_session_events').get()).toEqual({ n: 2 });
   });
@@ -650,7 +650,7 @@ describe('openDb — drop personality tables (v6)', () => {
   it('drops both personality tables (and their indexes) on a database that predates the collapse', () => {
     const path = seedPre6();
     const db = openDb(path);
-    expect(db.pragma('user_version', { simple: true })).toBe(19);
+    expect(db.pragma('user_version', { simple: true })).toBe(20);
     expect(hasTable(db, 'personality_profiles')).toBe(false);
     expect(hasTable(db, 'personality_active_profiles')).toBe(false);
     // The index went with its table — no orphan left behind.
@@ -659,9 +659,63 @@ describe('openDb — drop personality tables (v6)', () => {
 
   it('is a no-op on a fresh database that never had the tables (idempotent)', () => {
     const db = openDb(':memory:');
-    expect(db.pragma('user_version', { simple: true })).toBe(19);
+    expect(db.pragma('user_version', { simple: true })).toBe(20);
     expect(hasTable(db, 'personality_profiles')).toBe(false);
     expect(hasTable(db, 'personality_active_profiles')).toBe(false);
+  });
+});
+
+describe('openDb — drop retired tables (v20)', () => {
+  const hasTable = (db: Database.Database, name: string): boolean =>
+    !!db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name = ?").get(name);
+
+  /** A DB that still carries the three retired tables: the current schema, the tables hand-recreated
+   *  (schema.sql makes none of them), and user_version parked at 19 so only v20 is armed. v6 is
+   *  unreachable at that point — which is precisely why the personality tables survive on prod. */
+  function seedPre20(): string {
+    dir = mkdtempSync(join(tmpdir(), 'elowen-db-'));
+    const path = join(dir, 'pre20.db');
+    const db = openDb(path);
+    db.exec(`CREATE TABLE brain_queue (id INTEGER PRIMARY KEY, session_id TEXT NOT NULL, payload TEXT NOT NULL);
+             CREATE INDEX idx_brain_queue_session ON brain_queue(session_id);
+             CREATE TABLE personality_profiles (id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL, platform TEXT NOT NULL, name TEXT NOT NULL, prompt TEXT NOT NULL);
+             CREATE TABLE personality_active_profiles (user_id INTEGER NOT NULL, platform TEXT NOT NULL, profile_id INTEGER NOT NULL, PRIMARY KEY (user_id, platform));`);
+    db.prepare("INSERT INTO brain_tool_result_spills (session_id, tool_call_id, mode, bytes, path) VALUES ('s1', 'c1', 'file', 99, '/tmp/spill')").run();
+    db.pragma('user_version = 19');
+    db.close();
+    return path;
+  }
+
+  it('drops all three retired tables (and their indexes) on a database that still carries them', () => {
+    const path = seedPre20();
+    const db = openDb(path);
+    expect(db.pragma('user_version', { simple: true })).toBe(20);
+    expect(hasTable(db, 'brain_queue')).toBe(false);
+    expect(hasTable(db, 'personality_profiles')).toBe(false);
+    expect(hasTable(db, 'personality_active_profiles')).toBe(false);
+    expect(db.prepare("SELECT 1 FROM sqlite_master WHERE type='index' AND name = 'idx_brain_queue_session'").get()).toBeUndefined();
+  });
+
+  it('leaves the spill latch and the diagnostic memory column alone', () => {
+    // brain_tool_result_spills is held back on purpose until the v19 convergence has soaked, and
+    // memory_usage_events.search_index is a diagnostic column, not part of this cleanup.
+    const db = openDb(seedPre20());
+    expect(db.prepare('SELECT session_id, bytes FROM brain_tool_result_spills').all()).toEqual([{ session_id: 's1', bytes: 99 }]);
+    expect((db.prepare('PRAGMA table_info(memory_usage_events)').all() as { name: string }[]).map((c) => c.name))
+      .toContain('search_index');
+  });
+
+  it('is a no-op on a database that never had the tables, and on a second open', () => {
+    const fresh = openDb(':memory:');
+    expect(fresh.pragma('user_version', { simple: true })).toBe(20);
+    expect(hasTable(fresh, 'brain_queue')).toBe(false);
+
+    const path = seedPre20();
+    openDb(path).close();          // v20 runs here
+    const again = openDb(path);    // ...and must find nothing left to do
+    expect(again.pragma('user_version', { simple: true })).toBe(20);
+    expect(hasTable(again, 'brain_queue')).toBe(false);
+    expect(hasTable(again, 'personality_profiles')).toBe(false);
   });
 });
 
@@ -710,7 +764,7 @@ describe('openDb — monotonic user ids (v7)', () => {
 
   it('rebuilds a legacy table, preserving every row, id and column value', () => {
     const db = openDb(seedPre7());
-    expect(db.pragma('user_version', { simple: true })).toBe(19);
+    expect(db.pragma('user_version', { simple: true })).toBe(20);
     expect(db.prepare('SELECT id, username, password_hash, is_admin, email, created_at FROM users ORDER BY id').all())
       .toEqual([
         { id: 1, username: 'alice', password_hash: 'h1', is_admin: 1, email: 'a@x', created_at: '2026-01-01 09:00:00' },
@@ -771,13 +825,13 @@ describe('openDb — monotonic user ids (v7)', () => {
     seeded.close();
 
     const db = openDb(path);
-    expect(db.pragma('user_version', { simple: true })).toBe(19);
+    expect(db.pragma('user_version', { simple: true })).toBe(20);
     expect(addUser(db, 'dave')).toBe(10); // clears the orphaned 9 rather than reissuing it
   });
 
   it('leaves a fresh database alone — already monotonic, nothing to rebuild', () => {
     const db = openDb(':memory:');
-    expect(db.pragma('user_version', { simple: true })).toBe(19);
+    expect(db.pragma('user_version', { simple: true })).toBe(20);
     const a = addUser(db, 'alice');
     db.prepare('DELETE FROM users WHERE id = ?').run(a);
     expect(addUser(db, 'bob')).toBe(a + 1);
@@ -787,7 +841,7 @@ describe('openDb — monotonic user ids (v7)', () => {
     const path = seedPre7();
     openDb(path).close();      // v7 runs here
     const db = openDb(path);   // ...and must not rebuild a second time
-    expect(db.pragma('user_version', { simple: true })).toBe(19);
+    expect(db.pragma('user_version', { simple: true })).toBe(20);
     expect(db.prepare('SELECT COUNT(*) AS n FROM users').get()).toEqual({ n: 3 });
     expect(addUser(db, 'dave')).toBe(4); // counter survived the reopen, so it did not restart at max(id)
   });
