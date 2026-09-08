@@ -10,41 +10,284 @@
     "../elowen-plugins-environments/tests/lspManagedGuest.podman.test.ts"
   ],
   "rows": [
-    { "area": "lifecycle", "capability": "create/start/inspect a project environment", "evidence": "real-guest", "suite": "containerRuntime.podman", "negative": "unit", "notes": "systemd guest, crun, slirp4netns without host loopback." },
-    { "area": "lifecycle", "capability": "stop/start restart preserves rootfs, home, workspace, data", "evidence": "real-guest", "suite": "containerRuntime.podman", "negative": "unit" },
-    { "area": "lifecycle", "capability": "cgroup limits applied (cpu.max, memory.max, pids.max)", "evidence": "real-guest", "suite": "containerRuntime.podman", "negative": "unit" },
-    { "area": "lifecycle", "capability": "snapshot then restore into a fresh generation", "evidence": "real-guest", "suite": "containerRuntime.podman", "negative": "unit", "notes": "Was the long-standing blocker; restore now rebuilds the volume and retains worktree metadata." },
-    { "area": "lifecycle", "capability": "delete environment and release its resources", "evidence": "real-guest", "suite": "containerRuntime.podman", "negative": "unit" },
-    { "area": "lifecycle", "capability": "generation mismatch refused", "evidence": "unit", "suite": "environmentLifecycle", "negative": "unit" },
-    { "area": "lifecycle", "capability": "member revocation cancels that account's guest leases", "evidence": "unit", "suite": "environmentLifecycle", "negative": "unit" },
-    { "area": "execution", "capability": "shell command through the bootstrap frame (duplex stdin preserved)", "evidence": "real-guest", "suite": "containerRuntime.podman", "negative": "unit", "notes": "Two-write delayed echo confirmed later stdin frames are delivered." },
-    { "area": "execution", "capability": "argv launch with PATH resolved inside the guest", "evidence": "real-guest", "suite": "lspManagedGuest.podman", "negative": "unit" },
-    { "area": "execution", "capability": "cancellation kills the guest unit and its descendants", "evidence": "real-guest", "suite": "containerRuntime.podman", "negative": "unit" },
-    { "area": "execution", "capability": "execution uses the environment's whole pid budget", "evidence": "real-guest", "suite": "containerRuntime.podman", "negative": "unit", "notes": "TasksMax=infinity; guest systemd otherwise capped a unit at 15% of the declared limit." },
-    { "area": "execution", "capability": "background/foreground/cwd/output-limit behaviour in a guest", "evidence": "unverified", "negative": "unverified", "notes": "Only host-mode coverage exists." },
-    { "area": "guest-files", "capability": "write, read, and version-conflict refusal", "evidence": "real-guest", "suite": "containerRuntime.podman", "negative": "real-guest", "notes": "expectedVersion null means must-not-exist; stale version refused." },
-    { "area": "guest-files", "capability": "read bounded by the guest transfer limit", "evidence": "real-guest", "suite": "lspManagedGuest.podman", "negative": "unit", "notes": "Managed LSP asked for 2 MiB against a 512 KiB bound and every check silently degraded." },
-    { "area": "guest-files", "capability": "chunked upload protocol and completion metadata", "evidence": "unit", "suite": "managedCompletion", "negative": "unit" },
-    { "area": "file-tools", "capability": "Read/Edit/Write/Glob/Grep/ListDir/FileInfo against a managed project", "evidence": "unverified", "negative": "unit", "notes": "Wiring covered by managedConsumers; no real-guest journey." },
-    { "area": "file-tools", "capability": "GitStatus and worktrees in a managed project", "evidence": "real-guest", "suite": "containerRuntime.podman", "negative": "unit", "notes": "Worktree create/list/remove real; GitStatus tool itself unverified." },
-    { "area": "artifacts", "capability": "ShareFile/ShareImage resolve a managed guest path", "evidence": "unit", "suite": "managedSandboxWiring", "negative": "unit", "notes": "Provider resolver wiring was missing entirely and is now pinned by a contract test." },
-    { "area": "artifacts", "capability": "plans and transcripts under a managed project", "evidence": "unverified", "negative": "unverified" },
-    { "area": "preview", "capability": "project preview binding serves over a unix socket and releases", "evidence": "real-guest", "suite": "containerRuntime.podman", "negative": "real-guest", "notes": "Real HTTP 200; socket gone after release." },
-    { "area": "lsp", "capability": "install a language server into the guest and find it on PATH", "evidence": "real-guest", "suite": "lspManagedGuest.podman", "negative": "unit" },
-    { "area": "lsp", "capability": "real diagnostics: error reported, then clean after the fix", "evidence": "real-guest", "suite": "lspManagedGuest.podman", "negative": "unit" },
-    { "area": "lsp", "capability": "server lifetime owned by the lease, not a host pid watchdog", "evidence": "real-guest", "suite": "lspManagedGuest.podman", "negative": "unit", "notes": "A host pid is invisible in the guest namespace and the server exited(1) immediately." },
-    { "area": "browser", "capability": "headless Chromium renders in the guest", "evidence": "real-guest", "suite": "containerRuntime.podman", "negative": "unit", "notes": "Engine proven; the browser TOOL surface below is not." },
-    { "area": "browser", "capability": "navigate/evaluate/click/screenshot/download/persistence via the browser tool", "evidence": "unverified", "negative": "unverified" },
-    { "area": "editor", "capability": "upload/download/preview/converters against a managed project", "evidence": "unit", "suite": "editor plugin suites", "negative": "unit", "notes": "Chunked guest upload protocol covered; no real-guest journey." },
-    { "area": "sites", "capability": "container lifecycle handed to the environment provider", "evidence": "real-guest", "suite": "containerRuntime.podman", "negative": "unit", "notes": "register/request/export-project/cleanup-stage exercised." },
-    { "area": "sites", "capability": "source publication preserves mode and relative symlinks", "evidence": "real-guest", "suite": "containerRuntime.podman", "negative": "unit" },
-    { "area": "sites", "capability": "snapshot id mapping and retention pruning", "evidence": "unit", "suite": "sites-environment", "negative": "unit" },
-    { "area": "mcp", "capability": "project MCP install, reconnect, schema visibility", "evidence": "unverified", "negative": "unverified" },
-    { "area": "cron", "capability": "scheduled turn scoping to a managed project", "evidence": "unit", "suite": "cronjob suites", "negative": "unit" },
-    { "area": "subagent", "capability": "delegated scope cannot retarget or enumerate projects", "evidence": "unit", "suite": "delegatedTurnWire", "negative": "unit" },
-    { "area": "channels", "capability": "a managed conversation refuses its turn when no provider resolves", "evidence": "unit", "suite": "workDir + telegram E2E", "negative": "unit", "notes": "Observed for real when a stale bundled plugin made the whole sandbox control unresolvable." },
-    { "area": "credentials", "capability": "Git and publishing credential separation", "evidence": "unverified", "negative": "unverified" },
-    { "area": "codebase", "capability": "codebase indexing/search inside a managed project", "evidence": "unverified", "negative": "unverified", "notes": "Registry-local plugin found by inventory." },
-    { "area": "integrations", "capability": "central personal integrations (onedrive, github, voice-bot, image-gen, image-edit, todo, stats, skills, web)", "evidence": "unverified", "negative": "unverified", "notes": "Explicitly central/account-scoped: they do not run in a project container. Listed so their absence from the guest matrix is a stated decision, not an omission." }
+    {
+      "area": "lifecycle",
+      "capability": "create/start/inspect a project environment",
+      "evidence": "real-guest",
+      "suite": "containerRuntime.podman",
+      "negative": "unit",
+      "notes": "systemd guest, crun, slirp4netns without host loopback."
+    },
+    {
+      "area": "lifecycle",
+      "capability": "stop/start restart preserves rootfs, home, workspace, data",
+      "evidence": "real-guest",
+      "suite": "containerRuntime.podman",
+      "negative": "unit"
+    },
+    {
+      "area": "lifecycle",
+      "capability": "cgroup limits applied (cpu.max, memory.max, pids.max)",
+      "evidence": "real-guest",
+      "suite": "containerRuntime.podman",
+      "negative": "unit"
+    },
+    {
+      "area": "lifecycle",
+      "capability": "snapshot then restore into a fresh generation",
+      "evidence": "real-guest",
+      "suite": "containerRuntime.podman",
+      "negative": "unit",
+      "notes": "Was the long-standing blocker; restore now rebuilds the volume and retains worktree metadata."
+    },
+    {
+      "area": "lifecycle",
+      "capability": "delete environment and release its resources",
+      "evidence": "real-guest",
+      "suite": "containerRuntime.podman",
+      "negative": "unit"
+    },
+    {
+      "area": "lifecycle",
+      "capability": "generation mismatch refused",
+      "evidence": "real-guest",
+      "suite": "containerRuntime.podman",
+      "negative": "real-guest"
+    },
+    {
+      "area": "lifecycle",
+      "capability": "member revocation cancels that account's guest leases",
+      "evidence": "unit",
+      "suite": "environmentLifecycle",
+      "negative": "unit"
+    },
+    {
+      "area": "execution",
+      "capability": "shell command through the bootstrap frame (duplex stdin preserved)",
+      "evidence": "real-guest",
+      "suite": "containerRuntime.podman",
+      "negative": "unit",
+      "notes": "Two-write delayed echo confirmed later stdin frames are delivered."
+    },
+    {
+      "area": "execution",
+      "capability": "argv launch with PATH resolved inside the guest",
+      "evidence": "real-guest",
+      "suite": "lspManagedGuest.podman",
+      "negative": "unit"
+    },
+    {
+      "area": "execution",
+      "capability": "cancellation kills the guest unit and its descendants",
+      "evidence": "real-guest",
+      "suite": "containerRuntime.podman",
+      "negative": "unit"
+    },
+    {
+      "area": "execution",
+      "capability": "execution uses the environment's whole pid budget",
+      "evidence": "real-guest",
+      "suite": "containerRuntime.podman",
+      "negative": "unit",
+      "notes": "TasksMax=infinity; guest systemd otherwise capped a unit at 15% of the declared limit."
+    },
+    {
+      "area": "execution",
+      "capability": "background/foreground/cwd/output-limit behaviour in a guest",
+      "evidence": "unverified",
+      "negative": "unverified",
+      "notes": "Only host-mode coverage exists."
+    },
+    {
+      "area": "guest-files",
+      "capability": "write, read, and version-conflict refusal",
+      "evidence": "real-guest",
+      "suite": "containerRuntime.podman",
+      "negative": "real-guest",
+      "notes": "expectedVersion null means must-not-exist; stale version refused."
+    },
+    {
+      "area": "guest-files",
+      "capability": "read bounded by the guest transfer limit",
+      "evidence": "real-guest",
+      "suite": "lspManagedGuest.podman",
+      "negative": "unit",
+      "notes": "Managed LSP asked for 2 MiB against a 512 KiB bound and every check silently degraded."
+    },
+    {
+      "area": "guest-files",
+      "capability": "chunked upload protocol and completion metadata",
+      "evidence": "unit",
+      "suite": "managedCompletion",
+      "negative": "unit"
+    },
+    {
+      "area": "file-tools",
+      "capability": "Read/Edit/Write/Glob/Grep/ListDir/FileInfo against a managed project",
+      "evidence": "real-guest",
+      "negative": "real-guest",
+      "notes": "The guest operations the file tools sit on: mkdir, list, content search, stat, rename, remove. The tool wrappers themselves remain unit-only.",
+      "suite": "containerRuntime.podman"
+    },
+    {
+      "area": "file-tools",
+      "capability": "GitStatus and worktrees in a managed project",
+      "evidence": "real-guest",
+      "suite": "containerRuntime.podman",
+      "negative": "unit",
+      "notes": "Worktree create/list/remove real; GitStatus tool itself unverified."
+    },
+    {
+      "area": "artifacts",
+      "capability": "ShareFile/ShareImage resolve a managed guest path",
+      "evidence": "unit",
+      "suite": "managedSandboxWiring",
+      "negative": "unit",
+      "notes": "Provider resolver wiring was missing entirely and is now pinned by a contract test."
+    },
+    {
+      "area": "artifacts",
+      "capability": "plans and transcripts under a managed project",
+      "evidence": "unverified",
+      "negative": "unverified"
+    },
+    {
+      "area": "preview",
+      "capability": "project preview binding serves over a unix socket and releases",
+      "evidence": "real-guest",
+      "suite": "containerRuntime.podman",
+      "negative": "real-guest",
+      "notes": "Real HTTP 200; socket gone after release."
+    },
+    {
+      "area": "lsp",
+      "capability": "install a language server into the guest and find it on PATH",
+      "evidence": "real-guest",
+      "suite": "lspManagedGuest.podman",
+      "negative": "unit"
+    },
+    {
+      "area": "lsp",
+      "capability": "real diagnostics: error reported, then clean after the fix",
+      "evidence": "real-guest",
+      "suite": "lspManagedGuest.podman",
+      "negative": "unit"
+    },
+    {
+      "area": "lsp",
+      "capability": "server lifetime owned by the lease, not a host pid watchdog",
+      "evidence": "real-guest",
+      "suite": "lspManagedGuest.podman",
+      "negative": "unit",
+      "notes": "A host pid is invisible in the guest namespace and the server exited(1) immediately."
+    },
+    {
+      "area": "browser",
+      "capability": "headless Chromium renders in the guest",
+      "evidence": "real-guest",
+      "suite": "containerRuntime.podman",
+      "negative": "unit",
+      "notes": "Engine proven; the browser TOOL surface below is not."
+    },
+    {
+      "area": "browser",
+      "capability": "navigate/evaluate/click/screenshot/download/persistence via the browser tool",
+      "evidence": "unverified",
+      "negative": "unverified"
+    },
+    {
+      "area": "editor",
+      "capability": "upload/download/preview/converters against a managed project",
+      "evidence": "unit",
+      "suite": "editor plugin suites",
+      "negative": "unit",
+      "notes": "Chunked guest upload protocol covered; no real-guest journey."
+    },
+    {
+      "area": "sites",
+      "capability": "container lifecycle handed to the environment provider",
+      "evidence": "real-guest",
+      "suite": "containerRuntime.podman",
+      "negative": "unit",
+      "notes": "register/request/export-project/cleanup-stage exercised."
+    },
+    {
+      "area": "sites",
+      "capability": "source publication preserves mode and relative symlinks",
+      "evidence": "real-guest",
+      "suite": "containerRuntime.podman",
+      "negative": "unit"
+    },
+    {
+      "area": "sites",
+      "capability": "snapshot id mapping and retention pruning",
+      "evidence": "unit",
+      "suite": "sites-environment",
+      "negative": "unit"
+    },
+    {
+      "area": "mcp",
+      "capability": "project MCP install, reconnect, schema visibility",
+      "evidence": "unverified",
+      "negative": "unverified"
+    },
+    {
+      "area": "cron",
+      "capability": "scheduled turn scoping to a managed project",
+      "evidence": "unit",
+      "suite": "cronjob suites",
+      "negative": "unit"
+    },
+    {
+      "area": "subagent",
+      "capability": "delegated scope cannot retarget or enumerate projects",
+      "evidence": "unit",
+      "suite": "delegatedTurnWire",
+      "negative": "unit"
+    },
+    {
+      "area": "channels",
+      "capability": "a managed conversation refuses its turn when no provider resolves",
+      "evidence": "unit",
+      "suite": "workDir + telegram E2E",
+      "negative": "unit",
+      "notes": "Observed for real when a stale bundled plugin made the whole sandbox control unresolvable."
+    },
+    {
+      "area": "credentials",
+      "capability": "Git and publishing credential separation",
+      "evidence": "unverified",
+      "negative": "unverified"
+    },
+    {
+      "area": "codebase",
+      "capability": "codebase indexing/search inside a managed project",
+      "evidence": "unverified",
+      "negative": "unverified",
+      "notes": "Registry-local plugin found by inventory."
+    },
+    {
+      "area": "integrations",
+      "capability": "central personal integrations (onedrive, github, voice-bot, image-gen, image-edit, todo, stats, skills, web)",
+      "evidence": "unverified",
+      "negative": "unverified",
+      "notes": "Explicitly central/account-scoped: they do not run in a project container. Listed so their absence from the guest matrix is a stated decision, not an omission."
+    },
+    {
+      "area": "authority",
+      "capability": "another project's identity cannot reach this environment",
+      "evidence": "real-guest",
+      "suite": "containerRuntime.podman",
+      "negative": "real-guest",
+      "notes": "Denied at the project boundary, not by the file simply being absent."
+    },
+    {
+      "area": "authority",
+      "capability": "a path the guest protocol cannot express safely is refused",
+      "evidence": "real-guest",
+      "suite": "containerRuntime.podman",
+      "negative": "real-guest",
+      "notes": "The container is the boundary, so a guest path is not refused merely for sitting outside /workspace."
+    }
   ]
 }

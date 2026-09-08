@@ -135,8 +135,9 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
     const project: any = { id: 7, executionKind: 'managed', lifecycle: 'active' };
     const ctx: any = { db: () => db, currentAccountUserId: () => null, currentAccess: () => ({ readOnly: false }), config: {}, host: { stores: () => ({
       usersRead: { list: () => [{ id: 1 }], mayUsePlugin: () => true, isAdmin: () => true },
-      userProjects: { canAccess: () => project.lifecycle === 'active', canManage: () => true },
-      projects: { get: () => project, beginDeletion: () => { project.lifecycle = 'deleting'; return true; }, finishDeletion: () => true },
+      // Only project 7 exists for this actor: a denial case has to be able to actually be denied.
+      userProjects: { canAccess: (_userId: number, id: number) => id === project.id && project.lifecycle === 'active', canManage: (_userId: number, id: number) => id === project.id },
+      projects: { get: (id: number) => (id === project.id ? project : undefined), beginDeletion: () => { project.lifecycle = 'deleting'; return true; }, finishDeletion: () => true },
     }) } };
     initSandboxDb(ctx);
     const runtime = createEnvironmentRuntime({ ctx, db, dataDir: join(scratch, 'sandbox'), namespace: paths.namespace, podman: client, daemon: true });
@@ -157,6 +158,42 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
       assert.equal(Buffer.from(read.base64, 'base64').toString(), 'snapshot value');
       const prepared = await runtime.prepareExecution({ command: { type: 'shell', command: 'printf root > /rootfs-managed; printf home > /root/managed; printf data > /data/managed' }, projectRef: actor.project, cwd: '/workspace', leaseKind: 'terminal' }, 1);
       assert.equal((await runPrepared(prepared)).code, 0);
+
+      stage = 'guest file tool operations';
+      // What the file tools sit on: a directory listing, a content search, a stat, a rename and a
+      // removal, each answered by the guest rather than by a host view of the volume.
+      await files({ kind: 'mkdir', path: '/workspace/tools' });
+      await files({ kind: 'write', path: '/workspace/tools/needle.txt', base64: Buffer.from('alpha NEEDLE omega\n').toString('base64'), expectedVersion: null });
+      const listed = await files({ kind: 'list', path: '/workspace/tools', limit: 50 });
+      assert.equal(listed.kind, 'list');
+      assert.ok(listed.entries.some((entry: any) => entry.path.endsWith('needle.txt')), 'the listing must show the file just written');
+      const found = await files({ kind: 'search', path: '/workspace', pattern: 'NEEDLE', limit: 20 });
+      assert.equal(found.kind, 'search');
+      assert.ok(found.matches.length >= 1, 'the guest search must find the written content');
+      const statted = await files({ kind: 'stat', path: '/workspace/tools/needle.txt' });
+      assert.equal(statted.kind, 'stat');
+      assert.equal(statted.entry.size, 19);
+      await files({ kind: 'rename', path: '/workspace/tools/needle.txt', destination: '/workspace/tools/renamed.txt', expectedVersion: statted.entry.version });
+      // A stat answers "gone" with a null entry rather than an error, so absence is asserted that way.
+      assert.equal((await files({ kind: 'stat', path: '/workspace/tools/needle.txt' })).entry, null);
+      const renamed = await files({ kind: 'stat', path: '/workspace/tools/renamed.txt' });
+      await files({ kind: 'remove', path: '/workspace/tools/renamed.txt', expectedVersion: renamed.entry.version });
+      assert.equal((await files({ kind: 'stat', path: '/workspace/tools/renamed.txt' })).entry, null);
+
+      stage = 'guest access denial';
+      // Another project's identity must not reach this environment, and a stale generation must not
+      // either — both are refusals the environment owes its caller, not conveniences.
+      await assert.rejects(
+        runtime.projectFiles({ project: { kind: 'managed', projectId: 9 }, accountUserId: 1, operation: { kind: 'read', path: '/workspace/runtime-proof', maxBytes: 64 } }),
+        /forbidden|denied|not found|unavailable/i,
+      );
+      await assert.rejects(
+        runtime.projectFiles({ ...actor, expectedGeneration: 99, operation: { kind: 'read', path: '/workspace/runtime-proof', maxBytes: 64 } }),
+        /generation/i,
+      );
+      // The container is the boundary, so a guest path is not refused for being outside /workspace.
+      // What must be refused is a path the protocol cannot express safely.
+      await assert.rejects(files({ kind: 'read', path: 'relative/path', maxBytes: 64 }), /path|invalid|absolute/i);
       stage = 'managed worktrees and gateway preview';
       const worktrees = await runtime.managedWorktrees({ ...actor, action: { kind: 'create', label: 'retained', baseRef: 'main' } });
       assert.equal(worktrees.length, 1);
