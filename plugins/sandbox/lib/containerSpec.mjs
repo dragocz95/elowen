@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { isAbsolute, join, normalize } from 'node:path';
+import { dirname, isAbsolute, join, normalize } from 'node:path';
 
 const trustedSpecs = new WeakSet();
 export const DEFAULT_CONTAINER_LIMITS = Object.freeze({ cpus: 1, memoryMb: 1024, pidsLimit: 512 });
@@ -29,6 +29,24 @@ function freeze(value) {
 /** The host supplies roots, never a guest tool. Persist resource identity and regenerate this spec from
  * authorized host records; a deserialized or caller-authored mount list is not an execution capability. */
 export function createContainerSpec(input, paths) {
+  return buildSpec(input, paths, null);
+}
+
+/** Handover-only capability, built from the trusted Sites record and audited engine observations.
+ * Names and mount targets are fixed by the legacy Sites contract, never supplied by a guest. Persist
+ * containerId, imageId, volumeMountpoint and the resulting specHash with the handover generation;
+ * the daemon must revalidate that record before dispatch. This does not relabel or recreate anything. */
+export function createLegacySiteSpec(input, binding) {
+  closed(binding, ['sitesDataDir', 'sourcePath', 'brokerDir', 'containerId', 'imageId', 'volumeMountpoint']);
+  if (input?.resource?.kind !== 'site') throw new Error('A legacy binding must identify a Site');
+  for (const key of ['sitesDataDir', 'sourcePath', 'brokerDir', 'volumeMountpoint']) hostPath(binding[key]);
+  if (!/^[a-f0-9]{64}$/.test(binding.containerId) || !/^(sha256:)?[a-f0-9]{64}$/.test(binding.imageId)) throw new Error('Invalid legacy container/image identity');
+  return buildSpec(input, {
+    sitesDataDir: binding.sitesDataDir, siteSourcesDir: dirname(binding.sourcePath), siteBrokerDir: dirname(binding.brokerDir),
+  }, { ...binding });
+}
+
+function buildSpec(input, paths, legacy) {
   closed(input, ['resource', 'generation', 'image', 'limits', 'network', 'workspaceReadOnly']);
   closed(input.resource, ['kind', 'id']);
   const { kind, id } = input.resource;
@@ -49,33 +67,35 @@ export function createContainerSpec(input, paths) {
   const namespace = resourceToken(paths.namespace ?? 'elowen');
   const resource = { kind, id };
   const generation = input.generation;
-  const name = `${namespace}-${kind}-${id}-g${generation}`;
+  const name = legacy ? `elowen-site-${id}` : `${namespace}-${kind}-${id}-g${generation}`;
   const storageRoot = kind === 'project'
     ? join(hostPath(paths.sandboxDataDir), 'projects', String(id))
     : join(hostPath(paths.sitesDataDir), id, 'environment');
   const components = kind === 'project' ? ['workspace', 'home', 'data'] : ['data'];
   const volumes = components.map((component) => ({
-    component, name: `${name}-${component}`, path: join(storageRoot, 'storage', String(generation), component),
+    component, name: `${name}-${component}`, path: legacy ? legacy.volumeMountpoint : join(storageRoot, 'storage', String(generation), component),
   }));
   const mounts = kind === 'project'
     ? volumes.map((volume) => ({ type: 'volume', source: volume.name, target: { workspace: '/workspace', home: '/root', data: '/data' }[volume.component], readOnly: false }))
     : [
-      { type: 'bind', source: join(hostPath(paths.siteSourcesDir), id), target: '/workspace', readOnly: input.workspaceReadOnly ?? false },
+      { type: 'bind', source: legacy ? legacy.sourcePath : join(hostPath(paths.siteSourcesDir), id), target: '/workspace', readOnly: input.workspaceReadOnly ?? false },
       { type: 'bind', source: join(storageRoot, 'git-stub'), target: '/workspace/.git', readOnly: true },
-      { type: 'bind', source: join(hostPath(paths.siteBrokerDir), id), target: '/run/elowen', readOnly: false },
+      { type: 'bind', source: legacy ? legacy.brokerDir : join(hostPath(paths.siteBrokerDir), id), target: '/run/elowen', readOnly: false },
       { type: 'volume', source: volumes[0].name, target: '/data', readOnly: false },
     ];
   const settings = {
-    resource, generation, namespace, name, image: input.image, limits,
+    resource, generation, namespace, name, image: input.image, limits, legacy,
     network: network === 'isolated' ? 'none' : 'slirp4netns:allow_host_loopback=false',
     storageRoot, volumes, mounts, envFile: kind === 'site' ? join(storageRoot, 'container.env') : null,
   };
   const hash = createHash('sha256').update(JSON.stringify(settings)).digest('hex');
-  const spec = { ...settings, labels: {
+  /** @type {Record<string, string>} */
+  const labels = legacy ? { 'io.elowen.site': id } : {
     'io.elowen.runtime': 'sandbox', 'io.elowen.namespace': namespace,
     'io.elowen.resource': `${kind}:${id}`, 'io.elowen.generation': String(generation), 'io.elowen.spec': hash,
     ...(kind === 'site' ? { 'io.elowen.site': id } : {}),
-  } };
+  };
+  const spec = { ...settings, specHash: hash, labels };
   freeze(spec);
   trustedSpecs.add(spec);
   return spec;
@@ -89,6 +109,7 @@ export function assertContainerSpec(spec) {
 export function volumeLabels(spec, component) {
   assertContainerSpec(spec);
   if (!spec.volumes.some((volume) => volume.component === component)) throw new Error('Unknown storage component');
+  if (spec.legacy) return { 'io.elowen.site': spec.resource.id };
   return {
     'io.elowen.runtime': 'sandbox', 'io.elowen.namespace': spec.namespace,
     'io.elowen.resource': `${spec.resource.kind}:${spec.resource.id}`,

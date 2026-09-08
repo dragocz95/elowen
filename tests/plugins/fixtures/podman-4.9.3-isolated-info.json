@@ -1,0 +1,19 @@
+{
+  "host": {
+    "cgroupManager": "cgroupfs",
+    "cgroupVersion": "v2",
+    "cgroupControllers": ["cpuset", "cpu", "io", "memory", "hugetlb", "pids", "rdma", "misc"],
+    "databaseBackend": "sqlite",
+    "security": { "rootless": true, "seccompEnabled": true, "apparmorEnabled": false, "selinuxEnabled": false }
+  },
+  "store": {
+    "graphDriverName": "vfs",
+    "graphRoot": "/isolated/storage",
+    "runRoot": "/isolated/runroot",
+    "imageCopyTmpDir": "/isolated/tmp",
+    "volumePath": "/isolated/storage/volumes",
+    "containerStore": { "number": 0, "paused": 0, "running": 0, "stopped": 0 },
+    "imageStore": { "number": 0 }
+  },
+  "version": { "APIVersion": "4.9.3", "Version": "4.9.3", "GoVersion": "go1.22.2" }
+}

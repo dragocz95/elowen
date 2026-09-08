@@ -35,12 +35,14 @@ export function cleanPodmanEnv(input = {}) {
 export function isolatedPodmanOptions(directory, namespace) {
   hostPath(directory);
   resourceToken(namespace);
+  if (Buffer.byteLength(join(directory, 'runroot')) > 50) throw new Error('Isolated Podman runroot must fit within 50 bytes; use a short private temporary parent');
   checkedHostPath(dirname(directory));
   // Exclusive creation prevents attaching a test to an existing account store or another harness.
   mkdirSync(directory, { mode: 0o700 });
+  const location = (part) => checkedHostPath(join(directory, part), { create: true });
   const isolation = Object.freeze({
-    ...Object.fromEntries(['storage', 'runroot', 'tmp', 'runtime', 'home'].map((part) => [part, checkedHostPath(join(directory, part), { create: true })])),
-    namespace,
+    storage: location('storage'), runroot: location('runroot'), tmp: location('tmp'),
+    runtime: location('runtime'), home: location('home'), namespace,
   });
   isolatedStores.add(isolation);
   return { isolation };
@@ -101,6 +103,10 @@ export class SpawnExecutor {
 function labelsMatch(actual, expected) {
   return actual && Object.entries(expected).every(([key, value]) => actual[key] === value);
 }
+function legacyLabelsMatch(labels, siteId) {
+  return labels?.['io.elowen.site'] === siteId
+    && Object.keys(labels).every((key) => !key.startsWith('io.elowen.') || key === 'io.elowen.site');
+}
 function oneJson(result) {
   if (result.truncated) throw new Error('Podman inspection output exceeded its bound');
   const rows = JSON.parse(result.stdout);
@@ -122,6 +128,7 @@ export class PodmanClient {
   #prefix = [];
   #timeoutMs;
   #outputLimit;
+  #namespace;
 
   constructor(options = {}) {
     if (!options.executor && process.getuid?.() === 0) throw new Error('Rootless Podman service account is required');
@@ -136,7 +143,10 @@ export class PodmanClient {
       resourceToken(isolation.namespace);
       const locations = ['storage', 'runroot', 'tmp', 'runtime', 'home'].map((key) => isolation[key]);
       if (new Set(locations).size !== locations.length) throw new Error('Podman isolation paths must be distinct');
-      this.#prefix = ['--root', isolation.storage, '--runroot', isolation.runroot, '--tmpdir', isolation.tmp, '--namespace', isolation.namespace, '--storage-driver', 'vfs'];
+      // SQLite-backed Libpod rejects --namespace. Exclusive storage/runroot/runtime paths
+      // isolate the engine; spec names and ownership labels enforce the resource namespace below.
+      this.#namespace = isolation.namespace;
+      this.#prefix = ['--root', isolation.storage, '--runroot', isolation.runroot, '--tmpdir', isolation.tmp, '--storage-driver', 'vfs'];
       this.#env = { ...this.#env, HOME: isolation.home, XDG_RUNTIME_DIR: isolation.runtime, TMPDIR: isolation.tmp };
       delete this.#env.DBUS_SESSION_BUS_ADDRESS;
     }
@@ -162,6 +172,14 @@ export class PodmanClient {
     return bounded;
   }
 
+  async info() {
+    const result = await this.#run(['info', '--format', 'json']);
+    if (result.truncated) throw new Error('Podman info output exceeded its bound');
+    const info = JSON.parse(result.stdout);
+    if (info.host?.security?.rootless !== true) throw new Error('Rootless Podman is required');
+    return { version: info.version?.Version, rootless: true, graphRoot: info.store?.graphRoot, runRoot: info.store?.runRoot, cgroupManager: info.host?.cgroupManager };
+  }
+
   async #exists(kind, name) {
     const result = await this.#run([kind, 'exists', name], { allowFailure: true });
     if (result.code === 0) return true;
@@ -169,8 +187,18 @@ export class PodmanClient {
     throw new Error(`Podman ${kind} existence check failed (${result.code})`);
   }
 
-  async inspect(spec) {
+  #assertScope(spec) {
     assertContainerSpec(spec);
+    if (this.#namespace && spec.namespace !== this.#namespace) throw new Error('Container namespace differs from the isolated runtime');
+  }
+
+  #volumeFor(spec, component) {
+    this.#assertScope(spec);
+    return volumeFor(spec, component);
+  }
+
+  async inspect(spec) {
+    this.#assertScope(spec);
     if (!await this.#exists('container', spec.name)) return null;
     const row = oneJson(await this.#run(['inspect', '--type', 'container', spec.name]));
     const host = row.HostConfig;
@@ -185,6 +213,8 @@ export class PodmanClient {
     const cpus = host?.NanoCpus > 0 ? host.NanoCpus / 1e9 : host?.CpuPeriod > 0 ? host.CpuQuota / host.CpuPeriod : 0;
     if (!/^[a-f0-9]{64}$/.test(row.Id) || row.Name?.replace(/^\//, '') !== spec.name
       || !labelsMatch(row.Config?.Labels, spec.labels) || row.ImageName !== spec.image || !mountsMatch || !networkMatches
+      || (spec.legacy && (row.Id !== spec.legacy.containerId || String(row.Image).replace(/^sha256:/, '') !== spec.legacy.imageId.replace(/^sha256:/, '')
+        || !legacyLabelsMatch(row.Config?.Labels, spec.resource.id)))
       || host.Privileged !== false || host.ReadonlyRootfs !== false
       || (host.CapAdd && host.CapAdd.length !== 0) || (host.Devices && host.Devices.length !== 0)
       || (host.SecurityOpt && host.SecurityOpt.length !== 0)
@@ -198,15 +228,23 @@ export class PodmanClient {
     return { id: row.Id, state: row.State.Status };
   }
 
+  async inspectBinding(spec) {
+    return await this.#owned(spec);
+  }
+
   async #owned(spec) {
     const container = await this.inspect(spec);
     if (!container) throw new Error('Container is missing');
     for (const volume of spec.volumes) await this.inspectVolume(spec, volume.component);
+    if (spec.legacy) {
+      for (const mount of spec.mounts.filter((entry) => entry.type === 'bind')) checkedHostPath(mount.source, { file: mount.target === '/workspace/.git' });
+    }
     return container;
   }
 
   async create(spec) {
-    assertContainerSpec(spec);
+    this.#assertScope(spec);
+    if (spec.legacy) throw new Error('Legacy bindings cannot create or recreate a container');
     const rootless = await this.#run(['info', '--format', '{{.Host.Security.Rootless}}']);
     if (rootless.stdout.trim() !== 'true') throw new Error('Rootless Podman is required');
     if (await this.#exists('container', spec.name)) throw new Error('Container already exists; lifecycle adoption must validate it');
@@ -247,16 +285,20 @@ export class PodmanClient {
   }
 
   async inspectVolume(spec, component) {
-    const volume = volumeFor(spec, component);
+    const volume = this.#volumeFor(spec, component);
     if (!await this.#exists('volume', volume.name)) throw new Error('Owned volume is missing');
     const row = oneJson(await this.#run(['volume', 'inspect', volume.name]));
-    if (row.Name !== volume.name || !labelsMatch(row.Labels, volumeLabels(spec, component)) || row.Driver !== 'local'
-      || row.Options?.type !== 'none' || row.Options?.o !== 'bind' || row.Options?.device !== volume.path) throw new Error('Volume ownership or storage specification mismatch');
+    const storageMatches = spec.legacy
+      ? row.Mountpoint === volume.path && row.Options != null && Object.keys(row.Options).length === 0 && legacyLabelsMatch(row.Labels, spec.resource.id)
+      : row.Options?.type === 'none' && row.Options?.o === 'bind' && row.Options?.device === volume.path;
+    if (row.Name !== volume.name || !labelsMatch(row.Labels, volumeLabels(spec, component)) || row.Driver !== 'local' || !storageMatches) throw new Error('Volume ownership or storage specification mismatch');
+    if (spec.legacy) checkedHostPath(volume.path);
     return volume;
   }
 
   async ensureVolume(spec, component) {
-    const volume = volumeFor(spec, component);
+    const volume = this.#volumeFor(spec, component);
+    if (spec.legacy) return await this.inspectVolume(spec, component);
     checkedHostPath(volume.path);
     if (await this.#exists('volume', volume.name)) return await this.inspectVolume(spec, component);
     const args = ['volume', 'create'];
@@ -280,8 +322,9 @@ export class PodmanClient {
    * lifecycle owner to inspect; this primitive never destroys the previous recoverable storage. */
   async importSnapshotVolume(sourceSpec, snapshotId, targetSpec, component) {
     resourceToken(snapshotId);
-    volumeFor(sourceSpec, component);
-    const target = volumeFor(targetSpec, component);
+    this.#volumeFor(sourceSpec, component);
+    const target = this.#volumeFor(targetSpec, component);
+    if (targetSpec.legacy) throw new Error('A legacy binding cannot be a restore destination');
     if (sourceSpec.resource.kind !== targetSpec.resource.kind
       || (sourceSpec.resource.id === targetSpec.resource.id && sourceSpec.generation === targetSpec.generation)) throw new Error('Restore needs a new resource or generation');
     if (await this.#exists('container', targetSpec.name) || await this.#exists('volume', target.name)) throw new Error('Restore destination already exists');
@@ -326,6 +369,7 @@ export class PodmanClient {
   }
 
   async inspectSnapshotImage(spec, snapshotId) {
+    this.#assertScope(spec);
     const reference = snapshotReference(spec, snapshotId);
     const row = oneJson(await this.#run(['image', 'inspect', reference]));
     if (!labelsMatch(row.Labels ?? row.Config?.Labels, { ...spec.labels, 'io.elowen.snapshot': snapshotId }) || !/^(sha256:)?[a-f0-9]{64}$/.test(row.Id)) throw new Error('Snapshot image ownership mismatch');

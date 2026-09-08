@@ -1,8 +1,8 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createContainerSpec, executionUnit, volumeLabels } from '../../plugins/sandbox/lib/containerSpec.mjs';
+import { createContainerSpec, createLegacySiteSpec, executionUnit, volumeLabels } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import { cleanPodmanEnv, PodmanClient, SpawnExecutor, isolatedPodmanOptions } from '../../plugins/sandbox/lib/podman.mjs';
 import { PROJECT_CONTAINERFILE } from '../../plugins/sandbox/lib/containerBaseImage.mjs';
 import { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
@@ -71,7 +71,73 @@ describe('trusted container specifications', () => {
   });
 });
 
+describe('explicit legacy Site handover binding', () => {
+  function legacyFixture() {
+    const { root, paths } = fixture();
+    const binding = { sitesDataDir: paths.sitesDataDir, sourcePath: join(root, 'original-project/source'), brokerDir: join(paths.siteBrokerDir, 'site-1'),
+      containerId: 'a'.repeat(64), imageId: 'd'.repeat(64), volumeMountpoint: join(root, 'legacy-podman/volumes/elowen-site-site-1-data/_data') };
+    const spec = createLegacySiteSpec({ resource: { kind: 'site', id: 'site-1' }, generation: 8, image: 'localhost/site:v1', workspaceReadOnly: true }, binding);
+    for (const mount of spec.mounts.filter((mount: any) => mount.type === 'bind')) {
+      if (mount.target === '/workspace/.git') { mkdirSync(dirname(mount.source), { recursive: true }); writeFileSync(mount.source, ''); }
+      else mkdirSync(mount.source, { recursive: true });
+    }
+    mkdirSync(binding.volumeMountpoint, { recursive: true });
+    const state = fake(spec);
+    Object.assign(state.row, { Image: binding.imageId });
+    // Recorded default-local volume shape; substitute only this fixture's identity and private path.
+    const recordedVolume = JSON.parse(readFileSync(new URL('./fixtures/podman-4.9.3-legacy-volume.json', import.meta.url), 'utf8'));
+    state.volumes.set(spec.volumes[0].name, { ...recordedVolume, Name: spec.volumes[0].name, Labels: { 'io.elowen.site': 'site-1' }, Mountpoint: binding.volumeMountpoint });
+    return { spec, binding, ...state };
+  }
+  it('preserves the original name, sourcePath, Git stub, broker and named volume', async () => {
+    const { spec, binding, client, executor } = legacyFixture();
+    expect(spec.name).toBe('elowen-site-site-1');
+    expect(spec.volumes[0].name).toBe('elowen-site-site-1-data');
+    expect(spec.mounts[0]).toEqual({ type: 'bind', source: binding.sourcePath, target: '/workspace', readOnly: true });
+    expect(spec.mounts[1].target).toBe('/workspace/.git');
+    expect(spec.mounts[1].readOnly).toBe(true);
+    expect(spec.mounts[2].source).toBe(binding.brokerDir);
+    expect(spec.labels).toEqual({ 'io.elowen.site': 'site-1' });
+    expect(spec.specHash).toMatch(/^[a-f0-9]{64}$/);
+    await expect(client.inspectBinding(spec)).resolves.toEqual({ id: binding.containerId, state: 'running' });
+    expect(executor.run.mock.calls.every(([, args]) => ['inspect', 'container', 'volume'].includes(args[0]!))).toBe(true);
+  });
+  it.each(['containerId', 'imageId', 'labels', 'volumeLabels', 'volumePath', 'source', 'gitWritable'])('rejects mismatched legacy %s', async (field) => {
+    const { spec, client, row, volumes } = legacyFixture();
+    if (field === 'containerId') row.Id = 'b'.repeat(64);
+    if (field === 'imageId') Object.assign(row, { Image: 'b'.repeat(64) });
+    if (field === 'labels') row.Config.Labels = { ...row.Config.Labels, 'io.elowen.runtime': 'foreign' };
+    if (field === 'volumeLabels') volumes.get(spec.volumes[0].name).Labels = { 'io.elowen.site': 'foreign' };
+    if (field === 'volumePath') volumes.get(spec.volumes[0].name).Mountpoint = '/foreign';
+    if (field === 'source') row.Mounts[0]!.Source = '/foreign';
+    if (field === 'gitWritable') row.Mounts[1]!.RW = true;
+    await expect(client.inspectBinding(spec)).rejects.toThrow(/mismatch/);
+  });
+  it('never recreates an adopted legacy container or its missing volume', async () => {
+    const { spec, client, volumes, executor } = legacyFixture();
+    await expect(client.create(spec)).rejects.toThrow(/legacy|recreat/i);
+    volumes.clear();
+    await expect(client.ensureVolume(spec, 'data')).rejects.toThrow(/missing/i);
+    expect(executor.run.mock.calls.some(([, args]) => args.includes('create'))).toBe(false);
+  });
+  it('rejects binding input with arbitrary names, mounts, invalid IDs or project identity', () => {
+    const { binding } = legacyFixture();
+    const input = { resource: { kind: 'site', id: 'site-1' }, generation: 1, image: 'localhost/site:v1' };
+    expect(() => createLegacySiteSpec(input, { ...binding, name: 'other-container' })).toThrow(/unknown/i);
+    expect(() => createLegacySiteSpec(input, { ...binding, mounts: [] })).toThrow(/unknown/i);
+    expect(() => createLegacySiteSpec(input, { ...binding, containerId: 'name' })).toThrow(/identity/i);
+    expect(() => createLegacySiteSpec({ ...input, resource: { kind: 'project', id: 1 } }, binding)).toThrow(/site/i);
+  });
+});
+
 describe('clean and confined Podman client', () => {
+  it('reads the real rootless info field casing without treating missing userbus as success', async () => {
+    // Recorded Podman 4.9.3 response excerpt; only temporary paths are normalized.
+    const stdout = readFileSync(new URL('./fixtures/podman-4.9.3-isolated-info.json', import.meta.url), 'utf8');
+    const executor = { run: vi.fn(async () => ({ code: 0, stdout, stderr: '' })) };
+    await expect(new PodmanClient({ executor }).info()).resolves.toEqual({ version: '4.9.3', rootless: true,
+      graphRoot: '/isolated/storage', runRoot: '/isolated/runroot', cgroupManager: 'cgroupfs' });
+  });
   it('provides a deterministic project recipe with usable Git and systemd execution', () => {
     expect(PROJECT_CONTAINERFILE).toContain('git openssh-client python3');
     expect(PROJECT_CONTAINERFILE).toContain('systemd systemd-sysv');
@@ -147,16 +213,22 @@ describe('clean and confined Podman client', () => {
     expect(env).toEqual({ HOME: '/home/service', USER: 'service', LOGNAME: 'service', PATH: '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin', XDG_RUNTIME_DIR: '/run/user/123', DBUS_SESSION_BUS_ADDRESS: 'unix:path=/run/user/123/bus' });
   });
   it('pins every test store, runroot, runtime, temporary path and namespace', async () => {
-    const { root, spec } = fixture();
+    const { root, paths } = fixture();
+    const spec = createContainerSpec({ resource: { kind: 'project', id: 7 }, generation: 2, image: 'localhost/test:v1' }, { ...paths, namespace: 'test-a' });
     const executor = { run: vi.fn(async () => ({ code: 1, stdout: '', stderr: '' })) };
     const options = isolatedPodmanOptions(join(root, 'podman'), 'test-a');
     const client = new PodmanClient({ ...options, executor });
     await client.inspect(spec);
     const [, args, launch] = executor.run.mock.calls[0]! as any;
-    expect(args).toEqual(expect.arrayContaining(['--root', join(root, 'podman/storage'), '--runroot', join(root, 'podman/runroot'), '--tmpdir', join(root, 'podman/tmp'), '--namespace', 'test-a', '--storage-driver', 'vfs']));
+    expect(args).toEqual(expect.arrayContaining(['--root', join(root, 'podman/storage'), '--runroot', join(root, 'podman/runroot'), '--tmpdir', join(root, 'podman/tmp'), '--storage-driver', 'vfs']));
     expect(launch.env.HOME).toBe(join(root, 'podman/home'));
     expect(launch.env.XDG_RUNTIME_DIR).toBe(join(root, 'podman/runtime'));
     expect(launch.env.TMPDIR).toBe(join(root, 'podman/tmp'));
+    expect(args).not.toContain('--namespace');
+    const foreign = createContainerSpec({ resource: spec.resource, generation: 2, image: spec.image }, paths);
+    await expect(client.inspect(foreign)).rejects.toThrow(/namespace/);
+    expect(executor.run).toHaveBeenCalledOnce();
+    expect(() => isolatedPodmanOptions(join(root, 'path-that-is-too-long-for-a-runroot-socket'), 'test')).toThrow(/50 bytes/);
     expect(() => new PodmanClient({ isolation: { root: root } })).toThrow(/isolation/i);
   });
   it('does not expose raw host commands and refuses forged specs', async () => {
@@ -247,6 +319,7 @@ describe('project container storage and crash-consistent snapshots', () => {
     expect(manifest.consistency).toBe('crash-consistent');
     expect(manifest.components.map((c: any) => c.component)).toEqual(['workspace', 'home', 'data']);
     expect(JSON.parse(readFileSync(join(spec.storageRoot, 'snapshots/snap-1/manifest.json'), 'utf8'))).toEqual(manifest);
+    expect(() => readFileSync(join(spec.storageRoot, 'snapshots/snap-1/pending.json'))).toThrow();
   });
   it('preserves partial snapshots and exposes both export and resume failures', async () => {
     const { spec } = fixture();
