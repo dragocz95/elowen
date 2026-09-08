@@ -8,7 +8,8 @@
   "realGuestSuites": [
     "tests/plugins/containerRuntime.podman.test.ts",
     "../elowen-plugins-environments/tests/lspManagedGuest.podman.test.ts",
-    "tests/plugins/managedToolCallers.podman.test.ts"
+    "tests/plugins/managedToolCallers.podman.test.ts",
+    "../elowen-plugins-environments/tests/browserManagedGuest.podman.test.ts"
   ],
   "rows": [
     {
@@ -193,9 +194,11 @@
     },
     {
       "area": "browser",
-      "capability": "navigate/evaluate/click/screenshot/download/persistence via the browser tool",
-      "evidence": "unverified",
-      "negative": "unverified"
+      "capability": "navigate/evaluate/click/screenshot/persistence via the project browser",
+      "evidence": "real-guest",
+      "negative": "unit",
+      "suite": "browserManagedGuest.podman",
+      "notes": "Real guest Chromium over the CDP pipe on an execution lease. Download handling is NOT covered here and stays outstanding."
     },
     {
       "area": "editor",
@@ -290,6 +293,13 @@
       "suite": "containerRuntime.podman",
       "negative": "real-guest",
       "notes": "The container is the boundary, so a guest path is not refused merely for sitting outside /workspace."
+    },
+    {
+      "area": "browser",
+      "capability": "in-page download handling in a guest",
+      "evidence": "unverified",
+      "negative": "unverified",
+      "notes": "Split out from the browser row so its absence is explicit rather than implied."
     }
   ]
 }
