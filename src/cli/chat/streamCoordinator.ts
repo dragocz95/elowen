@@ -173,8 +173,8 @@ export class StreamCoordinator implements StreamCoordinatorPort {
           pendingSessionReset = event.sessionId;
           rt.artifacts.replace([]);
           rt.setGoal(null);
-          rt.notice = color.dim('previous conversation was idle — continuing in a fresh one');
-          void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:session-rollover'); });
+          rt.notice = color.dim('this conversation moved to a new session — continuing there');
+          void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:session-rebind'); });
           render('stream:session-binding');
         }
 
@@ -278,7 +278,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
             invalidateAsyncState();
             rt.artifacts.replace([]);
             rt.setGoal(null);
-            rt.notice = color.dim('previous conversation was idle — continuing in a fresh one');
+            rt.notice = color.dim('this conversation moved to a new session — continuing there');
             void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:snapshot-session'); });
           }
           rt.transcript.replaceHistory(snapshot.history);
