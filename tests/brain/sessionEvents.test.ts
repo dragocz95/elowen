@@ -103,6 +103,13 @@ describe('recordSubagentFinishMarker', () => {
     expect(live.pendingSessionNotices).toBeUndefined();
   });
 
+  it('carries the delegation name ahead of the task so the finish line reads like the rail row did', () => {
+    const store = fakeStore();
+    recordSubagentFinishMarker(store, 's1', () => {}, 'running', subUpdate({ name: 'Audit dead files', status: 'done' }));
+    const detail = JSON.stringify({ session: 'brain-ch-subagent-sub-dlg-abc', name: 'Audit dead files', task: 'Explore the repo', status: 'done' });
+    expect(store.appended).toEqual([{ kind: 'subagent', detail }]);
+  });
+
   it('marks an error finish with status error', () => {
     const store = fakeStore();
     recordSubagentFinishMarker(store, 's1', () => {}, 'running', subUpdate({ status: 'error' }));

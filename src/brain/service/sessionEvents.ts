@@ -87,7 +87,9 @@ function shortSubagentTask(task: string): string {
  *  but only on the running→terminal TRANSITION, so a repeated terminal update (upsertSubagentRun always
  *  re-writes the row and returns true) cannot stack a second marker. `prevStatus` is the child's status
  *  read from the store BEFORE the upsert that carries this update. The marker's detail is small JSON
- *  carrying the child session id (for a later DelegateContinue), a clipped task line, and the outcome. */
+ *  carrying the child session id (for a later DelegateContinue), the delegation's name when it has one
+ *  (the label the rail showed while it ran, so the finish line reads the same), a clipped task line as
+ *  the fallback for runs recorded before names existed, and the outcome. */
 export function recordSubagentFinishMarker(
   store: BrainStore,
   sessionId: string,
@@ -97,7 +99,13 @@ export function recordSubagentFinishMarker(
 ): void {
   if (update.status !== 'done' && update.status !== 'error') return;
   if (prevStatus === 'done' || prevStatus === 'error') return;
-  const detail = JSON.stringify({ session: update.sessionId, task: shortSubagentTask(update.task), status: update.status });
+  const name = update.name?.trim();
+  const detail = JSON.stringify({
+    session: update.sessionId,
+    ...(name ? { name } : {}),
+    task: shortSubagentTask(update.task),
+    status: update.status,
+  });
   recordDisplayMarker(store, sessionId, publish, 'subagent', detail);
 }
 

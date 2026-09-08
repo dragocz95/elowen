@@ -78,13 +78,16 @@ export function toolRowSpec(name: string, detail?: string): { glyph: string; tit
 
 /** A sub-agent finish marker's detail is small JSON (see recordSubagentFinishMarker). Parse defensively:
  *  a malformed row falls back to the raw string rather than throwing on a render path. */
-function parseSubagentMarker(detail: string): { task: string; status: string } | null {
+function parseSubagentMarker(detail: string): { label: string; status: string } | null {
   try {
     const raw: unknown = JSON.parse(detail);
     if (!raw || typeof raw !== 'object') return null;
     const obj = raw as Record<string, unknown>;
     if (typeof obj.status !== 'string') return null;
-    return { task: typeof obj.task === 'string' ? obj.task : '', status: obj.status };
+    // The delegation's name is what the rail showed while it ran; the clipped task line is the fallback
+    // for markers recorded before names existed.
+    const label = typeof obj.name === 'string' && obj.name ? obj.name : typeof obj.task === 'string' ? obj.task : '';
+    return { label, status: obj.status };
   } catch { return null; }
 }
 
@@ -116,8 +119,8 @@ function sessionEventLabel(kind: string, detail: string): string {
       const marker = parseSubagentMarker(detail);
       if (!marker) return value;
       const verb = marker.status === 'error' ? 'sub-agent failed' : 'sub-agent done';
-      const task = terminalInlineText(marker.task);
-      return task ? `${verb} · ${task}` : verb;
+      const label = terminalInlineText(marker.label);
+      return label ? `${verb} · ${label}` : verb;
     }
     case 'workflow': {
       const marker = parseWorkflowMarker(detail);
