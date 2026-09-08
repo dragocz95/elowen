@@ -1528,9 +1528,11 @@ export interface TurnContextOptions {
   placement?: TurnContextPlacement;
 }
 
-/** One registered per-turn context provider plus its stable prompt placement. */
+/** One registered per-turn context provider plus its stable prompt placement. The render may be
+ *  asynchronous (`string | Promise<string>`) — e.g. a provider that revalidates a live subsystem before
+ *  it reports; it is awaited in registration order during turn-context assembly. */
 export interface TurnContextContribution {
-  render: () => string;
+  render: () => string | Promise<string>;
   placement: TurnContextPlacement;
 }
 
@@ -1649,8 +1651,10 @@ export interface PluginContext {
   /** Register a provider of EPHEMERAL per-turn context (date/time, live status…). Its string is injected
    *  into each user message — NOT the system prompt — so the cacheable prompt prefix stays stable.
    *  Defaults before the user's text; use `placement: 'after-user'` for adjacent reminders that should
-   *  follow the request they qualify. */
-  registerTurnContext(fn: () => string, options?: TurnContextOptions): void;
+   *  follow the request they qualify. The render may return a promise (e.g. a provider that revalidates
+   *  a live subsystem before reporting); it is awaited in registration order, and a rejected render is
+   *  isolated exactly like a throwing sync one: the provider contributes nothing and the turn still runs. */
+  registerTurnContext(fn: () => string | Promise<string>, options?: TurnContextOptions): void;
   /** STUB: record a platform adapter (not started by the foundation). */
   registerPlatform(adapter: PlatformAdapter): void;
   /** Contribute admin-selectable proactive-notification targets for this platform. Deny-by-default: the

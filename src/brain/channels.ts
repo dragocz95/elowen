@@ -1147,7 +1147,7 @@ export class ChannelSessionService {
             // committed; the next real prompt composes and commits as usual.
             const continuation = opts.internalSystem?.continuation === true;
             if (!continuation && !(opts.promptCommand === true && isPromptCommand(turnText, ch.session))) {
-              const turnContext = ch.turnContext();
+              const turnContext = await ch.turnContext();
               // The drain stays per-surface (it is stateful and commits only once the prompt reached the
               // provider), but the ORDER and framing of the blocks no longer live here: composeTurnPrompt
               // is the single source for that, so a block added for the owner chat cannot silently skip
