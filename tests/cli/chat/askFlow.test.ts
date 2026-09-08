@@ -95,6 +95,24 @@ describe('AskChoiceDock', () => {
     expect(rendered).not.toContain('\x1b]0;');
   });
 
+  it('clips a header longer than the chip width instead of drawing it in full', () => {
+    // The tool accepts any header length (the reference caps nothing), so the dock is where the chip
+    // budget is applied: 16 characters come back as 12 columns.
+    const dock = new AskChoiceDock({
+      tui: fakeTui(),
+      question: { ...question(), header: 'Authentication m' },
+      index: 0,
+      total: 1,
+      agentName: 'Elowen',
+      onSubmit: vi.fn(),
+      onOther: vi.fn(),
+      onCancel: vi.fn(),
+    });
+    const title = stripAnsi(dock.render(90)[1]!);
+    expect(title).not.toContain('Authentication m');
+    expect(title).toContain('Authenticat…');
+  });
+
   it('uses space to toggle multiple answers and enter to submit them', () => {
     const onSubmit = vi.fn();
     const dock = new AskChoiceDock({

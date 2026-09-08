@@ -8,6 +8,12 @@ import { Input } from '../../components/ui/Input';
 import { useTranslation } from '../../lib/i18n';
 import { interpolate } from '../../lib/i18n/interpolate';
 
+// The header is drawn as a chip, and a chip has a fixed budget. A longer header is CLIPPED here rather
+// than rejected when the question is created — a chip label a few characters over is cosmetic, and
+// refusing the call over it would cost the user a whole turn.
+const CHIP_WIDTH = 12;
+const chip = (header: string): string => (header.length > CHIP_WIDTH ? `${header.slice(0, CHIP_WIDTH - 1)}…` : header);
+
 /** Presentational radio dot for single-select questions — the row button owns the click,
  *  mirroring the Checkbox primitive's pattern. */
 function Radio({ checked }: { checked: boolean }) {
@@ -150,7 +156,7 @@ export function AskQuestionCard({ questions, kind, onSubmit }: { questions: AskQ
           <div key={qi} className="flex flex-col gap-1.5">
             <div className="flex items-baseline gap-2">
               <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-tiny font-medium text-muted-foreground">
-                {wording ? t.brainChat.approvalHeader : q.header}
+                {wording ? t.brainChat.approvalHeader : chip(q.header)}
               </span>
               <span className="text-sm text-foreground">
                 {wording
