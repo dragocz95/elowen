@@ -84,6 +84,20 @@ interface ViewportResetAnchor {
   averageTurnRows: number;
 }
 
+/** The exact logical row the reader is looking at, captured before a frame reconciles the transcript.
+ *  `scrollOffset` is BOTTOM-relative, so rows appearing ABOVE the window (history indexed while scrolling
+ *  up) already leave the window untouched; rows appearing BELOW it push the anchored row off the top.
+ *  Re-deriving the offset from this anchor after reconciliation is what keeps a growing tail from
+ *  dragging the text the reader is mid-sentence on. */
+interface ViewportTailAnchor {
+  index: number;
+  turn: ChatTurn | null;
+  withinTurn: number;
+  viewportHeight: number;
+  layoutEpoch: number;
+  wasTail: boolean;
+}
+
 export class ChatViewport implements Component {
   private readonly turnRenderer: TurnRenderer;
   private state: ChatViewportState;
@@ -123,6 +137,9 @@ export class ChatViewport implements Component {
   private estimatedLayout = false;
   private estimatedTurnHeight = 0;
   private pendingResetAnchor: ViewportResetAnchor | null = null;
+  /** Bumped by every layout rebuild. A tail anchor captured before a rebuild refers to turn positions
+   *  that no longer exist, so the epoch is what makes it safe to trust `index` inside one frame. */
+  private layoutEpoch = 0;
   private layoutWidth = 0;
   private layoutTheme: unknown = null;
   private layoutShowsThoughts = true;
@@ -352,6 +369,7 @@ export class ChatViewport implements Component {
     const height = Math.max(1, this.getRows());
     const chatWidth = Math.max(1, Math.min(width, this.getWidth()));
     const contentWidth = Math.max(1, chatWidth - 2);
+    const tailAnchor = this.captureTailAnchor(height);
     this.prepareLayout(contentWidth);
     this.currentExtraRows = this.extraRows();
     this.viewportHeight = height;
@@ -369,6 +387,13 @@ export class ChatViewport implements Component {
     // spends seconds parsing history the user did not open.
     this.ensureTail(height + this.scrollOffset + HISTORY_OVERSCAN_ROWS, true);
     this.refreshMetrics();
+    // Exact heights for the whole known tail exist only now: the volatile tail was invalidated during
+    // prepareLayout and re-rendered by ensureTail. Re-deriving the anchored offset here therefore sees
+    // the frame's real growth, and the second ensureTail only covers the rows that growth added.
+    if (tailAnchor && this.restoreTailAnchor(tailAnchor)) {
+      this.ensureTail(height + this.scrollOffset + HISTORY_OVERSCAN_ROWS, true);
+      this.refreshMetrics();
+    }
     this.expandableRows = new Map();
     this.subagentRows = new Map();
     this.workflowRows = new Map();
@@ -515,6 +540,7 @@ export class ChatViewport implements Component {
   ): void {
     this.clearSelection();
     this.clearAllCachedRows();
+    this.layoutEpoch++;
     this.layout = Array.from({ length: turnCount }, () => ({ turn: null, height: null, rows: null }));
     this.retiredHeightIndexOperations += this.heightIndex.operationCount();
     this.heightIndex = new DynamicHeightIndex();
@@ -555,6 +581,68 @@ export class ChatViewport implements Component {
       withinTurnRatio: Math.max(0, Math.min(1, (turnOffset - turnStart) / turnHeight)),
       averageTurnRows: Math.max(1, averageTurnRows),
     };
+  }
+
+  /** Identify the top visible row as (turn, row within turn) before the frame reconciles the transcript.
+   *  Only meaningful while the reader has scrolled away from the tail; at the bottom the viewport is
+   *  supposed to follow new content. */
+  private captureTailAnchor(height: number): ViewportTailAnchor | null {
+    if (this.scrollOffset <= 0 || this.viewportHeight <= 0 || this.viewportHeight !== height) return null;
+    if (this.estimatedLayout || this.pendingResetAnchor || this.layout.length === 0) return null;
+    // A wheel burst can ask for more rows than are indexed yet; that frame belongs to ensureTail, which
+    // will settle the offset against real history rather than against a stale anchor.
+    if (this.scrollOffset > this.maxOffset || !this.tailMayGrow()) return null;
+    const leadingBlank = this.knownStart === 0 ? 1 : 0;
+    // Both derived from the totals refreshMetrics already froze, so an anchored frame pays two Fenwick
+    // traversals here rather than four.
+    const turnTotal = this.totalLines - leadingBlank - this.currentExtraRows.length;
+    const localStart = this.totalLines - this.viewportHeight - this.scrollOffset - leadingBlank;
+    if (localStart < 0 || localStart >= turnTotal) return null;
+    const knownBase = this.heightIndex.prefixSum(this.knownStart);
+    const index = this.heightIndex.lowerBoundOffset(knownBase + localStart);
+    if (index < this.knownStart || index >= this.layout.length) return null;
+    return {
+      index,
+      turn: this.layout[index]?.turn ?? null,
+      withinTurn: localStart - (this.heightIndex.prefixSum(index) - knownBase),
+      viewportHeight: this.viewportHeight,
+      layoutEpoch: this.layoutEpoch,
+      wasTail: index === this.layout.length - 1,
+    };
+  }
+
+  /** Nothing can appear below the viewport unless the transcript, its artifacts or the live streaming
+   *  tail moved. Idle frames, wheel bursts and scrollbar drags therefore pay nothing for anchoring. */
+  private tailMayGrow(): boolean {
+    const transcript = this.state.transcript;
+    if (this.layoutTranscript !== transcript) return false;
+    if (this.layoutRevision !== transcript.revision) return true;
+    const artifacts = this.state.inlineArtifacts ?? null;
+    if (this.layoutArtifacts !== artifacts) return false;
+    if (artifacts && this.layoutArtifactRevision !== artifacts.revision) return true;
+    const tail = this.layout.at(-1)?.turn;
+    return tail?.role === 'elowen' && tail.streaming === true;
+  }
+
+  /** Put the anchored row back at the top of the window. Returns whether the offset moved, so the caller
+   *  can extend the indexed tail over the rows the growth added. */
+  private restoreTailAnchor(anchor: ViewportTailAnchor): boolean {
+    if (anchor.layoutEpoch !== this.layoutEpoch || anchor.viewportHeight !== this.viewportHeight) return false;
+    if (this.estimatedLayout || anchor.index >= this.layout.length || anchor.index < this.knownStart) return false;
+    // The settled anchor keeps its object identity across frames. The live tail does not — TranscriptModel
+    // rebuilds it per delta — so anchoring inside the streaming turn is matched by position instead.
+    const turn = this.layout[anchor.index]?.turn ?? null;
+    const stillTail = anchor.wasTail && anchor.index === this.layout.length - 1;
+    if (turn !== anchor.turn && !stillTail) return false;
+    const withinTurn = Math.max(0, Math.min(anchor.withinTurn, this.heightIndex.valueAt(anchor.index)));
+    const knownBase = this.heightIndex.prefixSum(this.knownStart);
+    const turnStart = this.heightIndex.prefixSum(anchor.index) - knownBase;
+    const leadingBlank = this.knownStart === 0 ? 1 : 0;
+    const anchoredStart = leadingBlank + turnStart + withinTurn;
+    const desired = Math.max(0, Math.min(this.maxOffset, this.totalLines - this.viewportHeight - anchoredStart));
+    if (desired === this.scrollOffset) return false;
+    this.scrollOffset = desired;
+    return true;
   }
 
   private restoreResetAnchor(anchor: ViewportResetAnchor): void {

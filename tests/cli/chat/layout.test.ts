@@ -1348,6 +1348,133 @@ describe('progressive history layout', () => {
     expect(resumed).toContain('Conversation B marker 99');
   });
 
+  describe('scroll anchoring while the tail grows', () => {
+    const plainRows = (rows: string[]): string[] => rows.map((line) => line.replace(/\x1b\[[0-9;]*m/g, '').replace(/\s+$/, ''));
+    const growTail = (transcript: TranscriptModel, paragraphs: number): void => {
+      for (let i = 0; i < paragraphs; i += 1) transcript.apply({ type: 'text', delta: `\n\ngrowing paragraph ${i}` });
+    };
+
+    it('keeps the rows the reader is looking at in place while the streaming tail grows', () => {
+      const transcript = largeHistory(40);
+      transcript.apply({ type: 'text', delta: 'streaming answer' });
+      const viewport = new ChatViewport(
+        transcriptState(transcript),
+        getMarkdownTheme(), () => 18, () => 1, () => 80,
+      );
+      viewport.render(80);
+      viewport.scroll(40);
+      const before = plainRows(viewport.render(80));
+      const rowsBefore = viewport.metrics().transcriptRows;
+      const offsetBefore = viewport.metrics().scrollOffset;
+      expect(offsetBefore).toBeGreaterThan(0);
+
+      growTail(transcript, 6);
+      viewport.setState(transcriptState(transcript));
+      const after = plainRows(viewport.render(80));
+
+      // The tail really grew, so this is the frame that used to shift every visible row upward.
+      const grew = viewport.metrics().transcriptRows - rowsBefore;
+      expect(grew).toBeGreaterThan(0);
+      // Row 0 carries the "History +N lines" chip, whose N moves with the anchor by design.
+      expect(after.slice(1)).toEqual(before.slice(1));
+      expect(viewport.metrics().scrollOffset).toBe(offsetBefore + grew);
+    });
+
+    it('holds a row inside the streaming turn itself, whose object identity is rebuilt per delta', () => {
+      const transcript = largeHistory(10);
+      growTail(transcript, 40);
+      const viewport = new ChatViewport(
+        transcriptState(transcript),
+        getMarkdownTheme(), () => 18, () => 1, () => 80,
+      );
+      viewport.render(80);
+      // Small offset: the top visible row lands inside the long live answer, not in settled history.
+      viewport.scroll(12);
+      const before = plainRows(viewport.render(80));
+      expect(before.join('\n')).toContain('growing paragraph');
+
+      growTail(transcript, 4);
+      viewport.setState(transcriptState(transcript));
+      const after = plainRows(viewport.render(80));
+
+      expect(after.slice(1)).toEqual(before.slice(1));
+    });
+
+    it('still follows the live tail when the viewport is at the bottom', () => {
+      const transcript = largeHistory(40);
+      transcript.apply({ type: 'text', delta: 'streaming answer' });
+      const viewport = new ChatViewport(
+        transcriptState(transcript),
+        getMarkdownTheme(), () => 18, () => 1, () => 80,
+      );
+      viewport.render(80);
+      expect(viewport.metrics().scrollOffset).toBe(0);
+
+      growTail(transcript, 6);
+      viewport.setState(transcriptState(transcript));
+      const rendered = plainRows(viewport.render(80)).join('\n');
+
+      expect(viewport.metrics().scrollOffset).toBe(0);
+      expect(rendered).toContain('growing paragraph 5');
+    });
+
+    it('keeps the reader in place when a whole new turn is appended below', () => {
+      const transcript = largeHistory(40);
+      const viewport = new ChatViewport(
+        transcriptState(transcript),
+        getMarkdownTheme(), () => 18, () => 1, () => 80,
+      );
+      viewport.render(80);
+      viewport.scroll(40);
+      const before = plainRows(viewport.render(80));
+
+      transcript.apply({ type: 'tool', id: 'appended-tool', name: 'Read', detail: 'src/appended.ts' });
+      viewport.setState(transcriptState(transcript));
+      const after = plainRows(viewport.render(80));
+
+      expect(after.slice(1)).toEqual(before.slice(1));
+    });
+
+    it('holds the reader in place when their own message is appended, matching the web surface', () => {
+      // Web parity: BrainChatSurface re-follows the newest turn only on mount and on a conversation
+      // switch, so a message sent while scrolled up leaves the reader where they were. The CLI never
+      // reset scrollOffset on submit either; anchoring only makes that position actually stable.
+      const transcript = largeHistory(40);
+      const viewport = new ChatViewport(
+        transcriptState(transcript),
+        getMarkdownTheme(), () => 18, () => 1, () => 80,
+      );
+      viewport.render(80);
+      viewport.scroll(40);
+      const before = plainRows(viewport.render(80));
+
+      transcript.apply({ type: 'user', text: 'a question sent while reading history' });
+      viewport.setState(transcriptState(transcript));
+      const after = plainRows(viewport.render(80));
+
+      expect(after.slice(1)).toEqual(before.slice(1));
+      expect(viewport.metrics().scrollOffset).toBeGreaterThan(0);
+    });
+
+    it('does not jump when older history is indexed above the viewport', () => {
+      const transcript = largeHistory(400);
+      const viewport = new ChatViewport(
+        transcriptState(transcript),
+        getMarkdownTheme(), () => 18, () => 1, () => 80,
+      );
+      viewport.render(80);
+      viewport.scroll(60);
+      const before = plainRows(viewport.render(80));
+      const indexedBefore = viewport.metrics().indexedTurns;
+
+      // A second frame at the same offset keeps indexing older turns in the background.
+      const after = plainRows(viewport.render(80));
+
+      expect(viewport.metrics().indexedTurns).toBeGreaterThanOrEqual(indexedBefore);
+      expect(after).toEqual(before);
+    });
+  });
+
   it('stabilizes estimated heterogeneous rows before freezing frame and pointer geometry', () => {
     const shortHistory = Array.from({ length: 1_000 }, (_, index) => ({
       role: 'assistant' as const, text: `marker ${index}`,
