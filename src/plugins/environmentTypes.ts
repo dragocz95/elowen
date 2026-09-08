@@ -1,21 +1,23 @@
 import type { ManagedProjectRef } from '../shared/projectExecution.js';
 
+export interface EnvironmentLimits { cpus: number; memoryMb: number; pidsLimit: number; diskSoftMb: number }
 export type EnvironmentAction =
   | { kind: 'start' | 'stop' | 'restart' | 'delete' }
-  | { kind: 'snapshot'; note?: string }
-  | { kind: 'restore'; snapshotId: string };
+  | { kind: 'snapshot'; note?: string; includeData?: boolean }
+  | { kind: 'restore'; snapshotId: string; restoreData?: boolean }
+  | { kind: 'limits'; limits: EnvironmentLimits };
 
 export interface ProjectEnvironment {
   projectId: number;
   generation: number;
-  state: 'unprovisioned' | 'starting' | 'running' | 'stopped' | 'failed' | 'deleting';
+  state: 'unprovisioned' | 'starting' | 'running' | 'stopped' | 'failed' | 'deleting' | 'deleted';
   desiredState: 'running' | 'stopped' | 'deleted';
   lastError: string | null;
-  limits: { cpus: number; memoryMb: number; pidsLimit: number; diskSoftMb: number };
+  limits: EnvironmentLimits;
 }
-
 export interface EnvironmentOperation {
   id: string;
+  requestId: string;
   projectId: number;
   accountUserId: number;
   generation: number;
@@ -24,16 +26,22 @@ export interface EnvironmentOperation {
   error: string | null;
   snapshotId?: string;
 }
-
+export interface EnvironmentSnapshot {
+  id: string;
+  generation: number;
+  createdAt: string;
+  consistency: 'crash-consistent';
+  completeProject: boolean;
+  note: string;
+}
 export interface GuestFileStat {
   path: string;
   kind: 'file' | 'directory' | 'symlink' | 'other';
   size: number;
   modifiedAt: string;
-  /** Content version used for read-before-write/conflict checking, not authorization. */
+  /** A conflict token, never authorization. */
   version: string;
 }
-
 export type GuestFileOperation =
   | { kind: 'stat'; path: string }
   | { kind: 'list'; path: string; limit: number }
@@ -43,7 +51,6 @@ export type GuestFileOperation =
   | { kind: 'mkdir'; path: string }
   | { kind: 'rename'; path: string; destination: string; expectedVersion: string }
   | { kind: 'search'; path: string; pattern: string; glob?: string; caseSensitive?: boolean; limit: number };
-
 export type GuestFileResult =
   | { kind: 'stat'; entry: GuestFileStat | null }
   | { kind: 'list'; entries: GuestFileStat[]; truncated: boolean }
@@ -51,15 +58,94 @@ export type GuestFileResult =
   | { kind: 'write' | 'mkdir' | 'rename'; entry: GuestFileStat }
   | { kind: 'remove'; removed: boolean }
   | { kind: 'search'; matches: { path: string; line: number; text: string }[]; truncated: boolean };
+export interface ManagedWorktree { id: string; projectId: number; createdBy: number; path: string; branch: string; baseRef: string; label: string }
+export type ManagedWorktreeAction = { kind: 'list' } | { kind: 'create'; label: string; baseRef: string } | { kind: 'remove'; workspaceId: string };
 
-/** Actor is explicit for non-turn callers; implementations validate it against current core membership.
- * No host path, arbitrary executable or mount specification crosses this public control. */
-export const ENVIRONMENT_CONTROL_METHODS = ['environmentFor', 'requestEnvironment', 'environmentOperation', 'projectFiles', 'revokeProjectAccess'] as const;
+export interface ProjectPreviewBinding {
+  projectId: number;
+  generation: number;
+  port: number;
+  /** Trusted gateway transport only. This is not a public URL and never bypasses account authorization. */
+  socketPath: string;
+  release(): Promise<void>;
+}
 
+export const ENVIRONMENT_CONTROL_METHODS = [
+  'environmentFor', 'requestEnvironment', 'environmentOperation', 'projectFiles', 'revokeProjectAccess',
+  'environmentSnapshots', 'environmentLogs', 'managedWorktrees', 'projectPreviewBinding',
+] as const;
 export interface ProjectEnvironmentControl {
   environmentFor(input: { project: ManagedProjectRef; accountUserId: number }): Promise<ProjectEnvironment>;
-  requestEnvironment(input: { project: ManagedProjectRef; accountUserId: number; action: EnvironmentAction; expectedGeneration?: number }): Promise<EnvironmentOperation>;
+  /** Reuse requestId when retrying the same intent after a lost response. */
+  requestEnvironment(input: { project: ManagedProjectRef; accountUserId: number; action: EnvironmentAction; expectedGeneration?: number; requestId?: string }): Promise<EnvironmentOperation>;
   environmentOperation(input: { operationId: string; accountUserId: number }): Promise<EnvironmentOperation | null>;
   projectFiles(input: { project: ManagedProjectRef; accountUserId: number; operation: GuestFileOperation; expectedGeneration?: number }): Promise<GuestFileResult>;
   revokeProjectAccess(input: { projectId: number; accountUserId: number }): Promise<void>;
+  environmentSnapshots(input: { project: ManagedProjectRef; accountUserId: number }): Promise<EnvironmentSnapshot[]>;
+  environmentLogs(input: { project: ManagedProjectRef; accountUserId: number; lines?: number }): Promise<{ lifecycle: string; journal: string }>;
+  managedWorktrees(input: { project: ManagedProjectRef; accountUserId: number; action: ManagedWorktreeAction }): Promise<ManagedWorktree[]>;
+  projectPreviewBinding(input: { project: ManagedProjectRef; accountUserId: number; port: number }): Promise<ProjectPreviewBinding>;
+}
+
+/** Only the loader-identified Sites plugin may resolve these methods. These bindings come from Sites'
+ * trusted records, not model input. The resolver is called again when durable daemon work is claimed. */
+export interface SiteEnvironmentRegistration {
+  siteId: string;
+  projectId: number;
+  image: string;
+  sourcePath: string;
+  sitesDataDir: string;
+  brokerDir: string;
+  workspaceReadOnly: boolean;
+  network: 'shared' | 'isolated';
+  limits: EnvironmentLimits;
+  legacy?: { containerId: string; imageId: string; volumeMountpoint: string };
+  /** Copied from the Sites lifecycle checkpoint, not inferred from current container state. */
+  initialIntent?: { desiredState: 'running' | 'stopped'; pendingAction: 'start' | 'stop' | 'restart' | null; restartSequence?: number };
+  snapshotRetention?: number;
+}
+export type SiteRuntimeArtifact =
+  | { kind: 'data'; archivePath: string }
+  | { kind: 'snapshot'; snapshotId: string; imageReference: string; imageId: string; archivePath?: string; note?: string; createdAt: string }
+  | { kind: 'project-source'; project: ManagedProjectRef; guestPath: string; destinationPath: string };
+export interface SiteImageRecipe {
+  /** Fixed, content-addressed recipe supplied by Sites code, never by a model or a Site setting. */
+  tag: string;
+  files: Record<string, string>;
+  requiresBase?: boolean;
+}
+export type SiteImageKind = 'base' | 'static' | 'node';
+export type SiteEnvironmentAction = EnvironmentAction
+  | { kind: 'provision-image'; imageKind: SiteImageKind }
+  | { kind: 'prepare' | 'cleanup-stage' }
+  | { kind: 'import-data' | 'export-data' | 'import-snapshot' | 'remove-artifact' | 'export-project'; artifactId: string };
+export interface SiteRuntimeAuthority {
+  resolve(input: { siteId: string; accountUserId: number; access: 'read' | 'manage' }): Promise<SiteEnvironmentRegistration | null>;
+  /** Resolve only retained, Sites-owned artifact records; paths never originate in a model call. */
+  resolveArtifact?(input: { siteId: string; accountUserId: number; artifactId: string; action: SiteEnvironmentAction['kind'] }): Promise<SiteRuntimeArtifact | null>;
+  /** Existing Sites base/conversion recipe constants; runtime owns their build and verification. */
+  imageRecipe?(kind: SiteImageKind): SiteImageRecipe;
+  /** Includes every published runtime type, including stopped Sites and conversions. */
+  projectDependents?(projectId: number): Promise<{ siteId: string }[]>;
+  /** Sites owns privileged ingress preparation and application readiness, never the Podman lifecycle. */
+  beforeStart(siteId: string): Promise<void>;
+  afterStop(siteId: string): Promise<void>;
+}
+export interface SiteEnvironment extends Omit<ProjectEnvironment, 'projectId'> { siteId: string }
+export interface SiteEnvironmentOperation extends Omit<EnvironmentOperation, 'projectId' | 'action'> { siteId: string; action: SiteEnvironmentAction }
+export const SITE_ENVIRONMENT_CONTROL_METHODS = [
+  'connectSitesRuntime', 'discoverSiteEnvironment', 'registerSiteEnvironment', 'siteEnvironmentFor', 'requestSiteEnvironment',
+  'siteEnvironmentOperation', 'siteEnvironmentExec', 'siteEnvironmentLogs', 'siteEnvironmentSnapshots',
+] as const;
+export interface SiteEnvironmentControl {
+  connectSitesRuntime(authority: SiteRuntimeAuthority): void;
+  /** Read-only discovery verifies the Sites-owned container, image, mounts and volume before returning pins. */
+  discoverSiteEnvironment(input: { siteId: string; accountUserId: number }): Promise<(NonNullable<SiteEnvironmentRegistration['legacy']> & { state: 'running' | 'stopped' | 'paused' }) | null>;
+  registerSiteEnvironment(input: { siteId: string; accountUserId: number }): Promise<SiteEnvironment>;
+  siteEnvironmentFor(input: { siteId: string; accountUserId: number }): Promise<SiteEnvironment>;
+  requestSiteEnvironment(input: { siteId: string; accountUserId: number; action: SiteEnvironmentAction; expectedGeneration?: number; requestId?: string }): Promise<SiteEnvironmentOperation>;
+  siteEnvironmentOperation(input: { operationId: string; accountUserId: number }): Promise<SiteEnvironmentOperation | null>;
+  siteEnvironmentExec(input: { siteId: string; accountUserId: number; command: string; workdir?: string; timeoutMs?: number; signal?: AbortSignal }): Promise<{ stdout: string; stderr: string; code: number; truncated: boolean }>;
+  siteEnvironmentLogs(input: { siteId: string; accountUserId: number; lines?: number }): Promise<{ lifecycle: string; journal: string }>;
+  siteEnvironmentSnapshots(input: { siteId: string; accountUserId: number }): Promise<EnvironmentSnapshot[]>;
 }

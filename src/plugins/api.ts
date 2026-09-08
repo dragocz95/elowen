@@ -20,9 +20,9 @@ import type { WorkflowAddNodesRpcResult, WorkflowExpansionRpc } from '../subagen
 import type { PluginSecretBag } from '../shared/pluginSecrets.js';
 import type { ProjectGitSnapshot } from '../git/gitReader.js';
 import type { ProjectExecutionRef } from '../shared/projectExecution.js';
-import type { ProjectEnvironmentControl } from './environmentTypes.js';
+import type { ProjectEnvironmentControl, SiteEnvironmentControl } from './environmentTypes.js';
 export type { ProjectExecutionRef, ManagedProjectRef } from '../shared/projectExecution.js';
-export type { ProjectEnvironmentControl, ProjectEnvironment, EnvironmentAction, EnvironmentOperation, GuestFileOperation, GuestFileResult, GuestFileStat } from './environmentTypes.js';
+export type { ProjectEnvironmentControl, ProjectEnvironment, EnvironmentAction, EnvironmentOperation, GuestFileOperation, GuestFileResult, GuestFileStat, EnvironmentLimits, EnvironmentSnapshot, ManagedWorktree, ManagedWorktreeAction, SiteEnvironmentControl, SiteEnvironmentRegistration, SiteRuntimeAuthority, SiteEnvironment, SiteEnvironmentOperation, SiteEnvironmentAction, SiteRuntimeArtifact, SiteImageRecipe, SiteImageKind, ProjectPreviewBinding } from './environmentTypes.js';
 
 export type { DelegatedChildSummary, PluginSecretBag };
 
@@ -1232,6 +1232,8 @@ export interface SandboxExecutionLease {
   projectId?: number;
   runtimeGeneration?: number;
   heartbeat(): void | Promise<void>;
+  /** Managed leases cancel and verify guest processes, not merely the outer Podman client. */
+  cancel?(): Promise<void>;
   release(): void | Promise<void>;
 }
 
@@ -1253,6 +1255,9 @@ export interface SandboxPreparedExecution {
   launch:
     | { type: 'shell'; command: string; env: Record<string, string> }
     | { type: 'argv'; file: string; args: string[]; env: Record<string, string> };
+  /** Bounded guest stdin. A managed consumer must pipe this into the canonical launch. */
+  stdin?: string | Buffer;
+  cancel?: () => Promise<void>;
   workspace: SandboxWorkspace | null;
   lease: SandboxExecutionLease;
   /** Remove verified host-only prefixes from arbitrary command output before it reaches the model. */
@@ -1261,7 +1266,7 @@ export interface SandboxPreparedExecution {
 
 /** Live Sandbox domain seam. Consumers resolve it on every use; retaining a value across plugin reloads is
  * invalid because its DB/runtime generation may already have been replaced. */
-export interface SandboxControl extends ProjectEnvironmentControl {
+export interface SandboxControl extends ProjectEnvironmentControl, SiteEnvironmentControl {
   workspaceRoots(input: { projectIds: readonly number[] }): SandboxWorkspaceRoot[];
   /** Resolve one durable workspace ref for an explicit account and current project ceiling. Refuses stale,
    * orphaned, foreign, path-mismatched and inaccessible workspaces rather than falling back to a Project. */
