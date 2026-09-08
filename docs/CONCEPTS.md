@@ -65,7 +65,7 @@ A conversation's `user_id` is not always the person who most recently wrote. Sha
 Conversation lifecycle operations are deliberately different:
 
 - **Resume** rehydrates the same conversation.
-- **Rollover** archives an idle or stale live context under a fresh session ID while preserving history.
+- **Rollover** archives an idle or stale live context under a fresh session ID while preserving history. It applies to platform channels only; owner chat always continues its existing conversation.
 - **Clear** wipes the conversation's durable content in place and keeps the same session identity.
 - **Fork** creates a peer conversation with copied history/provenance.
 - **Delegate** creates a child conversation with a durable parent and captured authority boundary.

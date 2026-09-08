@@ -134,8 +134,8 @@ describe('StreamCoordinator — a question settled elsewhere', () => {
   });
 });
 
-describe('StreamCoordinator — idle rollover', () => {
-  it('resets to the fresh conversation on `session` and rebuilds from the daemon stream (no refetch)', () => {
+describe('StreamCoordinator — session rebind', () => {
+  it('resets to the new conversation on `session` and rebuilds from the daemon stream (no refetch)', () => {
     let onEvent!: (e: BrainEvent) => void;
     let historyCalls = 0;
     const client = {
@@ -163,17 +163,18 @@ describe('StreamCoordinator — idle rollover', () => {
     );
     stream.openStream(ac);
 
-    // Idle rollover: the server continued this message in a FRESH conversation, then re-emits the
-    // triggering message as a `user` event and streams its reply — all in order, no history refetch.
+    // The server moved this turn to another session (a channel rollover, a scheduled turn landing
+    // elsewhere) and announced it with `session`, then re-emits the triggering message as a `user` event
+    // and streams its reply — all in order, no history refetch.
     onEvent({ type: 'session', sessionId: 'fresh-1' });
     expect(turns(rt.transcript)).toEqual([]); // the prior conversation is cleared
     expect(rt.goal).toBeNull(); // old conversation state must never bleed into the fresh composer
     onEvent({ type: 'user', text: 'today' });
-    onEvent({ type: 'text', delta: 'streamed after rollover' });
+    onEvent({ type: 'text', delta: 'streamed after the rebind' });
 
     expect(turns(rt.transcript)[0]).toEqual({ role: 'you', text: 'today' });
     expect(turns(rt.transcript).some((t) => t.role === 'elowen' && t.segments.some((s) => s.kind === 'text' && s.text.includes('streamed')))).toBe(true);
-    expect(historyCalls).toBe(0); // a rollover never refetches — the fresh session has nothing stored yet
+    expect(historyCalls).toBe(0); // a rebind never refetches — the new session has nothing stored yet
   });
 
   it('buffers events during the post-compaction history refetch and replays them onto the collapsed view', async () => {
@@ -475,7 +476,7 @@ describe('StreamCoordinator — idle rollover', () => {
     rt.streamAc = new AbortController();
     oldAc.abort();
 
-    staleEvent({ type: 'session', sessionId: 'stale-rollover' });
+    staleEvent({ type: 'session', sessionId: 'stale-rebind' });
     staleEvent({ type: 'text', delta: 'stale bytes' });
     expect(rebinds).toEqual([]);
     expect(serialized(rt.transcript)).toContain('new selection stays');
@@ -1073,7 +1074,7 @@ describe('StreamCoordinator — bounded hydration lifecycle', () => {
     stream.stop();
   });
 
-  it('rebinds a rollover immediately during hydration and preserves it across a newer compaction boundary', async () => {
+  it('rebinds a `session` event immediately during hydration and preserves it across a newer compaction boundary', async () => {
     const firstHistory = deferred<Response>();
     const secondHistory = deferred<Response>();
     const historyUrls: string[] = [];

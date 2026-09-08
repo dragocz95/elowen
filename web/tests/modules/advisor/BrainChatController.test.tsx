@@ -226,20 +226,21 @@ describe('BrainChat session-bound controller', () => {
     expect(FakeES.instances.some((e) => new URL(e.url, 'http://x').searchParams.get('session') === 'slow')).toBe(false);
   });
 
-  it('rebinds on idle-rollover WITHOUT bumping the generation', async () => {
+  it('rebinds on a `session` event WITHOUT bumping the generation', async () => {
     renderHarness();
     await waitFor(() => expect(FakeES.instances.length).toBe(1));
     const es = FakeES.instances[0]!;
 
-    // The server rolled the idle conversation over into a fresh one.
-    act(() => es.emit({ type: 'session', sessionId: 'rolled-1' }));
+    // The server announced that the stream now belongs to another session (channel rollover, a scheduled
+    // turn landing elsewhere).
+    act(() => es.emit({ type: 'session', sessionId: 'rebound-1' }));
 
     const textarea = await screen.findByRole('textbox');
-    act(() => fireEvent.change(textarea, { target: { value: 'after rollover' } }));
+    act(() => fireEvent.change(textarea, { target: { value: 'after the rebind' } }));
     await act(async () => { fireEvent.click(screen.getByRole('button', { name: /Send|Odeslat/i })); });
     await waitFor(() => expect(sendBodies.length).toBe(1));
     // Bound to the replacement conversation, but the generation is UNCHANGED (rebind, not a new start).
-    expect(sendBodies[0]).toMatchObject({ session: 'rolled-1', generation: 1 });
+    expect(sendBodies[0]).toMatchObject({ session: 'rebound-1', generation: 1 });
   });
 
   it('detaches on tab-close (pagehide → sendBeacon), but never on a plain SSE drop', async () => {

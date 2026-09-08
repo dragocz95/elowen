@@ -89,7 +89,10 @@ describe('shapeDigestPayload', () => {
 });
 
 describe('DashDigestGenerator.run', () => {
-  const day = '2026-08-31';
+  // `beginGeneration` prunes every row older than DashDigestStore's retention window, so a hardcoded day
+  // silently deletes the claimed row once the calendar passes it. Follow the clock instead: today's row is
+  // always inside retention, and it is also the only day the dashboard ever reads.
+  const day = new Date().toISOString().slice(0, 10);
   function claimed(reply: string | Error | null) {
     const store = new DashDigestStore(openDb(':memory:'));
     store.beginGeneration(7, day, { retryAfterMs: 1, staleAfterMs: 1, maxAttempts: 3 });

@@ -94,10 +94,11 @@ export class ClientAttachments {
 
   /** Every live listener currently attached to a session id — subscribe() AND tapSession() alike — kept
    *  independently of any particular LiveBrain instance, so it survives a respawn (model switch, restart,
-   *  vision hop, rollover) even though the LiveBrain's own transient `listeners` Set is rebuilt from
-   *  scratch each time. `attach()`/`detachTransport()` own this bookkeeping; the spawner reads it on every
-   *  (re)spawn to restore every genuinely attached transport, not just drill-in taps (name kept as
-   *  `sessionTaps` — that is what brainService.ts wires into the spawner). Re-keyed by `retarget()`. */
+   *  vision hop) even though the LiveBrain's own transient `listeners` Set is rebuilt from scratch each
+   *  time. `attach()`/`detachTransport()` own this bookkeeping; the spawner reads it on every (re)spawn to
+   *  restore every genuinely attached transport, not just drill-in taps (name kept as `sessionTaps` — that
+   *  is what brainService.ts wires into the spawner). Keyed by session id and never re-keyed: a session
+   *  that moves to a new id (channel rollover) leaves its taps behind with the old id. */
   readonly sessionTaps = new Map<string, Set<(e: BrainEvent) => void>>();
 
   /** Register a listener under its session's persistent ownership record — see `sessionTaps`. */

@@ -377,7 +377,7 @@ function useBrainChatController(): BrainChatValue {
   // ordered; a REST snapshot is a point-in-time read that can land LATE and undo it — the server samples
   // it, then a newer step/idle arrives, then the slow response commits an older number that nothing
   // corrects until the next round-trip. The connect `generation` guard does not catch this: these
-  // refetches keep the same generation, and a rollover deliberately does not bump it either.
+  // refetches keep the same generation, and a `session` rebind deliberately does not bump it either.
   // So stamp every stream write and let a REST write commit only if no stream write beat it — the same
   // shape as the history epoch fence, applied to usage.
   const usageStampRef = useRef(0);
@@ -697,7 +697,7 @@ function useBrainChatController(): BrainChatValue {
         goal: setGoal,
         // The generated name landed after the provisional one. The rail's registry query is the one live
         // owner of conversation titles, so invalidate it exactly like a manual rename does — no transcript
-        // change, no reconnect, no local title copy. Session-agnostic key, so no rollover fence is needed.
+        // change, no reconnect, no local title copy. Session-agnostic key, so no session fence is needed.
         title: () => { void qc.invalidateQueries({ queryKey: ['brain-sessions'] }); },
         // Seed the same query used by process panels so live push and API hydration cannot diverge.
         process: (processes) => qc.setQueryData(['brain-processes'], processes),
@@ -817,8 +817,8 @@ function useBrainChatController(): BrainChatValue {
     const st = await status;
     if (generation !== genRef.current || !st) return;
     const fresh = hydrationStampRef.current;
-    // A rollover retargeted the stream while this explicit-session status read was in flight; every field in
-    // that response belongs to the conversation we already left.
+    // A `session` event rebound the stream while this explicit-session status read was in flight; every
+    // field in that response belongs to the conversation we already left.
     if (fresh.session !== statusHydrationStamp.session) return;
     setUsageIfFresh(st.usage, statusUsageRead);
     setTelemetry(telemetryOf(st));
@@ -1014,7 +1014,7 @@ function useBrainChatController(): BrainChatValue {
     const session = boundSessionRef.current;
     setRemovingQueue((cur) => new Set(cur).add(id));
     void elowenClient.brainQueueRemove(id, session).catch(() => {
-      // Another conversation is on screen (a switch bumped the generation, or an idle rollover rebound the
+      // Another conversation is on screen (a switch bumped the generation, or a `session` event rebound the
       // session without one): unhiding would plant a ghost chip pointing at a stranger's message, and the
       // error concerns a queue the user is no longer looking at.
       if (generation !== genRef.current || session !== boundSessionRef.current) return;
@@ -1126,7 +1126,7 @@ function useBrainChatController(): BrainChatValue {
   const planInFlightRef = useRef(false);
   /** Persist a decided plan under its conversation, so a reload does not re-raise it. The caller names the
    *  session the plan belongs to — for implement that is the one captured at click time, not whatever a
-   *  mid-flight rollover switched to. */
+   *  mid-flight `session` rebind switched to. */
   const recordPlanDecision = (sessionId: string, key: string): void => {
     // Re-inserting the session id puts it last in insertion order, so trimming from the front drops the
     // least recently decided conversations rather than an arbitrary one.

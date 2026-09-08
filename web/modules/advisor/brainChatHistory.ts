@@ -24,11 +24,11 @@ export function useBrainChatHistory({ getGeneration, getSession, setView }: Brai
   const [hasMoreHistory, setHasMoreHistory] = useState(false);
   const historyCursorRef = useRef<number | null>(null);
   const loadingOlderRef = useRef(false);
-  // Bumped by EVERY transcript reset/refetch (loadHistory, idle-rollover, read-only). A loadOlder captures
-  // it and discards its result if it changed while the fetch was in flight — the connect `generation` guard
-  // alone is not enough, because compaction/model-switch/rollover refetch WITHOUT bumping the generation
-  // (they keep the one SSE stream), which would otherwise let a stale older page tear a hole in the reset
-  // transcript or double the rolled-over turns.
+  // Bumped by EVERY transcript reset/refetch (loadHistory, a `session` rebind, read-only). A loadOlder
+  // captures it and discards its result if it changed while the fetch was in flight — the connect
+  // `generation` guard alone is not enough, because compaction, a model switch and a `session` rebind
+  // refetch WITHOUT bumping the generation (they keep the one SSE stream), which would otherwise let a
+  // stale older page tear a hole in the reset transcript or duplicate the turns of the new session.
   const historyEpochRef = useRef(0);
 
   // The newest page bootstraps the transcript; older pages lazy-load on scroll-up. A full refetch (compaction
@@ -47,10 +47,10 @@ export function useBrainChatHistory({ getGeneration, getSession, setView }: Brai
   };
 
   // Fetch the next older page and prepend it. Guarded against concurrent runs (a fast scroll fires scroll
-  // events in bursts), a stale generation (session switch), AND a stale epoch (a compaction/rollover refetch
-  // reset the transcript mid-fetch — those keep the generation, so the epoch is what discards this page
-  // instead of tearing a hole in the reset transcript). `prependHistory` dedupes by id and leaves the live
-  // streaming tail untouched, so a prepend mid-turn is safe.
+  // events in bursts), a stale generation (session switch), AND a stale epoch (a compaction or `session`
+  // rebind refetch reset the transcript mid-fetch — those keep the generation, so the epoch is what
+  // discards this page instead of tearing a hole in the reset transcript). `prependHistory` dedupes by id
+  // and leaves the live streaming tail untouched, so a prepend mid-turn is safe.
   const loadOlder = async (): Promise<void> => {
     if (loadingOlderRef.current || historyCursorRef.current === null) return;
     loadingOlderRef.current = true;
