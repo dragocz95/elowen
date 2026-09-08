@@ -349,6 +349,8 @@ export class TurnContextBuilder {
       accountUserId: live.contributionUserId,
       sessionId: live.sessionId,
       projects: this.d.projects,
+      projectRef: this.d.store.getProjectExecution(live.sessionId),
+      hostAuthorized: identity.owner,
       sandbox: this.d.sandbox?.(),
     });
     const effective = resolveWorkDir();
@@ -393,6 +395,8 @@ export class TurnContextBuilder {
         permissions,
         workDir: effective.workDir,
         resolveWorkDir: () => resolveWorkDir().workDir,
+        projectRef: effective.projectRef,
+        resolveProjectRef: () => resolveWorkDir().projectRef,
         memoryRecallScope: recallScope,
         // Read off the live rather than re-derived: it is the exact id this session's skill set and its
         // system-prompt announcement were composed from, so a tool resolving the caller through it can only

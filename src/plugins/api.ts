@@ -19,6 +19,10 @@ import type { PushPayload } from '../push/messages.js';
 import type { WorkflowAddNodesRpcResult, WorkflowExpansionRpc } from '../subagent/hostRpc.js';
 import type { PluginSecretBag } from '../shared/pluginSecrets.js';
 import type { ProjectGitSnapshot } from '../git/gitReader.js';
+import type { ProjectExecutionRef } from '../shared/projectExecution.js';
+import type { ProjectEnvironmentControl } from './environmentTypes.js';
+export type { ProjectExecutionRef, ManagedProjectRef } from '../shared/projectExecution.js';
+export type { ProjectEnvironmentControl, ProjectEnvironment, EnvironmentAction, EnvironmentOperation, GuestFileOperation, GuestFileResult, GuestFileStat } from './environmentTypes.js';
 
 export type { DelegatedChildSummary, PluginSecretBag };
 
@@ -58,6 +62,7 @@ interface DelegatingTurnAccessContract {
   principal?: string;
   contributionUserId?: number | null;
   workspaceRef?: SandboxWorkspaceRef;
+  projectRef?: ProjectExecutionRef;
 }
 
 export interface DelegatedChildBridge {
@@ -280,6 +285,7 @@ export interface SessionSource {
     workspaceId?: string;
     /** Internal inherited durable ref for nested delegation from an already workspace-scoped child. */
     workspaceRef?: SandboxWorkspaceRef;
+    projectRef?: ProjectExecutionRef;
     /** Chosen built-in/custom sub-agent type (a `subagent_type` on the delegate call). The host resolves
      *  it against the agent registry into the child's role prompt, tool allow-list and (for a read-only
      *  type) a minted read-only permission boundary — see brain/platforms.ts. */
@@ -618,13 +624,13 @@ export interface PluginHostExternalUsers {
  *  small number of plugins consume them: future integrations should reuse the core tenancy and identity
  *  decisions rather than query shared tables directly. */
 export interface PluginHostStores {
-  projects: { get(id: number): Project | null; list(): Project[] };
+  projects: { get(id: number): Project | null; list(): Project[]; beginDeletion(id: number): boolean; finishDeletion(id: number): boolean };
   /** The CORE-owned answer to "may this account see this project", resolved live and including the
    *  administrator rule. Exposed because a plugin doing durable per-account work has to re-check tenancy
    *  outside a request — a background worker has no ambient policy to consult — and re-deriving it from
    *  the `user_projects` table would put a copy of an access decision inside the very component that
    *  decision governs. Callers get the predicate, never the rows. */
-  userProjects: { canAccess(userId: number, projectId: number): boolean };
+  userProjects: { canAccess(userId: number, projectId: number): boolean; canManage(userId: number, projectId: number): boolean };
   /** The daemon's home project row (its own checkout). */
   homeProject(): Project;
   usersRead: {
@@ -1223,6 +1229,8 @@ export interface SandboxExecutionLease {
   accountUserId: number | null;
   workspaceId: string | null;
   homeGeneration: number | null;
+  projectId?: number;
+  runtimeGeneration?: number;
   heartbeat(): void | Promise<void>;
   release(): void | Promise<void>;
 }
@@ -1234,7 +1242,8 @@ export type SandboxExecutionCommand =
 /** Fully prepared launch. `launch` is the only process shape a consumer spawns; HOME, roots and confinement
  * policy have already been applied by Sandbox. */
 export interface SandboxPreparedExecution {
-  mode: 'confined' | 'direct';
+  mode: 'confined' | 'direct' | 'managed';
+  projectRef?: ProjectExecutionRef;
   /** Host cwd used only by the process launcher. Never render it to a workspace-scoped model. */
   cwd: string;
   /** Logical cwd visible inside the guest namespace and in tool results. */
@@ -1252,7 +1261,7 @@ export interface SandboxPreparedExecution {
 
 /** Live Sandbox domain seam. Consumers resolve it on every use; retaining a value across plugin reloads is
  * invalid because its DB/runtime generation may already have been replaced. */
-export interface SandboxControl {
+export interface SandboxControl extends ProjectEnvironmentControl {
   workspaceRoots(input: { projectIds: readonly number[] }): SandboxWorkspaceRoot[];
   /** Resolve one durable workspace ref for an explicit account and current project ceiling. Refuses stale,
    * orphaned, foreign, path-mismatched and inaccessible workspaces rather than falling back to a Project. */
@@ -1303,7 +1312,8 @@ export interface SandboxControl {
     input: {
       command: SandboxExecutionCommand;
       cwd: string;
-      leaseKind: 'terminal' | 'github' | 'sites';
+      leaseKind: 'terminal' | 'github' | 'sites' | 'files' | 'editor' | 'lsp' | 'mcp' | 'browser' | 'cron';
+      projectRef?: ProjectExecutionRef;
       /** A fresh network namespace has no route to the host loopback or another site's listener. Omitted
        * keeps the existing shared network for interactive terminal/GitHub work. */
       network?: 'shared' | 'isolated';
@@ -1819,7 +1829,7 @@ export interface PluginContext {
    *  toolPolicy carries exact allow+deny sets, and permissionBoundary carries the effective unattended
    *  granular-rule context so a child inherits exactly the caller's scope. `readOnly` is stamped by the
    *  host when the caller's turn is PLANNING — forward it untouched; never clear it. */
-  currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; settingsUserId?: number | null; contributionUserId?: number | null; accountUserId?: number | null; readOnly?: boolean; workspaceRef?: SandboxWorkspaceRef };
+  currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; settingsUserId?: number | null; contributionUserId?: number | null; accountUserId?: number | null; readOnly?: boolean; workspaceRef?: SandboxWorkspaceRef; projectRef?: ProjectExecutionRef };
   /** Who is driving the current turn (platform sender, resolved Elowen account, admin flag) — plugins
    *  that persist per-user state (long-term memory) key it on this. Null outside a prompt turn. */
   currentIdentity(): TurnIdentity | null;

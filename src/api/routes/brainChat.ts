@@ -1,5 +1,5 @@
 import { parseBody } from '../validation.js';
-import { brainStopSchema, brainVisibilitySchema, brainSendSchema, brainModelSchema, brainToggleSchema, brainThinkSchema, brainCwdSchema, brainCompactSchema, brainContextSchema, brainGoalSchema, brainAnswerSchema, subagentSendSchema } from '../schemas/brain.js';
+import { brainExecutionSchema, brainStopSchema, brainVisibilitySchema, brainSendSchema, brainModelSchema, brainToggleSchema, brainThinkSchema, brainCwdSchema, brainCompactSchema, brainContextSchema, brainGoalSchema, brainAnswerSchema, subagentSendSchema } from '../schemas/brain.js';
 import { commandsWithPlugins, findCommand, type SlashSurface } from '../../brain/slashCommands.js';
 import { logger } from '../../shared/logger.js';
 import type { ElowenApp, ElowenContext } from '../context.js';
@@ -265,6 +265,12 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
   // Record that the client moved its working directory (the CLI's /cd). The cwd itself already rides
   // every turn; this only annotates the conversation so the agent is told, and rejects a directory the
   // caller's policy would refuse rather than announcing a move that cannot happen.
+  app.post('/brain/execution', withBrain(async (c, brain) => {
+    const { target, session } = await parseBody(c, brainExecutionSchema);
+    try { return c.json(brain.selectProjectExecution(c.get('user').id, target, session)); }
+    catch (error) { return c.json({ error: error instanceof Error ? error.message : 'execution selection failed' }, 409); }
+  }));
+
   app.post('/brain/cwd', withBrain(async (c, brain) => {
     const { dir, session } = await parseBody(c, brainCwdSchema);
     try { return c.json(brain.noteWorkDir(c.get('user').id, dir, session)); }

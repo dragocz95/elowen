@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { projectExecutionRefSchema, type ProjectExecutionRef } from '../shared/projectExecution.js';
 import { renameSync, rmSync, writeFileSync } from 'node:fs';
 import type { Db } from './db.js';
 import { withWriteLock } from './db.js';
@@ -76,6 +77,7 @@ const FORK_SEED_ROLES = new Set(['user', 'assistant', 'toolResult', 'compactionS
 export interface BrainSessionRow {
   id: string; user_id: number; title: string; model: string; provider: string; work_dir: string; parent_session_id: string | null;
   delegated_access: string | null;
+  execution_ref: string | null;
   forked_from_session_id: string | null;
   /** Immutable spill namespace (see schema.sql). '' on rows minted by older builds = "use the id". */
   spill_ns: string;
@@ -306,11 +308,11 @@ export class BrainStore {
       const source = this.getSession(sourceId);
       if (!source) throw new Error(`brain session not found: ${sourceId}`);
       this.db.prepare(
-        `INSERT INTO brain_sessions (id, user_id, title, model, provider, work_dir, forked_from_session_id, spill_ns)
-         VALUES (@id, @user_id, @title, @model, @provider, @work_dir, @forked_from_session_id, @spill_ns)`
+        `INSERT INTO brain_sessions (id, user_id, title, model, provider, work_dir, forked_from_session_id, spill_ns, execution_ref)
+         VALUES (@id, @user_id, @title, @model, @provider, @work_dir, @forked_from_session_id, @spill_ns, @execution_ref)`
       ).run({
         id: newId, user_id: source.user_id, title: source.title, model: source.model,
-        provider: source.provider, work_dir: source.work_dir, forked_from_session_id: sourceId,
+        provider: source.provider, work_dir: source.work_dir, forked_from_session_id: sourceId, execution_ref: source.execution_ref,
         // A branched conversation gets its OWN namespace: sharing one would let either session's deletion
         // sweep the other's files. The copied transcript does carry the source's cleared-result
         // placeholders, which name the SOURCE's spill dir — the branch reads its own history fine, but a
@@ -330,6 +332,24 @@ export class BrainStore {
 
   getSession(id: string): BrainSessionRow | undefined {
     return this.db.prepare('SELECT * FROM brain_sessions WHERE id = ?').get(id) as BrainSessionRow | undefined;
+  }
+
+  getProjectExecution(sessionId: string): ProjectExecutionRef | undefined {
+    const row = this.getSession(sessionId);
+    if (!row) return undefined;
+    if (row.execution_ref !== null) return projectExecutionRefSchema.parse(JSON.parse(row.execution_ref));
+    if (!row.delegated_access) return undefined;
+    const scope = normalizeDelegatedExecutionScope(JSON.parse(row.delegated_access));
+    if (!scope) throw new Error('invalid delegated execution scope');
+    return scope.projectRef;
+  }
+
+  /** The caller authorizes the target before persisting. Delegated scope cannot be retargeted. */
+  setProjectExecution(sessionId: string, userId: number, ref: ProjectExecutionRef): void {
+    const parsed = projectExecutionRefSchema.parse(ref);
+    const row = this.getSession(sessionId);
+    if (!row || row.user_id !== userId || row.delegated_access !== null) throw new Error('conversation execution target cannot be changed');
+    this.db.prepare('UPDATE brain_sessions SET execution_ref = ? WHERE id = ?').run(JSON.stringify(parsed), sessionId);
   }
 
   /** Read the durable owner-facing activity slice without touching brain_messages. */

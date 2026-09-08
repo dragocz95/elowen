@@ -1,4 +1,10 @@
 import { z } from 'zod';
+import { projectExecutionRefSchema } from '../../shared/projectExecution.js';
+
+export const brainExecutionSchema = z.object({
+  session: z.string().min(1).optional(),
+  target: projectExecutionRefSchema,
+}).strict();
 
 /** Start the caller's embedded brain, optionally choosing which configured provider drives it. `cwd`
  *  mirrors brainSendSchema: the CLI's launch directory, validated server-side and used as the session's

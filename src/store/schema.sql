@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT UNIQUE NOT NULL, path TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '', memory_shared INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT UNIQUE NOT NULL, path TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '', memory_shared INTEGER NOT NULL DEFAULT 0, execution_kind TEXT NOT NULL DEFAULT 'host', creator_user_id INTEGER, lifecycle TEXT NOT NULL DEFAULT 'active');
 -- Explicit share list behind a project's `memory_shared` toggle. When the toggle is on and this table
 -- has NO rows for the project, EVERY project member (user_projects) shares its memory pool; with rows
 -- present, exactly those users share it (an empty selection means everyone, per the feature contract).
@@ -26,7 +26,11 @@ CREATE TABLE IF NOT EXISTS users (
   avatar TEXT NOT NULL DEFAULT '',
   default_exec TEXT NOT NULL DEFAULT '',
   advisor_exec TEXT NOT NULL DEFAULT '',
-  advisor_autostart INTEGER NOT NULL DEFAULT 1
+  advisor_autostart INTEGER NOT NULL DEFAULT 1,
+  can_create_projects INTEGER NOT NULL DEFAULT 0,
+  can_share_projects INTEGER NOT NULL DEFAULT 0,
+  project_limit INTEGER NOT NULL DEFAULT 3,
+  default_project_id INTEGER
 );
 -- Immutable identities proven by an external identity provider. The composite primary key prevents one
 -- provider identity from ever resolving to two local accounts; the unique user key also prevents a local
@@ -177,6 +181,7 @@ CREATE TABLE IF NOT EXISTS brain_sessions (
   -- cwd-less, e.g. web-dock sessions). Drives the CLI's default-start resolution: a CLI launched in a
   -- directory resumes the most recent unattached conversation with a matching work_dir.
   work_dir TEXT NOT NULL DEFAULT '',
+  execution_ref TEXT,
   -- Delegated agents run as ordinary isolated brain sessions, but retain their durable parent so the
   -- parent conversation can include the whole nested session tree in its own usage/cost status. NULL
   -- is a top-level conversation. The index is created in db.ts after the additive migration so an old

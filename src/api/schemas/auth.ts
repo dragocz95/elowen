@@ -29,6 +29,9 @@ export const usernameField = z.string().trim().min(1, 'username required').max(6
  *  when present and enforces the last-admin / global-allow-list rules. */
 export const userPermissionsSchema = z.object({
   is_admin: z.boolean().optional(),
+  can_create_projects: z.boolean().optional(),
+  can_share_projects: z.boolean().optional(),
+  project_limit: z.number().int().min(1).max(1000).optional(),
   /** Display name. Free text — it identifies nothing, so it carries no uniqueness rule. */
   name: z.string().max(200, 'name too long').optional(),
   /** Login name. Unique across accounts; the handler answers a collision with a 409. */

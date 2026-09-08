@@ -2,11 +2,10 @@ import { z } from 'zod';
 import { isCreatableDirectoryName } from '../../integrations/projectFiles.js';
 
 /** Register a project. slug + path are required; notes is the optional Pilot brief. */
-export const createProjectSchema = z.object({
-  slug: z.string().min(1),
-  path: z.string().min(1),
-  notes: z.string().optional(),
-});
+export const createProjectSchema = z.union([
+  z.object({ slug: z.string().min(1), path: z.string().min(1), notes: z.string().optional(), executionKind: z.literal('host').optional() }),
+  z.object({ slug: z.string().trim().min(1).max(128), notes: z.string().optional(), executionKind: z.literal('managed') }).strict(),
+]);
 
 /** Edit a project. All fields optional; trimming and icon validation stay in the handler.
  *  `memoryShared` toggles the project's shared memory pool (admin-only, like the rest of the patch). */

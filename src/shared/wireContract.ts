@@ -300,7 +300,7 @@ export interface BrainStreamControl {
 /** The user as served by `GET /auth/me` — the shape that actually drifted once: the daemon grew
  *  `advisor_exec`/`advisor_autostart` and the web mirror silently rendered `undefined` until an AST
  *  mirror test caught it (see web/tests/lib/dtoMirror.test.ts). */
-export interface User { id: number; username: string; created_at: string; is_admin: boolean; allowed_execs: string[]; disabled_tools: string[]; allowed_tools: string[]; granted_plugins: string[]; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: boolean }
+export interface User { id: number; username: string; created_at: string; is_admin: boolean; allowed_execs: string[]; disabled_tools: string[]; allowed_tools: string[]; granted_plugins: string[]; name: string; email: string; avatar: string; default_exec: string; advisor_exec: string; advisor_autostart: boolean; can_create_projects?: boolean; can_share_projects?: boolean; project_limit?: number; default_project_id?: number | null }
 
 /** A registered project as served by GET/POST/PATCH /projects. `pathExists` is current server state, not
  * persisted metadata. Clients only warn on explicit false so responses from older daemons remain valid. */
@@ -312,6 +312,9 @@ export interface ProjectView {
   icon: string;
   memoryShared?: boolean;
   pathExists?: boolean;
+  executionKind?: 'host' | 'managed';
+  creatorUserId?: number | null;
+  lifecycle?: 'active' | 'deleting';
 }
 
 /** A durable RAW memory row (v1: user-scoped; `GET /memory`). Deletes are SOFT (`status='deleted'`).

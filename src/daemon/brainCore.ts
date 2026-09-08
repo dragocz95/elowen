@@ -273,10 +273,13 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // would be two ways for a child to end up scoped differently in the two processes.
   const policyForProjects = (ids: number[], accountUserId?: number): Policy => ({
     allowedProjectIds: new Set(ids),
+    canAccessProject: (id) => accountUserId !== undefined && ids.includes(id) && userProjects.canAccess(accountUserId, id),
+    canExecuteHost: () => accountUserId !== undefined && users.isAdmin(accountUserId),
     allowedPaths: () => {
-      const roots = ids.map((id) => projects.get(id)?.path).filter((p): p is string => !!p);
+      const currentIds = accountUserId === undefined ? ids : ids.filter((id) => userProjects.canAccess(accountUserId, id));
+      const roots = currentIds.map((id) => projects.get(id)).filter((project) => project?.executionKind !== 'managed' && project?.lifecycle !== 'deleting').map((project) => project?.path).filter((p): p is string => !!p);
       if (accountUserId === undefined) return roots;
-      for (const workspace of sandboxWorkspaceRoots(accountUserId, ids)) {
+      for (const workspace of sandboxWorkspaceRoots(accountUserId, currentIds)) {
         if (!roots.includes(workspace.path)) roots.push(workspace.path);
       }
       return roots;
@@ -649,8 +652,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
           projects,
           homeProject: () => projects.get(homeProject.id) ?? {
             id: homeProject.id, slug: homeProject.slug, path: homeProject.path, notes: '', icon: '', memoryShared: false,
+            executionKind: 'host', creatorUserId: null, lifecycle: 'active',
           },
-          userProjects: { canAccess: (userId, projectId) => userProjects.canAccess(userId, projectId) },
+          userProjects: { canAccess: (userId, projectId) => userProjects.canAccess(userId, projectId), canManage: (userId, projectId) => userProjects.canManage(userId, projectId) },
           usersRead: {
             list: () => users.list().map(asPluginUser),
             isAdmin: (id) => users.isAdmin(id),
