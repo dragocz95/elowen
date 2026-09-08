@@ -23,6 +23,15 @@ export const createDirectorySchema = z.object({
   name: z.string().trim().refine(isCreatableDirectoryName, 'name must be a creatable directory segment'),
 });
 
+/** Delete a managed project. Both fields are optional and are forwarded verbatim to the environment
+ *  provider, which owns the durable deletion intent: `requestId` makes a retried DELETE return the same
+ *  operation instead of colliding with the pending one, and `expectedGeneration` refuses the delete when
+ *  the caller's view of the environment is stale. A host project ignores both. */
+export const deleteProjectSchema = z.object({
+  requestId: z.string().regex(/^[a-zA-Z0-9_.:-]{1,160}$/, 'invalid idempotency key').optional(),
+  expectedGeneration: z.number().int().nonnegative().optional(),
+});
+
 /** Replace a project's shared-memory share list WHOLESALE (admin-only). An empty list means every
  *  project member shares the pool — the "nobody picked = everyone" default of the feature contract. */
 export const memoryMembersSchema = z.object({

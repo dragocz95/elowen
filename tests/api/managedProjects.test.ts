@@ -10,13 +10,14 @@ import { createServer } from '../../src/api/server.js';
 
 const databases: Db[] = [];
 const request = (token: string, method = 'GET', body?: unknown) => ({ method, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-function setup() {
+function setup(sandbox?: { requestEnvironment: (input: unknown) => unknown }) {
   const db = openDb(':memory:'); databases.push(db);
   const users = new UserStore(db); const projects = new ProjectStore(db); const userProjects = new UserProjectStore(db);
   const home = projects.create({ slug: 'host', path: '/host' });
   const admin = users.create('admin', 'test-password'); const member = users.create('member', 'test-password'); const peer = users.create('peer', 'test-password');
   const token = users.issueToken(member.id); const peerToken = users.issueToken(peer.id);
-  const app = createServer({ bus: new EventBus(), engine: null as never, spawn: null as never, tmux: null as never, project: home, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db), users, projects, userProjects });
+  const plugins = sandbox ? { get: async () => ({ control: (name: string) => name === 'sandbox' ? sandbox : undefined }) } as never : undefined;
+  const app = createServer({ bus: new EventBus(), engine: null as never, spawn: null as never, tmux: null as never, project: home, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db), users, projects, userProjects, plugins });
   return { users, projects, userProjects, admin, member, peer, token, peerToken, app };
 }
 afterEach(() => { for (const db of databases.splice(0)) db.close(); });
@@ -45,5 +46,23 @@ describe('managed project API', () => {
     const { app, projects, member, token } = setup(); const p = projects.ensureDefault(member.id);
     expect((await app.request(`/projects/${p.id}`, request(token, 'DELETE'))).status).toBe(503);
     expect(projects.get(p.id)?.lifecycle).toBe('active');
+  });
+  it('forwards the caller idempotency key and generation to the single deletion owner', async () => {
+    const seen: Record<string, unknown>[] = [];
+    // The provider owns the deletion intent and records `beginDeletion` inside its own transaction; this
+    // stub deliberately does not, so a lifecycle left at 'active' proves core stopped recording it too.
+    const sandbox = { requestEnvironment: (input: Record<string, unknown>) => { seen.push(input); return { id: 'op-1', requestId: 'req-1', status: 'pending' }; } };
+    const { app, projects, member, token } = setup(sandbox); const p = projects.ensureDefault(member.id);
+    const response = await app.request(`/projects/${p.id}`, request(token, 'DELETE', { requestId: 'req-1', expectedGeneration: 4 }));
+    expect(response.status).toBe(202);
+    expect(await response.json()).toEqual({ operation: { id: 'op-1', requestId: 'req-1', status: 'pending' } });
+    expect(seen).toEqual([{ project: { kind: 'managed', projectId: p.id }, accountUserId: member.id, action: { kind: 'delete' }, requestId: 'req-1', expectedGeneration: 4 }]);
+    expect(projects.get(p.id)?.lifecycle).toBe('active');
+  });
+  it('rejects a malformed idempotency key instead of forwarding it', async () => {
+    const sandbox = { requestEnvironment: () => { throw new Error('must not be reached'); } };
+    const { app, projects, member, token } = setup(sandbox); const p = projects.ensureDefault(member.id);
+    expect((await app.request(`/projects/${p.id}`, request(token, 'DELETE', { requestId: 'bad key!' }))).status).toBe(400);
+    expect((await app.request(`/projects/${p.id}`, request(token, 'DELETE', { expectedGeneration: -1 }))).status).toBe(400);
   });
 });

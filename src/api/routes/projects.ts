@@ -4,7 +4,7 @@ import { posix } from 'node:path';
 import { RealGitReader } from '../../git/gitReader.js';
 import { runManagedProjectCommand } from '../../integrations/managedProjectExecution.js';
 import { parseBody } from '../validation.js';
-import { createDirectorySchema, createProjectSchema, updateProjectSchema, memoryMembersSchema } from '../schemas/projects.js';
+import { createDirectorySchema, createProjectSchema, deleteProjectSchema, updateProjectSchema, memoryMembersSchema } from '../schemas/projects.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 import type { PluginProjectIndicator } from '../../plugins/api.js';
 import { isPluginAllowedForUser } from '../../shared/pluginAccess.js';
@@ -261,14 +261,22 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     const target = d.projects.get(id);
     if (!target) return c.json({ error: 'project not found' }, 404);
     if (target.executionKind === 'managed' ? !(c.get('user') && d.userProjects?.canManage(c.get('user')!.id, id)) : notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    // DELETE carries a body only when the caller wants idempotency or a stale-view check. Clients send a
+    // JSON content-type even for a bodyless delete, so the empty body is decided on the payload itself;
+    // a malformed or wrongly shaped one still fails like every other validated body.
+    const raw = (await c.req.text()).trim();
+    const body = raw ? deleteProjectSchema.parse(JSON.parse(raw)) : {};
     const registry = await d.plugins?.get().catch(() => undefined);
     if (target.executionKind === 'managed') {
       const sandbox = registry?.control('sandbox');
       if (!sandbox) return c.json({ error: 'project environment provider unavailable' }, 503);
       const actor = c.get('user');
       if (!actor) return c.json({ error: 'forbidden' }, 403);
-      const operation = await sandbox.requestEnvironment({ project: { kind: 'managed', projectId: id }, accountUserId: actor.id, action: { kind: 'delete' } });
-      d.projects.beginDeletion(id);
+      // The environment provider owns the durable deletion intent: it records the core `beginDeletion`
+      // inside the same transaction as the enqueued operation. Recording it a second time here would
+      // re-mark an already finished project as deleting when an idempotent retry returns its prior
+      // operation, so core only forwards the caller's idempotency key and expected generation.
+      const operation = await sandbox.requestEnvironment({ project: { kind: 'managed', projectId: id }, accountUserId: actor.id, action: { kind: 'delete' }, ...body });
       return c.json({ operation }, 202);
     }
     for (const handler of registry?.projectRemovedHandlers ?? []) {
