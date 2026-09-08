@@ -139,7 +139,7 @@ interface TurnRunnerDeps {
   onConversationActivityChanged?: (sessionId: string) => void;
 }
 
-/** The owner-chat turn pipeline: mid-run steering, idle rollover + vision hop (delegated to the
+/** The owner-chat turn pipeline: mid-run steering, vision hop (delegated to the
  *  lifecycle), the live-prompt assembly (memory/hook/permissions blocks + turn context), the
  *  runWithPolicy scope with its turn-bound emitters, the thinking-only nudge, the post-turn curator
  *  kickoff, auto-compact and the goal judge. */
@@ -765,7 +765,7 @@ export class BrainTurnRunner {
       active.replay.publish({ type: 'queue', items: queuedWithPending(active) });
     }
     // Run ONE user turn on `live`. Refactored out of send() so the flush loop below can replay it for the
-    // drained queue with the same idle-rollover-safe serialization. `isUserTurn` marks a turn the DAEMON
+    // drained queue with the same serialization. `isUserTurn` marks a turn the DAEMON
     // must render as a 'you' bubble — a normal send AND a drained queued delivery, but never an internal
     // goal kickoff/continuation. When set, a `user` event streams so the sender renders the turn from the
     // stream (no client-side optimistic echo); `echoDisplay` is the client's clean text (else persistText).
@@ -896,8 +896,8 @@ export class BrainTurnRunner {
       }
       });
     };
-    // Serialized per CONVERSATION for the whole turn (outer `send-<id>` key): the idle rollover and the
-    // vision-fallback respawn dispose and recreate the session, which MUST NOT race a concurrent send()
+    // Serialized per CONVERSATION for the whole turn (outer `send-<id>` key): the vision-fallback respawn
+    // disposes and recreates the session, which MUST NOT race a concurrent send()
     // into the same conversation. Holding this lock is what keeps steering correct — any concurrent
     // /brain/send either sees isStreaming (→ steer) or blocks here, so no turn ever runs outside the
     // serial. The key is the TARGET conversation (not the user), so two bound clients working DIFFERENT
@@ -906,8 +906,8 @@ export class BrainTurnRunner {
     let completedSessionId = active.sessionId;
     try {
       await this.serial(sendLockKey(targetId), async () => {
-        // Re-resolve under the lock: an unbound send that queued behind a rollover/model switch must follow
-        // the active pointer to wherever the conversation went; a bound send stays on its explicit target.
+        // Re-resolve under the lock: an unbound send that queued behind a model switch or a conversation
+        // switch must follow the active pointer; a bound send stays on its explicit target.
         let b = session ? this.d.sessions.get(targetId) : this.d.lifecycle.activeLive(userId);
         if (!b) throw new Error('brain not started for user');
         assertClientCurrent(b.sessionId);
@@ -919,13 +919,13 @@ export class BrainTurnRunner {
         // respawns onto the user's vision model in place, and hops back on the next text-only turn).
         b = await this.d.lifecycle.maybeVisionHop(userId, b, !!images?.length, clientCwd);
         assertClientCurrent(b.sessionId);
-        // Markers land on the SESSION THE TURN ACTUALLY RUNS ON — resolved only here, after rollover/vision-hop
-        // may have replaced it. Recording them on the pre-lock `active` would strand the marker + its queued
-        // model-facing notice on the archived session a rollover just left behind (they ride `b`, which carries
-        // only listeners across the hop). A reasoning change still riding its debounce is landed first so its
-        // row precedes this turn's user message; the mode switch (build↔plan↔workflow, client-stamped per send
-        // with no discrete daemon event) is compared against the last mode seen on this session. Internal goal
-        // turns are always build and never roll over — they must not perturb the baseline or emit a marker.
+        // Markers land on the SESSION THE TURN ACTUALLY RUNS ON — resolved only here, after the re-resolve
+        // and vision hop above may have replaced it. Recording them on the pre-lock `active` would strand
+        // the marker and its queued model-facing notice on a conversation this turn is not running in. A
+        // reasoning change still riding its debounce is landed first so its row precedes this turn's user
+        // message; the mode switch (build↔plan↔workflow, client-stamped per send with no discrete daemon
+        // event) is compared against the last mode seen on this session. Internal goal turns are always
+        // build — they must not perturb the baseline or emit a marker.
         flushReasoningMarker(this.d.store, b);
         if (!internal) {
           if (b.lastMode !== undefined && b.lastMode !== mode) {
@@ -937,10 +937,9 @@ export class BrainTurnRunner {
         // default-start resolution); fallback-resolved dirs are never stamped.
         if (clientCwd) this.d.lifecycle.stampWorkDir(b.sessionId, clientCwd, b.policy);
         completedSessionId = b.sessionId;
-        // The pin follows the turn to the conversation it actually runs in. An idle rollover archives the
-        // old transcript and mints a FRESH session id, and settlement happens under that new id — so a pin
-        // left on the pre-lock id was found by nobody and the first turn after every rollover recorded as
-        // `internal` against the row owner instead of the surface the person was sitting at.
+        // The pin follows the turn to the conversation it actually runs in: settlement happens under the
+        // id resolved above, so a pin left on the pre-lock id would be found by nobody and the turn would
+        // record as `internal` against the row owner instead of the surface the person was sitting at.
         opened.movedTo(b.sessionId);
         // The activity projection opens only after the conversation admission lock is held. This makes two
         // concurrent idle sends serialize as two real turns instead of one replacing the other's working CAS.
@@ -975,7 +974,7 @@ export class BrainTurnRunner {
       activityDetail = aborted ? undefined : message;
       throw error;
     } finally {
-      // Safety net: if the turn threw before it started (rollover/preflight rejection), its pending
+      // Safety net: if the turn threw before it started (a preflight rejection), its pending
       // compaction chip is still up — drop it so a rejected send never leaves a phantom waiting chip.
       if (pendingCompactionEchoId) this.dropPendingCompactionEcho(active, pendingCompactionEchoId);
       // The turn is over, so PI's steering queue is gone with it and nothing steered into it is still in
@@ -1037,7 +1036,7 @@ export class BrainTurnRunner {
     }
     if (internal?.kind !== 'systemNudge') this.d.goals.afterTurnGoalJudge(userId, completedSessionId, internal);
     } finally {
-      // Every exit of the turn this opened, including the ones that never reach a provider: a rollover
+      // Every exit of the turn this opened, including the ones that never reach a provider: a preflight
       // rejection, a stopped client, a steer that threw. Releases only the pin this turn set.
       opened.close();
     }

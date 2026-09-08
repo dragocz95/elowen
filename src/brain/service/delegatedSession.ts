@@ -672,9 +672,7 @@ export class DelegatedSessionService {
   /** The single delegated-turn dispatch, shared by the owner's drill-in continuations (`sendToSubagent`)
    *  and hidden host system turns (durable sub-agent result delivery, via `internalSystem`). Resolves the
    *  child's immutable execution scope, rebuilds its captured policy + current account deny-list, and drives
-   *  channelService.send with `ownerSteer`. `idleRolloverMs` is pinned to Infinity: a drill-in or a
-   *  result-delivery turn must NEVER roll the delegate's transcript over (archiving it under a fresh id out
-   *  from under the still-owned child) — the child's own delegation owns that transcript. */
+   *  channelService.send with `ownerSteer`. */
   // `async` matters even though the body has no await of its own: delegatedContinuation() throws
   // SYNCHRONOUSLY (unknown session, bad parent, missing scope). Without it those escape a function
   // declaring Promise<string>, so a caller using the `void fn().catch(...)` style — as the HTTP route for
@@ -767,7 +765,6 @@ export class DelegatedSessionService {
       // sub-agent the delegating turn had asked for.
       ...(scope.thinkingLevel ? { thinkingLevel: scope.thinkingLevel } : {}),
       ownerSteer: true,
-      idleRolloverMs: Number.POSITIVE_INFINITY,
       ...(opts?.rebuildSession ? { rebuildSession: true } : {}),
       ...(opts?.internalSystem ? { internalSystem: opts.internalSystem } : {}),
       ...(opts?.onEvent ? { onEvent: opts.onEvent } : {}),

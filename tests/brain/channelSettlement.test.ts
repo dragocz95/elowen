@@ -193,9 +193,9 @@ describe('a room compacts a provably cold context before paying to re-cache it',
       },
     } as never);
     const opts = {
-      // Rollover would otherwise archive the room long before the cache gate opens; a cron channel that
-      // must keep continuity across runs disables it exactly like this, which is where this bites.
-      channelId: 'cron-aged', ownerUserId: 1, writerUserId: 2, idleRolloverMs: Infinity,
+      // A cron channel keeps one conversation across runs, so it is exactly where a context ages past the
+      // cache gate while the transcript stays put.
+      channelId: 'cron-aged', ownerUserId: 1, writerUserId: 2,
       policy: { allowedProjectIds: 'all' as const, allowedPaths: () => [] },
       identity: { userId: 7 },
     };

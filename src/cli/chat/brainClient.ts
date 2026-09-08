@@ -931,7 +931,7 @@ export class BrainClient {
   async stream(onEvent: (e: BrainStreamFrame) => void, signal: AbortSignal, backoffMs: number | undefined, onOpen: (() => void) | undefined, session: string | undefined, snapshot: true): Promise<void>;
   async stream(onEvent: ((e: BrainEvent) => void) | ((e: BrainStreamFrame) => void), signal: AbortSignal, backoffMs = 1000, onOpen?: () => void, session?: string, snapshot = false): Promise<void> {
     while (!signal.aborted) {
-      // Re-resolve per attempt: an idle rollover rebinds the client mid-stream, and a RECONNECT must
+      // Re-resolve per attempt: the daemon may rebind the client mid-stream, and a RECONNECT must
       // tap the replacement conversation, not the dead one it originally opened on.
       const sid = session ?? this.bound;
       const params = new URLSearchParams();
@@ -991,7 +991,7 @@ export class BrainClient {
                   });
                 }
                 // The server may have resolved this attempt's old bound id through the stable attachment
-                // after an idle rollover. Commit the fresh id before the loop's next reconnect URL.
+                // after a server-side rebind. Commit the fresh id before the loop's next reconnect URL.
                 if (session === undefined && typeof parsed.sessionId === 'string' && parsed.sessionId) this.rebind(parsed.sessionId);
               } else {
                 const cursor = frame.id === undefined ? undefined : Number(frame.id);

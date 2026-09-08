@@ -135,8 +135,8 @@ export function assertPathAllowed(path: string, opts: { intent?: 'read' | 'write
   const sessionId = currentSessionId();
   if (sessionId) {
     if (isSessionPlanPath(sessionId, path)) return realAbs(path);
-    // Resolved through the session's immutable spill NAMESPACE, not its re-keyable id: after a channel
-    // rollover or a /context bind the conversation keeps reading the directory its placeholders already
+    // Resolved through the session's immutable spill NAMESPACE, not its re-keyable id: after a
+    // `/context` bind the conversation keeps reading the directory its placeholders already
     // name, and a fresh conversation minted onto the freed id never inherits access to them.
     const inherited = opts.intent === 'read' ? forkParentToolResultSpillDir(process.env, sessionId) : undefined;
     const spill = realPathWithin(path, [

@@ -116,7 +116,6 @@ describe('DelegateContinue wiring — plugin tool to the brain core', () => {
     expect(opts.channelId).toBe('subagent-sub-dlg-abc');
     expect(opts.parentSessionId).toBe(PARENT);
     expect(opts.ownerSteer).toBe(true);
-    expect(opts.idleRolloverMs).toBe(Number.POSITIVE_INFINITY);
     expect(opts.model).toEqual({ provider: 'anthropic', model: 'claude-sonnet-5' });
     // The current turn's tool denies are layered onto the resumed child's policy — they ride the chain
     // from the toolPolicy the registry read out of the turn scope, down to the send opts. AskUserQuestion

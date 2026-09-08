@@ -14,7 +14,7 @@ import { openDb, type Db } from '../../src/store/db.js';
  *  stale and the writer is opening a genuinely new conversation. */
 
 const agedTs = (agoMs: number): string => new Date(Date.now() - agoMs).toISOString().replace('T', ' ').slice(0, 19);
-const THIRTY_ONE_MIN = 31 * 60 * 1000;
+const TWO_HOURS = 2 * 60 * 60 * 1000;
 
 function fakeBrain(sessionId: string, ownerUserId: number, direct = false) {
   const messages: { role?: string; content?: unknown }[] = [];
@@ -90,20 +90,19 @@ describe('a shared room is owned by whoever opened it', () => {
     expect(t.spawn).toHaveBeenCalledOnce();
   });
 
-  // The case Filip named: writing into a quiet channel opens a NEW session (the idle rollover exists to
-  // stop paying for a cold prompt cache), and that new session belongs to the person who woke it.
-  it('hands the next session to whoever writes after the channel has gone idle', async () => {
+  // A quiet room is still the same room. No surface has an idle cutoff on its history, so waking one up
+  // hours later joins the conversation that is already there rather than opening a second one.
+  it('keeps its owner and its conversation however long the room stays quiet', async () => {
     const t = setup();
     await t.turn(2, 'Michal opens the room');
-    t.ageLastMessage(THIRTY_ONE_MIN);
+    t.ageLastMessage(TWO_HOURS);
 
-    await t.turn(5, 'Ondrej writes an hour later');
+    await t.turn(5, 'Ondrej writes two hours later');
 
-    expect(t.store.getSession(t.sessionId)?.user_id).toBe(5);
-    // …and the conversation Michal had is preserved under the archived id, still his.
-    const archived = t.store.listSessions(2).filter((s) => s.id.startsWith(`brain-ch-${t.channelId}-arch-`));
-    expect(archived).toHaveLength(1);
-    expect(archived[0]!.user_id).toBe(2);
+    expect(t.store.getSession(t.sessionId)?.user_id).toBe(2);
+    // Nothing was archived, and both messages are in the one conversation.
+    expect(t.store.listSessions(2).some((s) => s.id.startsWith(`brain-ch-${t.channelId}-arch-`))).toBe(false);
+    expect(t.store.getMessages(t.sessionId)).toHaveLength(2);
   });
 
   it('keeps the operator when the writer has no linked account to name', async () => {

@@ -5732,8 +5732,8 @@ describe('sub-agent session tap + owner steering', () => {
       id: 'brain-ch-subagent-drill', userId: 1, model: 'm', parentSessionId: 'brain-parent',
       delegatedAccess: { admin: true, owner: true, projectIds: [], permissionBoundary: null },
     });
-    // The child transcript went quiet long past the 30-min idle cutoff. A plain channel turn would archive
-    // it under a fresh id and continue empty; a drill-in continuation must KEEP it — the child still owns it.
+    // The child transcript went quiet for hours. A continuation must find it intact: no surface archives a
+    // conversation for being idle, and the child still owns this one.
     d.store.appendMessage({
       id: 'old-user', sessionId: 'brain-ch-subagent-drill', parentId: null, role: 'user',
       content: { role: 'user', content: 'earlier' },
@@ -5743,7 +5743,7 @@ describe('sub-agent session tap + owner steering', () => {
 
     await svc.sendToSubagent(1, 'brain-ch-subagent-drill', 'continue after idle');
 
-    expect(reassign).not.toHaveBeenCalled(); // pinned idleRolloverMs = Infinity vetoes the rollover
+    expect(reassign).not.toHaveBeenCalled(); // nothing re-keys a conversation for having been idle
     expect(d.store.getSession('brain-ch-subagent-drill')).toBeDefined();
     expect(d.store.getMessages('brain-ch-subagent-drill').some((m) => m.id === 'old-user')).toBe(true);
     expect(d.session.prompt).toHaveBeenCalledTimes(1);
@@ -8703,8 +8703,6 @@ describe('BrainService.continueSubagent (a delegating turn picking a sub-agent b
     expect(opts.channelId).toBe('subagent-sub-1');
     expect(opts.parentSessionId).toBe(sessionId);
     expect(opts.delegatedAccess).toMatchObject({ admin: true, owner: true });
-    // Never roll the transcript over: continuing IS the reason it is still around.
-    expect(opts.idleRolloverMs).toBe(Number.POSITIVE_INFINITY);
   });
 
   it('an idle continuation is finished only once the child has no delegation of its own open — the 5 Sep case', async () => {

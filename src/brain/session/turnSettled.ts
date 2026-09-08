@@ -84,9 +84,9 @@ export interface TurnOpening {
 export interface OpenedTurn {
   /** Begin a deferred owner activity projection after the caller has acquired its admission lock. */
   begin(): void;
-  /** The turn moved to another conversation mid-flight (owner-chat idle rollover archives the transcript
-   *  and mints a fresh session id), so the pin follows it. Without this the turn settles under an id no
-   *  pin was ever written for and records as `internal` against the row owner. */
+  /** The turn resolved to a different conversation than the caller opened it for (an unbound send that
+   *  queued behind a conversation switch, a vision hop), so the pin follows it. Without this the turn
+   *  settles under an id no pin was ever written for and records as `internal` against the row owner. */
   movedTo(sessionId: string): void;
   /** The turn is over. Releases a pin nothing consumed — a turn refused at shutdown, aborted before its
    *  first provider request, or rejected by any other pre-prompt guard. A pin that a settled turn already
@@ -129,7 +129,7 @@ export function openTurn(parts: TurnOpening): OpenedTurn {
       if (!conversationActivity || activitySessionId === next) return;
       activitySessionId = next;
       if (!activityStarted) return;
-      // Rollover creates a new row, so move the projection as two CAS-protected transitions: clear the
+      // The projection lives on a row, so move it as two CAS-protected transitions: clear the
       // predecessor only when this turn still owns it, then begin on the replacement row.
       resetConversationActivity(conversationActivity.store, previousSessionId, conversationActivity.turnId, conversationActivity.onChanged);
       activityStarted = conversationActivity.store.beginSessionActivity(

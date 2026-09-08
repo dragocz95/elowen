@@ -7,7 +7,6 @@ import type { ChannelSessionService } from '../channels.js';
 import type { ElicitationRegistry } from '../elicitation.js';
 import { processRegistry } from '../processRegistry.js';
 import { abortSessionWork } from '../session/abortSessionWork.js';
-import { SESSION_IDLE_ROLLOVER_MS } from '../session/idleRollover.js';
 import type { LiveBrain } from '../session/liveBrain.js';
 import type { LiveSessionRegistry, PendingAbort } from '../session/liveRegistry.js';
 import { clearDeliveredUserEchoes } from '../session/queueMirror.js';
@@ -15,7 +14,7 @@ import { channelIdOf, isChannelSession, isNonUserSession, isOwnedUserSession } f
 import type { ClientAttachments } from './attachments.js';
 import type { GoalLoopService } from './goalLoop.js';
 import type { ConversationLifecycle } from './lifecycle.js';
-import type { IdleSessionClock } from './liveSessionReaper.js';
+import { IDLE_LIVE_SESSION_TTL_MS, type IdleSessionClock } from './liveSessionReaper.js';
 import { sessionHasWorkInFlight, sparedChildSessionIds } from './sessionQuiescence.js';
 import { resetConversationActivity } from '../session/conversationActivity.js';
 
@@ -220,8 +219,8 @@ export class SessionTeardownService {
    *  what the Stop button is for. The abandoned runtime is collected later by reapIdleLiveSessions. The
    *  CLI omits the flag and keeps its original semantics (closing the terminal aborts its own run). */
   async stopSession(userId: number, session?: string, clientId?: string, clientGeneration?: number, opts?: { detachOnly?: boolean }): Promise<{ stopped: boolean; disposed: boolean }> {
-    // Consume the authenticated client's attachment FIRST. Its binding follows idle rollover inside the
-    // daemon, so it is more authoritative than the (possibly pre-rollover) id the CLI last observed.
+    // Consume the authenticated client's attachment FIRST. The daemon's binding is more authoritative
+    // than the (possibly stale) id the CLI last observed.
     // Releasing invokes only this client's stream disposer; every other attachment remains counted.
     const released = clientId
       ? this.attachments.release(userId, clientId, clientGeneration)
@@ -333,7 +332,7 @@ export class SessionTeardownService {
   }
 
   /** Periodic sweep (daemon bootstrap, 60s): dispose live PI sessions that nobody has watched and nothing
-   *  has run in for a full SESSION_IDLE_ROLLOVER_MS. This is the counterpart of the non-destructive web
+   *  has run in for a full IDLE_LIVE_SESSION_TTL_MS. This is the counterpart of the non-destructive web
    *  stop — a client's binding expires on its own TTL, but before this nothing ever released the RUNTIME,
    *  so a tab closed over a running agent leaked its session until the daemon restarted. Returns the ids
    *  reaped. History stays in SQLite; the next message respawns the conversation. */
@@ -341,7 +340,7 @@ export class SessionTeardownService {
     const due = this.idleClock.due(
       this.sessions.liveEntries().map(([sessionId]) => ({ sessionId, reapable: this.reapableNow(sessionId) })),
       now,
-      SESSION_IDLE_ROLLOVER_MS,
+      IDLE_LIVE_SESSION_TTL_MS,
     );
     const reaped: string[] = [];
     for (const sessionId of due) {

@@ -436,8 +436,8 @@ export async function resumePlatformTurn(
   // degrade to `unknown` at the daemon's allow-list and lose the platform instead of adding anything.
   // That THIS was a resume is an operator fact, and it is in the log lines around this one.
   //
-  // No `movedTo`: the send below pins `idleRolloverMs: Infinity`, so this turn cannot change conversation
-  // under way. The handle is closed in the `finally` that ends this function, covering every exit taken
+  // No `movedTo`: a channel turn cannot change conversation under way at all any more. The handle is
+  // closed in the `finally` that ends this function, covering every exit taken
   // below — the `failed` return that keeps the marker for the next boot, the empty-reply stand-down, the
   // promotion-and-post tail, and any throw. A pin stranded here would bill the room's next live writer,
   // or the next turn this same boot resumes, to this account.
@@ -476,9 +476,6 @@ export async function resumePlatformTurn(
       scheduled: false,
       ...(envelope.model ? { model: envelope.model } : {}),
       ...(envelope.thinkingLevel !== undefined ? { thinkingLevel: envelope.thinkingLevel } : {}),
-      // A resume CONTINUES the interrupted transcript by definition; the idle-rollover check would see
-      // the pre-restart quiet time and archive the very conversation the continuation needs.
-      idleRolloverMs: Infinity,
       ...(authority.toolPolicy ? { toolPolicy: authority.toolPolicy } : {}),
       identity: { ...envelope.identity, admin: false, owner: false },
       writerUserId: authority.accountUserId,

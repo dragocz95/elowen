@@ -566,10 +566,6 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         ? { workspaceRef: node.workspaceRef ?? wf.workspaceRef ?? parentAccess.workspaceRef }
         : {}),
       ...(thinkingLevel ? { thinkingLevel } : {}),
-      // Number.MAX_SAFE_INTEGER, not Infinity, so the value survives any JSON round-trip (Infinity would
-      // serialize to null) — keeps the node transcript pinned to this workflow instead of rolling over
-      // mid-run, even though this object stays host-in-memory today.
-      sessionIdleMs: Number.MAX_SAFE_INTEGER,
       // read_only selects the host-side read-only MODE (preset toolset + minted boundary), same as delegate.
       ...(node.readOnly ? { readOnly: true } : {}),
       // A typed node gets its role prompt from the host (resolved from `agentType`); an untyped node uses

@@ -205,7 +205,7 @@ export class BrainService {
    *  drain this returns to false after the registry swap. A counter keeps the gate closed across queued reloads. */
   private pluginReloadWaiters = 0;
   private reloadingPlugins = false;
-  /** Session addressing, start/resume resolution and every respawn path (rollover, hop, restart). */
+  /** Session addressing, start/resume resolution and every respawn path (hop, model switch, restart). */
   private lifecycle: ConversationLifecycle;
   /** The owner-chat turn pipeline (send). */
   private turnRunner: BrainTurnRunner;
@@ -1524,7 +1524,7 @@ export class BrainService {
     return this.teardown.stopSession(userId, session, clientId, clientGeneration, opts);
   }
 
-  /** Periodic sweep: dispose live PI sessions unwatched and idle for a full SESSION_IDLE_ROLLOVER_MS —
+  /** Periodic sweep: dispose live PI sessions unwatched and idle for a full IDLE_LIVE_SESSION_TTL_MS —
    *  see SessionTeardownService.reapIdleLiveSessions. */
   async reapIdleLiveSessions(now: number = Date.now()): Promise<string[]> {
     return this.teardown.reapIdleLiveSessions(now);
@@ -1743,11 +1743,11 @@ export class BrainService {
   /** Bind (MOVE, not fork) one of the caller's own conversations INTO a platform channel slot so the
    *  channel's next turn continues in that conversation's history. IRREVERSIBLE by design: the chosen
    *  session is re-keyed onto the deterministic `brain-ch-<channel>` id, and whatever occupied the slot
-   *  is archived under a fresh id (nothing is lost, exactly like idle rollover). Guards: only the caller's
+   *  is archived under a fresh id, so nothing is lost. Guards: only the caller's
    *  OWN sessions are bindable (owner-scope); never the bare default `brain-<uid>` (re-keying it would
    *  strip the user's default id) and never a channel/task session; a session can hold only one slot, so a
    *  second bind of the same id finds nothing and throws. Serialized on the channel session lock so it
-   *  cannot race that channel's turn/compact/rollover. Returns the bound conversation's title for the
+   *  cannot race that channel's own turns or compaction. Returns the bound conversation's title for the
    *  adapter's confirmation message. */
   async bindChannelContext(callerUserId: number, channelKey: string, chosenSessionId: string): Promise<{ title: string }> {
     // Guard (b), id-only so it needs no store read: the bare default must never be re-keyed, and only a
@@ -1756,7 +1756,7 @@ export class BrainService {
       throw new Error('this conversation cannot be bound to a channel');
     }
     const channelSession = channelSessionId(channelKey);
-    // The channel session lock (same key the channel turn/compact/rollover take) serializes the whole move.
+    // The channel session lock (the same key a channel turn and a compaction take) serializes the whole move.
     return this.serial(channelSession, async () => {
       // Guards (a) + (c), resolved INSIDE the lock: only the caller's own session is bindable, and a second
       // bind of an already-moved id finds nothing here (the id ceased to exist on the first bind).
@@ -1780,7 +1780,7 @@ export class BrainService {
       this.goals.cancelGoalContinuation(chosenSessionId);
       this.elicitation.cancelForSession(chosenSessionId, 'moved to channel');
       this.cards.clearSession(chosenSessionId);
-      // Mirror the channel rollover (channels.ts): drop the live PI on the slot, ARCHIVE whatever occupies
+      // Drop the live PI on the slot, ARCHIVE whatever occupies
       // `brain-ch-<key>` under a fresh id (a no-op touching 0 rows if the channel never spawned), then MOVE
       // the chosen session into the now-free deterministic channel slot in one transaction.
       this.sessions.channelDispose(channelKey);
@@ -2306,7 +2306,7 @@ export class BrainService {
 
   /** A user saved their auto-compact settings: re-apply the threshold to every conversation of theirs that
    *  is ALREADY live — their own chats and the channel sessions they own. Without this the new percentage
-   *  only reached a session on its next respawn (model switch, rollover, daemon restart), so the setting
+   *  only reached a session on its next respawn (model switch, vision hop, daemon restart), so the setting
    *  looked broken: it was saved, and nothing happened to the conversation the user was sitting in.
    *
    *  No respawn happens here — PI reads its compaction settings at each check, so replacing the reserve in

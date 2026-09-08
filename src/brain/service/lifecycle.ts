@@ -76,7 +76,7 @@ interface LifecycleDeps {
 }
 
 /** Conversation lifecycle: session addressing (the active pointer + explicit bound ids), start/resume
- *  resolution, spawn/respawn (ensureLive, restart, model switch, idle rollover, vision hop), the
+ *  resolution, spawn/respawn (ensureLive, restart, model switch, vision hop), the
  *  attachment surface (subscribe/tapSession) and the work-dir stamping that feeds default-start. */
 export class ConversationLifecycle {
   constructor(private d: LifecycleDeps) {}
@@ -103,10 +103,9 @@ export class ConversationLifecycle {
   }
 
   /** Resolve an explicit parent-stream target through the stable CLI attachment when it carries a
-   * generation. A live idle rollover re-keys that attachment before the client has necessarily received
-   * its `session` event, so the reconnect's old URL must land on the fresh replacement. Validate BOTH
-   * ids as this user's ordinary conversation: a client binding is a routing hint, never an ownership
-   * bypass. */
+   * generation. The daemon's binding is more current than the id a reconnecting client last observed, so
+   * the reconnect's old URL lands where that client is actually bound. Validate BOTH ids as this user's
+   * ordinary conversation: a client binding is a routing hint, never an ownership bypass. */
   resolveStreamSession(userId: number, sessionId: string, clientId?: string, clientGeneration?: number): string {
     // Drill-in taps deliberately reach an owned delegated/channel child as read-only history/live output.
     // They never carry a stable parent CLI identity, so validate ownership without the owner-chat-only
@@ -294,9 +293,9 @@ export class ConversationLifecycle {
     }
     await this.serial(sessionId, async () => {
       // An EXPLICIT resume (the session picker / `/resume <id>`) is a deliberate choice to continue
-      // that conversation — stamp it so the idle-rollover check in send() respects it. A default
-      // start (client boot, no `session` opt) deliberately does NOT stamp: a stale conversation
-      // auto-resumed by a reconnecting client must still roll over on the next message.
+      // that conversation — stamp it so the cold-context gate (cacheDefinitelyCold) counts it as
+      // activity. A default start (client boot, no `session` opt) deliberately does NOT stamp: a
+      // conversation auto-resumed by a reconnecting client is not somebody choosing to continue it.
       const already = this.d.sessions.get(sessionId);
       if (already) {
         if (o.explicitResume) already.interactedAt = Date.now();
@@ -506,7 +505,7 @@ export class ConversationLifecycle {
    *
    *  Locking follows the topology in LiveSessionRegistry EXACTLY as a send does — outer `send-<id>`, then
    *  the bare session id. The outer lock is load-bearing, not belt-and-braces: a send holds it across its
-   *  idle-rollover and vision-hop awaits while the inner lock is free and `isStreaming` is still false, so
+   *  cold-context and vision-hop awaits while the inner lock is free and `isStreaming` is still false, so
    *  a clear taking only the inner lock would see a quiet conversation, dispose the live session under
    *  that send, and let it prompt() a disposed session holding the pre-clear context in memory — the
    *  cleared history would go straight back to the provider and be persisted again by its agent_end.
@@ -553,7 +552,7 @@ export class ConversationLifecycle {
       // Tell attached clients on the FRESH stream to rebuild from the server: `compacted` is the existing
       // "the daemon rewrote this session's stored rows, refetch history" signal (CLI StreamCoordinator and
       // the web dock both handle it), and the refetch now returns an empty transcript. A raw `session`
-      // event would be wrong — the id did not change, and the surfaces read it as an idle rollover.
+      // event would be wrong — the id did not change, and the surfaces read it as a change of session.
       live.replay.publish({ type: 'compacted' });
       // The card panel is client-side state seeded from the status snapshot, so the rows being gone is not
       // enough: re-emit each cleared card empty, which is the panel's own REMOVE signal (see upsertCard).
@@ -638,13 +637,12 @@ export class ConversationLifecycle {
       if (detached) return;
       detached = true;
       this.d.attachments.detachTransport(listener);
-      // An idle rollover may have MOVED this listener onto a replacement session (send() carries
-      // subscribers over so open streams survive) — and the user may have switched active sessions
-      // since, so sweep EVERY live session, not just the original and the currently active one
-      // (a listener left on a non-active live would keep receiving events for a dead stream forever).
+      // The user may have switched active sessions since this listener attached, so sweep EVERY live
+      // session, not just the original and the currently active one (a listener left on a non-active
+      // live would keep receiving events for a dead stream forever).
       for (const [, live] of this.d.sessions.liveEntries()) live.listeners.delete(listener);
-      // The source LiveBrain may already have been removed from the registry during rollover; clearing
-      // its captured set prevents the carry step from resurrecting a transport stopped mid-spawn.
+      // The source LiveBrain may already have been removed from the registry by a respawn; clearing
+      // its captured set prevents the re-attach step from resurrecting a transport stopped mid-spawn.
       b.listeners.delete(listener);
     };
     if (!this.d.attachments.attach(userId, b.sessionId, listener, off, clientId, clientGeneration, surface)) {
@@ -670,8 +668,8 @@ export class ConversationLifecycle {
       // detachTransport removes the persistent ClientAttachments-owned record (sessionTaps included), so
       // no later respawn ever re-attaches this listener again — see ClientAttachments.sessionTaps.
       this.d.attachments.detachTransport(listener);
-      // An idle rollover may have CARRIED this listener onto a replacement session (send() moves
-      // subscribers so open streams survive) — sweep every live user session, then the channel bucket.
+      // The listener may have been re-attached to another live session by a respawn — sweep every live
+      // user session, then the channel bucket.
       for (const [, live] of this.d.sessions.liveEntries()) live.listeners.delete(listener);
       this.liveFor(targetSessionId)?.listeners.delete(listener);
       initialLive?.listeners.delete(listener);

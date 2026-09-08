@@ -116,10 +116,10 @@ export class UsageOriginStore {
     if (this.turnOrigins.get(sessionId)?.token === token) this.turnOrigins.delete(sessionId);
   }
 
-  /** Follow a turn that changed conversation under way. Owner-chat idle rollover archives the transcript
-   *  and mints a FRESH session id (`ConversationLifecycle.maybeRollover`), and the turn then settles under
-   *  that new id — so a pin left on the old one is found by nobody and the turn records as `internal`
-   *  against the row owner instead of the surface the person actually used.
+  /** Follow a turn that resolved to a different conversation than the one it was opened for (an unbound
+   *  send that queued behind a conversation switch, a vision hop). It settles under that other id — so a
+   *  pin left on the original is found by nobody and the turn records as `internal` against the row owner
+   *  instead of the surface the person actually used.
    *
    *  Token-keyed exactly like {@link releasePin}, and it never overwrites a pin already held at the
    *  destination: that pin belongs to a turn in flight there. */

@@ -113,8 +113,8 @@ function harness(opts: {
   const attempts = new Map<string, number>();
   /** Every launch as the host saw it: which channel the node ran in, and the VERBATIM task it received.
    *  A resume is only real if the channel id repeats — that is what puts the retry back in the same session. */
-  const runs: { task: string; channelId: string; fullTask: string; sessionIdleMs?: number; toolPolicy?: { allow?: string[]; deny?: string[] }; model?: { provider: string; model: string }; thinkingLevel?: string; workspaceRef?: { workspaceId: string; projectId: number } }[] = [];
-  const run = async (source: { access?: { context?: string[]; sessionIdleMs?: number; toolPolicy?: { allow?: string[]; deny?: string[] }; model?: { provider: string; model: string }; thinkingLevel?: string; workspaceRef?: { workspaceId: string; projectId: number } }; channelId?: string }, fullTask: string, onEvent: (e: unknown) => void) => {
+  const runs: { task: string; channelId: string; fullTask: string; toolPolicy?: { allow?: string[]; deny?: string[] }; model?: { provider: string; model: string }; thinkingLevel?: string; workspaceRef?: { workspaceId: string; projectId: number } }[] = [];
+  const run = async (source: { access?: { context?: string[]; toolPolicy?: { allow?: string[]; deny?: string[] }; model?: { provider: string; model: string }; thinkingLevel?: string; workspaceRef?: { workspaceId: string; projectId: number } }; channelId?: string }, fullTask: string, onEvent: (e: unknown) => void) => {
     // A resumed node is handed its task plus a trailing resume note. Everything keyed by identity here
     // (launch order, session id, FAIL_ONCE attempts) must key on the TASK, or a retry would read as a
     // different node and FAIL_ONCE would fail forever.
@@ -122,7 +122,6 @@ function harness(opts: {
     launched.push(task);
     runs.push({
       task, channelId: source.channelId ?? '', fullTask,
-      ...(source.access?.sessionIdleMs !== undefined ? { sessionIdleMs: source.access.sessionIdleMs } : {}),
       ...(source.access?.toolPolicy !== undefined ? { toolPolicy: source.access.toolPolicy } : {}),
       ...(source.access?.model !== undefined ? { model: source.access.model } : {}),
       ...(source.access?.thinkingLevel !== undefined ? { thinkingLevel: source.access.thinkingLevel } : {}),
@@ -1785,26 +1784,6 @@ describe('WorkflowResume', () => {
     const text = resumed.content[0]!.text;
     expect(text).toMatch(/access boundary has changed/);
     expect(text).toMatch(/status: done/); // the run still completes, it just repeats that node's work
-  });
-
-  it('pins the node transcript, without which resuming into its session is silently pointless', async () => {
-    // Resuming a node reuses its channel id so it lands back in its own conversation. That only works
-    // while the transcript is still THERE: the host rolls a channel over after 30 idle minutes
-    // (SESSION_IDLE_ROLLOVER_MS) and archives it under a fresh id, which a resume minutes or hours later
-    // would walk straight into. The node opts out by sending sessionIdleMs, which the host maps to
-    // idleRolloverMs (src/brain/platforms.ts).
-    //
-    // This is worth pinning precisely BECAUSE the failure is invisible: the resume note is written to read
-    // sensibly in an empty conversation too, so losing the pin would not throw or warn — every resumed node
-    // would just quietly start from zero again, which is the bug the whole feature exists to fix.
-    const { tools, runs } = harness();
-    await tools.get('WorkflowStart')!.execute('r6', { nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
-
-    const idle = runs.find((r) => r.task === 'a')!.sessionIdleMs;
-    expect(idle).toBeDefined();
-    // Far past the host cutoff, and JSON-safe (Infinity would serialize to null on any round-trip).
-    expect(idle).toBeGreaterThan(30 * 60 * 1000);
-    expect(Number.isFinite(idle)).toBe(true);
   });
 
   it('does not spawn a node that was cancelled while its access was still being built', async () => {
