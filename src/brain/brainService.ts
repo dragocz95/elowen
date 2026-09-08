@@ -39,7 +39,7 @@ import { GoalLoopService } from './service/goalLoop.js';
 import { LiveSessionSpawner } from './service/spawner.js';
 import { ConversationLifecycle } from './service/lifecycle.js';
 import { recordSessionEvent, recordWorkflowFinishMarker, scheduleReasoningMarker } from './service/sessionEvents.js';
-import { moveSessionWorkDir, switchableProjects, projectMoveTarget, type SwitchableProject } from './service/workDir.js';
+import { moveSessionWorkDir, switchableProjects, type SwitchableProject } from './service/workDir.js';
 import { BrainTurnRunner, subagentResultReminder } from './service/turnRunner.js';
 import type { BoundClientRequest, TurnRequest } from './service/turnRequest.js';
 import { BrainStatusService } from './service/statusService.js';
@@ -1609,12 +1609,12 @@ export class BrainService {
 
   /** Move a CHANNEL conversation into one of the caller's own Projects (the /project switch's core) —
    *  the policy gate uses the CALLER's account, the channel key is the exact registry key a message from
-   *  that channel targets, and the move runs through the same shared implementation a `/cd` does. */
+   *  that channel targets, and the move runs through the same shared implementation a `/cd` does. The
+   *  target itself is resolved once, inside the channel lock (the caller re-validates there), so this
+   *  method only decides the policy question. */
   async switchChannelProject(userId: number, channelKey: string, projectId: number): Promise<{ workDir: string; slug: string }> {
     const policy = this.d.policy?.(userId);
     if (!policy) throw new Error('project is not readable or not allowed');
-    const target = projectMoveTarget(policy, this.d.projects, projectId);
-    if (!target) throw new Error('project is not readable or not allowed');
     return this.channelService.switchProject(channelKey, { policy, accountUserId: userId, projectId });
   }
 
