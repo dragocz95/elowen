@@ -1598,9 +1598,12 @@ export class BrainService {
     }).workDir };
   }
 
-  /** The Projects one account may move a conversation into — the platform /project picker's data. */
+  /** The Projects one account may move a conversation into — the platform /project picker's data.
+   *  Fails closed, like the delegated-boundary snapshot: a missing policy resolver is a wiring gap,
+   *  not an implicit admin grant. */
   listSwitchableProjects(userId: number): SwitchableProject[] {
-    const policy = this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
+    const policy = this.d.policy?.(userId);
+    if (!policy) return [];
     return switchableProjects(policy, this.d.projects);
   }
 
@@ -1608,7 +1611,8 @@ export class BrainService {
    *  the policy gate uses the CALLER's account, the channel key is the exact registry key a message from
    *  that channel targets, and the move runs through the same shared implementation a `/cd` does. */
   async switchChannelProject(userId: number, channelKey: string, projectId: number): Promise<{ workDir: string; slug: string }> {
-    const policy = this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
+    const policy = this.d.policy?.(userId);
+    if (!policy) throw new Error('project is not readable or not allowed');
     const target = projectMoveTarget(policy, this.d.projects, projectId);
     if (!target) throw new Error('project is not readable or not allowed');
     return this.channelService.switchProject(channelKey, { policy, accountUserId: userId, projectId });

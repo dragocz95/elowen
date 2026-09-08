@@ -27,6 +27,7 @@ import { HookAuditBuffer } from '../../src/shared/hookAudit.js';
 import { processRegistry, type ProcessHandle } from '../../src/brain/processRegistry.js';
 import type { TurnRequest } from '../../src/brain/service/turnRequest.js';
 import { inMemoryModelRuntime } from '../../src/brain/providers.js';
+import { channelSessionId } from '../../src/brain/sessionId.js';
 
 let sharedRuntime: ModelRuntime;
 beforeAll(async () => { sharedRuntime = await inMemoryModelRuntime(); });
@@ -2237,6 +2238,29 @@ describe('BrainService', () => {
     const svc = new BrainService(d as never);
     await svc.start(1, { cwd: allowed });
     expect(() => svc.noteWorkDir(1, outside)).toThrow(/not readable or not allowed/);
+  });
+
+  // Fail closed, like every other policy read in this file (the delegated-boundary snapshot above): a
+  // missing policy resolver is a wiring gap, not an implicit admin grant. The old fallback minted
+  // `allowedProjectIds: 'all'` — an ADMIN's policy — for any account whose resolver was not wired.
+  it('listSwitchableProjects fails closed when no policy resolver is wired', () => {
+    const dir = realpathSync(tmpDir('cwd-switchable'));
+    const d = fakeDeps();
+    (d as unknown as { projects: unknown }).projects = { list: () => [{ id: 7, slug: 'kolin', path: dir }] };
+    const svc = new BrainService(d as never);
+
+    expect(svc.listSwitchableProjects(1)).toEqual([]);
+  });
+
+  it('switchChannelProject refuses without a policy resolver instead of assuming admin', async () => {
+    const dir = realpathSync(tmpDir('cwd-switch-target'));
+    const d = fakeDeps();
+    (d as unknown as { projects: unknown }).projects = { list: () => [{ id: 7, slug: 'kolin', path: dir }] };
+    const svc = new BrainService(d as never);
+    // The conversation exists, so the ONLY refusal reason can be the missing policy.
+    d.store.createSession({ id: channelSessionId('c-1'), userId: 1, title: 'T', model: 'm' });
+
+    await expect(svc.switchChannelProject(1, 'c-1', 7)).rejects.toThrow(/not readable or not allowed/);
   });
 
   it('setThinkingLevel applies live (no respawn) and status reports it', async () => {
