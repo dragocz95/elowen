@@ -24,12 +24,21 @@ const PLUGINS = join(process.cwd(), 'plugins');
  *  check, each one is listed here with the keys it can produce — so the read is still verified, a site
  *  that disappears fails as a stale entry, and a new computed read fails until it is declared.
  *
- *  Empty today: the one entry was work's KanbanBoard (`s[col.labelKey]` over its COLUMNS table) and that
- *  plugin has moved to the plugin registry. An empty list is not an idle check — it is the assertion
- *  that NO bundle currently reads a key the scan cannot resolve, and the first one to do so fails here
- *  until it is declared. What that costs is the proof that the scan can still SEE a computed read, so
- *  the scanner is exercised against a fixture bundle at the bottom of this file. */
-const COMPUTED_READS: { file: string; keys: string[] }[] = [];
+ *  The scanner is additionally exercised against a fixture bundle at the bottom of this file, so a
+ *  regex that stopped seeing computed reads fails there rather than passing as a clean list here. */
+const COMPUTED_READS: { file: string; keys: string[] }[] = [
+  // The environment panel labels its live state and the status of the pending lifecycle operation by
+  // building the key from the value, so the scan cannot resolve which keys those are. Declared here:
+  // every state in ProjectEnvironment['state'] and every EnvironmentOperation['status'].
+  {
+    file: 'sandbox/web-src/ProjectEnvironmentSettings.tsx',
+    keys: [
+      'state_unprovisioned', 'state_starting', 'state_running', 'state_stopped', 'state_failed',
+      'state_deleting', 'state_deleted',
+      'operation_pending', 'operation_running', 'operation_succeeded', 'operation_failed', 'operation_cancelled',
+    ],
+  },
+];
 
 interface Manifest { web?: { strings?: Record<string, string> } }
 

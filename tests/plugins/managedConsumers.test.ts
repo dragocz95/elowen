@@ -5,7 +5,7 @@ import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
 import { loadPlugins } from '../../src/plugins/loader.js';
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
-import { ENVIRONMENT_CONTROL_METHODS } from '../../src/plugins/environmentTypes.js';
+import { ENVIRONMENT_CONTROL_METHODS, SITE_ENVIRONMENT_CONTROL_METHODS } from '../../src/plugins/environmentTypes.js';
 import { ProcessRegistry } from '../../src/brain/processRegistry.js';
 
 interface Result { content: { text?: string }[]; details?: Record<string, unknown> }
@@ -97,7 +97,8 @@ describe('managed builtin consumer routing', () => {
     const provider = memoryProvider({ '/etc/passwd': 'guest account data' });
     const registry = await loadPlugins({ dirs: [resolve('plugins')], enabled: ['files'], logger: { info() {}, warn() {}, error() {} } });
     registry.controls.set('sandbox', {
-      ...Object.fromEntries(ENVIRONMENT_CONTROL_METHODS.map(name => [name, () => { throw new Error(`unexpected ${name}`); }])),
+      ...Object.fromEntries([...ENVIRONMENT_CONTROL_METHODS, ...SITE_ENVIRONMENT_CONTROL_METHODS]
+        .map(name => [name, () => { throw new Error(`unexpected ${name}`); }])),
       workspaceRoots: () => [], resolveWorkspace() {}, acquireDelegationLease() {}, workspacesFor: () => [], activeWorkspace: () => null,
       projectFiles: provider.projectFiles, prepareExecution: provider.prepareExecution,
     } as never);

@@ -102,14 +102,40 @@ describe('the delegated-turn wire payload', () => {
     expect(opts.policy.allowedPaths()).toContain('/workspace/u2');
   });
 
-  it('gives an admin scope the all-project policy without consulting the resolver', () => {
+  it('gives an admin scope the all-project policy without enumerating projects', () => {
+    // An admin reaches every project without the resolver listing them. It is still asked ONE question:
+    // whether this account may execute on the HOST. That authority is the resolver's to grant, and an
+    // admin scope inheriting it implicitly is how a managed target would gain a host escape.
+    const asked: number[][] = [];
     const req = { ...request(), delegatedAccess: { ...request().delegatedAccess, admin: true, projectIds: [] } };
     const opts = delegatedChannelSendOpts(req, {
       identity,
-      policyForProjects: () => { throw new Error('must not be consulted for an admin scope'); },
+      policyForProjects: (projectIds: number[]) => {
+        asked.push(projectIds);
+        return { allowedProjectIds: new Set(projectIds), allowedPaths: () => [], canExecuteHost: false };
+      },
     });
     expect(opts.policy.allowedProjectIds).toBe('all');
+    expect(opts.policy.canExecuteHost).toBe(false);
+    expect(asked).toEqual([[]]); // the host question only, never an enumeration
     expect(opts.trusted).toBe(true);
+  });
+
+  it('derives a managed admin scope project access from the resolver, not from being an admin', () => {
+    const asked: number[][] = [];
+    const base = request();
+    const req = { ...base, delegatedAccess: { ...base.delegatedAccess, admin: true, projectIds: [], projectRef: { kind: 'managed' as const, projectId: 12 } } };
+    const opts = delegatedChannelSendOpts(req, {
+      identity,
+      policyForProjects: (projectIds: number[]) => {
+        asked.push(projectIds);
+        return { allowedProjectIds: new Set(projectIds), allowedPaths: () => [], canExecuteHost: true, canAccessProject: (id: number) => id === 12 };
+      },
+    });
+    expect(opts.policy.allowedProjectIds).toBe('all');
+    expect(opts.policy.canAccessProject?.(12)).toBe(true);
+    expect(opts.policy.canAccessProject?.(13)).toBe(false);
+    expect(asked).toEqual([[], [12]]);
   });
 
   describe('parsing a request that arrived over IPC', () => {

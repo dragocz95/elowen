@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { BrainService } from '../../src/brain/brainService.js';
 import { createBootRecovery } from '../../src/brain/recovery/providers.js';
 import type { KnownControls, PluginSkill, SubagentProgressEvent } from '../../src/plugins/api.js';
+import { SITE_ENVIRONMENT_CONTROL_METHODS } from '../../src/plugins/environmentTypes.js';
 import { currentSubagentEmitter, currentToolPolicy, currentTurnModel, currentWorkDir } from '../../src/plugins/policyContext.js';
 import { personalityText } from '../../src/brain/personality.js';
 import { NO_REPLY_NUDGE } from '../../src/brain/messageView.js';
@@ -3711,8 +3712,12 @@ describe('BrainService', () => {
       resolveWorkspace: async () => ({ ref: { workspaceId: 'ws-owner', projectId: 7 }, path: workspace, accountId: 1, label: 'Owner', branch: 'owner/topic', baseRef: 'main' }),
       acquireDelegationLease: async () => ({ heartbeat: () => {}, release: () => {} }),
       prepareExecution: async () => ({}),
-      // Required by the current control contract (ENVIRONMENT_CONTROL_METHODS); this turn-level test
-      // never reaches a managed environment, so any real call is an unexpected one.
+      // Required by the current control contract (ENVIRONMENT_CONTROL_METHODS and the Sites runtime
+      // half); this turn-level test never reaches a managed environment or a Site, so any real call is
+      // an unexpected one — and an incomplete control would resolve as no provider at all, quietly
+      // turning this into a test of the fallback path instead of the workspace switch.
+      ...Object.fromEntries(SITE_ENVIRONMENT_CONTROL_METHODS
+        .map((name) => [name, () => { throw new Error(`${name} is not expected in this fixture`); }])),
       environmentFor: async () => { throw new Error('environmentFor is not expected in this fixture'); },
       requestEnvironment: async () => { throw new Error('requestEnvironment is not expected in this fixture'); },
       environmentOperation: async () => { throw new Error('environmentOperation is not expected in this fixture'); },

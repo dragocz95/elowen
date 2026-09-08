@@ -9,7 +9,7 @@ import { FakeClock } from '../../src/shared/clock.js';
 import { createServer } from '../../src/api/server.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
-import { ENVIRONMENT_CONTROL_METHODS } from '../../src/plugins/environmentTypes.js';
+import { ENVIRONMENT_CONTROL_METHODS, SITE_ENVIRONMENT_CONTROL_METHODS } from '../../src/plugins/environmentTypes.js';
 import type { SandboxControl } from '../../src/plugins/api.js';
 
 const databases: Db[] = [];
@@ -29,7 +29,8 @@ function setup() {
     return { kind: 'stat', entry: { kind: 'file', path: operation.path, size: 3, modifiedAt: '2026-01-01', version: 'v1' } };
   });
   registry.controls.set('sandbox', {
-    ...Object.fromEntries(ENVIRONMENT_CONTROL_METHODS.map(name => [name, () => { throw new Error(`unexpected ${name}`); }])),
+    ...Object.fromEntries([...ENVIRONMENT_CONTROL_METHODS, ...SITE_ENVIRONMENT_CONTROL_METHODS]
+      .map(name => [name, () => { throw new Error(`unexpected ${name}`); }])),
     workspaceRoots: () => [], resolveWorkspace() {}, acquireDelegationLease() {}, workspacesFor: () => [], activeWorkspace: () => null,
     prepareExecution() { throw new Error('unexpected execution'); }, projectFiles,
   } as never);
