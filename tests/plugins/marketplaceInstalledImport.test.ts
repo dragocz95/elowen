@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join, resolve, dirname } from 'node:path';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 // @ts-expect-error — plain .mjs package entry, no types
-import { PLUGIN_SHARED_API_VERSION } from '../../packages/plugin-shared/index.mjs';
+import { PLUGIN_SHARED_API_VERSION } from 'elowen-plugin-shared';
 import { MarketplaceService } from '../../src/plugins/marketplace.js';
 import { discoverPlugins } from '../../src/plugins/loader.js';
 
@@ -93,9 +93,11 @@ describe('a marketplace-installed plugin actually loads', () => {
       probe: (t: string) => string;
       contract: number;
     };
-    // Against the package's own constant, not a literal: what this proves is that the installed copy
-    // resolves to the HOST's shared package, and a number restated here would just be a second place to
-    // bump the contract version.
+    // Against the package's own constant, not a literal — and resolved through the same node_modules
+    // walk the installed copy does, so the two agreeing IS the resolution working: a bare specifier from
+    // this test file and one from the installed plugin both land in the host's shared package. A literal
+    // here would just be a second place to bump the contract version, and a relative import would compare
+    // this checkout's source against whatever checkout the host node_modules symlink resolves to.
     expect(mod.contract).toBe(PLUGIN_SHARED_API_VERSION);
     expect(typeof mod.contract).toBe('number');
     expect(mod.probe('<thinking>hidden</thinking>visible')).not.toContain('hidden');

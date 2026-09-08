@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { controlCommandsFrom, runControlCommand } from '../../packages/plugin-shared/chatCommands.mjs';
+import { controlCommandsFrom, runControlCommand, runPickerCommand } from '../../packages/plugin-shared/chatCommands.mjs';
 import { SLASH_COMMANDS, commandsFor, commandsWithPlugins, buildPromptTemplates, isPromptCommand, isReservedCommandName, findCommand } from '../../src/brain/slashCommands.js';
 import { SERVER_COMMANDS } from '../../src/api/routes/brainChat.js';
 import { PLATFORM_SURFACES } from '../../src/shared/platformIdentity.js';
@@ -281,6 +281,29 @@ describe('slash command registry', () => {
     expect(commandsFor('web', true).some((c) => c.name === 'context')).toBe(false);
   });
 
+  /** /project is the second published `session-control` picker, and its one deliberate difference from
+   *  /context is the gate: binding someone else's conversation history into a shared room is an operator
+   *  decision, while a project switch moves the conversation into a directory only the SWITCHING account
+   *  itself reaches, and the host re-validates that policy on the switch — so every linked writer may call
+   *  it (`adminOnly` stays off, and `commandsFor` hides nothing here for non-admins). The text argument is
+   *  the typed short form (`/project <slug|id>`, exact slug first then a decimal id); the bare command
+   *  opens the same shared chooser as /context. Platform-only like /context: the CLI and the web dock are
+   *  not channels to move. */
+  it('publishes /project as an ungated session-control picker with a text argument, platforms only', () => {
+    const project = findCommand('project')!;
+    expect(project).toMatchObject({ kind: 'picker', execution: 'session-control', argument: { kind: 'text' } });
+    expect(project.adminOnly).toBeUndefined();
+    for (const surface of PLATFORM_SURFACES) {
+      expect(commandsFor(surface, true).find((c) => c.name === 'project'), `${surface} admin`).toMatchObject({ kind: 'picker' });
+      // Ungated by construction: the non-admin projection still carries it.
+      expect(commandsFor(surface, false).some((c) => c.name === 'project'), `${surface} non-admin`).toBe(true);
+    }
+    expect(commandsFor('cli', true).some((c) => c.name === 'project')).toBe(false);
+    expect(commandsFor('web', true).some((c) => c.name === 'project')).toBe(false);
+    // Reserved like every built-in: a plugin macro can never shadow the channel move.
+    expect(isReservedCommandName('project')).toBe(true);
+  });
+
   it('gates /lsp behind adminOnly (daemon-wide toggle) and its own plugin', () => {
     const lsp = findCommand('lsp')!;
     expect(lsp.adminOnly).toBe(true);
@@ -351,20 +374,18 @@ describe('slash command registry', () => {
       }
     });
 
-    /** A `session-control` PICKER is the one classification no generic dispatcher can serve: too stateful
-     *  for `POST /brain/command` (which takes actions only) and un-drawable by the adapters' shared control
-     *  core (`controlCommandsFrom` excludes pickers), so it needs a dedicated endpoint and a chooser per
-     *  surface. `/context` is the only command that has ever paid for that, and this list is small and
-     *  deliberate for exactly that reason: adding a second one is a real design decision — three surfaces'
-     *  worth of UI and a new PlatformControlApi pair — not a catalog edit. The two sets that used to
-     *  restate the whole classification here are gone: the `action` half is pinned against the route's own
-     *  dispatch table below, the daemon-run non-pickers against what `runControlCommand` really handles,
-     *  and `adapter-state` against the published projection. */
-    it('leaves /context the only command needing its own dispatch path', () => {
+    /** A `session-control` PICKER is server state no `action` endpoint serves: `POST /brain/command`
+     *  takes actions only, so both need a dedicated path — `/context` its endpoint, `/project` the
+     *  PlatformControlApi pair the shared picker core calls. The list stays small and deliberate for
+     *  exactly that reason: adding a third one is a real design decision — four surfaces' worth of
+     *  chooser rendering and a new PlatformControlApi seam — not a catalog edit. What CHANGED with
+     *  /project is who serves the chooser: the shared picker core owns the gate/listing/call for both,
+     *  and each surface only draws the descriptor and hands the choice back. */
+    it('leaves /context and /project the only commands needing their own dispatch path', () => {
       const needsOwnPath = SLASH_COMMANDS
         .filter((c) => c.execution === 'session-control' && c.kind === 'picker')
         .map((c) => c.name);
-      expect([...new Set(needsOwnPath)]).toEqual(['context']);
+      expect([...new Set(needsOwnPath)]).toEqual(['context', 'project']);
     });
 
     it('marks a plugin prompt macro, and only a plugin prompt macro, as plugin-executed', () => {
@@ -382,31 +403,42 @@ describe('slash command registry', () => {
      *  `controlCommandsFrom`, so "the two lists agree" has become tautological and the literal it compared
      *  against is gone.
      *
-     *  What can still part ways is the catalog and the shared core's actual switch. `/status` already
+     *  What can still part ways is the catalog and the shared cores' actual switches. `/status` already
      *  proved it: dropped from the CLI and the web dock while `runControlCommand` kept executing it on the
      *  platforms. So assert the half that still has two sides — every control command this catalog
-     *  publishes to a platform must be one the core really handles.
+     *  publishes to a platform must be one of the two cores really handles: the actions through
+     *  `runControlCommand`, the pickers through `runPickerCommand`.
      *
-     *  Behaviourally, because that switch is the ONLY statement of what the core owns: an unowned name
+     *  Behaviourally, because each switch is the ONLY statement of what its core owns: an unowned name
      *  falls to `default` and returns false without touching the binding, which is exactly the "adapter
      *  cannot run it" branch the adapters fall through on. */
-    it('publishes no platform control command the shared core cannot run', async () => {
+    it('publishes no platform control command the shared cores cannot run', async () => {
       // Every message key answers as a callable, so the value-shaped ones (`msg.stopped`) and the
       // function-shaped ones (`msg.fastSet(false)`) are both satisfied without restating the message set.
       const stub = () => ({
         msg: new Proxy({}, { get: () => () => '' }),
         reply: () => {}, isAdmin: () => true, stateId: 'X', ref: 'ref',
         state: { get: () => ({}), patch: () => {} },
-        ctl: { status: () => null, abort: () => {}, compact: async () => null, restart: async () => {}, setFast: () => null },
+        ctl: {
+          status: () => null, abort: () => {}, compact: async () => null, restart: async () => {}, setFast: () => null,
+          listContext: () => ({ items: [{ id: 's', title: 'T', model: 'm' }], total: 1, hasMore: false }),
+          bindContext: async () => ({ title: 'T' }),
+          listProjects: () => [{ id: 7, slug: 'kolin', path: '/srv/k' }],
+          switchProject: async () => ({ workDir: '/x', slug: 'kolin' }),
+        },
+        showPicker: async () => {},
         activeModel: async () => null,
       });
       for (const surface of PLATFORMS) {
-        // Pickers are excluded: /context is also `session-control`, but its listing/binding runs through
-        // dedicated PlatformControlApi methods and its own per-surface chooser, not the control core.
+        // Every published `session-control` name is in the control set now, pickers included; which of the
+        // two cores runs it is the cores' own answer, and the adapter falls through only when BOTH decline.
         const control = controlCommandsFrom(commandsFor(surface, true)) as Set<string>;
         expect(control.size, surface).toBeGreaterThan(0);
         for (const name of control) {
-          expect(await runControlCommand(name, stub()), `${surface} /${name}`).toBe(true);
+          expect(
+            (await runControlCommand(name, stub())) || (await runPickerCommand(name, stub())),
+            `${surface} /${name}`,
+          ).toBe(true);
         }
       }
     });
@@ -466,6 +498,8 @@ describe('slash command registry', () => {
       expect(findCommand('fast')?.argument).toEqual({ kind: 'enum', values: ['on', 'off', 'status'] });
       // Platform compact parses text but runControlCommand currently drops it before ctl.compact(ref).
       expect(findCommand('compact')?.argument).toBeUndefined();
+      // `/project <slug|id>` — the typed short form of the shared project picker.
+      expect(findCommand('project')?.argument).toEqual({ kind: 'text' });
       // `show` is CLI/web-only; platform /reasoning opens its picker and ignores the text argument.
       expect(findCommand('reasoning')?.argument).toBeUndefined();
       // Transport option schemas (Discord's option definitions) stay in the adapters; a declared enum that
