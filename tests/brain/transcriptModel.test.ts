@@ -422,6 +422,21 @@ describe('TranscriptModel', () => {
     expect(model.subagents()).toEqual([expect.objectContaining({ status: 'done', tools: 7 })]);
   });
 
+  it('carries the steered flag of a live subagent event onto the tool item, like the stored row does', () => {
+    const model = new TranscriptModel([
+      { role: 'assistant', text: '', segments: [
+        { kind: 'tool', id: 'continue-1', name: 'DelegateContinue', detail: 'note' },
+      ] },
+    ]);
+    model.apply({
+      type: 'subagent', id: 'continue-1', sessionId: 'child-1', status: 'done', task: 'note',
+      tools: 0, seconds: 1, steered: true,
+    });
+    // Without it the live CLI paints "✓ 0 tools · 1s" for a call that finished nothing, and only a
+    // restart (which reads the durable row) shows the steer.
+    expect(toolItem(model, 0, 'continue-1').sub?.steered).toBe(true);
+  });
+
   it('settles a streaming assistant tail when a user turn displaces it, so its sub-agent marker still repaints', () => {
     // Regression for #61: a foreground delegate flips to `done` while its assistant turn is still the
     // streaming tail, then a steered mid-turn user message is appended over it. If the tail keeps
