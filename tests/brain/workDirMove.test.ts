@@ -44,6 +44,25 @@ describe('moveSessionWorkDir', () => {
     expect(live.pendingSessionNotices).toEqual([`changed the working directory to ${dest}`]);
   });
 
+  it('carries the caller-supplied notice label instead of the raw path', () => {
+    // The channel switch drains this notice into the next turn's context whatever writer sends there —
+    // a shared room must not be handed the absolute path of a project only the switching account is
+    // assigned to, so it labels the move with the project slug instead.
+    const store = new BrainStore(openDb(':memory:'));
+    store.createSession({ id: 'brain-1', userId: 1, title: 'T', model: 'm' });
+    store.appendMessage({ id: 'm1', sessionId: 'brain-1', parentId: null, role: 'user', content: 'hi' });
+    const dest = tmpDir('dest');
+    const live = liveWith('brain-1', tmpDir('launch'));
+
+    moveSessionWorkDir({ store, policy: ALL, accountUserId: 1, sessionId: 'brain-1', live, workDir: dest, noticeDetail: 'kolin' });
+
+    expect(live.pendingSessionNotices).toEqual(['changed the working directory to kolin']);
+    expect(store.getSessionEvents('brain-1').map((e) => e.detail)).toEqual(['kolin']);
+    // The label is cosmetic: the durable home and the live cwd still carry the validated path.
+    expect(store.getSession('brain-1')?.work_dir).toBe(dest);
+    expect(live.workDir).toBe(dest);
+  });
+
   it('refuses a directory the policy does not reach and moves nothing', () => {
     const store = new BrainStore(openDb(':memory:'));
     store.createSession({ id: 'brain-1', userId: 1, title: 'T', model: 'm' });
@@ -236,7 +255,10 @@ describe('ChannelSessionService.switchProject', () => {
     expect(moved).toEqual({ workDir: dest, slug: 'kolin' });
     expect(store.getSession(channelSessionId('discord-c1'))?.work_dir).toBe(dest);
     expect(ch?.workDir).toBe(dest);
-    expect(ch?.pendingSessionNotices).toEqual([`changed the working directory to ${dest}`]);
+    // The notice and its transcript marker carry the project SLUG, never the absolute path: whatever
+    // writer sends in this room next drains it into the model's context.
+    expect(ch?.pendingSessionNotices).toEqual(['changed the working directory to kolin']);
+    expect(store.getSessionEvents(channelSessionId('discord-c1')).map((e) => e.detail)).toEqual(['kolin']);
   });
 
   it('refuses a project the caller does not reach and moves nothing', async () => {

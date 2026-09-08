@@ -219,6 +219,12 @@ export interface MoveSessionWorkDirInput {
   live?: LiveBrain;
   /** The requested directory, client-reported or a registered project path — validated here. */
   workDir: string;
+  /** What the cwd marker and its one-shot notice say instead of the validated path. Absent (owner
+   *  chat's /cd) keeps the absolute path, which only the owner's own turns drain. The channel project
+   *  switch passes the project slug: the notice is handed to the next turn WHATEVER writer sends in
+   *  the room, so a shared channel must not be given the absolute path of a project only the switching
+   *  account is assigned to. Label only — the persisted home and the live cwd keep the real path. */
+  noticeDetail?: string;
   projects?: { list(): ProjectView[] };
   sandbox?: KnownControls['sandbox'];
 }
@@ -266,7 +272,7 @@ export function moveSessionWorkDir(input: MoveSessionWorkDirInput): MoveSessionW
   // moved live (the marker rides the stream and the notice), and marker-only for a cold move, exactly
   // like a rename from the picker. A silent heal (row stale, live already there) says nothing.
   if (liveMoved || (!input.live && persisted)) {
-    recordSessionEvent(input.store, input.sessionId, input.live, 'cwd', resolved);
+    recordSessionEvent(input.store, input.sessionId, input.live, 'cwd', input.noticeDetail ?? resolved);
   }
   if (liveMoved) input.live!.workDir = resolved;
   return { workDir: resolved, moved: persisted || liveMoved, released };

@@ -1750,6 +1750,9 @@ export class ChannelSessionService {
         sessionId,
         ...(ch ? { live: ch } : {}),
         workDir: target.workDir,
+        // The room's next turn drains the notice whatever writer sends it, so it names the project's
+        // slug instead of carrying the absolute path into a shared channel's context.
+        noticeDetail: target.slug,
         ...(this.d.projects ? { projects: this.d.projects } : {}),
         ...(sandbox ? { sandbox } : {}),
       });
