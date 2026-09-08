@@ -42,20 +42,29 @@ export interface GuestFileStat {
   /** A conflict token, never authorization. */
   version: string;
 }
+/** Decoded bytes per upload chunk; every chunk except the last has exactly this size. */
+export const GUEST_FILE_CHUNK_BYTES = 524288;
 export type GuestFileOperation =
   | { kind: 'stat'; path: string }
-  | { kind: 'list'; path: string; limit: number }
+  | { kind: 'list'; path: string; limit: number; cursor?: string }
   | { kind: 'read'; path: string; maxBytes: number; offset?: number; length?: number }
   | { kind: 'write'; path: string; base64: string; expectedVersion: string | null }
+  /** Upload handles are bound to the original account, Project, generation, target and version. */
+  | { kind: 'write-begin'; path: string; expectedVersion: string | null; size: number }
+  | { kind: 'write-chunk'; path: string; uploadId: string; offset: number; base64: string }
+  | { kind: 'write-commit' | 'write-abort'; path: string; uploadId: string }
   | { kind: 'remove'; path: string; expectedVersion: string }
   | { kind: 'mkdir'; path: string }
   | { kind: 'rename'; path: string; destination: string; expectedVersion: string }
   | { kind: 'search'; path: string; pattern: string; glob?: string; caseSensitive?: boolean; limit: number };
 export type GuestFileResult =
   | { kind: 'stat'; entry: GuestFileStat | null }
-  | { kind: 'list'; entries: GuestFileStat[]; truncated: boolean }
+  | { kind: 'list'; entries: GuestFileStat[]; truncated: boolean; nextCursor: string | null }
   | { kind: 'read'; base64: string; version: string; totalBytes: number }
-  | { kind: 'write' | 'mkdir' | 'rename'; entry: GuestFileStat }
+  | { kind: 'write' | 'mkdir' | 'rename' | 'write-commit'; entry: GuestFileStat }
+  | { kind: 'write-begin'; uploadId: string; chunkSize: number; received: number; resolvedPath: string }
+  | { kind: 'write-chunk'; received: number }
+  | { kind: 'write-abort'; aborted: true }
   | { kind: 'remove'; removed: boolean }
   | { kind: 'search'; matches: { path: string; line: number; text: string }[]; truncated: boolean };
 export interface ManagedWorktree { id: string; projectId: number; createdBy: number; path: string; branch: string; baseRef: string; label: string }
@@ -121,7 +130,25 @@ export type SiteEnvironmentAction = EnvironmentAction
   | { kind: 'provision-image'; imageKind: SiteImageKind }
   | { kind: 'prepare' | 'cleanup-stage' }
   | { kind: 'import-data' | 'export-data' | 'import-snapshot' | 'remove-artifact' | 'export-project'; artifactId: string };
+export interface SiteImageOperation {
+  id: string;
+  requestId: string;
+  imageKind: SiteImageKind;
+  status: EnvironmentOperation['status'];
+  error: string | null;
+}
+export interface SiteImageStatus {
+  imageKind: SiteImageKind;
+  imageReference: string;
+  imageId: string | null;
+  present: boolean;
+  operation: SiteImageOperation | null;
+}
 export interface SiteRuntimeAuthority {
+  /** Approves only image references still named by this Site's retained release records. */
+  resolveSnapshotImage?(input: { siteId: string; accountUserId: number; imageReference: string }): Promise<{ imageReference: string; imageId?: string } | null>;
+  /** Host lifecycle only: verifies that the Site still belongs to the removed account. */
+  resolveCleanup?(input: { siteId: string; removedAccountUserId: number }): Promise<SiteEnvironmentRegistration | null>;
   resolve(input: { siteId: string; accountUserId: number; access: 'read' | 'manage' }): Promise<SiteEnvironmentRegistration | null>;
   /** Resolve only retained, Sites-owned artifact records; paths never originate in a model call. */
   resolveArtifact?(input: { siteId: string; accountUserId: number; artifactId: string; action: SiteEnvironmentAction['kind'] }): Promise<SiteRuntimeArtifact | null>;
@@ -136,12 +163,18 @@ export interface SiteRuntimeAuthority {
   afterStop(siteId: string): Promise<void>;
 }
 export interface SiteEnvironment extends Omit<ProjectEnvironment, 'projectId'> { siteId: string }
-export interface SiteEnvironmentOperation extends Omit<EnvironmentOperation, 'projectId' | 'action'> { siteId: string; action: SiteEnvironmentAction }
+export interface SiteEnvironmentOperation extends Omit<EnvironmentOperation, 'projectId' | 'action' | 'accountUserId'> { siteId: string; action: SiteEnvironmentAction; accountUserId: number | null }
 export const SITE_ENVIRONMENT_CONTROL_METHODS = [
+  'discoverSiteSnapshotImage', 'siteImageStatus', 'provisionSiteImage', 'requestSiteCleanup',
   'connectSitesRuntime', 'discoverSiteEnvironment', 'registerSiteEnvironment', 'siteEnvironmentFor', 'requestSiteEnvironment',
   'siteEnvironmentOperation', 'siteEnvironmentExec', 'siteEnvironmentLogs', 'siteEnvironmentSnapshots',
 ] as const;
 export interface SiteEnvironmentControl {
+  discoverSiteSnapshotImage(input: { siteId: string; accountUserId: number; imageReference: string }): Promise<{ imageReference: string; imageId: string }>;
+  siteImageStatus(input: { imageKind: SiteImageKind }): Promise<SiteImageStatus>;
+  provisionSiteImage(input: { imageKind: SiteImageKind; accountUserId: number; requestId?: string }): Promise<SiteImageOperation>;
+  /** Idempotent host account-removal intent. Poll by repeating the same input; no synthetic actor. */
+  requestSiteCleanup(input: { siteId: string; removedAccountUserId: number }): Promise<SiteEnvironmentOperation>;
   connectSitesRuntime(authority: SiteRuntimeAuthority): void;
   /** Read-only discovery verifies the Sites-owned container, image, mounts and volume before returning pins. */
   discoverSiteEnvironment(input: { siteId: string; accountUserId: number }): Promise<(NonNullable<SiteEnvironmentRegistration['legacy']> & { state: 'running' | 'stopped' | 'paused' }) | null>;
