@@ -143,6 +143,28 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
     const pid = String(JSON.stringify(bg).match(/"id":"([^"]+)"/)?.[1] ?? '');
     if (pid) await run('KillProcess', { id: pid });
 
+    enter('the daemon environment does not reach the guest');
+    // A guest that inherited the daemon's environment would hand the model whatever credentials the
+    // service account holds. Sentinels stand in for those: they must be absent from the guest, and the
+    // guest must not be answering from a stale cached environment either.
+    process.env.ELOWEN_TEST_HOST_SECRET = 'host-only-sentinel';
+    process.env.GH_TOKEN = 'daemon-token-sentinel';
+    try {
+      const guestEnv = await run('Bash', { command: 'env', description: 'guest environment' });
+      const printed = JSON.stringify(guestEnv);
+      expect(printed).not.toContain('host-only-sentinel');
+      expect(printed).not.toContain('daemon-token-sentinel');
+      // Proof the command really ran and really printed an environment, so the absence above means
+      // something: a failed or empty exec would also "not contain" the sentinels.
+      expect(printed).toContain('PATH=');
+      // The guest environment is the unit's own, not the daemon's: the systemd exec unit carries PATH,
+      // LANG and its own bookkeeping, and does not forward HOME from the container spec.
+      expect(printed).toContain('LANG=');
+    } finally {
+      delete process.env.ELOWEN_TEST_HOST_SECRET;
+      delete process.env.GH_TOKEN;
+    }
+
     enter('ShareFile copies a guest artifact into conversation storage');
     const imagesDir = join(scratch, 'chat-images');
     const shareOk: any = await runWithPolicy(
