@@ -22,6 +22,7 @@ import { useConversationJobLinks } from '../../lib/queries';
 import { useMeasuredPageSize } from '../../lib/useMeasuredPageSize';
 import { ScheduledJobLink, scheduledJobName } from '../../components/brain/ScheduledJobLink';
 import { TreeGuide } from '../../components/brain/TreeGuide';
+import { subagentBranchRows, type SubagentBranchLabels } from '../../components/brain/SubagentBranch';
 import type { BrainSearchHit, BrainSessionInfo, ConversationJobLink } from '../../lib/types';
 import { useBrainChat } from './BrainChatProvider';
 import { brainModelLabel, brainModelQualifiedLabel } from '../../lib/modelProvider';
@@ -138,6 +139,8 @@ const COMPACT_COLUMNS = '2.25rem minmax(0,1fr) 2.25rem';
 
 /** One shared empty set for "nothing is expanded", so an unfiltered render keeps the same identities. */
 const EMPTY_IDS: ReadonlySet<string> = new Set<string>();
+/** The same trick for "no sub-agent branches yet": one identity, so the memos below do not recompute. */
+const EMPTY_BRANCHES: Readonly<Record<string, never[]>> = {};
 
 /** The caller's OWN conversations: the register's table, the fulltext search with its snippets, the
  *  activity and unread marks, switch / new / rename / branch / export / delete, and the collapsed branch
@@ -177,6 +180,16 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
   // Which conversations have their scheduled-job branch open. Local to this mount and keyed by session
   // id: navigation state, not something to persist or sync across devices.
   const [openJobs, setOpenJobs] = useState<ReadonlySet<string>>(EMPTY_IDS);
+  // The sub-agent branches the reader has opened — the group under a conversation, and the individual
+  // rows inside it whose own delegations are uncovered. Same lifetime and same reasoning as `openJobs`:
+  // navigation state, kept for as long as this mount lives so a refetch cannot fold it back.
+  const [openAgents, setOpenAgents] = useState<ReadonlySet<string>>(EMPTY_IDS);
+  const [openAgentNodes, setOpenAgentNodes] = useState<ReadonlySet<string>>(EMPTY_IDS);
+  // The conversations whose branches are worth reading: the page actually on screen. Held in state and
+  // written by an effect below the pager rather than derived here, because the page is computed from the
+  // job branches this same read provides — deriving it inline would make the answer an input to its own
+  // request. Empty until the first page is measured, which asks for the whole authorized listing.
+  const [pageIds, setPageIds] = useState<readonly string[]>([]);
   const [renameFor, setRenameFor] = useState<string | null>(null);
   const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string; active: boolean } | null>(null);
   const [deletePending, setDeletePending] = useState(false);
@@ -327,12 +340,33 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
 
   const q = search.trim();
 
-  // The recurring jobs organized under THIS caller's conversations. The endpoint already bounds `mine` by
-  // the personal session list; the render below still only asks the map for sessions that list holds, so
-  // a shared platform room can never appear here as a conversation the switcher does not otherwise show.
-  const jobLinks = useConversationJobLinks('mine');
+  // The recurring jobs and sub-agents organized under THIS caller's conversations. The endpoint already
+  // bounds `mine` by the personal session list; the render below still only asks the map for sessions
+  // that list holds, so a shared platform room can never appear here as a conversation the switcher does
+  // not otherwise show. `pageIds` narrows the sub-agent half to the rows on screen — it is computed from
+  // the sort, the search and the page alone, never from the branches, so asking for a page cannot change
+  // which page is asked for.
+  const jobLinks = useConversationJobLinks('mine', pageIds);
   const jobsByConversation = useMemo(() => groupJobLinks(jobLinks.data?.links ?? []), [jobLinks.data]);
   const jobsFailed = jobLinks.data?.status === 'error' || jobLinks.isError;
+  const subagents = jobLinks.data?.subagents ?? EMPTY_BRANCHES;
+  const subagentsFailed = jobLinks.data?.subagentStatus === 'error';
+  const subagentLabels: SubagentBranchLabels = {
+    branch: t.subagentBranch.branch,
+    toggle: t.subagentBranch.toggle,
+    expand: t.subagentBranch.expand,
+    workflow: t.subagentBranch.workflow,
+    unavailable: t.subagentBranch.unavailable,
+    truncated: t.subagentBranch.truncated,
+    status: {
+      pending: t.subagentBranch.statusPending,
+      running: t.subagentBranch.statusRunning,
+      blocked: t.subagentBranch.statusBlocked,
+      done: t.subagentBranch.statusDone,
+      error: t.subagentBranch.statusError,
+      interrupted: t.subagentBranch.statusInterrupted,
+    },
+  };
 
   const sessionList = useMemo(() => sessions.data ?? [], [sessions.data]);
   const sessionById = useMemo(() => new Map(sessionList.map((s) => [s.id, s])), [sessionList]);
@@ -386,8 +420,12 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
   // A page is a page of CONVERSATIONS. Whatever an open schedules branch adds scrolls inside the same
   // viewport and never pushes a conversation onto the next page.
   const pageRows = visible.slice(clampedPage * pageSize, (clampedPage + 1) * pageSize);
+  // A string, so the effect fires when the PAGE changes rather than on every render that rebuilds the
+  // array. This is the one place the branch request learns which conversations to answer for.
+  const pageKey = pageRows.map((node) => node.row.id).join(',');
 
   useEffect(() => { setPage(0); }, [search, sort, direction, setPage]);
+  useEffect(() => { setPageIds(pageKey ? pageKey.split(',') : []); }, [pageKey]);
 
   /** Clicking the active column reverses it; a different column starts at its own natural order. */
   const sortBy = (key: SortKey) => {
@@ -398,11 +436,13 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
   const jobsRowDomId = (sessionId: string) => `${uid}-jobs-${encodeURIComponent(sessionId)}`;
   const jobRowDomId = (sessionId: string, jobId: string) => `${jobsRowDomId(sessionId)}-${encodeURIComponent(jobId)}`;
   const jobBranchOpen = (id: string): boolean => openJobs.has(id) || filtered.jobsExpanded.has(id);
-  const toggleJobs = (id: string) => setOpenJobs((current) => {
+  /** Flip one id in a set of open branches, shared by the schedules and the sub-agent group. */
+  const toggleIds = (setter: typeof setOpenJobs, id: string) => setter((current) => {
     const next = new Set(current);
     if (next.has(id)) next.delete(id); else next.add(id);
     return next;
   });
+  const toggleJobs = (id: string) => toggleIds(setOpenJobs, id);
 
   /** The row being renamed keeps its place in the table and its columns; only the title cell becomes a
    *  field, so the list does not jump under the reader while they type. */
@@ -563,6 +603,21 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
     if (node.jobs.length > 0 && jobBranchOpen(node.row.id)) {
       node.jobs.forEach((link, i) => out.push(jobRow(node, link, i === node.jobs.length - 1)));
     }
+    // The sub-agents that ran under this conversation, as their own collapsed group. Following one opens
+    // its transcript READ-ONLY: a finished delegation is a record of what happened, not a chat to resume.
+    out.push(...subagentBranchRows({
+      conversation: { id: node.row.id, title: node.row.title || t.brainChat.untitled },
+      nodes: subagents[node.row.id] ?? [],
+      labels: subagentLabels,
+      rowDomId: (suffix) => `${uid}-${encodeURIComponent(node.row.id)}-${suffix}`,
+      indent: 0,
+      open: openAgents.has(node.row.id),
+      onToggleBranch: () => toggleIds(setOpenAgents, node.row.id),
+      openKeys: openAgentNodes,
+      onToggleNode: (key) => toggleIds(setOpenAgentNodes, key),
+      forceOpen: false,
+      onOpenSession: (sessionId) => { dismiss(); openBrainSession(sessionId, false); },
+    }));
     return out;
   };
 
@@ -615,6 +670,8 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
             answers `unavailable` and shows nothing at all — but a read that FAILED must not be presented
             as "no conversation has a schedule". */}
         {jobsFailed ? <p role="status" className="px-1 pt-1 text-tiny text-muted-foreground">{t.scheduledJobs.error}</p> : null}
+        {/* Same rule for the core branch: a failed read must not read as "nothing was delegated here". */}
+        {subagentsFailed ? <p role="status" className="px-1 pt-1 text-tiny text-muted-foreground">{t.subagentBranch.error}</p> : null}
         <div ref={scrollRef} data-testid="conversation-history-scroll" className="min-h-0 flex-1 overflow-y-auto">
           {sessions.isLoading && !sessions.data ? null : visible.length === 0 ? (
             emptyText ? <p className="py-8 text-xs italic text-muted-foreground">{emptyText}</p> : null

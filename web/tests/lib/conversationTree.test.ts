@@ -1,12 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
   buildConversationTree,
+  countSubagentNodes,
   filterConversationTree,
   groupJobLinks,
   sortConversationTree,
+  subagentSessionIds,
   type ConversationRow,
 } from '../../lib/conversationTree';
-import type { ConversationJobLink } from '../../lib/types';
+import type { ConversationJobLink, ConversationSubagentNode } from '../../lib/types';
 
 const row = (id: string, extra: Partial<ConversationRow> = {}): ConversationRow => ({
   id,
@@ -31,6 +33,16 @@ const job = (jobId: string, conversationId: string, name: string, extra: Partial
 });
 
 const ids = (nodes: { row: ConversationRow }[]): string[] => nodes.map((n) => n.row.id);
+
+const agent = (name: string, extra: Partial<ConversationSubagentNode> = {}): ConversationSubagentNode => ({
+  kind: 'delegate',
+  key: `sub:${name}`,
+  name,
+  status: 'done',
+  childSessionId: `brain-ch-subagent-sub-${name}`,
+  children: [],
+  ...extra,
+});
 
 describe('buildConversationTree', () => {
   it('nests a delegated session under its parent and counts every descendant', () => {
@@ -87,6 +99,39 @@ describe('buildConversationTree', () => {
   it('hangs the conversation job links on their own conversation', () => {
     const tree = buildConversationTree([row('root')], groupJobLinks([job('j1', 'root', 'Digest')]));
     expect(tree[0]!.jobs.map((j) => j.jobId)).toEqual(['j1']);
+  });
+
+});
+
+describe('countSubagentNodes', () => {
+  it('counts every row a branch would render, nested ones included', () => {
+    expect(countSubagentNodes([
+      agent('a', { children: [agent('a1'), agent('a2', { children: [agent('a2x')] })] }),
+      agent('b'),
+    ])).toBe(5);
+    expect(countSubagentNodes([])).toBe(0);
+  });
+});
+
+describe('subagentSessionIds', () => {
+  /** The admin register already nests a delegated session under the conversation that started it. Those
+   *  same sessions are now rows of the sub-agent branch, so the register needs to know which ones the
+   *  branch already shows — otherwise one sub-agent appears twice under one conversation. */
+  it('collects every openable session a branch covers, at any depth', () => {
+    const collected = subagentSessionIds({
+      root: [
+        agent('a', { children: [agent('a1')] }),
+        { kind: 'workflow', key: 'wf:1', name: 'Batch', status: 'running', children: [agent('n1')] },
+      ],
+      other: [agent('b')],
+    });
+    expect([...collected].sort()).toEqual([
+      'brain-ch-subagent-sub-a', 'brain-ch-subagent-sub-a1', 'brain-ch-subagent-sub-b', 'brain-ch-subagent-sub-n1',
+    ]);
+  });
+
+  it('ignores a row with nothing to open, so a purged child never hides a real session', () => {
+    expect(subagentSessionIds({ root: [{ ...agent('gone'), childSessionId: undefined }] }).size).toBe(0);
   });
 });
 
@@ -158,4 +203,5 @@ describe('filterConversationTree', () => {
     const result = filterConversationTree(tree(), 'nothing', matches('nothing'));
     expect(result.roots).toEqual([]);
   });
+
 });

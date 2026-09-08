@@ -767,6 +767,44 @@ export interface ConversationJobLink {
 export interface ConversationLinksResponse {
   status: 'available' | 'unavailable' | 'error';
   links: ConversationJobLink[];
+  /** The CORE sub-agent branch, read from the store rather than contributed by a plugin — which is why
+   *  it has a status of its own and survives everything the cron half above can do wrong. `unavailable`
+   *  means the daemon had no store to ask; `error` means the read failed and the caller must say so
+   *  rather than render "this conversation delegated nothing". Optional so a payload from an older
+   *  daemon still types. */
+  subagentStatus?: 'available' | 'unavailable' | 'error';
+  /** Sub-agent branches keyed by conversation id. Only conversations that HAVE a branch appear. */
+  subagents?: Record<string, ConversationSubagentNode[]>;
+  /** Some bound cut the tree somewhere in this response. */
+  subagentsTruncated?: boolean;
+}
+
+/** What a sub-agent tree row says about its work. Mirrors SubagentNodeStatus in
+ *  src/store/brainDelegationStore.ts: `blocked` is a delegation parked for a human continuation,
+ *  `interrupted` a run a restart cut off or one too old to carry a lifecycle at all, and `pending` a
+ *  workflow node the engine has not dispatched yet. */
+export type ConversationSubagentStatus = 'pending' | 'running' | 'blocked' | 'done' | 'error' | 'interrupted';
+
+/** One row of the conversation switcher's sub-agent branch — the delegations and workflows that ran
+ *  under a conversation, nested as they ran. Mirrors ConversationSubagentNode in
+ *  src/store/brainDelegationStore.ts.
+ *
+ *  `childSessionId` is present only where the daemon verified a real transcript that is a direct,
+ *  same-owner child of the conversation this row hangs under. Absent means the row is metadata: a purged
+ *  transcript, a workflow node never dispatched, or a workflow, which fans out to N node sessions and so
+ *  has no transcript of its own. A row without it only expands; it never navigates. */
+export interface ConversationSubagentNode {
+  kind: 'delegate' | 'workflow' | 'workflowNode';
+  /** Stable across refetches and unique within one response — the render key and the `aria-controls`
+   *  target of the disclosure that reveals this row's children. */
+  key: string;
+  name: string;
+  status: ConversationSubagentStatus;
+  childSessionId?: string;
+  model?: string;
+  children: ConversationSubagentNode[];
+  /** This row's own children were cut by a bound, so what is shown is not the whole branch. */
+  truncated?: boolean;
 }
 
 /** One admin-selectable proactive-notification target from an enabled platform plugin. `value` is the

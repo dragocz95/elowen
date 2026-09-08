@@ -360,11 +360,16 @@ export const elowenClient = {
   brainManagedSessions: () => req<ManagedSession[]>('/brain/managed-sessions'),
   brainDeleteManagedSession: (id: string) => req<{ deleted: number }>(`/brain/managed-sessions/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   brainDeleteAllManagedSessions: (scope?: 'all') => req<{ deleted: number }>(`/brain/managed-sessions${scope === 'all' ? '?scope=all' : ''}`, { method: 'DELETE' }),
-  /** The recurring jobs organized under a conversation, for the collapsed navigation branches. `mine` is
-   *  bounded by the caller's own conversation list, `all` by the admin register and answers 403 to a
-   *  non-admin. The whole minimal array comes back at once — one request per list, never one per row. */
-  brainConversationLinks: (scope: 'mine' | 'all' = 'mine') =>
-    req<ConversationLinksResponse>(`/brain/conversation-links?scope=${scope}`),
+  /** The schedules and sub-agents organized under a conversation, for the collapsed navigation branches.
+   *  `mine` is bounded by the caller's own conversation list, `all` by the admin register and answers 403
+   *  to a non-admin. The whole minimal array comes back at once — one request per list, never one per row.
+   *  `conversationIds` narrows the sub-agent half to the page on screen and is intersected server-side
+   *  with what the caller may see, so it is a request rather than an authorization. */
+  brainConversationLinks: (scope: 'mine' | 'all' = 'mine', conversationIds?: readonly string[]) => {
+    const query = new URLSearchParams({ scope });
+    if (conversationIds?.length) query.set('ids', conversationIds.join(','));
+    return req<ConversationLinksResponse>(`/brain/conversation-links?${query.toString()}`);
+  },
   /** One backwards page of chat history for the lazy-load: the newest `limit` turns, then older ones as
    *  `before` (a previous page's `nextBefore`) walks back. The session defaults to the caller's active
    *  conversation. */

@@ -28,6 +28,7 @@ import {
 } from '../brain/delegatedScope.js';
 import { BrainUsageStore, numeric, rollupDroppedUsage } from './brainUsageStore.js';
 import { BrainDelegationStore } from './brainDelegationStore.js';
+import type { ConversationSubagentBranches, SubagentBranchBounds } from './brainDelegationStore.js';
 import type { BrainCard, BrainGoalState, BrainInlineArtifact } from '../brain/events.js';
 import type { StoredInlineArtifact } from '../brain/inlineArtifacts.js';
 import { ProviderRequestStore } from './providerRequestStore.js';
@@ -1526,6 +1527,15 @@ export class BrainStore {
    *  {@link BrainDelegationStore.getSubagentRuns}. */
   getSubagentRuns(parentSessionId: string): ReturnType<BrainDelegationStore['getSubagentRuns']> {
     return this.delegation.getSubagentRuns(parentSessionId);
+  }
+
+  /** The sub-agent tree under a batch of already-authorized conversations — see
+   *  {@link BrainDelegationStore.conversationSubagentBranches}. */
+  conversationSubagentBranches(
+    rootIds: readonly string[],
+    bounds?: Partial<SubagentBranchBounds>,
+  ): ConversationSubagentBranches {
+    return this.delegation.conversationSubagentBranches(rootIds, bounds);
   }
 
   /** Child sessions with a delegated call still open on them, whichever boot or process owns it — see

@@ -44,21 +44,33 @@ export const useBrainCommands = () =>
     staleTime: 60_000,
   });
 
-/** The recurring jobs organized under each conversation — the collapsed "Scheduled jobs" branches in the
- *  chat sidebar (`mine`) and in the admin register (`all`).
+/** The branches organized under each conversation — the collapsed "Scheduled jobs" and "Sub-agents"
+ *  groups in the chat sidebar (`mine`) and in the admin register (`all`).
  *
  *  ONE request per list, holding the whole minimal summary array: search has to see every link before the
  *  register pages its roots, and a request per visible row would multiply a quiet navigation aid into a
  *  burst. There is no poll — schedules change when somebody edits them, and the cron mutations invalidate
- *  this key — but a focus refetch is kept (against the client default) so a tab left open beside the cron
- *  editor catches up on return instead of listing a job that was renamed elsewhere. */
-export const useConversationJobLinks = (scope: 'mine' | 'all' = 'mine') =>
-  useQuery<ConversationLinksResponse>({
-    queryKey: [...QUERY_KEYS.brainConversationLinks, scope],
-    queryFn: () => elowenClient.brainConversationLinks(scope),
+ *  this key, as does a sub-agent or workflow finishing — but a focus refetch is kept (against the client
+ *  default) so a tab left open beside the cron editor catches up on return instead of listing a job that
+ *  was renamed elsewhere.
+ *
+ *  `conversationIds` narrows the SUB-AGENT half to the page of roots on screen. A tree read is far more
+ *  expensive than a job list, and an instance with hundreds of conversations should not walk all of them
+ *  to draw twenty rows. The jobs half is unaffected and still spans the whole authorized listing. */
+export const useConversationJobLinks = (scope: 'mine' | 'all' = 'mine', conversationIds?: readonly string[]) => {
+  // The ids join the key NORMALIZED — sorted, then joined — so paging back to a page already fetched hits
+  // the cache instead of re-asking, and re-rendering one page never splits it into two cache entries.
+  const ids = conversationIds ? [...conversationIds].sort().join(',') : null;
+  return useQuery<ConversationLinksResponse>({
+    queryKey: [...QUERY_KEYS.brainConversationLinks, scope, ids],
+    queryFn: () => elowenClient.brainConversationLinks(scope, conversationIds),
     staleTime: 30_000,
     refetchOnWindowFocus: true,
+    // Turning a page must not blank the branches while the next read is in flight: the previous answer
+    // stays on screen until the new one lands.
+    placeholderData: (previous) => previous,
   });
+};
 
 /** Background processes for the panel next to the todos. Polls quickly while any is running (to catch
  *  exits), slowly otherwise (to catch a newly-spawned one) — the SSE `card` handler also invalidates this

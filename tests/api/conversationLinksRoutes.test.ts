@@ -11,6 +11,7 @@ import { PluginRegistryProvider } from '../../src/plugins/pluginsProvider.js';
 import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 import type { CronConversationLink } from '../../src/plugins/api.js';
 import type { ConversationJobLink, ConversationLinksResponse } from '../../web/lib/types.js';
+import type { ConversationSubagentBranches, ConversationSubagentNode } from '../../src/store/brainDelegationStore.js';
 
 /** GET /brain/conversation-links is the ONE read behind the collapsed scheduled-job branches. It is
  *  organizational navigation and nothing else: it never starts, pauses or reschedules anything, and the
@@ -29,6 +30,8 @@ function setup(opts: {
   managed?: { id: string }[];
   /** Session rows the run-target resolution may find, keyed by id. Absent = no store at all. */
   rows?: Record<string, { user_id: number }>;
+  /** The sub-agent branch the core store answers with, or a thrower to simulate a failed read. */
+  branches?: (rootIds: readonly string[]) => ConversationSubagentBranches;
 } = {}) {
   const db = openPluginTablesDb(':memory:');
   db.prepare("INSERT INTO projects (id,slug,path) VALUES (1,'elowen','/o')").run();
@@ -41,6 +44,7 @@ function setup(opts: {
   users.setGrantedPlugins(amy.id, ['cronjob']);
 
   const calls: { requesterUserId: number; requesterIsAdmin: boolean; conversationIds: readonly string[] }[] = [];
+  const branchCalls: string[][] = [];
   let plugins: PluginRegistryProvider | undefined;
   if (opts.cron) {
     const reg = new PluginRegistry();
@@ -69,18 +73,44 @@ function setup(opts: {
     project: { id: 1, path: '/o' }, fallback: { program: 'claude-code', model: 'sonnet' },
     clock: new FakeClock(0), config, users, projects: new ProjectStore(db), userProjects: new UserProjectStore(db),
     brain: brain as never, plugins,
-    ...(opts.rows ? { brainStore: { getSession: (id: string) => opts.rows![id] } as never } : {}),
+    ...(opts.rows || opts.branches ? {
+      brainStore: {
+        getSession: (id: string) => opts.rows?.[id],
+        conversationSubagentBranches: (rootIds: readonly string[]) => {
+          branchCalls.push([...rootIds]);
+          return opts.branches ? opts.branches(rootIds) : { byConversation: {}, truncated: false };
+        },
+      } as never,
+    } : {}),
   });
-  return { app, users, admin, amy, calls, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
+  return { app, users, admin, amy, calls, branchCalls, adminTok: users.issueToken(admin.id), amyTok: users.issueToken(amy.id) };
 }
+
+const node = (over: Partial<ConversationSubagentNode> = {}): ConversationSubagentNode => ({
+  kind: 'delegate', key: 'sub:brain-ch-subagent-sub-a', name: 'Audit auth', status: 'done',
+  childSessionId: 'brain-ch-subagent-sub-a', children: [], ...over,
+});
 
 const auth = (t: string) => ({ headers: { authorization: `Bearer ${t}` } });
 const link = (over: Partial<CronConversationLink> = {}): CronConversationLink => ({
   jobId: 'job-1', conversationId: 'brain-2', name: 'Daily digest', enabled: true, ownerUserId: 2, ...over,
 });
 
-async function links(app: { request: (p: string, o?: unknown) => Promise<Response> }, token: string, scope?: string) {
-  const res = await app.request(`/brain/conversation-links${scope ? `?scope=${scope}` : ''}`, auth(token));
+/** What the response carries when no core store is wired at all — there is nothing to read, which is not
+ *  the same answer as "this conversation delegated nothing". */
+const NO_BRANCH = { subagentStatus: 'unavailable' as const, subagents: {}, subagentsTruncated: false };
+
+async function links(
+  app: { request: (p: string, o?: unknown) => Promise<Response> },
+  token: string,
+  scope?: string,
+  ids?: string,
+) {
+  const query = new URLSearchParams();
+  if (scope) query.set('scope', scope);
+  if (ids !== undefined) query.set('ids', ids);
+  const suffix = query.toString();
+  const res = await app.request(`/brain/conversation-links${suffix ? `?${suffix}` : ''}`, auth(token));
   return { status: res.status, body: await res.json() as ConversationLinksResponse };
 }
 
@@ -95,7 +125,7 @@ describe('GET /brain/conversation-links', () => {
     };
 
     expect(status).toBe(200);
-    expect(body).toEqual({ status: 'available', links: [expected] });
+    expect(body).toEqual({ status: 'available', links: [expected], ...NO_BRANCH });
   });
 
   it('passes the caller\'s ACTUAL personal conversation list as the authorized set', async () => {
@@ -157,7 +187,7 @@ describe('GET /brain/conversation-links', () => {
   it('reports unavailable — never an empty job list — when the plugin is absent', async () => {
     const { app, amyTok } = setup({ mine: [{ id: 'brain-2' }] });
 
-    expect((await links(app, amyTok)).body).toEqual({ status: 'unavailable', links: [] });
+    expect((await links(app, amyTok)).body).toEqual({ status: 'unavailable', links: [], ...NO_BRANCH });
   });
 
   /** An older installed cronjob plugin registers the control WITHOUT the navigation method. It must keep
@@ -166,7 +196,7 @@ describe('GET /brain/conversation-links', () => {
   it('reports unavailable for an older plugin whose control has no conversationLinks method', async () => {
     const { app, amyTok } = setup({ cron: 'legacy', mine: [{ id: 'brain-2' }] });
 
-    expect((await links(app, amyTok)).body).toEqual({ status: 'unavailable', links: [] });
+    expect((await links(app, amyTok)).body).toEqual({ status: 'unavailable', links: [], ...NO_BRANCH });
   });
 
   it('reports an error rather than a confirmed empty list when the plugin read fails', async () => {
@@ -178,7 +208,7 @@ describe('GET /brain/conversation-links', () => {
     const { status, body } = await links(app, amyTok);
 
     expect(status).toBe(200);
-    expect(body).toEqual({ status: 'error', links: [] });
+    expect(body).toEqual({ status: 'error', links: [], ...NO_BRANCH });
   });
 
   it('reports unavailable when the caller\'s plugin grant is revoked', async () => {
@@ -186,7 +216,7 @@ describe('GET /brain/conversation-links', () => {
 
     users.setGrantedPlugins(amy.id, []);
 
-    expect((await links(app, amyTok)).body).toEqual({ status: 'unavailable', links: [] });
+    expect((await links(app, amyTok)).body).toEqual({ status: 'unavailable', links: [], ...NO_BRANCH });
   });
 
   /** The link is built by core from the job id alone, so a plugin cannot point a navigation row at an
@@ -248,5 +278,148 @@ describe('GET /brain/conversation-links', () => {
     const { app } = setup({ cron: () => [link()], mine: [{ id: 'brain-2' }] });
 
     expect((await app.request('/brain/conversation-links')).status).toBe(401);
+  });
+});
+
+/** The same read also carries the CORE sub-agent branch — the delegations and workflows that ran under
+ *  each conversation. It is core data rather than a plugin contribution, which is why it survives
+ *  everything the cron half can do wrong, and why its roots are the authorized listing and nothing else. */
+describe('GET /brain/conversation-links — sub-agent branches', () => {
+  it('answers for the caller\'s own conversations beside the scheduled jobs', async () => {
+    const { app, amyTok, branchCalls } = setup({
+      cron: () => [link()],
+      mine: [{ id: 'brain-2' }, { id: 'brain-2-b' }],
+      branches: () => ({ byConversation: { 'brain-2': [node()] }, truncated: false }),
+    });
+
+    const { body } = await links(app, amyTok);
+
+    expect(branchCalls).toEqual([['brain-2', 'brain-2-b']]);
+    expect(body.subagentStatus).toBe('available');
+    expect(body.subagents).toEqual({ 'brain-2': [node()] });
+    expect(body.subagentsTruncated).toBe(false);
+    // The scheduled-job half is untouched by any of it.
+    expect(body.status).toBe('available');
+    expect(body.links.map((l) => l.jobId)).toEqual(['job-1']);
+  });
+
+  /** The cron plugin can be missing, ungranted or broken. None of those is a statement about the
+   *  sub-agents a conversation ran, so none of them may blank that branch. */
+  it('keeps the sub-agent branch when the cron read fails outright', async () => {
+    const { app, amyTok } = setup({
+      cron: () => { throw new Error('jobs.json unreadable'); },
+      mine: [{ id: 'brain-2' }],
+      branches: () => ({ byConversation: { 'brain-2': [node()] }, truncated: false }),
+    });
+
+    const { body } = await links(app, amyTok);
+
+    expect(body.status).toBe('error');
+    expect(body.links).toEqual([]);
+    expect(body.subagentStatus).toBe('available');
+    expect(body.subagents).toEqual({ 'brain-2': [node()] });
+  });
+
+  it('keeps the sub-agent branch when the cron plugin is absent altogether', async () => {
+    const { app, amyTok } = setup({
+      mine: [{ id: 'brain-2' }],
+      branches: () => ({ byConversation: { 'brain-2': [node()] }, truncated: false }),
+    });
+
+    const { body } = await links(app, amyTok);
+
+    expect(body.status).toBe('unavailable');
+    expect(body.subagents).toEqual({ 'brain-2': [node()] });
+  });
+
+  /** A failed core read is reported as a failure. Answering `available` with an empty map would tell the
+   *  reader that these conversations delegated nothing, which is a wrong answer rather than an empty one. */
+  it('reports an error rather than a confirmed empty branch when the store read fails', async () => {
+    const { app, amyTok } = setup({
+      cron: () => [link()],
+      mine: [{ id: 'brain-2' }],
+      branches: () => { throw new Error('database is locked'); },
+    });
+
+    const { status, body } = await links(app, amyTok);
+
+    expect(status).toBe(200);
+    expect(body.subagentStatus).toBe('error');
+    expect(body.subagents).toEqual({});
+    // The jobs still came back — one half failing does not cancel the other.
+    expect(body.links.map((l) => l.jobId)).toEqual(['job-1']);
+  });
+
+  /** `?ids` narrows the answer to the page on screen. It is INTERSECTED with what core authorized, so a
+   *  forged id names nothing: the reply cannot be used to discover that a conversation exists. */
+  it('intersects explicitly requested roots with the authorized listing', async () => {
+    const { app, amyTok, branchCalls } = setup({
+      cron: () => [],
+      mine: [{ id: 'brain-2' }, { id: 'brain-2-b' }],
+      branches: () => ({ byConversation: {}, truncated: false }),
+    });
+
+    await links(app, amyTok, undefined, 'brain-2-b,brain-99,brain-ch-discord-42');
+
+    expect(branchCalls).toEqual([['brain-2-b']]);
+  });
+
+  it('falls back to the whole authorized listing when no ids are given', async () => {
+    const { app, amyTok, branchCalls } = setup({
+      cron: () => [],
+      mine: [{ id: 'brain-2' }],
+      branches: () => ({ byConversation: {}, truncated: false }),
+    });
+
+    await links(app, amyTok, undefined, '');
+
+    expect(branchCalls).toEqual([['brain-2']]);
+  });
+
+  /** `mine` is the caller's ACTUAL personal list, never every session that happens to share their user
+   *  id: a shared room anchored on the operator must not become a root of their personal navigation. */
+  it('roots the personal branch in the personal listing and the admin one in the register', async () => {
+    const asUser = setup({
+      cron: () => [],
+      mine: [{ id: 'brain-2' }],
+      managed: [{ id: 'brain-ch-discord-42' }],
+      branches: () => ({ byConversation: {}, truncated: false }),
+    });
+    await links(asUser.app, asUser.amyTok);
+    expect(asUser.branchCalls).toEqual([['brain-2']]);
+
+    const asAdmin = setup({
+      cron: () => [],
+      mine: [{ id: 'brain-1' }],
+      managed: [{ id: 'brain-ch-discord-42' }],
+      branches: () => ({ byConversation: {}, truncated: false }),
+    });
+    await links(asAdmin.app, asAdmin.adminTok, 'all');
+    expect(asAdmin.branchCalls).toEqual([['brain-ch-discord-42']]);
+  });
+
+  it('refuses scope=all to a non-admin before reading anything', async () => {
+    const { app, amyTok, branchCalls } = setup({
+      cron: () => [],
+      mine: [{ id: 'brain-2' }],
+      managed: [{ id: 'brain-7' }],
+      branches: () => ({ byConversation: { 'brain-7': [node()] }, truncated: false }),
+    });
+
+    expect((await links(app, amyTok, 'all')).status).toBe(403);
+    expect(branchCalls).toEqual([]);
+  });
+
+  it('passes the store\'s truncation flag through instead of presenting a clipped tree as whole', async () => {
+    const { app, amyTok } = setup({
+      cron: () => [],
+      mine: [{ id: 'brain-2' }],
+      branches: () => ({ byConversation: { 'brain-2': [node({ truncated: true })] }, truncated: true }),
+    });
+
+    const { body } = await links(app, amyTok);
+
+    expect(body.subagentsTruncated).toBe(true);
+    expect(body.subagents['brain-2']![0]!.truncated).toBe(true);
   });
 });
