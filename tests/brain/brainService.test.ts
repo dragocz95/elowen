@@ -2263,6 +2263,36 @@ describe('BrainService', () => {
     await expect(svc.switchChannelProject(1, 'c-1', 7)).rejects.toThrow(/not readable or not allowed/);
   });
 
+  // The owner-chat half of the workspace reorientation the channel suite pins (channelTurnContext):
+  // PI's static prompt advertises the cwd the session spawned with, so a validated /cd must supersede
+  // it on EVERY following owner turn until a respawn re-advertises the restored durable home.
+  it('reorients owner turns after noteWorkDir and stops after the respawn re-advertises the home', async () => {
+    const launch = realpathSync(tmpDir('cwd-owner-a'));
+    const moved = realpathSync(tmpDir('cwd-owner-b'));
+    const d = fakeDeps();
+    (d as unknown as { policy: () => unknown }).policy = () => ({ allowedProjectIds: 'all', allowedPaths: () => [] });
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1, { cwd: launch });
+    d.store.appendMessage({ id: 'm1', sessionId, parentId: null, role: 'user', content: 'hi' });
+
+    await svc.send({ userId: 1, text: 'before the move' });
+    expect(d.session.prompt.mock.calls.at(-1)![0]).not.toContain('<current-workspace>');
+
+    svc.noteWorkDir(1, moved);
+    await svc.send({ userId: 1, text: 'after the move' });
+    let prompt = d.session.prompt.mock.calls.at(-1)![0];
+    expect(prompt).toContain('<current-workspace>');
+    expect(prompt).toContain(`The effective working directory for this turn is ${moved}`);
+
+    // The respawn recomposes the static prompt from the restored durable home, so the reorientation
+    // has nothing left to supersede and the following owner turns run without the block again.
+    await svc.restart(1);
+    await svc.send({ userId: 1, text: 'after the respawn' });
+    prompt = d.session.prompt.mock.calls.at(-1)![0];
+    expect(prompt).not.toContain('<current-workspace>');
+    expect(d.store.getSession(sessionId)?.work_dir).toBe(moved);
+  });
+
   it('setThinkingLevel applies live (no respawn) and status reports it', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
