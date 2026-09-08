@@ -5,6 +5,14 @@ import { Type } from 'typebox';
 import { assertPathAllowed, isAllAccess } from '../../plugins/pathGuard.js';
 import { currentSessionId, currentTurnToken, currentIdentity } from '../../plugins/policyContext.js';
 import { chatFilesDir, storeFileByContent, type StoredChatFile } from '../chatFiles.js';
+import {
+  guestAbsolutePath,
+  isManagedProjectTurn,
+  managedArtifactTurn,
+  resolveFor,
+  readGuestFileBounded,
+  type SandboxResolver,
+} from '../managedArtifacts.js';
 
 /** Large enough for normal documents, archives, and generated artifacts while staying below common chat
  *  upload ceilings and bounding the synchronous read + in-memory copy this local handoff necessarily makes. */
@@ -16,6 +24,11 @@ const MAX_PER_TURN = 4;
 export interface ShareFileDeps {
   /** The existing attachment root; general files are stored in its sibling `chat-files` directory. */
   imagesDir?: string;
+  /** Live Sandbox provider for managed-project turns: resolved fresh per call (`control('sandbox')`), so
+   *  a plugin reload never leaves the tool holding a stale control. Absent ⇒ a managed turn refuses —
+   *  there is no host fallback for a guest path — while host-project turns are unaffected. Wired by the
+   *  session spawner at composition time. */
+  sandbox?: SandboxResolver;
 }
 
 function text(message: string) {
@@ -42,7 +55,7 @@ export function buildShareFileTool(deps: ShareFileDeps) {
       const used = spent.get(turn) ?? 0;
       if (used >= MAX_PER_TURN) return text(`ShareFile: already shared ${MAX_PER_TURN} files in this turn — describe or bundle the rest instead.`);
 
-      const stored = fromDisk(p.path, chatFilesDir(deps.imagesDir));
+      const stored = await managed(p.path, deps) ?? fromDisk(p.path, chatFilesDir(deps.imagesDir));
       if (typeof stored === 'string') return text(stored);
       spent.set(turn, used + 1);
       const caption = p.caption?.trim();
@@ -52,6 +65,40 @@ export function buildShareFileTool(deps: ShareFileDeps) {
       };
     },
   });
+
+  /** The managed-project branch: the path is a GUEST path, the bytes come from the Sandbox projectFiles
+   *  provider (bounded, version-checked), and none of the host fs machinery in `fromDisk` is touched.
+   *  Returns null when the path cannot be a managed guest path (relative, or outside the guest workspace
+   *  root), so the legacy host branch answers. The two never mix: in a managed turn `assertPathAllowed`
+   *  refuses every host path, and a guest path has no host existence at all.
+   *
+   *  Authorization is the PROVIDER's (per-operation account/project check); the managed guest is a whole
+   *  filesystem the model may share from anywhere in. A managed turn NEVER reaches the host branch or
+   *  the path guard: a relative path is refused as an invalid absolute guest path, and an unreachable
+   *  provider is a refusal — never a host read. */
+  async function managed(rawPath: string, toolDeps: ShareFileDeps): Promise<StoredChatFile | string | null> {
+    // The ambient execution target decides the BRANCH — explicitly, never by matching a refusal
+    // string. Only a NON-managed turn answers from the host branch; on a managed turn the context
+    // (legacy workspace scope, missing linked account, session) and then the path are validated here,
+    // and every failure is a managed refusal — the host path guard is never consulted, whatever the
+    // input looks like.
+    if (!isManagedProjectTurn()) return null;
+    const turn = managedArtifactTurn();
+    if (typeof turn === 'string') return `ShareFile: ${turn}.`;
+    const guestPath = guestAbsolutePath(rawPath);
+    if (!guestPath) return 'ShareFile: an absolute guest path is required.';
+
+    const resolved = await resolveFor(toolDeps.sandbox, turn);
+    if (typeof resolved === 'string') return `ShareFile: ${resolved}.`;
+    const bytes = await readGuestFileBounded(
+      { sandbox: resolved.sandbox, projectRef: resolved.turn.projectRef, accountUserId: resolved.turn.accountUserId },
+      guestPath,
+      MAX_BYTES,
+    );
+    if (typeof bytes === 'string') return `ShareFile: ${bytes}`;
+    const stored = storeFileByContent(chatFilesDir(toolDeps.imagesDir!), bytes, basename(guestPath));
+    return stored ?? `ShareFile: could not store ${basename(guestPath)}.`;
+  }
 }
 
 function fromDisk(rawPath: string, dir: string): StoredChatFile | string {

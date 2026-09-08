@@ -1,8 +1,18 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import type { AgentSession } from '@earendil-works/pi-coding-agent';
-import { fsSafeSegment, sessionToolResultSpillDir } from '../../shared/paths.js';
+import { fsSafeSegment, sessionToolResultSpillDir, sessionToolResultSpillNamespace } from '../../shared/paths.js';
 import { logger } from '../../shared/logger.js';
+import {
+  GUEST_WRITE_OP_BYTES,
+  guestSpillDirForNamespace,
+  guestArtifactDestinationPath,
+  readGuestFileBounded,
+  resolveManagedArtifactTurn,
+  writeGuestFile,
+  type SandboxResolver,
+} from '../managedArtifacts.js';
+import { currentProjectRef } from '../../plugins/policyContext.js';
 import type { PiAgentMessage } from './historyImageStripping.js';
 import { isUserTurn } from './userTurn.js';
 
@@ -146,13 +156,25 @@ function toolOutputSpillPath(spillDir: string, toolCallId: string, bytes: number
  *  is byte-identical in size at that. Overwriting would then swap the content under a path an earlier
  *  result still tells the model to read, with nothing marking the swap. Identical bytes are the same file
  *  and are simply adopted; a genuine conflict returns null, and the caller keeps whatever it does when
- *  nothing could be stored. */
+ *  nothing could be stored.
+ *
+ *  MANAGED ROUTE: on a managed-project turn the ambient caller (the plugin context) has no readable
+ *  host path for the model, so the output is persisted into the MANAGED PROJECT instead — same
+ *  immutable namespace, same naming authority, provider write with the EEXIST adoption — and the
+ *  returned `path` is the GUEST path the model can read. The host `spillDir` argument is ignored on
+ *  that branch. Provider absent/malformed/failing → `null` (the caller's established "nothing was
+ *  stored" answer, so the output stays whole in the result) plus an error-level log, NEVER a host
+ *  write the model could not read. */
 export async function persistToolOutputSpill(
   spillDir: string,
   toolCallId: string,
   text: string,
 ): Promise<{ path: string; bytes: number } | null> {
   const bytes = Buffer.byteLength(text, 'utf8');
+  const managed = currentProjectRef()?.kind === 'managed';
+  if (managed) {
+    return await persistManagedToolOutput(toolCallId, text, bytes);
+  }
   const path = toolOutputSpillPath(spillDir, toolCallId, bytes);
   await mkdir(dirname(path), { recursive: true });
   try {
@@ -163,6 +185,41 @@ export async function persistToolOutputSpill(
       log.warn(`a different file already occupies the output spill path for ${toolCallId} — not storing this output`);
       return null;
     }
+  }
+  return { path, bytes };
+}
+
+/** The managed branch of {@link persistToolOutputSpill}: write into the session's guest spill directory
+ *  through the live provider, create-once with the same EEXIST adoption, guest path returned. */
+async function persistManagedToolOutput(
+  toolCallId: string,
+  text: string,
+  bytes: number,
+): Promise<{ path: string; bytes: number } | null> {
+  const resolved = await resolveManagedArtifactTurn(managedSandboxSeam());
+  if (typeof resolved === 'string') {
+    log.error(`managed tool output spill unavailable for ${toolCallId}: ${resolved} — the output stays whole in the result, NOT stored on the host`);
+    return null;
+  }
+  if (bytes > GUEST_WRITE_OP_BYTES) {
+    log.error(`managed tool output spill for ${toolCallId} exceeds the ${GUEST_WRITE_OP_BYTES / 1024} KiB guest write limit — the output stays whole in the result, NOT stored`);
+    return null;
+  }
+  const guest = {
+    sandbox: resolved.sandbox,
+    projectRef: resolved.turn.projectRef,
+    accountUserId: resolved.turn.accountUserId,
+  };
+  const dir = guestSpillDirForNamespace(sessionToolResultSpillNamespace(resolved.turn.sessionId));
+  const path = toolOutputSpillPath(dir, toolCallId, bytes);
+  const written = await writeGuestFile(guest, path, Buffer.from(text, 'utf8'));
+  if (typeof written === 'string') {
+    // A file already at the path: adopt an identical survivor, refuse anything else — same
+    // reconciliation as the host branch above.
+    const onDisk = await readGuestFileBounded(guest, path, GUEST_WRITE_OP_BYTES);
+    if (typeof onDisk !== 'string' && onDisk.equals(Buffer.from(text, 'utf8'))) return { path, bytes };
+    log.error(`managed tool output spill for ${toolCallId} failed (${written}) — the output stays whole in the result, NOT stored`);
+    return null;
   }
   return { path, bytes };
 }
@@ -462,6 +519,27 @@ export interface ToolResultDeliverySpillOptions {
   readSpill?: (path: string) => Promise<string | null>;
 }
 
+/** The live Sandbox provider for a MANAGED-project turn's spills — the same bootstrap seam pattern as
+ *  `setSpillMaxResultBytes` above: injected once at process construction (buildBrainCore, where
+ *  `control('sandbox')` is already resolved for the other consumers), `undefined` (tests, un-wired
+ *  processes) means managed turns REFUSE (the result is preserved whole, never host-spilled); host
+ *  turns are unaffected.
+ *
+ *  A provider resolved per OPERATION, never cached: the delivery hook runs inside a live turn, so the
+ *  provider must be the one the plugin currently publishes. UNWIRED does NOT mean host-spill fallback:
+ *  on a managed turn the result is preserved whole with an error log; only a non-managed turn takes
+ *  the host path. */
+let managedSandboxResolver: SandboxResolver | undefined;
+export function setManagedSandboxResolver(resolve: SandboxResolver | undefined): void {
+  managedSandboxResolver = resolve;
+}
+
+/** The seam's current state, for the sibling central consumer (the cold turn-start pass) that shares the
+ *  same bootstrap wiring rather than threading its own. */
+export function managedSandboxSeam(): SandboxResolver | undefined {
+  return managedSandboxResolver;
+}
+
 /** Compose the delivery-time spill onto the session's `afterToolCall`, wrapping whatever is already
  *  there (the extension `tool_result` hooks and image normalization PI installs) the same way the
  *  `transformContext` installers wrap each other.
@@ -533,7 +611,44 @@ export function installToolResultDeliverySpill(
     const content = hooked?.content ?? input.result.content ?? [];
     const batch = input.assistantMessage as unknown as object;
     const before = committed.get(batch) ?? 0;
-    const decision = decideDeliverySpill(before, spillDir, input.toolCall.id, content);
+    const initial = decideDeliverySpill(before, spillDir, input.toolCall.id, content);
+    if (!initial.spill) {
+      committed.set(batch, before + initial.wireBytes);
+      return hooked;
+    }
+    // A managed turn spills into the MANAGED PROJECT (the placeholder names a guest path the model can
+    // read; the host path it cannot). No host fallback: an absent/malformed/failing provider preserves
+    // the result WHOLE and logs at error level — never a placeholder naming an unreadable host file.
+    if (currentProjectRef()?.kind === 'managed') {
+      if (typeof managedSandboxResolver !== 'function') {
+        log.error(`managed tool-result spill for ${input.toolCall.id}: the Sandbox seam is not wired — the result is preserved whole and NOT spilled to the host path`);
+        committed.set(batch, before + deliveryBytes(content));
+        return hooked;
+      }
+      const sink = await managedSpillSink(input.toolCall.id);
+      if (!sink) {
+        committed.set(batch, before + deliveryBytes(content));
+        return hooked;
+      }
+      const decision = decideDeliverySpill(before, sink.dir, input.toolCall.id, content);
+      if (!decision.spill) {
+        committed.set(batch, before + decision.wireBytes);
+        return hooked;
+      }
+      const { trigger, path, text, placeholder, marker, bytes } = decision.spill;
+      if (!await sink.store(path, text, input.toolCall.id)) {
+        committed.set(batch, before + deliveryBytes(content));
+        return hooked;
+      }
+      committed.set(batch, before + decision.wireBytes);
+      log.info(`spilled ${input.toolCall.id} on delivery (${trigger} trigger, ${bytes} bytes, managed)`);
+      return {
+        ...hooked,
+        content: clearedToolResultContent(content, placeholder) as DeliveryContent,
+        details: clearedToolResultDetails(hooked?.details ?? input.result.details, marker),
+      };
+    }
+    const decision = initial;
     if (!decision.spill) {
       committed.set(batch, before + decision.wireBytes);
       return hooked;
@@ -553,6 +668,45 @@ export function installToolResultDeliverySpill(
       ...hooked,
       content: clearedToolResultContent(content, placeholder) as DeliveryContent,
       details: clearedToolResultDetails(hooked?.details ?? input.result.details, marker),
+    };
+  }
+
+  /** The guest spill sink for one managed delivery: the session's guest spill directory (same immutable
+   *  namespace as the host dir), a create-once CAS write with EEXIST adoption. Spills larger than one
+   *  guest write op cannot be stored (no append in the contract) — the store answers false and the
+   *  result goes out whole. */
+  async function managedSpillSink(
+    toolCallId: string,
+  ): Promise<{ dir: string; store: (path: string, text: string, id: string) => Promise<boolean> } | null> {
+    const resolved = await resolveManagedArtifactTurn(managedSandboxResolver);
+    if (typeof resolved === 'string') {
+      log.error(`managed tool-result spill unavailable for ${toolCallId}: ${resolved} — the result is preserved whole and NOT spilled to the host path`);
+      return null;
+    }
+    const guest = {
+      sandbox: resolved.sandbox,
+      projectRef: resolved.turn.projectRef,
+      accountUserId: resolved.turn.accountUserId,
+    };
+    const dir = guestSpillDirForNamespace(sessionToolResultSpillNamespace(sessionId));
+    return {
+      dir,
+      store: async (path, body, id) => {
+        if (Buffer.byteLength(body, 'utf8') > GUEST_WRITE_OP_BYTES) {
+          log.warn(`managed tool-result spill for ${id} exceeds the ${GUEST_WRITE_OP_BYTES / 1024} KiB guest write limit — the result goes out whole`);
+          return false;
+        }
+        const guestPath = guestArtifactDestinationPath(path);
+        if (!guestPath || !guestPath.startsWith(`${dir}/`)) return false;
+        const written = await writeGuestFile(guest, guestPath, Buffer.from(body, 'utf8'));
+        if (typeof written !== 'string') return true;
+        // A file already at the spill path: adopt an identical survivor (a toolCallId is not unique on
+        // its own — see storeSpill below), refuse anything else. Same reconciliation, guest-side.
+        const onDisk = await readGuestFileBounded(guest, guestPath, GUEST_WRITE_OP_BYTES);
+        if (typeof onDisk !== 'string' && onDisk.equals(Buffer.from(body, 'utf8'))) return true;
+        log.warn(`managed tool-result spill for ${id} conflicts with a different guest file — the result goes out whole: ${written}`);
+        return false;
+      },
     };
   }
 

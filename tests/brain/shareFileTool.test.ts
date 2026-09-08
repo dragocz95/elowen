@@ -8,8 +8,8 @@ import { runWithPolicy, type TurnIdentity } from '../../src/plugins/policyContex
 import type { Policy } from '../../src/plugins/policy.js';
 
 const SESSION = 'brain-1';
-const OWNER: TurnIdentity = { platform: 'web', userId: '1', admin: true, owner: true };
-const ADMIN_STRANGER: TurnIdentity = { platform: 'discord', userId: '99', admin: true, owner: false };
+const OWNER: TurnIdentity = { platform: 'web', userId: '1', admin: true, owner: true, conversation: 'own' };
+const ADMIN_STRANGER: TurnIdentity = { platform: 'discord', userId: '99', admin: true, owner: false, conversation: 'shared' };
 
 let home: string;
 let repo: string;

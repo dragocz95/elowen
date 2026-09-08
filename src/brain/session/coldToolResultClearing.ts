@@ -1,6 +1,15 @@
 import { logger } from '../../shared/logger.js';
-import { sessionToolResultSpillDir } from '../../shared/paths.js';
+import { sessionToolResultSpillDir, sessionToolResultSpillNamespace } from '../../shared/paths.js';
 import type { BrainStore, ClearedToolResultRow } from '../../store/brainStore.js';
+import {
+  GUEST_WRITE_OP_BYTES,
+  guestArtifactDestinationPath,
+  guestSpillDirForNamespace,
+  readGuestFileBounded,
+  resolveManagedArtifactsFor,
+  writeGuestFile,
+  type GuestAccess,
+} from '../managedArtifacts.js';
 import { sessionHasWorkInFlight, type SessionQuiescenceDeps } from '../service/sessionQuiescence.js';
 import { OPENAI_CACHE_MAX_RETENTION_MS } from './cacheTiming.js';
 import { cacheDefinitelyCold } from './coldStartCompaction.js';
@@ -13,6 +22,7 @@ import {
   clearedToolResultPlaceholder,
   defaultReadSpill,
   defaultWriteSpill,
+  managedSandboxSeam,
   selectClearableToolResults,
   toolResultSpillPath,
   toolResultText,
@@ -55,7 +65,7 @@ const log = logger('brain-tool-clearing');
  *  it with the dependencies they already hold. */
 export interface ColdToolResultClearingDeps extends SessionQuiescenceDeps {
   store: SessionQuiescenceDeps['store']
-    & Pick<BrainStore, 'lastMessageAt' | 'lastForkChildMessageAt' | 'clearToolResultRows'>;
+    & Pick<BrainStore, 'getSession' | 'lastMessageAt' | 'lastForkChildMessageAt' | 'clearToolResultRows' | 'getProjectExecution'>;
 }
 
 /** The live-session facts the pass reads — the same structural shape as {@link ColdCompactionSession}, so
@@ -134,9 +144,50 @@ async function clearCold(
   const selected = selectClearableToolResults(messages, TURN_START_KEEP_USER_TURNS);
   if (selected.length === 0) return;
 
-  const spillDir = options.spillDir ?? sessionToolResultSpillDir(process.env, live.sessionId);
   const writeSpill = options.writeSpill ?? defaultWriteSpill;
   const readSpill = options.readSpill ?? defaultReadSpill;
+
+  // On a managed turn the spills land in the MANAGED PROJECT (placeholders name guest paths). The
+  // decision is the session's stored execution kind — this pass runs before any policy scope exists.
+  // No host fallback: a provider that cannot serve the pass leaves every result IN CONTEXT, and a
+  // spill larger than one guest write op is skipped individually.
+  let spillDir = options.spillDir ?? sessionToolResultSpillDir(process.env, live.sessionId);
+  let storeSpillAt: (path: string, text: string, toolCallId: string) => Promise<boolean> = (path, text, id) =>
+    storeSpill(writeSpill, readSpill, path, text, id);
+  // Explicit identity, not ambient: this pass runs at turn start, before any policy scope exists. The
+  // tenancy rule is the session's OWN stored execution kind and its owner account — the same rule the
+  // store already enforces for who may select that execution.
+  const execution = d.store.getProjectExecution(live.sessionId);
+  if (execution?.kind === 'managed') {
+    const owner = d.store.getSession(live.sessionId)?.user_id;
+    const resolved = Number.isSafeInteger(owner)
+      ? await resolveManagedArtifactsFor(managedSandboxSeam(), { projectRef: execution, accountUserId: owner!, sessionId: live.sessionId })
+      : 'managed project artifacts require a linked account';
+    if (typeof resolved === 'string') {
+      log.error(`managed cold spill unavailable on ${live.sessionId}: ${resolved} — the results stay in context, NOT spilled to the host path`);
+      return;
+    }
+    const guest: GuestAccess = {
+      sandbox: resolved.sandbox,
+      projectRef: resolved.turn.projectRef,
+      accountUserId: resolved.turn.accountUserId,
+    };
+    spillDir = guestSpillDirForNamespace(sessionToolResultSpillNamespace(live.sessionId));
+    storeSpillAt = async (path, text, id) => {
+      if (Buffer.byteLength(text, 'utf8') > GUEST_WRITE_OP_BYTES) {
+        log.warn(`managed cold spill for ${id} exceeds the ${GUEST_WRITE_OP_BYTES / 1024} KiB guest write limit — the result stays in context`);
+        return false;
+      }
+      const guestPath = guestArtifactDestinationPath(path);
+      if (!guestPath || !guestPath.startsWith(`${spillDir}/`)) return false;
+      const written = await writeGuestFile(guest, guestPath, Buffer.from(text, 'utf8'));
+      if (typeof written !== 'string') return true;
+      const onDisk = await readGuestFileBounded(guest, guestPath, GUEST_WRITE_OP_BYTES);
+      if (typeof onDisk !== 'string' && onDisk.equals(Buffer.from(text, 'utf8'))) return true;
+      log.warn(`managed cold spill for ${id} conflicts with a different guest file — the result stays in context: ${written}`);
+      return false;
+    };
+  }
 
   const rows: ClearedToolResultRow[] = [];
   /** Resolved to the message OBJECT, not to its index: the mutation below writes through the object PI
@@ -147,7 +198,7 @@ async function clearCold(
     if (message?.role !== 'toolResult') continue;
     const text = toolResultText(message);
     const path = toolResultSpillPath(spillDir, item.toolCallId, { mode: 'time', bytes: item.bytes });
-    if (!await storeSpill(writeSpill, readSpill, path, text, item.toolCallId)) continue;
+    if (!await storeSpillAt(path, text, item.toolCallId)) continue;
     const placeholder = clearedToolResultPlaceholder(path, item.bytes);
     const details = clearedToolResultDetails(
       (message as { details?: unknown }).details,

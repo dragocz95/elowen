@@ -1,7 +1,8 @@
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import { currentContributionUserId, currentForkChild, currentSessionId, currentToolPolicy, currentTurnMode, currentTurnPermissions, listCovers, runWithApprovedCall, toolOwnedByOtherAccount, toolPermitted, toolVisibleUnderPolicy, type PersonalToolOwnership, type ToolPolicy } from '../../plugins/policyContext.js';
+import { currentContributionUserId, currentForkChild, currentProjectRef, currentSessionId, currentToolPolicy, currentTurnMode, currentTurnPermissions, listCovers, runWithApprovedCall, toolOwnedByOtherAccount, toolPermitted, toolVisibleUnderPolicy, type PersonalToolOwnership, type ToolPolicy } from '../../plugins/policyContext.js';
 import { forkToolDenial } from './forkPrefix.js';
 import { isSessionPlanPath } from '../../plugins/pathGuard.js';
+import { isSessionGuestPlanPath, type SandboxResolver } from '../managedArtifacts.js';
 import type { ToolDeferralOverrides } from '../../shared/wireContract.js';
 import { buildExitPlanModeTool } from '../tools/exitPlanMode.js';
 import { BASH_PERMISSION_TOOLS, bashAlwaysPattern, resolveToolPermission, type ApprovalDecision } from '../toolPermissions.js';
@@ -77,6 +78,11 @@ export interface CapabilitySpec {
   toolSearch?: (deferred: Set<string>) => ToolDefinition[];
   /** Core sharing tools (`ShareImage` and `ShareFile`). */
   shareImage?: () => ToolDefinition[];
+  /** Live Sandbox provider for the artifact consumers composed here — handed to `ExitPlanMode` so a
+   *  managed-project plan turn can read its guest-authored plan back and write it through to the
+   *  central store. Resolved live per call; absent ⇒ managed plan turns refuse honestly (host turns
+   *  are unaffected). Wired by the session spawner at composition time. */
+  sandbox?: SandboxResolver;
   pluginTools: ToolDefinition[];
   /** name → the accounts a composed plugin tool belongs to. Set only where a session composes several
    *  accounts' owner-scoped tools — a shared room (see PluginRegistry.sharedRoomToolOwners). Every other
@@ -216,7 +222,16 @@ function planWriteDenial(toolName: string, params: unknown): string | undefined 
   const rawPath = (params as { file_path?: unknown } | null | undefined)?.file_path;
   // Deny by default: no session to scope a plan to, or a path that is not even a string, is refused
   // rather than waved through. There is no benign call shaped like that in plan mode.
-  if (!sessionId || typeof rawPath !== 'string' || !isSessionPlanPath(sessionId, rawPath)) {
+  //
+  // The allowed set is EXACTLY ONE path per session, in whichever filesystem the turn runs in: on a
+  // managed-project turn the session's GUEST plan file (the host plans directory is unreachable and
+  // unmountable there), everywhere else the session's central plan file. Exactly one predicate, chosen
+  // by the execution target — never both, so neither branch can be smuggled through the other's turn.
+  const allowed = sessionId !== undefined && typeof rawPath === 'string'
+    && (currentProjectRef()?.kind === 'managed'
+      ? isSessionGuestPlanPath(sessionId, rawPath)
+      : isSessionPlanPath(sessionId, rawPath));
+  if (!allowed) {
     return `Plan mode is read-only: "${toolName}" may only write this conversation's plan file. `
       + 'Finish planning and exit plan mode before changing anything else.';
   }
@@ -335,7 +350,7 @@ export function composeSessionTools(spec: CapabilitySpec): ToolDefinition[] {
   // (currentTurnMode), so there would be nothing for this tool to exit. Composed unconditionally for the
   // owner rather than only while planning, mirroring the reference: the tool is what REFUSES outside plan
   // mode, and a tool that vanishes cannot explain itself to a model that reaches for it.
-  const planTools = ownerChat ? [buildExitPlanModeTool()] : [];
+  const planTools = ownerChat ? [buildExitPlanModeTool({ sandbox: spec.sandbox })] : [];
   const pluginTools = spec.pluginTools.map((t) =>
     gateToolAccess(t, spec.onToolResult, spec.onToolCall, spec.personalToolOwners?.get(t.name)));
 

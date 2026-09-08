@@ -6,6 +6,14 @@ import { assertPathAllowed, isAllAccess } from '../../plugins/pathGuard.js';
 import { currentSessionId, currentTurnToken, currentIdentity } from '../../plugins/policyContext.js';
 import { sniffImageMime, storeImageByContent, type StoredChatImage } from '../chatImages.js';
 import type { BrainStore } from '../../store/brainStore.js';
+import {
+  guestAbsolutePath,
+  isManagedProjectTurn,
+  managedArtifactTurn,
+  resolveFor,
+  readGuestFileBounded,
+  type SandboxResolver,
+} from '../managedArtifacts.js';
 
 /** Above this a picture stops being a picture and starts being a payload: it has to be read into memory,
  *  base64'd for a platform upload, and pushed down whatever connection the reader is on. Well past any
@@ -20,6 +28,12 @@ export interface ShareImageDeps {
   store: BrainStore;
   /** Where shared bytes are kept. Absent (in-memory store) the tool refuses rather than pretending. */
   imagesDir?: string;
+  /** Live Sandbox provider for managed-project turns: resolved fresh per call (`control('sandbox')`), so
+   *  a plugin reload never leaves the tool holding a stale control. Absent ⇒ a managed turn refuses —
+   *  there is no host fallback for a guest path — while host-project turns are unaffected. Wired by the
+   *  session spawner at composition time. `latest` shares are unaffected: those bytes already live in
+   *  this conversation's own image store. */
+  sandbox?: SandboxResolver;
 }
 
 function text(message: string) {
@@ -61,7 +75,9 @@ export function buildShareImageTool(deps: ShareImageDeps) {
         return text(`ShareImage: already shared ${MAX_PER_TURN} images in this turn — say what the rest show instead.`);
       }
 
-      const stored = p.latest === true ? latestToolImage(deps.store, sessionId) : fromDisk(p.path!, dir);
+      const stored = p.latest === true
+        ? latestToolImage(deps.store, sessionId)
+        : await managed(p.path!, deps) ?? fromDisk(p.path!, dir);
       if (typeof stored === 'string') return text(stored);
       spent.set(turn, used + 1);
       const caption = p.caption?.trim();
@@ -73,6 +89,38 @@ export function buildShareImageTool(deps: ShareImageDeps) {
       };
     },
   });
+
+  /** The managed-project branch: the path is a GUEST path, the bytes come from the Sandbox projectFiles
+   *  provider (bounded, version-checked) and are sniffed exactly like host bytes before anything is
+   *  served from the app origin. Returns null when the path cannot be a managed guest path (relative, or
+   *  outside the guest workspace root), so the legacy host branch answers. The two never mix: in a
+   *  managed turn `assertPathAllowed` refuses every host path, and a guest path has no host existence.
+   *
+   *  Authorization is the PROVIDER's (per-operation account/project check) and the type boundary stays
+   *  `sniffImageMime` on the bytes. A managed turn NEVER reaches the host branch or the path guard: a
+   *  relative path is refused as an invalid absolute guest path; a failing provider is a refusal. */
+  async function managed(rawPath: string, toolDeps: ShareImageDeps): Promise<StoredChatImage | string | null> {
+    // Same branch decision as ShareFile's managed route: explicit projectRef first, then the managed
+    // context and the path; the host path guard is never consulted on a managed turn.
+    if (!isManagedProjectTurn()) return null;
+    const turn = managedArtifactTurn();
+    if (typeof turn === 'string') return `ShareImage: ${turn}.`;
+    const guestPath = guestAbsolutePath(rawPath);
+    if (!guestPath) return 'ShareImage: an absolute guest path is required.';
+
+    const resolved = await resolveFor(toolDeps.sandbox, turn);
+    if (typeof resolved === 'string') return `ShareImage: ${resolved}.`;
+    const bytes = await readGuestFileBounded(
+      { sandbox: resolved.sandbox, projectRef: resolved.turn.projectRef, accountUserId: resolved.turn.accountUserId },
+      guestPath,
+      MAX_BYTES,
+    );
+    if (typeof bytes === 'string') return `ShareImage: ${bytes}`;
+    const mimeType = sniffImageMime(bytes);
+    if (!mimeType) return `ShareImage: ${basename(guestPath)} is not a png, jpeg, gif or webp image.`;
+    const stored = storeImageByContent(toolDeps.imagesDir!, bytes.toString('base64'), mimeType);
+    return stored ?? `ShareImage: could not store ${basename(guestPath)}.`;
+  }
 }
 
 /** Take the picture the last tool handed the model. It is already on disk — every tool result's image

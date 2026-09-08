@@ -37,9 +37,9 @@ afterEach(() => rmSync(home, { recursive: true, force: true }));
 
 /** The turn scope the tool reads its session and path policy from. `allowedPaths` is the real boundary a
  *  scoped user gets; `repo` stands in for their one permitted project. */
-const OWNER: TurnIdentity = { platform: 'web', userId: '1', admin: true, owner: true };
+const OWNER: TurnIdentity = { platform: 'web', userId: '1', admin: true, owner: true, conversation: 'own' };
 /** An admin-ROLE platform member: all-access policy, but not the operator. */
-const ADMIN_STRANGER: TurnIdentity = { platform: 'discord', userId: '99', admin: true, owner: false };
+const ADMIN_STRANGER: TurnIdentity = { platform: 'discord', userId: '99', admin: true, owner: false, conversation: 'shared' };
 
 function call(params: unknown, policy?: Policy, identity: TurnIdentity = OWNER): Promise<{ content: { text: string }[]; details?: { sharedImage?: { file: string; mimeType: string; caption?: string } } }> {
   const tool = buildShareImageTool({ store, imagesDir: images });
