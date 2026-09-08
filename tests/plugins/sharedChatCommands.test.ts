@@ -343,6 +343,13 @@ describe('shared picker core', () => {
     expect(unlinked.replies).toEqual(['NO_CONTEXT_SESSIONS']);
   });
 
+  it('/context descriptor answers a missing host with no session, not an empty listing', async () => {
+    const noCtl = binding({ ctl: undefined });
+    expect(await runPickerCommand('context', noCtl.b)).toBe(true);
+    expect(noCtl.replies).toEqual(['NO_SESSION']);
+    expect(noCtl.showings).toEqual([]);
+  });
+
   it('/project offers the caller’s projects and never carries a host path', async () => {
     const { b, showings, replies } = binding({ ctl: projectCtl() });
     expect(await runPickerCommand('project', b)).toBe(true);

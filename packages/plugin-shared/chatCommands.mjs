@@ -93,6 +93,14 @@ export function botControlCommandsFrom(commands, adapterOwned = []) {
  *  Every surface pages its chooser (or the host caps the listing), so this bounds one listing fetch. */
 const PICKER_LIST_LIMIT = 200;
 
+/** The published `session-control` picker names — the one place these names are written down. The
+ *  descriptors below carry them and every adapter routes its per-surface chooser components through
+ *  them (Discord's `pick_<name>` custom ids, Telegram's pending-descriptor kinds, WhatsApp's
+ *  `<name>:<value>` menu ids) instead of keeping a second, drifting copy of the list. */
+export const PICKER_CONTEXT = 'context';
+export const PICKER_PROJECT = 'project';
+export const SHARED_PICKERS = [PICKER_CONTEXT, PICKER_PROJECT];
+
 /** Run one control command. Returns true when handled (a reply was sent), false when `cmd` is not one
  *  this core implements — the caller then treats it as an unknown command, or (a published picker) hands
  *  it to {@link runPickerCommand}. */
@@ -176,6 +184,7 @@ async function pickerDescriptor(cmd, b) {
     // bare default excluded server-side) and bindContext re-checks. An unlinked sender has nothing to
     // bind, and that is exactly what the empty text says.
     if (isAdmin && !isAdmin()) { await reply(msg.controlForbidden); return null; }
+    if (!ctl) { await reply(msg.noSession); return null; }
     const listing = ctl?.listContext?.(ref, senderPlatformId, { offset: 0, limit: PICKER_LIST_LIMIT }) ?? null;
     if (!listing || !listing.items?.length) { await reply(msg.noContextSessions); return null; }
     return {
