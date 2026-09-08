@@ -1143,8 +1143,8 @@ export class BrainStore {
 
   /** The session carrying this immutable namespace — the INVERSE of {@link spillNamespace}, and the one
    *  way a durable reference to a conversation survives what an id does not. A session id is not stable:
-   *  channel idle rollover re-keys the transcript under an archive id and frees the deterministic id for
-   *  a fresh conversation, so a stored id can silently come to name someone else's chat. `spill_ns` is
+   *  a `/context` bind re-keys the transcript under an archive id and frees the deterministic channel id
+   *  for another conversation, so a stored id can silently come to name someone else's chat. `spill_ns` is
    *  minted once at creation, travels with the row through `reassignSession`, and dies with the row —
    *  which is why a deleted conversation resolves to nothing here even after its id is reused.
    *
@@ -1239,7 +1239,7 @@ export class BrainStore {
   }
 
   /** created_at of the session's newest stored message (undefined when it has none) — drives the
-   *  idle-rollover check without loading the whole history. */
+   *  cold-context gate without loading the whole history. */
   lastMessageAt(sessionId: string): string | undefined {
     const row = this.db.prepare('SELECT MAX(created_at) AS ts FROM brain_messages WHERE session_id = ?').get(sessionId) as { ts: string | null };
     return row.ts ?? undefined;
@@ -1950,10 +1950,10 @@ export class BrainStore {
   }
 
   /** Re-key a session — its row, messages and goal — to a new id, atomically (a crash mid-move would
-   *  otherwise split a conversation across two ids). Used by channel idle rollover to ARCHIVE the old
-   *  transcript under a fresh unique id (freeing the deterministic channel id for a new session) while
-   *  keeping the old conversation and its title fully browsable, exactly as owner-chat rollover keeps
-   *  the prior conversation. Delegated children follow the archived parent id; `parent_id` on messages
+   *  otherwise split a conversation across two ids). Used by a `/context` bind to ARCHIVE whatever holds
+   *  a channel slot under a fresh unique id (freeing the deterministic channel id for the conversation
+   *  being moved in) while keeping the old conversation and its title fully browsable. Delegated
+   *  children follow the archived parent id; `parent_id` on messages
    *  references message ids (not session ids), so that separate column needs no rewrite. */
   reassignSession(oldId: string, newId: string): void {
     this.db.transaction(() => {
@@ -1970,8 +1970,8 @@ export class BrainStore {
       // VERBATIM: the spill dir is keyed by the immutable spill_ns (which travels inside the session
       // row), so the files never move and the stored path stays true. The old code rewrote old-dir →
       // new-dir here and renamed the directory, which silently invalidated the cached prefix of every
-      // WARM conversation a /context bind moved (reassignment is NOT only cold idle rollover) — one
-      // changed placeholder byte re-caches the entire history.
+      // WARM conversation a /context bind moves — one changed placeholder byte re-caches the entire
+      // history.
       this.db.prepare('UPDATE brain_tool_result_spills SET session_id = ? WHERE session_id = ?').run(newId, oldId);
       this.db.prepare('UPDATE brain_goals SET session_id = ? WHERE session_id = ?').run(newId, oldId);
       this.db.prepare('UPDATE brain_cards SET session_id = ? WHERE session_id = ?').run(newId, oldId);
@@ -1993,7 +1993,7 @@ export class BrainStore {
     catch (e) {
       if ((e as NodeJS.ErrnoException).code !== 'ENOENT') {
         logger('brain-store').warn(`failed to move plan file ${oldId} → ${newId}`, e);
-        // The move failed, so the plan is still sitting under the id this rollover just freed for a new
+        // The move failed, so the plan is still sitting under the id this re-key just freed for another
         // conversation. Blank it rather than leave it there to be read as that conversation's own plan:
         // the archived transcript loses its plan, which is the lesser of the two outcomes.
         this.blankPlanFile(oldId);

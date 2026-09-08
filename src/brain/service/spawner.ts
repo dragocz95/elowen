@@ -199,7 +199,7 @@ export class LiveSessionSpawner {
     //    that in-place re-apply matches on, which a per-turn threshold would leave naming something
     //    untrue.
     // An explicit `/model` for the room still wins over all of this, and the room re-reads the current
-    // writer's settings on every respawn (rollover, model switch, eviction, restart).
+    // writer's settings on every respawn (model switch, eviction, vision hop, restart).
     const settingsUserId = opts.settingsUserId ?? ownerUserId;
     // The writer's per-user compaction-model choice (Account → Auto-compact). Empty → PI compacts on the
     // session model (or the provider's stable default). Validated at save time; resolved defensively here
@@ -594,7 +594,7 @@ export class LiveSessionSpawner {
     };
     const listeners = new Set<(e: BrainEvent) => void>();
     // Re-attach every listener ClientAttachments still has on this session id — direct subscribe()
-    // subscribers and drill-in taps alike. A respawn (model switch, restart, vision hop, idle rollover,
+    // subscribers and drill-in taps alike. A respawn (model switch, restart, vision hop,
     // LRU eviction + revival) always builds a fresh listener set here; without this every one of them
     // would silently go dark while the client believes it is still attached.
     for (const tap of this.d.sessionTaps(opts.sessionId)) listeners.add(tap);

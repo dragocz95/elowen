@@ -193,7 +193,7 @@ CREATE TABLE IF NOT EXISTS brain_sessions (
   forked_from_session_id TEXT,
   -- IMMUTABLE spill namespace: the fs-safe directory segment this conversation's cleared tool results
   -- live under (<dataDir>/tool-results/<spill_ns>). Minted once at creation and NEVER rewritten — the
-  -- session id is re-keyed by channel rollover and /context binds, but the placeholders already sent to
+  -- session id is re-keyed by /context binds, but the placeholders already sent to
   -- the provider embed spill paths, and moving the directory (or rewriting the stored paths) would
   -- rewrite an already-cached prefix and strand files under a slot id the next conversation inherits.
   -- Empty on rows minted by older builds; db.ts backfills those to their then-current id, freezing the
@@ -436,7 +436,7 @@ CREATE TABLE IF NOT EXISTS brain_request_session_summary (
 -- spill instead of its own output). 0 marks a legacy row from before this column; toolResultClearing
 -- restores those through a created_at heuristic and prunes/graduates them. The spill FILES keep the
 -- full output for the model to Read; this table carries only placeholder state. No foreign keys, same
--- lifecycle policy as brain_subagent_runs: sessions are re-keyed during channel rollover, so BrainStore
+-- lifecycle policy as brain_subagent_runs: sessions are re-keyed by a /context bind, so BrainStore
 -- moves/deletes these rows itself (`path` moves with the row VERBATIM — the spill dir is keyed by the
 -- immutable spill_ns, so the files never move and the path stays true).
 CREATE TABLE IF NOT EXISTS brain_tool_result_spills (
@@ -453,8 +453,8 @@ CREATE TABLE IF NOT EXISTS brain_tool_result_spills (
 );
 -- Latest durable UI state for each delegated tool call. The parent assistant message remains the
 -- canonical transcript row; this sidecar supplies the child session id + rolling status that PI's
--- message format does not carry. No foreign keys here: brain sessions are re-keyed during channel
--- rollover, so BrainStore updates/deletes these rows in the same lifecycle transactions instead.
+-- message format does not carry. No foreign keys here: brain sessions are re-keyed by a /context bind,
+-- so BrainStore updates/deletes these rows in the same lifecycle transactions instead.
 CREATE TABLE IF NOT EXISTS brain_subagent_runs (
   parent_session_id TEXT NOT NULL,
   tool_call_id TEXT NOT NULL,
@@ -483,7 +483,7 @@ CREATE INDEX IF NOT EXISTS idx_brain_subagent_runs_child ON brain_subagent_runs(
 -- Unlike brain_subagent_runs there is no single child to key on -- one blocking call fans out to N node
 -- sessions -- so the node session ids live inside `state` and are NOT trusted on read: getWorkflowRuns
 -- re-derives each node's drill-in target from the live parent/child relation. That check is strictly
--- stronger than rewriting ids on rollover, which is why the DAG can stay one JSON blob (and why one
+-- stronger than rewriting ids on a re-key, which is why the DAG can stay one JSON blob (and why one
 -- snapshot costs one write, not up to 64). Same no-foreign-keys rule as the tables above.
 CREATE TABLE IF NOT EXISTS brain_workflows (
   parent_session_id TEXT NOT NULL,
@@ -534,7 +534,7 @@ CREATE INDEX IF NOT EXISTS idx_brain_inline_artifacts_ref ON brain_inline_artifa
 -- rename, reasoning change). Rendered as a subtle system line INTERLEAVED into the transcript by time,
 -- and replayed on reconnect — but deliberately NOT part of brain_messages, so they never enter the
 -- model's context (rehydrate) or perturb compaction alignment. Row order (rowid) mirrors event order;
--- same no-foreign-keys / rekey-in-rollover rule as the tables above.
+-- same no-foreign-keys / rekey-in-store rule as the tables above.
 CREATE TABLE IF NOT EXISTS brain_session_events (
   session_id TEXT NOT NULL,
   event_id TEXT NOT NULL,

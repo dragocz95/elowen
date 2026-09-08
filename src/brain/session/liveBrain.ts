@@ -84,7 +84,7 @@ export interface LiveBrain {
   policy: Policy;
   /** Re-apply this session's auto-compact threshold IN PLACE — PI reads its compaction settings at each
    *  check, so a saved Account change takes effect on the running conversation instead of waiting for the
-   *  next respawn (model switch, rollover, daemon restart). See BrainService.applyAutoCompactSettings. */
+   *  next respawn (model switch, vision hop, daemon restart). See BrainService.applyAutoCompactSettings. */
   applyCompaction: ApplyCompaction;
   /** Live cold-start-compaction eligibility (proactive flag, breaker state, break-even estimate) —
    *  consulted by the turn runner before the first provider call of a turn that follows a provably
@@ -135,7 +135,7 @@ export interface LiveBrain {
   yoloOverride?: boolean;
   /** Epoch ms of the user's last EXPLICIT interaction with this conversation (resume via the session
    *  picker / `/resume`, a model switch, a manual compact, a reasoning-effort change). Consulted by the
-   *  idle-rollover check (send()) so a deliberately reopened old conversation continues instead of being
+   *  cold-context gate (cacheDefinitelyCold) so a deliberately reopened old conversation is not treated as
    *  cut over to a fresh session. Unset for auto-resumed sessions (client boot). */
   interactedAt?: number;
   /** Mode of the last real turn the user drove (the CLI toggle is per-request, so the daemon has no other
@@ -144,7 +144,7 @@ export interface LiveBrain {
    *  without plan mode's shell clamp and re-advertise the tools plan mode withheld, letting a delivery that
    *  lands mid-planning mutate the repo.
    *
-   *  Carried across every in-memory respawn (model switch, idle rollover, vision hop). It does NOT survive
+   *  Carried across every in-memory respawn (model switch, vision hop). It does NOT survive
    *  a daemon restart: the mode is a per-request CLI flag with no durable home, so a result drained into a
    *  freshly respawned session falls back to 'build' until the user's next real turn re-states it. */
   lastTurnMode?: TurnMode;

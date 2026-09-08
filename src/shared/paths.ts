@@ -40,8 +40,8 @@ export function fsSafeSegment(id: string): string {
 /** Where a conversation's cleared tool results are spilled before the context placeholder replaces
  *  them. One directory per conversation, so pathGuard can scope read access to the OWNING session and
  *  session deletion can remove the whole directory. `spillNs` is the conversation's IMMUTABLE spill
- *  namespace (brain_sessions.spill_ns) — deliberately NOT the session id, which channel rollover and
- *  `/context` binds re-key: the placeholder text already sent to the provider embeds this path, so the
+ *  namespace (brain_sessions.spill_ns) — deliberately NOT the session id, which a `/context` bind
+ *  re-keys: the placeholder text already sent to the provider embeds this path, so the
  *  directory must never move once a spill exists, or every re-pointed placeholder rewrites an
  *  already-cached prefix (a full re-cache) and a failed rename would leave the files under an id the
  *  next conversation on that slot inherits. Callers that hold a SESSION id resolve it through

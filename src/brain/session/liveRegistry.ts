@@ -3,7 +3,7 @@
  *  live record so it stays a pure container — session composition lives with the callers.
  *
  *  Lock topology (MUST be preserved by callers): `send-<sessionId>` is the outer send() lock guarding
- *  that ONE conversation's idle-rollover / vision-hop dispose-and-respawn decision (turns on different
+ *  that ONE conversation's vision-hop dispose-and-respawn decision (turns on different
  *  conversations run concurrently); the bare session id is the inner lock guarding prompt()/spawn.
  *  start()/ensureLive lock the bare session id only — that key difference is what makes
  *  send() → ensureLive() re-entrant. */
@@ -44,7 +44,7 @@ export class LiveSessionRegistry<T extends { sessionId: string; session: { dispo
   private locks = new Map<string, Promise<unknown>>();
   /** Running delegated children are conversation state, not PI-session state: a model switch, restart,
    *  or vision hop replaces the LiveBrain object in place while the child keeps running. Keep the tree
-   *  here so every replacement sees the same abort/status/rollover guard. Each child maps to the SET of
+   *  here so every replacement sees the same abort/status guard. Each child maps to the SET of
    *  sources currently claiming it (see ChildClaimSource): the child stays alive while any claim
    *  remains, and a source can only ever release its own — a Set per source keeps same-source
    *  re-registration idempotent (the runner mirrors begin edges per call, not per 0↔1 transition). */
@@ -86,7 +86,7 @@ export class LiveSessionRegistry<T extends { sessionId: string; session: { dispo
     const stored = next.then(() => undefined, () => undefined);
     this.locks.set(key, stored);
     // Release the key once it settles so the map doesn't accumulate a permanent entry for every session
-    // id ever locked (idle/channel rollover mints fresh ids for the daemon's whole lifetime). Only delete
+    // id ever locked (a `/context` bind mints fresh ids for the daemon's whole lifetime). Only delete
     // when we're still the tail — a newer withLock on the same key will have replaced `stored`.
     void stored.then(() => { if (this.locks.get(key) === stored) this.locks.delete(key); });
     return next;

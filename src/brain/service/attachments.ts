@@ -13,7 +13,7 @@ interface StableClientBinding {
    *  older starts from reclaiming the stable identity after a newer selection already won. */
   requestGeneration?: number;
   /** Present only while this client's SSE transport is still attached. The stable binding deliberately
-   *  survives transport teardown so a racing stop POST can still resolve an idle-rollover replacement. */
+   *  survives transport teardown so a racing stop POST can still resolve the conversation it named. */
   listener?: ClientListener;
   detach?: () => void;
   detachedAt?: number;
@@ -54,17 +54,17 @@ export interface ClientRelease {
   sessionId?: string;
 }
 
-/** Result of resolving the target carried by a generation-bound parent SSE. An idle rollover moves the
- * stable binding before it emits its `session` frame; a reconnect that missed that frame must tap the
- * moved target rather than repeatedly attempting the disposed predecessor. */
+/** Result of resolving the target carried by a generation-bound parent SSE. A reconnect resolves through
+ * the stable binding rather than the id it last observed, so a client that missed a frame still taps the
+ * conversation the daemon has it bound to. */
 export interface ClientStreamResolution {
   accepted: boolean;
   sessionId: string;
 }
 
 /** Live client attachment tracking, shared by the conversation lifecycle (subscribe/tap and the
- *  switch-away/default-start guards), the turn runner (an idle rollover carries attachments onto the
- *  replacement session), the spawner (tap re-attach on respawn) and the status views (`attached`). */
+ *  switch-away/default-start guards), the turn runner, the spawner (tap re-attach on respawn) and the
+ *  status views (`attached`). */
 export class ClientAttachments {
   private readonly maxDetached: number;
   private readonly detachedTtlMs: number;
@@ -78,8 +78,7 @@ export class ClientAttachments {
   }
   /** Live client streams (SSE listeners from /brain/stream) → the session id each is attached to.
    *  Only REAL client streams register here (subscribe + tapSession); internal fanout listeners and the
-   *  respawn re-attach never do. An idle rollover re-keys entries onto the replacement session (the
-   *  listeners are carried there). Powers `attached` in listSessions, the CLI default-start resolution
+   *  respawn re-attach never do. Powers `attached` in listSessions, the CLI default-start resolution
    *  ("don't grab a conversation another client holds") and the switch-away cleanup guard. */
   readonly clientStreams = new Map<ClientListener, string>();
 
@@ -98,7 +97,7 @@ export class ClientAttachments {
    *  time. `attach()`/`detachTransport()` own this bookkeeping; the spawner reads it on every (re)spawn to
    *  restore every genuinely attached transport, not just drill-in taps (name kept as `sessionTaps` — that
    *  is what brainService.ts wires into the spawner). Keyed by session id and never re-keyed: a session
-   *  that moves to a new id (channel rollover) leaves its taps behind with the old id. */
+   *  that moves to a new id (a `/context` bind) leaves its taps behind with the old id. */
   readonly sessionTaps = new Map<string, Set<(e: BrainEvent) => void>>();
 
   /** Register a listener under its session's persistent ownership record — see `sessionTaps`. */
@@ -159,10 +158,10 @@ export class ClientAttachments {
    *
    *  The CLI mints a per-process client id and sends it on `/brain/start` and on its bound SSE; the web
    *  dock subscribes anonymously (no `client`, no `session`), so it never creates a stable binding. That
-   *  asymmetry is what makes this the CLI signal, and it is load-bearing: the idle rollover consults it to
-   *  leave an open terminal conversation alone (a user coming back from lunch must not silently find a
-   *  fresh, empty one), while the web keeps its own policy. If another surface ever starts sending a client
-   *  id, it inherits that behaviour — decide it deliberately there.
+   *  asymmetry is what makes this the CLI signal, and it is load-bearing: the idle live-session reaper
+   *  consults it to leave an open terminal conversation's runtime alone, while the web keeps its own
+   *  policy. If another surface ever starts sending a client id, it inherits that behaviour — decide it
+   *  deliberately there.
    *
    *  A live `listener` — not the binding's mere existence — is the test: a binding deliberately outlives
    *  its transport for a grace TTL so a racing stop can still resolve it, and a client that has gone away
@@ -171,7 +170,7 @@ export class ClientAttachments {
     this.pruneDetached();
     for (const binding of this.stableClients.values()) {
       // New protocol clients identify their surface explicitly. Missing surface keeps the old CLI meaning so
-      // older terminals retain rollover semantics, while an explicit web binding never pins a CLI rollover.
+      // older terminals still pin their runtime, while an explicit web binding never does.
       if (binding.sessionId === sessionId && binding.listener && (binding.surface === undefined || binding.surface === 'cli')) return true;
     }
     return false;
