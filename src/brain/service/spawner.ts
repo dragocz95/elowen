@@ -29,6 +29,7 @@ import { liveSkillCommandExtension } from '../session/turnSkills.js';
 import type { BrainEvent } from '../events.js';
 import type { BrainDeps } from '../brainDeps.js';
 import { clientDir, turnWorkDir } from './workDir.js';
+import { preparePersonalProject } from './personalProject.js';
 import { modelCapabilities, qwenThinkingWire } from '../modelCapabilities.js';
 import { LiveEventReplay } from '../session/liveEventReplay.js';
 import { resolveHostedToolSearchRoute } from '../session/hostedToolSearch.js';
@@ -66,6 +67,7 @@ interface SpawnerDeps {
   /** Registered projects — the write path resolves the current turn's project id to a slug for the
    *  lazily created project category (see MemoryToolDeps.projects). */
   projects?: BrainDeps['projects'];
+  policy?: BrainDeps['policy'];
   /** The daemon-wide plugin registry (undefined when plugins aren't wired at all). */
   plugins(): Promise<PluginRegistry | undefined>;
   /** Shared session assembly (store row + rehydrate + resource loader + PI session). */
@@ -277,7 +279,10 @@ export class LiveSessionSpawner {
     // The session cwd is what pi advertises to the model ("Current working directory: …") and what
     // relative paths resolve against — it must be the USER'S project, never the brain's data dir
     // (the model would otherwise claim/act on that path). Same resolution as the per-turn workDir.
-    const cwd = opts.pathView?.root
+    const execution = preparePersonalProject(this.d, opts);
+    opts = { ...opts, policy: execution.policy };
+    const managed = execution.projectRef?.kind === 'managed';
+    const cwd = managed ? '/workspace' : opts.pathView?.root
       ?? turnWorkDir(opts.policy, opts.clientCwd, this.d.projectPath) ?? this.d.cwd ?? process.cwd();
     // SIZE GUARD, before anything is built. A fork inherits the whole parent conversation, and the child
     // may be running a different model: a 480k-token owner chat forked onto a 200k-window model produced a
@@ -603,6 +608,8 @@ export class LiveSessionSpawner {
     const replay = new LiveEventReplay(listeners);
     const { session, applyCompaction, assessColdCompaction } = await this.d.factory.create({
       sessionId, ownerUserId, parentSessionId: opts.parentSessionId, delegatedAccess: opts.delegatedAccess,
+      executionRef: execution.initialRef,
+      ...(managed ? { contextFiles: false } : {}),
       seedMessages: opts.seedMessages,
       ...(opts.forkSeed ? { forkSeed: opts.forkSeed } : {}),
       ...(opts.forkCache ? { forkCache: opts.forkCache } : {}),

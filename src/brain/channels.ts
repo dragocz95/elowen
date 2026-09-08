@@ -969,6 +969,10 @@ export class ChannelSessionService {
           clientCwd: delegated?.pathView?.root ?? opts.clientCwd,
           ...(delegated?.pathView ? { pathView: delegated.pathView } : {}),
         });
+        // A first personal spawn can mint its default project after the incoming policy was captured.
+        if (opts.direct && !parentSessionId && this.d.store.getProjectExecution(sessionId)?.kind === 'managed') {
+          opts = { ...opts, policy: ch.policy };
+        }
         if (this.d.registry.hasPendingAbort(sessionId)) {
           ch.session.dispose();
           this.d.registry.throwIfPendingAbort(sessionId);

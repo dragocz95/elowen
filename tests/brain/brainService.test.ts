@@ -4520,7 +4520,7 @@ describe('BrainService memory integration', () => {
     (d as Record<string, unknown>).projects = new ProjectStore(memDb);
     (d as Record<string, unknown>).memoryCategorizer = new MemoryCategorizer({ categories: cats, memories: memStore, inference: () => null });
     const svc = new BrainService(d as never);
-    await svc.start(1);
+    await svc.start(1, { cwd: process.cwd() });
     const opts = (d.createSession as unknown as { mock: { calls: [{ customTools: { name: string }[] }][] } }).mock.calls[0][0];
     const names = opts.customTools.map((t) => t.name);
     expect(names).toContain('MemoryAdd');

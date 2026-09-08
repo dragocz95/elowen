@@ -254,6 +254,7 @@ export class BrainStore {
     parentSessionId?: string | null;
     /** Immutable execution boundary for a newly-created delegated child. */
     delegatedAccess?: DelegatedExecutionScope;
+    executionRef?: ProjectExecutionRef;
   }): BrainSessionRow {
     const parentSessionId = input.parentSessionId ?? null;
     const delegatedAccess = input.delegatedAccess === undefined
@@ -261,6 +262,8 @@ export class BrainStore {
       : normalizeDelegatedExecutionScope(input.delegatedAccess);
     if (input.delegatedAccess !== undefined && !delegatedAccess) throw new Error('invalid delegated access');
     if (delegatedAccess && parentSessionId === null) throw new Error('delegated access requires a parent session');
+    const executionRef = input.executionRef === undefined ? undefined : projectExecutionRefSchema.parse(input.executionRef);
+    if (executionRef && parentSessionId !== null) throw new Error('delegated execution target belongs in its access scope');
     withWriteLock(this.db, () => {
       if (parentSessionId !== null) {
         const parent = this.db.prepare('SELECT user_id FROM brain_sessions WHERE id = ?').get(parentSessionId) as { user_id: number } | undefined;
@@ -268,13 +271,14 @@ export class BrainStore {
         if (parent.user_id !== input.userId) throw new Error('parent brain session belongs to another user');
       }
       this.db.prepare(
-        `INSERT INTO brain_sessions (id, user_id, title, model, provider, parent_session_id, delegated_access, spill_ns)
-         VALUES (@id, @user_id, @title, @model, @provider, @parent_session_id, @delegated_access, @spill_ns)`
+        `INSERT INTO brain_sessions (id, user_id, title, model, provider, parent_session_id, delegated_access, execution_ref, spill_ns)
+         VALUES (@id, @user_id, @title, @model, @provider, @parent_session_id, @delegated_access, @execution_ref, @spill_ns)`
       ).run({
         id: input.id, user_id: input.userId, title: input.title ?? '', model: input.model,
         provider: input.provider ?? '',
         parent_session_id: parentSessionId,
         delegated_access: delegatedAccess ? JSON.stringify(delegatedAccess) : null,
+        execution_ref: executionRef ? JSON.stringify(executionRef) : null,
         spill_ns: mintSpillNamespace(input.id),
       });
     });
