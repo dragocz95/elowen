@@ -7,7 +7,8 @@
   },
   "realGuestSuites": [
     "tests/plugins/containerRuntime.podman.test.ts",
-    "../elowen-plugins-environments/tests/lspManagedGuest.podman.test.ts"
+    "../elowen-plugins-environments/tests/lspManagedGuest.podman.test.ts",
+    "tests/plugins/managedToolCallers.podman.test.ts"
   ],
   "rows": [
     {
@@ -126,16 +127,16 @@
       "capability": "Read/Edit/Write/Glob/Grep/ListDir/FileInfo against a managed project",
       "evidence": "real-guest",
       "negative": "real-guest",
-      "notes": "The guest operations the file tools sit on: mkdir, list, content search, stat, rename, remove. The tool wrappers themselves remain unit-only.",
-      "suite": "containerRuntime.podman"
+      "notes": "The registered plugin tools' own execute() against a container: Write, Read, Edit, ListDir, FileInfo, Glob, Grep. The host path guard is asserted never to be consulted.",
+      "suite": "managedToolCallers.podman"
     },
     {
       "area": "file-tools",
       "capability": "GitStatus and worktrees in a managed project",
       "evidence": "real-guest",
-      "suite": "containerRuntime.podman",
-      "negative": "unit",
-      "notes": "Worktree create/list/remove real; GitStatus tool itself unverified."
+      "suite": "managedToolCallers.podman",
+      "negative": "real-guest",
+      "notes": "GitStatus tool and worktree lifecycle both exercised against a guest."
     },
     {
       "area": "artifacts",

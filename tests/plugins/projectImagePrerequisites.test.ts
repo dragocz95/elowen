@@ -27,6 +27,9 @@ describe('project base image prerequisites', () => {
     expect(packages).toContain('chromium');
     // Headless browsing renders text; the distro font package keeps screenshots legible.
     expect(packages).toContain('fonts-liberation');
+    // Grep resolves ripgrep through the guest PATH, so an image without it fails the tool on every
+    // managed project — which is how this was found: from the real tool, not from a stand-in provider.
+    expect(packages).toContain('ripgrep');
     // No arbitrary install scripts, no tarballs, no host paths for either toolchain.
     expect(PROJECT_CONTAINERFILE).not.toMatch(/nodesource|setup_\d+\.x|nodejs\.org|\bcurl\s+[^\\]*\|\s*(ba)?sh|\/var\/www|workspace\/\.\./i);
   });

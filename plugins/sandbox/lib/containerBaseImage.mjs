@@ -8,7 +8,7 @@ COPY --from=docker.io/library/node:24-bookworm-slim@sha256:ba849c60be29959425b87
 RUN apt-get update \\
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
       systemd systemd-sysv dbus ca-certificates curl iproute2 procps less \\
-      git openssh-client python3 bash tar util-linux \\
+      git openssh-client python3 bash tar util-linux ripgrep \\
       chromium fonts-liberation \\
  && apt-get clean \\
  && rm -rf /var/lib/apt/lists/* \\
