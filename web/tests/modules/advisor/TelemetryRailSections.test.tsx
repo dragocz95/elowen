@@ -108,7 +108,7 @@ const snapshot = (over: Record<string, unknown>) => ({
 
 /** A delegate tool call plus its sub-agent progress — the shape the rail's agent rows are folded from. */
 const subagentEvents = (over: {
-  sessionId: string; status: 'running' | 'done'; task: string; id: string;
+  sessionId: string; status: 'running' | 'done'; task: string; id: string; name?: string;
   detail?: string; model?: string; tokens?: number; thinkingLabel?: string;
   background?: boolean; autoDeliver?: boolean; resultDelivery?: 'pending' | 'acknowledged';
   tools?: number; seconds?: number; workspaceId?: string;
@@ -355,6 +355,42 @@ describe('telemetry rail — live work sections', () => {
     await waitFor(() => expect(FakeES.instances).toHaveLength(2));
     expect(new URL(FakeES.instances[1]!.url, 'http://localhost').searchParams.get('session')).toBe('child-2');
     expect(screen.queryByRole('dialog', { name: 'Agents' })).not.toBeInTheDocument();
+  });
+
+  // The row's layout rule, shared with the CLI: the label is the delegation's short NAME, and the child's
+  // live status note sits beside it as the secondary text. The task text was never a label — a briefing
+  // paragraph at a 280px rail width tells the reader nothing about which child they are looking at.
+  it('labels a rail row with the delegation name and keeps the live note beside it', async () => {
+    const es = await renderRail();
+    es.emit('snapshot', snapshot({
+      events: subagentEvents({
+        id: 't1', sessionId: 'child-1', status: 'running', name: 'panel-redesign',
+        task: 'redesign the telemetry panel and report back', detail: 'Upravuji soubor…', tokens: 1234,
+      }),
+    }));
+
+    const section = await screen.findByTestId('telemetry-agents');
+    expect(section.textContent).toContain('panel-redesign');
+    expect(section.textContent).toContain('Upravuji soubor…');
+    expect(section.textContent).not.toContain('redesign the telemetry panel');
+    // The trailing meta column is untouched.
+    expect(section.textContent).toContain('1.2k');
+
+    // …and the agents table names it too, without losing the task it was given.
+    await act(async () => { fireEvent.click(within(section).getByTestId('telemetry-row')); });
+    const dialog = await screen.findByRole('dialog', { name: 'Agents' });
+    expect(within(dialog).getByText('panel-redesign')).toBeInTheDocument();
+    expect(within(dialog).getByText('redesign the telemetry panel and report back')).toBeInTheDocument();
+  });
+
+  it('falls back to the task on a rail row for a run that carries no name', async () => {
+    const es = await renderRail();
+    es.emit('snapshot', snapshot({
+      events: subagentEvents({ id: 't1', sessionId: 'child-1', status: 'running', task: 'hledá volající' }),
+    }));
+
+    const section = await screen.findByTestId('telemetry-agents');
+    expect(section.textContent).toContain('hledá volající');
   });
 
   it('marks a sandbox-scoped sub-agent with the workspace icon on the rail and in the agents table', async () => {

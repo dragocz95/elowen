@@ -28,7 +28,12 @@ export function runningSubagentsBlock(
     .filter((run) => run.status === 'running');
   if (running.length === 0) return '';
   const rows = running.slice(0, 32).map((run) => {
-    const attrs = `session="${xmlEscape(run.sessionId)}" background="${run.background === true}" auto-deliver="${run.autoDeliver === true}" tools="${run.tools}" seconds="${run.seconds}"`;
+    // `name` is the delegation's short label and the ONLY thing added to this row: it is the handle the
+    // parent can name a child by (in DelegateContinue, DelegateStop, or when it tells the user which one
+    // it is waiting on), where the session id is a UUID. Omitted when the run has none, so a row that
+    // predates the field renders byte for byte what it always did — this text is a cached prompt prefix.
+    const named = run.name ? ` name="${xmlEscape(run.name)}"` : '';
+    const attrs = `session="${xmlEscape(run.sessionId)}"${named} background="${run.background === true}" auto-deliver="${run.autoDeliver === true}" tools="${run.tools}" seconds="${run.seconds}"`;
     // The child's current tool (`run.detail`) is a UI-only projection (web AgentsTable + CLI live
     // progress); it is deliberately withheld from the model here (context hardening) so the parent
     // cannot steer on the child's internal tool trace.

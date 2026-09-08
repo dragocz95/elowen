@@ -1644,6 +1644,7 @@ export const en = {
     link: { one: 'agent', few: 'agents', many: 'agents' },
     linkDone: { one: 'finished agent', few: 'finished agents', many: 'finished agents' },
     status: 'Status',
+    name: 'Name',
     task: 'Task',
     model: 'Model',
     tokens: 'Tokens',

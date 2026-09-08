@@ -166,6 +166,9 @@ export class CardPanel implements Component {
 export interface SubagentPanelEntry {
   sessionId: string;
   task: string;
+  /** The delegation's short label — what this row is titled with. Absent for a run recorded before the
+   *  field existed, where the task text stands in. */
+  name?: string;
   status: 'running' | 'done' | 'error';
   detail?: string;
   tools: number;
@@ -253,16 +256,27 @@ export class SubagentPanel implements Component {
       // the highlight background early (SGR has no stack), so strip SGR here to keep these strings truly
       // plain — the contract the coloured branches below rely on.
       let metaPlain = stripSgr(truncateToWidth(meta, Math.max(10, Math.floor(width * 0.5)), '…'));
-      // The terminal-safe sandbox marker (`[S] `, 4 cols) is carved out of the task budget up front so a
+      // The terminal-safe sandbox marker (`[S] `, 4 cols) is carved out of the label budget up front so a
       // workspace-scoped row keeps the same overall width as an unscoped one instead of overflowing.
       const sandboxBudget = e.workspaceId ? 4 : 0;
-      const taskPlain = stripSgr(truncateToWidth(inlineText(e.task), Math.max(10, width - visibleWidth(metaPlain) - 12 - sandboxBudget), '…'));
+      const textBudget = Math.max(10, width - visibleWidth(metaPlain) - 12 - sandboxBudget);
+      // The label is the delegation's NAME: a task is a briefing paragraph, and at a row's width it filled
+      // the line with prose that said nothing about which of three running children this one is. The task
+      // remains the fallback for a run recorded before the field existed.
+      const labelPlain = stripSgr(truncateToWidth(inlineText(e.name || e.task), textBudget, '…'));
+      // …and what the child last said it is doing goes beside it, in whatever the label left over. Dropped
+      // rather than squeezed to a couple of glyphs: an ellipsis on its own is not a status.
+      const noteBudget = textBudget - visibleWidth(labelPlain) - 1;
+      const notePlain = e.detail && noteBudget >= 8
+        ? stripSgr(truncateToWidth(inlineText(e.detail), noteBudget, '…'))
+        : '';
+      const textPlain = notePlain ? `${labelPlain} ${notePlain}` : labelPlain;
       const iconPlain = e.status === 'running' ? '●' : e.status === 'done' ? '✓' : '✗';
       const sandboxGlyphPlain = e.workspaceId ? '[S] ' : '';
-      const rowPlain = `    ${iconPlain} ${sandboxGlyphPlain}${taskPlain} click`;
+      const rowPlain = `    ${iconPlain} ${sandboxGlyphPlain}${textPlain} click`;
       let gap = width - visibleWidth(rowPlain) - visibleWidth(metaPlain) - 2;
       if (gap < 1) {
-        // The task text already floors at 10 columns, so a narrow panel (e.g. its 36-column minimum)
+        // The label already floors at 10 columns, so a narrow panel (e.g. its 36-column minimum)
         // cannot free more room there — shrink the meta column instead of letting the row overflow.
         metaPlain = stripSgr(truncateToWidth(metaPlain, Math.max(0, width - visibleWidth(rowPlain) - 1), '…'));
         gap = Math.max(0, width - visibleWidth(rowPlain) - visibleWidth(metaPlain));
@@ -276,7 +290,8 @@ export class SubagentPanel implements Component {
       }
       const icon = e.status === 'running' ? color.warning('●') : e.status === 'done' ? color.success('✓') : color.error('✗');
       const sandboxGlyph = e.workspaceId ? `${color.faint('[S]')} ` : '';
-      lines.push(`    ${icon} ${sandboxGlyph}${DIM(taskPlain)} ${FAINTC('click')}${' '.repeat(gap)}${FAINTC(metaPlain)}`);
+      const note = notePlain ? ` ${FAINTC(notePlain)}` : '';
+      lines.push(`    ${icon} ${sandboxGlyph}${DIM(labelPlain)}${note} ${FAINTC('click')}${' '.repeat(gap)}${FAINTC(metaPlain)}`);
     }
     // A clickable pager row makes the hidden overflow discoverable (the wheel alone was invisible). It
     // pages forward and wraps, so more than one full page is reachable with clicks alone.

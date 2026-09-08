@@ -285,6 +285,24 @@ describe('chat layout components', () => {
       const rendered = renderSub({ sessionId: 'child', status: 'running', task: 'inspect', tools: 2, seconds: 3, detail: 'Upravuji soubor…' });
       expect(rendered).toContain('Upravuji soubor…');
     });
+
+    // Same row rule as the rail panel: the label is the delegation's short name, and the note under it
+    // says what the child is doing. The whole task text was never a label — at a row's width it filled
+    // the line with briefing prose.
+    it('labels the block with the delegation name when it has one', () => {
+      const rendered = renderSub({
+        sessionId: 'child', status: 'running', name: 'panel-redesign',
+        task: 'redesign the telemetry panel and report back', tools: 2, seconds: 3, detail: 'Upravuji soubor…',
+      });
+      expect(rendered).toContain('panel-redesign');
+      expect(rendered).not.toContain('redesign the telemetry panel');
+      expect(rendered).toContain('Upravuji soubor…');
+    });
+
+    it('falls back to the task text for a block with no name', () => {
+      const rendered = renderSub({ sessionId: 'child', status: 'running', task: 'redesign the panel', tools: 2, seconds: 3 });
+      expect(rendered).toContain('redesign the panel');
+    });
   });
 
   it('parses SGR mouse wheel events', () => {

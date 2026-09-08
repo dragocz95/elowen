@@ -579,6 +579,31 @@ describe('SubagentPanel', () => {
     expect(p.targetAt(1)).toBe('brain-ch-subagent-a');
   });
 
+  // The row's layout rule: the label is the delegation's NAME, the secondary text is what the child last
+  // said it is doing, and the trailing meta column is untouched. The task text is a briefing paragraph and
+  // was never a label — at this width it filled the row and told the reader nothing.
+  it('labels the row with the delegation name and puts the live status note beside it', () => {
+    const p = new SubagentPanel();
+    p.set([{ ...running, name: 'config-research', detail: 'Čtu konfiguraci…' }]);
+
+    const plain = p.render(80).map((l) => l.replace(/\x1b\[[0-9;]*m/g, '')).join('\n');
+
+    expect(plain).toContain('config-research');
+    expect(plain).toContain('Čtu konfiguraci…');
+    expect(plain).not.toContain('research the config layer');
+    // The trailing meta column is unchanged.
+    expect(plain).toContain('tok');
+  });
+
+  it('falls back to the task for a run that carries no name, so no row is ever unlabelled', () => {
+    const p = new SubagentPanel();
+    p.set([running]);
+
+    const plain = p.render(80).map((l) => l.replace(/\x1b\[[0-9;]*m/g, '')).join('\n');
+
+    expect(plain).toContain('research the config layer');
+  });
+
   it('highlights the focused agent and leaves the rest plain, without moving the click targets', () => {
     const p = new SubagentPanel();
     const other = { ...running, sessionId: 'brain-ch-subagent-b', task: 'audit the store layer' };

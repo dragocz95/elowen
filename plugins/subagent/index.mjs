@@ -12,7 +12,8 @@ import { raceDetach } from './lib/detach.mjs';
 import { resolveResultRetentionMs } from './lib/retention.mjs';
 import { resolveStallMs } from './lib/stall.mjs';
 import { toolListCovers } from './lib/toolLists.mjs';
-import { liveToolDetail } from './lib/progress.mjs';
+import { foldToolDetail } from './lib/progress.mjs';
+import { resolveSubagentName } from './lib/name.mjs';
 import { THINKING_LEVEL_HINT, resolveThinkingLevel } from './lib/thinking.mjs';
 import {
   CONTEXT_HEADER,
@@ -307,6 +308,9 @@ export function register(ctx) {
         sessionId: job.sessionId,
         status,
         task: job.task,
+        // The row's short label. Unlike `detail` this one DOES reach the model (the running-subagents
+        // reminder names it), because addressing a child by a handle is the point of having one.
+        name: job.name,
         // `detail` is a UI/store projection only (web AgentsTable + CLI live progress): it surfaces the
         // child's current tool so the operator can watch progress. The model-facing running-subagents
         // reminder deliberately omits it — the parent must not steer on the child's internal tool trace.
@@ -432,6 +436,13 @@ export function register(ctx) {
     ].join(' '),
     parameters: Type.Object({
       task: Type.String({ description: 'The complete, self-contained instruction for the sub-agent — it does not see this conversation. Include all context, constraints and the output format you want back.' }),
+      name: Type.Optional(Type.String({
+        description: 'Short name for the spawned sub-agent — one or two words, lowercase. It labels the '
+          + 'sub-agent everywhere the user and you see it running (the rail, the agents table, the '
+          + 'running-subagents reminder), so the user can tell your children apart and you can name the '
+          + 'right one in DelegateContinue or DelegateStop. Omit it and a name is derived from the opening '
+          + 'words of the task.',
+      })),
       fork: Type.Optional(Type.Boolean({
         description: 'FORK this conversation instead of starting a clean one — a fork inherits your full '
           + 'conversation context: the same system prompt, the same tools and every message so far, and your task '
@@ -611,9 +622,15 @@ export function register(ctx) {
         toolCallId: id,
         status: 'running',
         task: clip(p.task, MAX_STORED_TASK_CHARS),
+        // The row's label everywhere it is shown. Derived from the task when the parent passed none, so a
+        // caller that predates the parameter still gets a labelled row instead of a paragraph of prose.
+        name: resolveSubagentName(p.name, p.task),
         sessionId: '',
         tools: 0,
         detail: undefined,
+        // The child's last AUTHORED status note, kept so an unannotated call does not drop the row back to
+        // the derived tool label (see lib/progress.mjs).
+        reason: '',
         tokens: undefined,
         model: model?.model,
         // The level this delegation actually spawns with (inherited from the parent turn above). Carried
@@ -654,7 +671,11 @@ export function register(ctx) {
       const onEvent = (e) => {
         lastActivityAt = Date.now();
         if (e.type === 'session' && e.sessionId) { state.sessionId = e.sessionId; push('running'); }
-        else if (e.type === 'tool' && e.name) { state.tools += 1; state.detail = liveToolDetail(e); push('running'); }
+        else if (e.type === 'tool' && e.name) {
+          state.tools += 1;
+          ({ reason: state.reason, detail: state.detail } = foldToolDetail(e, state.reason));
+          push('running');
+        }
         else if ((e.type === 'step' || e.type === 'idle') && e.usage?.totalTokens) { state.tokens = e.usage.totalTokens; push('running'); }
         // The child's own sub-agent or workflow is running (a nested Delegate mid-turn, or the host's
         // keep-alive while the child waits on it after its turn): this call is not stalled and its progress
@@ -922,7 +943,10 @@ export function register(ctx) {
           relativeAge(run.updatedAt || run.startedAt),
           run.model,
         ].filter(Boolean).join(' · ');
-        return `- ${run.sessionId}\n  ${clip(label, LISTED_TASK_PREVIEW_CHARS)}\n  ${facts}`;
+        // The short name the delegation runs under, on the id line: it is what the rail and the
+        // running-subagents reminder call this child, so the listing has to speak the same dialect.
+        const named = run.name ? `${run.sessionId}  (${run.name})` : run.sessionId;
+        return `- ${named}\n  ${clip(label, LISTED_TASK_PREVIEW_CHARS)}\n  ${facts}`;
       });
       return ok(
         `${runs.length} sub-agent${runs.length === 1 ? '' : 's'} in this conversation (newest first). `
@@ -1053,8 +1077,13 @@ export function register(ctx) {
         status: 'running',
         sessionId: childSessionId,
         task: clip(message, MAX_STORED_TASK_CHARS),
+        // A follow-up is its own call and gets its own row, so it needs its own label. There is no `name`
+        // parameter here — the follow-up text is the directive, and its opening words describe this round
+        // of work better than the original delegation's name would.
+        name: resolveSubagentName(undefined, message),
         tools: 0,
         detail: undefined,
+        reason: '',
         tokens: undefined,
         startedAt: Date.now(),
         finishedAt: undefined,
@@ -1070,7 +1099,11 @@ export function register(ctx) {
       };
       const push = (status) => pushJob(state, status);
       const onEvent = (e) => {
-        if (e.type === 'tool' && e.name) { state.tools += 1; state.detail = liveToolDetail(e); push('running'); }
+        if (e.type === 'tool' && e.name) {
+          state.tools += 1;
+          ({ reason: state.reason, detail: state.detail } = foldToolDetail(e, state.reason));
+          push('running');
+        }
         else if ((e.type === 'step' || e.type === 'idle') && e.usage?.totalTokens) { state.tokens = e.usage.totalTokens; push('running'); }
         // Same as Delegate: the host keeps this continuation open while the child's own sub-agent runs, and
         // this is what the call's row says meanwhile.

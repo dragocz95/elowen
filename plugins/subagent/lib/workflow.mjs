@@ -12,7 +12,7 @@ import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { validateWorkflowNodes, mergeWorkflowNodes, readyNodeIds } from './dag.mjs';
 import { toolListCovers, toolPolicyAllows } from './toolLists.mjs';
-import { liveToolDetail } from './progress.mjs';
+import { foldToolDetail } from './progress.mjs';
 import { THINKING_LEVEL_HINT, resolveThinkingLevel } from './thinking.mjs';
 import {
   CONTEXT_HEADER,
@@ -614,7 +614,15 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         writeJournal(wf); // the channel/session pair is what lets a boot resume re-enter this node's conversation
         snapshot(wf);
       }
-      else if (e.type === 'tool' && e.name) { ns.tools += 1; ns.detail = liveToolDetail(e); ns.seconds = Math.round((Date.now() - ns.startedAt) / 1000); snapshot(wf); }
+      else if (e.type === 'tool' && e.name) {
+        ns.tools += 1;
+        // A node's own sticky note, on the node state so it survives every snapshot in between. The node
+        // needs no `name` of its own: its declared `id` is already the short handle its row is labelled
+        // with and the one WorkflowAddNodes addresses it by.
+        ({ reason: ns.reason, detail: ns.detail } = foldToolDetail(e, ns.reason));
+        ns.seconds = Math.round((Date.now() - ns.startedAt) / 1000);
+        snapshot(wf);
+      }
       else if ((e.type === 'step' || e.type === 'idle') && e.usage?.totalTokens) { ns.tokens = e.usage.totalTokens; ns.seconds = Math.round((Date.now() - ns.startedAt) / 1000); snapshot(wf); }
     };
     try {

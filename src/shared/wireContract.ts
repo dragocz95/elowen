@@ -34,6 +34,9 @@ export interface BrainSubagentView {
   sessionId: string;
   status: 'running' | 'done' | 'error';
   task: string;
+  /** The delegation's short label — Delegate's `name`, or one derived from the task's opening words.
+   *  Every row shows this instead of the whole task text; absent on runs recorded before the field. */
+  name?: string;
   detail?: string;
   tools: number;
   tokens?: number;

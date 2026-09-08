@@ -339,7 +339,9 @@ export class TurnRenderer {
     const glyph = subagent.status === 'running'
       ? color.warning('●')
       : subagent.status === 'done' ? color.success('✓') : color.error('✗');
-    const task = truncateToWidth(terminalInlineText(subagent.task), Math.max(12, width - 26), '…');
+    // The delegation's short NAME titles the block; the whole task text is a briefing paragraph that only
+    // ever ellipsized into prose here. A run recorded before the field falls back to that task text.
+    const label = truncateToWidth(terminalInlineText(subagent.name || subagent.task), Math.max(12, width - 26), '…');
     const tokens = subagent.tokens ? `${formatK(subagent.tokens)} tok` : '';
     const detail = subagent.status === 'running'
       ? [subagent.detail ?? 'starting…', subagent.model, formatDuration(subagent.seconds), tokens]
@@ -358,7 +360,7 @@ export class TurnRenderer {
     const metaLine = truncateToWidth(`↳ ${meta}`, Math.max(12, width - 6 - visibleWidth(hint)), '…');
     return [
       { line: '' },
-      { line: `  ${glyph} ${color.text('Sub-agent')} ${color.faint('click')} ${color.dim(task)}`, kind: 'subagent', key: subagent.sessionId },
+      { line: `  ${glyph} ${color.text('Sub-agent')} ${color.faint('click')} ${color.dim(label)}`, kind: 'subagent', key: subagent.sessionId },
       { line: `    ${color.faint(metaLine)}${hint ? color.faint(hint) : ''}`, kind: 'subagent', key: subagent.sessionId },
     ];
   }

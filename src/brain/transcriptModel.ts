@@ -415,6 +415,7 @@ export class TranscriptModel implements TranscriptRead {
       sessionId: event.sessionId,
       status: event.status,
       task: event.task,
+      name: event.name,
       detail: event.detail,
       tools: event.tools,
       tokens: event.tokens,
