@@ -17,9 +17,15 @@ const MIN_PREVIEW_WIDTH = 20;
 const SPLIT_GUTTER = 3;   // ' │ ' — the divider between the columns
 const MAX_PREVIEW_LINES = 40;
 
+// The header is drawn as a chip, and a chip has a fixed budget. A header longer than the budget is
+// CLIPPED here rather than rejected when the question is created — a chip label one character over is a
+// cosmetic matter, and refusing the call over it costs the user a whole turn.
+const CHIP_WIDTH = 12;
+
 const open = (code: string, text: string): string => ansi.open(code, text);
 const selectedGlyph = (active: boolean): string => active ? '☑' : '☐';
 const inlineText = terminalInlineText;
+const chip = (header: string): string => truncateToWidth(inlineText(header), CHIP_WIDTH, '…');
 
 /** One rendered line of one option: its text and whether it is the muted description tail. */
 interface ChoiceLine { text: string; muted: boolean }
@@ -196,7 +202,7 @@ export class AskChoiceDock implements Component, Focusable {
     }));
     const choiceRows = choiceGroups.flat();
     const progress = `${this.opts.index + 1}/${this.opts.total}`;
-    const titleRow = row(`  ${open(theme.text, `${inlineText(this.opts.agentName)} needs a decision`)}  ${open(theme.faint, inlineText(this.opts.question.header || 'AskUserQuestion'))}  ${open(theme.faint, progress)}`);
+    const titleRow = row(`  ${open(theme.text, `${inlineText(this.opts.agentName)} needs a decision`)}  ${open(theme.faint, chip(this.opts.question.header || 'AskUserQuestion'))}  ${open(theme.faint, progress)}`);
     const questionRows = wrapTextWithAnsi(terminalPlainText(this.opts.question.question), Math.max(1, innerWidth - 4))
       .map((line) => row(`  ${open(theme.text, line)}`));
     const actionSegments = [
@@ -346,7 +352,7 @@ export function runAskFlow(o: AskFlowOpts): { close(): void } {
       invalidate: () => { input.invalidate?.(); },
       handleInput: (data: string) => { input.handleInput?.(data); },
       render: (width: number) => [
-        inputRow(`  ${color.bold('Other answer')} ${color.faint(inlineText(q.header))}`, width),
+        inputRow(`  ${color.bold('Other answer')} ${color.faint(chip(q.header))}`, width),
         inputRow(`  ${color.faint('type your own answer · enter send · esc back')}`, width),
         ...input.render(width),
       ],

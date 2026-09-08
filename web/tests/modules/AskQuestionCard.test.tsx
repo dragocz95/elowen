@@ -37,6 +37,17 @@ describe('AskQuestionCard', () => {
     expect(onSubmit).toHaveBeenCalledWith([{ header: 'Tools', selected: ['A', 'C'], other: undefined }]);
   });
 
+  it('clips a header longer than the chip width and answers with the full header', () => {
+    // The tool accepts any header length, so the card is where the chip budget is applied. The answer
+    // still carries the header the question was created with — only the drawing is shortened.
+    const onSubmit = renderCard([{ ...single, header: 'Authentication m' }]);
+    expect(screen.getByText('Authenticat…')).toBeTruthy();
+    expect(screen.queryByText('Authentication m')).toBeNull();
+    fireEvent.click(screen.getByRole('radio', { name: /Blue/ }));
+    fireEvent.click(screen.getByRole('button', { name: en.brainChat.askSubmit }));
+    expect(onSubmit).toHaveBeenCalledWith([{ header: 'Authentication m', selected: ['Blue'], other: undefined }]);
+  });
+
   it('offers a free-text "Other" by default and includes the typed answer', () => {
     const onSubmit = renderCard([single]);
     fireEvent.click(screen.getByRole('button', { name: en.brainChat.askOther }));
