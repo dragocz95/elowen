@@ -99,6 +99,11 @@ export function recordSubagentFinishMarker(
 ): void {
   if (update.status !== 'done' && update.status !== 'error') return;
   if (prevStatus === 'done' || prevStatus === 'error') return;
+  // A DelegateContinue steered into the child's RUNNING turn finished nothing — the message entered that
+  // turn and the call returned within a second, while the delegation it steered into keeps working. Its
+  // row is terminal because that call really is over, but announcing "sub-agent done" for it marks a
+  // sub-agent complete that is still running; the original delegation drops the marker when it settles.
+  if (update.steered) return;
   const name = update.name?.trim();
   const detail = JSON.stringify({
     session: update.sessionId,

@@ -138,6 +138,27 @@ describe('recordSubagentFinishMarker', () => {
     expect(store.appended).toEqual([]);
   });
 
+  // A DelegateContinue steered into a RUNNING child returns within a second and its own row settles, but
+  // the child is still working under the original delegation. The marker announces a CHILD finishing, so
+  // this call must leave none — the timeline said "sub-agent done · <name>" while the sub-agent ran on.
+  it('records no finish marker for a continuation that was steered into a running turn', () => {
+    const published: BrainEvent[] = [];
+    const store = fakeStore();
+    recordSubagentFinishMarker(store, 's1', (event) => published.push(event), 'running', subUpdate({ status: 'done', steered: true }));
+    expect(store.appended).toEqual([]);
+    expect(published).toEqual([]);
+  });
+
+  // The steer must not silence the delegation it entered: when that call really finishes, its own terminal
+  // update carries no `steered` flag and leaves the one marker the conversation should see.
+  it('still marks the original delegation when it finishes for real', () => {
+    const store = fakeStore();
+    recordSubagentFinishMarker(store, 's1', () => {}, 'running', subUpdate({ id: 'call-continue', status: 'done', steered: true }));
+    recordSubagentFinishMarker(store, 's1', () => {}, 'running', subUpdate({ status: 'done', tools: 41, seconds: 900 }));
+    const detail = JSON.stringify({ session: 'brain-ch-subagent-sub-dlg-abc', task: 'Explore the repo', status: 'done' });
+    expect(store.appended).toEqual([{ kind: 'subagent', detail }]);
+  });
+
   it('clips a long task to its first non-empty line, bounded', () => {
     const store = fakeStore();
     recordSubagentFinishMarker(store, 's1', () => {}, 'running', subUpdate({ task: `${'A'.repeat(200)}\nsecond line`, status: 'done' }));
