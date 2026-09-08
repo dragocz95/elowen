@@ -253,8 +253,11 @@ describe('the session-settings contract', () => {
   it('nothing that spawns a live session resolves those settings for itself', () => {
     const callers = spawnCallers();
     // A rename that stopped matching would leave an empty set quietly passing.
+    // preparePersonalProject (managed personal default) is a caller too: it assembles SpawnOpts policy
+    // and projectRef metadata only, so it reads no composition setting — the offenders scan below
+    // enforces that against it exactly as against the other two.
     expect(callers.map((m) => m.path).sort(), 'the spawn call sites this contract covers')
-      .toEqual(['brain/channels.ts', 'brain/service/lifecycle.ts']);
+      .toEqual(['brain/channels.ts', 'brain/service/lifecycle.ts', 'brain/service/personalProject.ts']);
     const offenders = callers.flatMap(({ path, code }) => COMPOSITION_SETTINGS
       .filter((key) => new RegExp(`\\b${key}\\b`).test(code))
       .map((key) => `${path} reads ${key}`));

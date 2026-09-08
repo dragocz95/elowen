@@ -77,6 +77,9 @@ function makeLifecycle(sessions: LiveSessionRegistry<LiveBrain>, spawn: (opts: S
   };
   const store = {
     getSession: () => row,
+    // Not a managed execution, so the git-project root of the model ladder resolves as it always did
+    // (src/brain/service/lifecycle.ts consults the store for one on every respawn).
+    getProjectExecution: () => undefined,
     listSessions: () => [row],
     lastMessageAt: () => (messages > 0 ? '2026-08-18 10:00:00' : undefined),
     deleteSession,
