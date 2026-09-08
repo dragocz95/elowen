@@ -61,20 +61,6 @@
   gap: 0.75rem;
   padding-block: 0.75rem 1.25rem;
 }
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__lead {
-  order: 1;
-  min-width: 0;
-  padding-block: 0.75rem 0;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__lead:empty {
-  display: none;
-}
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__lead .control-surface-toolbar {
-  position: static;
-  padding: 0;
-  border-radius: 0;
-  background: none;
-}
 
 /* The page's glyph reads as a drawn mark rather than a lit disc: a hairline square on the neutral ink,
    sized to the title beside it instead of to a hero panel. */
@@ -139,26 +125,6 @@
   display: none;
 }
 
-/* The decorative panel belongs to the ember identity. It stays in the DOM — a page states its mascot as
-   a prop and Studio does not fork pages — and simply does not paint, the same move shared.css makes for
-   `.dash-beam`.
-
-   Hiding it leaves the body's two-column grid with an empty first track, so the body is re-declared as
-   a plain block: `:not(:has(.workspace-hero__mascot))` cannot help here, the element is still there. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__mascot {
-  display: none;
-}
-/* No rule above the body either. Between the description and the section tabs there used to be three
-   horizontal rules within 90px of each other, none of which separated anything the reader was about to
-   compare. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__body {
-  order: 0;
-  display: block;
-  min-height: 0;
-  padding-block: 1rem 0.25rem;
-  border-top: 0;
-}
-
 /* Metrics read as one calm sentence of readings, not a row of divided cells. The shared rail owns the
    single bottom hairline, vertical breathing room and internal overflow; Studio only changes each reading
    to its compact value-label form and keeps the entire sentence on one line. */
@@ -211,12 +177,6 @@
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__actions {
     grid-column: 1 / -1;
     justify-self: end;
-  }
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__body {
-    padding-top: 0.75rem;
-  }
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__lead {
-    padding-top: 0.625rem;
   }
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .workspace-hero__metrics {
     flex-wrap: nowrap;
@@ -807,21 +767,8 @@
     margin-left: 0;
     gap: 0.25rem;
   }
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row__provider {
-    max-width: 5.5rem;
-  }
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row__provider .badge {
-    max-width: 100%;
-    overflow: hidden;
-    text-overflow: ellipsis;
-  }
   :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row__context {
     padding-inline: 0.25rem;
-  }
-}
-@container (width < 22rem) {
-  :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-model-row__provider {
-    display: none;
   }
 }
 

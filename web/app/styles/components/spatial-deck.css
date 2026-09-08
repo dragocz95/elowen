@@ -226,12 +226,11 @@
 html:is([data-effects='reduced'], [data-effects='off']) .settings-row:hover .settings-row__icon,
 html:is([data-effects='reduced'], [data-effects='off']) .settings-row:focus-within .settings-row__icon { box-shadow: none; }
 
-/* A record's name is the card-title step and the two quiet lines beside it are the meta step. `580` was
+/* A record's name is the card-title step and the quiet status line beside it is the meta step. `580` was
    a synthesised weight between Inter's 500 and 600 — a value no variable axis stop lands on and no
    heading elsewhere in the app used — and it is what made a record name read heavier than the section
    heading above it on some platforms and lighter on others. */
 .settings-row__title { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: 0.4rem; color: var(--color-foreground); font-size: var(--text-card-title); font-weight: var(--text-card-title--font-weight); letter-spacing: var(--tracking-ui); line-height: var(--text-card-title--line-height); }
-.settings-row__description { margin-top: 0.16rem; color: var(--color-muted-foreground); font-size: var(--text-meta); font-weight: var(--text-meta--font-weight); letter-spacing: var(--tracking-ui); line-height: var(--text-meta--line-height); }
 .settings-row__status { margin-top: 0.3rem; color: var(--color-muted-foreground); font-size: var(--text-meta); font-weight: var(--text-meta--font-weight); letter-spacing: var(--tracking-ui); line-height: var(--text-meta--line-height); }
 /* THE SHORT STATUS READS WITH THE LABEL. An inline record's status states something about the SETTING —
    "Today's recap is ready", a model name, a count — so it belongs to the record's name and not to the
