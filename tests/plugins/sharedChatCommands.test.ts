@@ -457,6 +457,34 @@ describe('shared picker core', () => {
     expect(replies).toEqual(['PROJECT_ERROR project is not readable or not allowed']);
   });
 
+  /** A chooser value is ALWAYS the decimal id the descriptor listed, so the choice switches straight on
+   *  it — the listing round-trip would re-ask a question the descriptor already answered, and a host whose
+   *  `listProjects` is missing or stubbed must not break an id it handed out itself. */
+  it('/project choice switches straight on the decimal id, without a listing round-trip', async () => {
+    let listed = 0;
+    let called: { sender: string; id: number } | undefined;
+    const { b, replies } = binding({ senderPlatformId: 'clicker-9', ctl: {
+      listProjects: () => { listed += 1; return undefined; },
+      switchProject: async (_ref: unknown, sender: string, id: number) => { called = { sender, id }; return { workDir: '/x', slug: 'kolin' }; },
+    } });
+    expect(await applyPickerChoice('project', '7', b)).toBe(true);
+    expect(listed).toBe(0);
+    expect(called).toEqual({ sender: 'clicker-9', id: 7 });
+    expect(replies).toEqual(['PROJECT_SWITCHED kolin']);
+  });
+
+  /** A typed argument still resolves through the listing — but a listing that comes back as anything but
+   *  an array is a host that cannot list, which is "unavailable", not "unlinked" (null alone means that). */
+  it('/project typed argument answers a broken listing as unavailable, not unlinked', async () => {
+    const stubbed = binding({ arg: 'kolin', ctl: {
+      listProjects: () => undefined,
+      switchProject: async () => ({ workDir: '/x', slug: 'kolin' }),
+    } });
+    expect(await runPickerCommand('project', stubbed.b)).toBe(true);
+    expect(stubbed.replies).toEqual(['PROJECT_UNAVAILABLE']);
+    expect(stubbed.showings).toEqual([]);
+  });
+
   it('is unhandled for a picker it does not own, without touching the binding', async () => {
     const { b, replies, showings } = binding({ ctl: {} });
     // `/model` is a surface-local picker: the daemon owns nothing behind it, so the picker core must

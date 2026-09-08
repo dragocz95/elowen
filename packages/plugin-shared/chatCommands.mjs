@@ -252,27 +252,23 @@ export async function applyPickerChoice(picker, value, b) {
     }
     return true;
   }
-  if (picker === 'project') return applyProjectChoice(value, b);
+  if (picker === 'project') {
+    // A chooser pick always carries the decimal id this core's descriptor listed, so it switches straight
+    // on it — no listing round-trip, and a host whose listing is missing or stubbed must not break an id
+    // it handed out itself. Anything else (a stale or foreign component) resolves like a typed argument.
+    const v = String(value ?? '').trim();
+    if (/^\d+$/.test(v)) return switchProjectById(Number(v), b);
+    return applyProjectChoice(value, b);
+  }
   return false;
 }
 
-/** One /project resolution and switch — shared by a chooser pick (the value is always the decimal id)
- *  and a typed `/project <slug|id>` argument. Resolution is an EXACT project slug first, then the
- *  decimal id, so a hand-typed name and a chooser value meet one code path; the switch itself re-validates
- *  the invoking sender's policy server-side. */
-async function applyProjectChoice(raw, b) {
+/** The terminal /project switch, shared by a chooser pick (whose value is the decimal id this core's
+ *  descriptor listed) and a typed argument that resolved. The switch re-validates the invoking sender's
+ *  project policy server-side. */
+async function switchProjectById(projectId, b) {
   const { msg, reply, ctl, ref, senderPlatformId } = b;
   if (!ctl?.switchProject) { await reply(msg.projectUnavailable); return true; }
-  const arg = String(raw ?? '').trim();
-  let projectId = null;
-  if (arg) {
-    const projects = typeof ctl.listProjects === 'function' ? await ctl.listProjects(ref, senderPlatformId) : null;
-    if (projects === null) { await reply(msg.projectAccountRequired); return true; }
-    const bySlug = projects.find((p) => String(p.slug) === arg);
-    if (bySlug) projectId = bySlug.id;
-    else if (/^\d+$/.test(arg)) projectId = Number(arg);
-  }
-  if (projectId === null) { await reply(msg.projectNotFound(arg)); return true; }
   try {
     const { slug } = await ctl.switchProject(ref, senderPlatformId, projectId);
     await reply(msg.projectSwitched(slug));
@@ -280,4 +276,27 @@ async function applyProjectChoice(raw, b) {
     await reply(msg.projectError(e?.message ?? e));
   }
   return true;
+}
+
+/** One typed `/project <slug|id>` resolution and switch — the only place a slug is resolved, EXACT
+ *  project slug first, then the decimal id (an all-digit slug still wins), so a hand-typed name meets one
+ *  code path. A chooser pick never lands here with an id-shaped value; the switch re-validates the
+ *  invoking sender's policy server-side. A listing that comes back as anything but an array is a host
+ *  that cannot list — "unavailable", while `null` alone stays the documented "unlinked" signal. */
+async function applyProjectChoice(raw, b) {
+  const { msg, reply, ctl, ref, senderPlatformId } = b;
+  if (!ctl?.switchProject) { await reply(msg.projectUnavailable); return true; }
+  const arg = String(raw ?? '').trim();
+  let projectId = null;
+  if (arg) {
+    if (typeof ctl.listProjects !== 'function') { await reply(msg.projectUnavailable); return true; }
+    const projects = await ctl.listProjects(ref, senderPlatformId);
+    if (projects === null) { await reply(msg.projectAccountRequired); return true; }
+    if (!Array.isArray(projects)) { await reply(msg.projectUnavailable); return true; }
+    const bySlug = projects.find((p) => String(p.slug) === arg);
+    if (bySlug) projectId = bySlug.id;
+    else if (/^\d+$/.test(arg)) projectId = Number(arg);
+  }
+  if (projectId === null) { await reply(msg.projectNotFound(arg)); return true; }
+  return switchProjectById(projectId, b);
 }
