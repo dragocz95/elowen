@@ -2,7 +2,7 @@ import type { ComponentType } from 'react';
 
 type AnyComponent = ComponentType<any>;
 
-export interface Project { id: number; slug: string; path: string }
+export interface Project { id: number; slug: string; path: string; executionKind?: 'host' | 'managed'; lifecycle?: 'active' | 'deleting' }
 export interface User {
   id: number; username: string; created_at: string; is_admin: boolean; allowed_execs: string[];
   disabled_tools: string[]; allowed_tools: string[]; granted_plugins: string[]; name: string; email: string;

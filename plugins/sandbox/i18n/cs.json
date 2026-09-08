@@ -1,5 +1,5 @@
 {
-  "description": "Izolované prostředí pro jednotlivé účty: trvalý HOME, bubblewrap, pracovní prostory Git worktree, bezpečné commity a úklid.",
+  "description": "Trvalá prostředí projektů, sdílené pracovní stromy a správa životního cyklu se zachováním původních pracovních prostorů účtů.",
   "fields": {
     "sec_execution": {
       "label": "Spouštění",
@@ -15,7 +15,7 @@
       "environment": "Vývojové prostředí"
     },
     "project": {
-      "workspaces": "Sandbox"
+      "workspaces": "Prostředí"
     },
     "strings": {
       "workspacesTitle": "Pracovní prostory",
@@ -25,15 +25,15 @@
       "changedCount": "Změněné soubory",
       "search": "Hledat pracovní prostory",
       "filterAll": "Všechny Projekty",
-      "tableLabel": "Pracovní prostory Sandboxu",
+      "tableLabel": "Pracovní prostory prostředí",
       "columnWorkspace": "Pracovní prostor",
       "columnProject": "Projekt",
       "columnBranch": "Větev",
       "columnState": "Stav",
       "openWorkspace": "Otevřít pracovní prostor {name}",
       "emptyWorkspaces": "Tomuto filtru neodpovídá žádný pracovní prostor.",
-      "loading": "Načítání dat Sandboxu…",
-      "loadError": "Data Sandboxu se nepodařilo načíst.",
+      "loading": "Načítání dat prostředí…",
+      "loadError": "Data prostředí se nepodařilo načíst.",
       "retry": "Zkusit znovu",
       "create": "Vytvořit pracovní prostor",
       "createTitle": "Vytvořit pracovní prostor",
@@ -105,8 +105,45 @@
       "error_home_in_use": "Tento HOME používá aktivní proces.",
       "error_home_changed": "HOME se po vytvoření náhledu změnil. Obnov ho a znovu zkontroluj.",
       "error_confirmation_mismatch": "Potvrzovací fráze nesouhlasí.",
-      "errorFallback": "Operace Sandboxu selhala.",
-      "manageEnvironment": "Otevřít prostředí"
+      "errorFallback": "Operace prostředí selhala.",
+      "manageEnvironment": "Otevřít prostředí",
+      "projectTrust": "Každý člen projektu má plný přístup k prostředí včetně všech pracovních stromů a profilů prohlížeče. Pracovní stromy oddělují rozpracovanou práci, nikoli přístup. Odchozí síť zahrnuje interní služby.",
+      "projectCredentials": "Údaje osobních integrací zůstávají mimo prostředí. Přihlašovací údaje a exportované výsledky zde uložené jsou sdílená data projektu.",
+      "startEnvironment": "Spustit prostředí",
+      "stopEnvironment": "Zastavit prostředí",
+      "snapshotEnvironment": "Vytvořit snímek",
+      "restoreEnvironment": "Obnovit snímek",
+      "deleteProject": "Smazat projekt a prostředí",
+      "operationRequested": "Operace byla vyžádána. Dokončení oznámí prostředí.",
+      "stopWarning": "Zastavit prostředí projektu? Příkazy a služby projektu budou přerušeny. Soubory a nainstalované balíčky zůstanou zachovány.",
+      "snapshotWarning": "Úplný snímek obsahuje kořenový systém souborů, soubory, pracovní stromy Gitu, HOME a data zachycená během pozastaveného spouštění. Zajišťuje konzistenci po pádu, nikoli databázovou konzistenci. Databáze aplikací mohou vyžadovat samostatný export.",
+      "restoreWarning": "Nahradit prostředí tímto snímkem? Změny od vytvoření snímku budou ztraceny a běžící práce bude přerušena.",
+      "deleteProjectWarning": "Smazat projekt, prostředí a všechny jeho soubory, balíčky, HOME a data? Publikované weby je nutné samostatně převést nebo smazat. Soukromá historie konverzací zůstane zachována. Dokončení úklidu bude oznámeno asynchronně.",
+      "generation": "Generace",
+      "cpuLimit": "Limit CPU",
+      "memoryLimit": "Limit paměti (MiB)",
+      "processLimit": "Limit procesů",
+      "diskSoftLimit": "Orientační práh disku (MiB)",
+      "diskSoftHint": "Práh disku je orientační, nejde o vynucenou kvótu.",
+      "diskUsage": "Využití disku",
+      "editLimits": "Upravit limity prostředků",
+      "saveLimits": "Uložit limity",
+      "snapshots": "Úplné snímky",
+      "noSnapshots": "Nejsou k dispozici žádné úplné snímky.",
+      "state_unprovisioned": "Nevytvořeno",
+      "state_starting": "Spouští se",
+      "state_running": "Spuštěno",
+      "state_stopped": "Zastaveno",
+      "state_failed": "Selhalo",
+      "state_deleting": "Maže se",
+      "state_deleted": "Smazáno",
+      "error_request_unresolved": "Předchozí požadavek nebyl potvrzen. Než zahájíte jinou operaci, zopakujte danou akci nebo obnovte její stav.",
+      "error_request_state_invalid": "Uložený požadavek prostředí je neplatný. Před vymazáním dat prohlížeče ověřte aktuální operace.",
+      "operation_pending": "Operace čeká",
+      "operation_running": "Operace probíhá",
+      "operation_succeeded": "Operace dokončena",
+      "operation_failed": "Operace selhala",
+      "operation_cancelled": "Operace zrušena"
     }
   }
 }

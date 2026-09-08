@@ -102,6 +102,7 @@ function createComposerDraft() {
  *  usage numbers. A null section is one the daemon does not report (no directory, MCP off or hidden from
  *  this account, an older daemon) and the panel simply omits it. */
 interface BrainTelemetry {
+  projectRef?: BrainStatus['projectRef'] | null;
   project: BrainProject | null;
   lspEnabled: boolean | null;
   mcp: McpServerStatus[] | null;
@@ -142,6 +143,7 @@ function snapshotArtifacts(snapshot: BrainStreamSnapshotFrame): BrainInlineArtif
 
 /** Read the telemetry sections off a status response, normalizing "absent" to null. */
 const telemetryOf = (st: BrainStatus): BrainTelemetry => ({
+  projectRef: st.projectRef ?? null,
   project: st.project ?? null,
   lspEnabled: st.lspEnabled ?? null,
   mcp: st.mcp ?? null,

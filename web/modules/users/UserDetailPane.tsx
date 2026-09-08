@@ -23,6 +23,8 @@ import { localDateTime } from '../../lib/format';
 import { ToolPills } from './ToolPills';
 import { UserStatsInline } from './UserStatsInline';
 import { PluginUserPanels } from './PluginUserPanels';
+import { ProjectPermissions } from './ProjectPermissions';
+import { managedProjectStrings } from '../projects/managedProjectStrings';
 
 /** Admin-only: assign a user to projects (the access boundary for non-admins). A compact summary
  *  card on the page; the full pick list lives in the manage modal. */
@@ -283,7 +285,7 @@ export function UserDetailPane({ user, projects }: {
   user: ElowenUser;
   projects: Project[];
 }) {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   return (
     <div>
       <header className="mb-5 flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-border pb-4">
@@ -295,6 +297,7 @@ export function UserDetailPane({ user, projects }: {
 
       <div className="flex flex-col gap-5">
         <DetailBlock icon={FolderGit2} title={t.users.projects}><ProjectChips userId={user.id} projects={projects} /></DetailBlock>
+        <DetailBlock icon={ShieldCheck} title={managedProjectStrings[locale].permissions}><ProjectPermissions key={user.id} user={user} /></DetailBlock>
         <DetailBlock icon={Cpu} title={t.users.allowedModels}><ModelChips user={user} /></DetailBlock>
         <DetailBlock icon={Puzzle} title={t.users.grantedPlugins} hint={t.users.grantedPluginsHint}><PluginGrantChips user={user} /></DetailBlock>
         <DetailBlock icon={Wrench} title={t.users.tools} hint={t.users.toolsHint}><ToolPills user={user} /></DetailBlock>

@@ -18,6 +18,7 @@ import { SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { Toggle } from '../../components/ui/Toggle';
 import { Avatar } from '../../components/ui/Avatar';
 import { useToast } from '../../components/ui/Toast';
+import { ManagedProjectMembers } from './ManagedProjectMembers';
 
 type ProjectRegistration = PluginUiRegistration & {
   project?: Record<string, ComponentType<PluginProjectPanelProps>>;
@@ -231,7 +232,7 @@ export function ProjectDetailTabs({ project, isAdmin, overview }: {
   const selectedPanel = panels.find((panel) => panel.tabId === active);
   const options = [
     { value: 'overview', label: t.projects.tabOverview, icon: Info },
-    ...(isAdmin ? [{ value: 'access', label: t.projects.tabAccess, icon: UsersRound }] : []),
+    ...(isAdmin || project.executionKind === 'managed' ? [{ value: 'access', label: t.projects.tabAccess, icon: UsersRound }] : []),
     ...panels.map((panel) => ({ value: panel.tabId, label: panel.label, icon: pluginLucideIcon(panel.icon) })),
   ];
 
@@ -241,10 +242,10 @@ export function ProjectDetailTabs({ project, isAdmin, overview }: {
         <Segmented value={active} onChange={setActive} options={options} variant="line" nowrap aria-label={t.projects.detailSections} className="w-full" />
       </div>
       {active === 'overview' ? overview
-        : active === 'access' && isAdmin ? (
+        : active === 'access' && (isAdmin || project.executionKind === 'managed') ? (
           <div>
-            <ProjectAccessPanel project={project} />
-            <SharedMemoryPanel project={project} />
+            {project.executionKind === 'managed' ? <ManagedProjectMembers key={project.id} project={project} /> : <ProjectAccessPanel project={project} />}
+            {isAdmin ? <SharedMemoryPanel project={project} /> : null}
           </div>
         )
           : selectedPanel ? <PluginProjectPanel panel={selectedPanel} project={project} />

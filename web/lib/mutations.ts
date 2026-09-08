@@ -449,7 +449,7 @@ export function useBrainOauthDisconnect() {
 }
 export function useCreateProject() {
   const qc = useQueryClient();
-  return useMutation({ mutationFn: (v: { slug: string; path: string; notes?: string }) => elowenClient.createProject(v), onSuccess: async () => { await Promise.all([qc.invalidateQueries({ queryKey: ['projects'] }), qc.invalidateQueries({ queryKey: ['project-summaries'] })]); } });
+  return useMutation({ mutationFn: (v: Parameters<typeof elowenClient.createProject>[0]) => elowenClient.createProject(v), onSuccess: async () => { await Promise.all([qc.invalidateQueries({ queryKey: ['projects'] }), qc.invalidateQueries({ queryKey: ['project-summaries'] })]); } });
 }
 export function useUpdateProject() {
   const qc = useQueryClient();
@@ -502,8 +502,10 @@ export function useAssignProject() {
   return useMutation({
     mutationFn: (v: { userId: number; projectId: number; currentlyAssigned: boolean }) =>
       v.currentlyAssigned ? elowenClient.unassignProject(v.userId, v.projectId) : elowenClient.assignProject(v.userId, v.projectId),
-    onSuccess: async (_r, v) => {
+    onSettled: async (_r, _error, v) => {
+      // Revocation can succeed before runtime cleanup fails; refresh even after an error.
       await Promise.all([
+        qc.invalidateQueries({ queryKey: ['projects'] }),
         qc.invalidateQueries({ queryKey: ['user-projects', v.userId] }),
         qc.invalidateQueries({ queryKey: ['project-users', v.projectId] }),
         qc.invalidateQueries({ queryKey: ['project-summaries'] }),
