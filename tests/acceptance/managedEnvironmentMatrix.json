@@ -9,7 +9,8 @@
     "tests/plugins/containerRuntime.podman.test.ts",
     "../elowen-plugins-environments/tests/lspManagedGuest.podman.test.ts",
     "tests/plugins/managedToolCallers.podman.test.ts",
-    "../elowen-plugins-environments/tests/browserManagedGuest.podman.test.ts"
+    "../elowen-plugins-environments/tests/browserManagedGuest.podman.test.ts",
+    "../elowen-plugins-environments/tests/editorManagedGuest.podman.test.ts"
   ],
   "rows": [
     {
@@ -202,11 +203,11 @@
     },
     {
       "area": "editor",
-      "capability": "upload/download/preview/converters against a managed project",
-      "evidence": "unit",
-      "suite": "editor plugin suites",
-      "negative": "unit",
-      "notes": "Chunked guest upload protocol covered; no real-guest journey."
+      "capability": "upload/download/save/listing against a managed project",
+      "evidence": "real-guest",
+      "suite": "editorManagedGuest.podman",
+      "negative": "real-guest",
+      "notes": "Chunked upload, byte-identical raw download, range request, version-guarded save. Office converters are NOT covered and stay outstanding."
     },
     {
       "area": "sites",
@@ -300,6 +301,13 @@
       "evidence": "unverified",
       "negative": "unverified",
       "notes": "Split out from the browser row so its absence is explicit rather than implied."
+    },
+    {
+      "area": "editor",
+      "capability": "office preview converters in a guest",
+      "evidence": "unverified",
+      "negative": "unverified",
+      "notes": "Split out so its absence is explicit."
     }
   ]
 }
