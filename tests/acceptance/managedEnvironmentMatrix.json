@@ -143,17 +143,19 @@
     },
     {
       "area": "artifacts",
-      "capability": "ShareFile/ShareImage resolve a managed guest path",
-      "evidence": "unit",
-      "suite": "managedSandboxWiring",
-      "negative": "unit",
-      "notes": "Provider resolver wiring was missing entirely and is now pinned by a contract test."
+      "capability": "ShareFile resolves a managed guest path",
+      "evidence": "real-guest",
+      "suite": "managedToolCallers.podman",
+      "negative": "real-guest",
+      "notes": "ShareFile reads guest bytes through the provider; relative path and missing provider both refuse without a host read."
     },
     {
       "area": "artifacts",
-      "capability": "plans and transcripts under a managed project",
-      "evidence": "unverified",
-      "negative": "unverified"
+      "capability": "the plan mirror under a managed project",
+      "evidence": "real-guest",
+      "negative": "real-guest",
+      "suite": "managedToolCallers.podman",
+      "notes": "Plan written through the central guest writer and submitted by ExitPlanMode; a write outside the artifact prefix is refused. Transcripts and share links are NOT covered here."
     },
     {
       "area": "preview",
@@ -308,6 +310,21 @@
       "evidence": "unverified",
       "negative": "unverified",
       "notes": "Split out so its absence is explicit."
+    },
+    {
+      "area": "artifacts",
+      "capability": "ShareImage resolves a managed guest path",
+      "evidence": "unit",
+      "negative": "unit",
+      "suite": "shareImageTool",
+      "notes": "Shares the managed helper with ShareFile but was not driven against a real guest; listed separately rather than claimed by association."
+    },
+    {
+      "area": "plans",
+      "capability": "transcripts and share links under a managed project",
+      "evidence": "unverified",
+      "negative": "unverified",
+      "notes": "Split from the plan row rather than claimed by association."
     }
   ]
 }
