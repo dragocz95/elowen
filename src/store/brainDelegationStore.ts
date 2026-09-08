@@ -449,6 +449,48 @@ export class BrainDelegationStore {
     ).all(parentSessionId, cur) as { workflow_id: string }[]).map((row) => row.workflow_id);
   }
 
+  /** Whether this conversation still owns a delegation that is OWED A TURN — durably, across boots.
+   *
+   *  The retention janitor's live-children check is in-memory (`hasActiveChildren`), so between a restart
+   *  and boot recovery a conversation whose child is about to be respawned looks idle and its whole tree
+   *  can be deleted out from under the recovery that was going to resume it. The lifecycle column is the
+   *  recovery authority and survives the restart, so it answers the same question durably.
+   *
+   *  The three lifecycles are exactly the ones {@link discardOrphanedDeliveries} treats as still claimed:
+   *  `running` and `recovering` get a turn from boot recovery, and `recovery_required` is parked for a
+   *  human DelegateContinue. `done`, `error`, `legacy_interrupted` and a NULL lifecycle never do.
+   *  Deliberately NOT owner-validated like getSubagentRuns: this is a "hands off" signal, so a row whose
+   *  relation no longer validates must still hold the delete back rather than silently permit it. */
+  hasUnfinishedSubagentRuns(parentSessionId: string): boolean {
+    if (!parentSessionId) return false;
+    return !!this.db.prepare(
+      `SELECT 1 FROM brain_subagent_runs
+        WHERE parent_session_id = ?
+          AND lifecycle IN ('running', 'recovering', 'recovery_required') LIMIT 1`
+    ).get(parentSessionId);
+  }
+
+  /** Retention for the delegated-result inbox: drop rows past the horizon that can never reach anyone.
+   *
+   *  A result row normally dies with a session — {@link BrainStore.deleteSession} deletes by parent AND by
+   *  child — so the only rows that outlive their subject are SUB-AGENT results whose child session id is
+   *  empty or names a session that no longer exists. An empty child id is accepted at enqueue for a
+   *  delegation that failed BEFORE its child was spawned (normalizeSubagentResult allows it for `error`
+   *  only), which is deliverable while the parent still takes turns and pure sediment long after.
+   *
+   *  WORKFLOW rows are excluded on purpose: `child_session_id = ''` is their normal shape (their link is
+   *  brain_workflows + workflow_id, not a child session), so sweeping on the empty id would delete a live
+   *  conversation's delivered workflow summaries. Returns how many rows were removed. */
+  purgeUndeliverableSubagentResults(days: number): number {
+    const d = Number.isFinite(days) && days >= 1 ? Math.floor(days) : 90;
+    return withWriteLock(this.db, () => this.db.prepare(
+      `DELETE FROM brain_subagent_results
+        WHERE kind != 'workflow'
+          AND created_at < datetime('now', '-${d} days')
+          AND NOT EXISTS (SELECT 1 FROM brain_sessions c WHERE c.id = brain_subagent_results.child_session_id)`
+    ).run().changes);
+  }
+
   /** Child sessions THIS boot still durably owns during restart recovery. This is a read-model liveness
    *  source: all rows are claimed before serial recovery starts, so later queued rows may outlive the initial
    *  lease while still owned by this process. A previous boot stays hidden because it has no worker. Keep the

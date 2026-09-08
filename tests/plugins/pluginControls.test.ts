@@ -83,18 +83,18 @@ describe('ctx.control — one plugin reaching another plugin domain', () => {
     expect(contextOver(merged, { reads: ['controls'] }).control('sandbox')).toBeUndefined();
   });
 
-  /** The cron control's navigation method is ADDITIVE. An older installed cronjob plugin registers only
-   *  the wake-up retention method, and it must go on resolving as the cron control: the retention janitor
-   *  asks it before deleting an idle conversation, and a control that stopped resolving would silently
-   *  turn that protection off — deleting conversations a pending wake-up still needs. Adding
-   *  `conversationLinks` to the required list is exactly what this forbids. */
-  it('resolves a cron control that carries only the required wake-up method', () => {
+  /** The cron control's navigation method is ADDITIVE. A cronjob plugin that registers only the retention
+   *  method must go on resolving as the cron control: the retention janitor asks it before deleting an idle
+   *  conversation, and a control that stopped resolving would silently turn that protection off — deleting
+   *  conversations a live job still needs. Adding `conversationLinks` to the required list is exactly what
+   *  this forbids. */
+  it('resolves a cron control that carries only the required retention method', () => {
     const merged = new PluginRegistry();
-    ownerMerges(merged, 'cronjob', 'cron', { pendingWakeupOriginSessionIds: () => ['brain-1-pinned'] });
+    ownerMerges(merged, 'cronjob', 'cron', { retainedSessionIds: () => ['brain-1-pinned'] });
 
     const control = merged.control('cron');
 
-    expect(control?.pendingWakeupOriginSessionIds(1)).toEqual(['brain-1-pinned']);
+    expect(control?.retainedSessionIds(1)).toEqual(['brain-1-pinned']);
     expect(control?.conversationLinks).toBeUndefined();
   });
 

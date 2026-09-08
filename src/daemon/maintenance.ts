@@ -167,9 +167,9 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
     const stopOriginRetention = clock.setInterval(sweepOriginRetention, 3_600_000);
     // Optional session retention (admin, off by default): hourly, delete each user's own idle
     // conversations older than the configured age. Skips running/active/has-running-child sessions,
-    // conversations a pending cron wake-up is bound to, and the non-user channel/task shells (enforced
+    // conversations the cronjob plugin still needs, and the non-user channel/task shells (enforced
     // in BrainService + the store query). No-op while disabled. Async: the purge consults the plugin
-    // registry (the cronjob wake-up seam), so the sweep awaits each user in turn.
+    // registry (the cronjob retention seam), so the sweep awaits each user in turn.
     const purgeStaleSessions = async () => {
       const retention = deps.config.get().sessionRetention;
       if (!retention.enabled || !deps.brain || !deps.users) return;
@@ -177,6 +177,10 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
         let removed = 0;
         for (const user of deps.users.list()) removed += await deps.brain.purgeStaleSessionsForUser(user.id, retention.days);
         if (removed > 0) deps.log.info(`session retention: removed ${removed} conversation(s) older than ${retention.days} days`);
+        // The delegated-result inbox is not owned by any account, so it is swept ONCE per pass rather than
+        // per user: rows whose child session is gone can never be delivered and nothing else collects them.
+        const results = deps.brain.purgeUndeliverableDelegationResults(retention.days);
+        if (results > 0) deps.log.info(`session retention: removed ${results} undeliverable delegated result(s)`);
       } catch (e) { deps.log.error('session retention sweep failed', e); }
     };
     void purgeStaleSessions();

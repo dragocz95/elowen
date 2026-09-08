@@ -82,7 +82,7 @@ describe('cli/setup.runAiStep — reuse-provider wiring', () => {
     select.mockResolvedValueOnce('reuse:relay'); // the top-level "Connect an AI provider" choice
 
     const { fetchFn, calls } = routedFetch({
-      'GET /config': { brain: { providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x', models: ['m1'], apiKeySet: true }] }, defaults: { exec: 'sonnet', maxSessions: 1 } },
+      'GET /config': { brain: { providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x', models: ['m1'], apiKeySet: true }] }, defaults: { exec: 'sonnet' } },
       'GET /brain/oauth/status': {},
       'PUT /config': { ok: true },
       'POST /brain/test': { ok: true, model: 'm1', reply: 'OK' },
@@ -95,7 +95,7 @@ describe('cli/setup.runAiStep — reuse-provider wiring', () => {
     expect(ctx.answers.ai).toEqual({ status: 'done', summary: 'Relay (m1)', providerId: 'relay', providerType: 'openai', model: 'm1', hasKey: true });
 
     // The AI step wires ONLY the embedded task exec now — it PUTs { defaults: { exec } } (the config store
-    // merges defaults per-field, so maxSessions survives without a read-then-write race). Autopilot
+    // merges defaults per-field, so a sibling field survives without a read-then-write race). Autopilot
     // is no longer configured here: it's a separate, final, opt-in step, so the AI step must NOT touch the
     // autopilot config.
     const puts = calls.filter((c) => c.method === 'PUT' && c.path === '/config');
@@ -113,7 +113,7 @@ describe('cli/setup.runAiStep — reuse-provider wiring', () => {
     select.mockResolvedValueOnce('keep'); // "What next?" after a failed smoke test
 
     const { fetchFn, calls } = routedFetch({
-      'GET /config': { brain: { providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x', models: ['m1'], apiKeySet: true }] }, defaults: { exec: 'sonnet', maxSessions: 1 } },
+      'GET /config': { brain: { providers: [{ id: 'relay', label: 'Relay', type: 'openai', baseUrl: 'http://x', models: ['m1'], apiKeySet: true }] }, defaults: { exec: 'sonnet' } },
       'GET /brain/oauth/status': {},
       'PUT /config': { ok: true },
       'POST /brain/test': { ok: false, error: 'connection refused' },

@@ -761,8 +761,9 @@ export class BrainStore {
    *  candidates for the retention janitor. The DB-derivable exclusions live HERE so they are applied
    *  atomically and can never drift from the delete: a non-user session (channel/task shell), a delegated
    *  child (`parent_session_id` set — deleting one out from under its parent tree is wrong), and an
-   *  unspoken empty shell are all filtered out. The live-state exclusions (running, active, running
-   *  children) cannot be seen from SQLite and are the caller's to apply before deleting. `days` is clamped
+   *  unspoken empty shell that is not an ephemeral run are all filtered out. The live-state exclusions
+   *  (running, active, running children) cannot be seen from SQLite and are the caller's to apply before
+   *  deleting. `days` is clamped
    *  to a positive integer — it is interpolated into a SQLite date modifier, so it must never be a string. */
   staleConversationIds(userId: number, days: number): string[] {
     const d = Number.isFinite(days) && days >= 1 ? Math.floor(days) : 90;
@@ -770,7 +771,15 @@ export class BrainStore {
       `SELECT s.id FROM brain_sessions s
        WHERE s.user_id = ?
          AND s.updated_at < datetime('now', '-${d} days')
-         AND EXISTS (SELECT 1 FROM brain_messages m WHERE m.session_id = s.id)
+         -- A conversation nobody ever spoke into is an empty shell, not history: dropIfUnspoken owns it
+         -- and the named/cleared ones are deliberately kept. An EPHEMERAL RUN is the opposite case — it
+         -- is a spent shell either way, and a sub-agent or cron run that died before writing its first
+         -- message left a row nothing else will ever collect, so those are judged on row age alone.
+         AND (
+           s.id LIKE '${SUBAGENT_PREFIX}%'
+           OR s.id LIKE '${CRON_PREFIX}%'
+           OR EXISTS (SELECT 1 FROM brain_messages m WHERE m.session_id = s.id)
+         )
          AND (
            -- The caller's own conversations: only roots, so a child is never deleted out from under
            -- the transcript that links to it.
@@ -1629,6 +1638,18 @@ export class BrainStore {
       out.push({ id: row.event_id, kind: row.kind, detail: row.detail, at: dbTsToIso(row.created_at) });
     }
     return out;
+  }
+
+  /** Whether this conversation still owns a delegation owed a turn, durably across boots — see
+   *  {@link BrainDelegationStore.hasUnfinishedSubagentRuns}. */
+  hasUnfinishedSubagentRuns(parentSessionId: string): boolean {
+    return this.delegation.hasUnfinishedSubagentRuns(parentSessionId);
+  }
+
+  /** Retention for the delegated-result inbox — see
+   *  {@link BrainDelegationStore.purgeUndeliverableSubagentResults}. */
+  purgeUndeliverableSubagentResults(days: number): number {
+    return this.delegation.purgeUndeliverableSubagentResults(days);
   }
 
   /** Persist a terminal child result before any attempt to wake the parent — see

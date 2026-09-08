@@ -34,7 +34,7 @@ let runtimeLimits: { streamSilenceLimitMs?: number; streamReviveSilenceLimitMs?:
 const server = setupServer(
   http.get('*/api/config', () => HttpResponse.json({
     allowedExecs: [], customModels: [], hiddenPresets: [], modelNotes: {}, providers: {},
-    defaults: { exec: '', maxSessions: 4 },
+    defaults: { exec: '' },
     ...(runtimeLimits ? { runtime: { limits: runtimeLimits, toolDeferralEnabled: true } } : {}),
   })),
   http.post('*/api/brain/start', async ({ request }) => {

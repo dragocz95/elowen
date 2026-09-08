@@ -5,7 +5,7 @@ export interface ElowenConfig {
   allowedSkins: string[];
   modelNotes: Record<string, string>;
   providers: Record<string, { bin: string; args: string; skipPermissions: boolean; resume: boolean }>;
-  defaults: { exec: string; maxSessions: number };
+  defaults: { exec: string };
   security: { tokenTtlDays: number; trustProxy: boolean };
   sessionRetention: { enabled: boolean; days: number };
   autoUpdate: boolean;
@@ -347,7 +347,7 @@ export interface ConfigPatch {
   allowedSkins?: string[];
   modelNotes?: Record<string, string>;
   providers?: Record<string, { bin: string; args: string }>;
-  defaults?: { exec?: string; maxSessions?: number };
+  defaults?: { exec?: string };
   security?: { tokenTtlDays?: number; trustProxy?: boolean };
   sessionRetention?: { enabled?: boolean; days?: number };
   autoUpdate?: boolean;
