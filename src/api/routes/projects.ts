@@ -1,6 +1,7 @@
 import { homedir } from 'node:os';
 import { createDir, CreateDirError, listDirs, isProjectImage, isProjectImageExtension, projectPathExists } from '../../integrations/projectFiles.js';
 import { posix } from 'node:path';
+import { RealGitReader } from '../../git/gitReader.js';
 import { runManagedProjectCommand } from '../../integrations/managedProjectExecution.js';
 import { parseBody } from '../validation.js';
 import { createDirectorySchema, createProjectSchema, updateProjectSchema, memoryMembersSchema } from '../schemas/projects.js';
@@ -280,11 +281,27 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json({ ok: true });
   });
   app.get('/projects/:id/git', async (c) => {
-    if (!d.projects || !d.git) return c.json({ error: 'projects unavailable' }, 400);
+    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
     const p = d.projects.get(Number(c.req.param('id')));
     if (!p) return c.json({ error: 'project not found' }, 404);
     if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
-    if (p.executionKind === 'managed') return c.json({ error: 'managed project Git inspection requires the environment provider' }, 503);
+    if (p.executionKind === 'managed') {
+      const actor = c.get('user');
+      if (!actor) return c.json({ error: 'forbidden' }, 403);
+      try {
+        const reader = new RealGitReader(async (file, args, options) => {
+          const sandbox = (await d.plugins?.get())?.control('sandbox');
+          if (!sandbox) throw new Error('project environment provider unavailable');
+          return runManagedProjectCommand(sandbox, { kind: 'managed', projectId: p.id }, actor.id,
+            { type: 'argv', file, args: ['-c', 'core.fsmonitor=false', ...args] }, { ...options, signal: c.req.raw.signal });
+        }, true);
+        return c.json(await reader.read('/workspace'));
+      } catch (error) {
+        ctx.log.warn(`managed project Git inspection failed: ${error instanceof Error ? error.message : String(error)}`);
+        return c.json({ error: 'project environment Git inspection unavailable' }, 503);
+      }
+    }
+    if (!d.git) return c.json({ error: 'projects unavailable' }, 400);
     return c.json(await d.git.read(p.path));
   });
 
