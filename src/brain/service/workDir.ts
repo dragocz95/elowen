@@ -177,11 +177,13 @@ export interface SwitchableProject { id: number; slug: string; path: string }
 
 /** Resolve ONE registered Project as a move destination — the /project switch's project resolver.
  *
- *  The caller's policy must reach the registered path TODAY, and the path must be a real directory:
- *  both are the exact `clientDir` gate a client-reported cwd clears, so a switch can never name a
- *  directory the caller's turns could not run in. The validated realpath is the move target — never
- *  the raw registered string, which may be a symlink. Undefined when the project is unknown, its path
- *  has vanished, or the caller does not reach it. */
+ *  The caller must be ASSIGNED to the project: path containment alone is not the gate, because a project
+ *  registered inside another allowed project's root (or inside a supplemental Sandbox root) clears that
+ *  check by accident. Assignment first, then the same `clientDir` gate a client-reported cwd clears —
+ *  the registered path must still be a real directory the caller's policy reaches TODAY, so a switch can
+ *  never name a directory the caller's turns could not run in. The validated realpath is the move target
+ *  — never the raw registered string, which may be a symlink. Undefined when the project is unknown,
+ *  unassigned, its path has vanished, or the caller does not reach it. */
 export function projectMoveTarget(
   policy: Policy,
   projects: { list(): Project[] } | undefined,
@@ -190,15 +192,18 @@ export function projectMoveTarget(
   if (!projects) return undefined;
   const project = projects.list().find((candidate) => candidate.id === projectId);
   if (!project) return undefined;
+  if (policy.allowedProjectIds !== 'all' && !policy.allowedProjectIds.has(project.id)) return undefined;
   const workDir = clientDir(policy, project.path);
   return workDir ? { workDir, slug: project.slug } : undefined;
 }
 
 /** The Projects one account may move a conversation into — the picker's data side of the same gate.
- *  A project whose path has vanished, or one the caller's policy does not reach, is simply not offered. */
+ *  A project whose path has vanished, or one the caller is not assigned to or whose path their policy
+ *  does not reach, is simply not offered. */
 export function switchableProjects(policy: Policy, projects?: { list(): Project[] }): SwitchableProject[] {
   if (!projects) return [];
   return projects.list()
+    .filter((project) => policy.allowedProjectIds === 'all' || policy.allowedProjectIds.has(project.id))
     .map((project) => ({ project, validated: clientDir(policy, project.path) }))
     .filter((entry): entry is { project: Project; validated: string } => entry.validated !== undefined)
     .map(({ project }) => ({ id: project.id, slug: project.slug, path: project.path }));

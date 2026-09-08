@@ -1,5 +1,5 @@
 import { afterAll, describe, it, expect, vi } from 'vitest';
-import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, realpathSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { moveSessionWorkDir, projectMoveTarget, switchableProjects } from '../../src/brain/service/workDir.js';
@@ -159,6 +159,46 @@ describe('project resolvers', () => {
       { id: 2, slug: 'second', path: second },
     ]);
     expect(switchableProjects(policy, undefined)).toEqual([]);
+  });
+
+  it('projectMoveTarget refuses a project the caller is not assigned to, even one nested in an allowed root', () => {
+    // A project registered inside another project's root — or inside a supplemental Sandbox root —
+    // clears the path-containment gate by accident; the project ASSIGNMENT is what says the caller
+    // may be moved there at all.
+    const parent = tmpDir('parent');
+    const nested = join(parent, 'nested');
+    mkdirSync(nested, { recursive: true });
+    const supplemental = tmpDir('sandbox-root');
+    const workspace = join(supplemental, 'ws');
+    mkdirSync(workspace, { recursive: true });
+    const projects = { list: () => [
+      { id: 1, slug: 'parent', path: parent },
+      { id: 2, slug: 'nested', path: nested },
+      { id: 3, slug: 'sandboxed', path: workspace },
+      { id: 4, slug: 'sandbox-assigned', path: supplemental },
+    ] };
+    const policy: Policy = { allowedProjectIds: new Set([1, 4]), allowedPaths: () => [parent, supplemental] };
+
+    expect(projectMoveTarget(policy, projects, 2)).toBeUndefined(); // nested in project 1, but not assigned
+    expect(projectMoveTarget(policy, projects, 3)).toBeUndefined(); // nested in the sandbox root, but not assigned
+    expect(projectMoveTarget(policy, projects, 1)).toEqual({ workDir: parent, slug: 'parent' });
+    expect(projectMoveTarget(policy, projects, 4)).toEqual({ workDir: supplemental, slug: 'sandbox-assigned' });
+  });
+
+  it('switchableProjects omits unassigned projects even when their paths sit inside allowed roots', () => {
+    const parent = tmpDir('p-parent');
+    const nested = join(parent, 'nested');
+    mkdirSync(nested, { recursive: true });
+    const supplemental = tmpDir('p-sandbox');
+    mkdirSync(join(supplemental, 'ws'), { recursive: true });
+    const projects = { list: () => [
+      { id: 1, slug: 'parent', path: parent },
+      { id: 2, slug: 'nested', path: nested },
+      { id: 3, slug: 'sandboxed', path: join(supplemental, 'ws') },
+    ] };
+    const policy: Policy = { allowedProjectIds: new Set([1]), allowedPaths: () => [parent, supplemental] };
+
+    expect(switchableProjects(policy, projects)).toEqual([{ id: 1, slug: 'parent', path: parent }]);
   });
 });
 
