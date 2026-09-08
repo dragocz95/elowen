@@ -34,6 +34,28 @@ function sessionPageOpts(rawLimit?: string, rawOffset?: string): { limit?: numbe
   return opts;
 }
 
+/** How many conversations one request may name explicitly. Matches the store's own root ceiling, so a
+ *  caller cannot widen the batch by listing more ids than a page could hold. */
+const MAX_REQUESTED_CONVERSATIONS = 100;
+
+/** The `?ids` narrowing of GET /brain/conversation-links: the conversations actually on screen, as a
+ *  comma-separated list. Undefined when the parameter is absent or names nothing, which keeps the
+ *  historical whole-listing behaviour. These are a REQUEST, not an authorization — the caller intersects
+ *  them with the set core itself authorized. */
+function requestedConversationIds(raw?: string): string[] | undefined {
+  if (raw === undefined) return undefined;
+  const out: string[] = [];
+  const seen = new Set<string>();
+  for (const part of raw.split(',')) {
+    const id = part.trim();
+    if (!id || seen.has(id)) continue;
+    seen.add(id);
+    out.push(id);
+    if (out.length >= MAX_REQUESTED_CONVERSATIONS) break;
+  }
+  return out.length > 0 ? out : undefined;
+}
+
 /** One navigation row of GET /brain/conversation-links. Mirrors ConversationJobLink in web/lib/types.ts. */
 interface ConversationJobLink {
   jobId: string;
@@ -241,27 +263,61 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   app.delete('/brain/managed-sessions/:id', withBrain((c, brain) =>
     c.json({ deleted: brain.deleteManagedSession(c.get('user').id, c.req.param('id')!, 'any') }), { admin: true }));
 
-  /** The scheduled-job branches under a conversation listing. ONE read per listing, never per row.
+  /** The branches under a conversation listing: the schedules filed under each conversation, and the
+   *  sub-agents that ran under it. ONE read per listing, never per row.
    *
    *  `?scope=all` answers for the admin register and needs an administrator; the default `mine` answers
    *  for the caller's OWN conversation list — the actual personal sidebar roots, deliberately not the
    *  wider set a job may be attached to, so a shared platform target never appears among someone's
-   *  personal navigation. Either way the plugin is handed only ids core already authorized.
+   *  personal navigation. `?ids` narrows the answer to the page actually on screen and is INTERSECTED
+   *  with that authorized set, never trusted: a forged id names nothing, so the reply cannot be used to
+   *  discover which conversations exist.
    *
-   *  The response distinguishes three states so a client never has to guess (see ConversationLinksResponse
-   *  in web/lib/types.ts). `unavailable` covers every "there is nothing to ask" case at once: the cron
-   *  plugin disabled or uninstalled, an installed version too old to carry the optional navigation method,
-   *  or an account without the grant. A genuine failure is logged and reported as `error` — never as a
-   *  confirmed empty list, which would quietly claim the user has no scheduled jobs. */
+   *  The two branches are independent, and the ordering below is what makes them so. The sub-agent tree
+   *  is CORE data read from the store; the schedules are a plugin contribution. A cron plugin that is
+   *  disabled, too old, ungranted or simply broken says nothing whatsoever about which sub-agents a
+   *  conversation ran, so it may not take that branch down with it — which the early returns here used to
+   *  do, one shared `return` at a time.
+   *
+   *  Each branch carries its own status so a client never has to guess (see ConversationLinksResponse in
+   *  web/lib/types.ts). `unavailable` is "there is nothing to ask": for cron the plugin disabled,
+   *  uninstalled, too old to carry the optional navigation method, or not granted to this account; for
+   *  the core branch an unwired store. A genuine failure is logged and reported as `error` — never as a
+   *  confirmed empty list, which would quietly claim the user has no schedules or no sub-agents. */
   app.get('/brain/conversation-links', withBrain(async (c, brain) => {
     const user = c.get('user');
     const all = c.req.query('scope') === 'all';
     if (all && !user?.is_admin) return c.json({ error: 'forbidden' }, 403);
+
+    const conversationIds = all
+      ? brain.listManagedSessions(user.id).map((s) => s.id)
+      : brain.listSessions(user.id).map((s) => s.id);
+    const authorized = new Set(conversationIds);
+    const requested = requestedConversationIds(c.req.query('ids'));
+    const rootIds = requested ? requested.filter((id) => authorized.has(id)) : conversationIds;
+
+    // Read FIRST and independently, so nothing the cron half does below can reach it.
+    let subagentStatus: 'available' | 'unavailable' | 'error' = 'unavailable';
+    let subagents: Record<string, unknown> = {};
+    let subagentsTruncated = false;
+    if (d.brainStore) {
+      try {
+        const branches = d.brainStore.conversationSubagentBranches(rootIds);
+        subagents = branches.byConversation;
+        subagentsTruncated = branches.truncated;
+        subagentStatus = 'available';
+      } catch (e) {
+        logger('brain-conversation-links').error(`sub-agent branch read failed: ${(e as Error).message}`);
+        subagentStatus = 'error';
+      }
+    }
+    const core = { subagentStatus, subagents, subagentsTruncated };
+
     let registry;
     try { registry = await d.plugins?.get(); }
     catch (e) {
       logger('brain-conversation-links').error(`plugin registry unavailable: ${(e as Error).message}`);
-      return c.json({ status: 'error', links: [] });
+      return c.json({ status: 'error', links: [], ...core });
     }
     // The GRANT is checked against whichever plugin actually owns the cron control, so core never has to
     // hardcode a plugin package name to gate its own route on.
@@ -269,11 +325,8 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     const control = registry?.control('cron');
     const granted = !!owner && !!registry
       && isPluginAllowedForUser(user, { name: owner, userGrantable: registry.userGrantable.has(owner) });
-    if (!control?.conversationLinks || !granted) return c.json({ status: 'unavailable', links: [] });
+    if (!control?.conversationLinks || !granted) return c.json({ status: 'unavailable', links: [], ...core });
 
-    const conversationIds = all
-      ? brain.listManagedSessions(user.id).map((s) => s.id)
-      : brain.listSessions(user.id).map((s) => s.id);
     let contributed: unknown;
     try {
       contributed = control.conversationLinks({
@@ -281,10 +334,10 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
       });
     } catch (e) {
       logger('brain-conversation-links').error(`cron link read failed: ${(e as Error).message}`);
-      return c.json({ status: 'error', links: [] });
+      return c.json({ status: 'error', links: [], ...core });
     }
-    const links = toConversationJobLinks(contributed, { id: user.id, admin: !!user.is_admin }, new Set(conversationIds), d.brainStore);
-    return c.json({ status: 'available', links });
+    const links = toConversationJobLinks(contributed, { id: user.id, admin: !!user.is_admin }, authorized, d.brainStore);
+    return c.json({ status: 'available', links, ...core });
   }));
 
   // Background processes (terminal plugin's `Bash(run_in_background:true)` children) — the panel next to

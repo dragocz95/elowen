@@ -2,6 +2,8 @@ import type { Db } from './db.js';
 import { withWriteLock } from './db.js';
 import type { WorkflowNode, WorkflowUpdate } from '../brain/events.js';
 import { SUBAGENT_PREFIX } from '../brain/sessionId.js';
+import { laterChildRunSpeaks } from '../brain/subagentRuns.js';
+import { resolveSubagentName } from '../brain/subagentName.js';
 import { logger } from '../shared/logger.js';
 
 /** Validated latest UI state of one delegated child. The child id is a first-class indexed column in
@@ -86,6 +88,103 @@ export interface DelegatedChildSummary {
 /** Ceiling for one listing. A conversation that fanned out hundreds of children must not turn a single
  *  tool call into an unbounded transcript dump. */
 const MAX_DELEGATED_CHILDREN = 50;
+
+/** What a sub-agent tree row says about its work, derived from the HOST-owned lifecycle rather than from
+ *  the display JSON a run row also carries. `blocked` is a run parked for a human continuation
+ *  (recovery_required); `interrupted` covers a legacy interruption and a row too old to carry a lifecycle
+ *  at all — neither may be announced as still running on the strength of stale JSON. `pending` exists only
+ *  for a workflow node the engine has not dispatched yet. */
+export type SubagentNodeStatus = 'pending' | 'running' | 'blocked' | 'done' | 'error' | 'interrupted';
+
+/** One row of the conversation switcher's sub-agent branch.
+ *
+ *  Deliberately NOT a timeline: no started/finished stamps and no elapsed seconds. A run row's
+ *  `updated_at` is at most the time of its last terminal UPDATE and a workflow node's snapshot stamp is
+ *  the engine's own clock, so putting either on screen as a finish time would state something nobody
+ *  recorded. What this branch answers is which sub-agents ran under a conversation, what they were
+ *  called, how they ended, and where to read them.
+ *
+ *  `childSessionId` is present only when a real transcript exists AND is a direct, same-owner child of
+ *  the conversation this row hangs under — re-derived on every read, never trusted from a run row or a
+ *  DAG snapshot. Absent means the row is metadata only: a purged transcript, or a workflow node the
+ *  engine never dispatched. Such a row has nothing to open. */
+export interface ConversationSubagentNode {
+  kind: 'delegate' | 'workflow' | 'workflowNode';
+  /** Stable identity across refetches and unique within one response — the render key, and what the
+   *  disclosure button points `aria-controls` at. */
+  key: string;
+  name: string;
+  status: SubagentNodeStatus;
+  childSessionId?: string;
+  model?: string;
+  children: ConversationSubagentNode[];
+  /** Set when this row's OWN children were cut by a bound, so a clipped branch is never presented as the
+   *  whole story. */
+  truncated?: boolean;
+}
+
+/** The bounds one batch answers within. Each is applied to the SELECT as well as to the serialized
+ *  answer: a listing of 800 conversations must not become an instance-wide tree walk. */
+export interface SubagentBranchBounds {
+  /** Conversations answered for in one request. */
+  roots: number;
+  /** Delegation edges followed below a root. */
+  depth: number;
+  /** Direct workflow + delegation rows under one parent. */
+  childrenPerParent: number;
+  /** Serialized nodes across the whole response. */
+  nodes: number;
+}
+
+export interface ConversationSubagentBranches {
+  /** Only conversations that actually have a branch appear, so a caller renders nothing for the rest
+   *  without having to tell "no sub-agents" from "not asked about". */
+  byConversation: Record<string, ConversationSubagentNode[]>;
+  /** Some bound cut the answer somewhere. Reported once for the batch, beside the per-row flag. */
+  truncated: boolean;
+}
+
+const SUBAGENT_BRANCH_BOUNDS: SubagentBranchBounds = { roots: 100, depth: 8, childrenPerParent: 50, nodes: 2_000 };
+
+/** SQLite's default parameter ceiling is 999 and one level of the walk binds one parameter per parent.
+ *  Chunking keeps the query count a function of DEPTH and the node budget, never of the listing size. */
+const SQL_PARAM_CHUNK = 200;
+
+const chunked = <T>(items: readonly T[], size = SQL_PARAM_CHUNK): T[][] => {
+  const out: T[][] = [];
+  for (let at = 0; at < items.length; at += size) out.push(items.slice(at, at + size));
+  return out;
+};
+
+const placeholders = (count: number): string => new Array(count).fill('?').join(',');
+
+/** The status of ONE delegation call. The lifecycle column is the only one true for every row ever
+ *  written: a run whose final progress upsert never landed still carries `running` in its display JSON
+ *  forever, and a row older than the lifecycle columns carries no host answer at all — which is
+ *  "interrupted", not "still working". */
+function runLifecycleStatus(lifecycle: string | null, displayStatus?: BrainSubagentRunState['status']): SubagentNodeStatus {
+  switch (lifecycle) {
+    case 'running': case 'recovering': return 'running';
+    case 'recovery_required': return 'blocked';
+    case 'done': return 'done';
+    case 'error': return 'error';
+    case 'legacy_interrupted': return 'interrupted';
+    default:
+      return displayStatus === 'done' ? 'done' : displayStatus === 'error' ? 'error' : 'interrupted';
+  }
+}
+
+/** The tree's richer status collapsed onto the three-value vocabulary the shared "which call speaks for
+ *  this child" rule is written in ({@link laterChildRunSpeaks}). Only liveness decides there, so every
+ *  settled outcome — finished, failed, parked, interrupted — is simply "not running". */
+const runLike = (status: SubagentNodeStatus): 'running' | 'done' | 'error' =>
+  status === 'running' ? 'running' : status === 'done' ? 'done' : 'error';
+
+/** The workflow snapshot's own status, mapped onto the shared vocabulary. A workflow has no lifecycle
+ *  column — its terminalization path is the engine's — so the validated snapshot status is the authority;
+ *  `cancelled` is an interruption rather than a failure the user has to act on. */
+const workflowNodeStatus = (status: WorkflowUpdate['status'] | WorkflowNode['status']): SubagentNodeStatus =>
+  status === 'cancelled' ? 'interrupted' : status;
 
 /** `provider/model` when both are known, the bare model when only that is. A bare id is ambiguous once
  *  several providers serve similarly named models, and the listing is what an agent reads to report which
@@ -759,6 +858,275 @@ export class BrainDelegationStore {
         WHERE parent_session_id = ? AND json_valid(state) AND json_extract(state, '$.status') = 'running'
         ORDER BY updated_at DESC, rowid DESC LIMIT ?`
     ).all(parentSessionId, capped) as { workflow_id: string }[]).map((row) => row.workflow_id);
+  }
+
+  /** The verified direct children of a whole LEVEL of conversations, keyed by child id. One query for
+   *  every parent at that depth, so a workflow's stored node ids can be checked against the live relation
+   *  without a read per node — the same check getWorkflowRuns makes for one conversation. */
+  private verifiedChildrenOfLevel(parentIds: readonly string[], rowCap: number): Map<string, { parent: string; model?: string }> {
+    const out = new Map<string, { parent: string; model?: string }>();
+    for (const chunk of chunked(parentIds)) {
+      const rows = this.db.prepare(
+        `SELECT c.id, c.parent_session_id, c.model, c.provider
+           FROM brain_sessions c
+           JOIN brain_sessions p ON p.id = c.parent_session_id
+          WHERE c.parent_session_id IN (${placeholders(chunk.length)})
+            AND c.user_id = p.user_id
+            AND c.id LIKE ?
+          ORDER BY c.parent_session_id, c.rowid
+          LIMIT ?`
+      ).all(...chunk, `${SUBAGENT_PREFIX}%`, rowCap) as {
+        id: string; parent_session_id: string; model: string | null; provider: string | null;
+      }[];
+      for (const row of rows) {
+        const model = qualifiedModel(row.provider, row.model);
+        out.set(row.id, { parent: row.parent_session_id, ...(model ? { model } : {}) });
+      }
+    }
+    return out;
+  }
+
+  /** Which of these conversations have ANY delegated work recorded under them. Used at the depth bound to
+   *  mark the rows whose branch was genuinely cut — marking every leaf would claim there is more below a
+   *  sub-agent that simply delegated nothing. */
+  private conversationsWithDelegatedWork(parentIds: readonly string[]): Set<string> {
+    const out = new Set<string>();
+    for (const chunk of chunked(parentIds)) {
+      const list = placeholders(chunk.length);
+      const rows = this.db.prepare(
+        `SELECT DISTINCT parent_session_id FROM brain_subagent_runs WHERE parent_session_id IN (${list})
+         UNION
+         SELECT DISTINCT parent_session_id FROM brain_workflows WHERE parent_session_id IN (${list})`
+      ).all(...chunk, ...chunk) as { parent_session_id: string }[];
+      for (const row of rows) out.add(row.parent_session_id);
+    }
+    return out;
+  }
+
+  /** The sub-agent tree under a BATCH of conversations — the read model behind the conversation
+   *  switcher's collapsed branches, for the personal list and the admin register alike.
+   *
+   *  Authorization is structural rather than parameterised: the caller passes conversations it has
+   *  already authorized, and every edge below them is re-derived here from the live relation. A child is
+   *  followed only when its session still names THIS parent and still shares its owner, at every level —
+   *  so an admin reading another account's conversation still never sees a foreign owner's session hung
+   *  under it, and a run row or a DAG snapshot naming somebody else's transcript yields nothing at all.
+   *  A child row that exists but fails that check is DROPPED rather than shown as deleted: rendering it
+   *  as a purged delegation would leak both its existence and its name.
+   *
+   *  The two authorities stay the ones that already exist. brain_subagent_runs is the record of
+   *  delegations; the workflow snapshot is the record of a DAG and its nodes, which have no run rows of
+   *  their own. A node whose engine DID write a run row is shown once, under its workflow — the grouping
+   *  a reader expects — and not a second time beside it. Nothing new is stored to make this possible, so
+   *  a delegation whose only record retention has removed is simply gone.
+   *
+   *  Cost is bounded by DEPTH, not by the size of the listing: each level asks at most three parameterised
+   *  queries per chunk of parents, all of them with a LIMIT, and the node budget caps the frontier. */
+  conversationSubagentBranches(
+    rootIds: readonly string[],
+    bounds?: Partial<SubagentBranchBounds>,
+  ): ConversationSubagentBranches {
+    const clamp = (value: number | undefined, fallback: number): number =>
+      Number.isSafeInteger(value) && (value as number) > 0 ? Math.min(value as number, fallback) : fallback;
+    const limits: SubagentBranchBounds = {
+      roots: clamp(bounds?.roots, SUBAGENT_BRANCH_BOUNDS.roots),
+      depth: clamp(bounds?.depth, SUBAGENT_BRANCH_BOUNDS.depth),
+      childrenPerParent: clamp(bounds?.childrenPerParent, SUBAGENT_BRANCH_BOUNDS.childrenPerParent),
+      nodes: clamp(bounds?.nodes, SUBAGENT_BRANCH_BOUNDS.nodes),
+    };
+
+    let truncated = false;
+    const roots: string[] = [];
+    const seenRoot = new Set<string>();
+    for (const id of rootIds) {
+      if (!id || seenRoot.has(id)) continue;
+      seenRoot.add(id);
+      if (roots.length >= limits.roots) { truncated = true; break; }
+      roots.push(id);
+    }
+    if (roots.length === 0) return { byConversation: {}, truncated };
+
+    const byConversation: Record<string, ConversationSubagentNode[]> = {};
+    // Session id → where its own delegations are appended, plus the row that owns that list (absent for a
+    // root conversation, which has no row of its own). A session appears once: the relation gives each
+    // child exactly one parent, and `visited` stops a self-parenting row from looping.
+    type Slot = { into: ConversationSubagentNode[]; owner?: ConversationSubagentNode };
+    let frontier = new Map<string, Slot>();
+    for (const id of roots) frontier.set(id, { into: (byConversation[id] = []) });
+    const visited = new Set<string>(roots);
+    let budget = limits.nodes;
+
+    for (let depth = 0; depth < limits.depth && frontier.size > 0 && budget > 0; depth++) {
+      const parentIds = [...frontier.keys()];
+      // Bounded by what the per-parent cap could possibly need, and never more than twice the remaining
+      // global budget — the LIMIT is the point, so an unbounded fan-out is refused by the database.
+      const rowCap = Math.min(parentIds.length * limits.childrenPerParent, limits.nodes * 2) + 1;
+      const next = new Map<string, Slot>();
+      // Sessions a workflow node already claims: the same child must not also render as a loose
+      // delegation beside its workflow.
+      const claimed = new Set<string>();
+      const workflowsByParent = new Map<string, ConversationSubagentNode[]>();
+
+      // --- workflows and their nodes -------------------------------------------------------------
+      const workflowRows: { parent_session_id: string; tool_call_id: string; state: string }[] = [];
+      for (const chunk of chunked(parentIds)) {
+        const rows = this.db.prepare(
+          `SELECT w.parent_session_id, w.tool_call_id, w.state
+             FROM brain_workflows w
+             JOIN brain_sessions p ON p.id = w.parent_session_id
+            WHERE w.parent_session_id IN (${placeholders(chunk.length)})
+            ORDER BY w.parent_session_id, w.rowid
+            LIMIT ?`
+        ).all(...chunk, rowCap) as typeof workflowRows;
+        if (rows.length >= rowCap) truncated = true;
+        workflowRows.push(...rows);
+      }
+      // Only paid for when a DAG is actually present at this level: a listing that never ran a workflow
+      // must not pay to validate node sessions that do not exist.
+      const children: Map<string, { parent: string; model?: string }> =
+        workflowRows.length > 0 ? this.verifiedChildrenOfLevel(parentIds, rowCap) : new Map();
+      for (const row of workflowRows) {
+        let state: BrainWorkflowRun | undefined;
+        try { state = normalizeWorkflowState(JSON.parse(row.state)); } catch { state = undefined; }
+        if (!state) continue;
+        const nodes: ConversationSubagentNode[] = [];
+        for (const node of state.nodes) {
+          const verified = node.sessionId ? children.get(node.sessionId) : undefined;
+          const childSessionId = verified?.parent === row.parent_session_id ? node.sessionId : undefined;
+          if (childSessionId) claimed.add(childSessionId);
+          nodes.push({
+            kind: 'workflowNode',
+            key: `wfn:${row.parent_session_id}:${row.tool_call_id}:${node.id}`,
+            name: resolveSubagentName('', node.task) || node.id,
+            status: workflowNodeStatus(node.status),
+            ...(childSessionId ? { childSessionId } : {}),
+            ...(verified?.model && childSessionId ? { model: verified.model } : {}),
+            children: [],
+          });
+        }
+        const bucket = workflowsByParent.get(row.parent_session_id) ?? [];
+        bucket.push({
+          kind: 'workflow',
+          key: `wf:${row.parent_session_id}:${row.tool_call_id}`,
+          // A DAG's title is what the parent called the batch; its id is the honest fallback.
+          name: resolveSubagentName(state.title ?? '', state.id),
+          status: workflowNodeStatus(state.status),
+          children: nodes,
+        });
+        workflowsByParent.set(row.parent_session_id, bucket);
+      }
+
+      // --- ordinary delegations -------------------------------------------------------------------
+      // LEFT JOIN, not JOIN: a run row outlives the child transcript retention removed, and that
+      // delegation still happened. The relation is checked in code instead, so an existing-but-foreign
+      // child can be dropped rather than mistaken for a deleted one.
+      type RunRow = {
+        parent_session_id: string; tool_call_id: string; child_session_id: string;
+        state: string; lifecycle: string | null; rowid: number; parent_owner: number;
+        child_id: string | null; child_parent: string | null; child_owner: number | null;
+        child_model: string | null; child_provider: string | null;
+      };
+      const runRows: RunRow[] = [];
+      for (const chunk of chunked(parentIds)) {
+        const rows = this.db.prepare(
+          `SELECT r.parent_session_id, r.tool_call_id, r.child_session_id, r.state, r.lifecycle,
+                  r.rowid AS rowid, p.user_id AS parent_owner,
+                  c.id AS child_id, c.parent_session_id AS child_parent, c.user_id AS child_owner,
+                  c.model AS child_model, c.provider AS child_provider
+             FROM brain_subagent_runs r
+             JOIN brain_sessions p ON p.id = r.parent_session_id
+             LEFT JOIN brain_sessions c ON c.id = r.child_session_id
+            WHERE r.parent_session_id IN (${placeholders(chunk.length)})
+            ORDER BY r.parent_session_id, r.rowid
+            LIMIT ?`
+        ).all(...chunk, rowCap) as RunRow[];
+        if (rows.length >= rowCap) truncated = true;
+        runRows.push(...rows);
+      }
+
+      /** One node per CHILD, not per call: a steered continuation settles within a second while the
+       *  delegation it steered into keeps working, so the newest row must not speak for the child. The
+       *  rule itself lives in brain/subagentRuns; only the ordering (rowid, because a boot-claimed
+       *  recovery keeps the pause's updated_at) is applied here. */
+      const perChild = new Map<string, { row: RunRow; status: SubagentNodeStatus; name: string }>();
+      const orderPerParent = new Map<string, string[]>();
+      for (const row of runRows) {
+        if (row.child_id === null) {
+          // Nothing to check: the transcript is gone, and the run row is all that remains of it.
+        } else if (row.child_parent !== row.parent_session_id || row.child_owner !== row.parent_owner) {
+          continue;
+        } else if (claimed.has(row.child_session_id)) {
+          continue;
+        }
+        let state: BrainSubagentRunState | undefined;
+        try { state = normalizeSubagentState(JSON.parse(row.state)); } catch { state = undefined; }
+        const status = runLifecycleStatus(row.lifecycle, state?.status);
+        const key = `${row.parent_session_id}\u0000${row.child_session_id}`;
+        const current = perChild.get(key);
+        if (!current) {
+          perChild.set(key, { row, status, name: resolveSubagentName(state?.name ?? '', state?.task ?? '') });
+          const order = orderPerParent.get(row.parent_session_id) ?? [];
+          order.push(key);
+          orderPerParent.set(row.parent_session_id, order);
+          continue;
+        }
+        // Rows arrive in rowid order, so `row` is always the later of the pair.
+        const speaks = laterChildRunSpeaks(
+          { status: runLike(current.status) },
+          { status: runLike(status) },
+        );
+        if (speaks) perChild.set(key, { row, status, name: resolveSubagentName(state?.name ?? '', state?.task ?? '') });
+      }
+
+      // --- assemble the level, workflow groups first ---------------------------------------------
+      for (const parentId of parentIds) {
+        const { into } = frontier.get(parentId)!;
+        const rows: ConversationSubagentNode[] = [...(workflowsByParent.get(parentId) ?? [])];
+        for (const key of orderPerParent.get(parentId) ?? []) {
+          const entry = perChild.get(key)!;
+          const model = qualifiedModel(entry.row.child_provider, entry.row.child_model);
+          rows.push({
+            kind: 'delegate',
+            key: `sub:${entry.row.child_session_id}`,
+            name: entry.name,
+            status: entry.status,
+            ...(entry.row.child_id ? { childSessionId: entry.row.child_session_id } : {}),
+            ...(entry.row.child_id && model ? { model } : {}),
+            children: [],
+          });
+        }
+        if (rows.length > limits.childrenPerParent) { truncated = true; rows.length = limits.childrenPerParent; }
+        for (const node of rows) {
+          // The budget counts a workflow row AND its nodes: they are all rows on the same screen.
+          const cost = 1 + node.children.length;
+          if (budget < cost) { truncated = true; break; }
+          budget -= cost;
+          into.push(node);
+          // A workflow row has no transcript of its own, so what recurses is its NODES' sessions.
+          const descend = node.kind === 'workflow' ? node.children : [node];
+          for (const target of descend) {
+            const id = target.childSessionId;
+            if (!id || visited.has(id)) continue;
+            visited.add(id);
+            next.set(id, { into: target.children, owner: target });
+          }
+        }
+      }
+      frontier = next;
+    }
+
+    // The walk stopped with sessions still unexplored. Only the rows that really have something below
+    // them are marked, so a leaf is never dressed up as a clipped branch.
+    if (frontier.size > 0) {
+      truncated = true;
+      const deeper = this.conversationsWithDelegatedWork([...frontier.keys()]);
+      for (const [id, slot] of frontier) {
+        if (slot.owner && deeper.has(id)) slot.owner.truncated = true;
+      }
+    }
+
+    for (const id of roots) if (byConversation[id]!.length === 0) delete byConversation[id];
+    return { byConversation, truncated };
   }
 
   /** Persist a terminal child result before any attempt to wake the parent. Stable result/tool ids make
