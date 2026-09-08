@@ -25,10 +25,29 @@ export interface GitReader {
 const EMPTY_SNAPSHOT: ProjectGitSnapshot = { isRepo: false, status: null, remotes: [] };
 const EMPTY: ProjectGit = { ...EMPTY_SNAPSHOT, branches: [], commits: [] };
 
+/** Failures git itself attests on stderr. Strict managed recovery swallows only these; a launcher/runtime
+ * failure (podman 125, exec 126/127) or a provider-shaped exit (403) is a broken environment, never a
+ * repository verdict, so it rethrows instead of degrading into a successful empty result. */
+const NOT_A_REPOSITORY = /fatal: not a git repository/i;
+const UNBORN_HEAD = /does not have any commits yet/i;
+
+export type GitExecutor = (file: string, args: string[], options?: { maxBuffer?: number }) => Promise<{ stdout: string; stderr: string }>;
+
 export class RealGitReader implements GitReader {
+  constructor(private readonly execute: GitExecutor = run, private readonly strictExecution = false) {}
+
+  /** Host mode stays lax. Managed mode accepts only git's fatal exit code and the expected repository
+   * verdict; a launcher failure remains a failure even when stderr contains a repository diagnostic. */
+  private recover(error: unknown, expected?: RegExp): void {
+    if (!this.strictExecution) return;
+    const failure = error as { code?: unknown; stderr?: unknown } | null | undefined;
+    if (failure?.code === 128 && typeof failure.stderr === 'string' && expected?.test(failure.stderr)) return;
+    throw error;
+  }
+
   async snapshot(path: string): Promise<ProjectGitSnapshot> {
-    try { await run('git', ['-C', path, 'rev-parse', '--is-inside-work-tree']); }
-    catch { return EMPTY_SNAPSHOT; }
+    try { await this.execute('git', ['-C', path, 'rev-parse', '--is-inside-work-tree']); }
+    catch (error) { this.recover(error, NOT_A_REPOSITORY); return EMPTY_SNAPSHOT; }
     const [status, remotes] = await Promise.all([this.status(path), this.remotes(path)]);
     return { isRepo: true, status, remotes };
   }
@@ -42,7 +61,7 @@ export class RealGitReader implements GitReader {
 
   private async status(path: string): Promise<GitStatus | null> {
     try {
-      const { stdout } = await run('git', ['-C', path, 'status', '--porcelain=v2', '--branch'], { maxBuffer: 1024 * 1024 });
+      const { stdout } = await this.execute('git', ['-C', path, 'status', '--porcelain=v2', '--branch'], { maxBuffer: 1024 * 1024 });
       const lines = stdout.split('\n');
       let branch = 'HEAD';
       let head = '';
@@ -62,12 +81,12 @@ export class RealGitReader implements GitReader {
         else if (line && !line.startsWith('#') && !line.startsWith('! ')) dirty += 1;
       }
       return { branch, head, upstream, ahead, behind, dirty, untracked, clean: dirty === 0 && untracked === 0 };
-    } catch { return null; }
+    } catch (error) { this.recover(error); return null; }
   }
 
   private async remotes(path: string): Promise<GitRemote[]> {
     try {
-      const { stdout } = await run('git', ['-C', path, 'remote'], { maxBuffer: 1024 * 1024 });
+      const { stdout } = await this.execute('git', ['-C', path, 'remote'], { maxBuffer: 1024 * 1024 });
       const names = stdout.split('\n').map((name) => name.trim()).filter(Boolean);
       return Promise.all(names.map(async (name) => {
         const [fetchUrl, pushUrl] = await Promise.all([
@@ -76,34 +95,34 @@ export class RealGitReader implements GitReader {
         ]);
         return { name, fetchUrl: sanitizeRemoteUrl(fetchUrl), pushUrl: sanitizeRemoteUrl(pushUrl || fetchUrl) };
       }));
-    } catch { return []; }
+    } catch (error) { this.recover(error); return []; }
   }
 
   private async remoteUrl(path: string, name: string, push: boolean): Promise<string> {
     try {
-      const { stdout } = await run('git', ['-C', path, 'remote', 'get-url', ...(push ? ['--push'] : []), name], { maxBuffer: 1024 * 1024 });
+      const { stdout } = await this.execute('git', ['-C', path, 'remote', 'get-url', ...(push ? ['--push'] : []), name], { maxBuffer: 1024 * 1024 });
       return stdout.trim();
-    } catch { return ''; }
+    } catch (error) { this.recover(error); return ''; }
   }
 
   private async branches(path: string): Promise<GitBranch[]> {
     try {
-      const { stdout } = await run('git', ['-C', path, 'branch', '--format=%(HEAD)%09%(refname:short)'], { maxBuffer: 1024 * 1024 });
+      const { stdout } = await this.execute('git', ['-C', path, 'branch', '--format=%(HEAD)%09%(refname:short)'], { maxBuffer: 1024 * 1024 });
       return stdout.split('\n').filter(Boolean).map((line) => {
         const [head, name] = line.split('\t');
         return { name: name ?? line.trim(), current: head === '*' };
       });
-    } catch { return []; }
+    } catch (error) { this.recover(error); return []; }
   }
 
   private async commits(path: string): Promise<GitCommit[]> {
     try {
-      const { stdout } = await run('git', ['-C', path, 'log', '-n', '15', '--pretty=format:%h%x09%s%x09%an%x09%cr'], { maxBuffer: 1024 * 1024 });
+      const { stdout } = await this.execute('git', ['-C', path, 'log', '-n', '15', '--pretty=format:%h%x09%s%x09%an%x09%cr'], { maxBuffer: 1024 * 1024 });
       return stdout.split('\n').filter(Boolean).map((line) => {
         const [hash = '', subject = '', author = '', relative = ''] = line.split('\t');
         return { hash, subject, author, relative };
       });
-    } catch { return []; }
+    } catch (error) { this.recover(error, UNBORN_HEAD); return []; }
   }
 }
 

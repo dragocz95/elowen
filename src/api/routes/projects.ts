@@ -1,5 +1,8 @@
 import { homedir } from 'node:os';
-import { createDir, CreateDirError, listDirs, isProjectImage, projectPathExists } from '../../integrations/projectFiles.js';
+import { createDir, CreateDirError, listDirs, isProjectImage, isProjectImageExtension, projectPathExists } from '../../integrations/projectFiles.js';
+import { posix } from 'node:path';
+import { RealGitReader } from '../../git/gitReader.js';
+import { runManagedProjectCommand } from '../../integrations/managedProjectExecution.js';
 import { parseBody } from '../validation.js';
 import { createDirectorySchema, createProjectSchema, updateProjectSchema, memoryMembersSchema } from '../schemas/projects.js';
 import type { ElowenApp, RouteContext } from '../context.js';
@@ -183,14 +186,43 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (cur.executionKind === 'managed' ? !canAccessProject(c, id) : notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const b = await parseBody(c, updateProjectSchema);
     if (cur.executionKind === 'managed' && b.path !== undefined) return c.json({ error: 'managed projects do not have a host path' }, 400);
-    if (cur.executionKind === 'managed' && b.icon) return c.json({ error: 'managed project icons require guest file validation' }, 503);
     const patch: { path?: string; notes?: string; icon?: string; memoryShared?: boolean } = {};
     if (typeof b.path === 'string' && b.path.trim()) patch.path = b.path.trim();
     if (typeof b.notes === 'string') patch.notes = b.notes;
     // Icon is a project-relative image path. '' clears it; anything else must resolve to a real image
     // file inside the project root (guards against path traversal / pointing at a non-image).
     if (typeof b.icon === 'string') {
-      if (b.icon !== '' && !isProjectImage(cur.path, b.icon)) return c.json({ error: 'invalid icon path' }, 400);
+      if (b.icon !== '') {
+        if (cur.executionKind === 'managed') {
+          const path = posix.resolve('/workspace', b.icon);
+          if (!isProjectImageExtension(b.icon) || b.icon.includes('\0') || posix.isAbsolute(b.icon) || !path.startsWith('/workspace/')) {
+            return c.json({ error: 'invalid icon path' }, 400);
+          }
+          const actor = c.get('user');
+          if (!actor) return c.json({ error: 'forbidden' }, 403);
+          const sandbox = (await d.plugins?.get())?.control('sandbox');
+          if (!sandbox) return c.json({ error: 'project environment provider unavailable' }, 503);
+          try {
+            const resolved = await runManagedProjectCommand(sandbox, { kind: 'managed', projectId: id }, actor.id,
+              { type: 'argv', file: '/usr/bin/realpath', args: ['--zero', '--canonicalize-existing', '--', path] },
+              { maxBuffer: 8192, signal: c.req.raw.signal });
+            const parts = resolved.stdout.split('\0');
+            if (parts.length !== 2 || parts[1] !== '' || !parts[0]?.startsWith('/workspace/')) {
+              return c.json({ error: 'invalid icon path' }, 400);
+            }
+            const result = await sandbox.projectFiles({ project: { kind: 'managed', projectId: id }, accountUserId: actor.id,
+              operation: { kind: 'stat', path: parts[0] } });
+            if (result.kind !== 'stat') throw new Error('guest icon validation returned an invalid response');
+            if (!result.entry || result.entry.kind !== 'file' || !posix.resolve(result.entry.path).startsWith('/workspace/')) {
+              return c.json({ error: 'invalid icon path' }, 400);
+            }
+          } catch (error) {
+            if (error && typeof error === 'object' && 'code' in error && error.code === 1) return c.json({ error: 'invalid icon path' }, 400);
+            ctx.log.warn(`managed project icon validation failed: ${error instanceof Error ? error.message : String(error)}`);
+            return c.json({ error: 'project environment file validation unavailable' }, 503);
+          }
+        } else if (!isProjectImage(cur.path, b.icon)) return c.json({ error: 'invalid icon path' }, 400);
+      }
       patch.icon = b.icon;
     }
     if (typeof b.memoryShared === 'boolean') patch.memoryShared = b.memoryShared;
@@ -249,11 +281,27 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     return c.json({ ok: true });
   });
   app.get('/projects/:id/git', async (c) => {
-    if (!d.projects || !d.git) return c.json({ error: 'projects unavailable' }, 400);
+    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
     const p = d.projects.get(Number(c.req.param('id')));
     if (!p) return c.json({ error: 'project not found' }, 404);
     if (!canAccessProject(c, p.id)) return c.json({ error: 'forbidden' }, 403);
-    if (p.executionKind === 'managed') return c.json({ error: 'managed project Git inspection requires the environment provider' }, 503);
+    if (p.executionKind === 'managed') {
+      const actor = c.get('user');
+      if (!actor) return c.json({ error: 'forbidden' }, 403);
+      try {
+        const reader = new RealGitReader(async (file, args, options) => {
+          const sandbox = (await d.plugins?.get())?.control('sandbox');
+          if (!sandbox) throw new Error('project environment provider unavailable');
+          return runManagedProjectCommand(sandbox, { kind: 'managed', projectId: p.id }, actor.id,
+            { type: 'argv', file, args: ['-c', 'core.fsmonitor=false', ...args] }, { ...options, signal: c.req.raw.signal });
+        }, true);
+        return c.json(await reader.read('/workspace'));
+      } catch (error) {
+        ctx.log.warn(`managed project Git inspection failed: ${error instanceof Error ? error.message : String(error)}`);
+        return c.json({ error: 'project environment Git inspection unavailable' }, 503);
+      }
+    }
+    if (!d.git) return c.json({ error: 'projects unavailable' }, 400);
     return c.json(await d.git.read(p.path));
   });
 

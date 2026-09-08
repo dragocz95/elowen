@@ -62,6 +62,14 @@ export function setSpillNamespaceResolver(resolve: ((sessionId: string) => strin
   spillNamespaceResolver = resolve;
 }
 
+/** The spill namespace of a SESSION, exactly as {@link sessionToolResultSpillDir} resolves it. Exported
+ *  for the managed-project consumers, which must mint guest paths that stay valid across a `/context`
+ *  re-key for the same reason the host paths do — without holding the host directory itself, which a
+ *  guest path must never derive from or name. */
+export function sessionToolResultSpillNamespace(sessionId: string): string {
+  return spillNamespaceResolver?.(sessionId) || sessionId;
+}
+
 /** The spill directory of a SESSION, through the namespace resolver. The `||` matters: an empty
  *  namespace column (a row minted by an older build) means "the namespace is the current id", exactly
  *  what the migration backfill freezes for pre-existing conversations. */

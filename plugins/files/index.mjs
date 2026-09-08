@@ -9,6 +9,7 @@ import { createHash } from 'node:crypto';
 import { tmpdir } from 'node:os';
 import { basename, dirname, extname, join, relative } from 'node:path';
 import { promisify } from 'node:util';
+import { managedFiles } from './managed.mjs';
 
 const DEFAULT_MAX = 100_000;
 const DEFAULT_SEARCH_MAX_MATCHES = 200;
@@ -412,16 +413,16 @@ export function parsePageSpec(spec, maxPages = DEFAULT_PDF_MAX_PAGES) {
 
 /** Total page count via pdfinfo, or null when it cannot be determined (we then just try the pages asked for
  *  and let pdftotext report an empty result). Doubles as the poppler-availability probe. */
-async function pdfPageCount(abs) {
-  const { stdout } = await execFileP('pdfinfo', [abs], { encoding: 'utf8', timeout: PDF_TIMEOUT_MS, maxBuffer: PDF_MAX_BUFFER });
+async function pdfPageCount(abs, guest) {
+  const { stdout } = await (guest?.exec ?? execFileP)('pdfinfo', [abs], { encoding: 'utf8', timeout: PDF_TIMEOUT_MS, maxBuffer: PDF_MAX_BUFFER });
   const m = /^Pages:\s+(\d+)$/m.exec(stdout);
   return m ? Number(m[1]) : null;
 }
 
 /** One page's text layer (empty string for a scanned page). `-layout` preserves the visual column layout,
  *  which is what makes tables and invoices readable instead of an interleaved word soup. */
-async function pdfPageText(abs, page) {
-  const { stdout } = await execFileP('pdftotext', ['-layout', '-f', String(page), '-l', String(page), abs, '-'], {
+async function pdfPageText(abs, page, guest) {
+  const { stdout } = await (guest?.exec ?? execFileP)('pdftotext', ['-layout', '-f', String(page), '-l', String(page), abs, '-'], {
     encoding: 'utf8', timeout: PDF_TIMEOUT_MS, maxBuffer: PDF_MAX_BUFFER,
   });
   return stdout;
@@ -429,7 +430,13 @@ async function pdfPageText(abs, page) {
 
 /** Render one page to PNG bytes. pdftoppm only writes to disk, so this runs through a temp dir that is
  *  always removed — including when the render throws. */
-async function pdfPageImage(abs, page) {
+async function pdfPageImage(abs, page, guest) {
+  if (guest) {
+    const { stdout } = await guest.exec('pdftoppm', [
+      '-png', '-scale-to', String(PDF_MAX_RENDER_PX), '-f', String(page), '-l', String(page), '-singlefile', abs,
+    ], { encoding: 'buffer', timeout: PDF_TIMEOUT_MS, maxBuffer: PDF_MAX_BUFFER });
+    return stdout;
+  }
   const dir = mkdtempSync(join(tmpdir(), 'elowen-pdf-'));
   try {
     const prefix = join(dir, 'page');
@@ -458,10 +465,10 @@ async function pdfImageBlock(png) {
 
 /** Read the requested pages of a PDF: text where there is a text layer, a rendered image where there is
  *  not. Returns the PI tool-result shape directly. */
-async function readPdf(abs, pageSpec, supportsImages, readCap, maxPages) {
+async function readPdf(abs, pageSpec, supportsImages, readCap, maxPages, guest) {
   let total = null;
   try {
-    total = await pdfPageCount(abs);
+    total = await pdfPageCount(abs, guest);
   } catch (e) {
     // ENOENT here means poppler is not installed; anything else is a genuinely broken/encrypted PDF.
     if (e && typeof e === 'object' && e.code === 'ENOENT') {
@@ -492,7 +499,7 @@ async function readPdf(abs, pageSpec, supportsImages, readCap, maxPages) {
   let rendered = 0;
   let skippedImages = 0;
   for (const page of wanted) {
-    const text = await pdfPageText(abs, page);
+    const text = await pdfPageText(abs, page, guest);
     if (text.trim()) {
       parts.push(`--- page ${page} ---\n${text.trimEnd()}`);
       continue;
@@ -500,7 +507,7 @@ async function readPdf(abs, pageSpec, supportsImages, readCap, maxPages) {
     // No text layer — a scanned page. Rendering is the only way its content reaches the model at all, but
     // each image is expensive, so cap them and tell the caller which pages were left out.
     if (rendered >= PDF_MAX_IMAGE_PAGES || !supportsImages) { skippedImages += 1; continue; }
-    const block = await pdfImageBlock(await pdfPageImage(abs, page)).catch(() => null);
+    const block = await pdfImageBlock(await pdfPageImage(abs, page, guest)).catch(() => null);
     if (!block) { skippedImages += 1; continue; }
     images.push(block);
     rendered += 1;
@@ -729,9 +736,9 @@ export function seedReadStateFromHistory(sessionId, messages) {
     if (m?.role !== 'toolResult' || m?.isError === true
       || !d || d.ok !== true || d.tool !== 'Read'
       || typeof d.path !== 'string' || typeof d.contentHash !== 'string') continue;
-    const key = typeof d.workspaceId === 'string' && d.workspaceId
-      ? `${d.workspaceId}\0${d.path}`
-      : d.path;
+    const key = d.projectRef?.kind === 'managed' && Number.isSafeInteger(d.projectRef.projectId)
+      ? `managed:${d.projectRef.projectId}\0${d.path}`
+      : typeof d.workspaceId === 'string' && d.workspaceId ? `${d.workspaceId}\0${d.path}` : d.path;
     recordEntry(files, key, { hash: d.contentHash, ours: false });
     seeded++;
   }
@@ -782,13 +789,25 @@ function looksLikeImage(probe) {
 
 /** Stream one text snapshot through a fixed-size buffer. The selected output is retained only up to readCap
  * plus a small UTF-8 boundary allowance, while line counting and hashing continue without retaining the file. */
-function readTextSnapshot(abs, start, requestedLines, readCap, expectedProbe) {
+function* hostTextChunks(abs) {
   const fd = openSync(abs, 'r');
   try {
     const before = fstatSync(fd, { bigint: true });
     if (!before.isFile()) throw new Error('path is not a regular file');
-    const hash = createHash('sha256');
     const chunk = Buffer.allocUnsafe(TEXT_READ_CHUNK_BYTES);
+    for (;;) {
+      const count = readSync(fd, chunk, 0, chunk.length, null);
+      if (count === 0) break;
+      yield chunk.subarray(0, count);
+    }
+    if (!sameFileSnapshot(before, fstatSync(fd, { bigint: true }))) {
+      throw new Error('file changed while it was being read; retry the Read');
+    }
+  } finally { closeSync(fd); }
+}
+
+async function readTextSnapshot(abs, start, requestedLines, readCap, expectedProbe, guest = null) {
+    const hash = createHash('sha256');
     const retained = [];
     const retainLimit = readCap + 4;
     let retainedBytes = 0;
@@ -814,10 +833,8 @@ function readTextSnapshot(abs, start, requestedLines, readCap, expectedProbe) {
       selectedLines += 1;
       atLineStart = false;
     };
-    for (;;) {
-      const bytesRead = readSync(fd, chunk, 0, chunk.length, null);
-      if (bytesRead === 0) break;
-      const data = chunk.subarray(0, bytesRead);
+    for await (const data of guest ? guest.chunks(abs) : hostTextChunks(abs)) {
+      const bytesRead = data.length;
       if (actualProbeBytes < actualProbe.length) {
         const copy = Math.min(data.length, actualProbe.length - actualProbeBytes);
         data.copy(actualProbe, actualProbeBytes, 0, copy);
@@ -843,8 +860,7 @@ function readTextSnapshot(abs, start, requestedLines, readCap, expectedProbe) {
       }
     }
     const totalLines = currentLine + (totalBytes > 0 && lastByte !== 0x0A ? 1 : 0);
-    const after = fstatSync(fd, { bigint: true });
-    if (!sameFileSnapshot(before, after) || actualProbeBytes !== expectedProbe.length
+    if (actualProbeBytes !== expectedProbe.length
       || !actualProbe.subarray(0, actualProbeBytes).equals(expectedProbe)) {
       throw new Error('file changed while it was being read; retry the Read');
     }
@@ -857,9 +873,6 @@ function readTextSnapshot(abs, start, requestedLines, readCap, expectedProbe) {
       byteTruncated: selectedBytes > readCap,
       selectedEnd: Math.min(selectedEnd, totalLines),
     };
-  } finally {
-    closeSync(fd);
-  }
 }
 
 function safeRegexSource(query) {
@@ -1056,7 +1069,7 @@ function walkFiles(root, limit = 5000) {
 
 /** Ripgrep collects the WHOLE match set and this trims it, so `total` is the real number of matches —
  *  reported so the caller can say "showing N of M" rather than guessing from a full page. */
-async function rgSearch(abs, root, queryText, include, maxMatches) {
+async function rgSearch(abs, root, queryText, include, maxMatches, guest) {
   const ignoreGlobs = [...SKIP_DIRS].map((d) => `!${d}/**`);
   // `-i` is deliberate and fixed, not an oversight next to Grep's opt-in `-i`: Search is the discovery
   // entry point and its behaviour is one rule the model can state. Grep is the precise ripgrep tool and
@@ -1073,7 +1086,7 @@ async function rgSearch(abs, root, queryText, include, maxMatches) {
     abs,
   ];
   try {
-    const { stdout } = await execFileP('rg', args, { cwd: root, encoding: 'utf8', timeout: SEARCH_TIMEOUT_MS, maxBuffer: 1_000_000 });
+    const { stdout } = await (guest?.exec ?? execFileP)('rg', args, { cwd: root, encoding: 'utf8', timeout: SEARCH_TIMEOUT_MS, maxBuffer: 1_000_000 });
     const all = stdout.split('\n').filter(Boolean).map((line) => {
       if (!line.startsWith('/')) return line;
       const first = line.indexOf(':');
@@ -1096,12 +1109,14 @@ async function rgSearch(abs, root, queryText, include, maxMatches) {
  *  drift from whatever rg is installed, and a free-form value would reach rg as an unexplained exit 2.
  *  Cached per process — the set only changes when the rg binary itself does. */
 let rgTypeNames = null;
-async function assertKnownType(type, root) {
-  if (!rgTypeNames?.size) {
-    const { stdout } = await execFileP('rg', ['--type-list'], { cwd: root, encoding: 'utf8', timeout: SEARCH_TIMEOUT_MS, maxBuffer: 1_000_000 });
-    rgTypeNames = new Set(stdout.split('\n').map((l) => l.split(':')[0].trim()).filter(Boolean));
+async function assertKnownType(type, root, guest) {
+  let names = guest ? null : rgTypeNames;
+  if (!names?.size) {
+    const { stdout } = await (guest?.exec ?? execFileP)('rg', ['--type-list'], { cwd: root, encoding: 'utf8', timeout: SEARCH_TIMEOUT_MS, maxBuffer: 1_000_000 });
+    names = new Set(stdout.split('\n').map((l) => l.split(':')[0].trim()).filter(Boolean));
+    if (!guest) rgTypeNames = names;
   }
-  if (!rgTypeNames.has(type)) {
+  if (!names.has(type)) {
     throw new Error(`unknown type "${type}". Use a ripgrep type name (see \`rg --type-list\`), for example ts, js, py, go, rust, or use glob instead.`);
   }
 }
@@ -1113,9 +1128,9 @@ async function assertKnownType(type, root) {
  *  is that set's real size and `truncated` says whether anything remains AFTER the returned page, so the
  *  caller can name the offset that continues it. `headLimit: 0` means unlimited (reference semantics),
  *  still bounded by `maxMatches`. */
-async function rgGrep(target, root, pattern, opts = {}) {
+async function rgGrep(target, root, pattern, opts = {}, guest) {
   const { include, type, outputMode = 'content', beforeContext, afterContext, contextLines, lineNumbers = true, multiline, caseInsensitive, headLimit, offset = 0, maxMatches } = opts;
-  if (type) await assertKnownType(type, root);
+  if (type) await assertKnownType(type, root, guest);
   const ignoreGlobs = [...SKIP_DIRS].map((d) => `!${d}/**`);
   // Hidden files are ordinary source in a repository — CI workflows, dotfile configs, .env templates — and
   // rg skips them by default. The SKIP_DIRS globs below still keep .git out of the result set.
@@ -1155,7 +1170,7 @@ async function rgGrep(target, root, pattern, opts = {}) {
   args.push('--', pattern, target);
   let stdout;
   try {
-    ({ stdout } = await execFileP('rg', args, { cwd: root, encoding: 'utf8', timeout: SEARCH_TIMEOUT_MS, maxBuffer: 2_000_000 }));
+    ({ stdout } = await (guest?.exec ?? execFileP)('rg', args, { cwd: root, encoding: 'utf8', timeout: SEARCH_TIMEOUT_MS, maxBuffer: 2_000_000 }));
   } catch (e) {
     // rg exits 1 on "no matches" (same as content mode) — a real empty result, not an rg-missing signal.
     if (e && typeof e === 'object' && 'code' in e && e.code === 1) return { lines: [], truncated: false, total: 0 };
@@ -1177,8 +1192,15 @@ async function rgGrep(target, root, pattern, opts = {}) {
     // boundary for the content relativizer to find — a plain prefix strip is what is left.
     return lineNumbers ? relativizeContentLine(line, root) : relativizePathPrefix(line, root);
   };
+  const matchedFiles = [];
+  if (outputMode === 'files_with_matches') {
+    for (const abs of raw) {
+      const mtime = guest ? Date.parse((await guest.stat(abs))?.modifiedAt ?? '') || 0 : mtimeOf(abs);
+      matchedFiles.push({ abs, mtime });
+    }
+  }
   const ordered = outputMode === 'files_with_matches'
-    ? raw.map((abs) => ({ abs, mtime: mtimeOf(abs) })).sort((a, b) => b.mtime - a.mtime).map((f) => relative(root, f.abs) || f.abs)
+    ? matchedFiles.sort((a, b) => b.mtime - a.mtime).map((f) => relative(root, f.abs) || f.abs)
     : raw.map(relativizeRow);
   const lines = ordered.slice(offset, offset + cap);
   return { lines, truncated: ordered.length > offset + lines.length, total: ordered.length };
@@ -1194,11 +1216,14 @@ export function register(ctx) {
   // the only one there is.
   const pdfMaxPages = Math.min(Math.max(Number(ctx.config.pdfMaxPages) || DEFAULT_PDF_MAX_PAGES, 10), DEFAULT_PDF_MAX_PAGES);
   const pathMeta = (abs) => {
+    const access = ctx.currentAccess();
+    if (access.projectRef?.kind === 'managed') return { path: abs, projectRef: access.projectRef };
     const path = ctx.displayPath(abs);
-    const workspaceId = ctx.currentAccess().workspaceRef?.workspaceId;
+    const workspaceId = access.workspaceRef?.workspaceId;
     return { path, ...(workspaceId ? { workspaceId } : {}) };
   };
-  const statePath = (abs) => ctx.pathStateKey(abs);
+  const statePath = (abs) => ctx.currentAccess().projectRef?.kind === 'managed'
+    ? `managed:${ctx.currentAccess().projectRef.projectId}\0${abs}` : ctx.pathStateKey(abs);
   const safeError = (error) => new Error(ctx.sanitizePathOutput(error instanceof Error ? error.message : String(error)));
   const sanitizeResult = (result, abs) => ({
     ...result,
@@ -1246,7 +1271,8 @@ export function register(ctx) {
       try {
         // The read intent is what lets a fork child open the spill file its INHERITED placeholder names —
         // the file lives under the parent's directory, and no other tool here promises to read it back.
-        const abs = ctx.assertPathAllowed(p.file_path, { intent: 'read' });
+        const guest = managedFiles(ctx, _signal);
+        const abs = guest ? guest.resolve(p.file_path) : ctx.assertPathAllowed(p.file_path, { intent: 'read' });
         if (p.offset !== undefined && (!Number.isSafeInteger(p.offset) || p.offset < 0)) {
           return fail('Read', new Error('offset must be a non-negative integer.'), pathMeta(abs));
         }
@@ -1262,10 +1288,10 @@ export function register(ctx) {
         if (binaryExt) {
           return fail('Read', new Error(`This tool cannot read binary files. The file appears to be a binary ${binaryExt} file. Please use appropriate tools for binary file analysis.`), pathMeta(abs));
         }
-        if (!existsSync(abs)) {
-          return fail('Read', new Error(pathNotFoundMessage('File does not exist.', abs, ctx.defaultCwd(), (value) => ctx.displayPath(value))), pathMeta(abs));
+        if (guest ? !(await guest.stat(abs)) : !existsSync(abs)) {
+          return fail('Read', new Error(guest ? `File does not exist: ${abs}` : pathNotFoundMessage('File does not exist.', abs, ctx.defaultCwd(), (value) => ctx.displayPath(value))), pathMeta(abs));
         }
-        const probe = readFileProbe(abs);
+        const probe = guest ? (await guest.chunk(abs, 0, FILE_PROBE_BYTES)).bytes : readFileProbe(abs);
         // An existing empty file is not a failed read: the reference answers it with a warning and marks
         // the file read, and so do we. There is no content the model could be editing blind against —
         // there is no content at all — so the hash of those zero bytes authorizes a later Write exactly
@@ -1278,8 +1304,12 @@ export function register(ctx) {
         const model = ectx?.model ?? ctx.model;
         const supportsImages = !model || (Array.isArray(model.input) ? model.input.includes('image') : true);
         if (isPdf(probe)) {
-          const raw = readFileSync(abs);
-          const result = sanitizeResult(await readPdf(abs, p.pages, supportsImages, readCap, pdfMaxPages), abs);
+          const snapshot = guest ? await guest.read(abs, MAX_EDIT_BYTES) : null;
+          const raw = snapshot ? snapshot.bytes : readFileSync(abs);
+          const result = sanitizeResult(await readPdf(abs, p.pages, supportsImages, readCap, pdfMaxPages, guest), abs);
+          if (guest && (await guest.stat(abs))?.version !== snapshot.version) {
+            throw new Error('file changed while it was being converted; retry the Read');
+          }
           if (!result.details?.ok) return result;
           // Only a read that actually put the whole document in front of the model authorizes a later
           // mutation, and `contentHash` is what vouches — live and when the transcript is replayed after a
@@ -1290,7 +1320,7 @@ export function register(ctx) {
           return { ...result, details: { ...details, contentHash: hashOf(raw) } };
         }
         if (extname(abs).toLowerCase() === '.ipynb') {
-          const raw = readFileSync(abs);
+          const raw = guest ? (await guest.read(abs, MAX_EDIT_BYTES)).bytes : readFileSync(abs);
           const result = sanitizeResult(readNotebook(raw, supportsImages, readCap), abs);
           if (!result.details?.ok) return result;
           // Same rule as the PDF branch: a truncated render, or one whose images the model cannot see, is
@@ -1300,7 +1330,7 @@ export function register(ctx) {
           return { ...result, details: { ...result.details, contentHash: hashOf(raw) } };
         }
         if (looksLikeImage(probe)) {
-          const raw = readFileSync(abs);
+          const raw = guest ? (await guest.read(abs, MAX_EDIT_BYTES)).bytes : readFileSync(abs);
           const mime = detectImageMime(raw);
           if (mime) {
             const details = { ok: true, tool: 'Read', truncated: false, ...pathMeta(abs), bytes: raw.length, image: true, mimeType: mime };
@@ -1340,7 +1370,7 @@ export function register(ctx) {
         // applies to it. Without one, an oversized selection is an ERROR rather than a silent truncation:
         // quietly handing back a prefix is how a model ends up editing against content it never saw.
         const byteCap = p.limit === undefined ? readCap : Infinity;
-        const snapshot = readTextSnapshot(abs, start, requestedLines, byteCap, probe);
+        const snapshot = await readTextSnapshot(abs, start, requestedLines, byteCap, probe, guest);
         const total = snapshot.totalLines;
         if (total === 0) {
           markFileRead(ctx.currentSessionId?.(), statePath(abs), Buffer.alloc(0));
@@ -1409,17 +1439,28 @@ export function register(ctx) {
       file_path: Type.String({ description: 'Absolute path to the file' }),
       content: Type.String({ description: 'The complete new content of the file' }),
     }, { additionalProperties: false }),
-    execute: async (_id, p) => {
+    execute: async (_id, p, _signal) => {
       try {
-        const abs = ctx.assertPathAllowed(p.file_path);
+        const guest = managedFiles(ctx, _signal);
+        const abs = guest ? guest.resolve(p.file_path) : ctx.assertPathAllowed(p.file_path);
         const sessionId = ctx.currentSessionId?.();
         // Serialize the read-modify-write against other mutations of the SAME file (different files still
         // run in parallel) so a concurrent edit can't slip between the diff-baseline read and the write.
         // The guard check lives INSIDE the queue for the same reason: a file that changed between the check
         // and the write would defeat the point of checking.
-        return await withFileMutationQueue(abs, async () => {
+        // PI's queue realpaths its key on the host. Guest writes instead use provider-side version CAS.
+        return await (guest ? async (_path, mutate) => mutate() : withFileMutationQueue)(abs, async () => {
           let beforeBuf = null;
-          try { beforeBuf = readFileSync(abs); } catch { /* new file */ }
+          let version = null;
+          if (guest) {
+            if (await guest.stat(abs)) {
+              const read = await guest.read(abs, MAX_EDIT_BYTES);
+              beforeBuf = read.bytes;
+              version = read.version;
+            }
+          } else {
+            try { beforeBuf = readFileSync(abs); } catch { /* new file */ }
+          }
           const display = ctx.displayPath(abs);
           const guard = readGuardError(sessionId, statePath(abs), beforeBuf, false);
           if (guard) return ok('Write', `Error: ${guard}`, { ok: false, ...pathMeta(abs) });
@@ -1428,8 +1469,11 @@ export function register(ctx) {
           // write may happen at all, and a directory created for a refused write would be litter. The path
           // is already through ctx.assertPathAllowed, so every directory made here sits inside a root the
           // caller may write to.
-          if (beforeBuf === null) mkdirSync(dirname(abs), { recursive: true });
-          writeFileSync(abs, p.content, 'utf-8');
+          if (guest) await guest.write(abs, Buffer.from(p.content, 'utf8'), version);
+          else {
+            if (beforeBuf === null) mkdirSync(dirname(abs), { recursive: true });
+            writeFileSync(abs, p.content, 'utf-8');
+          }
           const written = Buffer.from(p.content, 'utf-8');
           markFileRead(sessionId, statePath(abs), written, true);
           const base = beforeBuf?.toString('utf-8') ?? '';
@@ -1465,13 +1509,15 @@ export function register(ctx) {
       replace_all: Type.Optional(Type.Boolean({ default: false, description: 'Replace every occurrence (default false)' })),
       fuzzy_match: Type.Optional(Type.Boolean({ default: false, description: 'Elowen extension: normalize smart quotes, Unicode dashes, exotic spaces and trailing whitespace before matching (default false)' })),
     }, { additionalProperties: false }),
-    execute: async (_id, p) => {
+    execute: async (_id, p, _signal) => {
       try {
-        const abs = ctx.assertPathAllowed(p.file_path);
+        const guest = managedFiles(ctx, _signal);
+        const abs = guest ? guest.resolve(p.file_path) : ctx.assertPathAllowed(p.file_path);
         const sessionId = ctx.currentSessionId?.();
         // Serialize the read-modify-write against other mutations of the SAME file (different files still
         // run in parallel) so a concurrent write can't slip between the match read and the write.
-        return await withFileMutationQueue(abs, async () => {
+        // PI's queue realpaths its key on the host. Guest writes instead use provider-side version CAS.
+        return await (guest ? async (_path, mutate) => mutate() : withFileMutationQueue)(abs, async () => {
           // An empty `old_string` is the reference's file-creation form (`FileEditTool.ts:224-263`), and it
           // is the ONE Edit that runs without a prior Read — there is nothing on disk to have read. On an
           // existing path it stays a refusal, in the reference's own words, so creation never turns into a
@@ -1482,11 +1528,14 @@ export function register(ctx) {
             if (p.new_string === '') {
               return ok('Edit', 'Error: No changes to make: old_string and new_string are exactly the same.', { ok: false, ...pathMeta(abs) });
             }
-            if (existsSync(abs)) {
+            if (guest ? await guest.stat(abs) : existsSync(abs)) {
               return ok('Edit', 'Error: Cannot create new file - file already exists.', { ok: false, ...pathMeta(abs) });
             }
-            mkdirSync(dirname(abs), { recursive: true });
-            writeFileSync(abs, p.new_string, 'utf-8');
+            if (guest) await guest.write(abs, Buffer.from(p.new_string, 'utf8'), null);
+            else {
+              mkdirSync(dirname(abs), { recursive: true });
+              writeFileSync(abs, p.new_string, 'utf-8');
+            }
             const created = Buffer.from(p.new_string, 'utf-8');
             markFileRead(sessionId, statePath(abs), created, true);
             const newDiff = displayDiff('', p.new_string);
@@ -1499,19 +1548,21 @@ export function register(ctx) {
           // The same missing-path answer Read, Glob and Grep give, and the reference's own for this tool:
           // a raw ENOENT from the stat below names neither the directory the path was resolved against nor
           // the neighbour the caller probably meant.
-          if (!existsSync(abs)) {
+          if (guest && !(await guest.stat(abs))) throw new Error(`File does not exist: ${abs}`);
+          if (!guest && !existsSync(abs)) {
             return ok('Edit', `Error: ${pathNotFoundMessage(
               'File does not exist.', abs, ctx.defaultCwd(), (value) => ctx.displayPath(value),
             )}`, { ok: false, ...pathMeta(abs) });
           }
           // Checked on the stat, before the slurp: reading a gigabyte-plus file into a single string is the
           // out-of-memory failure this refusal exists to prevent, so it cannot come after the read.
-          const size = statSync(abs).size;
+          const size = guest ? (await guest.stat(abs)).size : statSync(abs).size;
           if (size > MAX_EDIT_BYTES) {
             return ok('Edit', `Error: File is too large to edit (${formatSize(size)}). Maximum editable file size is 1 GB.`,
               { ok: false, ...pathMeta(abs) });
           }
-          const beforeBuf = readFileSync(abs);
+          const snapshot = guest ? await guest.read(abs, MAX_EDIT_BYTES) : null;
+          const beforeBuf = snapshot ? snapshot.bytes : readFileSync(abs);
           // `true`: an anchored edit may proceed through a post-write reformat of our OWN content — its
           // old_string still has to match what is on disk now. A blind overwrite (Write) gets no such pass.
           const display = ctx.displayPath(abs);
@@ -1529,7 +1580,8 @@ export function register(ctx) {
             { ok: false, ...pathMeta(abs), matches: plan.count });
           }
           if (plan.newContent === plan.content) return ok('Edit', 'Error: the replacement produced identical content.', { ok: false, ...pathMeta(abs) });
-          writeFileSync(abs, plan.after, 'utf-8');
+          if (guest) await guest.write(abs, Buffer.from(plan.after, 'utf8'), snapshot.version);
+          else writeFileSync(abs, plan.after, 'utf-8');
           const written = Buffer.from(plan.after, 'utf-8');
           markFileRead(sessionId, statePath(abs), written, true);
           const diff = displayDiff(plan.content, plan.newContent);
@@ -1550,9 +1602,17 @@ export function register(ctx) {
       'Do not use recursively; use Search for codebase-wide discovery.',
     ].join(' '),
     parameters: Type.Object({ path: Type.String() }),
-    execute: async (_id, p) => {
+    execute: async (_id, p, _signal) => {
       try {
-        const abs = ctx.assertPathAllowed(p.path);
+        const guest = managedFiles(ctx, _signal);
+        const abs = guest ? guest.resolve(p.path) : ctx.assertPathAllowed(p.path);
+        if (guest) {
+          const listing = await guest.list(abs, WALK_CAP);
+          const names = listing.entries.map((entry) => `${basename(entry.path)}${entry.kind === 'directory' ? '/' : ''}`);
+          return ok('ListDir', (names.join('\n') || '(empty)') + (listing.truncated ? '\n[Directory listing truncated.]' : ''), {
+            ...pathMeta(abs), count: names.length, truncated: listing.truncated,
+          });
+        }
         const entries = readdirSync(abs).map((n) => {
           try { return statSync(join(abs, n)).isDirectory() ? `${n}/` : n; } catch { return n; }
         });
@@ -1575,11 +1635,14 @@ export function register(ctx) {
       query: Type.String({ description: 'Literal text or regular expression to search for in file contents' }),
       include: Type.Optional(Type.String({ description: 'Optional file glob, e.g. "*.ts", "**/*.tsx", or "*.{ts,tsx}"; a comma- or space-separated list filters on every pattern in it' })),
     }),
-    execute: async (_id, p) => {
+    execute: async (_id, p, _signal) => {
       try {
-        const abs = ctx.assertPathAllowed(p.path);
+        const guest = managedFiles(ctx, _signal);
+        const abs = guest ? guest.resolve(p.path) : ctx.assertPathAllowed(p.path);
         if (!String(p.query ?? '').trim()) return ok('Search', 'Error: query is required.', { ok: false, ...pathMeta(abs) });
-        const root = statSync(abs).isDirectory() ? abs : dirname(abs);
+        const entry = guest ? await guest.stat(abs) : null;
+        if (guest && !entry) throw new Error(`Path does not exist: ${abs}`);
+        const root = (guest ? entry.kind === 'directory' : statSync(abs).isDirectory()) ? abs : dirname(abs);
         const queryText = String(p.query);
         const lines = [];
         // Matches found, INCLUDING the ones past the cap. Counting them is what lets the notice below say
@@ -1587,7 +1650,7 @@ export function register(ctx) {
         // full is far more often a complete result than a trimmed one.
         let total = 0;
         try {
-          const hits = await rgSearch(abs, root, queryText, p.include, searchMaxMatches);
+          const hits = await rgSearch(abs, root, queryText, p.include, searchMaxMatches, guest);
           lines.push(...hits.lines);
           total = hits.total;
         } catch (error) {
@@ -1622,11 +1685,13 @@ export function register(ctx) {
       'Output is JSON so it can be parsed by the model.',
     ].join(' '),
     parameters: Type.Object({ path: Type.String({ description: 'Absolute path to inspect' }) }),
-    execute: async (_id, p) => {
+    execute: async (_id, p, _signal) => {
       try {
-        const abs = ctx.assertPathAllowed(p.path);
-        const s = statSync(abs);
-        const info = { ...pathMeta(abs), type: s.isDirectory() ? 'directory' : s.isFile() ? 'file' : 'other', bytes: s.size, modifiedAt: s.mtime.toISOString() };
+        const guest = managedFiles(ctx, _signal);
+        const abs = guest ? guest.resolve(p.path) : ctx.assertPathAllowed(p.path);
+        const s = guest ? await guest.stat(abs) : statSync(abs);
+        if (!s) throw new Error(`Path does not exist: ${abs}`);
+        const info = { ...pathMeta(abs), type: guest ? s.kind : s.isDirectory() ? 'directory' : s.isFile() ? 'file' : 'other', bytes: s.size, modifiedAt: guest ? s.modifiedAt : s.mtime.toISOString() };
         return ok('FileInfo', JSON.stringify(info, null, 2), info);
       } catch (e) { return fail('FileInfo', safeError(e)); }
     },
@@ -1640,10 +1705,25 @@ export function register(ctx) {
       'Do not use for arbitrary shell commands; it only runs safe git status/rev-parse commands.',
     ].join(' '),
     parameters: Type.Object({ path: Type.String({ description: 'Absolute repository path or file path inside it' }) }),
-    execute: async (_id, p) => {
+    execute: async (_id, p, _signal) => {
       try {
-        const abs = ctx.assertPathAllowed(p.path);
+        const guest = managedFiles(ctx, _signal);
+        const abs = guest ? guest.resolve(p.path) : ctx.assertPathAllowed(p.path);
         const access = ctx.currentAccess();
+        if (guest) {
+          const entry = await guest.stat(abs);
+          if (!entry) throw new Error(`Path does not exist: ${abs}`);
+          const cwd = entry.kind === 'directory' ? abs : dirname(abs);
+          const run = async (args) => (await guest.exec('git', ['-c', 'core.fsmonitor=false', ...args], {
+            cwd, encoding: 'utf8', timeout: SEARCH_TIMEOUT_MS, maxBuffer: 1_000_000,
+          })).stdout.trim();
+          const root = await run(['rev-parse', '--show-toplevel']);
+          const branch = await run(['branch', '--show-current']) || await run(['rev-parse', '--short', 'HEAD']);
+          const lines = (await run(['status', '--short'])).split('\n').filter(Boolean);
+          return ok('GitStatus', [`branch ${branch}`, `root ${root}`, lines.length ? '' : 'clean', ...lines.slice(0, 120)].join('\n'), {
+            ...pathMeta(abs), root, branch, dirtyFiles: lines.length, truncated: lines.length > 120,
+          });
+        }
         if (access.workspaceRef) {
           const sandbox = ctx.control('sandbox');
           if (!sandbox?.gitStatus || !Number.isSafeInteger(access.contributionUserId)) {
@@ -1683,20 +1763,23 @@ export function register(ctx) {
       pattern: Type.String({ description: 'The glob pattern to match files against (e.g. "**/*.ts", "src/**/*.{js,jsx}")' }),
       path: Type.Optional(Type.String({ description: 'The directory to search in. Defaults to the current working directory.' })),
     }),
-    execute: async (_id, p) => {
+    execute: async (_id, p, _signal) => {
       try {
         // An absolute pattern carries its own search root, which is what makes it match at all: the
         // matcher only ever sees paths relative to that root.
+        const guest = managedFiles(ctx, _signal);
         const anchored = extractGlobBase(p.pattern);
-        const searchRoot = anchored
+        const searchRoot = guest ? guest.resolve(anchored?.base ?? p.path) : anchored
           ? ctx.assertPathAllowed(anchored.base)
           : (p.path ? ctx.assertPathAllowed(p.path) : ctx.defaultCwd());
-        if (!existsSync(searchRoot)) {
+        const entry = guest ? await guest.stat(searchRoot) : null;
+        if (guest && !entry) throw new Error(`Path does not exist: ${searchRoot}`);
+        if (!guest && !existsSync(searchRoot)) {
           return ok('Glob', `Error: ${pathNotFoundMessage(
             `Directory does not exist: ${ctx.displayPath(searchRoot)}.`, searchRoot, ctx.defaultCwd(), (value) => ctx.displayPath(value),
           )}`, { ok: false, ...pathMeta(searchRoot) });
         }
-        const abs = statSync(searchRoot).isDirectory() ? searchRoot : dirname(searchRoot);
+        const abs = (guest ? entry.kind === 'directory' : statSync(searchRoot).isDirectory()) ? searchRoot : dirname(searchRoot);
         if (!p.path && !anchored && isFsRoot(abs)) return ok('Glob', 'Error: no path given and no project root is set — pass an explicit path.', { ok: false });
         const regex = globRegex(anchored ? anchored.pattern : p.pattern);
         if (!regex) return ok('Glob', 'Error: invalid glob pattern.', { ok: false });
@@ -1704,8 +1787,9 @@ export function register(ctx) {
         // One over the cap, so "the tree holds exactly WALK_CAP files" is distinguishable from "the walk
         // ran out of budget" — the notice below claims matches were never examined, which must not be
         // said about a traversal that actually finished.
-        const walked = walkFiles(abs, WALK_CAP + 1);
-        const walkTruncated = walked.length > WALK_CAP;
+        const guestWalk = guest ? await guest.walk(abs, WALK_CAP + 1, SKIP_DIRS) : null;
+        const walked = guestWalk ? guestWalk.files : walkFiles(abs, WALK_CAP + 1);
+        const walkTruncated = guestWalk?.truncated === true || walked.length > WALK_CAP;
         const files = walked.slice(0, WALK_CAP);
         // "newest first" must hold across the WHOLE match set, so collect EVERY match (matching is cheap),
         // then sort by mtime and trim — never stop the walk in traversal order and sort only that subset,
@@ -1713,7 +1797,10 @@ export function register(ctx) {
         const matched = [];
         for (const file of files) {
           const rel = relative(abs, file) || file;
-          if (regex.test(rel) || regex.test(rel.split('/').at(-1) ?? rel)) matched.push({ path: rel, mtime: mtimeOf(file) });
+          if (regex.test(rel) || regex.test(rel.split('/').at(-1) ?? rel)) {
+            const mtime = guest ? Date.parse((await guest.stat(file))?.modifiedAt ?? '') || 0 : mtimeOf(file);
+            matched.push({ path: rel, mtime });
+          }
         }
         matched.sort((a, b) => b.mtime - a.mtime);
         const results = matched.slice(0, globMax).map((m) => m.path);
@@ -1726,7 +1813,9 @@ export function register(ctx) {
         // the total describe only what it examined, which is what the second notice warns about.
         const notices = [
           ...(truncated ? [`[Showing the ${results.length} newest of ${matched.length} matching files — narrow the pattern for more.]`] : []),
-          ...(walkTruncated ? [`[The traversal stopped at ${WALK_CAP} files, so matches beyond it were never examined — search a narrower path.]`] : []),
+          ...(walkTruncated ? [guestWalk?.truncated
+            ? '[The guest listing reached its traversal or directory limit; further matches were not examined. Search a narrower path.]'
+            : `[The traversal stopped at ${WALK_CAP} files, so matches beyond it were never examined — search a narrower path.]`] : []),
         ];
         const text = [results.join('\n') || 'No files found', ...notices].join('\n\n');
         return ok('Glob', text, {
@@ -1769,17 +1858,20 @@ export function register(ctx) {
       head_limit: Type.Optional(Type.Integer({ minimum: 0, description: `Max number of result lines to return. Defaults to ${searchMaxMatches}; 0 removes the head limit but the ${searchMaxMatches} cap still applies.` })),
       offset: Type.Optional(Type.Integer({ minimum: 0, description: 'Skip this many results before the page returned, for continuing a truncated listing. Defaults to 0.' })),
     }),
-    execute: async (_id, p) => {
+    execute: async (_id, p, _signal) => {
       try {
         // rg accepts a single FILE as its search path — pass it through so `path` pointing at a file
         // searches that file, not its whole parent directory. `root` (its dirname) only relativizes output.
-        const target = p.path ? ctx.assertPathAllowed(p.path) : ctx.defaultCwd();
-        if (!existsSync(target)) {
+        const guest = managedFiles(ctx, _signal);
+        const target = guest ? guest.resolve(p.path) : p.path ? ctx.assertPathAllowed(p.path) : ctx.defaultCwd();
+        const entry = guest ? await guest.stat(target) : null;
+        if (guest && !entry) throw new Error(`Path does not exist: ${target}`);
+        if (!guest && !existsSync(target)) {
           return ok('Grep', `Error: ${pathNotFoundMessage(
             `Path does not exist: ${ctx.displayPath(target)}.`, target, ctx.defaultCwd(), (value) => ctx.displayPath(value),
           )}`, { ok: false, ...pathMeta(target) });
         }
-        const isDir = statSync(target).isDirectory();
+        const isDir = guest ? entry.kind === 'directory' : statSync(target).isDirectory();
         const root = isDir ? target : dirname(target);
         if (!p.path && isFsRoot(root)) return ok('Grep', 'Error: no path given and no project root is set — pass an explicit path.', { ok: false });
         if (!String(p.pattern ?? '').trim()) return ok('Grep', 'Error: pattern is required.', { ok: false });
@@ -1811,7 +1903,7 @@ export function register(ctx) {
             headLimit: p.head_limit,
             offset,
             maxMatches: searchMaxMatches,
-          });
+          }, guest);
           lines = r.lines;
           truncated = r.truncated;
           total = r.total;

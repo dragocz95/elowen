@@ -1,8 +1,9 @@
 import { defineTool } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { currentSessionId, currentTurnMode } from '../../plugins/policyContext.js';
-import { readPlan } from '../continuity/planStore.js';
+import { readPlanForTurn, writePlan } from '../continuity/planStore.js';
 import { planFilePath } from '../../shared/paths.js';
+import { guestPlanPath, isManagedProjectTurn, type SandboxResolver } from '../managedArtifacts.js';
 import { EXIT_PLAN_MODE_TOOL } from '../../shared/planTool.js';
 
 /** Refusal when the tool is called outside plan mode. Adapted from the reference's validateInput text,
@@ -21,7 +22,7 @@ const toolText = (text: string) => ({ content: [{ type: 'text' as const, text }]
  *  The plan is NOT a parameter. The model writes it to the session's plan file (the only path plan mode
  *  lets it write) and this tool reads it back from disk, so one document is the single source of truth for
  *  the model, the approval UI, the post-compaction re-injection and the user's own editor. */
-export function buildExitPlanModeTool() {
+export function buildExitPlanModeTool(deps: { sandbox?: SandboxResolver } = {}) {
   return defineTool({
     name: EXIT_PLAN_MODE_TOOL,
     label: 'Submit plan',
@@ -50,11 +51,30 @@ export function buildExitPlanModeTool() {
       const sessionId = currentSessionId();
       if (!sessionId) return toolText(NOT_IN_PLAN_MODE);
 
-      const plan = readPlan(sessionId);
+      const managed = isManagedProjectTurn();
+      const read = await readPlanForTurn(deps.sandbox, sessionId);
+      if ('error' in read) {
+        // The managed provider is unreachable: refusing is honest, while "no plan" would tell the model
+        // to rewrite a document that exists where it cannot look.
+        return toolText(`ExitPlanMode: ${read.error}.`);
+      }
+      const plan = read.plan;
       // An empty or missing file means the model reached for the tool before writing anything. Say where
-      // the file is rather than just refusing, so the next attempt can succeed without guessing.
+      // the file is rather than just refusing, so the next attempt can succeed without guessing — the
+      // GUEST path on a managed turn, which is the only plan path that turn can write.
       if (!plan) {
-        return toolText(`No plan has been written yet. Write your plan to ${planFilePath(process.env, sessionId)} first, then call ${EXIT_PLAN_MODE_TOOL} again.`);
+        const where = managed ? guestPlanPath(sessionId) : planFilePath(process.env, sessionId);
+        return toolText(`No plan has been written yet. Write your plan to ${where} first, then call ${EXIT_PLAN_MODE_TOOL} again.`);
+      }
+      // The central plans directory stays the durable source (the non-managed read path, the user's own
+      // editor and the lifecycle sweeps all read it), so a managed-authored plan is written THROUGH to
+      // it at submit time. A FAILED write-through refuses the submission visibly: an approval whose
+      // document never reached the durable store would lose the plan on the next non-managed read,
+      // sweep or editor pass. The guest copy is untouched; the model can retry.
+      if (managed && !writePlan(sessionId, plan)) {
+        return toolText('ExitPlanMode: your plan could not be written to the central plan store, so it '
+          + 'has not been submitted. Do not rewrite it from memory — the guest copy is intact. Ask the '
+          + 'user to retry the submission.');
       }
       // The plan rides `details`, which reaches the CLIENT but not the model — the approval UI needs the
       // markdown to render, while the model has just written it and gains nothing from being handed it

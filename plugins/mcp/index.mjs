@@ -8,7 +8,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { ReadBuffer, serializeMessage } from '@modelcontextprotocol/sdk/shared/stdio.js';
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -111,12 +111,24 @@ function parseJsonArray(value) {
   catch { return []; }
 }
 
-function loadStoredSpecs(db) {
+function loadStoredSpecs(db, logger) {
   const rows = db.prepare('SELECT owner_user_id, name, spec_json, tools_json, revision FROM p_mcp_servers ORDER BY owner_user_id IS NOT NULL, owner_user_id, name').all();
   const specs = [];
   for (const row of rows) {
     const spec = parseJsonObject(row.spec_json);
     if (!spec || typeof row.name !== 'string') continue;
+    if (Object.hasOwn(spec, 'projectRef')) {
+      // Fail CLOSED: a stored binding that no longer validates is dropped, never reinterpreted — the only
+      // reinterpretations available are "host command" (the exact execution the binding exists to prevent)
+      // or "the currently selected project" (inference this feature forbids). The same closed door rejects
+      // a binding parked on a remote transport: no runtime that a non-stdio row can reach honours a
+      // project binding, so the ref must not survive as metadata around a host/remote execution path.
+      // The DB row is left untouched for inspection; recreating the server re-persists a valid binding.
+      try {
+        spec.projectRef = projectBinding(spec.projectRef);
+        if (transportKind(spec) !== 'stdio') throw new Error('only stdio MCP servers may have a project binding');
+      } catch { logger?.warn?.(`mcp: dropping stored server "${row.name}" whose managed project binding no longer validates`); continue; }
+    }
     const cachedBridged = parseJsonArray(row.tools_json);
     specs.push({ ...spec, name: row.name, enabled: spec.enabled !== false, ownerUserId: row.owner_user_id == null ? null : Number(row.owner_user_id), cachedBridged, revision: Number.isSafeInteger(row.revision) ? row.revision : 0 });
   }
@@ -172,7 +184,14 @@ function assertTransportAuthority(ctx, spec) {
 
 const SENSITIVE_URL_PARAMETER = /^(?:api[_-]?key|auth|authorization|access[_-]?token|password|secret|token)$/i;
 
+function projectBinding(value) {
+  if (!value || value.kind !== 'managed' || !Number.isSafeInteger(value.projectId) || value.projectId < 1
+    || Object.keys(value).some(key => !['kind', 'projectId'].includes(key))) throw new Error('invalid managed MCP project binding');
+  return { kind: 'managed', projectId: value.projectId };
+}
+
 export function validateServerInput(input) {
+  const projectRef = input?.projectRef === undefined ? undefined : projectBinding(input.projectRef);
   const name = String(input?.name ?? '').trim();
   if (!/^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$/.test(name)) throw new Error('server name must be 1-40 letters, numbers, underscores or dashes');
   const transport = input?.transport ?? (input?.url ? 'http' : 'stdio');
@@ -181,13 +200,14 @@ export function validateServerInput(input) {
     const command = String(input?.command ?? '').trim();
     if (!command) throw new Error('stdio MCP servers require command');
     return {
-      name, enabled: input?.enabled !== false, transport, command,
+      name, enabled: input?.enabled !== false, transport, command, ...(projectRef ? { projectRef } : {}),
       args: Array.isArray(input?.args) ? input.args.map(String) : [],
       ...(input?.env && typeof input.env === 'object' && !Array.isArray(input.env)
         ? { env: Object.fromEntries(Object.entries(input.env).map(([key, value]) => [key, String(value)])) }
         : {}),
     };
   }
+  if (projectRef) throw new Error('only stdio MCP servers may have a project binding');
   const url = String(input?.url ?? '').trim();
   let parsed;
   try { parsed = new URL(url); } catch { throw new Error(`${transport} MCP servers require a valid URL`); }
@@ -214,8 +234,13 @@ async function closeLiveSpec(spec) {
 
 async function addMcpServerForScope(ctx, scope, input) {
   const ownerUserId = ownerForScope(ctx, scope);
-  const spec = { ...validateServerInput(input), ownerUserId, cachedBridged: [] };
+  const selected = ctx.currentAccess().projectRef;
+  const binding = transportKind(input) === 'stdio' && selected?.kind === 'managed' ? selected : input?.projectRef;
+  if (input?.projectRef !== undefined && binding?.projectId !== projectBinding(input.projectRef).projectId) throw new Error('MCP project binding differs from the selected project');
+  const spec = { ...validateServerInput({ ...input, ...(binding ? { projectRef: binding } : {}) }), ownerUserId, cachedBridged: [] };
   assertTransportAuthority(ctx, spec);
+  // The binding is authorized against the LIVE project before anything is persisted — disabled rows included.
+  if (spec.projectRef) await assertBindingAuthorized(ctx, spec.projectRef);
   if (state.specs.some((candidate) => candidate.name === spec.name
     && (candidate.ownerUserId == null || candidate.ownerUserId === ownerUserId))) {
     throw new Error(`MCP server "${spec.name}" already exists in this account's visible scope`);
@@ -263,10 +288,11 @@ async function reconnectMcpServerForScope(ctx, scope, name) {
   const spec = specForOwner(ownerUserId, String(name ?? '').trim());
   if (!spec) throw new Error(`unknown ${scope} MCP server "${name}"`);
   if (!spec.enabled) throw new Error(`MCP server "${name}" is disabled`);
+  if (!spec.projectRef && isProjectStdio(ctx, spec)) throw new Error('central stdio reconnection requires host mode; managed project clients connect separately for each operation');
   await closeLiveSpec(spec);
   const tools = await connectServer(ctx, spec, state.live);
   if (ownerUserId != null) await closeLiveSpec(spec);
-  if (tools.length) registerBridgedTools(ctx, ownerUserId == null ? connectedClient(state.live) : lazyClient(ctx, state.live), [{ spec, tools }]);
+  if (tools.length) registerBridgedTools(ctx, ownerUserId == null && !spec.projectRef ? connectedClient(state.live) : lazyClient(ctx, state.live), [{ spec, tools }]);
   ctx.requestReload();
   return publicServerState(spec);
 }
@@ -311,8 +337,11 @@ async function updateMcpServerForScope(ctx, scope, name, input) {
     throw error;
   }
   const previous = { ...spec, args: [...(spec.args ?? [])], env: { ...(spec.env ?? {}) }, cachedBridged: [...(spec.cachedBridged ?? [])] };
-  const next = { ...validateServerInput({ ...spec, ...input, name: spec.name }), ownerUserId, cachedBridged: [], revision: (spec.revision ?? 0) + 1 };
+  if (Object.hasOwn(input ?? {}, 'projectRef') && JSON.stringify(input.projectRef) !== JSON.stringify(spec.projectRef)) throw new Error('MCP project binding is immutable');
+  const next = { ...validateServerInput({ ...spec, ...input, name: spec.name, projectRef: spec.projectRef }), ownerUserId, cachedBridged: [], revision: (spec.revision ?? 0) + 1 };
   assertTransportAuthority(ctx, next);
+  if (next.projectRef) await assertBindingAuthorized(ctx, next.projectRef);
+  if (!spec.projectRef && isProjectStdio(ctx, next)) throw new Error('a central stdio server cannot be changed from a managed project');
   await closeLiveSpec(spec);
   Object.assign(spec, next);
   const sql = ownerUserId == null
@@ -491,11 +520,110 @@ function transportKind(spec) {
   return spec.transport ?? (spec.url ? 'http' : 'stdio');
 }
 
+const isProjectStdio = (ctx, spec) => (spec.projectRef !== undefined || ctx.currentAccess().projectRef?.kind === 'managed') && transportKind(spec) === 'stdio';
+
+/** A bound server exists only while the binding's project still exists and the ACTOR may still reach it.
+ *  Checked live through Sandbox at every persistence boundary — creation AND update, even when the row is
+ *  saved disabled — so a revoked or deleted project can never quietly keep a binding, and the enabled
+ *  flag is never what stands between a stale binding and its next launch. Fails closed: no Sandbox
+ *  environment provider, no binding. */
+async function assertBindingAuthorized(ctx, projectRef) {
+  const sandbox = ctx.control('sandbox');
+  if (!sandbox || typeof sandbox.environmentFor !== 'function') {
+    throw new Error('a managed MCP binding requires the Sandbox environment provider');
+  }
+  const accountUserId = ctx.currentAccountUserId();
+  if (accountUserId == null) throw new Error('a linked Elowen account is required for a managed MCP binding');
+  const environment = await sandbox.environmentFor({ project: projectRef, accountUserId });
+  if (!environment || environment.projectId !== projectRef.projectId) throw new Error('managed project binding no longer resolves');
+  return environment;
+}
+
+/** A project command never reuses the daemon's central client, nor a client from another project/account.
+ * Its connection and execution lease live exactly as long as this operation, including handshake failure. */
+async function withProjectClient(ctx, spec, operation, signal, management = false) {
+  if (spec.ownerUserId != null) assertTransportAuthority(ctx, spec);
+  if (Object.keys(spec.env ?? {}).length) {
+    throw new Error('managed MCP cannot import centrally stored command environments; configure shared credentials inside the project instead');
+  }
+  const selected = ctx.currentAccess().projectRef;
+  const projectRef = spec.projectRef ? projectBinding(spec.projectRef) : selected;
+  if (spec.projectRef && !management && (selected?.kind !== 'managed' || selected.projectId !== projectRef.projectId)) throw new Error('MCP server belongs to a different project');
+  if (ctx.currentAccess().workspaceRef) throw new Error('a legacy exact workspace cannot widen into a managed project');
+  const sandbox = ctx.control('sandbox');
+  if (!sandbox) throw new Error('managed project MCP is unavailable because it requires the Sandbox plugin');
+  const prepared = await sandbox.prepareExecution({
+    projectRef, cwd: ctx.defaultCwd(), leaseKind: 'mcp',
+    command: { type: 'argv', file: spec.command, args: spec.args ?? [] },
+  });
+  let transport;
+  let childClosed;
+  let heartbeat;
+  let heartbeatFailure;
+  let failure;
+  // The managed gate hangs off verified guest cancellation: prepared.cancel must be callable. The lease
+  // separately owns heartbeat/release (and may carry its own optional cancel); nothing here treats a
+  // lease method as the verified cancellation itself.
+  const cancel = typeof prepared.cancel === 'function' ? () => prepared.cancel() : null;
+  let cancellation;
+  const stop = () => {
+    cancellation ??= Promise.resolve().then(() => cancel?.()).finally(() => transport?.close());
+    return cancellation;
+  };
+  const abort = () => { stop().catch((error) => { heartbeatFailure = error; }); };
+  const client = new Client({ name: 'elowen-mcp-bridge', version: '0.1.2' }, { capabilities: {} });
+  try {
+    if (prepared.mode !== 'managed' || prepared.projectRef?.kind !== 'managed' || prepared.projectRef.projectId !== projectRef.projectId) {
+      throw new Error('managed project provider returned a different execution target');
+    }
+    if (!cancel) throw new Error('managed execution requires verified guest cancellation');
+    if (prepared.stdin !== undefined && ((typeof prepared.stdin !== 'string' && !Buffer.isBuffer(prepared.stdin))
+      || Buffer.byteLength(prepared.stdin) > 1024 * 1024)) throw new Error('invalid or oversized prepared stdin');
+    signal?.throwIfAborted();
+    const launch = prepared.launch;
+    const options = { cwd: prepared.cwd, env: launch.env, detached: true, stdio: ['pipe', 'pipe', 'pipe'] };
+    const child = launch.type === 'argv' ? spawn(launch.file, launch.args, options)
+      : spawn('/bin/sh', ['-c', launch.command], options);
+    childClosed = new Promise((resolve) => child.once('close', resolve));
+    // Route diagnostics through the provider's sanitizer instead of inheriting host stderr.
+    child.stderr.on('data', (chunk) => ctx.logger?.warn?.(`mcp ${spec.name}: ${prepared.sanitizeOutput(String(chunk))}`));
+    transport = new DetachedStdioTransport(child);
+    signal?.addEventListener('abort', abort, { once: true });
+    if (prepared.stdin !== undefined) {
+      child.stdin.on('error', (error) => { heartbeatFailure = error; abort(); });
+      child.stdin.write(prepared.stdin);
+    }
+    heartbeat = setInterval(() => {
+      Promise.resolve().then(() => prepared.lease.heartbeat()).catch((error) => {
+        heartbeatFailure = error;
+        abort();
+      });
+    }, 5000);
+    heartbeat.unref?.();
+    await withTimeout(client.connect(transport), configNumber(ctx.config?.connectTimeoutMs, CONNECT_TIMEOUT_MS, 5000, 60000), `mcp connect ${spec.name}`);
+    const result = await operation(client);
+    if (heartbeatFailure) throw heartbeatFailure;
+    return result;
+  } catch (error) {
+    failure = error;
+    throw error;
+  } finally {
+    if (heartbeat) clearInterval(heartbeat);
+    signal?.removeEventListener('abort', abort);
+    const cleanupErrors = [];
+    try { await stop(); } catch (error) { cleanupErrors.push(error); }
+    try { if (childClosed) await childClosed; } catch (error) { cleanupErrors.push(error); }
+    try { await prepared.lease.release(); } catch (error) { cleanupErrors.push(error); }
+    if (cleanupErrors.length) throw new AggregateError([...(failure ? [failure] : []), ...cleanupErrors], 'Managed MCP cleanup failed');
+  }
+}
+
 function publicServerState(spec) {
   const key = serverKey(spec.ownerUserId, spec.name);
   const entry = state.servers.get(key) ?? {};
   return {
     name: spec.name,
+    ...(spec.projectRef ? { projectRef: spec.projectRef } : {}),
     scope: ownerScope(spec.ownerUserId),
     transport: transportKind(spec),
     status: entry.status ?? (spec.enabled ? 'disconnected' : 'disabled'),
@@ -600,17 +728,18 @@ function registerBridgedTool(ctx, getClient, spec, tool) {
     label: tool.title || tool.name,
     description: bridgedDescription(spec.name, tool),
     parameters: params,
-    execute: async (_id, args) => {
+    execute: async (_id, args, signal) => {
       try {
         const callTimeoutMs = configNumber(ctx.config?.callTimeoutMs, CALL_TIMEOUT_MS, 30000, 300000);
         // The server has to be reachable for the call to mean anything, so a connect that fails here is
         // the same kind of failure a dead client is: transport, thrown, never a silent empty answer.
-        const client = await getClient().catch((error) => { throw markTransportFailure(error); });
-        const res = await withTimeout(
+        const call = (client) => withTimeout(
           client.callTool({ name: tool.name, arguments: args ?? {} })
             .catch((error) => { throw asMcpTransportFailure(error); }),
           callTimeoutMs, `mcp call ${tool.name}`,
         );
+        const res = isProjectStdio(ctx, spec) ? await withProjectClient(ctx, spec, call, signal)
+          : await call(await getClient().catch((error) => { throw markTransportFailure(error); }));
         return await mapResult(res);
       } catch (e) {
         if (isTransportFailure(e)) throw e;
@@ -706,6 +835,29 @@ async function connectServer(ctx, spec, live) {
   // no acting turn. Personal stdio rows, including legacy rows created before this gate existed, must
   // re-check the CURRENT caller before every lazy/reconnect path reaches makeTransport().
   if (spec.ownerUserId != null) assertTransportAuthority(ctx, spec);
+  if (isProjectStdio(ctx, spec)) {
+    try {
+      return await withProjectClient(ctx, spec, async (client) => {
+        const tools = [];
+        let cursor;
+        do {
+          const page = await withTimeout(client.listTools(cursor ? { cursor } : undefined), CONNECT_TIMEOUT_MS, `mcp listTools ${spec.name}`);
+          tools.push(...(page.tools ?? []));
+          cursor = page.nextCursor;
+        } while (cursor);
+        persistTools(state.db, spec, tools);
+        spec.cachedBridged = tools;
+        setServerState(spec, { status: 'disconnected', toolCount: tools.length, tools: tools.map(tool => ({ name: tool.name, title: tool.title ?? tool.name, description: tool.description ?? '', schema: tool.inputSchema ?? null })), bridged: tools });
+        return tools;
+      }, undefined, true);
+    } catch (error) {
+      // Nothing was pushed to `live` on this path, so there is nothing to tear down — but the failure must
+      // be as visible as a failed host connect: without this the row would sit at its boot-initialized
+      // "disconnected" forever and a failed management connect would look like a no-op.
+      setServerState(spec, { status: 'error', lastError: error instanceof Error ? error.message : String(error), toolCount: 0, tools: [], bridged: [] });
+      throw error;
+    }
+  }
   const key = serverKey(spec.ownerUserId, spec.name);
   setServerState(spec, { status: 'connecting', transport: transportKind(spec), lastError: null, tools: [], toolCount: 0 });
   const { transport, child } = makeTransport(spec);
@@ -783,7 +935,7 @@ async function connectServer(ctx, spec, live) {
  *  rather than by response latency — tool order is part of the cached prompt prefix and must be stable
  *  across restarts. */
 async function connectAll(ctx, specs, live) {
-  const enabled = specs.filter((s) => s && s.enabled && s.name && s.ownerUserId == null);
+  const enabled = specs.filter((s) => s && s.enabled && s.name && s.ownerUserId == null && !s.projectRef);
   const results = await Promise.allSettled(
     enabled.map((s) => connectServer(ctx, s, live).catch((e) => ctx.logger?.warn?.(`mcp: server "${s.name}" failed: ${e?.message ?? e}`))),
   );
@@ -803,7 +955,7 @@ function registerManagementTools(ctx) {
 
   ctx.registerTool(defineTool({
     name: 'AddMcpServer', label: 'Add MCP server',
-    description: 'Add and verify an MCP server, then expose its tools after the current turn reloads. `scope` is required: personal stores remote HTTP/SSE servers for the acting account only; instance shares them across the instance and is restricted to administrators. A stdio server RUNS the supplied command as a local process and is therefore restricted to administrators regardless of scope.',
+    description: 'Add and verify an MCP server, then expose its tools after the current turn reloads. `scope` is required: personal stores remote HTTP/SSE servers for the acting account only; instance shares them across the instance and is restricted to administrators. A stdio server RUNS the supplied command as a local process and is therefore restricted to administrators regardless of scope. A new stdio server created while a managed project is selected is bound to it (or bind explicitly with projectRef); the binding is immutable and every call runs inside that project, never on the host.',
     parameters: Type.Object({
       scope: scopeSchema,
       name: nameSchema,
@@ -813,8 +965,12 @@ function registerManagementTools(ctx) {
       env: Type.Optional(Type.Record(Type.String(), Type.String(), { description: 'Environment variables for the stdio process, including any credentials the server needs' })),
       url: Type.Optional(Type.String({ description: 'HTTP(S) URL for http or sse transport' })),
       enabled: Type.Optional(Type.Boolean({ description: 'Whether the server is enabled (default true)' })),
+      projectRef: Type.Optional(Type.Object({
+        kind: Type.Literal('managed'),
+        projectId: Type.Integer({ minimum: 1, description: 'Managed project id to bind the stdio server to' }),
+      }, { description: 'Explicit managed project binding for a stdio server. Omitted, a stdio server created while a managed project is selected binds to it; must match it when both are given. stdio only, immutable afterwards.' })),
     }),
-    execute: async (_id, p) => {
+    execute: async (_id, p, _signal) => {
       try {
         const server = await addMcpServerForScope(ctx, p.scope, p);
         return ok(`Added ${p.scope} MCP server "${server.name}" with ${server.toolCount} tool(s).`, { server });
@@ -826,7 +982,7 @@ function registerManagementTools(ctx) {
     name: 'ListMcpServers', label: 'List MCP servers',
     description: 'List MCP servers in one explicit ownership scope. Personal lists only the acting account\'s servers; instance is owner-only. Credentials and command environments are never returned.',
     parameters: Type.Object({ scope: scopeSchema }),
-    execute: async (_id, p) => {
+    execute: async (_id, p, _signal) => {
       try {
         const ownerUserId = ownerForScope(ctx, p.scope);
         const servers = state.specs.filter((spec) => spec.ownerUserId === ownerUserId).map(publicServerState);
@@ -839,7 +995,7 @@ function registerManagementTools(ctx) {
     name: 'RemoveMcpServer', label: 'Remove MCP server',
     description: 'Permanently remove one MCP server from the required personal or instance scope and stop its live connection. Instance scope is owner-only.',
     parameters: Type.Object({ scope: scopeSchema, name: nameSchema }),
-    execute: async (_id, p) => {
+    execute: async (_id, p, _signal) => {
       try {
         const removed = await removeMcpServerForScope(ctx, p.scope, p.name);
         return ok(`Removed ${p.scope} MCP server "${p.name}".`, removed);
@@ -851,7 +1007,7 @@ function registerManagementTools(ctx) {
     name: 'ReconnectMcpServer', label: 'Reconnect MCP server',
     description: 'Reconnect and re-discover tools for one MCP server in the required personal or instance scope. Personal remote credentials remain account-private; instance scope and every stdio process are owner-only.',
     parameters: Type.Object({ scope: scopeSchema, name: nameSchema }),
-    execute: async (_id, p) => {
+    execute: async (_id, p, _signal) => {
       try {
         const server = await reconnectMcpServerForScope(ctx, p.scope, p.name);
         return ok(`Reconnected ${p.scope} MCP server "${p.name}" with ${server.toolCount} tool(s).`, { server });
@@ -936,7 +1092,12 @@ function registerManagementApi(ctx) {
 function registerResourceTools(ctx, live, snapshot, ownerUserId) {
   const allowedSpecs = () => {
     const byName = new Map();
+    const selected = ctx.currentAccess().projectRef;
     for (const spec of state.specs) {
+      // A bound server is visible to the resource tools only from its own project: the mismatched
+      // selection is filtered here, at the source, instead of surfacing wrong-project servers as
+      // per-server errors in the listing.
+      if (spec.projectRef && (selected?.kind !== 'managed' || selected.projectId !== spec.projectRef.projectId)) continue;
       if (spec.ownerUserId == null) byName.set(spec.name, spec);
       else if (ownerUserId != null && spec.ownerUserId === ownerUserId) byName.set(spec.name, spec);
     }
@@ -946,12 +1107,17 @@ function registerResourceTools(ctx, live, snapshot, ownerUserId) {
   const ensure = async (name) => {
     const targets = name ? [specFor(name)].filter(Boolean) : allowedSpecs().filter((spec) => spec.enabled);
     await Promise.allSettled(targets
-      .filter((spec) => snapshot || spec.ownerUserId != null)
+      .filter((spec) => !isProjectStdio(ctx, spec) && (snapshot || spec.ownerUserId != null))
       .map((spec) => connectLazily(ctx, spec, live)));
   };
   const visibleLive = () => {
     const keys = new Set(allowedSpecs().map((spec) => serverKey(spec.ownerUserId, spec.name)));
-    return live.filter((entry) => keys.has(entry.key));
+    const projectSpecs = allowedSpecs().filter((spec) => spec.enabled && isProjectStdio(ctx, spec));
+    const projectKeys = new Set(projectSpecs.map((spec) => serverKey(spec.ownerUserId, spec.name)));
+    return [
+      ...live.filter((entry) => keys.has(entry.key) && !projectKeys.has(entry.key)),
+      ...projectSpecs.map((spec) => ({ key: serverKey(spec.ownerUserId, spec.name), name: spec.name, projectSpec: spec })),
+    ];
   };
   const opts = ownerUserId == null ? undefined : { ownerUserId };
 
@@ -961,7 +1127,7 @@ function registerResourceTools(ctx, live, snapshot, ownerUserId) {
     parameters: Type.Object({
       server: Type.Optional(Type.String({ description: 'Only list resources from this MCP server (by name).' })),
     }),
-    execute: async (_id, p) => {
+    execute: async (_id, p, _signal) => {
       await ensure(p?.server);
       const targets = p?.server ? visibleLive().filter((entry) => entry.name === p.server) : visibleLive();
       if (p?.server && targets.length === 0) return fail(new Error(`MCP server "${p.server}" is not connected. Use ListMcpResources with no server to see connected servers.`));
@@ -969,9 +1135,10 @@ function registerResourceTools(ctx, live, snapshot, ownerUserId) {
       const errors = [];
       for (const entry of targets) {
         try {
+          const collect = async (client) => {
           let cursor;
           do {
-            const res = await withTimeout(entry.client.listResources(cursor ? { cursor } : undefined), 10_000, `mcp listResources ${entry.name}`);
+            const res = await withTimeout(client.listResources(cursor ? { cursor } : undefined), 10_000, `mcp listResources ${entry.name}`);
             // Optional fields are OMITTED rather than defaulted to '' — the reference's shape, and the one
             // that lets the model tell "no description" from "an empty description".
             for (const r of res?.resources ?? []) {
@@ -985,6 +1152,9 @@ function registerResourceTools(ctx, live, snapshot, ownerUserId) {
             }
             cursor = res?.nextCursor;
           } while (cursor);
+          };
+          if (entry.projectSpec) await withProjectClient(ctx, entry.projectSpec, collect, _signal);
+          else await collect(entry.client);
         } catch (e) {
           if (isMethodNotFound(e)) continue;
           // Listing is fail-open across servers: one unreachable server must not hide the resources of
@@ -1006,25 +1176,38 @@ function registerResourceTools(ctx, live, snapshot, ownerUserId) {
       server: Type.String({ description: 'Name of the MCP server to read from' }),
       uri: Type.String({ description: 'URI of the resource to read' }),
     }),
-    execute: async (_id, p) => {
+    execute: async (_id, p, _signal) => {
       await ensure(p.server);
       const spec = specFor(p.server);
       const entry = spec ? visibleLive().find((candidate) => candidate.key === serverKey(spec.ownerUserId, spec.name)) : undefined;
       if (!entry) return fail(new Error(`MCP server "${p.server}" is not connected. Use ListMcpResources to see available servers.`));
       try {
-        const result = await withTimeout(
-          entry.client.readResource({ uri: p.uri }).catch((error) => { throw asMcpTransportFailure(error); }),
+        const read = (client) => withTimeout(
+          client.readResource({ uri: p.uri }).catch((error) => { throw asMcpTransportFailure(error); }),
           30_000, `mcp readResource ${p.uri}`,
         );
+        const result = entry.projectSpec ? await withProjectClient(ctx, entry.projectSpec, read, _signal) : await read(entry.client);
         const parts = Array.isArray(result?.contents) ? result.contents : [];
-        const contents = parts.map((c) => {
+        const contents = await Promise.all(parts.map(async (c) => {
           const uri = c?.uri ?? p.uri;
           const mimeType = c?.mimeType;
           const head = { uri, ...(mimeType ? { mimeType } : {}) };
           if (c?.text != null) return { ...head, text: String(c.text) };
           if (c?.blob == null) return head;
           try {
-            const saved = persistResourceBlob(join(ctx.dataDir(), 'resources'), uri, mimeType ?? 'unknown', c.blob);
+            const project = ctx.currentAccess().projectRef;
+            let saved;
+            if (project?.kind === 'managed') {
+              const sandbox = ctx.control('sandbox');
+              if (!sandbox) throw new Error('managed project resource export requires the Sandbox plugin');
+              const bytes = Buffer.from(String(c.blob), 'base64');
+              if (bytes.length > 16 * 1024 * 1024) throw new Error('MCP resource exceeds the 16 MiB export limit');
+              const path = `/tmp/elowen-mcp-${randomUUID()}${BLOB_EXTENSIONS.get(String(mimeType)) ?? '.bin'}`;
+              const result = await sandbox.projectFiles({ project, accountUserId: ctx.currentAccountUserId(),
+                operation: { kind: 'write', path, base64: bytes.toString('base64'), expectedVersion: null } });
+              if (result.kind !== 'write') throw new Error('managed resource export returned an invalid result');
+              saved = { path, bytes: bytes.length };
+            } else saved = persistResourceBlob(join(ctx.dataDir(), 'resources'), uri, mimeType ?? 'unknown', c.blob);
             return {
               ...head,
               blobSavedTo: saved.path,
@@ -1035,7 +1218,7 @@ function registerResourceTools(ctx, live, snapshot, ownerUserId) {
             // went wrong, which is what the reference does too.
             return { ...head, text: `Binary content could not be saved to disk: ${e instanceof Error ? e.message : String(e)}` };
           }
-        });
+        }));
         return okJson({ contents }, { server: p.server, uri: p.uri, count: contents.length });
       } catch (e) {
         if (isTransportFailure(e)) throw e;
@@ -1047,7 +1230,7 @@ function registerResourceTools(ctx, live, snapshot, ownerUserId) {
 
 export async function register(ctx) {
   const db = initStore(ctx);
-  const specs = loadStoredSpecs(db);
+  const specs = loadStoredSpecs(db, ctx.logger);
   const live = []; // { key, name, ownerUserId, client, transport, child }
   // Handed down by a process that has ALREADY connected instance servers (the daemon → its sub-agent
   // runners). Personal server descriptors come from the shared DB cache and always connect lazily.
@@ -1118,7 +1301,9 @@ export async function register(ctx) {
     // The wire snapshot contains instance servers only; resolve each against the DB-backed spec so the
     // runner has the command/URL it needs when a tool is first called.
     const inherited = snapshot.flatMap((entry) => {
-      const spec = state.specs.find((candidate) => candidate.ownerUserId == null && candidate.name === entry.serverName);
+      // Bound servers are declared from their PERSISTED cache below, never from a snapshot: an inherited
+      // legacy entry that happens to share the name would otherwise register the same tool twice.
+      const spec = state.specs.find((candidate) => candidate.ownerUserId == null && !candidate.projectRef && candidate.name === entry.serverName);
       return spec ? [{ spec, tools: entry.tools }] : [];
     });
     registerBridgedTools(ctx, lazyClient(ctx, live), inherited);
@@ -1133,7 +1318,7 @@ export async function register(ctx) {
   // persisted beside the private spec, enough to compose the owner's tool schemas; first use connects the
   // matching server lazily. A server with no successful cache advertises nothing until it is reconnected.
   const personal = state.specs
-    .filter((spec) => spec.ownerUserId != null && spec.enabled && spec.cachedBridged.length > 0)
+    .filter((spec) => (spec.ownerUserId != null || spec.projectRef) && spec.enabled && spec.cachedBridged.length > 0)
     .map((spec) => ({ spec, tools: spec.cachedBridged }));
   registerBridgedTools(ctx, lazyClient(ctx, live), personal);
 
@@ -1182,6 +1367,7 @@ export function mcpBridgeSnapshot() {
 export async function reconnectMcpServer(name) {
   const spec = state.specs.find((s) => s.ownerUserId == null && s.name === name);
   if (!spec) throw new Error(`unknown MCP server "${name}"`);
+  if (spec.projectRef) throw new Error('project MCP reconnection requires authenticated scoped management');
   if (!spec.enabled) throw new Error(`MCP server "${name}" is disabled`);
   const key = serverKey(spec.ownerUserId, spec.name);
   const current = state.servers.get(key);
@@ -1201,7 +1387,7 @@ export async function reconnectMcpServer(name) {
 }
 
 export async function reconnectMcpDisconnected() {
-  const targets = state.specs.filter((spec) => spec.ownerUserId == null && spec.enabled
+  const targets = state.specs.filter((spec) => spec.ownerUserId == null && !spec.projectRef && spec.enabled
     && ['disconnected', 'error'].includes(state.servers.get(serverKey(spec.ownerUserId, spec.name))?.status ?? 'disconnected'));
   return Promise.allSettled(targets.map((spec) => reconnectMcpServer(spec.name))).then(() => listMcpServers().filter((server) => server.scope === 'instance'));
 }

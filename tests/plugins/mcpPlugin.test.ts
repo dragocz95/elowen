@@ -11,7 +11,6 @@ import { channelSessionId, contributionOwnerForSession } from '../../src/brain/s
 import { composeSessionTools } from '../../src/brain/session/capabilities.js';
 import { currentIdentity, runWithPolicy } from '../../src/plugins/policyContext.js';
 // The plugin is a plain ESM module (no build step) — import it directly.
-// @ts-expect-error - .mjs plugin has no type declarations
 import { register, killTree, sanitize, mapResult, DetachedStdioTransport, configNumber, listMcpServers, reconnectMcpServer, mcpBridgeSnapshot } from '../../plugins/mcp/index.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -39,6 +38,7 @@ function fakeCtx(config: Record<string, unknown>, mcpBridgeSnapshot?: unknown, d
     logger: { info: vi.fn(), warn: vi.fn(), error: vi.fn() },
     db: () => makePluginDb(db, 'mcp', { canMigrate: true }),
     currentIdentity: () => typeof identity === 'function' ? identity() : identity,
+    currentAccess: () => ({}),
     requestReload: vi.fn(),
     registerTool: (t: { name: string; execute: (id: string, args: unknown) => Promise<unknown> }, opts?: { ownerUserId?: number }) => tools.push({ ...t, ...opts }),
     registerHook: (h: { name: string; run: (p: unknown) => unknown }) => hooks.push(h),
@@ -152,7 +152,7 @@ describe('mcp plugin — helpers', () => {
     };
     const t = new DetachedStdioTransport(child);
     const got: unknown[] = [];
-    t.onmessage = (m: unknown) => got.push(m);
+    (t as unknown as { onmessage: (m: unknown) => void }).onmessage = (m) => got.push(m);
     await t.start();
     // Feed a complete JSON-RPC line + a split one.
     listeners.data![0]!(Buffer.from('{"jsonrpc":"2.0","id":1,"result":{}}\n{"jsonrpc":"2.0",'));
@@ -450,7 +450,7 @@ describe('mcp plugin — end-to-end connection + process-group cleanup', () => {
     const bridged = ctx.tools.filter((t) => t.name.startsWith('mcp__paged__')).map((t) => t.name).sort();
     expect(bridged).toEqual(['mcp__paged__tool_a', 'mcp__paged__tool_b', 'mcp__paged__tool_c']);
 
-    const server = listMcpServers().find((s: { name: string }) => s.name === 'paged');
+    const server = listMcpServers().find((s: { name: string }) => s.name === 'paged')!;
     expect(server.status).toBe('connected');
     expect(server.toolCount).toBe(3);
     expect(server.tools.map((t: { name: string }) => t.name).sort()).toEqual(['tool_a', 'tool_b', 'tool_c']);
@@ -504,7 +504,7 @@ describe('mcp plugin — end-to-end connection + process-group cleanup', () => {
     process.kill(serverPid, 'SIGKILL'); // simulate the server crashing, not a deliberate plugin cleanup
 
     expect(await waitFor(() => listMcpServers().find((s: { name: string }) => s.name === 'crashy')?.status === 'disconnected', 5000)).toBe(true);
-    const disconnected = listMcpServers().find((s: { name: string }) => s.name === 'crashy');
+    const disconnected = listMcpServers().find((s: { name: string }) => s.name === 'crashy')!;
     expect(disconnected.lastError).toBeTruthy();
     expect(disconnected.toolCount).toBe(0);
 
@@ -544,6 +544,64 @@ describe('mcp plugin — declaring bridged tools from an inherited snapshot', ()
   const teardown = async (ctx: ReturnType<typeof fakeCtx>): Promise<void> => {
     await ctx.hooks.find((h) => h.name === 'plugin.reload.before')!.run({});
   };
+
+  it('routes managed stdio tool calls through their project instead of the inherited host client', async () => {
+    const ctx = fakeCtx({ servers: [{ name: 'mock', enabled: true, transport: 'stdio', command: process.execPath, args: [MOCK_SERVER] }] },
+      [{ serverName: 'mock', tools: [{ name: 'echo', inputSchema: { type: 'object' } }] }]);
+    const release = vi.fn();
+    const prepareExecution = vi.fn(async () => ({
+      mode: 'managed', projectRef: { kind: 'managed', projectId: 11 }, cwd: tmpdir(), displayCwd: '/workspace',
+      launch: { type: 'argv', file: process.execPath, args: [MOCK_SERVER], env: {} },
+      lease: { id: 'mcp-test', heartbeat() {}, release }, cancel: vi.fn(async () => {}), sanitizeOutput: (text: string) => text,
+    }));
+    const managed = { ...ctx, currentAccess: () => ({ projectRef: { kind: 'managed', projectId: 11 } }),
+      currentAccountUserId: () => 1, defaultCwd: () => '/workspace', control: () => ({ prepareExecution }) };
+    try {
+      await register(managed as never);
+      const result = await ctx.tools.find(t => t.name === 'mcp__mock__echo')!.execute('t', { text: 'guest reply' });
+      expect(JSON.stringify(result)).toContain('guest reply');
+      expect(prepareExecution).toHaveBeenCalledWith(expect.objectContaining({ leaseKind: 'mcp', projectRef: { kind: 'managed', projectId: 11 } }));
+      expect(release).toHaveBeenCalledOnce();
+    } finally { await teardown(ctx); ctx.rawDb.close(); rmSync(ctx.dataDirPath, { recursive: true, force: true }); }
+  });
+
+  it('routes managed resource listings and binary exports without using the central filesystem', async () => {
+    const ctx = fakeCtx({ servers: [{ name: 'resources', enabled: true, transport: 'stdio', command: 'guest-resources' }] }, []);
+    const release = vi.fn();
+    const prepareExecution = vi.fn(async () => ({
+      mode: 'managed', projectRef: { kind: 'managed', projectId: 12 }, cwd: tmpdir(), displayCwd: '/workspace',
+      launch: { type: 'argv', file: process.execPath, args: [RESOURCE_MOCK_SERVER], env: {} },
+      lease: { id: 'mcp-resource-test', heartbeat() {}, release }, cancel: vi.fn(async () => {}), sanitizeOutput: (text: string) => text,
+    }));
+    const projectFiles = vi.fn(async ({ operation }) => ({ kind: 'write', entry: { path: operation.path } }));
+    const managed = { ...ctx, currentAccess: () => ({ projectRef: { kind: 'managed', projectId: 12 } }),
+      currentAccountUserId: () => 1, defaultCwd: () => '/workspace', control: () => ({ prepareExecution, projectFiles }),
+      dataDir: () => { throw new Error('HOST FILESYSTEM REACHED'); } };
+    try {
+      await register(managed as never);
+      const listing = await ctx.tools.find(t => t.name === 'ListMcpResources')!.execute('list', {});
+      expect(JSON.stringify(listing)).toContain('file:///picture.png');
+      const read = await ctx.tools.find(t => t.name === 'ReadMcpResource')!.execute('read', { server: 'resources', uri: 'file:///picture.png' });
+      expect(JSON.stringify(read)).toContain('/tmp/elowen-mcp-');
+      expect(projectFiles).toHaveBeenCalledWith(expect.objectContaining({ project: { kind: 'managed', projectId: 12 }, accountUserId: 1,
+        operation: expect.objectContaining({ kind: 'write', expectedVersion: null, base64: Buffer.from('binary-bytes').toString('base64') }) }));
+      expect(release).toHaveBeenCalledTimes(2);
+    } finally { await teardown(ctx); ctx.rawDb.close(); rmSync(ctx.dataDirPath, { recursive: true, force: true }); }
+  });
+
+  it('refuses centrally stored stdio credentials before requesting a managed launch', async () => {
+    const ctx = fakeCtx({ servers: [{ name: 'mock', enabled: true, transport: 'stdio', command: process.execPath, args: [MOCK_SERVER], env: { PRIVATE_TOKEN: 'do-not-export' } }] },
+      [{ serverName: 'mock', tools: [{ name: 'echo', inputSchema: { type: 'object' } }] }]);
+    const control = vi.fn();
+    const managed = { ...ctx, currentAccess: () => ({ projectRef: { kind: 'managed', projectId: 11 } }), control };
+    try {
+      await register(managed as never);
+      const result = await ctx.tools.find(t => t.name === 'mcp__mock__echo')!.execute('t', { text: 'guest reply' });
+      expect(JSON.stringify(result)).toContain('cannot import centrally stored');
+      expect(JSON.stringify(result)).not.toContain('do-not-export');
+      expect(control).not.toHaveBeenCalled();
+    } finally { await teardown(ctx); ctx.rawDb.close(); rmSync(ctx.dataDirPath, { recursive: true, force: true }); }
+  });
 
   const visibleTools = (ctx: ReturnType<typeof fakeCtx>, ownerUserId: number | null) => {
     const selected = new Map<string, (typeof ctx.tools)[number]>();
@@ -761,5 +819,422 @@ describe('mcp plugin — declaring bridged tools from an inherited snapshot', ()
     expect(snapshot[0]!.tools[0]!.description).toBe('Echo the text back');
     expect(snapshot[0]!.tools[0]!.inputSchema).toMatchObject({ type: 'object' });
     await teardown(ctx);
+  }, 30000);
+});
+
+/** Immutable managed stdio binding: a newly created stdio server whose creation turn had a managed project
+ *  selected (or that was created with an explicit binding) is persisted with `{ kind: 'managed', projectId }`
+ *  and EVERY later execution — management verify, tool call, resource read — runs inside exactly that
+ *  project through Sandbox, never on the host. The binding never migrates an old row, never changes on
+ *  update, and a row whose binding no longer validates fails CLOSED (dropped), never reinterpreted as a
+ *  host command. The Sandbox side is faked at the `prepareExecution` contract (mode/projectRef/launch/
+ *  lease/cancel) exactly as the managed environments provider implements it. */
+describe('mcp plugin — immutable managed stdio binding', () => {
+  let dirs: string[] = [];
+  const tmpDir = (tag: string): string => { const p = mkdtempSync(join(tmpdir(), `elowen-${tag}-`)); dirs.push(p); return p; };
+  afterEach(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true }); dirs = []; });
+
+  const resultText = (result: unknown) => (result as { content: { text: string }[] }).content[0]!.text;
+  const starts = (log: string): number =>
+    (existsSync(log) ? readFileSync(log, 'utf-8').split('\n').filter(Boolean).length : 0);
+  const descriptor = [{ name: 'echo', description: 'Echo the text back', inputSchema: { type: 'object', properties: { text: { type: 'string' } }, required: ['text'] } }];
+
+  /** A prepared managed execution, shaped exactly like the provider contract (see
+   *  runManagedProjectExecution in src/integrations): mode/projectRef verified, host launch, lease with
+   *  heartbeat/release, verified cancel callback, output sanitizer. */
+  const managedPrepared = (projectId: number, launchArgs: string[], launchEnv: Record<string, string> = {}, release: () => unknown = vi.fn()) => ({
+    mode: 'managed', projectRef: { kind: 'managed', projectId }, cwd: tmpdir(), displayCwd: '/workspace',
+    launch: { type: 'argv', file: process.execPath, args: launchArgs, env: launchEnv },
+    lease: { id: 'mcp-bind-test', heartbeat() {}, release },
+    cancel: vi.fn(async () => {}), sanitizeOutput: (text: string) => text,
+  });
+
+  /** A fakeCtx with a managed project selected and a Sandbox control whose prepareExecution is the given
+   *  mock and whose environmentFor authorizes the binding live (overridable to simulate revocation).
+   *  `setAccess` re-points the selected project mid-test (wrong-project refusals). */
+  const makeManaged = (opts: {
+    projectId: number; prepareExecution: (...args: unknown[]) => Promise<unknown>;
+    db?: Db; identity?: object | null; dataDir?: string;
+    environmentFor?: (...args: unknown[]) => Promise<unknown>;
+  }) => {
+    const base = fakeCtx({}, undefined, opts.db ?? openPluginTablesDb(), opts.identity ?? { elowenUserId: 1, owner: true }, opts.dataDir);
+    let access: { projectRef?: { kind: 'managed'; projectId: number } } = { projectRef: { kind: 'managed', projectId: opts.projectId } };
+    const ctx = {
+      ...base,
+      currentAccess: () => access,
+      currentAccountUserId: () => 1,
+      defaultCwd: () => '/workspace',
+      control: (name: string) => name === 'sandbox'
+        ? {
+          prepareExecution: opts.prepareExecution,
+          environmentFor: opts.environmentFor ?? (async ({ project }: { project: { projectId: number } }) => ({ projectId: project.projectId, generation: 1, state: 'running' })),
+        }
+        : undefined,
+    };
+    return { ctx, setAccess: (next: { projectRef?: { kind: 'managed'; projectId: number } }) => { access = next; } };
+  };
+
+  const teardownCtx = async (ctx: { hooks: { name: string; run: (p: unknown) => unknown }[]; rawDb: Db; dataDirPath: string }): Promise<void> => {
+    await ctx.hooks.find((h) => h.name === 'plugin.reload.before')!.run({});
+    ctx.rawDb.close();
+    rmSync(ctx.dataDirPath, { recursive: true, force: true });
+  };
+
+  /** Registers a throwaway ctx to run the plugin migration (creating p_mcp_servers), sharing the dataDir
+   *  the test's real ctx will use so teardown removes exactly one temp dir. */
+  const bootstrapDb = async (db: Db, dataDir: string): Promise<void> => {
+    const bootstrap = fakeCtx({}, undefined, db, null, dataDir);
+    await register(bootstrap as never);
+    await bootstrap.hooks.find((h) => h.name === 'plugin.reload.before')!.run({});
+  };
+
+  it('persists an immutable managed binding captured from the selected project at creation', async () => {
+    const db = openPluginTablesDb();
+    const release = vi.fn();
+    const prepareExecution = vi.fn(async () => managedPrepared(11, [MOCK_SERVER], {}, release));
+    const { ctx } = makeManaged({ projectId: 11, db, prepareExecution });
+    try {
+      await register(ctx as never);
+      const add = ctx.tools.find((t) => t.name === 'AddMcpServer')!;
+      const added = await add.execute('1', { scope: 'instance', name: 'selbound', transport: 'stdio', command: process.execPath, args: [MOCK_SERVER] });
+      expect(resultText(added)).toContain('Added instance MCP server "selbound"');
+
+      // The binding is persisted exactly, canonical {kind:'managed', projectId}.
+      const stored = JSON.parse((db.prepare('SELECT spec_json FROM p_mcp_servers WHERE name = ?').get('selbound') as { spec_json: string }).spec_json) as { projectRef: unknown };
+      expect(stored.projectRef).toEqual({ kind: 'managed', projectId: 11 });
+
+      // Creation verified INSIDE the guest through the managed provider, with the mcp lease kind.
+      expect(prepareExecution).toHaveBeenCalledWith(expect.objectContaining({
+        projectRef: { kind: 'managed', projectId: 11 }, leaseKind: 'mcp',
+      }));
+
+      // The binding is public metadata on the listed server.
+      const listed = listMcpServers().find((s: { name: string }) => s.name === 'selbound') as { projectRef?: unknown };
+      expect(listed.projectRef).toEqual({ kind: 'managed', projectId: 11 });
+      expect(release).toHaveBeenCalledOnce();
+    } finally { await teardownCtx(ctx); }
+  }, 20000);
+
+  it('refuses an explicit binding that differs from the selected project, before any launch', async () => {
+    const db = openPluginTablesDb();
+    const prepareExecution = vi.fn(async () => managedPrepared(11, [MOCK_SERVER]));
+    const { ctx } = makeManaged({ projectId: 11, db, prepareExecution });
+    try {
+      await register(ctx as never);
+      const add = ctx.tools.find((t) => t.name === 'AddMcpServer')!;
+      const result = await add.execute('1', {
+        scope: 'instance', name: 'crossbound', transport: 'stdio',
+        command: process.execPath, args: [MOCK_SERVER], projectRef: { kind: 'managed', projectId: 12 },
+      });
+      expect(resultText(result)).toContain('differs from the selected project');
+      expect((db.prepare('SELECT COUNT(*) AS n FROM p_mcp_servers').get() as { n: number }).n).toBe(0);
+      expect(prepareExecution).not.toHaveBeenCalled();
+    } finally { await teardownCtx(ctx); }
+  }, 20000);
+
+  it('honours an explicit managed binding when no project is selected', async () => {
+    const db = openPluginTablesDb();
+    const prepareExecution = vi.fn(async () => managedPrepared(41, [MOCK_SERVER]));
+    const base = fakeCtx({}, undefined, db, { elowenUserId: 1, owner: true });
+    const ctx = { ...base, currentAccess: () => ({}), currentAccountUserId: () => 1, defaultCwd: () => '/workspace',
+      control: () => ({ prepareExecution, environmentFor: async ({ project }: { project: { projectId: number } }) => ({ projectId: project.projectId, generation: 1, state: 'running' }) }) };
+    try {
+      await register(ctx as never);
+      const add = ctx.tools.find((t) => t.name === 'AddMcpServer')!;
+      const added = await add.execute('1', {
+        scope: 'instance', name: 'explbound', transport: 'stdio', command: process.execPath, args: [MOCK_SERVER],
+        projectRef: { kind: 'managed', projectId: 41 },
+      });
+      expect(resultText(added)).toContain('Added instance MCP server "explbound"');
+      const stored = JSON.parse((db.prepare('SELECT spec_json FROM p_mcp_servers WHERE name = ?').get('explbound') as { spec_json: string }).spec_json) as { projectRef: unknown };
+      expect(stored.projectRef).toEqual({ kind: 'managed', projectId: 41 });
+      expect(prepareExecution).toHaveBeenCalledWith(expect.objectContaining({ projectRef: { kind: 'managed', projectId: 41 }, leaseKind: 'mcp' }));
+    } finally { await teardownCtx(ctx); }
+  }, 20000);
+
+  it('never launches a bound server on the host at boot, and declares its cached tools lazily', async () => {
+    const log = join(tmpDir('mcp-bind-boot'), 'starts.log');
+    const db = openPluginTablesDb();
+    const dataDir = mkdtempSync(join(tmpdir(), 'elowen-mcp-bind-data-'));
+    await bootstrapDb(db, dataDir);
+    // The stored env is deliberate: an erroneous HOST launch runs through makeTransport with the spec's
+    // own env, so SERVER_START_LOG catches it. There is no guest call in this test — the guest side is
+    // covered by prepareExecution staying untouched.
+    db.prepare('INSERT INTO p_mcp_servers (owner_user_id, name, spec_json, tools_json) VALUES (?, ?, ?, ?)')
+      .run(null, 'bootbound',
+        JSON.stringify({ name: 'bootbound', enabled: true, transport: 'stdio', command: process.execPath, args: [MOCK_SERVER], env: { SERVER_START_LOG: log }, projectRef: { kind: 'managed', projectId: 21 } }),
+        JSON.stringify(descriptor));
+    const prepareExecution = vi.fn();
+    const { ctx } = makeManaged({ projectId: 21, db, prepareExecution, dataDir });
+    try {
+      await register(ctx as never);
+      // The cached descriptor is declared (personal/managed rows advertise from the cache) …
+      expect(ctx.tools.some((t) => t.name === 'mcp__bootbound__echo')).toBe(true);
+      // …but boot launched NOTHING: not on the host (no server process in the start log) …
+      expect(starts(log)).toBe(0);
+      // …and not in a guest (no managed provisioning either).
+      expect(prepareExecution).not.toHaveBeenCalled();
+      expect(listMcpServers().find((s: { name: string }) => s.name === 'bootbound')?.status).toBe('disconnected');
+      // And the bound row is excluded from the connect-all and background reconnect paths alike.
+      await register(ctx as never);
+      expect(starts(log)).toBe(0);
+      expect(prepareExecution).not.toHaveBeenCalled();
+    } finally { await teardownCtx(ctx); }
+  }, 20000);
+
+  it('routes a bound tool call to exactly the saved ref and refuses a different project before launch', async () => {
+    const log = join(tmpDir('mcp-bind-call'), 'starts.log');
+    const db = openPluginTablesDb();
+    const dataDir = mkdtempSync(join(tmpdir(), 'elowen-mcp-bind-data-'));
+    await bootstrapDb(db, dataDir);
+    // Persisted exactly as creation left it: no central env (the managed provider refuses to import one),
+    // cached descriptor beside the spec, binding {kind:'managed', projectId:31}.
+    db.prepare('INSERT INTO p_mcp_servers (owner_user_id, name, spec_json, tools_json) VALUES (?, ?, ?, ?)')
+      .run(null, 'callref',
+        JSON.stringify({ name: 'callref', enabled: true, transport: 'stdio', command: process.execPath, args: [MOCK_SERVER], projectRef: { kind: 'managed', projectId: 31 } }),
+        JSON.stringify(descriptor));
+    const prepareExecution = vi.fn(async () => managedPrepared(31, [MOCK_SERVER], { SERVER_START_LOG: log }));
+    const { ctx, setAccess } = makeManaged({ projectId: 31, db, prepareExecution, dataDir });
+    try {
+      await register(ctx as never);
+      expect(starts(log)).toBe(0); // boot launched nothing
+      const echo = ctx.tools.find((t) => t.name === 'mcp__callref__echo')!;
+
+      // Matching selected project: the call runs in the guest against the SAVED ref.
+      const res = (await echo.execute('1', { text: 'guest hi' })) as { content: { text: string }[] };
+      expect(res.content[0]!.text).toBe('guest hi');
+      expect(starts(log)).toBe(1);
+      expect(prepareExecution).toHaveBeenLastCalledWith(expect.objectContaining({ projectRef: { kind: 'managed', projectId: 31 } }));
+
+      // A DIFFERENT selected project is refused BEFORE any launch: no provider request, no process.
+      setAccess({ projectRef: { kind: 'managed', projectId: 32 } });
+      prepareExecution.mockClear();
+      const refused = (await echo.execute('2', { text: 'nope' })) as { content: { text: string }[] };
+      expect(refused.content[0]!.text).toContain('belongs to a different project');
+      expect(prepareExecution).not.toHaveBeenCalled();
+
+      // No selection at all fails closed the same way.
+      setAccess({});
+      const unselected = (await echo.execute('3', { text: 'nope' })) as { content: { text: string }[] };
+      expect(unselected.content[0]!.text).toContain('belongs to a different project');
+      expect(prepareExecution).not.toHaveBeenCalled();
+      expect(starts(log)).toBe(1);
+    } finally { await teardownCtx(ctx); }
+  }, 30000);
+
+  it('keeps the binding immutable across updates: no move, no deletion, no conversion to remote', async () => {
+    const db = openPluginTablesDb();
+    const prepareExecution = vi.fn(async () => managedPrepared(51, [MOCK_SERVER]));
+    const { ctx } = makeManaged({ projectId: 51, db, prepareExecution });
+    try {
+      await register(ctx as never);
+      const add = ctx.tools.find((t) => t.name === 'AddMcpServer')!;
+      await add.execute('1', { scope: 'instance', name: 'frozen', transport: 'stdio', command: process.execPath, args: [MOCK_SERVER], enabled: false });
+      const patch = ctx.apiRoutes.find((r) => r.path === 'servers' && r.method === 'PATCH')!;
+      const storedRef = () => (JSON.parse((db.prepare('SELECT spec_json FROM p_mcp_servers WHERE name = ?').get('frozen') as { spec_json: string }).spec_json) as { projectRef: unknown }).projectRef;
+      const patchBody = async (body: Record<string, unknown>) =>
+        await patch.handler({ path: 'frozen', json: async () => body }) as { status?: number; body: { error?: string; server?: { projectRef?: unknown } } };
+
+      // Moving it to another project is refused …
+      const moved = await patchBody({ scope: 'instance', enabled: false, projectRef: { kind: 'managed', projectId: 99 } });
+      expect(moved.status).toBe(409);
+      expect(moved.body.error).toMatch(/immutable/);
+      // … deleting the binding is refused (null) …
+      const deleted = await patchBody({ scope: 'instance', enabled: false, projectRef: null });
+      expect(deleted.body.error).toMatch(/immutable/);
+      // … and converting to a remote server is refused — that would erase the binding.
+      const converted = await patchBody({ scope: 'instance', enabled: false, transport: 'http', url: 'https://example.invalid/mcp' });
+      expect(converted.body.error).toMatch(/only stdio MCP servers may have a project binding/);
+      expect(storedRef()).toEqual({ kind: 'managed', projectId: 51 });
+
+      // An ordinary update goes through and KEEPS the binding.
+      const kept = await patchBody({ scope: 'instance', enabled: false, args: [MOCK_SERVER] });
+      expect(kept.body.server!.projectRef).toEqual({ kind: 'managed', projectId: 51 });
+      expect(storedRef()).toEqual({ kind: 'managed', projectId: 51 });
+    } finally { await teardownCtx(ctx); }
+  }, 20000);
+
+  it('refuses a binding on remote transports at creation', async () => {
+    const db = openPluginTablesDb();
+    const base = fakeCtx({}, undefined, db, { elowenUserId: 1, owner: true });
+    const ctx = { ...base, currentAccess: () => ({}) };
+    try {
+      await register(ctx as never);
+      const add = ctx.tools.find((t) => t.name === 'AddMcpServer')!;
+      const result = await add.execute('1', {
+        scope: 'instance', name: 'remotebind', transport: 'http', url: 'https://example.invalid/mcp',
+        projectRef: { kind: 'managed', projectId: 7 },
+      });
+      expect(resultText(result)).toContain('only stdio MCP servers may have a project binding');
+      expect((db.prepare('SELECT COUNT(*) AS n FROM p_mcp_servers').get() as { n: number }).n).toBe(0);
+    } finally { await teardownCtx(ctx); }
+  }, 20000);
+
+  it('drops stored rows whose binding no longer validates instead of ever running them on the host', async () => {
+    const log = join(tmpDir('mcp-bind-corrupt'), 'starts.log');
+    const db = openPluginTablesDb();
+    const dataDir = mkdtempSync(join(tmpdir(), 'elowen-mcp-bind-data-'));
+    await bootstrapDb(db, dataDir);
+    const insert = db.prepare('INSERT INTO p_mcp_servers (owner_user_id, name, spec_json, tools_json) VALUES (?, ?, ?, ?)');
+    const corrupt = (name: string, projectRef: unknown) => insert.run(null, name,
+      JSON.stringify({ name, enabled: true, transport: 'stdio', command: process.execPath, args: [MOCK_SERVER], env: { SERVER_START_LOG: log }, projectRef }), '[]');
+    // A projectId that stopped being an integer, and one that is null — the falsy case most likely to be
+    // silently reinterpreted as "no binding" and therefore as a host command.
+    corrupt('corrupt-str', { kind: 'managed', projectId: 'five' });
+    corrupt('corrupt-null', null);
+    const prepareExecution = vi.fn();
+    const { ctx } = makeManaged({ projectId: 1, db, prepareExecution, dataDir });
+    try {
+      await register(ctx as never);
+      // Neither row is declared, listed, prepared or spawned: fail closed, never reinterpreted.
+      expect(ctx.tools.some((t) => t.name.startsWith('mcp__corrupt-'))).toBe(false);
+      expect(listMcpServers().some((s: { name: string }) => s.name.startsWith('corrupt-'))).toBe(false);
+      expect(prepareExecution).not.toHaveBeenCalled();
+      expect(starts(log)).toBe(0);
+      expect((ctx.logger.warn as ReturnType<typeof vi.fn>).mock.calls.some((c) => String(c[0]).includes('corrupt-str'))).toBe(true);
+    } finally { await teardownCtx(ctx); }
+  }, 20000);
+});
+
+describe('mcp plugin — managed binding validation and visibility', () => {
+  let dirs: string[] = [];
+  const tmpDir = (tag: string): string => { const p = mkdtempSync(join(tmpdir(), `elowen-${tag}-`)); dirs.push(p); return p; };
+  afterEach(() => { for (const p of dirs) rmSync(p, { recursive: true, force: true }); dirs = []; });
+
+  const resultText = (result: unknown) => (result as { content: { text: string }[] }).content[0]!.text;
+  const descriptor = [{ name: 'echo', description: 'Echo the text back', inputSchema: { type: 'object' } }];
+
+  const bootstrapDb = async (db: Db, dataDir: string): Promise<void> => {
+    const bootstrap = fakeCtx({}, undefined, db, null, dataDir);
+    await register(bootstrap as never);
+    await bootstrap.hooks.find((h) => h.name === 'plugin.reload.before')!.run({});
+  };
+  const insertBound = (db: Db, name: string, projectId: number, spec: Record<string, unknown> = {}, tools: unknown[] = []) =>
+    db.prepare('INSERT INTO p_mcp_servers (owner_user_id, name, spec_json, tools_json) VALUES (?, ?, ?, ?)')
+      .run(null, name, JSON.stringify({ name, enabled: false, transport: 'stdio', command: process.execPath, args: [MOCK_SERVER], projectRef: { kind: 'managed', projectId }, ...spec }), JSON.stringify(tools));
+
+  it('rejects a persisted binding parked on a remote transport, failing closed at load', async () => {
+    const db = openPluginTablesDb();
+    const dataDir = mkdtempSync(join(tmpdir(), 'elowen-mcp-bind-data-'));
+    await bootstrapDb(db, dataDir);
+    db.prepare('INSERT INTO p_mcp_servers (owner_user_id, name, spec_json, tools_json) VALUES (?, ?, ?, ?)')
+      .run(null, 'httpbound', JSON.stringify({ name: 'httpbound', enabled: true, transport: 'http', url: 'https://example.invalid/mcp', projectRef: { kind: 'managed', projectId: 5 } }), '[]');
+    const prepareExecution = vi.fn();
+    const base = fakeCtx({}, undefined, db, { elowenUserId: 1, owner: true }, dataDir);
+    const ctx = { ...base, currentAccess: () => ({ projectRef: { kind: 'managed', projectId: 5 } }), currentAccountUserId: () => 1, defaultCwd: () => '/workspace', control: () => ({ prepareExecution }) };
+    try {
+      await register(ctx as never);
+      // A valid ref must not turn a malformed remote row into binding metadata around a host/remote path.
+      expect(ctx.tools.some((t) => t.name.startsWith('mcp__httpbound__'))).toBe(false);
+      expect(listMcpServers().some((s: { name: string }) => s.name === 'httpbound')).toBe(false);
+      expect(prepareExecution).not.toHaveBeenCalled();
+      expect((ctx.logger.warn as ReturnType<typeof vi.fn>).mock.calls.some((c) => String(c[0]).includes('httpbound'))).toBe(true);
+    } finally { await ctx.hooks.find((h) => h.name === 'plugin.reload.before')!.run({}); ctx.rawDb.close(); rmSync(dataDir, { recursive: true, force: true }); }
+  });
+
+  it('authorizes the binding live at creation even when the server is saved disabled', async () => {
+    // Revoked access and a nonexistent project are both refused BEFORE persistence, with nothing prepared.
+    for (const [name, message] of [['revokedbind', 'access revoked'], ['ghostbind', 'project not found']] as const) {
+      const db = openPluginTablesDb();
+      const dataDir = mkdtempSync(join(tmpdir(), 'elowen-mcp-bind-data-'));
+      const prepareExecution = vi.fn();
+      const base = fakeCtx({}, undefined, db, { elowenUserId: 1, owner: true }, dataDir);
+      const ctx = { ...base, currentAccess: () => ({ projectRef: { kind: 'managed', projectId: 71 } }), currentAccountUserId: () => 1, defaultCwd: () => '/workspace',
+        control: () => ({ prepareExecution, environmentFor: async () => { throw new Error(message); } }) };
+      try {
+        await register(ctx as never);
+        const add = ctx.tools.find((t) => t.name === 'AddMcpServer')!;
+        const result = await add.execute('1', { scope: 'instance', name, transport: 'stdio', command: process.execPath, args: [MOCK_SERVER], enabled: false });
+        expect(resultText(result), name).toContain(message);
+        expect((db.prepare('SELECT COUNT(*) AS n FROM p_mcp_servers WHERE name = ?').get(name) as { n: number }).n).toBe(0);
+        expect(prepareExecution).not.toHaveBeenCalled();
+      } finally { await ctx.hooks.find((h) => h.name === 'plugin.reload.before')!.run({}); ctx.rawDb.close(); rmSync(dataDir, { recursive: true, force: true }); }
+    }
+  }, 20000);
+
+  it('fails closed when the environment provider is missing, disabled binding included', async () => {
+    const db = openPluginTablesDb();
+    const dataDir = mkdtempSync(join(tmpdir(), 'elowen-mcp-bind-data-'));
+    const base = fakeCtx({}, undefined, db, { elowenUserId: 1, owner: true }, dataDir);
+    const ctx = { ...base, currentAccess: () => ({ projectRef: { kind: 'managed', projectId: 73 } }), currentAccountUserId: () => 1, defaultCwd: () => '/workspace', control: () => ({}) };
+    try {
+      await register(ctx as never);
+      const add = ctx.tools.find((t) => t.name === 'AddMcpServer')!;
+      const result = await add.execute('1', { scope: 'instance', name: 'noprovider', transport: 'stdio', command: process.execPath, args: [MOCK_SERVER], enabled: false });
+      expect(resultText(result)).toContain('requires the Sandbox environment provider');
+      expect((db.prepare('SELECT COUNT(*) AS n FROM p_mcp_servers').get() as { n: number }).n).toBe(0);
+    } finally { await ctx.hooks.find((h) => h.name === 'plugin.reload.before')!.run({}); ctx.rawDb.close(); rmSync(dataDir, { recursive: true, force: true }); }
+  }, 20000);
+
+  it('re-checks the binding on update even when the row stays disabled', async () => {
+    const db = openPluginTablesDb();
+    const dataDir = mkdtempSync(join(tmpdir(), 'elowen-mcp-bind-data-'));
+    await bootstrapDb(db, dataDir);
+    insertBound(db, 'frozenupd', 81);
+    const base = fakeCtx({}, undefined, db, { elowenUserId: 1, owner: true }, dataDir);
+    const ctx = { ...base, currentAccess: () => ({}), currentAccountUserId: () => 1, defaultCwd: () => '/workspace',
+      control: () => ({ prepareExecution: vi.fn(), environmentFor: async () => { throw new Error('access revoked'); } }) };
+    try {
+      await register(ctx as never);
+      const patch = ctx.apiRoutes.find((r) => r.path === 'servers' && r.method === 'PATCH')!;
+      const res = await patch.handler({ path: 'frozenupd', json: async () => ({ scope: 'instance', enabled: false }) }) as { status?: number; body: { error?: string } };
+      expect(res.status).toBe(409);
+      expect(res.body.error).toContain('access revoked');
+      // Nothing moved: the binding and the revision survive the failed update untouched.
+      const stored = JSON.parse((db.prepare('SELECT spec_json, revision FROM p_mcp_servers WHERE name = ?').get('frozenupd') as { spec_json: string; revision: number }).spec_json || '{}') as { projectRef?: { projectId: number } };
+      expect(stored.projectRef).toEqual({ kind: 'managed', projectId: 81 });
+      expect((db.prepare('SELECT revision FROM p_mcp_servers WHERE name = ?').get('frozenupd') as { revision: number }).revision).toBe(0);
+    } finally { await ctx.hooks.find((h) => h.name === 'plugin.reload.before')!.run({}); ctx.rawDb.close(); rmSync(dataDir, { recursive: true, force: true }); }
+  }, 20000);
+
+  it('declares a bound server from its persisted cache only, never twice from a stale snapshot entry', async () => {
+    const db = openPluginTablesDb();
+    const dataDir = mkdtempSync(join(tmpdir(), 'elowen-mcp-bind-data-'));
+    await bootstrapDb(db, dataDir);
+    // A bound row whose name a STALE legacy snapshot entry (from before the binding existed) still carries.
+    insertBound(db, 'legacydup', 91, { enabled: true }, descriptor);
+    const prepareExecution = vi.fn();
+    const base = fakeCtx({}, [{ serverName: 'legacydup', tools: descriptor }], db, { owner: true }, dataDir);
+    const ctx = { ...base, currentAccess: () => ({}), currentAccountUserId: () => 1, defaultCwd: () => '/workspace', control: () => ({ prepareExecution }) };
+    try {
+      await register(ctx as never);
+      const names = ctx.tools.filter((t) => t.name === 'mcp__legacydup__echo');
+      expect(names).toHaveLength(1);
+      expect(prepareExecution).not.toHaveBeenCalled();
+    } finally { await ctx.hooks.find((h) => h.name === 'plugin.reload.before')!.run({}); ctx.rawDb.close(); rmSync(dataDir, { recursive: true, force: true }); }
+  }, 20000);
+
+  it('hides a bound resource server from a wrong project and lists it through its own project', async () => {
+    const db = openPluginTablesDb();
+    const dataDir = mkdtempSync(join(tmpdir(), 'elowen-mcp-bind-data-'));
+    await bootstrapDb(db, dataDir);
+    insertBound(db, 'resbound', 61, { enabled: true });
+    const prepareExecution = vi.fn(async () => ({
+      mode: 'managed', projectRef: { kind: 'managed', projectId: 61 }, cwd: tmpDir('mcp-bind-resource'), displayCwd: '/workspace',
+      launch: { type: 'argv', file: process.execPath, args: [RESOURCE_MOCK_SERVER], env: {} },
+      lease: { id: 'mcp-bind-resource', heartbeat() {}, release: vi.fn() },
+      cancel: vi.fn(async () => {}), sanitizeOutput: (text: string) => text,
+    }));
+    const base = fakeCtx({}, undefined, db, { elowenUserId: 1, owner: true }, dataDir);
+    let access: unknown = { projectRef: { kind: 'managed', projectId: 62 } }; // wrong project selected
+    const ctx = { ...base, currentAccess: () => access, currentAccountUserId: () => 1, defaultCwd: () => '/workspace', control: () => ({ prepareExecution, environmentFor: async () => ({ projectId: 61, generation: 1, state: 'running' }) }) };
+    try {
+      await register(ctx as never);
+      const list = ctx.tools.find((t) => t.name === 'ListMcpResources')!;
+
+      // Wrong project: the bound server is filtered from the visible set entirely.
+      const hidden = (await list.execute('1', { server: 'resbound' })) as { content: { text: string }[] };
+      expect(hidden.content[0]!.text).toContain('is not connected');
+      const full = (await list.execute('2', {})) as { content: { text: string }[] };
+      expect(full.content[0]!.text).not.toContain('resbound');
+      expect(prepareExecution).not.toHaveBeenCalled();
+
+      // Matching project: listed through the guest.
+      access = { projectRef: { kind: 'managed', projectId: 61 } };
+      const listed = (await list.execute('3', {})) as { content: { text: string }[]; details: { ok: boolean } };
+      expect(listed.details.ok).toBe(true);
+      expect(listed.content[0]!.text).toContain('file:///notes.txt');
+      expect(prepareExecution).toHaveBeenCalledWith(expect.objectContaining({ projectRef: { kind: 'managed', projectId: 61 }, leaseKind: 'mcp' }));
+    } finally { await ctx.hooks.find((h) => h.name === 'plugin.reload.before')!.run({}); ctx.rawDb.close(); rmSync(dataDir, { recursive: true, force: true }); }
   }, 30000);
 });

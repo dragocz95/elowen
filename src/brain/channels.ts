@@ -1152,7 +1152,7 @@ export class ChannelSessionService {
               // provider), but the ORDER and framing of the blocks no longer live here: composeTurnPrompt
               // is the single source for that, so a block added for the owner chat cannot silently skip
               // every channel the way this composition used to allow.
-              const { block: postCompaction, compacted, commit } = drainPostCompactionContext(this.d.store, ch);
+              const { block: postCompaction, compacted, commit } = await drainPostCompactionContext(this.d.store, ch, this.d.sandbox);
               commitOrientation = commit;
               // The compaction took the memory blocks with it, so what the model can still read is empty
               // again. Cleared before the recall below, or this turn would suppress memories the compacted

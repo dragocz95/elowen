@@ -33,7 +33,7 @@ import { composeTurnWire } from '../session/turnPrompt.js';
 import { projectTurnWireFrames } from '../persistence.js';
 import { EXIT_PLAN_MODE_TOOL } from '../../shared/planTool.js';
 import { planFilePath } from '../../shared/paths.js';
-import { ensurePlanDir, readPlan } from '../continuity/planStore.js';
+import { planTurnContext } from '../continuity/planStore.js';
 
 interface TurnContextBuilderDeps {
   store: BrainStore;
@@ -77,22 +77,6 @@ interface TurnContextBuilderDeps {
  *  `WorkflowStart` stays withheld: it would inherit the same forcing, but its nodes expand through
  *  `WorkflowAddNodes`, and admitting one without the other only buys a workflow that cannot grow. */
 export const PLAN_MODE_CLAMPED_TOOLS: ReadonlySet<string> = new Set(['Bash', 'Delegate', 'Write', 'Edit', EXIT_PLAN_MODE_TOOL]);
-
-/** What the plan-mode directive says about the plan file's current state.
- *
- *  Worth a whole line of prompt because of the file tools' read guard: overwriting a file this session
- *  has not READ is refused. That guard is right, and the model walks into it in two ordinary cases — the
- *  daemon restarted (the read marks are in memory), or the user edited the plan by hand, which the
- *  directive openly invites. Both leave a model that believes it is resuming its own document and gets a
- *  refusal it has no reason to expect. Telling it the file already exists costs one sentence and turns
- *  that into a Read it would have done anyway. */
-function planStateLine(sessionId: string): string {
-  return readPlan(sessionId) === undefined
-    ? 'It does not exist yet — your first `Write` creates it.'
-    : 'It ALREADY EXISTS from earlier in this conversation (or from the user editing it). Read it before'
-      + ' you change it: revise what is there rather than starting over, and the file tools refuse an'
-      + ' overwrite of a file this session has not read.';
-}
 
 /** How often a mode's FULL directive is resent while the mode stays on — entry, then every Nth turn.
  *  Low enough that the rules never scroll out of steering range, high enough that a long planning
@@ -154,7 +138,7 @@ export class TurnContextBuilder {
           commitSessionNotices = commitNotices;
           // A compaction just destroyed the messages holding the agreed plan and every trace of which
           // files were open. Re-orient the model exactly once, next to the other one-shot notices.
-          const { block: postCompaction, compacted, commit } = drainPostCompactionContext(this.d.store, live);
+          const { block: postCompaction, compacted, commit } = await drainPostCompactionContext(this.d.store, live, this.d.sandbox);
           commitOrientation = commit;
           // The compaction took the memory blocks with it, so what the model can still read is empty
           // again. Cleared before the recall below, or this turn would suppress memories the compacted
@@ -194,11 +178,11 @@ export class TurnContextBuilder {
           // The plan-mode directive NAMES the plan file, because the plan is authored as a document and
           // the model cannot write one to a path it was never told. Passed to both modes' templates: the
           // var is simply unused by the ones that do not mention it.
-          // Creating the directory is part of naming the path. Write brings its own parent tree along
-          // now, so this is no longer the only thing keeping the model out of an ENOENT it could not
-          // resolve (the plan-mode shell clamp denies `mkdir -p`) — it still guarantees the directory is
-          // there for a turn that reads the plan without ever having written one.
-          if (mode === 'plan') ensurePlanDir(live.sessionId);
+          // Which path that is — and whether the document already exists — is the plan store's turn-level
+          // decision: a managed-project turn is handed the GUEST plan path (with the central plan
+          // exported into the guest first, when the guest copy does not exist yet), every other turn the
+          // central host path with its directory ensured exactly as before.
+          const planContext = mode === 'plan' ? await planTurnContext(this.d.sandbox, live.sessionId) : undefined;
           let modeReminder = '';
           if (modeTemplate) {
             const reminder = this.modeTemplateFor(modeTemplate, mode, previousMode, live, compacted);
@@ -206,8 +190,8 @@ export class TurnContextBuilder {
             modeReminder = this.d.prompts.render(
               reminder.template,
               {
-                planFile: planFilePath(process.env, live.sessionId),
-                planState: mode === 'plan' ? planStateLine(live.sessionId) : '',
+                planFile: planContext?.planFile ?? planFilePath(process.env, live.sessionId),
+                planState: planContext?.planState ?? '',
               },
               request.userId,
             );
