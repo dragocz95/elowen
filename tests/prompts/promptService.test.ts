@@ -38,8 +38,11 @@ describe('PromptService.render', () => {
       expect(template).toContain(`<${section}>`);
       expect(template).toContain(`</${section}>`);
     }
-    for (const placeholder of ['{{agentName}}', '{{userName}}', '{{personality}}']) {
-      expect(template.split(placeholder)).toHaveLength(2);
+    // Occurrence counts, not just presence: the agent name is stated twice on purpose (identity, and the
+    // personality paragraph the configured overlay follows), while a second user name or personality slot
+    // would mean the same text was pasted twice rather than moved.
+    for (const [placeholder, occurrences] of [['{{agentName}}', 2], ['{{userName}}', 1], ['{{personality}}', 1]] as const) {
+      expect(template.split(placeholder)).toHaveLength(occurrences + 1);
     }
     const openTags: string[] = [];
     for (const match of template.matchAll(/<\/?([a-z][a-z0-9_]*)\b[^>]*>/g)) {
@@ -51,7 +54,10 @@ describe('PromptService.render', () => {
     expect(template).toContain('maintained, stable, secure');
     expect(template).toContain('AGENTS.md');
     expect(template).toMatch(/say so in the first\s+sentence of your report/);
-    expect(template).toContain('One idea per sentence, about 20 words, with a verb');
+    // The three chat mechanics kept from the old style list; the rest of the writing guidance is pinned
+    // verbatim against tests/fixtures/promptAdoptedGuidance.md.
+    expect(template).toContain('no em-dashes, no parentheticals, no arrows');
+    expect(template).toMatch(/put a measurement or count on its own\s+line or in a short table/);
     expect(template).toContain('When a tool schema offers an optional `_reason`');
     expect(template).toContain('Bash uses its canonical `description` argument instead of `_reason`');
     expect(template).toContain('Write `_reason`, or Bash `description`, ONLY where the call may take a noticeable moment');
@@ -69,6 +75,10 @@ describe('PromptService.render', () => {
     // The parent-facing criterion, never an unconditional rule — the child boilerplate tells a fork to
     // ignore this guidance, and a blanket "always fork" would be wrong on every cross-model delegation.
     expect(template).not.toContain('default to forking');
+    // Superseded by the adopted permission guidance: a standing authorization now carries across turns,
+    // so the old "approval never extends" rule would contradict it if a copy survived anywhere.
+    expect(template).not.toContain('Approval in one context does not extend to the next');
+    expect(template).not.toContain('Do not ask whether to take a reversible, low-stakes action');
     expect(template).not.toContain('Write either status field');
     expect(template).not.toContain('Every tool call accepts an optional `_reason`');
     expect(template).not.toContain('Do exactly what was asked — no more, no less');
@@ -80,6 +90,7 @@ describe('PromptService.render', () => {
     }, 1);
     // Identity is stated inline rather than in <name>/<user> tags, but both names must still be substituted.
     expect(rendered).toContain('You are Elowen,');
+    expect(rendered).toContain('As Elowen, you are a curious, thoughtful collaborator');
     expect(rendered).toContain('for Alice,');
     expect(rendered).toContain('<communication_style>Communicate as a pragmatic senior engineer.</communication_style>');
     expect(rendered).not.toMatch(/\{\{(?:agentName|userName|personality)\}\}/);
