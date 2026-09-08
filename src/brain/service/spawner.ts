@@ -9,6 +9,8 @@ import { resolveFastModeRoute } from '../fastMode.js';
 import { isOfferableBrainModel } from '../../shared/execs.js';
 import { buildMemoryTools, BUILTIN_TOOL_DEFER_LOADING, BUILTIN_TOOL_ICONS, BUILTIN_TOOL_PLAN_SAFE } from '../tools/index.js';
 import { buildShareFileTool } from '../tools/shareFileTool.js';
+import type { GuestFileSandbox, SandboxResolver } from '../managedArtifacts.js';
+import { setManagedSandboxResolver } from '../session/toolResultClearing.js';
 import { buildShareImageTool } from '../tools/shareImageTool.js';
 import { makeToolIconResolver } from '../toolIcons.js';
 import { composeSessionTools } from '../session/capabilities.js';
@@ -337,6 +339,12 @@ export class LiveSessionSpawner {
     // Enabled plugins contribute tools, skills, and system-prompt fragments. Their tools read the active
     // Policy at call time via AsyncLocalStorage (set around each prompt), no per-session construction.
     const plugins = await this.d.plugins();
+    // The one live Sandbox seam for every managed-project artifact consumer composed below. Resolved
+    // through the registry on each call rather than captured here, so a plugin reload never leaves a
+    // consumer holding a disposed control; absent or disabled means those consumers refuse, and a
+    // managed turn never falls back to the host filesystem.
+    const sandbox: SandboxResolver = async () => (await this.d.plugins())?.control('sandbox') as GuestFileSandbox | undefined;
+    setManagedSandboxResolver(sandbox);
     // The security invariant (a SHARED platform channel — trusted OR foreign — never gets the owner's
     // Elowen* control-plane tools or owner API token) lives in composeSessionTools; the token is minted
     // lazily so it never exists for them. An admin-role Discord sender lands on 'trusted-channel', NOT
@@ -440,9 +448,10 @@ export class LiveSessionSpawner {
       // cached prefix. The capability does not follow the schema: `forkToolDenial` refuses both names at
       // execute time, so the reasoning above still holds for what the child can actually do.
       shareImage: isSubagentSession(sessionId) && !forkChild ? undefined : () => [
-        buildShareImageTool({ store: this.d.store, imagesDir: this.d.chatImagesDir }),
-        buildShareFileTool({ imagesDir: this.d.chatImagesDir }),
+        buildShareImageTool({ store: this.d.store, imagesDir: this.d.chatImagesDir, sandbox }),
+        buildShareFileTool({ imagesDir: this.d.chatImagesDir, sandbox }),
       ],
+      sandbox,
       pluginTools,
       // …and, in a room, which of them belong to ONE account. Absent everywhere else, where the whole
       // composed set already belongs to whoever the session was composed for.
