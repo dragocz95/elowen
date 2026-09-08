@@ -235,9 +235,9 @@ export class BrainClient {
   private lifetimeSignal?: AbortSignal;
   private readonly clientId: string;
   private startGeneration = 0;
-  /** Generation that actually committed `bound`; preserved across server-driven idle rollover rebinds. */
+  /** Generation that actually committed `bound`; preserved across server-driven rebinds. */
   private boundGeneration?: number;
-  /** The conversation this client is bound to — set by start(), updated by rebind() (idle rollover). */
+  /** The conversation this client is bound to — set by start(), updated by rebind() on a `session` event. */
   private bound?: string;
   constructor(private o: BrainClientOpts) {
     const fetchImpl = o.fetchImpl ?? fetch;

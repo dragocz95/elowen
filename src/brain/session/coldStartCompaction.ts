@@ -114,7 +114,7 @@ export function assessColdCompaction(
 }
 
 /** A session's last activity in epoch ms — the newest stored message vs the user's last explicit
- *  interaction, the same pair rolloverDue keys on. `interactedAt` moves on resume, model switch and
+ *  interaction, the same pair the channel idle cutoff keys on. `interactedAt` moves on resume, model switch and
  *  manual compact even without a provider request, which can only DELAY the gate — the safe direction.
  *  0 means no activity on record (never cold-compact). */
 export function lastActivityMs(lastMessageAt: string | undefined, interactedAt: number | undefined): number {

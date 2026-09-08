@@ -40,7 +40,9 @@ A CLI launch reports its working directory. Elowen resumes the most recent unatt
 
 ### Session lifecycle and restart recovery
 
-A conversation keeps its durable id, transcript, model/provider selection, and validated working-directory binding even when its in-memory provider session is replaced. Elowen may replace that live session when you switch models, change settings that affect the prompt, reconnect after a detach, or when an idle conversation rolls over. An idle rollover creates a fresh conversation for the next message rather than sending an expired context back to the provider; active work is not cut off.
+A conversation keeps its durable id, transcript, model/provider selection, and validated working-directory binding even when its in-memory provider session is replaced. Elowen may replace that live session when you switch models, change settings that affect the prompt, or reconnect after a detach.
+
+A chat conversation is never moved for you: however long it sat idle, your next message continues it, and a scheduled turn answers in the conversation it was set from. When a conversation resumes after a long gap, Elowen compacts the stale context at the start of the turn instead of sending an expired one back to the provider. Start a new conversation yourself when you want one.
 
 The daemon persists turn boundaries and recovery state. During boot it first claims recoverable work, then resumes it after the platform services are ready through the normal chat path. Recovery covers interrupted delegations, workflow nodes, pending delegated results, parked owner conversations, and parked platform-channel turns. It is bounded and fail-closed: when the stored recovery record, plugin, scope, or runtime is unavailable, the work may be parked, released, or terminalized with its completed portion preserved; it is not blindly replayed. A live stream may need to reconnect and refetch the authoritative transcript.
 

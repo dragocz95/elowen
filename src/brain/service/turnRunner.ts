@@ -911,10 +911,10 @@ export class BrainTurnRunner {
         let b = session ? this.d.sessions.get(targetId) : this.d.lifecycle.activeLive(userId);
         if (!b) throw new Error('brain not started for user');
         assertClientCurrent(b.sessionId);
-        // Idle rollover — see ConversationLifecycle.maybeRollover. INTERNAL sends (goal kickoff /
-        // continuation) never roll over — the goal row is keyed to the session it was set on; moving its
-        // kickoff to a fresh session would orphan the goal (judge finds no row, loop never starts).
-        if (!internal) b = await this.d.lifecycle.maybeRollover(userId, b, clientCwd);
+        // Owner chat has no idle cutoff: a conversation is continued however long it sat, so a scheduled
+        // turn keeps the "it will reply here" promise and a dedicated job's history accumulates in one
+        // place. The stale-context cost that cutoff used to pay for is handled at turn start instead, by
+        // cold-start compaction and cold tool-result clearing.
         // Vision fallback — see ConversationLifecycle.maybeVisionHop (an image turn on a text-only model
         // respawns onto the user's vision model in place, and hops back on the next text-only turn).
         b = await this.d.lifecycle.maybeVisionHop(userId, b, !!images?.length, clientCwd);

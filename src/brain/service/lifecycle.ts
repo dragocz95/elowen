@@ -5,7 +5,6 @@ import type { ElicitationRegistry } from '../elicitation.js';
 import type { BrainEvent } from '../events.js';
 import { sendLockKey, type LiveSessionRegistry } from '../session/liveRegistry.js';
 import type { LiveBrain, SpawnOpts } from '../session/liveBrain.js';
-import { rolloverDue } from '../session/idleRollover.js';
 import { decideVisionHop } from '../visionFallback.js';
 import { catalogModelVision } from '../modelCapabilities.js';
 import { defaultUserSessionId, freshUserSessionId, isNonUserSession, isOwnedUserSession, isChannelSession, channelIdOf } from '../sessionId.js';
@@ -37,8 +36,7 @@ import { resetConversationActivity } from '../session/conversationActivity.js';
  *  the memory dedup set and the ambient digests give to the identical question.
  *
  *  Also deliberately excludes `yoloOverride` and the pending reasoning marker — their own field docs say a
- *  respawn resets them to the persisted default — and is never used by rollover, which opens a brand-new
- *  EMPTY conversation (see maybeRollover). */
+ *  respawn resets them to the persisted default. */
 interface InPlaceRespawnState {
   lastTurnMode: LiveBrain['lastTurnMode'];
 }
@@ -500,7 +498,7 @@ export class ConversationLifecycle {
    *  cold-start assessment all belong to the disposed session. Deliberately NOT an in-place respawn in the
    *  {@link InPlaceRespawnState} sense: a cleared context must not inherit `lastTurnMode` /
    *  `orientedForCompaction` / `modeReminderTurns`, whose whole meaning is "the model already read this
-   *  earlier in THIS conversation" — after a clear it never did (same reason maybeRollover skips them).
+   *  earlier in THIS conversation" — after a clear it never did.
    *
    *  The model is passed EXPLICITLY rather than left to the spawn's own resolution: that path only restores
    *  a conversation's stored pin once it has been spoken in (`lastMessageAt`), which an emptied history no
@@ -562,65 +560,6 @@ export class ConversationLifecycle {
       for (const id of clearedCardIds) live.replay.publish({ type: 'card', card: { id, pinned: false } });
       return { sessionId, model: live.model };
     }));
-  }
-
-  /** Idle rollover — the ONE chokepoint every owner-chat message funnels through (web, CLI): a
-   *  conversation whose last message sits past the cutoff continues as a FRESH session instead —
-   *  the provider's prompt cache is long expired, so continuing would drag the whole stale context
-   *  back in at full price. A running turn is never cut (a streaming send steers in the turn runner;
-   *  one that queued here behind a finishing turn sees a fresh lastMessageAt and stays). An explicitly
-   *  reopened conversation counts as fresh interaction (LiveBrain.interactedAt). Subscribers are
-   *  carried onto the replacement session so open event streams survive, then told via the
-   *  `session` event so their transcript restarts at this message (a bound CLI rebinds to the id the
-   *  event carries). Returns the (possibly replaced) live session. */
-  async maybeRollover(userId: number, b: LiveBrain, clientCwd?: string): Promise<LiveBrain> {
-    // A background delegate can outlive the parent's own prompt. Its durable parent id must stay stable
-    // until the child settles, so never archive/replace a conversation that still owns running children.
-    //
-    // Nor do we cut a conversation a terminal still has OPEN. The cutoff exists to avoid dragging a stale
-    // context back in at full price after the prompt cache expired — a fair trade for a conversation nobody
-    // is looking at, but not for one the user is sitting in front of: they step away, come back, type, and
-    // would find their thread silently replaced by an empty one. An idle CLI conversation therefore stays;
-    // the user starts a new one when THEY want one (/new, or simply relaunching). Every other surface —
-    // web, Discord, cron — is unaffected and keeps rolling over as before.
-    if (b.session.isStreaming || this.d.sessions.hasActiveChildren(b.sessionId)
-        || this.d.attachments.hasLiveStableClient(b.sessionId)
-        || !rolloverDue({ lastMessageAt: this.d.store.lastMessageAt(b.sessionId), interactedAt: b.interactedAt, now: Date.now() })) return b;
-    const oldId = b.sessionId;
-    const wasActive = this.activeSessionId(userId) === oldId;
-    const freshId = freshUserSessionId(userId);
-    // Publish the identity transition to attachment bookkeeping before the first async spawn boundary.
-    // A quit POST can race while ensureLive awaits provider/session setup; it must already resolve the
-    // old client-visible id to `freshId` rather than concluding that the disposed predecessor is gone.
-    // This is also what carries every genuinely attached transport (subscribe + taps) onto the fresh
-    // session id — the spawner restores them from ClientAttachments, so nothing else has to.
-    this.d.attachments.retarget(oldId, freshId);
-    this.d.goals.cancelGoalContinuation(oldId);
-    this.d.elicitation.cancelForSession(oldId, 'session stopped');
-    this.d.sessions.dispose(oldId);
-    try {
-      await this.ensureLive(userId, freshId, { clientCwd });
-    } catch (error) {
-      // The spawn failed: the fresh id never became live, so unwind the identity transition back onto the
-      // old id. The old runtime is already gone (its dispose above is real, not undoable), but leaving
-      // attachments pointed at the old id means the NEXT ensureLive/send simply respawns it there — instead
-      // of the current client staying permanently dark behind a fresh id nothing will ever spawn into (see
-      // the sol review finding 6). The active pointer is untouched here on purpose: it only moves below,
-      // after a successful respawn, so on failure it is still exactly where it was before this call.
-      this.d.attachments.retarget(freshId, oldId);
-      throw error;
-    }
-    const fresh = this.d.sessions.get(freshId);
-    if (!fresh) throw new Error('brain not started for user');
-    // The pointer follows the rollover only when it pointed at the rolled-over conversation — a bound
-    // send on a non-active conversation must not hijack the pointer from another client.
-    if (wasActive) this.d.sessions.setActive(userId, freshId);
-    // Rollover opens a brand-new EMPTY conversation — deliberately NOT an in-place respawn: it must not
-    // carry the old one's prompt/cadence state (lastTurnMode/orientedForCompaction/modeReminderTurns).
-    // Doing so would make TurnContextBuilder.modeTemplateFor() emit a sparse mode instruction claiming the
-    // full text is already earlier in THIS conversation's history, which is never true for a fresh id.
-    fresh.replay.publish({ type: 'session', sessionId: fresh.sessionId });
-    return fresh;
   }
 
   /** Vision fallback (Account → CLI): an image turn on a text-only model hops onto the user's

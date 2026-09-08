@@ -3942,6 +3942,55 @@ describe('BrainService', () => {
     expect(d.store.getSession('brain-ch-somewhere')).toBeUndefined();
   });
 
+  // Regression: a one-shot wake-up ("it will reply in this conversation") set an hour ahead found its
+  // origin conversation idle past the old 30-min cutoff and rolled it over, so the promised reply
+  // appeared in a brand-new conversation the owner never opened. The same cut hit every dedicated job
+  // conversation whose runs are hours apart, defeating "history accumulates in one conversation".
+  it('a scheduled origin wake-up answers in the conversation it promised, however idle it sat', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    const ctx = reg.contextFor('cron', {}, { info() {}, warn() {}, error() {} });
+    let handler: ((src: unknown, text: string) => Promise<string | undefined>) | null = null;
+    ctx.registerPlatform({ name: 'cron', connect: async () => {}, listen: (h) => { handler = h as never; }, send: async () => {} });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    (d as unknown as { platformOwner: () => number }).platformOwner = () => 1;
+    (d as unknown as { policy: (userId: number) => unknown }).policy =
+      (userId) => ({ allowedProjectIds: new Set([userId]), allowedPaths: () => [] });
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    await svc.startPlatforms();
+    await svc.send({ userId: 1, text: 'wake me in an hour' });
+    // The owner is asleep: no live stable client, no streaming turn, last message 59 minutes old.
+    d.db.prepare("UPDATE brain_messages SET created_at = datetime('now', '-59 minutes')").run();
+
+    expect(await handler!({ platform: 'cron', userId: 'cron', roleIds: [], channelId: 'job-1',
+      origin: { sessionId: 'brain-1', userId: 1 },
+      access: { admin: false, projectIds: [], actAsUserId: 1, scheduled: true },
+    }, 'here is your hour')).toBe('echo:here is your hour');
+
+    // Same conversation, and no fresh one was minted behind the owner's back.
+    expect(svc.listSessions(1).map((s) => s.id)).toEqual(['brain-1']);
+    expect(svc.status(1).sessionId).toBe('brain-1');
+    const texts = d.store.getMessages('brain-1').map((m) => JSON.parse(m.content).content);
+    expect(texts).toContain('wake me in an hour');
+    expect(texts).toContain('here is your hour');
+  });
+
+  // Owner chat has no idle cutoff at all any more: a human resuming a stale conversation continues it
+  // too. Cold-start compaction and cold tool-result clearing (both at turn start) carry the stale-context
+  // cost the cutoff used to pay for, without ever moving the user's thread.
+  it('a plain user send into an equally idle conversation continues it instead of starting a fresh one', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    await svc.start(1);
+    await svc.send({ userId: 1, text: 'wake me in an hour' });
+    d.db.prepare("UPDATE brain_messages SET created_at = datetime('now', '-59 minutes')").run();
+    await svc.send({ userId: 1, text: 'morning' });
+    expect(svc.status(1).sessionId).toBe('brain-1');
+    expect(svc.listSessions(1).map((s) => s.id)).toEqual(['brain-1']);
+    expect(d.store.getMessages('brain-1').map((m) => JSON.parse(m.content).content)).toContain('morning');
+  });
+
   it('classifies a linked Teams 1:1 as direct and lets a personal scheduled job bind delivery to it', async () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();
@@ -4676,12 +4725,14 @@ describe('channel tool composition + per-turn gate', () => {
   });
 });
 
-describe('idle rollover (send)', () => {
-  /** Backdate every stored brain message so the conversation looks idle past the 30-min cutoff. */
+describe('conversation continuity (send)', () => {
+  /** Backdate every stored brain message so the conversation looks long idle. */
   const backdate = (d: ReturnType<typeof fakeDeps>) =>
     d.db.prepare("UPDATE brain_messages SET created_at = datetime('now', '-31 minutes')").run();
 
-  it('a message into a conversation idle past the cutoff rolls over into a FRESH session', async () => {
+  // Owner chat has no idle cutoff: whatever the gap, the user comes back to the conversation they left.
+  // The stale-context cost is paid at turn start by cold-start compaction and cold tool-result clearing.
+  it('continues an idle conversation instead of starting a fresh one', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
@@ -4690,52 +4741,29 @@ describe('idle rollover (send)', () => {
     const seen: { type: string; sessionId?: string }[] = [];
     svc.subscribe(1, (e) => seen.push(e as { type: string; sessionId?: string }));
     await svc.send({ userId: 1, text: 'second' });
-    const sessionId = svc.status(1).sessionId!;
-    expect(sessionId).not.toBe('brain-1');
-    expect(sessionId).toMatch(/^brain-1-/);
-    // The subscriber survived the rollover: it was told about the new session, then saw the turn settle.
-    const rolled = seen.find((e) => e.type === 'session');
-    expect(rolled?.sessionId).toBe(sessionId);
-    expect(seen.some((e) => e.type === 'idle')).toBe(true);
-    // The triggering user message landed in the NEW session, never the stale one.
-    const userTexts = (id: string) => d.store.getMessages(id).filter((m) => m.role === 'user').map((m) => JSON.parse(m.content).content);
-    expect(userTexts('brain-1')).toEqual(['first']);
-    expect(userTexts(sessionId)).toContain('second');
-    // Both conversations remain listed; the fresh one is active.
-    const list = svc.listSessions(1);
-    expect(list.map((s) => s.id).sort()).toEqual(['brain-1', sessionId].sort());
-    expect(list.find((s) => s.id === sessionId)?.active).toBe(true);
-  });
-
-  it('stays in the session while the last message is within the cutoff', async () => {
-    const d = fakeDeps();
-    const svc = new BrainService(d as never);
-    await svc.start(1);
-    await svc.send({ userId: 1, text: 'first' });
-    await svc.send({ userId: 1, text: 'second' });
     expect(svc.status(1).sessionId).toBe('brain-1');
-    expect(svc.listSessions(1)).toHaveLength(1);
+    // No conversation change was announced, and both messages are in the one transcript.
+    expect(seen.some((e) => e.type === 'session')).toBe(false);
+    expect(seen.some((e) => e.type === 'idle')).toBe(true);
+    const userTexts = d.store.getMessages('brain-1').filter((m) => m.role === 'user').map((m) => JSON.parse(m.content).content);
+    expect(userTexts).toEqual(['first', 'second']);
+    const list = svc.listSessions(1);
+    expect(list.map((s) => s.id)).toEqual(['brain-1']);
+    expect(list[0]?.active).toBe(true);
   });
 
-  // Regression: the mode-switch marker was recorded on `active` (pre-lock) before maybeRollover replaced the
-  // session, so a send that both switched mode AND rolled over stranded the marker on the archived brain-1.
-  it('never strands a mode-switch marker on a session that then rolls over', async () => {
+  it('records a mode switch on the conversation it happened in', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
     await svc.send({ userId: 1, text: 'first', mode: 'build' }); // baseline build on brain-1
     backdate(d);
-    await svc.send({ userId: 1, text: 'second', mode: 'plan' }); // mode change + rollover in the same send
-    expect(svc.status(1).sessionId).not.toBe('brain-1');
-    // The build→plan marker must NOT dangle on the now-archived conversation; the fresh session simply
-    // starts under plan mode (no prior mode in it to switch from).
-    expect(d.store.getSessionEvents('brain-1').filter((e) => e.kind === 'mode')).toEqual([]);
+    await svc.send({ userId: 1, text: 'second', mode: 'plan' });
+    expect(svc.status(1).sessionId).toBe('brain-1');
+    expect(d.store.getSessionEvents('brain-1').filter((e) => e.kind === 'mode')).toHaveLength(1);
   });
 
-  // The cutoff is a cost optimisation for conversations nobody is watching. A terminal that still has the
-  // conversation OPEN is precisely the case where it is wrong: the user steps away, comes back, types — and
-  // would find their thread silently replaced by an empty one.
-  it('does not roll over a conversation a CLI client still holds open, however long it sat idle', async () => {
+  it('keeps an idle conversation a CLI client still holds open', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
@@ -4747,14 +4775,13 @@ describe('idle rollover (send)', () => {
     await svc.send({ userId: 1, text: 'second' });
 
     expect(svc.status(1).sessionId).toBe('brain-1'); // same conversation, context intact
-    expect(svc.listSessions(1)).toHaveLength(1);     // no fresh one was minted behind their back
+    expect(svc.listSessions(1)).toHaveLength(1);
 
-    // …and the mechanism itself is untouched: once the terminal is gone, the same idle conversation rolls
-    // over exactly as before. The CLI's presence is the ONLY thing that held it.
+    // …and it stays put once the terminal is gone too: nothing about owner chat cuts a conversation loose.
     off();
     backdate(d);
     await svc.send({ userId: 1, text: 'third' });
-    expect(svc.status(1).sessionId).not.toBe('brain-1');
+    expect(svc.status(1).sessionId).toBe('brain-1');
   });
 
   // A conversation begins when the user says something, not when a client opens one. Launching the CLI
@@ -4808,20 +4835,7 @@ describe('idle rollover (send)', () => {
     expect(d.store.getSession(held)).toBeDefined(); // that terminal's conversation is not ours to remove
   });
 
-  it('still rolls over for the web dock — an anonymous subscriber does not hold a conversation open', async () => {
-    const d = fakeDeps();
-    const svc = new BrainService(d as never);
-    await svc.start(1);
-    await svc.send({ userId: 1, text: 'first' });
-    backdate(d);
-
-    svc.subscribe(1, () => {}); // the web's /brain/stream: no client id, no session
-    await svc.send({ userId: 1, text: 'second' });
-
-    expect(svc.status(1).sessionId).not.toBe('brain-1');
-  });
-
-  it('never cuts a running turn: a stale conversation mid-stream steers instead of rolling over', async () => {
+  it('steers a stale conversation mid-stream into its own running turn', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
@@ -4829,11 +4843,9 @@ describe('idle rollover (send)', () => {
     backdate(d);
     d.session.isStreaming = true; // a turn is in flight
     await svc.send({ userId: 1, text: 'still there?' });
-    // Mid-turn: steered into the SAME conversation — never rolled to a fresh one (the idle-rollover check
-    // lives in the outer serial, which the steer path returns before ever reaching).
     expect(d.session.steer).toHaveBeenCalledWith('still there?', undefined);
     expect(svc.queueList(1).map((q) => q.text)).toEqual(['still there?']);
-    expect(svc.status(1).sessionId).toBe('brain-1'); // same conversation — no rollover
+    expect(svc.status(1).sessionId).toBe('brain-1');
     expect(svc.listSessions(1)).toHaveLength(1);
   });
 
@@ -4869,7 +4881,7 @@ describe('idle rollover (send)', () => {
     expect(svc.listSessions(1)).toHaveLength(1);
   });
 
-  it('a default (client-boot) start does NOT shield a stale conversation from rolling over', async () => {
+  it('a reconnecting client resumes the most recent conversation and continues it', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
@@ -4878,7 +4890,7 @@ describe('idle rollover (send)', () => {
     svc.stop(1);
     await svc.start(1); // reconnecting client auto-resumes the most recent conversation
     await svc.send({ userId: 1, text: 'morning' });
-    expect(svc.status(1).sessionId).toMatch(/^brain-1-/);
+    expect(svc.status(1).sessionId).toBe('brain-1');
   });
 });
 
@@ -7890,66 +7902,31 @@ describe('per-client session binding (multi-instance CLI)', () => {
     expect(row()?.attached).toBe(0);
   });
 
-  it('an idle rollover carries attached streams and session taps onto the replacement conversation', async () => {
+  // A dropped SSE keeps its stable identity in the grace cache, so a stop carrying that client id still
+  // reaches the session it was bound to and a reconnect on the same URL hydrates the live transcript.
+  it('a client stop after a dropped SSE resolves and disposes the bound session', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
     await svc.send({ userId: 1, text: 'first', mode: 'build', session: 'brain-1' });
-    d.db.prepare("UPDATE brain_messages SET created_at = datetime('now', '-31 minutes')").run();
-    const got: string[] = [];
-    const off = svc.tapSession(1, 'brain-1', (e) => got.push(e.type));
-    await svc.send({ userId: 1, text: 'second', mode: 'build', session: 'brain-1' });
-    const rolled = svc.listSessions(1).find((s) => s.id !== 'brain-1');
-    expect(rolled).toBeDefined();
-    expect(got).toContain('session'); // the tap heard about the replacement id…
-    expect(rolled?.attached).toBe(1); // …and now counts as attached THERE
-    expect(userTexts(d, rolled!.id)).toContain('second');
-    got.length = 0;
-    await svc.send({ userId: 1, text: 'third', mode: 'build', session: rolled!.id }); // rebound client
-    expect(got).toContain('idle'); // the moved tap keeps delivering
-    off();
-    expect(attached(svc, rolled!.id)).toBe(0);
-  });
-
-  // A LIVE CLI tap now vetoes the idle rollover outright (see "does not roll over a conversation a CLI
-  // client still holds open"). So the only way a rollover still happens behind a CLI client's back is with
-  // its transport DOWN — a dropped SSE whose stable identity survives in the grace cache. That is precisely
-  // the race the retarget/stale-id machinery below exists for, and these two pin it.
-  it('a client stop carrying the pre-rollover id resolves and disposes the retargeted session', async () => {
-    const d = fakeDeps();
-    const svc = new BrainService(d as never);
-    await svc.start(1);
-    await svc.send({ userId: 1, text: 'first', mode: 'build', session: 'brain-1' });
-    d.db.prepare("UPDATE brain_messages SET created_at = datetime('now', '-31 minutes')").run();
-    // The SSE dropped; the stable identity lives on. A send (a separate POST) still lands and rolls over.
     svc.tapSession(1, 'brain-1', () => {}, 'cli-a')();
     await svc.send({ userId: 1, text: 'second', mode: 'build', session: 'brain-1' });
-    const freshId = svc.listSessions(1).find((s) => s.id !== 'brain-1')?.id;
-    expect(freshId).toBeDefined();
 
-    // The request deliberately carries the stale id. Stable attachment identity is authoritative and
-    // follows rollover server-side, so the replacement (not the already-dead predecessor) is stopped.
     expect(await svc.stopSession(1, 'brain-1', 'cli-a')).toEqual({ stopped: true, disposed: true });
-    expect(isLive(svc, freshId)).toBe(false);
+    expect(isLive(svc, 'brain-1')).toBe(false);
     expect(svc.status(1).running).toBe(false);
   });
 
-  it('a reconnect that missed idle rollover resolves its stale bound stream id to the stable fresh binding', async () => {
+  it('a reconnect on a bound stream id hydrates the conversation transcript', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     const old = await svc.start(1, { clientId: 'cli-a', clientGeneration: 1 });
     await svc.send({ userId: 1, text: 'first', mode: 'build', session: old.sessionId });
-    d.db.prepare("UPDATE brain_messages SET created_at = datetime('now', '-31 minutes')").run();
-    // The SSE dies BEFORE the rollover — the only way it can now happen without the client seeing it.
     svc.tapSession(1, old.sessionId, () => {}, 'cli-a', 1)();
 
     await svc.send({ userId: 1, text: 'second', mode: 'build', session: old.sessionId });
-    const freshId = svc.listSessions(1).find((session) => session.id !== old.sessionId)?.id;
-    expect(freshId).toBeDefined();
-    // The dead SSE never observed the `session` event, but its stable binding was retargeted for this
-    // generation. Reconnecting with the old URL must hydrate the fresh transcript.
     const recovered = await svc.tapSessionSnapshot(1, old.sessionId, () => {}, 'cli-a', 1);
-    expect(recovered.snapshot.sessionId).toBe(freshId);
+    expect(recovered.snapshot.sessionId).toBe(old.sessionId);
     expect(recovered.snapshot.history.some((row) => row.text.includes('second'))).toBe(true);
     recovered.off();
   });

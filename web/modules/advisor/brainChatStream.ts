@@ -184,7 +184,7 @@ export function useBrainChatStream({ connectRef, getGeneration, setReady, setRec
       handlers.error(message);
       reconnect().retry();
     });
-    // Idle rollover rebinds to a fresh conversation WITHOUT bumping the generation, matching BrainClient.
+    // A server-side rebind names a different conversation WITHOUT bumping the generation, matching BrainClient.
     onFrame('session', (e) => handlers.session((JSON.parse((e as MessageEvent).data) as { sessionId: string }).sessionId));
     onFrame('reasoning', (e) => handlers.reasoning((JSON.parse((e as MessageEvent).data) as { delta: string }).delta));
     // Do not throttle again here: the daemon already preserves the first reason-bearing delta and caps later

@@ -822,15 +822,16 @@ export class ChannelSessionService {
       this.d.registry.throwIfPendingAbort(sessionId);
       // Idle rollover (cache-cost fix): a channel that sat quiet past the idle cutoff has a long-expired
       // prompt cache, so continuing would re-send its whole stale transcript at full price for no benefit.
-      // Roll it over like owner chat (lifecycle.maybeRollover): drop the live PI session and ARCHIVE the
-      // old transcript+title under a fresh unique id — the deterministic channel id is freed, so the fall
+      // Drop the live PI session and ARCHIVE the old transcript+title under a fresh unique id — the
+      // deterministic channel id is freed, so the fall
       // through below spawns a fresh, empty session under it (the registry and slash commands key on
       // channelId, so the id stays stable). The old conversation stays browsable in the sessions view.
       // MUST run before the getMessages() backfill check so a reset channel re-triggers its history
       // backfill + titler. A streaming turn is never cut — the lock already serializes this channel's
       // turns, so this only guards against a live record left mid-flight. `interactedAt` is the live
-      // session's own last deliberate touch (compact/model switch), mirroring the owner-chat call site:
-      // a recent interaction vetoes the rollover even when the last stored message is stale.
+      // session's own last deliberate touch (compact/model switch): a recent interaction vetoes the
+      // rollover even when the last stored message is stale. This cutoff is a PLATFORM-only rule — owner
+      // chat has no equivalent, so a scheduled turn bound to an owner conversation never moves.
       const live = this.d.registry.channelGet(opts.channelId);
       // The caller resolved this from the row that existed when the turn arrived. The rollover below can
       // rename that row out from under it, which is the one moment the value goes stale.
