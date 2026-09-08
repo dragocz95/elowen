@@ -106,6 +106,16 @@ describe('BrainSessionsPanel (conversation register)', () => {
     expect(within(row('Web chat')).queryByText('room')).not.toBeInTheDocument();
   });
 
+  /** Export, delete and the sub-agent tree are reachable only through this button, so it may not be a
+   *  hover affordance: it is quiet at rest and washes to the foreground on hover. */
+  it('keeps the row action trigger visible without hover', async () => {
+    renderPanel();
+    const trigger = await screen.findByRole('button', { name: 'Conversation 1: Actions' });
+    expect(trigger.className).not.toMatch(/\bopacity-0\b/);
+    expect(trigger.className).not.toMatch(/group-hover:opacity-100/);
+    expect(trigger.className).toMatch(/\btext-muted-foreground\b/);
+  });
+
   it('offers the conversation row actions from right click', async () => {
     renderPanel();
     await screen.findByText('Conversation 1');
@@ -528,10 +538,10 @@ describe('BrainSessionsPanel — the page fills the dialog', () => {
   });
 });
 
-/** The administrator's view of the same branch. This register already nests a delegated session under the
- *  conversation that started it, from the session ancestry alone — so the interesting property here is
- *  that adding the branch does not make one sub-agent appear twice. */
-describe('BrainSessionsPanel — sub-agent branch', () => {
+/** The administrator's view of the same tree: reached from the row's action menu and drawn as a
+ *  drill-down in place of the register. The register itself stays one row per conversation, with the
+ *  ancestry nesting it has always had. */
+describe('BrainSessionsPanel — sub-agent tree', () => {
   const branch = (subagents: Record<string, unknown[]>, over: Record<string, unknown> = {}) => {
     jobLinks = { status: 'available', links: [], subagentStatus: 'available', subagents, subagentsTruncated: false, ...over };
   };
@@ -541,27 +551,47 @@ describe('BrainSessionsPanel — sub-agent branch', () => {
       { id: 'brain-ch-subagent-sub-a', title: 'Nested worker', model: 'gpt-5.5', updated_at: '2026-07-13T09:00:00.000Z', running: false, active: false, kind: 'conversation', tokens: 5, ownerId: 2, ownerLabel: 'Me', parentSessionId: 'brain-1' },
     ];
   };
+  const openTree = async (title: string, count = 1) => {
+    fireEvent.click(await screen.findByRole('button', { name: `${title}: Actions` }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: `Sub-agents (${count})` }));
+  };
 
-  it('shows a delegated session under the branch and not a second time through its ancestry', async () => {
-    withNested();
-    branch({ 'brain-1': [{ kind: 'delegate', key: 'sub:a', name: 'Nested worker', status: 'done', childSessionId: 'brain-ch-subagent-sub-a', children: [] }] });
+  /** The regression: every conversation of the register grew a full-width branch row with a tree guide
+   *  under it. The tree moved into the row's own menu, and the register is a list of conversations again. */
+  it('adds no branch row to the register and offers the tree in the row menu', async () => {
+    branch({ 'brain-1': [{ kind: 'delegate', key: 'sub:a', name: 'Audit auth', status: 'done', childSessionId: 'brain-ch-subagent-sub-a', children: [] }] });
     renderPanel();
     await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
 
-    fireEvent.click(screen.getByRole('button', { name: 'Sub-agents of Conversation 1' }));
-    fireEvent.click(await screen.findByRole('button', { name: 'Sub-agent runs under Conversation 1' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Conversation 1: Actions' }));
+    expect(await screen.findByRole('menuitem', { name: 'Sub-agents (1)' })).toBeInTheDocument();
+    fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
 
-    // Exactly one row carries the name: the branch row, which knows the run status the ancestry cannot.
-    await waitFor(() => expect(screen.getAllByText('Nested worker')).toHaveLength(1));
-    expect(screen.getByRole('button', { name: 'Nested worker' })).toBeInTheDocument();
-    expect(screen.getByText('Completed')).toBeInTheDocument();
+    expect(document.querySelector('[data-tree-row="subagents"]')).toBeNull();
+    expect(document.querySelector('[data-tree-row="subagent"]')).toBeNull();
+    expect(screen.queryByText('Audit auth')).toBeNull();
   });
 
-  /** A session older than the run rows and the DAG snapshots has no branch row to move to. Yielding the
-   *  ancestry rendering unconditionally would simply lose it. */
-  it('keeps a delegated session the branch does not cover in its ancestry place', async () => {
+  it('drills into the tree of the conversation the menu belongs to, and back', async () => {
+    branch({ 'brain-1': [{ kind: 'delegate', key: 'sub:a', name: 'Audit auth', status: 'done', childSessionId: 'brain-ch-subagent-sub-a', children: [] }] });
+    renderPanel();
+    await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
+    await openTree('Conversation 1');
+
+    expect(await screen.findByTestId('brain-sessions-subagents-tree')).toBeInTheDocument();
+    expect(screen.getByRole('heading', { name: 'Conversation 1' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Audit auth' })).toBeInTheDocument();
+    expect(screen.queryByTestId('brain-sessions-list')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: /Back to conversations|Zpět na konverzace|Späť na konverzácie/ }));
+    expect(await screen.findByTestId('brain-sessions-list')).toBeInTheDocument();
+  });
+
+  /** The register nests a delegated session under the conversation that started it from the session
+   *  ancestry alone. That is a different affordance from the tree and keeps every row it ever showed. */
+  it('keeps a delegated session in its ancestry place under the conversation', async () => {
     withNested();
-    branch({});
+    branch({ 'brain-1': [{ kind: 'delegate', key: 'sub:a', name: 'Nested worker', status: 'done', childSessionId: 'brain-ch-subagent-sub-a', children: [] }] });
     renderPanel();
     await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
 
@@ -569,6 +599,15 @@ describe('BrainSessionsPanel — sub-agent branch', () => {
 
     expect(await screen.findByText('Nested worker')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^Sub-agent runs under/ })).toBeNull();
+  });
+
+  it('offers nothing to open for a conversation that delegated nothing', async () => {
+    branch({ 'brain-1': [{ kind: 'delegate', key: 'sub:a', name: 'Audit auth', status: 'done', childSessionId: 'brain-ch-subagent-sub-a', children: [] }] });
+    renderPanel();
+    await waitFor(() => expect(screen.getByText('Conversation 2')).toBeInTheDocument());
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Conversation 2: Actions' }));
+    expect(await screen.findByRole('menuitem', { name: 'Sub-agents (0)' })).toHaveAttribute('aria-disabled', 'true');
   });
 
   it('opens a sub-agent read-only and lets its host dismiss', async () => {
@@ -579,8 +618,7 @@ describe('BrainSessionsPanel — sub-agent branch', () => {
     try {
       renderPanel();
       await waitFor(() => expect(screen.getByText('Conversation 1')).toBeInTheDocument());
-      fireEvent.click(screen.getByRole('button', { name: 'Sub-agents of Conversation 1' }));
-      fireEvent.click(await screen.findByRole('button', { name: 'Sub-agent runs under Conversation 1' }));
+      await openTree('Conversation 1');
       fireEvent.click(await screen.findByRole('button', { name: 'Audit auth' }));
     } finally {
       window.removeEventListener(BRAIN_OPEN_EVENT, listener);

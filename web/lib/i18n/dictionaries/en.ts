@@ -362,11 +362,15 @@ export const en = {
     paused: 'Paused',
     error: 'Scheduled jobs could not be loaded',
   },
-  /** The collapsed branch of sub-agents under a conversation, in both switcher views. Navigation into
-   *  what already ran: nothing on these rows starts, continues or deletes anything. */
+  /** The sub-agent tree of one conversation, opened from its row menu in both switcher views. Navigation
+   *  into what already ran: nothing on these rows starts, continues or deletes anything. */
   subagentBranch: {
     branch: 'Sub-agents',
-    toggle: 'Sub-agent runs under {title}',
+    /** The row-menu item that opens the tree, with the number of runs it holds. */
+    menu: 'Sub-agents ({count})',
+    /** Out of the tree and back to the list it was opened from. */
+    back: 'Back to conversations',
+    empty: 'This conversation delegated no sub-agents.',
     expand: 'What {name} delegated',
     workflow: 'Workflow',
     /** A delegation whose transcript retention has already removed. The row still records that the work

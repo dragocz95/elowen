@@ -15,6 +15,9 @@ import {
 export type ActionMenuItem = {
   label: string;
   tone?: 'default' | 'danger';
+  /** Present but not selectable — for an action a row genuinely offers and this row has nothing to do it
+   *  with, where dropping the item would make the menu's shape depend on the row. */
+  disabled?: boolean;
   onSelect: () => void;
   /** Run only after Radix has closed the menu and restored focus to its stable trigger. Use this when the
    *  action opens another focus-owning overlay, so that overlay captures the trigger rather than a menuitem
@@ -201,6 +204,7 @@ export function ActionMenu({ items, label, trigger, triggerClassName, className,
               <DropdownMenuItem
                 key={item.label}
                 variant={item.tone === 'danger' ? 'destructive' : 'default'}
+                disabled={item.disabled}
                 onSelect={() => {
                   restoreFocus.current = true;
                   afterClose.current = item.onAfterClose ?? null;
