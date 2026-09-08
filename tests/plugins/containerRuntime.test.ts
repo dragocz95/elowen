@@ -230,6 +230,9 @@ describe('clean and confined Podman client', () => {
     const [, args, options] = executor.run.mock.calls.find(([, args]) => args.includes('systemd-run'))!;
     expect(args).toContain('--property=KillMode=control-group');
     expect(args).toContain('--property=RuntimeMaxSec=1s');
+    // The container's pids cgroup is the declared bound. Without this the guest systemd applies
+    // DefaultTasksMax, 15% of it, and an execution suffocates far below the environment's own limit.
+    expect(args).toContain('--property=TasksMax=infinity');
     expect(args.join(' ')).not.toContain('echo guest-input');
     expect(options.input).toBe('echo guest-input');
     expect(executor.run.mock.calls.some(([, args]) => args.includes('unmask'))).toBe(true);

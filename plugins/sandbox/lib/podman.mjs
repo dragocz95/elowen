@@ -625,9 +625,14 @@ export class PodmanClient {
     options.signal?.throwIfAborted();
     const row = await this.#owned(spec);
     if (row.state !== 'running') throw new Error('Container is not running');
+    // TasksMax=infinity defers to the container's own pids cgroup, which is the limit the environment
+    // actually declares. The guest systemd otherwise caps every transient unit at DefaultTasksMax, 15%
+    // of that budget, so a 512-PID environment let an execution reach only ~76 tasks: headless Chromium
+    // peaks near 155 threads and died on pthread_create while the container was 84% idle. The bound is
+    // not weakened, it is moved back to the one place that states it.
     return { timeoutMs, args: ['exec', '--interactive', row.id, 'systemd-run', '--quiet', '--pipe', '--wait', '--collect', `--unit=${unit}`,
-      '--service-type=exec', '--property=KillMode=control-group', '--property=TimeoutStopSec=5s', `--property=RuntimeMaxSec=${Math.ceil(timeoutMs / 1000)}s`,
-      `--working-directory=${workdir}`, '--', ...argv] };
+      '--service-type=exec', '--property=KillMode=control-group', '--property=TimeoutStopSec=5s', '--property=TasksMax=infinity',
+      `--property=RuntimeMaxSec=${Math.ceil(timeoutMs / 1000)}s`, `--working-directory=${workdir}`, '--', ...argv] };
   }
 
   async startPreview(spec, executionId, argv) {
