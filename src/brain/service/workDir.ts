@@ -212,7 +212,9 @@ export function switchableProjects(policy: Policy, projects?: { list(): Project[
 export interface MoveSessionWorkDirInput {
   store: Pick<BrainStore, 'getSession' | 'setWorkDir' | 'lastMessageAt' | 'appendSessionEvent'>;
   policy: Policy;
-  /** The account whose Sandbox bindings the move may release — the contribution owner, never a room writer. */
+  /** The account whose Sandbox bindings the move may release. Owner chat's /cd passes the contribution
+   *  owner; the channel project switch passes the calling room writer — whoever the caller is, only
+   *  THEIR OWN bindings are ever released, never another account's. */
   accountUserId: number | null;
   sessionId: string;
   /** The live record when the conversation is running; absent (cold) → only the durable home moves. */
