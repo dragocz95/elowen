@@ -323,6 +323,9 @@ export function register(ctx) {
         background: job.background,
         autoDeliver: job.autoDeliver,
         workspaceId: job.workspaceId,
+        // Only a DelegateContinue that was steered into a running turn sets this, and only then is it on
+        // the wire at all: an ordinary run's payload stays exactly what it was before the field existed.
+        ...(job.steered === true ? { steered: true } : {}),
       });
       if (accepted === false) throw new Error('the host rejected the durable sub-agent progress row');
       return { ok: true };
@@ -1115,6 +1118,12 @@ export function register(ctx) {
           const res = await continuation;
           state.status = 'done';
           if (res.status === 'steered') {
+            // The call is over (its state below is written truthfully), but NOTHING finished: the message
+            // entered a turn that keeps running under the original delegation. The flag is what lets the
+            // views say that — a steer instead of "✓ 0 tools · 10s" — and what keeps the timeline's
+            // sub-agent finish marker for the delegation that really settles. Set before the terminal
+            // `push` in `finally`, so the durable row and the live event both carry it.
+            state.steered = true;
             state.result = 'The follow-up entered the sub-agent\'s running turn; its updated conclusion arrives through the original delegation.';
             return ok(
               'The sub-agent was mid-turn, so your message was steered into its RUNNING turn and has entered '

@@ -69,6 +69,10 @@ export interface SubagentState {
   /** Sandbox workspace the child was confined to, when Delegate passed `workspaceId`. Mirrors
    *  BrainSubagentView; drives the sandboxed-run glyph next to the sub-agent's status icon. */
   workspaceId?: string;
+  /** This call is a DelegateContinue whose message was STEERED into the child's already running turn: it
+   *  ran no tools and finished nothing, so the row renders as a steer rather than a settled run. Mirrors
+   *  BrainSubagentView; present only on such a call. */
+  steered?: true;
 }
 type Segment =
   | { kind: 'text'; text: string }

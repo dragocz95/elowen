@@ -54,6 +54,12 @@ export interface BrainSubagentView {
   /** Sandbox workspace the child was confined to (Delegate's `workspaceId`), when it ran scoped to one.
    *  Display-only signal for the sandboxed-run icon; absent means the legacy project-scope run. */
   workspaceId?: string;
+  /** This call is a `DelegateContinue` whose message was STEERED into the child's already running turn: it
+   *  entered that turn's context and returned at once, having run no tools and finished nothing — the
+   *  delegation it steered into is what keeps working. Present only on such a call, so every row recorded
+   *  without it stays byte-identical. Display-only: a renderer must show a steer rather than a settled run,
+   *  and no sub-agent finish marker is recorded for it. */
+  steered?: true;
 }
 
 /** Trusted durable Sandbox-workspace anchor a delegated child or workflow node ran confined to. Mirrors
