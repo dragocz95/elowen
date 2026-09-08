@@ -170,8 +170,10 @@
 }
 
 /* Wide content in assistant prose (markdown tables, fenced code) scrolls inside its own box so the page
-   never scrolls sideways at narrow / mobile widths. */
+   never scrolls sideways at narrow / mobile widths. A block-level table would otherwise stretch its box
+   across the whole column while its cells stay narrow; sizing it to its content keeps the border tight. */
 .chat-markdown table, .chat-markdown pre { display: block; max-width: 100%; overflow-x: auto; }
+.chat-markdown table { width: max-content; }
 
 /* Collapsible tool row (native <details>): hide the default marker, rotate the chevron when open. */
 .chat-tool > summary { list-style: none; }
