@@ -44,5 +44,6 @@ web-dist/
 # stays tracked instead of being silently ignored.
 plugins/subagent/web/
 plugins/sandbox/web/
+plugins/mcp/web/
 plugins/msteams/web/
 plugins/changelog/web/
