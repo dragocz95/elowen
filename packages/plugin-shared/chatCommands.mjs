@@ -178,7 +178,7 @@ export async function runControlCommand(cmd, b) {
  *  can leak a path only the switching account may read into a shared room. */
 async function pickerDescriptor(cmd, b) {
   const { msg, reply, isAdmin, ctl, ref, senderPlatformId } = b;
-  if (cmd === 'context') {
+  if (cmd === PICKER_CONTEXT) {
     // Operator-gated like /model: binding exposes the chosen history to everyone in the room. Ownership
     // stays the real boundary — the listing offers only the invoking sender's OWN conversations (the
     // bare default excluded server-side) and bindContext re-checks. An unlinked sender has nothing to
@@ -188,7 +188,7 @@ async function pickerDescriptor(cmd, b) {
     const listing = ctl?.listContext?.(ref, senderPlatformId, { offset: 0, limit: PICKER_LIST_LIMIT }) ?? null;
     if (!listing || !listing.items?.length) { await reply(msg.noContextSessions); return null; }
     return {
-      picker: 'context',
+      picker: PICKER_CONTEXT,
       title: msg.pickContext,
       placeholder: msg.contextPlaceholder,
       items: listing.items.map((s) => ({
@@ -198,7 +198,7 @@ async function pickerDescriptor(cmd, b) {
       })),
     };
   }
-  if (cmd === 'project') {
+  if (cmd === PICKER_PROJECT) {
     // Deliberately NO operator gate: binding someone else's history into the room is an operator decision
     // (/context), while a project switch moves the conversation into a directory only the SWITCHING
     // account itself reaches — the host resolves that sender's own project policy and re-validates it on
@@ -210,7 +210,7 @@ async function pickerDescriptor(cmd, b) {
     if (projects === null) { await reply(msg.projectAccountRequired); return null; }
     if (projects.length === 0) { await reply(msg.noProjects); return null; }
     return {
-      picker: 'project',
+      picker: PICKER_PROJECT,
       title: msg.pickProject,
       placeholder: msg.projectPlaceholder,
       items: projects.map((p) => ({ value: String(p.id), label: String(p.slug) })),
@@ -231,7 +231,7 @@ async function pickerDescriptor(cmd, b) {
 export async function runPickerCommand(cmd, b, page = 0) {
   // A typed `/project <slug|id>` argument skips the chooser entirely: it resolves and switches in one
   // step. Bare `/project` falls through to the descriptor and opens the same chooser as /context.
-  if (cmd === 'project' && String(b.arg ?? '').trim()) return applyProjectChoice(b.arg, b);
+  if (cmd === PICKER_PROJECT && String(b.arg ?? '').trim()) return applyProjectChoice(b.arg, b);
   const d = await pickerDescriptor(cmd, b);
   if (d === undefined) return false;
   if (d) await b.showPicker(d, page);
@@ -248,7 +248,7 @@ export async function runPickerCommand(cmd, b, page = 0) {
  *  that opened it. /project has none at either end. */
 export async function applyPickerChoice(picker, value, b) {
   const { msg, reply, isAdmin, ctl, ref, senderPlatformId } = b;
-  if (picker === 'context') {
+  if (picker === PICKER_CONTEXT) {
     if (isAdmin && !isAdmin()) { await reply(msg.controlForbidden); return true; }
     if (!ctl?.bindContext) { await reply(msg.noSession); return true; }
     const sessionId = String(value ?? '').trim();
@@ -261,7 +261,7 @@ export async function applyPickerChoice(picker, value, b) {
     }
     return true;
   }
-  if (picker === 'project') {
+  if (picker === PICKER_PROJECT) {
     // A chooser pick always carries the decimal id this core's descriptor listed, so it switches straight
     // on it — no listing round-trip, and a host whose listing is missing or stubbed must not break an id
     // it handed out itself. Anything else (a stale or foreign component) resolves like a typed argument.

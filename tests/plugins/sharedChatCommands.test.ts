@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error — plain .mjs plugin module, no types
-import { applyPickerChoice, botControlCommandsFrom, controlCommandsFrom, localCommandsFrom, runControlCommand, runPickerCommand } from '../../packages/plugin-shared/chatCommands.mjs';
+import { PICKER_CONTEXT, PICKER_PROJECT, SHARED_PICKERS, applyPickerChoice, botControlCommandsFrom, controlCommandsFrom, localCommandsFrom, runControlCommand, runPickerCommand } from '../../packages/plugin-shared/chatCommands.mjs';
 import { commandsWithPlugins } from '../../src/brain/slashCommands.js';
 
 const MSG = {
@@ -129,6 +129,16 @@ describe('control set derived from the published catalog', () => {
     expect(set.has('deploy')).toBe(false);
     // …while a surface-local picker never enters it: the daemon owns nothing behind /model.
     expect(controlCommandsFrom(PLATFORM_CATALOG.filter((c) => c.name === 'model')).size).toBe(0);
+  });
+
+  /** The adapters route their chooser components through these exported names, so they must stay the
+   *  names the catalog publishes for the session-control pickers — a drift here would route a component
+   *  no descriptor ever built. */
+  it('exports the shared picker names the catalog publishes', () => {
+    expect(SHARED_PICKERS).toEqual(['context', 'project']);
+    expect(SHARED_PICKERS).toEqual([PICKER_CONTEXT, PICKER_PROJECT]);
+    const control = controlCommandsFrom(PLATFORM_CATALOG);
+    for (const name of SHARED_PICKERS) expect(control.has(name)).toBe(true);
   });
 
   /** The catalog arrives from the daemon over HTTP, so a surface running against a core that predates
