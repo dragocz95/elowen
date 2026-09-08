@@ -6,6 +6,7 @@ import { manageWorktrees } from './managedWorktrees.mjs';
 import { createSiteImageService } from './environmentSiteImages.mjs';
 import { createSiteCleanupService } from './environmentSiteCleanup.mjs';
 import { createGuestFileTransport, validateUploadOperation, UPLOAD_KINDS } from './guestFileTransport.mjs';
+import { managedShellFrame } from './managedBootstrap.mjs';
 import { createEnvironmentStore } from './environmentDb.mjs';
 import { ownerProvablyDead, processIdentity, withRepoLease } from './db.mjs';
 import { createContainerSpec, createBoundSiteSpec, withContainerLimits, resourceToken, bindContainerIdentity } from './containerSpec.mjs';
@@ -48,7 +49,14 @@ function guestPath(value) {
   return posix.normalize(value);
 }
 function command(input) {
-  if (input?.type === 'shell' && typeof input.command === 'string' && Buffer.byteLength(input.command) <= 524288) return { argv: ['/bin/bash', '-s'], input: input.command };
+  // `bash -s` would read the script off stdin with a buffered reader and take whatever followed it in
+  // the same write — which for a duplex consumer (a language server, a CDP client) is its first protocol
+  // frames. The bootstrap reads exactly the declared number of bytes, execs bash on them, and leaves the
+  // rest of stdin untouched for the program.
+  if (input?.type === 'shell' && typeof input.command === 'string' && Buffer.byteLength(input.command) <= 524288) {
+    const frame = managedShellFrame(input.command);
+    return { argv: frame.argv, input: frame.stdin };
+  }
   if (input?.type === 'argv' && typeof input.file === 'string' && Array.isArray(input.args)) {
     // PATH resolution is performed inside the guest, never by the host launcher.
     return { argv: input.file.startsWith('/') ? [input.file, ...input.args] : ['/usr/bin/env', '--', input.file, ...input.args] };

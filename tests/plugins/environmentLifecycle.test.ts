@@ -83,7 +83,11 @@ describe('durable managed environment lifecycle', () => {
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
     const prepared = await runtime.prepareExecution({ command: { type: 'shell', command: 'sleep 5' }, cwd: '/workspace', projectRef: input.project, leaseKind: 'terminal' }, 1);
     expect(prepared.mode).toBe('managed');
-    expect(prepared.stdin).toBe('sleep 5');
+    // The shell script is the bootstrap's declared prefix, written once, so anything the caller sends
+    // after it stays on stdin for the program rather than being swallowed by the shell.
+    expect(prepared.stdin.equals(Buffer.from('sleep 5'))).toBe(true);
+    expect(podman.prepareExecution).toHaveBeenCalledWith(expect.anything(), expect.any(String),
+      ['/usr/bin/python3', '-c', expect.stringContaining('memfd_create'), '7'], expect.anything());
     members.delete(1);
     await runtime.revokeProjectAccess({ projectId: 7, accountUserId: 1 });
     expect(podman.cancelExecution).toHaveBeenCalled();
