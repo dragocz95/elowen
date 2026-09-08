@@ -51,7 +51,7 @@ export const config: ElowenConfig = {
   hiddenPresets: [],
   modelNotes: {},
   providers: {},
-  defaults: { exec: 'elowen:oauth-anthropic/claude-sonnet-4', maxSessions: 3 },
+  defaults: { exec: 'elowen:oauth-anthropic/claude-sonnet-4' },
   security: { tokenTtlDays: TOKEN_TTL_DAYS },
   sessionRetention: { enabled: false, days: 30 },
   autoUpdate: false,

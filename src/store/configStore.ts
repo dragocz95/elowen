@@ -121,7 +121,7 @@ export interface ElowenConfig {
   allowedSkins: string[];
   modelNotes: Record<string, string>;
   providers: Providers;
-  defaults: { exec: string; maxSessions: number };
+  defaults: { exec: string };
   security: { tokenTtlDays: number; trustProxy: boolean };
   /** Automatic cleanup of stale brain conversations. Off by default (opt-in): when on, an hourly janitor
    *  deletes user conversations whose last activity is older than `days`. Never touches running sessions,
@@ -816,7 +816,7 @@ const DEFAULT_CONFIG: ElowenConfig = {
   allowedSkins: [],
   modelNotes: { ...EXEC_NOTES },
   providers: { ...DEFAULT_PROVIDERS },
-  defaults: { exec: 'sonnet', maxSessions: 2 },
+  defaults: { exec: 'sonnet' },
   // trustProxy on by default: the install wizard writes the nginx vhost itself, and that vhost is what
   // sets X-Real-IP. An install that puts the daemon behind something else (or nothing) turns it off, and
   // every recorded origin degrades to "claimed, unverified" instead of silently looking authoritative.
@@ -868,7 +868,7 @@ interface Stored {
   allowedSkins: string[];
   modelNotes: Record<string, string>;
   providers: Providers;
-  defaults: { exec: string; maxSessions: number };
+  defaults: { exec: string };
   security: { tokenTtlDays: number; trustProxy: boolean };
   sessionRetention: { enabled: boolean; days: number };
   autoUpdate: boolean;
@@ -968,7 +968,7 @@ export interface ConfigPatch {
   allowedSkins?: string[];
   modelNotes?: Record<string, string>;
   providers?: Providers;
-  defaults?: { exec?: string; maxSessions?: number };
+  defaults?: { exec?: string };
   security?: { tokenTtlDays?: number; trustProxy?: boolean };
   sessionRetention?: { enabled?: boolean; days?: number };
   autoUpdate?: boolean;
@@ -1020,7 +1020,7 @@ export class ConfigStore {
         // while user edits (including an explicit '' to clear one) take precedence.
         modelNotes: (p.modelNotes && typeof p.modelNotes === 'object' && !Array.isArray(p.modelNotes)) ? { ...d.modelNotes, ...sanitizeModelNotes(p.modelNotes) } : { ...d.modelNotes },
         providers: { ...d.providers, ...sanitizeProviders(p.providers) },
-        defaults: { exec: canonicalExec(p.defaults?.exec) ?? d.defaults.exec, maxSessions: p.defaults?.maxSessions ?? d.defaults.maxSessions },
+        defaults: { exec: canonicalExec(p.defaults?.exec) ?? d.defaults.exec },
         security: {
           tokenTtlDays: p.security?.tokenTtlDays ?? d.security.tokenTtlDays,
           trustProxy: typeof p.security?.trustProxy === 'boolean' ? p.security.trustProxy : d.security.trustProxy,
@@ -1288,7 +1288,7 @@ export class ConfigStore {
       allowedSkins: patch.allowedSkins !== undefined ? sanitizeSkinList(patch.allowedSkins) : cur.allowedSkins,
       modelNotes: sanitizeModelNotes(patch.modelNotes ?? cur.modelNotes),
       providers: patch.providers ? { ...cur.providers, ...sanitizeProviders(patch.providers) } : cur.providers,
-      defaults: { exec: defaultExec, maxSessions: patch.defaults?.maxSessions ?? cur.defaults.maxSessions },
+      defaults: { exec: defaultExec },
       // Clamp to a sane positive integer — the value is interpolated into a SQL date modifier.
       security: {
         tokenTtlDays: clampTtlDays(patch.security?.tokenTtlDays, cur.security.tokenTtlDays),

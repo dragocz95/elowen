@@ -14,7 +14,7 @@ let putBody: unknown = null;
 let putBodies: unknown[] = [];
 const config = {
   allowedExecs: ['elowen:anthropic::opus'], customModels: [], providers: {},
-  defaults: { exec: 'elowen:anthropic::opus', maxSessions: 1 },
+  defaults: { exec: 'elowen:anthropic::opus' },
   security: { tokenTtlDays: 30 }, sessionRetention: { enabled: false, days: 90 },
 };
 const server = setupServer(
