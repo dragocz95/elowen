@@ -304,9 +304,10 @@
     {
       "area": "browser",
       "capability": "in-page download handling in a guest",
-      "evidence": "unverified",
-      "negative": "unverified",
-      "notes": "Split out from the browser row so its absence is explicit rather than implied."
+      "evidence": "real-guest",
+      "negative": "unit",
+      "notes": "A click-triggered download settles in /data/browser/downloads and reads back byte-exact through the provider.",
+      "suite": "browserManagedGuest.podman"
     },
     {
       "area": "editor",
