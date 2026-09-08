@@ -1039,13 +1039,18 @@ export interface KillForegroundControl {
   killForeground(input: { sessionId: string; principal: string }): { killed: number };
 }
 
-/** The cronjob plugin's retention seam: the ids of a user's conversations that still have a PENDING
- *  one-shot wake-up scheduled INTO them (jobs recorded with that origin which have not fired yet —
- *  firing consumes the job, so presence in the plugin's store IS pendingness). The retention janitor
- *  excludes these ids from its stale sweep: purging the origin conversation would strand the wake-up's
- *  context and demote its reply to the notification channel. */
-export interface PendingWakeupControl {
-  pendingWakeupOriginSessionIds(userId: number): string[];
+/** The cronjob plugin's retention seam: every session id the plugin STILL NEEDS for this user, which the
+ *  retention janitor then excludes from its stale sweep.
+ *
+ *  Deliberately wider than the pending one-shot wake-up origins it started as. Those are one case — the
+ *  origin conversation of a job that has not fired yet, whose purge would strand the wake-up's context and
+ *  demote its reply to the notification channel. A RECURRING job is the other, and the old name was why it
+ *  was missed: it never stops being pending, and both its dedicated conversation (`brain-<uid>-job-<id>`,
+ *  which is exactly where its history lives between runs) and the conversation it was scheduled from must
+ *  survive an idle stretch longer than the retention horizon. The plugin knows which of its jobs are live;
+ *  core must not have to guess the shape of a job id to protect one. */
+export interface CronRetentionControl {
+  retainedSessionIds(userId: number): string[];
   /** The cronjob plugin's NAVIGATION seam: the recurring jobs organized under conversations the host has
    *  already authorized for this requester, so a conversation listing can show a collapsed jobs branch.
    *  Organization only — this says nothing about where a job runs, which model it uses or where its result
@@ -1459,7 +1464,7 @@ export interface SkillCatalogControl {
 export interface KnownControls {
   subagent: DetachControl & ActiveCountControl;
   terminal: DetachControl & KillForegroundControl;
-  cron: PendingWakeupControl;
+  cron: CronRetentionControl;
   workflow: WorkflowCancelControl & DetachControl & ActiveCountControl & WorkflowLivenessControl & WorkflowExpansionControl & WorkflowRecoveryControl;
   mcp: McpListControl;
   lsp: LspStateControl;

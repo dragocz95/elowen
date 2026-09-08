@@ -45,7 +45,7 @@ function setup(opts: {
   if (opts.cron) {
     const reg = new PluginRegistry();
     reg.userGrantable.add('cronjob');
-    const wakeups = { pendingWakeupOriginSessionIds: () => [] };
+    const wakeups = { retainedSessionIds: () => [] };
     reg.contextFor('cronjob', {}, { info() {}, warn() {}, error() {} }).registerControl(
       'cron',
       opts.cron === 'legacy' ? wakeups : {

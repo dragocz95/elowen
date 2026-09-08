@@ -1878,6 +1878,12 @@ export class BrainService {
     return this.teardown.purgeStaleSessionsForUser(userId, days);
   }
 
+  /** Retention janitor: delete delegated result rows whose child session no longer exists — see
+   *  SessionTeardownService.purgeUndeliverableDelegationResults. */
+  purgeUndeliverableDelegationResults(days: number): number {
+    return this.teardown.purgeUndeliverableDelegationResults(days);
+  }
+
   /** Start (or resume) a conversation — see ConversationLifecycle.start. */
   async start(userId: number, opts?: { provider?: string; model?: string; session?: string; fresh?: boolean; cwd?: string; clientId?: string; clientGeneration?: number; surface?: ConversationActivitySurface }): Promise<{ sessionId: string }> {
     const started = await this.lifecycle.start(userId, opts);

@@ -8308,7 +8308,7 @@ describe('retention janitor — pending cron wake-up protection', () => {
     const d = fakeDeps();
     const reg = new PluginRegistry();
     reg.contextFor('cronjob', {}, { info() {}, warn() {}, error() {} })
-      .registerControl('cron', { pendingWakeupOriginSessionIds: (userId: number) => (userId === 1 ? ['brain-1-pinned'] : []) });
+      .registerControl('cron', { retainedSessionIds: (userId: number) => (userId === 1 ? ['brain-1-pinned'] : []) });
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     const svc = new BrainService(d as never);
     seedCurrent(d);
@@ -8318,6 +8318,28 @@ describe('retention janitor — pending cron wake-up protection', () => {
     await expect(svc.purgeStaleSessionsForUser(1, 30)).resolves.toBe(1);
     expect(d.store.getSession('brain-1-pinned')).toBeTruthy(); // the wake-up's origin survives the sweep
     expect(d.store.getSession('brain-1-stale')).toBeUndefined(); // no pending wake-up → deleted
+  });
+
+  /** A RECURRING job never has a pending one-shot wake-up, so the old seam reported nothing for it and the
+   *  sweep deleted the conversation its history lives in — the next run then started blank under the same
+   *  id. The seam asks what the plugin still NEEDS instead, which covers a recurring job's dedicated
+   *  conversation as well as the origin it was scheduled from. */
+  it('keeps an idle dedicated job conversation while its recurring job is still active', async () => {
+    const d = fakeDeps();
+    const reg = new PluginRegistry();
+    reg.contextFor('cronjob', {}, { info() {}, warn() {}, error() {} })
+      .registerControl('cron', { retainedSessionIds: () => ['brain-1-job-42', 'brain-1-origin'] });
+    (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
+    const svc = new BrainService(d as never);
+    seedCurrent(d);
+    seedStale(d, 'brain-1-job-42');   // the recurring job's dedicated conversation, idle past the horizon
+    seedStale(d, 'brain-1-origin');   // the conversation it was scheduled from
+    seedStale(d, 'brain-1-job-old');  // a job that no longer exists → ordinary stale history
+
+    await expect(svc.purgeStaleSessionsForUser(1, 30)).resolves.toBe(1);
+    expect(d.store.getSession('brain-1-job-42')).toBeTruthy();
+    expect(d.store.getSession('brain-1-origin')).toBeTruthy();
+    expect(d.store.getSession('brain-1-job-old')).toBeUndefined();
   });
 
   it('purges normally when no cron control is registered (cronjob plugin disabled/absent)', async () => {
@@ -8357,6 +8379,39 @@ describe('retention janitor — pending cron wake-up protection', () => {
     await svc.purgeStaleSessionsForUser(1, 30);
     expect(d.store.getSession('brain-1-parent')).toBeUndefined();       // parent purged
     expect(d.store.getSession('brain-ch-subagent-abc')).toBeUndefined(); // child purged WITH it (previously leaked)
+  });
+
+  /** The live-children guard is in-memory, so between a daemon restart and boot recovery a conversation
+   *  whose child is about to be respawned looks idle — and the sweep deleted the whole tree out from under
+   *  the recovery that was going to resume it. The run lifecycle survives the restart and answers durably. */
+  it('keeps a stale conversation whose delegation is still owed a turn after a restart', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    seedCurrent(d);
+    const run = (parent: string, child: string, toolCallId: string, lifecycle: string) => {
+      d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: parent });
+      d.db.prepare('INSERT INTO brain_subagent_runs (parent_session_id, tool_call_id, child_session_id, state, lifecycle) VALUES (?, ?, ?, ?, ?)')
+        .run(parent, toolCallId, child, JSON.stringify({ status: 'running', task: 'child', tools: 0, seconds: 0 }), lifecycle);
+    };
+    // Nothing is live in THIS process: every guard below is the durable one.
+    seedStale(d, 'brain-1-restart-orphan');
+    run('brain-1-restart-orphan', 'brain-ch-subagent-orphan', 'tc-orphan', 'running');
+    seedStale(d, 'brain-1-parked');
+    run('brain-1-parked', 'brain-ch-subagent-parked', 'tc-parked', 'recovery_required'); // waits for DelegateContinue
+    seedStale(d, 'brain-1-deep');
+    run('brain-1-deep', 'brain-ch-subagent-deep', 'tc-deep', 'done');
+    run('brain-ch-subagent-deep', 'brain-ch-subagent-grandchild', 'tc-deep-2', 'recovering'); // one level down
+    seedStale(d, 'brain-1-finished');
+    run('brain-1-finished', 'brain-ch-subagent-finished', 'tc-finished', 'done');
+
+    await svc.purgeStaleSessionsForUser(1, 30);
+    expect(d.store.getSession('brain-1-restart-orphan')).toBeTruthy();
+    expect(d.store.getSession('brain-1-parked')).toBeTruthy();
+    expect(d.store.getSession('brain-1-deep')).toBeTruthy();
+    expect(d.store.getSession('brain-ch-subagent-grandchild')).toBeTruthy();
+    // A tree whose delegations all finished is ordinary stale history and still goes.
+    expect(d.store.getSession('brain-1-finished')).toBeUndefined();
+    expect(d.store.getSession('brain-ch-subagent-finished')).toBeUndefined();
   });
 });
 

@@ -122,7 +122,7 @@ export interface PluginEmbedder {
 const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof KnownControls[K] & string)[] } = {
   subagent: ['detachForeground', 'activeCount'],
   terminal: ['detachForeground', 'killForeground'],
-  cron: ['pendingWakeupOriginSessionIds'],
+  cron: ['retainedSessionIds'],
   workflow: ['cancelForSession', 'detachForeground', 'activeCount', 'isWorkflowLive', 'addNodesFromSession', 'resumeInterrupted'],
   mcp: ['listServers', 'bridgeSnapshot'],
   lsp: ['diagnosticsEnabled'],

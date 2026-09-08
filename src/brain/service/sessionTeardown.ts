@@ -498,26 +498,41 @@ export class SessionTeardownService {
   /** Retention janitor: delete this user's own idle top-level conversations older than `days`. The store
    *  query already excludes non-user shells, delegated children and unspoken rows; here we add the live
    *  exclusions it cannot see — a running session, the user's active conversation, any session whose
-   *  sub-agent is still running (deleting it would kill that child), and any conversation a PENDING cron
-   *  wake-up was scheduled FROM (purging it would strand the wake-up's context and demote its reply to
-   *  the notification channel). Returns the count removed. */
+   *  sub-agent is still running (deleting it would kill that child), and any conversation the cronjob
+   *  plugin still needs (a pending wake-up's origin, and a recurring job's dedicated conversation, whose
+   *  purge would strand the job's context). Also sweeps the delegated-result inbox on the same horizon.
+   *  Returns the count of conversations removed. */
   async purgeStaleSessionsForUser(userId: number, days: number): Promise<number> {
-    // The cronjob plugin owns the wake-up jobs, so ask through its typed control; with the plugin
-    // disabled/absent no control is registered → nothing to protect. A failed plugin LOAD rejects
-    // instead — fail closed (the sweep skips, the caller logs) rather than delete a conversation a
-    // wake-up may still need.
+    // The cronjob plugin owns the jobs, so ask through its typed control which session ids it still needs;
+    // with the plugin disabled/absent no control is registered → nothing to protect. A failed plugin LOAD
+    // rejects instead — fail closed (the sweep skips, the caller logs) rather than delete a conversation a
+    // job may still need.
     const cron = (await this.resolvePlugins())?.control('cron');
-    const pendingOrigins = new Set(cron?.pendingWakeupOriginSessionIds(userId) ?? []);
+    const retained = new Set(cron?.retainedSessionIds(userId) ?? []);
     const activeId = this.lifecycle.activeSessionId(userId);
     let n = 0;
     for (const id of this.store.staleConversationIds(userId, days)) {
-      if (id === activeId || pendingOrigins.has(id)) continue;
+      if (id === activeId || retained.has(id)) continue;
       if (this.sessions.has(id) || this.sessions.hasActiveChildren(id)) continue;
-      // Purge the whole delegated tree, not just the root: collect the sub-agent descendants FIRST (before
-      // deleteSession detaches them), then delete each. Otherwise their transcripts leak forever.
-      for (const descId of this.descendantSessionIds(id)) n += this.deleteManagedSession(userId, descId);
+      // Collect the sub-agent descendants FIRST (before deleteSession detaches them): the whole tree is
+      // purged together, or their transcripts leak forever — and the tree is also what has to be checked
+      // for durable delegation work, since the in-memory check above only sees THIS process. A run row
+      // still owed a turn (running/recovering/recovery_required) is one boot recovery may resume, so the
+      // conversation it belongs to is not idle history yet, whichever depth it sits at.
+      const descendants = this.descendantSessionIds(id);
+      if ([id, ...descendants].some((treeId) => this.store.hasUnfinishedSubagentRuns(treeId))) continue;
+      for (const descId of descendants) n += this.deleteManagedSession(userId, descId);
       n += this.deleteManagedSession(userId, id);
     }
     return n;
+  }
+
+  /** Retention for the delegated-result inbox: delete result rows past the horizon whose child session no
+   *  longer exists (an empty child id included). Every other row dies with its session, so this is the one
+   *  shape that outlives its subject; running it inside the recurring sweep is what keeps the table clean
+   *  forever instead of needing a one-shot cleanup. Account-independent, so the daemon calls it ONCE per
+   *  sweep rather than per user. Returns the count removed. */
+  purgeUndeliverableDelegationResults(days: number): number {
+    return this.store.purgeUndeliverableSubagentResults(days);
   }
 }
