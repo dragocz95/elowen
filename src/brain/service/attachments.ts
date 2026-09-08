@@ -356,7 +356,7 @@ export class ClientAttachments {
   }
 
   /** Resolve a parent SSE's requested session through its stable authenticated binding. Only the exact
-   * generation that created the binding may follow a retarget; an older/newer transport is stale rather
+   * generation that created the binding may follow it; an older/newer transport is stale rather
    * than a licence to attach to whatever the client id currently owns. No binding is deliberately
    * accepted for daemon-restart compatibility — `attach()` will reconstruct it after normal ownership
    * validation. */
@@ -377,8 +377,8 @@ export class ClientAttachments {
     // Hygiene, not correctness: `watchingCount` only walks live streams, so a mark left on a dead
     // listener could not change an answer — but without this the set would grow for the process's life.
     this.hiddenListeners.delete(listener);
-    // Own the removal here rather than making every call site reach into the map: rollover can re-key (or
-    // merge) the session bucket a listener started in, so scan every key instead of trusting a captured id.
+    // Own the removal here rather than making every call site reach into the map: a listener can be
+    // tapped under more than one id, so scan every key instead of trusting a captured one.
     for (const [id, set] of this.sessionTaps) {
       if (set.delete(listener) && set.size === 0) this.sessionTaps.delete(id);
     }
@@ -395,8 +395,7 @@ export class ClientAttachments {
   }
 
   /** Consume one authenticated client's binding and detach only its live transport. Returns the
-   *  binding's CURRENT session id (updated by retarget), which intentionally outranks a stale id in the
-   *  stop request body. */
+   *  binding's CURRENT session id, which intentionally outranks a stale id in the stop request body. */
   release(userId: number, clientId: string, requestGeneration?: number): ClientRelease {
     this.pruneDetached();
     const key = this.stableKey(userId, clientId);
@@ -425,21 +424,4 @@ export class ClientAttachments {
     return { accepted: true, sessionId: binding.sessionId };
   }
 
-  /** Re-key everything attached to a rolled-over conversation onto its replacement session. */
-  retarget(oldId: string, freshId: string): void {
-    // Attached client streams move with their listeners so `attached` stays truthful post-rollover.
-    for (const [l, sid] of this.clientStreams) if (sid === oldId) this.clientStreams.set(l, freshId);
-    // Stable identities move even when their transport happened to disconnect just before this method.
-    // A stop request carrying the pre-rollover id can consequently still reach the replacement session.
-    for (const binding of this.stableClients.values()) if (binding.sessionId === oldId) binding.sessionId = freshId;
-    // Session taps (the CLI's bound stream) follow too, so a later respawn of the REPLACEMENT session
-    // re-attaches them — the client just rebinds its id, its open stream never goes dark.
-    const taps = this.sessionTaps.get(oldId);
-    if (taps) {
-      this.sessionTaps.delete(oldId);
-      const existing = this.sessionTaps.get(freshId);
-      if (existing) for (const t of taps) existing.add(t);
-      else this.sessionTaps.set(freshId, taps);
-    }
-  }
 }

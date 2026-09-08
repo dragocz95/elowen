@@ -39,8 +39,8 @@ export interface BrainStreamSnapshot extends LiveEventSnapshot {
    * required to clear a client that missed the live completion/pause/clear event before reconnecting.
    * Optional only for rolling compatibility with an older daemon during local upgrades. */
   goal?: BrainGoalState | null;
-  /** The actual tapped session. It can differ from the query after an idle rollover retargeted this
-   * stable client while its previous SSE was down. */
+  /** The actual tapped session. It can differ from the query when the stable client's binding moved
+   * while its previous SSE was down. */
   sessionId?: string;
   /** Identity of the tapped session, which may use a different model/provider than its parent.
    *  `provider` and `providerLabel` are the PUBLIC identity (the operator's config entry id and its

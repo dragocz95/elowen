@@ -113,9 +113,9 @@ export type BrainEvent =
    *  so clients don't wait until the final idle event to refresh context fill. Synthetic — counted
    *  daemon-side, not a raw PI event. */
   | { type: 'step'; step: number; maxSteps: number; usage?: BrainUsage; turnStartedAt?: number }
-  /** The active conversation changed server-side mid-send: an idle conversation rolled over into a
-   *  fresh session (see SESSION_IDLE_ROLLOVER_MS) and the triggering message runs there. Carries the
-   *  NEW session id. Synthetic, like `ask`/`step` — emitted by send(), not derived from a PI event.
+  /** The conversation a turn is running in, named server-side: a platform room that rolled over onto a
+   *  fresh session, or an origin-bound scheduled turn reporting where it landed. Carries the session id
+   *  the turn actually runs in. Synthetic, like `ask`/`step` — never derived from a PI event.
    *  The shared fold resets the transcript to the triggering turn; ignoring it is safe (the stream
    *  keeps flowing, only the visible history would look continued). */
   | { type: 'session'; sessionId: string }

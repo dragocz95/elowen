@@ -592,8 +592,8 @@ function useBrainChatController(): BrainChatValue {
         ready: () => setReady(true),
         snapshotStart: () => setNotice(''),
         snapshot: (snap) => {
-          // An idle rollover this stream never saw retargeted the binding server-side. Follow it so lazy-load
-          // and every later send name the replacement conversation.
+          // A rebind this stream never saw moved the binding server-side. Follow it so lazy-load
+          // and every later send name the current conversation.
           if (snap.sessionId && snap.sessionId !== boundSessionRef.current) {
             hydrationStampRef.current.session += 1;
             boundSessionRef.current = snap.sessionId;

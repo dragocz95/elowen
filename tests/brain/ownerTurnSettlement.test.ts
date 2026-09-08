@@ -12,8 +12,8 @@ import type { BrainTurnRunner } from '../../src/brain/service/turnRunner.js';
 /** What an OWNER turn does besides answering, against a real BrainStore and a real UsageOriginStore.
  *
  *  The owner surface and a room settle through one helper on purpose, so the cases here are the ones the
- *  room cannot exercise: the idle rollover that moves a turn to a fresh conversation mid-flight, the
- *  guards that can still refuse a turn after it was announced, and the steer path. */
+ *  room cannot exercise: a conversation resumed after a long gap, the guards that can still refuse a turn
+ *  after it was announced, and the steer path. */
 
 const WEB: ClientOrigin = { value: '203.0.113.9', kind: 'ip', trusted: true };
 const AT = Date.UTC(2026, 7, 24, 10, 0);
@@ -57,8 +57,8 @@ function fakeDeps() {
     subscribe: (l: (e: unknown) => void) => { listeners.push(l); return () => {}; },
     setModel: vi.fn(),
     // A disposed PI session takes its subscription with it. The harness reuses ONE session object across
-    // spawns, so without this the archived conversation's subscription would still be listening when the
-    // rolled-over session answers, and every turn after a rollover would settle twice.
+    // spawns, so without this a replaced conversation's subscription would still be listening when the
+    // next session answers, and the turn would settle twice.
     dispose: vi.fn(() => { listeners.length = 0; }),
     abort: vi.fn(async () => {}),
     sendCustomMessage: vi.fn(async (message: Record<string, unknown>, options?: { triggerTurn?: boolean }) => {
@@ -126,29 +126,24 @@ function fakeDeps() {
   };
 }
 
-/** Push every stored message far enough into the past that the idle rollover is due on the next turn. */
+/** Push every stored message far into the past — a conversation resumed after a long gap. */
 const ageTranscript = (store: BrainStore): void => {
   store.db.prepare(`UPDATE brain_messages SET created_at = datetime('now', '-3 hours')`).run();
 };
 
-describe('an owner turn that changes conversation mid-flight is still attributed to its surface', () => {
-  // The idle rollover archives the transcript and mints a FRESH session id, and settlement happens under
-  // that new id. A pin left on the pre-lock id is found by nobody, so the first turn after every rollover
-  // used to record as `internal` against the row owner instead of the surface the person was sitting at.
-  it('follows the idle rollover, so the turn after it is not recorded as `internal`', async () => {
+describe('an owner turn resumed after a long gap keeps its conversation and its surface', () => {
+  it('continues the same conversation and is not recorded as `internal`', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     await svc.start(1);
     await svc.send({ userId: 1, text: 'first', origin: WEB, surface: 'web' });
-    const before = svc.status(1).sessionId;
+    const before = svc.status(1).sessionId!;
     ageTranscript(d.store);
 
     await svc.send({ userId: 1, text: 'after a long lunch', origin: WEB, surface: 'web' });
 
-    const after = svc.status(1).sessionId!;
-    expect(after, 'the rollover must actually have happened').not.toBe(before);
-    expect(d.store.getSessionActivity(before!)).toMatchObject({ state: 'done', turnId: null });
-    expect(d.store.getSessionActivity(after)).toMatchObject({ state: 'done', turnId: null });
+    expect(svc.status(1).sessionId).toBe(before);
+    expect(d.store.getSessionActivity(before)).toMatchObject({ state: 'done', turnId: null });
     expect(d.billed()).toEqual([[1, WEB.value, 2]]);
   });
 });

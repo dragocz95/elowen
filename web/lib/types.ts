@@ -216,8 +216,8 @@ export type BrainStreamTailEvent = { type: string } & Record<string, unknown>;
 export interface BrainStreamSnapshotFrame {
   history: BrainMessage[];
   events: BrainStreamTailEvent[];
-  /** The session actually tapped — differs from the requested one after an idle rollover the dead stream
-   *  never saw. */
+  /** The session actually tapped — differs from the requested one after a server-side rebind the dead
+   *  stream never saw. */
   sessionId?: string;
   /** Authoritative identity of the tapped session, including a child drill-in. Same public/internal split
    *  as {@link BrainStatus}: `provider`/`providerLabel` are for display, `usageProvider` for the rail. */

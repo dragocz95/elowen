@@ -158,8 +158,8 @@ describe('ClientAttachments stable client grace cache', () => {
   });
 });
 
-// The idle rollover consults this to leave a conversation a CLI still has OPEN alone. Explicit web bindings
-// may use stable client ids for attachment identity, but they never pin the CLI rollover policy.
+// Session teardown consults this to leave a conversation a CLI still has OPEN alone. Explicit web bindings
+// may use stable client ids for attachment identity, but they never pin a conversation open that way.
 describe('ClientAttachments.hasLiveStableClient', () => {
   it('is true only while an identified client\'s transport is actually attached', () => {
     const attachments = new ClientAttachments();
@@ -183,7 +183,7 @@ describe('ClientAttachments.hasLiveStableClient', () => {
     expect(attachments.hasLiveStableClient('brain-A')).toBe(false); // …but it is not a terminal
   });
 
-  it('keeps explicit web and CLI stable bindings on opposite rollover semantics', () => {
+  it('counts an explicit CLI binding as a live terminal and an explicit web one as not', () => {
     const web = new ClientAttachments();
     const webListener = () => {};
     web.attach(1, 'brain-web', webListener, vi.fn(), 'web-1', 1, 'web');
@@ -193,15 +193,6 @@ describe('ClientAttachments.hasLiveStableClient', () => {
     const cliListener = () => {};
     cli.attach(1, 'brain-cli', cliListener, vi.fn(), 'cli-1', 1, 'cli');
     expect(cli.hasLiveStableClient('brain-cli')).toBe(true);
-  });
-
-  it('follows a rolled-over conversation onto its replacement session', () => {
-    const attachments = new ClientAttachments();
-    const listener = () => {};
-    attachments.attach(1, 'brain-old', listener, vi.fn(), 'cli-1', 1);
-    attachments.retarget('brain-old', 'brain-new');
-    expect(attachments.hasLiveStableClient('brain-old')).toBe(false);
-    expect(attachments.hasLiveStableClient('brain-new')).toBe(true);
   });
 
   it('is scoped to the conversation asked about, not to "any CLI anywhere"', () => {

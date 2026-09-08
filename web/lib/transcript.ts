@@ -399,7 +399,7 @@ export function reduce(view: ChatView, e: TranscriptEvent): ChatView {
       return patched ? { ...view, turns } : view;
     }
     case 'session': {
-      // Idle rollover mid-send: the server moved this message into a FRESH conversation. Reset the
+      // The server moved this message into a different conversation mid-send. Reset the
       // transcript — the daemon re-emits the triggering message as a `user` event and streams its reply,
       // so the fresh conversation rebuilds purely from the stream (no optimistic local 'you' to preserve).
       return { turns: [], thinking: view.thinking, notice: view.notice };
