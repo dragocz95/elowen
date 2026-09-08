@@ -7,6 +7,7 @@ import type { BrainStore } from '../../store/brainStore.js';
 import { createSessionPersistenceProjector, rehydrate, settlePartialTurn, type SettledTurnUsage } from '../persistence.js';
 import { applyProviderRequestProfile, isCanonicalThinkingLevel, type ProviderRequestProfile } from '../modelCapabilities.js';
 import type { DelegatedExecutionScope } from '../delegatedScope.js';
+import type { ProjectExecutionRef } from '../../shared/projectExecution.js';
 import type { ApplyCompaction } from './liveBrain.js';
 import { installLiveRecall, type LiveRecallOptions } from './liveRecall.js';
 import { createCompactionModelRoute, type CompactionModelRoute } from './compactionModelRoute.js';
@@ -69,6 +70,8 @@ export interface SessionSpec {
   parentSessionId?: string;
   /** Immutable access boundary for a delegated child; verified on every respawn. */
   delegatedAccess?: DelegatedExecutionScope;
+  /** Trusted initial target, persisted atomically with a new personal conversation. */
+  executionRef?: ProjectExecutionRef;
   /** Imported platform transcript rows inserted atomically before history rehydration. */
   seedMessages?: { id: string; role: 'user' | 'assistant'; content: unknown }[];
   /** What a FORK child needs to report whether it actually read its parent's prompt cache, measured on its
@@ -584,6 +587,7 @@ export class BrainSessionFactory {
       this.d.store.createSession({
         id: spec.sessionId, userId: spec.ownerUserId, model: spec.model.id, provider: spec.providerId,
         parentSessionId: spec.parentSessionId, delegatedAccess: spec.delegatedAccess,
+        executionRef: spec.executionRef,
       });
     } else {
       // A durable delegated child never accepts a replacement scope after its first spawn. In

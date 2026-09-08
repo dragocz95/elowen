@@ -340,7 +340,8 @@ export class ConversationLifecycle {
       // consulted when the conversation carries no model pin of its own, so a pinned conversation is
       // unaffected. A dir that vanished or fell outside the policy simply yields no project root — the
       // same graceful miss as a CLI client launching in a gone directory.
-      const projectRoot = gitProjectRoot(policy, resolvedCwd);
+      const managed = this.d.store.getProjectExecution(sessionId)?.kind === 'managed';
+      const projectRoot = managed ? undefined : gitProjectRoot(policy, resolvedCwd);
       const stored = storedModel && storedProvider
         && storedModel !== userCfg?.visionModel
         // "Has this conversation been spoken in?" — the pin is only restored for one that has, so a
@@ -384,6 +385,7 @@ export class ConversationLifecycle {
    *  client-reported directory is ever stamped — fallback-resolved workDirs (policy root, primary
    *  project) must not turn a cwd-less web session into a false cwd match. */
   stampWorkDir(sessionId: string, clientCwd: string, policy: Policy): void {
+    if (this.d.store.getProjectExecution(sessionId)?.kind === 'managed') return;
     const dir = clientDir(policy, clientCwd);
     if (!dir) return;
     const row = this.d.store.getSession(sessionId);
