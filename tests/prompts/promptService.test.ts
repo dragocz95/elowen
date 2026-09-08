@@ -58,9 +58,16 @@ describe('PromptService.render', () => {
     // verbatim against tests/fixtures/promptAdoptedGuidance.md.
     expect(template).toContain('no em-dashes, no parentheticals, no arrows');
     expect(template).toMatch(/put a measurement or count on its own\s+line or in a short table/);
-    expect(template).toContain('When a tool schema offers an optional `_reason`');
-    expect(template).toContain('Bash uses its canonical `description` argument instead of `_reason`');
-    expect(template).toContain('Write `_reason`, or Bash `description`, ONLY where the call may take a noticeable moment');
+    // The note's SHAPE (at most four words, present tense, the user's language, a trailing ellipsis,
+    // authored first) rides every augmented tool schema in REASON_DESC, and Bash's own `description`
+    // argument documents its own wording, so the prompt keeps only the remainder those cannot state:
+    // when a note is worth writing at all, and that it never belongs in the answer.
+    expect(template).toMatch(
+      /Write `_reason`, or Bash's canonical `description` argument, ONLY where the call may take a\s+noticeable moment/,
+    );
+    expect(template).toContain('never part of your answer, so never restate it in your reply');
+    expect(template).not.toContain('AT MOST FOUR WORDS');
+    expect(template).not.toContain('When a tool schema offers an optional `_reason`');
     // When to fork, and the one condition that decides it here: a fork buys the provider's cached prefix,
     // so a child on another provider or model inherits the context and shares no cache at all. Without
     // these lines the prompt says nothing about forking and the criterion lives only in a parameter.
