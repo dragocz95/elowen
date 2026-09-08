@@ -15,7 +15,7 @@ import { createWrapper } from '../test-utils';
 // forwarded to that page instead of dropped.
 
 const server = setupServer(
-  http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], providers: { 'claude-code': { bin: 'claude', args: '' } }, defaults: { exec: 'sonnet', autonomy: 'L1', maxSessions: 1 }, security: { tokenTtlDays: 30 } })),
+  http.get('*/api/config', () => HttpResponse.json({ allowedExecs: ['sonnet'], customModels: [], providers: { 'claude-code': { bin: 'claude', args: '' } }, defaults: { exec: 'sonnet', maxSessions: 1 }, security: { tokenTtlDays: 30 } })),
   http.get('*/api/system', () => HttpResponse.json({ version: '0.26.0', latest: '0.26.0', updateAvailable: false, autoUpdate: false, lastUpdatedAt: '2026-07-11T12:00:00.000Z' })),
   http.get('*/api/system/skills', () => HttpResponse.json({ skills: [] })),
   http.get('*/api/plugins/ui', () => HttpResponse.json([

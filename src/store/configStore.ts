@@ -121,7 +121,7 @@ export interface ElowenConfig {
   allowedSkins: string[];
   modelNotes: Record<string, string>;
   providers: Providers;
-  defaults: { exec: string; autonomy: string; maxSessions: number };
+  defaults: { exec: string; maxSessions: number };
   security: { tokenTtlDays: number; trustProxy: boolean };
   /** Automatic cleanup of stale brain conversations. Off by default (opt-in): when on, an hourly janitor
    *  deletes user conversations whose last activity is older than `days`. Never touches running sessions,
@@ -131,9 +131,9 @@ export interface ElowenConfig {
   /** When on, the hourly systemd timer (`elowen update --auto`) upgrades to the latest npm release and
    *  restarts the services. Off by default (opt-in). */
   autoUpdate: boolean;
-  /** Web Push VAPID public key (safe to expose) + whether a keypair has been generated. The private
-   *  key NEVER leaves the daemon — read it only via `webPushKeys()`. */
-  webPush: { publicKey: string; publicKeySet: boolean };
+  /** Web Push VAPID public key (safe to expose). The private key NEVER leaves the daemon — read it
+   *  only via `webPushKeys()`. */
+  webPush: { publicKey: string };
   /** Contact address embedded in every push as the VAPID `sub` claim, so a push service can reach the
    *  operator about this instance. Apple REJECTS a token whose contact is not a real address (403
    *  BadJwtToken) and the send fails silently, so this must be a working `https://…` or `mailto:…`.
@@ -816,7 +816,7 @@ const DEFAULT_CONFIG: ElowenConfig = {
   allowedSkins: [],
   modelNotes: { ...EXEC_NOTES },
   providers: { ...DEFAULT_PROVIDERS },
-  defaults: { exec: 'sonnet', autonomy: 'L3', maxSessions: 2 },
+  defaults: { exec: 'sonnet', maxSessions: 2 },
   // trustProxy on by default: the install wizard writes the nginx vhost itself, and that vhost is what
   // sets X-Real-IP. An install that puts the daemon behind something else (or nothing) turns it off, and
   // every recorded origin degrades to "claimed, unverified" instead of silently looking authoritative.
@@ -825,7 +825,7 @@ const DEFAULT_CONFIG: ElowenConfig = {
   // accumulate it is what turns the message store into the largest table in the database.
   sessionRetention: { enabled: true, days: 10 },
   autoUpdate: false,
-  webPush: { publicKey: '', publicKeySet: false },
+  webPush: { publicKey: '' },
   webPushContact: '',
   // A fresh install is a BARE ASSISTANT: everything that makes the agent capable without being
   // configured first ships on (read/write files, run commands, search the codebase, ask the user,
@@ -868,7 +868,7 @@ interface Stored {
   allowedSkins: string[];
   modelNotes: Record<string, string>;
   providers: Providers;
-  defaults: { exec: string; autonomy: string; maxSessions: number };
+  defaults: { exec: string; maxSessions: number };
   security: { tokenTtlDays: number; trustProxy: boolean };
   sessionRetention: { enabled: boolean; days: number };
   autoUpdate: boolean;
@@ -968,7 +968,7 @@ export interface ConfigPatch {
   allowedSkins?: string[];
   modelNotes?: Record<string, string>;
   providers?: Providers;
-  defaults?: { exec?: string; autonomy?: string; maxSessions?: number };
+  defaults?: { exec?: string; maxSessions?: number };
   security?: { tokenTtlDays?: number; trustProxy?: boolean };
   sessionRetention?: { enabled?: boolean; days?: number };
   autoUpdate?: boolean;
@@ -1020,7 +1020,7 @@ export class ConfigStore {
         // while user edits (including an explicit '' to clear one) take precedence.
         modelNotes: (p.modelNotes && typeof p.modelNotes === 'object' && !Array.isArray(p.modelNotes)) ? { ...d.modelNotes, ...sanitizeModelNotes(p.modelNotes) } : { ...d.modelNotes },
         providers: { ...d.providers, ...sanitizeProviders(p.providers) },
-        defaults: { exec: canonicalExec(p.defaults?.exec) ?? d.defaults.exec, autonomy: p.defaults?.autonomy ?? d.defaults.autonomy, maxSessions: p.defaults?.maxSessions ?? d.defaults.maxSessions },
+        defaults: { exec: canonicalExec(p.defaults?.exec) ?? d.defaults.exec, maxSessions: p.defaults?.maxSessions ?? d.defaults.maxSessions },
         security: {
           tokenTtlDays: p.security?.tokenTtlDays ?? d.security.tokenTtlDays,
           trustProxy: typeof p.security?.trustProxy === 'boolean' ? p.security.trustProxy : d.security.trustProxy,
@@ -1104,8 +1104,8 @@ export class ConfigStore {
       security: s.security,
       sessionRetention: s.sessionRetention,
       autoUpdate: s.autoUpdate,
-      // Only the public key is exposed; `publicKeySet` reflects whether a full keypair exists.
-      webPush: { publicKey: s.webPush?.publicKey ?? '', publicKeySet: !!s.webPush },
+      // Only the public key is exposed; the private half never leaves the daemon.
+      webPush: { publicKey: s.webPush?.publicKey ?? '' },
       webPushContact: s.webPushContact,
       // Only the enabled + removed lists surface; per-plugin config (possible secrets) stays daemon-side.
       plugins: { enabled: s.plugins.enabled, removed: s.plugins.removed },
@@ -1288,7 +1288,7 @@ export class ConfigStore {
       allowedSkins: patch.allowedSkins !== undefined ? sanitizeSkinList(patch.allowedSkins) : cur.allowedSkins,
       modelNotes: sanitizeModelNotes(patch.modelNotes ?? cur.modelNotes),
       providers: patch.providers ? { ...cur.providers, ...sanitizeProviders(patch.providers) } : cur.providers,
-      defaults: { exec: defaultExec, autonomy: patch.defaults?.autonomy ?? cur.defaults.autonomy, maxSessions: patch.defaults?.maxSessions ?? cur.defaults.maxSessions },
+      defaults: { exec: defaultExec, maxSessions: patch.defaults?.maxSessions ?? cur.defaults.maxSessions },
       // Clamp to a sane positive integer — the value is interpolated into a SQL date modifier.
       security: {
         tokenTtlDays: clampTtlDays(patch.security?.tokenTtlDays, cur.security.tokenTtlDays),

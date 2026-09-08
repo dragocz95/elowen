@@ -105,6 +105,7 @@ function migrate(db: Db): void {
   dropBrainTerminals(db);
   backfillClearedToolResultRows(db);
   convergeLegacyClearedToolResults(db);
+  dropRetiredTables(db);
 }
 
 /** Run `apply` in an IMMEDIATE transaction, retrying while another process holds the write lock.
@@ -549,6 +550,28 @@ function seedUserSequenceAboveEveryReference(db: Db): void {
 function dropBrainTerminals(db: Db): void {
   runOnce(db, 17, () => {
     db.exec('DROP TABLE IF EXISTS brain_terminals;');
+  });
+}
+
+/** v20 — drop three tables no code has referenced for releases.
+ *
+ *  · `brain_queue` outlived the queue it served. Nothing in the daemon, the web app or `schema.sql`
+ *    mentions it, and no migration ever dropped it, so it survives on every database old enough to have
+ *    been created with it.
+ *  · `personality_profiles` / `personality_active_profiles` are the tables v6 already drops. That runner
+ *    is unreachable on any install whose `user_version` had passed 6 before it shipped (the renumbering
+ *    incident described above dropBrainTerminals), which is exactly where the tables are still present —
+ *    so the same DROP has to be re-issued under a number those installs have not reached.
+ *
+ *  Re-issuing is safe: `DROP TABLE IF EXISTS` is a no-op when the table is absent (a fresh database, or
+ *  one v6 did reach), and it takes each table's indexes with it. All three are empty wherever they
+ *  survive, and none has a CREATE statement in `schema.sql`, so nothing recreates them on the next open.
+ *
+ *  `brain_tool_result_spills` is deliberately NOT dropped here — see convergeLegacyClearedToolResults:
+ *  it stays until the v19 convergence has soaked. */
+function dropRetiredTables(db: Db): void {
+  runOnce(db, 20, () => {
+    db.exec('DROP TABLE IF EXISTS brain_queue; DROP TABLE IF EXISTS personality_active_profiles; DROP TABLE IF EXISTS personality_profiles;');
   });
 }
 

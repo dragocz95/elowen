@@ -111,7 +111,6 @@ export const configPatchSchema = z.object({
   providers: z.record(z.string(), providerConfigPatchSchema).optional(),
   defaults: z.object({
     exec: z.string().optional(),
-    autonomy: z.string().optional(),
     maxSessions: z.number().optional(),
   }).optional(),
   security: z.object({ tokenTtlDays: z.number().optional(), trustProxy: z.boolean().optional() }).optional(),
