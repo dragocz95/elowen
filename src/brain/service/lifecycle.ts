@@ -71,6 +71,7 @@ interface LifecycleDeps {
   /** PermissionApprovalService.selectionAllowed — a saved model the user may no longer run falls back
    *  to the server default instead of blocking the brain. */
   selectionAllowed(userId: number, sel?: { provider?: string; model?: string }): boolean;
+
   /** Notify user-scoped conversation-list subscribers after durable activity changes. */
   onConversationActivityChanged?: (sessionId: string) => void;
 }
@@ -364,6 +365,10 @@ export class ConversationLifecycle {
         if (!candidate || (!candidate.provider && !candidate.model)) continue;
         if (this.d.selectionAllowed(userId, candidate)) { selection = candidate; break; }
       }
+      // An empty or half-filled selection is NOT completed here. Every candidate being absent or refused
+      // leaves the pair for the spawner to authorize (LiveSessionSpawner.authorizedSelection), which is
+      // the boundary every other spawn path passes through too — this one is only choosing which
+      // candidate it would PREFER.
       const live = await this.d.spawn({
         sessionId,
         ownerUserId: userId,

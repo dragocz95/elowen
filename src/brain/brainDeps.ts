@@ -120,6 +120,12 @@ export interface BrainDeps {
    *  restriction (open mode / tests). Enforced on explicit picks; a saved-but-revoked default
    *  silently falls back to the server default instead of erroring. */
   execAllowed?: (userId: number, exec: string) => boolean;
+  /** The complete provider+model pair a spawn falls back to when the account expressed no runnable
+   *  preference. `execAllowed` can only judge a pair somebody NAMED; this resolves the pair the provider
+   *  layer would otherwise pick unexamined, so the instance default is subject to the same allow-list as
+   *  an explicit pick. Prefers the instance default when the account may run it, else the first offered
+   *  pair it may run, else `null` for "this account has no runnable model". */
+  allowedFallbackSelection?: (userId: number) => { provider: string; model: string } | null;
   /** Build a Policy from an explicit project-id set captured in delegated execution scopes. The optional
    * contribution account adds only that account's live Sandbox roots. */
   policyForProjects?: (projectIds: number[], contributionUserId?: number) => Policy;

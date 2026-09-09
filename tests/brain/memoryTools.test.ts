@@ -212,6 +212,25 @@ describe('buildMemoryTools', () => {
     expect(txt(list)).not.toContain('hidden uncategorized memory');
   });
 
+  it('MemoryListRecent reports an empty SCOPE, not empty storage, when every memory is uncategorized', async () => {
+    const { store, projects, byName } = toolsetWithProject(null);
+    const current = projects.create({ slug: 'current', path: '/current' });
+    store.add(1, { body: 'stored but uncategorized memory' }, 'test', '');
+
+    const list = await run(OWNER, () => byName('MemoryListRecent').execute('l', {}), {
+      projectId: current.id,
+      categoryIds: new Set<number>(),
+      sharedCategoryIds: new Set<number>(),
+    });
+
+    // The row exists; only the recall scope is empty. Answering "nothing is stored" contradicts the
+    // tool's own description and made a just-saved memory read as lost.
+    expect(store.list(1)).toHaveLength(1);
+    expect(txt(list)).not.toContain('No memories stored yet');
+    expect(txt(list)).toContain('No memories are recallable in this conversation scope');
+    expect(txt(list)).toContain('uncategorized');
+  });
+
   it('linked-owner platform turn: keys to the Elowen account (#1), not the raw Discord id', async () => {
     const { store, categories, byName } = toolset();
     const add = await run(LINKED_OWNER, () => byName('MemoryAdd').execute('c1', { body: 'Filip jede na Discordu.' }));

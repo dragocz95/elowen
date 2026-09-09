@@ -1340,7 +1340,12 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
     // deliberately unused: the snapshot must address the origin's WorkflowStart row, which `snapshot()`
     // reads off wf.toolCallId. Keying anything here off `_id` would fork a phantom row per expansion.
     execute: async (_id, p) => {
-      try {
+      // Authorization, lifecycle and validation failures are THROWN, never returned as text. PI marks a
+      // result as an error only when execute throws, so the previous catch persisted "Error: workflow …
+      // has already finished" with isError false — a refusal the transcript recorded as a successful call,
+      // which is exactly how a model concludes the expansion landed. Nothing here has a benign no-op the
+      // tool contract defines as success, so there is no case left to swallow.
+      {
         // A runner's plugin instance owns no DAG. Its host bridge carries only the requested workflow id and
         // nodes; the daemon independently derives the caller session and performs this same mutation there.
         const local = authWorkflow(p.workflowId);
@@ -1361,8 +1366,6 @@ export function registerWorkflow(ctx, getRun, { resolveDelegateTools, principalO
         else if (rpc) result = await rpc.addNodes({ workflowId: p.workflowId, nodes });
         else result = addNodesFromSession(p.workflowId, nodes, undefined, ctx.currentAccess(), ctx.currentModel());
         return ok(`Added ${result.added.length} node(s) to workflow ${p.workflowId}: ${result.added.join(', ')}.`);
-      } catch (e) {
-        return ok(`Error: ${errorText(e)}.`);
       }
     },
   }));
