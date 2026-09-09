@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join, resolve as resolvePath } from 'node:path';
-import { tmpdir } from 'node:os';
+import { hostname, tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { it, expect, vi } from 'vitest';
 import { PodmanClient, SpawnExecutor, isolatedPodmanOptions } from '../../plugins/sandbox/lib/podman.mjs';
@@ -25,11 +25,16 @@ import { runWithPolicy } from '../../src/plugins/policyContext.js';
  */
 const files = await import(resolvePath('plugins/files/index.mjs')) as { register(ctx: PluginContext): void };
 const terminal = await import(resolvePath('plugins/terminal/index.mjs')) as { register(ctx: PluginContext): void };
+const mcp = await import(resolvePath('plugins/mcp/index.mjs')) as { register(ctx: PluginContext): Promise<void>; reconnectMcpServer(name: string): Promise<unknown> };
 
 type Tool = { name: string; execute(id: string, params: Record<string, unknown>): Promise<any> };
 
 const PROJECT_ID = 7;
+const OTHER_PROJECT_ID = 8;
 const ACTOR = 1;
+/** A linked account that is NOT a member of the project. */
+const OUTSIDER = 2;
+const GUEST_MCP_FIXTURE = resolvePath('tests/fixtures/guest-mcp-server.mjs');
 
 it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell tools against a managed guest', async () => {
   const scratch = mkdtempSync(join(tmpdir(), 'tools-'));
@@ -51,9 +56,12 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
     const db = makePluginDb(sql, 'sandbox', { canMigrate: true });
     const project: any = { id: PROJECT_ID, executionKind: 'managed', lifecycle: 'active' };
     const projectRef = { kind: 'managed' as const, projectId: PROJECT_ID };
-    const runtimeCtx: any = { db: () => db, currentAccountUserId: () => ACTOR, currentAccess: () => ({ readOnly: false }), config: {}, host: { stores: () => ({
-      usersRead: { list: () => [{ id: ACTOR }], mayUsePlugin: () => true, isAdmin: () => true },
-      userProjects: { canAccess: (_u: number, id: number) => id === PROJECT_ID, canManage: (_u: number, id: number) => id === PROJECT_ID },
+    // The acting account of the current "turn", as the runtime sees it; the MCP stage below switches it
+    // to an outsider so the denial comes from project membership rather than an actor mismatch.
+    let actingAccount = ACTOR;
+    const runtimeCtx: any = { db: () => db, currentAccountUserId: () => actingAccount, currentAccess: () => ({ readOnly: false }), config: {}, host: { stores: () => ({
+      usersRead: { list: () => [{ id: ACTOR }, { id: OUTSIDER }], mayUsePlugin: () => true, isAdmin: (id: number) => id === ACTOR },
+      userProjects: { canAccess: (u: number, id: number) => id === PROJECT_ID && u === ACTOR, canManage: (u: number, id: number) => id === PROJECT_ID && u === ACTOR },
       projects: { get: (id: number) => (id === PROJECT_ID ? project : undefined), beginDeletion: () => true, finishDeletion: () => true },
     }) } };
     initSandboxDb(runtimeCtx);
@@ -219,6 +227,85 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
       '/workspace/stray.md', Buffer.from('nope'),
     );
     expect(typeof strayWrite).toBe('string');
+
+    enter('a stdio MCP server bound to the project runs inside the guest');
+    // The bundled MCP plugin's own management tools and bridged tool, against the same provider. The
+    // server program is written INTO the guest first, so a host launch could not even find it.
+    const fixtureWrite = await run('Write', { file_path: '/workspace/mcp/guest-mcp-server.mjs', content: readFileSync(GUEST_MCP_FIXTURE, 'utf8') });
+    expect(fixtureWrite.details?.ok).toBe(true);
+    const mcpTools: Tool[] = [];
+    let mcpAccess: { projectRef: { kind: 'managed'; projectId: number } } = { projectRef };
+    let mcpAccount = ACTOR;
+    const prepareCalls = vi.fn();
+    const mcpSandbox = { ...sandbox, prepareExecution: (input: any, options?: { accountUserId?: number }) => { prepareCalls(input); return sandbox.prepareExecution(input, { accountUserId: mcpAccount, ...options }); } };
+    const mcpCtx: any = {
+      config: {}, logger: { info() {}, warn() {}, error() {} },
+      db: () => makePluginDb(sql, 'mcp', { canMigrate: true }), dataDir: () => join(scratch, 'mcp-data'),
+      registerTool: (tool: Tool) => mcpTools.push(tool), registerHook() {}, registerUserRemoved() {}, registerControl() {}, registerApiRoute() {},
+      requestReload() {}, defaultCwd: () => '/workspace',
+      currentIdentity: () => ({ owner: mcpAccount === ACTOR, elowenUserId: mcpAccount, conversation: 'own' }),
+      currentAccess: () => ({ admin: mcpAccount === ACTOR, owner: mcpAccount === ACTOR, accountUserId: mcpAccount, ...mcpAccess }),
+      currentAccountUserId: () => mcpAccount,
+      control: (name: string) => (name === 'sandbox' ? mcpSandbox : undefined),
+    };
+    await mcp.register(mcpCtx as PluginContext);
+    const runMcp = (name: string, params: Record<string, unknown>) => {
+      const tool = mcpTools.find((t) => t.name === name);
+      if (!tool) throw new Error(`MCP tool ${name} is not registered; have ${mcpTools.map((t) => t.name).join(', ')}`);
+      return tool.execute('m', params);
+    };
+    const added = await runMcp('AddMcpServer', { scope: 'instance', name: 'guestprobe', transport: 'stdio', command: 'node', args: ['/workspace/mcp/guest-mcp-server.mjs'] });
+    expect(added.details?.ok, JSON.stringify(added.content)).toBe(true);
+    expect(added.details.server.projectRef).toEqual(projectRef);
+    expect(added.details.server.toolCount).toBe(1);
+    expect(prepareCalls).toHaveBeenCalledWith(expect.objectContaining({ leaseKind: 'mcp', projectRef, command: { type: 'argv', file: 'node', args: ['/workspace/mcp/guest-mcp-server.mjs'] } }));
+
+    enter('reconnecting a bound server rediscovers its tools through the guest and bridges them');
+    const reconnected = await runMcp('ReconnectMcpServer', { scope: 'instance', name: 'guestprobe' });
+    expect(reconnected.details?.ok, JSON.stringify(reconnected.content)).toBe(true);
+    expect(mcpTools.some((t) => t.name === 'mcp__guestprobe__guest_probe')).toBe(true);
+
+    enter('a bridged call runs the server in the guest, not on the host');
+    const probed = await runMcp('mcp__guestprobe__guest_probe', { path: '/workspace/alpha.ts' });
+    expect(probed.details?.ok, JSON.stringify(probed.content)).toBe(true);
+    const facts = JSON.parse(probed.content[0].text) as { hostname: string; cwd: string; exists: boolean };
+    // The file exists only in the guest (written through the managed tools above); the host has no
+    // /workspace/alpha.ts. The guest's hostname is the container's, never this machine's.
+    expect(facts.exists).toBe(true);
+    expect(existsSync('/workspace/alpha.ts')).toBe(false);
+    expect(facts.cwd).toBe('/workspace');
+    expect(facts.hostname).not.toBe(hostname());
+    expect(facts.hostname).not.toBe('');
+    // Every managed operation leaves no lease behind.
+    expect(sql.prepare("SELECT COUNT(*) AS n FROM p_sandbox_execution_leases WHERE kind = 'mcp'").get()).toEqual({ n: 0 });
+
+    enter('the same bridged tool refuses from another project without touching the provider');
+    prepareCalls.mockClear();
+    mcpAccess = { projectRef: { kind: 'managed', projectId: OTHER_PROJECT_ID } };
+    const crossProject = await runMcp('mcp__guestprobe__guest_probe', { path: '/workspace/alpha.ts' });
+    expect(crossProject.details?.ok).toBe(false);
+    expect(JSON.stringify(crossProject)).toMatch(/belongs to a different project/);
+    expect(prepareCalls).not.toHaveBeenCalled();
+    mcpAccess = { projectRef };
+
+    enter('a non-member is denied at the project boundary, not by a missing file');
+    mcpAccount = OUTSIDER;
+    actingAccount = OUTSIDER;
+    const outsider = await runMcp('mcp__guestprobe__guest_probe', { path: '/workspace/alpha.ts' });
+    expect(outsider.details?.ok).toBe(false);
+    expect(JSON.stringify(outsider)).toMatch(/Project access is denied/);
+    mcpAccount = ACTOR;
+    actingAccount = ACTOR;
+
+    enter('central reconnection of a bound server is refused');
+    await expect(mcp.reconnectMcpServer('guestprobe')).rejects.toThrow(/requires authenticated scoped management/);
+
+    enter('removing the bound server leaves nothing running in the guest');
+    const removed = await runMcp('RemoveMcpServer', { scope: 'instance', name: 'guestprobe' });
+    expect(removed.details?.ok).toBe(true);
+    // The bracket keeps pgrep from matching the shell that runs this very command line.
+    const leftovers = await run('Bash', { command: 'pgrep -fa "guest-mcp-[s]erver" || echo none', description: 'leftover MCP servers' });
+    expect(leftovers.content[0].text).toContain('none');
 
     enter('a managed project without a provider refuses instead of falling back');
     const orphan = fixture(null);
