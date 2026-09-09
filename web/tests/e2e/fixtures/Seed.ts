@@ -109,8 +109,8 @@ export class Seed {
    *  Returns the plugin names that were armed. A registry plugin lives in another repository and is only
    *  present when the harness was pointed at that checkout (`E2E_PLUGIN_DIRS`), so a caller MUST check the
    *  returned list and skip what is not there rather than assume a page exists. */
-  async realPlugins(only?: readonly string[]): Promise<string[]> {
-    const res = await this.request.get(`${DAEMON_URL}/__test/real-plugins`);
+  async realPlugins(only?: readonly string[], lang?: string): Promise<string[]> {
+    const res = await this.request.get(`${DAEMON_URL}/__test/real-plugins${lang ? `?lang=${encodeURIComponent(lang)}` : ''}`);
     const { plugins } = await res.json() as { plugins: PluginUiListing[] };
     const armed = only ? plugins.filter((p) => only.includes(p.name)) : plugins;
     await this.response('plugins/ui', armed);

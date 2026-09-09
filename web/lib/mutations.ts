@@ -508,6 +508,7 @@ export function useAssignProject() {
         qc.invalidateQueries({ queryKey: ['projects'] }),
         qc.invalidateQueries({ queryKey: ['user-projects', v.userId] }),
         qc.invalidateQueries({ queryKey: ['project-users', v.projectId] }),
+        qc.invalidateQueries({ queryKey: ['project-member-profiles', v.projectId] }),
         qc.invalidateQueries({ queryKey: ['project-summaries'] }),
       ]);
     },

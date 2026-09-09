@@ -57,6 +57,28 @@ describe('PluginsSection URL state', () => {
     useMarketplace.mockReturnValue({ data: { plugins: [] }, isLoading: false });
   });
 
+  // The register used to title every row with the technical id, so a plugin whose id is an
+  // implementation word ("sandbox") was never called what it actually is. The id still keys the address.
+  it('titles a plugin by its declared name while keeping the id as its address', async () => {
+    usePlugins.mockReturnValue({ data: [plugin({ name: 'sandbox', label: 'Environments' })], isLoading: false });
+    renderSection();
+
+    expect(screen.getByText('Environments')).toBeInTheDocument();
+    expect(screen.queryByText('sandbox')).toBeNull();
+    fireEvent.click(screen.getByText('Environments').closest('button')!);
+    expect(await screen.findByTestId('plugin-detail')).toHaveAttribute('data-plugin', 'sandbox');
+    expect(window.location.search).toBe('?cat=plugins&plugin=sandbox');
+  });
+
+  it('finds a plugin by the name it is shown under, not only by its id', () => {
+    usePlugins.mockReturnValue({ data: [plugin({ name: 'sandbox', label: 'Environments' }), plugin({ name: 'files' })], isLoading: false });
+    renderSection();
+
+    fireEvent.change(screen.getByRole('searchbox'), { target: { value: 'environ' } });
+    expect(screen.getByText('Environments')).toBeInTheDocument();
+    expect(screen.queryByText('files')).toBeNull();
+  });
+
   it('pushes the selected plugin into the URL and removes it through the Plugins back action', async () => {
     usePlugins.mockReturnValue({ data: [plugin({ name: 'browser' })], isLoading: false });
     renderSection();

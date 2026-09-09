@@ -4,13 +4,14 @@ import { HelpTip } from '../../components/ui/HelpTip';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 import { usePluginConsent } from './usePluginConsent';
+import { pluginDisplayName } from './pluginDisplayName';
 import type { PluginDetail } from '../../lib/types';
 
 /** The plugin's install-state actions: the live enable/disable switch with its help tip. Enabling one
  *  that claims power over stored state asks first — the dialog comes from the shared consent hook. */
 export function PluginActions({ name, detail }: { name: string; detail: PluginDetail }) {
   const { toast } = useToast();
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const consent = usePluginConsent({
     // A deferred swap still saved the change, so the switch stays flipped — the toast explains why the
     // plugin's pages and tools appear a moment later instead of leaving the delay unexplained.
@@ -22,7 +23,7 @@ export function PluginActions({ name, detail }: { name: string; detail: PluginDe
       <Toggle
         checked={detail.enabled}
         onChange={(v) => consent.setEnabled(name, v)}
-        label={detail.name}
+        label={pluginDisplayName(detail, locale)}
         disabled={consent.isBusy(name)}
       />
       <HelpTip align="left">{t.help.pluginEnable}</HelpTip>

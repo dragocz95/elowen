@@ -1,4 +1,5 @@
 {
+  "label": "Prostředí",
   "description": "Trvalá prostředí projektů, sdílené pracovní stromy a správa životního cyklu se zachováním původních pracovních prostorů účtů.",
   "fields": {
     "sec_execution": {
@@ -8,6 +9,26 @@
     "confineNonOperators": {
       "label": "Izolovat příkazy běžných účtů",
       "hint": "Spouštět příkazy účtů bez oprávnění provozovatele v bubblewrap pouze s jejich dostupnými Projekty, pracovními prostory a účtovým HOME. Síť zůstává dostupná. Když živá zkouška namespace selže, spuštění se odmítne místo neizolovaného běhu."
+    },
+    "sec_resources": {
+      "label": "Výchozí hodnoty prostředí",
+      "hint": "Prostředky, které prostředí projektu dostane při prvním vytvoření. Existující prostředí si ponechají limity, se kterými vznikla; ty mění správce přímo u projektu."
+    },
+    "defaultCpus": {
+      "label": "Procesor",
+      "hint": "Počet jader, která smí kontejner využít; vynucuje se kvótou CPU."
+    },
+    "defaultMemoryMb": {
+      "label": "Paměť",
+      "hint": "Strop paměti. Proces, který jej překročí, je ukončen jádrem."
+    },
+    "defaultPidsLimit": {
+      "label": "Procesy",
+      "hint": "Nejvyšší počet procesů a vláken uvnitř prostředí."
+    },
+    "defaultDiskSoftMb": {
+      "label": "Práh diskového místa",
+      "hint": "Pouze orientační. Využití disku se vůči této hodnotě vykazuje, není to vynucená kvóta."
     }
   },
   "web": {
@@ -125,14 +146,18 @@
       "restoreWarning": "Nahradit prostředí tímto snímkem? Změny od vytvoření snímku budou ztraceny a běžící práce bude přerušena.",
       "deleteProjectWarning": "Smazat projekt, prostředí a všechny jeho soubory, balíčky, HOME a data? Publikované weby je nutné samostatně převést nebo smazat. Soukromá historie konverzací zůstane zachována. Dokončení úklidu bude oznámeno asynchronně.",
       "generation": "Generace",
-      "cpuLimit": "Limit CPU",
-      "memoryLimit": "Limit paměti (MiB)",
-      "processLimit": "Limit procesů",
-      "diskSoftLimit": "Orientační práh disku (MiB)",
+      "resources": "Prostředky",
+      "resourcesHint": "Co smí toto prostředí využívat. Změna se použije na běžící kontejner, restart není potřeba.",
+      "limitsAdminOnly": "Pouze pro správce",
+      "unitCpu": "CPU",
+      "unitProcesses": "procesů",
+      "cpuLimit": "Procesor",
+      "memoryLimit": "Paměť",
+      "processLimit": "Procesy",
+      "diskSoftLimit": "Práh diskového místa",
       "diskSoftHint": "Práh disku je orientační, nejde o vynucenou kvótu.",
+      "limitsRange": "Zadejte celé číslo mezi {min} a {max} {unit}.",
       "diskUsage": "Využití disku",
-      "editLimits": "Upravit limity prostředků",
-      "saveLimits": "Uložit limity",
       "snapshots": "Úplné snímky",
       "noSnapshots": "Nejsou k dispozici žádné úplné snímky.",
       "state_unprovisioned": "Nevytvořeno",

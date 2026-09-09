@@ -353,6 +353,17 @@ export interface ProjectView {
   lifecycle?: 'active' | 'deleting';
 }
 
+/** One member of a project as served by `GET /projects/:id/users`. Bounded on purpose: it carries the
+ *  identity a member row renders and nothing else, and it lists only accounts already assigned to THIS
+ *  project, so a member reading it never learns the instance directory. */
+export interface ProjectMemberView {
+  id: number;
+  username: string;
+  name: string;
+  email: string;
+  avatar: string;
+}
+
 /** A durable RAW memory row (v1: user-scoped; `GET /memory`). Deletes are SOFT (`status='deleted'`).
  *  `status` is a closed set because the daemon's own API schema enums exactly these three
  *  (api/schemas/memory.ts) and the web switches over them. */

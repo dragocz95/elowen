@@ -11,6 +11,11 @@ describe('parseManifest', () => {
   it('accepts a valid manifest', () => {
     expect(parseManifest(good).name).toBe('skills');
   });
+  it('carries a display name beside the technical id, and stays valid without one', () => {
+    expect(parseManifest({ ...good, label: 'Environments' }).label).toBe('Environments');
+    expect(parseManifest(good).label).toBeUndefined();
+    expect(() => parseManifest({ ...good, label: '' })).toThrow();
+  });
   it('accepts optional requires/provides', () => {
     const m = parseManifest({ ...good, requires: { env: ['X'] }, provides: { skills: ['*'] } });
     expect(m.provides?.skills).toEqual(['*']);

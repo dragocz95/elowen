@@ -117,6 +117,12 @@ export interface PluginManifest {
    *  honest reading for a plugin published before this field existed: its manifest cannot say what it
    *  needs, so the host cannot gate it (loader.ts explains what happens to those instead). */
   requiresSharedApi?: number;
+  /** What people should CALL this plugin — the title the plugin register and the plugin detail show.
+   *  `name` is the technical id: it keys the config, the control, the API mount, the data directory and
+   *  every stored grant, so it cannot be renamed without a migration, and it is frequently not a word
+   *  anyone outside the codebase would use. Localized through `i18n/<lang>.json` → `label`; absent, the
+   *  surfaces fall back to `name` exactly as before. */
+  label?: string;
   description: string;
   /** Path (relative to the plugin folder) of the built ESM entry exporting `register(ctx)`. */
   entry: string;
@@ -313,6 +319,7 @@ const ManifestSchema = Type.Object({
   requiresCore: Type.Optional(Type.String({ pattern: '^\\d+(\\.\\d+)*$' })),
   requiresControls: Type.Optional(Type.Array(Type.String({ minLength: 1 }))),
   requiresSharedApi: Type.Optional(Type.Integer({ minimum: 1 })),
+  label: Type.Optional(Type.String({ minLength: 1 })),
   description: Type.String(),
   entry: Type.String({ minLength: 1 }),
   provides: Type.Optional(Type.Object({

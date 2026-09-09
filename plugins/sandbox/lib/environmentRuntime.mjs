@@ -31,6 +31,20 @@ function limits(value) {
   for (const key of ['memoryMb', 'pidsLimit', 'diskSoftMb']) positive(result[key], key);
   return result;
 }
+/** The limits a project environment is provisioned with, from the administrator's plugin settings.
+ *  An unset or unusable field falls back to the built-in figure per key, so a single bad value cannot
+ *  leave a new environment without a ceiling. Read once per provisioning; the settings snapshot refreshes
+ *  when the plugin reloads, and environments that already exist keep the limits they were created with. */
+function configuredDefaults(config) {
+  const keys = { cpus: 'defaultCpus', memoryMb: 'defaultMemoryMb', pidsLimit: 'defaultPidsLimit', diskSoftMb: 'defaultDiskSoftMb' };
+  const chosen = {};
+  for (const [key, setting] of Object.entries(keys)) {
+    const value = config?.[setting];
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) chosen[key] = value;
+  }
+  try { return limits(chosen); }
+  catch { return { ...DEFAULT_LIMITS }; }
+}
 function action(value, kind) {
   if (!value || typeof value !== 'object') throw error('invalid_action', 'An environment action is required', 400);
   const fields = { start: [], stop: [], restart: [], delete: [], snapshot: ['note', 'includeData'], restore: ['snapshotId', 'restoreData'], limits: ['limits'],
@@ -149,7 +163,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       if (!same(binding(authority), binding(row.spec.registration))) throw error('site_binding_changed', 'The trusted Site binding changed; an explicit handover is required');
     }
     if (!row) {
-      const effective = limits(DEFAULT_LIMITS);
+      const effective = configuredDefaults(ctx.config);
       const spec = { input: { resource: { kind: 'project', id: Number(id) }, generation: 1, image: PROJECT_BASE_IMAGE_TAG, previewBroker: true, limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } }, paths: { sandboxDataDir: dataDir, namespace } };
       row = store.insert(kind, id, Number(id), spec, effective);
     }
@@ -779,7 +793,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       const id = projectId(input.project);
       await authorize('project', id, input.accountUserId, true);
       const row = store.get('project', id);
-      return row ? view(row) : { projectId: id, generation: 1, state: 'unprovisioned', desiredState: 'running', lastError: null, limits: { ...DEFAULT_LIMITS } };
+      // An unprovisioned project has no stored limits yet, so it reports the defaults it WOULD be
+      // created with rather than the built-in figures the administrator may have moved away from.
+      return row ? view(row) : { projectId: id, generation: 1, state: 'unprovisioned', desiredState: 'running', lastError: null, limits: configuredDefaults(ctx.config) };
     },
     async projectOverview(input) {
       const environment = await control.environmentFor(input);

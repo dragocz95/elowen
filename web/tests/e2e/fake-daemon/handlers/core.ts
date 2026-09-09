@@ -27,6 +27,13 @@ export function registerCoreRoutes(app: Hono): void {
 
   app.get('/config', (c) => c.json(getResponse('config', config)));
   app.get('/projects', (c) => c.json(getResponse('projects', projects)));
+  // The project's membership. The DEFAULT answer is the id list, exactly as the daemon serves it, and
+  // `?view=profiles` is the opt-in a surface that names its members asks for — so a spec measures the UI
+  // against the real contract rather than against a fake that hands out profiles to anyone.
+  app.get('/projects/:id/users', (c) => {
+    const members = getResponse('projects/members', [] as { id: number }[]);
+    return c.json(c.req.query('view') === 'profiles' ? members : members.map((member) => member.id));
+  });
   app.get('/activity/pulse', (c) => c.json(getResponse('activity/pulse', [])));
   // The shell reads this before it can render its nav at all, and `applyNavLayout` indexes both arrays
   // unguarded — the catch-all's `[]` crashes the whole layout, so the empty layout is modeled explicitly.

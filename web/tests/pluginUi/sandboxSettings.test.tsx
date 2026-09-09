@@ -11,6 +11,7 @@ import { ensurePluginUiRuntime } from '../../lib/pluginUi';
 import { ToastProvider } from '../../components/ui/Toast';
 import { createWrapper } from '../test-utils';
 import { onUnhandledRequest } from '../msw';
+import { en } from '../../lib/i18n/dictionaries/en';
 
 ensurePluginUiRuntime();
 const strings = (manifest as { web: { strings: Record<string, string> } }).web.strings;
@@ -128,7 +129,9 @@ describe('managed environment lifecycle', () => {
     expect(requests[0]?.requestId).toEqual(expect.any(String));
   });
 
-  it('sends admin resource limits as a durable lifecycle action', async () => {
+  // The resource figures used to sit behind an "Edit resource limits" modal of bare number boxes. They
+  // are rows now, and an administrator's change auto-saves through the SAME durable lifecycle action.
+  it('auto-saves an administrator resource change as a durable lifecycle action', async () => {
     setup();
     let submitted: unknown;
     server.use(
@@ -136,11 +139,95 @@ describe('managed environment lifecycle', () => {
       http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => { submitted = await request.json(); return HttpResponse.json({ id: 'op-limits', requestId: (submitted as { requestId: string }).requestId, projectId: 1, generation: 2, accountUserId: 1, action: { kind: 'limits' }, status: 'pending', error: null }); }),
     );
     mount(<ProjectEnvironmentSettings project={project} />);
-    fireEvent.click(await screen.findByRole('button', { name: strings.editLimits }));
-    const dialog = within(await screen.findByRole('dialog', { name: strings.editLimits }));
-    fireEvent.change(dialog.getByLabelText(strings.memoryLimit!), { target: { value: '2048' } });
-    fireEvent.click(dialog.getByRole('button', { name: strings.saveLimits }));
-    await waitFor(() => expect(submitted).toEqual({ action: { kind: 'limits', limits: { ...environment.limits, memoryMb: 2048 } }, expectedGeneration: 2, requestId: expect.any(String) }));
+    const memory = await screen.findByRole('slider', { name: strings.memoryLimit });
+    fireEvent.keyDown(memory, { key: 'ArrowRight' });
+    // Debounced: a drag becomes one container update rather than one per step.
+    expect(submitted).toBeUndefined();
+    await waitFor(
+      () => expect(submitted).toEqual({ action: { kind: 'limits', limits: { ...environment.limits, memoryMb: 1152 } }, expectedGeneration: 2, requestId: expect.any(String) }),
+      { timeout: 4000 },
+    );
+  });
+
+  /** An administrator, and every limits write recorded and HELD open until it is released by hand, so a
+   *  spec can put a second edit into the window where the first request is still in flight. */
+  const armLimits = () => {
+    const bodies: { action: { kind: string; limits: Record<string, number> }; requestId: string }[] = [];
+    const gates: (() => void)[] = [];
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: true } })),
+      http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => {
+        const body = await request.json() as typeof bodies[number];
+        bodies.push(body);
+        await new Promise<void>((resolve) => { gates.push(resolve); });
+        return HttpResponse.json({ id: `op-${bodies.length}`, requestId: body.requestId, projectId: 1, generation: 2, accountUserId: 1, action: body.action, status: 'succeeded', error: null });
+      }),
+    );
+    return { bodies, releaseOpen: () => gates.splice(0).forEach((resolve) => resolve()) };
+  };
+
+  /** Drag the memory row twice, with the second step landing while the first write is still open. */
+  const editWhileSaving = async (bodies: { action: { limits: Record<string, number> } }[]) => {
+    const memory = await screen.findByRole('slider', { name: strings.memoryLimit });
+    fireEvent.keyDown(memory, { key: 'ArrowRight' });
+    await waitFor(() => expect(bodies).toHaveLength(1), { timeout: 4000 });
+    expect(bodies[0]!.action.limits.memoryMb).toBe(1152);
+    fireEvent.keyDown(memory, { key: 'ArrowRight' });
+    expect(await screen.findByText('1280 MiB')).toBeInTheDocument();
+  };
+
+  // The save used to clear the draft unconditionally once its request resolved, so anything dragged or
+  // typed while that request was in flight was thrown away — silently, and after the person had already
+  // watched the new figure appear on screen.
+  it('keeps an edit made while a resource save is in flight and sends it afterwards', async () => {
+    setup();
+    const { bodies, releaseOpen } = armLimits();
+    mount(<ProjectEnvironmentSettings project={project} />);
+    await editWhileSaving(bodies);
+
+    releaseOpen();
+    await waitFor(() => expect(bodies).toHaveLength(2), { timeout: 6000 });
+    expect(bodies[1]!.action.limits).toEqual({ ...environment.limits, memoryMb: 1280 });
+  });
+
+  it('never reports the work as finished while the newer figure is still unsent', async () => {
+    setup();
+    const { bodies, releaseOpen } = armLimits();
+    mount(<ProjectEnvironmentSettings project={project} />);
+    await editWhileSaving(bodies);
+
+    // Across the whole window between the older answer landing and the newer figure going out, the
+    // indicator has to keep reporting work rather than fall silent on a save that is not the last one.
+    releaseOpen();
+    const deadline = Date.now() + 6000;
+    while (bodies.length < 2) {
+      expect(screen.queryByText(en.common.saving), 'the indicator fell silent before the newer figure was sent').not.toBeNull();
+      expect(Date.now(), 'the newer figure was never sent').toBeLessThan(deadline);
+      await new Promise((resolve) => setTimeout(resolve, 40));
+    }
+  });
+
+  // `Number('')` is 0 and `Number('5')` is 5 — both below the row's 512 minimum, and both used to be
+  // written straight into the draft and saved.
+  it('never sends a blank or out-of-range disk figure, and saves the corrected one', async () => {
+    setup();
+    const { bodies } = armLimits();
+    mount(<ProjectEnvironmentSettings project={project} />);
+    const disk = await screen.findByLabelText(strings.diskSoftLimit!);
+
+    for (const attempt of ['', '5', '99999999']) {
+      fireEvent.change(disk, { target: { value: attempt } });
+      // The box keeps what was typed rather than snapping back mid-edit.
+      expect(disk).toHaveValue(attempt === '' ? null : Number(attempt));
+      expect(await screen.findByRole('alert')).toHaveTextContent('512');
+    }
+    await new Promise((resolve) => setTimeout(resolve, 1600));
+    expect(bodies).toHaveLength(0);
+
+    fireEvent.change(disk, { target: { value: '2048' } });
+    expect(screen.queryByRole('alert')).toBeNull();
+    await waitFor(() => expect(bodies).toHaveLength(1), { timeout: 4000 });
+    expect(bodies[0]!.action.limits).toEqual({ ...environment.limits, diskSoftMb: 2048 });
   });
 
   it('fails visibly without exposing actions when the provider is unavailable', async () => {
@@ -166,7 +253,9 @@ describe('managed environment lifecycle', () => {
     expect(submitted).toBeUndefined();
     fireEvent.click(dialog.getByRole('button', { name: strings.restoreEnvironment }));
     await waitFor(() => expect(submitted).toEqual({ action: { kind: 'restore', snapshotId: 'complete' }, expectedGeneration: 2, requestId: expect.any(String) }));
-    expect(screen.queryByRole('button', { name: strings.editLimits })).toBeNull();
+    // This member is not an administrator: the resource figures are readable, not editable.
+    expect(screen.getByText(strings.limitsAdminOnly!)).toBeInTheDocument();
+    expect(screen.queryByRole('slider', { name: strings.memoryLimit })).toBeNull();
   });
 
   it('requests durable project deletion through core instead of deleting only the container', async () => {

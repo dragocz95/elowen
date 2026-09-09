@@ -334,23 +334,23 @@ export async function register(ctx) {
 
   ctx.registerReadinessCheck(() => {
     if (migrationState.collisions.length > 0) return {
-      id: 'sandbox', label: 'Sandbox', ok: false,
+      id: 'sandbox', label: 'Environments', ok: false,
       detail: 'Legacy and current account HOME directories both exist; migration was refused.',
       hint: 'Inspect plugins-data/terminal/sandbox-home and plugins-data/sandbox/users before choosing which HOME to retain.',
     };
     if (migrationState.retainedSessions.length > 0) return {
-      id: 'sandbox', label: 'Sandbox', ok: false,
+      id: 'sandbox', label: 'Environments', ok: false,
       detail: `${migrationState.retainedSessions.length} legacy session HOME director${migrationState.retainedSessions.length === 1 ? 'y is' : 'ies are'} retained because process ownership cannot be verified.`,
       hint: 'Confirm no legacy process uses these directories, then remove them manually from plugins-data/terminal/sandbox-home.',
     };
     if (ctx.config.confineNonOperators === false) return {
-      id: 'sandbox', label: 'Sandbox', ok: true,
+      id: 'sandbox', label: 'Environments', ok: true,
       detail: 'Account HOME and workspaces are ready; non-operator confinement is disabled by configuration.',
     };
     const probe = bubblewrapProbe();
     return probe.available
-      ? { id: 'sandbox', label: 'Sandbox', ok: true, detail: 'bubblewrap confinement probe passed; account HOME and workspaces are ready.' }
-      : { id: 'sandbox', label: 'Sandbox', ok: false, detail: `Confined execution is unavailable: ${probe.reason || 'probe failed'}.`, hint: 'Install bubblewrap and permit its unprivileged namespace profile; non-operator shell commands fail closed until the probe passes.' };
+      ? { id: 'sandbox', label: 'Environments', ok: true, detail: 'bubblewrap confinement probe passed; account HOME and workspaces are ready.' }
+      : { id: 'sandbox', label: 'Environments', ok: false, detail: `Confined execution is unavailable: ${probe.reason || 'probe failed'}.`, hint: 'Install bubblewrap and permit its unprivileged namespace profile; non-operator shell commands fail closed until the probe passes.' };
   });
 
   ctx.registerBootReconcile(async () => {

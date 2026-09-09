@@ -3,12 +3,14 @@ import { PluginIcon } from './PluginIcon';
 import { PluginActions } from './PluginActions';
 import { Badge } from '../../components/ui/Badge';
 import { useTranslation } from '../../lib/i18n';
+import { pluginDisplayName } from './pluginDisplayName';
 import type { PluginDetail } from '../../lib/types';
 
 /** Hero: the plugin's identity card — icon, name, description, live enable toggle, and key facts. */
 export function PluginHero({ name, detail, description, toolCount }: { name: string; detail: PluginDetail; description: string; toolCount: number }) {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const icon = <PluginIcon name={detail.name} hasIcon={detail.hasIcon} size={64} />;
+  const title = pluginDisplayName(detail, locale);
   return (
     <section className="@container">
       <div className="flex flex-col gap-5 @2xl:flex-row @2xl:items-start">
@@ -16,7 +18,7 @@ export function PluginHero({ name, detail, description, toolCount }: { name: str
           <div className="grid h-20 w-20 shrink-0 place-items-center overflow-hidden text-primary">{icon}</div>
           <div className="min-w-0 pt-1">
             <div className="flex flex-wrap items-center gap-2.5">
-              <h2 className="text-2xl font-semibold tracking-[-0.025em] text-foreground">{detail.name}</h2>
+              <h2 className="text-2xl font-semibold tracking-[-0.025em] text-foreground">{title}</h2>
               <Badge tone={detail.enabled ? 'success' : 'muted'}>{detail.enabled ? t.pluginDetail.statusEnabled : t.pluginDetail.statusDisabled}</Badge>
             </div>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">{description}</p>

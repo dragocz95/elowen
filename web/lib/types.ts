@@ -158,9 +158,9 @@ import type {
   BrainContextBreakdown, BrainForkedSession,
   BrainDebugPage, BrainDebugSessionPage, BrainDebugSessionItem, BrainDebugRequestItem, BrainDebugRequestDetail, BrainDebugSegmentManifestItem, BrainDebugSegmentPayload,
   BrainDebugRawPayload, BrainDebugLegacyTranscriptPage,
-  CommitFileChange, CommitLogEntry, PlatformLinkKey, PlatformSurface, ProjectView,
+  CommitFileChange, CommitLogEntry, PlatformLinkKey, PlatformSurface, ProjectView, ProjectMemberView,
 } from '../../src/shared/wireContract.js';
-export type { PlatformLinkKey, PlatformSurface };
+export type { PlatformLinkKey, PlatformSurface, ProjectMemberView };
 // `BrainStreamControl` is only referenced by the snapshot frame below, so it is imported but not re-exported.
 export type { ToolOutputView, BrainSubagentView, BrainWorkflowView, BrainMessageImage, BrainMessageFile, SlashCommandDef, AskQuestion, BrainWorkMode, BrainPendingPlan, User, BrainLimits, BrainProviderCompatibility, RuntimeLimits, BrainUsage, MemoryMaintenanceJob, MemoryMaintenanceState, MemoryRecategorizeMode, CommitFileChange, CommitLogEntry };
 export type {
@@ -487,6 +487,9 @@ export interface PluginUiListing {
 
 export interface PluginInfo {
   name: string;
+  /** What the plugin register and detail CALL this plugin (manifest `label`). `name` stays the
+   *  technical id behind config, controls, mounts and grants. Absent → the id is the title. */
+  label?: string;
   version: string;
   description: string;
   provides: { tools?: string[]; skills?: string[]; hooks?: string[]; platforms?: string[]; destinations?: string[] };
@@ -513,6 +516,8 @@ export interface PluginInfo {
 /** Localized overrides for a plugin's manifest strings, keyed by config-field key. */
 interface PluginI18n {
   description?: string;
+  /** Localized display name for the plugin itself (manifest `label`). */
+  label?: string;
   /** Localized short name for the plugin's per-account settings entry (manifest `userConfigLabel`). */
   userConfigLabel?: string;
   fields?: Record<string, { label?: string; hint?: string; options?: Record<string, string> }>;

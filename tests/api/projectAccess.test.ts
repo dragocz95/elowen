@@ -77,8 +77,14 @@ describe('project access gating', () => {
   it('projects expose their assigned members only to administrators', async () => {
     const { app, adminTok, bobTok, bob, userProjects } = setup();
     userProjects.assign(bob.id, 1);
+    // A HOST project's member list stays administrator-only in BOTH shapes, and the default answer is
+    // still the id list. The profile view is bounded to the identity a member row renders — never a
+    // password hash, grants or anything else on the account.
     expect(await (await app.request('/projects/1/users', auth(adminTok))).json()).toEqual([bob.id]);
+    expect(await (await app.request('/projects/1/users?view=profiles', auth(adminTok))).json())
+      .toEqual([{ id: bob.id, username: 'bob', name: 'Bob', email: '', avatar: 'bob.png' }]);
     expect((await app.request('/projects/1/users', auth(bobTok))).status).toBe(403);
+    expect((await app.request('/projects/1/users?view=profiles', auth(bobTok))).status).toBe(403);
   });
 
   it('projects summary batches bounded plugin indicators and never leaks member assignments', async () => {
