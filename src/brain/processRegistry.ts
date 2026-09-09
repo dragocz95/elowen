@@ -34,6 +34,10 @@ export interface ProcessHandle {
    *  detach; on detach the plugin flips the same handle to `job` and it becomes an ordinary background
    *  process. It is deliberately NOT counted as a running job (see `runningJobCountForSession`). */
   completionMode?: 'job' | 'service' | 'foreground';
+  /** True while a blocking `ProcessOutput` read of this process is holding the turn open. Like a
+   *  `foreground` handle it is work the user's Ctrl+B can release, so the clients count it as foreground
+   *  work — but the process itself stays an ordinary background job throughout. */
+  blockedRead?: boolean;
   running: () => boolean;
   exitCode: () => number | null;
   readAll: () => string;
@@ -57,6 +61,8 @@ export interface ProcessInfo {
   running: boolean;
   exitCode: number | null;
   completionMode?: 'job' | 'service' | 'foreground';
+  /** A blocking `ProcessOutput` read is waiting on this process — foreground work a client can release. */
+  blockedRead?: boolean;
   workspaceId?: string | null;
   homeGeneration?: number | null;
   projectRef?: ProjectExecutionRef;
@@ -68,6 +74,7 @@ const toInfo = (h: ProcessHandle): ProcessInfo => ({
   sessionId: h.sessionId ?? null,
   running: h.running(), exitCode: h.exitCode(),
   completionMode: h.completionMode,
+  ...(h.blockedRead ? { blockedRead: true } : {}),
   workspaceId: h.workspaceId ?? null,
   homeGeneration: h.homeGeneration ?? null,
   ...(h.projectRef ? { projectRef: h.projectRef } : {}),
