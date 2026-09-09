@@ -86,47 +86,10 @@ function catalogDefinition(model: Model<Api>, configured?: Pick<Model<Api>, 'sam
   };
 }
 
-/** Image models the ChatGPT/OpenAI OAuth account exposes for the GenerateImage tool but that PI does not
- *  list in the openai-codex catalog (it catalogs `gpt-image-1`/`gpt-image-2` for image APIs only). PI's own
- *  descriptor wins automatically once it ships the exact id here. */
-const OPENAI_CODEX_OAUTH_IMAGE_MODELS = ['gpt-image-1.5', 'gpt-image-2'] as const;
-
-function extendOpenAiCodexCatalog(registry: ModelRegistry): void {
-  const provider = 'openai-codex';
-  const builtins = registry.getAll().filter((model) => model.provider === provider);
-  const template = builtins.find((model) => model.id === 'gpt-5.5') ?? builtins[0];
-  if (!template) return; // PI dropped the provider — nothing to extend.
-  const existing = new Set(builtins.map((model) => model.id));
-  const models = builtins.map((model) => catalogDefinition(model));
-  for (const id of OPENAI_CODEX_OAUTH_IMAGE_MODELS) {
-    if (existing.has(id)) continue;
-    const capabilities = descriptorCapabilities(provider, id);
-    models.push({
-      id,
-      name: id,
-      api: template.api,
-      baseUrl: template.baseUrl,
-      reasoning: capabilities.reasoning,
-      thinkingLevelMap: capabilities.thinkingLevelMap,
-      input: ['text', 'image'],
-      cost: template.cost,
-      contextWindow: template.contextWindow,
-      maxTokens: template.maxTokens,
-      samplingParams: template.samplingParams,
-      headers: template.headers,
-      compat: template.compat,
-    });
-  }
-  // No `oauth` here: registering an extension config over a built-in provider composes onto it, so the
-  // provider's native OAuth is preserved (the composition falls back to the base when the extension omits
-  // it). Re-supplying it would only be needed for a provider PI ships without one.
-  registry.registerProvider(provider, {
-    name: 'OpenAI Codex',
-    api: 'openai-codex-responses',
-    baseUrl: 'https://chatgpt.com/backend-api',
-    models,
-  });
-}
+/** The ChatGPT account's image models are NOT registered here. They answer on `codex/images/*` and the
+ *  Responses API this catalog describes rejects them as a `model`, so a chat entry for one could only
+ *  ever fail on first use. They live in `imageService.ts` (OPENAI_CODEX_IMAGE_MODELS), which owns the
+ *  image transport and validates the id the image plugins ask for. */
 
 /** pi-ai's openai-completions client appends `/chat/completions` to the model's baseUrl, so the base
  *  must already include the API version segment (e.g. `.../v1`). We only trim a trailing slash — we do
@@ -262,7 +225,6 @@ export function buildBrainRegistry(cfg: BrainRuntimeConfig, runtime: ModelRuntim
   for (const id of registry.getRegisteredProviderIds()) {
     if (id.startsWith(BRAIN_REGISTRY_PROVIDER_PREFIX) && !wanted.has(id)) registry.unregisterProvider(id);
   }
-  extendOpenAiCodexCatalog(registry);
   for (const p of cfg.providers) {
     if (p.type === 'openai') {
       const api = openAiApiFor(p);

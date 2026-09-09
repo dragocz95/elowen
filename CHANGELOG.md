@@ -11,6 +11,14 @@ This file is the full technical log. The notes users read in the app are the cur
 
 ### Added
 
+- Added a host-owned image seam. `ctx.images` renders and edits images for a plugin through either an
+  API-key provider's OpenAI-compatible Images API or a connected ChatGPT account's own image backend, so
+  the account's OAuth token — refreshed by the same runtime every model request uses — never enters plugin
+  code, and a plugin receives only the finished bytes plus the provider's usage. The image plugins declare
+  `requiresCore` 0.28.36, the first core that provides it. A `provider` settings field may now accept
+  several provider types, and the picker offers a connected OAuth account, which carries no API key of its
+  own and was therefore invisible there before.
+
 - Added project-owned persistent environments: a managed Project now runs in its own rootless Podman
   container that survives across turns, with the file, shell, browser, editor, LSP, MCP and codebase
   surfaces reaching it through the Sandbox control instead of the host filesystem. Plugins that consume
@@ -39,6 +47,13 @@ This file is the full technical log. The notes users read in the app are the cur
   rendering right now, so an artifact that expands over the dock can still show what is being said. It is a
   projection of the host's own visible text — newest assistant turn, latest text segment, whitespace-collapsed
   and capped at 240 characters — and carries no tool payloads, hidden reasoning, system content or history.
+
+### Changed
+
+- The ChatGPT account's image models are no longer registered as chat models. They answer on the account's
+  image endpoint and the Responses API rejects them, so those picker entries could only ever fail on first
+  use. `gpt-image-2.5-sunburst`, `gpt-image-2.5-flare`, `gpt-image-2` and `gpt-image-1.5` are now the image
+  catalog the seam validates a requested model against.
 
 ### Removed
 

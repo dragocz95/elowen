@@ -53,7 +53,7 @@ export interface PluginConfigField {
   display?: { control?: 'input' | 'slider'; unit?: string; divisor?: number };
   browse?: 'directory';
   default?: string | number | boolean | string[];
-  providerType?: string;
+  providerType?: string | string[];
   options?: { value: string; label: string }[];
   language?: string;
   help?: string;

@@ -16,11 +16,12 @@ const usePlugins = vi.hoisted(() => vi.fn());
 const useProjects = vi.hoisted(() => vi.fn());
 const useConfig = vi.hoisted(() => vi.fn());
 const useBrainModels = vi.hoisted(() => vi.fn());
+const useBrainOauthStatus = vi.hoisted(() => vi.fn());
 const useUsers = vi.hoisted(() => vi.fn());
 const useNotificationDestinations = vi.hoisted(() => vi.fn());
 const useSystemReadiness = vi.hoisted(() => vi.fn());
 const usePluginUi = vi.hoisted(() => vi.fn());
-vi.mock('../../../lib/queries', () => ({ usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions, usePlugins, useProjects, useConfig, useBrainModels, useUsers, useNotificationDestinations, useSystemReadiness, usePluginUi }));
+vi.mock('../../../lib/queries', () => ({ usePluginDetail, usePluginContributions, usePluginLogs, usePluginHookExecutions, usePlugins, useProjects, useConfig, useBrainModels, useBrainOauthStatus, useUsers, useNotificationDestinations, useSystemReadiness, usePluginUi }));
 // The debounced draft writes through this one mutation, so a shared mock is what lets a test prove that
 // editing a record — or the editor inside its modal — actually reaches the server.
 const savePluginConfig = vi.hoisted(() => vi.fn());
@@ -85,6 +86,7 @@ beforeEach(() => {
   useConfig.mockReturnValue({ data: undefined });
   usePlugins.mockReturnValue({ data: [] });
   useBrainModels.mockReturnValue({ data: [] });
+  useBrainOauthStatus.mockReturnValue({ data: {} });
   useUsers.mockReturnValue({ data: [] });
   useNotificationDestinations.mockReturnValue({ data: [] });
   usePluginUi.mockReturnValue({ data: [] });
@@ -438,6 +440,27 @@ describe('PluginDetail config field layout', () => {
     renderDetail();
 
     expect(screen.getByRole('radiogroup', { name: 'Speech provider' })).toBeInTheDocument();
+  });
+
+  // An OAuth account holds no API key — its credential lives in the daemon — so the old "key is set"
+  // filter hid the ChatGPT account from every plugin picker, which is precisely the provider the image
+  // plugins need. A connected account is offered; a disconnected one still is not.
+  it('offers a connected OAuth account, and only for a field that accepts its type', () => {
+    useConfig.mockReturnValue({ data: { brain: { providers: [
+      { id: 'chatgpt', label: 'ChatGPT account', type: 'oauth-openai-codex', apiKeySet: false },
+      { id: 'claude', label: 'Claude account', type: 'oauth-anthropic', apiKeySet: false },
+      { id: 'openai', label: 'OpenAI', type: 'openai', apiKeySet: true },
+    ] } } });
+    useBrainOauthStatus.mockReturnValue({ data: { 'oauth-openai-codex': true, 'oauth-anthropic': false } });
+    usePluginDetail.mockReturnValue({ data: detail([
+      { key: 'provider', label: 'Image provider', type: 'provider', providerType: ['openai', 'oauth-openai-codex'] },
+    ], { provider: 'chatgpt' }), isLoading: false });
+    renderDetail();
+
+    const picker = screen.getByRole('radiogroup', { name: 'Image provider' });
+    expect(within(picker).getByText('ChatGPT account')).toBeInTheDocument();
+    expect(within(picker).getByText('OpenAI')).toBeInTheDocument();
+    expect(within(picker).queryByText('Claude account')).toBeNull();
   });
 });
 

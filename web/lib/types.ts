@@ -574,8 +574,9 @@ export interface PluginConfigField {
   /** Out-of-box value the settings form pre-fills when nothing is stored yet (mirrors the plugin's
    *  runtime fallback, so pre-filling never changes behavior). */
   default?: string | number | boolean | string[];
-  /** For `provider` fields: restrict the picker to configured providers of this type (e.g. `openai`). */
-  providerType?: string;
+  /** For `provider` fields: restrict the picker to configured providers of this type (e.g. `openai`), or
+   *  to any of several types (the image plugins take an API-key endpoint or the ChatGPT account). */
+  providerType?: string | string[];
   /** Choices for `enum`/`multiSelect` fields. */
   options?: { value: string; label: string }[];
   /** Syntax mode for `code` fields (e.g. `js`, `python`). */

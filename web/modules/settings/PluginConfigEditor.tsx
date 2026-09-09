@@ -24,7 +24,7 @@ import { SelectMenu } from '../../components/ui/SelectMenu';
 import { ProviderPicker } from '../../components/ui/ProviderPicker';
 import { interpolate, useTranslation } from '../../lib/i18n';
 import { useBrand } from '../../lib/brand';
-import { useConfig, useBrainModels, useNotificationDestinations, usePlugins, usePluginTools, useProjects } from '../../lib/queries';
+import { useConfig, useBrainModels, useBrainOauthStatus, useNotificationDestinations, usePlugins, usePluginTools, useProjects } from '../../lib/queries';
 import type { BrainModelOption, PluginConfigField, PluginDetail, RolePolicy, McpServerSpec } from '../../lib/types';
 import { RISK_TONE, CONNECTION_KEYS } from './pluginDetail.shared';
 import { numberOutOfBounds, type PluginConfigCommitResult, type PluginConfigDraft } from '../../lib/usePluginConfigDraft';
@@ -528,15 +528,20 @@ function McpServersEditor({ value, onChange }: { value: McpServerSpec[]; onChang
   );
 }
 
-/** Provider picker for a `provider`-type field: choose one of the configured brain providers (its key
- *  is reused as the plugin's credentials, so no key is entered twice). Filtered to those with a key set
- *  and — when the field declares `providerType` — that type (e.g. `openai`, the only one with audio).
- *  Rendering is the shared ProviderPicker; this wrapper just applies the plugin-field filter. */
-function PluginProviderField({ label, value, onChange, providerType }: { label: string; value: string; onChange: (v: string) => void; providerType?: string }) {
+/** Provider picker for a `provider`-type field: choose one of the configured brain providers (its
+ *  credentials are reused by the plugin, so nothing is entered twice). Filtered to the ones that can
+ *  actually authenticate — an API-key entry with its key set, or a CONNECTED OAuth account, which carries
+ *  no key at all and was therefore invisible here until the image plugins needed the ChatGPT account —
+ *  and, when the field declares `providerType`, to that type (or any of several). Rendering is the shared
+ *  ProviderPicker; this wrapper just applies the plugin-field filter. */
+function PluginProviderField({ label, value, onChange, providerType }: { label: string; value: string; onChange: (v: string) => void; providerType?: string | string[] }) {
   const { data: config } = useConfig();
+  const { data: oauthConnected } = useBrainOauthStatus();
   const { t } = useTranslation();
   const { agentName } = useBrand();
-  const providers = (config?.brain?.providers ?? []).filter((p) => p.apiKeySet && (!providerType || p.type === providerType));
+  const wanted = providerType === undefined ? null : (Array.isArray(providerType) ? providerType : [providerType]);
+  const providers = (config?.brain?.providers ?? []).filter((p) =>
+    (p.apiKeySet || oauthConnected?.[p.type] === true) && (!wanted || wanted.includes(p.type)));
   return <ProviderPicker providers={providers} value={value} onChange={onChange} label={label} emptyText={interpolate(t.pluginCfg.noProviders, { agentName })} size="sm" />;
 }
 

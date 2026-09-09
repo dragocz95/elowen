@@ -1003,6 +1003,43 @@ export interface PluginLogger { info(msg: string): void; warn(msg: string): void
  *  null for OAuth providers (no static key). */
 export interface ProviderCredentials { id: string; label: string; type: string; baseUrl: string; apiKey: string | null }
 
+/** What an image render cost, as the provider reported it. Null fields mean the provider said nothing. */
+export interface PluginImageUsage { inputTokens: number | null; outputTokens: number | null; imageTokens: number | null }
+
+/** A finished image: the bytes plus what the provider says it produced. */
+export interface PluginImageResult {
+  png: Buffer;
+  model: string;
+  size: string | null;
+  quality: string | null;
+  format: string | null;
+  usage: PluginImageUsage | null;
+}
+
+export interface PluginImageRequest {
+  /** A configured brain provider id — an API-key endpoint or a connected OAuth account. */
+  providerId: string;
+  model: string;
+  prompt: string;
+  size?: string;
+  quality?: string;
+  background?: string;
+  n?: number;
+  signal?: AbortSignal;
+}
+
+/** One source image for an edit: raw bytes and their type. The host owns the encoding (a data URL for
+ *  the ChatGPT backend, a multipart part for the Images API), so a plugin never picks the transport. */
+export interface PluginImageSource { bytes: Uint8Array; mime?: string }
+
+export interface PluginImageEditRequest extends PluginImageRequest { images: PluginImageSource[] }
+
+/** The host's image client, handed to plugins as `ctx.images`. */
+export interface PluginImages {
+  generate(req: PluginImageRequest): Promise<PluginImageResult>;
+  edit(req: PluginImageEditRequest): Promise<PluginImageResult>;
+}
+
 export interface PluginModelOption {
   provider: string;
   providerLabel: string;
@@ -2040,6 +2077,14 @@ export interface PluginContext {
    *  covers with a `providers` read capability — any other id returns null (a plugin can't lift an
    *  unrelated central key). */
   resolveProvider(id: string): ProviderCredentials | null;
+  /** THE image seam: render or edit an image through a configured provider without ever holding its
+   *  credential. Core owns both transports — an API-key endpoint's OpenAI-compatible Images API and the
+   *  ChatGPT OAuth account's `codex/images/*` backend, whose access token stays inside the daemon — and
+   *  answers with the finished bytes plus the provider's usage. Gated exactly like
+   *  {@link PluginContext.resolveProvider}: a plugin may name only a provider wired into its OWN config,
+   *  or any id once it declares a `providers` read capability. Rejects when this process wired no image
+   *  host (a worker/unit-test context), which is a real state and not an empty result. */
+  readonly images: PluginImages;
   /** The SHARED text→vector embedder — the SAME EmbeddingService + Settings→Memory embedding config the
    *  memory subsystem uses (single source of truth). Gated deny-by-default by `reads:['embeddings']`:
    *  without that capability `isConfigured()` is false and `embed*()` reject, so an already-installed

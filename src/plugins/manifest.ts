@@ -65,8 +65,9 @@ export interface PluginConfigField {
   /** Out-of-box value the settings form pre-fills when nothing is stored yet. Must equal the plugin's
    *  own runtime fallback for the key, so pre-filling never changes behavior. */
   default?: string | number | boolean | string[];
-  /** For `provider` fields: restrict the picker to providers of this type (e.g. `openai`). */
-  providerType?: string;
+  /** For `provider` fields: restrict the picker to providers of this type (e.g. `openai`), or to any of
+   *  several — the image plugins take an API-key endpoint or the connected ChatGPT account. */
+  providerType?: string | string[];
   /** Choices for `enum`/`multiSelect` fields. */
   options?: { value: string; label: string }[];
   /** Syntax mode for `code` fields (e.g. `js`, `python`). */
@@ -287,7 +288,7 @@ const ConfigFieldSchema = Type.Object({
   })),
   browse: Type.Optional(Type.Literal('directory')),
   default: Type.Optional(Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Array(Type.String())])),
-  providerType: Type.Optional(Type.String()),
+  providerType: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())])),
   options: Type.Optional(Type.Array(Type.Object({
     value: Type.String(),
     label: Type.String(),

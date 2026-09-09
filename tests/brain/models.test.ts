@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { listBrainModels, clearModelsCache } from '../../src/brain/models.js';
 import type { BrainRuntimeConfig } from '../../src/brain/providers.js';
+import { OPENAI_CODEX_IMAGE_MODELS } from '../../src/brain/imageService.js';
 
 const openaiProvider = (models: string[] = []) => ({
   id: 'relay', label: 'Relay', type: 'openai' as const, baseUrl: 'https://ai.example/v1', models, apiKey: 'k',
@@ -130,9 +131,21 @@ describe('listBrainModels', () => {
     };
     const ids = (await listBrainModels(cfg, f)).map((model) => model.model);
     expect(ids).toEqual(expect.arrayContaining([
-      'gpt-5.3-codex-spark', 'gpt-5.5', 'gpt-5.6-luna', 'gpt-image-1.5', 'gpt-image-2',
+      'gpt-5.3-codex-spark', 'gpt-5.5', 'gpt-5.6-luna',
       'gpt-5.4', 'gpt-5.4-mini', 'gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-6-astra',
     ]));
+  });
+
+  // The account's image models answer on `codex/images/*`, not on the Responses API this catalog
+  // describes, so registering them here only ever produced picker entries that fail on first use. They
+  // belong to the image catalog the GenerateImage/EditImage seam validates against instead.
+  it('keeps the account image models out of the chat catalog', async () => {
+    const f = vi.fn() as unknown as typeof fetch;
+    const cfg: BrainRuntimeConfig = {
+      providers: [{ id: 'openai', label: 'OpenAI account', type: 'oauth-openai-codex', baseUrl: '', models: [], apiKey: null }],
+    };
+    const ids = (await listBrainModels(cfg, f)).map((model) => model.model);
+    for (const image of OPENAI_CODEX_IMAGE_MODELS) expect(ids).not.toContain(image);
   });
 
   // An OAuth account's stored list is the operator's ALLOWLIST — the settings picker says so in as many

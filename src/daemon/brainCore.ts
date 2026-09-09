@@ -47,6 +47,7 @@ import { MemoryCategorizer } from '../brain/memoryCategorizer.js';
 import type { InferenceClient } from '../inference/types.js';
 import { EmbeddingService } from '../embeddings/embeddingService.js';
 import { ToolSemanticIndex } from '../brain/toolSearch/semanticIndex.js';
+import { ImageService } from '../brain/imageService.js';
 import { EmbeddingQueue } from '../embeddings/embedQueue.js';
 import { MemoryService } from '../brain/memoryService.js';
 import { toEmbeddingConfig } from '../store/configStore.js';
@@ -352,6 +353,10 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // Text→vector embedder for Elowen memory (consumed by Phase-4 retrieval); reuses the operator's brain
   // provider credentials via the same resolver plugins get. Pure network service, no DB access.
   const embeddings = new EmbeddingService({ resolveProvider });
+  // THE image client behind ctx.images. Host-owned because a ChatGPT account's images need the OAuth
+  // access token — refreshed through the same runtime every model request uses — plus the Codex identity
+  // headers, and neither may cross into plugin code. Pure network service, like the embedder above.
+  const images = new ImageService({ resolveProvider, credentials: brainCreds });
   const brainStore = new BrainStore(db);
   // Provider request attempts are correlated in process memory, so a row still pending when this process
   // starts belongs to a correlator that died with the previous daemon (the pause closes its own; this
@@ -639,6 +644,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
       host: {
         tmux,
         elowenCli,
+        images,
         chatArtifacts: {
           open: (plugin, sessionId, toolCallId, artifact) => {
             if (!brain) throw new Error('inline chat artifacts are unavailable in this process');
