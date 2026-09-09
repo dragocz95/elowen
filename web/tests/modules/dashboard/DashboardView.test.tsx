@@ -118,6 +118,35 @@ describe('DashboardView — first paint', () => {
     expect(screen.getByPlaceholderText(en.dashboard.composerPlaceholder)).toBeInTheDocument();
   });
 
+  // On a phone the strip runs past the screen and its scrollbar is hidden, so the only thing that can
+  // say a figure is cut off is the edge itself. The fade follows measured geometry, so a strip that fits
+  // carries none.
+  it('fades only the edge that actually hides a figure', async () => {
+    mount();
+    const strip = screen.getByRole('list', { name: en.dashboard.stripLabel });
+    expect(strip).toHaveAttribute('data-overflow-right', 'false');
+    expect(strip).toHaveAttribute('data-overflow-left', 'false');
+
+    Object.defineProperties(strip, {
+      clientWidth: { configurable: true, value: 358 },
+      scrollWidth: { configurable: true, value: 520 },
+      scrollLeft: { configurable: true, writable: true, value: 0 },
+    });
+    fireEvent.scroll(strip);
+    expect(strip).toHaveAttribute('data-overflow-right', 'true');
+    expect(strip).toHaveAttribute('data-overflow-left', 'false');
+    expect(strip.style.getPropertyValue('--dash-strip-fade-right')).toBe('var(--dash-strip-fade-size)');
+    expect(strip.style.getPropertyValue('--dash-strip-fade-left')).toBe('0px');
+
+    // Scrolled to the end: the last figure is whole and the cue moves to the side now holding content.
+    strip.scrollLeft = 162;
+    fireEvent.scroll(strip);
+    expect(strip).toHaveAttribute('data-overflow-left', 'true');
+    expect(strip).toHaveAttribute('data-overflow-right', 'false');
+    // Touch scrolling is what the fade is a cue FOR — it must survive the change.
+    expect(strip.className).toContain('overflow-x-auto');
+  });
+
   it('keeps the working count unknown until the pulse request resolves', () => {
     server.use(http.get('*/api/activity/pulse', async () => {
       await delay(100);

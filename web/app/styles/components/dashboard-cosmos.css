@@ -13,5 +13,24 @@
 .home-composer { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-foreground) 4%, transparent), 0 18px 70px rgb(var(--primary-rgb) / 0.08); }
 .home-composer:focus-within { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--color-foreground) 5%, transparent), 0 20px 80px rgb(var(--primary-rgb) / 0.14); }
 
+/* Today's figures stay one touch-scrollable line on a phone. The measured edge state drives the mask, so
+   a fade marks a figure that is genuinely cut off and never decorates a strip that already fits. This
+   must live outside Tailwind's utility layer for the same reason .segmented does: the global scrollbar
+   rule in base.css is also unlayered and would win over an arbitrary utility. */
+.dash-strip {
+  --dash-strip-fade-size: 1.5rem;
+  --dash-strip-fade-left: 0px;
+  --dash-strip-fade-right: 0px;
+  scrollbar-width: none;
+  mask-image: linear-gradient(
+    to right,
+    transparent 0,
+    black var(--dash-strip-fade-left),
+    black calc(100% - var(--dash-strip-fade-right)),
+    transparent 100%
+  );
+}
+.dash-strip::-webkit-scrollbar { display: none; }
+
 .dash-label { font-family: var(--font-mono); font-size: 0.66rem; font-weight: 650; letter-spacing: 0.22em; text-transform: uppercase; color: var(--color-ember); text-shadow: 0 0 12px rgb(var(--primary-rgb) / 0.5); }
 .dash-beam { background: linear-gradient(180deg, rgb(var(--primary-rgb) / 0.3), rgb(var(--primary-rgb) / 0.12) 70%, transparent); }

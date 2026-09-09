@@ -1,7 +1,8 @@
 'use client';
 import Link from 'next/link';
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Button } from '../../components/ui/Button';
+import { NO_HORIZONTAL_OVERFLOW, horizontalOverflowState, type HorizontalOverflowState } from '../../components/ui/horizontalScroll';
 import { MotionReveal } from '../../components/ui/Motion';
 import { HomeComposer } from './HomeComposer';
 import { ActivityTile } from './ActivityTile';
@@ -54,6 +55,35 @@ export function DashboardView({ recapSeed = null }: { recapSeed?: DashRecap | nu
 
   const [open, setOpen] = useState<PanelId | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  // On a phone the four figures run past the screen and the strip's scrollbar is hidden, so the edge is
+  // the only thing that can report a cut-off figure. Measured, like every other swipeable one-line track
+  // in the app, so a strip that fits carries no permanent decoration.
+  const stripRef = useRef<HTMLDivElement>(null);
+  const [stripEdges, setStripEdges] = useState<HorizontalOverflowState>(NO_HORIZONTAL_OVERFLOW);
+  const measureStrip = useCallback(() => {
+    const track = stripRef.current;
+    if (!track) return;
+    const next = horizontalOverflowState(track);
+    setStripEdges((current) => (
+      current.overflow === next.overflow && current.left === next.left && current.right === next.right ? current : next
+    ));
+  }, []);
+
+  useEffect(() => {
+    const track = stripRef.current;
+    if (!track) return;
+    measureStrip();
+    const resizeObserver = new ResizeObserver(measureStrip);
+    resizeObserver.observe(track);
+    track.addEventListener('scroll', measureStrip, { passive: true });
+    return () => {
+      resizeObserver.disconnect();
+      track.removeEventListener('scroll', measureStrip);
+    };
+  }, [measureStrip]);
+  // The figures arrive after the first paint, so the track's width changes with them.
+  useEffect(measureStrip, [measureStrip, totals, presence.activeCount, spendToday]);
 
   // Move focus to the revealed panel's heading, exactly as the disclosure pattern asks: the button that
   // was pressed keeps aria-expanded, the reader lands on what expanded.
@@ -121,7 +151,18 @@ export function DashboardView({ recapSeed = null }: { recapSeed?: DashRecap | nu
           phone instead of wrapping the hero further down. `pt-4` is the shell's own rhythm (ModuleShell
           gap) — the strip reads as the page's first line, not as part of the app bar above it. */}
       <div className="flex items-center gap-4 border-b border-border px-4 pb-3 pt-4 md:px-0">
-        <div role="list" aria-label={t.dashboard.stripLabel} style={{ scrollbarWidth: 'none' }} className="flex min-w-0 items-baseline gap-5 overflow-x-auto whitespace-nowrap [&::-webkit-scrollbar]:hidden @sm:gap-8">
+        <div
+          ref={stripRef}
+          role="list"
+          aria-label={t.dashboard.stripLabel}
+          data-overflow-left={String(stripEdges.left)}
+          data-overflow-right={String(stripEdges.right)}
+          style={{
+            '--dash-strip-fade-left': stripEdges.left ? 'var(--dash-strip-fade-size)' : '0px',
+            '--dash-strip-fade-right': stripEdges.right ? 'var(--dash-strip-fade-size)' : '0px',
+          } as CSSProperties}
+          className="dash-strip flex min-w-0 items-baseline gap-5 overflow-x-auto whitespace-nowrap @sm:gap-8"
+        >
           <span role="listitem" className="flex shrink-0 items-baseline gap-1.5">
             <b className="font-mono text-[13.5px] font-semibold tabular-nums text-foreground">{totals?.turns ?? '—'}</b>
             <span className="text-[13px] text-muted-foreground">{t.dashboard.pulseColTurns.toLocaleLowerCase(locale)}</span>

@@ -170,6 +170,15 @@ describe('design tokens', () => {
     );
   });
 
+  // The dashboard's metric strip hides the native scrollbar, so the fade is the only cue left that a
+  // figure continues past the edge. Both halves belong to the same rule: hiding the bar without the mask
+  // is the phone bug this replaced.
+  it('hides the metric strip scrollbar only together with its measured edge fade', () => {
+    expect(components).toMatch(/\.dash-strip\s*\{[^}]*scrollbar-width:\s*none;[^}]*mask-image:\s*linear-gradient/);
+    expect(components).toMatch(/\.dash-strip\s*\{[^}]*--dash-strip-fade-left:\s*0px;[^}]*--dash-strip-fade-right:\s*0px;/);
+    expect(components).toContain('.dash-strip::-webkit-scrollbar { display: none; }');
+  });
+
   it('uses component width for spatial deck layout changes', () => {
     // The deck's label/control record stacks on the SHELL's width, not the window's: the same form is
     // rendered inside a detail rail, where a viewport media query would keep it in three tracks.
