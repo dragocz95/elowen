@@ -13,6 +13,11 @@ import { installLiveRecall, type LiveRecallOptions } from './liveRecall.js';
 import { createCompactionModelRoute, type CompactionModelRoute } from './compactionModelRoute.js';
 import { createCompactionCircuitBreaker, type CompactionThresholdBudget } from './compactionCircuitBreaker.js';
 import {
+  createInSessionCompaction,
+  inSessionCompactionApplies,
+  type InSessionCompaction,
+} from './inSessionCompaction.js';
+import {
   estimatedContextTokens,
   installTurnBoundaryAutoCompaction,
   latestCompaction,
@@ -211,6 +216,9 @@ export interface BrainResourceLoaderOptions {
   compactionModelRouteExtension?: CompactionModelRoute['extension'];
   /** Cancel gate for automatic compaction once it has failed too many times in a row. */
   compactionCircuitBreakerExtension?: (pi: ExtensionAPI) => void;
+  /** Summarize on the live conversation's own warm prefix. Present only when the summary would run on the
+   *  session's model anyway — a distinct compaction model has no cache here to reuse. */
+  inSessionCompactionExtension?: InSessionCompaction['extension'];
   /** Provider-side opaque compaction; present only for a ChatGPT-account session. */
   remoteCompactionExtension?: RemoteCompactionV2['extension'];
   /** Whether THIS session can restore a stored compaction blob. Always supplied: the sanitizer it
@@ -543,6 +551,12 @@ function defaultResourceLoaderFactory(o: BrainResourceLoaderOptions): ResourceLo
         ...(o.kimiHeaderProbe ? [kimiHeaderProbe] : []),
         ...(o.compactionModelRouteExtension ? [o.compactionModelRouteExtension] : []),
         ...(o.compactionCircuitBreakerExtension ? [o.compactionCircuitBreakerExtension] : []),
+        // AFTER the circuit breaker, and that order is load-bearing. ExtensionRunner.emit walks handlers
+        // in registration order and returns early only once one answers `cancel`, so a summarizer placed
+        // ahead of the breaker would issue its request first and have the result thrown away — turning
+        // the breaker's "stop paying for a compaction that cannot succeed" into one full-context request
+        // per turn, forever.
+        ...(o.inSessionCompactionExtension ? [o.inSessionCompactionExtension] : []),
         ...(o.requestProfile ? [providerRequestProfile(o.requestProfile)] : []),
         // Hosted tools and recall add provider-visible content before path sanitization. The Anthropic raw
         // replay then runs AFTER every transform that could touch assistant text: signed thinking is verbatim
@@ -630,6 +644,12 @@ export class BrainSessionFactory {
     // `projectTrusted` lets those session-local writes land in the in-memory store instead of erroring.
     const settingsManager = SettingsManager.inMemory(undefined, { projectTrusted: true });
     const compactionModelRoute = createCompactionModelRoute(spec.compactionFallbackModel);
+    const inSessionCompaction: InSessionCompaction | undefined = inSessionCompactionApplies({
+      provider: spec.model.provider,
+      ...(spec.compactionFallbackModel ? { compactionFallbackModel: spec.compactionFallbackModel } : {}),
+    })
+      ? createInSessionCompaction()
+      : undefined;
     const anthropicHostedReplay = spec.hostedToolSearch === 'anthropic'
       ? createAnthropicHostedToolReplay(spec.model)
       : undefined;
@@ -707,6 +727,7 @@ export class BrainSessionFactory {
       codexReasoningFix: spec.model.provider === 'openai-codex',
       kimiHeaderProbe: spec.model.provider === 'kimi-coding',
       compactionModelRouteExtension: compactionModelRoute?.extension,
+      inSessionCompactionExtension: inSessionCompaction?.extension,
       compactionCircuitBreakerExtension: compactionBreaker.extension,
       remoteCompactionExtension: remoteCompaction?.extension,
       remoteCompactionUsable,
@@ -758,6 +779,9 @@ export class BrainSessionFactory {
     anthropicHostedReplay?.install(session);
     // PI's compaction marker extension was loaded above; this wrapper makes only the model substitution.
     compactionModelRoute?.install(session);
+    // Wraps nothing: the hook only needs the live session to read its context and reach `streamFunction`,
+    // so it deliberately joins AFTER the wrappers its own request has to pass through.
+    inSessionCompaction?.install(session);
     // Outermost: a stale-blob retry re-issues through both the compaction route and replay wrapper, so the
     // retry remains the exact same routed request rather than bypassing either provider-specific seam.
     remoteCompaction?.install(session);
