@@ -57,6 +57,10 @@ export interface SessionListItem {
   working: boolean;
 }
 
+/** A conversation reduced to what identifies and orders it. The cheap half of {@link SessionListItem},
+ *  for callers that need the conversation SET rather than its live state. */
+export interface ConversationRef { id: string; title: string; updatedAt: string; active: boolean }
+
 /** Opt-in slice for the session listings. Both fields are already clamped to non-negative ints by the
  *  route; absent → the full unpaginated list (the historical bare-array response). */
 export interface SessionPageOpts { limit?: number; offset?: number }
@@ -584,6 +588,23 @@ export class BrainStatusService {
   listSessions(userId: number, opts?: SessionPageOpts): SessionListItem[] | SessionPage<SessionListItem> {
     const all = this.ownedSessions(userId);
     return opts ? paginate(all, opts) : all;
+  }
+
+  /** The same conversations {@link listSessions} reports, carrying only identity, order and which one
+   *  is active. Same identity and unspoken-shell filtering, so a caller never sees a conversation the
+   *  full listing would withhold.
+   *
+   *  It exists because the full listing is expensive for reasons a caller may not need: every item
+   *  carries a per-conversation token total, and that rollup reads the usage out of EVERY message the
+   *  account has ever stored. On a long-lived account that is a whole-database scan, it runs
+   *  synchronously, and it therefore holds the daemon's event loop for as long as it takes — which is
+   *  why a request that only wants conversation titles must not ask for it. */
+  listConversationRefs(userId: number): ConversationRef[] {
+    const activeId = this.d.lifecycle.activeSessionId(userId);
+    const unspoken = this.d.store.unspokenSessionIds(userId);
+    return this.d.store.listSessionRefs(userId)
+      .filter((s) => !isNonUserSession(s.id) && !unspoken.has(s.id))
+      .map((s) => ({ id: s.id, title: s.title, updatedAt: s.updated_at, active: s.id === activeId }));
   }
 
   /** The caller's conversations eligible to bind into a channel (the /context picker). Same identity

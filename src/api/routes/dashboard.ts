@@ -1,4 +1,5 @@
 import { DashDigestGenerator, type DigestInput } from '../../brain/dashDigest.js';
+import type { ConversationRef } from '../../brain/service/statusService.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 
 /** Retry economics for the daily digest: a failed generation may retry after an hour, at most three
@@ -24,13 +25,15 @@ const dayIso = (offsetDays: number, now: number): string =>
 export function registerDashboardRoutes(app: ElowenApp, ctx: RouteContext): void {
   const { d, notAdmin } = ctx;
 
-  /** Assemble everything the digest model may see — server-side reads only, no session is created. */
-  const digestInput = (userId: number, yesterday: string, today: string): DigestInput => {
+  /** Assemble everything the digest model may see — server-side reads only, no session is created.
+   *  Yesterday's conversations arrive from the request that already resolved them: listing them a
+   *  second time would repeat the same reads on the one request that also has a generation to start. */
+  const digestInput = (
+    userId: number, yesterday: string, today: string, yesterdaySessions: ConversationRef[],
+  ): DigestInput => {
     const from = `${yesterday} 00:00:00`;
     const to = `${today} 00:00:00`;
-    const sessions = (d.brain?.listSessions(userId) ?? [])
-      .filter((s) => s.updated_at >= from && s.updated_at < to)
-      .slice(0, MAX_SESSIONS);
+    const sessions = yesterdaySessions.slice(0, MAX_SESSIONS);
     const messages: DigestInput['messages'] = [];
     for (const s of sessions) {
       for (const text of d.brainStore?.userMessagesBetween(s.id, from, to, MAX_MESSAGES_PER_SESSION) ?? []) {
@@ -61,11 +64,14 @@ export function registerDashboardRoutes(app: ElowenApp, ctx: RouteContext): void
 
     const from = `${yesterday} 00:00:00`;
     const to = `${today} 00:00:00`;
-    const all = d.brain?.listSessions(userId) ?? [];
+    // Conversation REFS, never the full listing: this request renders the /dash document, and the full
+    // listing's per-conversation token rollup reads every message the account owns — a synchronous
+    // whole-database scan on an established account. The dashboard reads none of what it would add.
+    const all = d.brain?.listConversationRefs(userId) ?? [];
     const cont = cfg.continueEnabled
-      ? all.filter((s) => !s.active).slice(0, 3).map((s) => ({ id: s.id, title: s.title, updatedAt: s.updated_at }))
+      ? all.filter((s) => !s.active).slice(0, 3).map((s) => ({ id: s.id, title: s.title, updatedAt: s.updatedAt }))
       : [];
-    const yesterdaySessions = all.filter((s) => s.updated_at >= from && s.updated_at < to);
+    const yesterdaySessions = all.filter((s) => s.updatedAt >= from && s.updatedAt < to);
     const usageRow = (d.usageOrigins?.topOrigins({ group: 'user', fromIso: yesterday, toIso: yesterday, limit: 500 }) ?? [])
       .find((r) => r.userId === userId);
     const yesterdayOut = usageRow || yesterdaySessions.length
@@ -102,7 +108,7 @@ export function registerDashboardRoutes(app: ElowenApp, ctx: RouteContext): void
             // that starts one, so changing the count here costs nothing until the next regular turn.
             recapVariants: cfg.digestVariants,
           });
-          void generator.run(userId, today, digestInput(userId, yesterday, today));
+          void generator.run(userId, today, digestInput(userId, yesterday, today, yesterdaySessions));
         }
         // Freshly claimed or already being generated elsewhere — either way the client should poll.
         pending = claimed || d.dashDigests.get(userId, today)?.status === 'generating';

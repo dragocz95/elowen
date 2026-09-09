@@ -45,7 +45,7 @@ import { runWithContributionUser } from '../plugins/policyContext.js';
 import { BrainTurnRunner, subagentResultReminder } from './service/turnRunner.js';
 import type { BoundClientRequest, TurnRequest } from './service/turnRequest.js';
 import { BrainStatusService } from './service/statusService.js';
-import type { SessionListItem, SessionPage, SessionPageOpts, MessagePage, MessagePageOpts, BrainStatusView, ManagedSessionView } from './service/statusService.js';
+import type { ConversationRef, SessionListItem, SessionPage, SessionPageOpts, MessagePage, MessagePageOpts, BrainStatusView, ManagedSessionView } from './service/statusService.js';
 import type {
   BrainContextBreakdown, BrainDebugLegacyTranscriptPage, BrainDebugPage, BrainDebugPayloadPage,
   BrainDebugRawPayload, BrainDebugRequestDetail, BrainDebugRequestItem, BrainDebugSegmentPayload,
@@ -1800,6 +1800,12 @@ export class BrainService {
   listSessions(userId: number, opts: SessionPageOpts): SessionPage<SessionListItem>;
   listSessions(userId: number, opts?: SessionPageOpts): SessionListItem[] | SessionPage<SessionListItem> {
     return opts ? this.statusView.listSessions(userId, opts) : this.statusView.listSessions(userId);
+  }
+
+  /** The same conversations as {@link listSessions}, without the live state or the token rollup — see
+   *  BrainStatusService.listConversationRefs. */
+  listConversationRefs(userId: number): ConversationRef[] {
+    return this.statusView.listConversationRefs(userId);
   }
 
   /** The caller's conversations eligible to bind into a channel (the /context picker) — the bare default

@@ -18,6 +18,14 @@ const FAILURE_BACKOFF_MS = 5_000;
  *  suppress the identity prefetch too, and the rail would go back to growing its admin destinations
  *  after first paint — the exact flash the identity seed exists to remove. */
 const failedAt = new Map<string, number>();
+/** The upper bound on a seed that has not answered: enough for a loaded daemon, short enough that a
+ *  hung one costs seconds rather than the request's whole lifetime. */
+const DAEMON_DOWN_TIMEOUT_MS = 2_000;
+/** The recap seed's own bound, and a much tighter one. Everything above seeds the SHELL — chrome that
+ *  is wrong until its data arrives — while this seeds one heading inside a page that renders perfectly
+ *  well without it. The client query is already there to fill it in, so the moment the daemon is slow
+ *  enough for the reader to notice the wait, waiting is the wrong trade. */
+const RECAP_SEED_TIMEOUT_MS = 700;
 
 /** The authoritative session name follows the actual browser transport. HTTPS never falls back to the
  *  legacy unprefixed name: a published sibling subdomain may set a parent-domain cookie under that
@@ -33,10 +41,16 @@ async function callerSessionToken(): Promise<string | null> {
  *  credential, or one user's data would leak into another user's document.
  *
  *  Returns null — never throws — for every non-happy path: no session cookie (logged-out visitor),
- *  a 401/403 (a stale session is a NORMAL answer, not an error), a daemon failure, or a body that
- *  fails `accept`. Null means "no server-seeded data": the page renders exactly as it does without
- *  the prefetch and the client query refills it. */
-async function fetchForCaller<T>(path: string, accept: (body: unknown) => body is T): Promise<T | null> {
+ *  a 401/403 (a stale session is a NORMAL answer, not an error), a daemon failure, an elapsed bound,
+ *  or a body that fails `accept`. Null means "no server-seeded data": the page renders exactly as it
+ *  does without the prefetch and the client query refills it.
+ *
+ *  `timeoutMs` is how long the DOCUMENT may wait on this seed. The default is the daemon-down guard;
+ *  a caller that seeds one route passes a tighter one, because a seed is an optimization and must
+ *  never cost the reader more time than the flash it removes. */
+async function fetchForCaller<T>(
+  path: string, accept: (body: unknown) => body is T, timeoutMs = DAEMON_DOWN_TIMEOUT_MS,
+): Promise<T | null> {
   const token = await callerSessionToken();
   if (!token) return null; // logged-out: nothing to forward, nothing to fetch
   const endpoint = path.split('?')[0];
@@ -45,7 +59,7 @@ async function fetchForCaller<T>(path: string, accept: (body: unknown) => body i
   try {
     const res = await fetch(`${daemonUrl()}${path}`, {
       cache: 'no-store',
-      signal: AbortSignal.timeout(2000),
+      signal: AbortSignal.timeout(timeoutMs),
       headers: { authorization: `Bearer ${token}` },
     });
     // A stale/revoked session is a normal "no seed", not a fetch failure — and it must not trip the
@@ -118,6 +132,7 @@ export const fetchDashRecap = cache((): Promise<DashRecap | null> =>
     '/dash/recap',
     // `enabled` is the one field the route always answers with, in both of its shapes.
     (body): body is DashRecap => typeof (body as { enabled?: unknown } | null)?.enabled === 'boolean',
+    RECAP_SEED_TIMEOUT_MS,
   ));
 
 /** Prefetch the caller's /auth/me for the same reason, and it is the OTHER half of the same flash: the

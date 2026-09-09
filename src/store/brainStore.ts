@@ -767,6 +767,16 @@ export class BrainStore {
       .all(userId) as BrainSessionRow[];
   }
 
+  /** The user's conversations as bare references, in the same order as {@link listSessions}. Three
+   *  columns instead of the whole row: an account with hundreds of conversations carries kilobytes of
+   *  activity detail, work dirs and provider metadata per row, and a caller that only needs to know
+   *  WHICH conversations exist should not pay to materialize any of it. */
+  listSessionRefs(userId: number): { id: string; title: string; updated_at: string }[] {
+    return this.db.prepare(
+      'SELECT id, title, updated_at FROM brain_sessions WHERE user_id = ? ORDER BY updated_at DESC, rowid ASC'
+    ).all(userId) as { id: string; title: string; updated_at: string }[];
+  }
+
   /** The user's sessions that hold no message at all. A live session owns its row from the moment it
    *  spawns — that is what the delegation parent check, the work-dir binding and every ownership check
    *  read — but a row nobody has spoken into is not yet a CONVERSATION: it is the empty shell the CLI
