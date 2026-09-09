@@ -642,6 +642,128 @@ describe('toolSearchTool.execute', () => {
     expect((res.details as { matched: string[] }).matched).toEqual(['DiscordCreateChannel', 'ShareImage']);
   });
 
+  // The semantic half. The keyword pass cannot see vocabulary it does not share with a tool's name or
+  // description — a paraphrase query returns nothing even when the exact tool exists. When the handle
+  // carries a semantic ranker, keyword queries blend both signals; the exact paths stay untouched.
+  describe('hybrid semantic execution', () => {
+    const TOOLS = [
+      { name: 'RestartDaemon', description: 'Restart the docker daemon over ssh' },
+      { name: 'BakeBread', description: 'Bake a loaf of bread' },
+    ];
+    /** Scores only what a real index would score at or above its relevance floor. The hybrid ranks
+     *  tools and skills in ONE call, so ids arrive namespaced: `tool:<name>` / `skill:<name>`. */
+    const ranker = (scores: Record<string, number>): { rank: (q: string, docs: readonly { id: string }[]) => Promise<Map<string, number>>; calls: number } => {
+      let calls = 0;
+      return {
+        get calls() { return calls; },
+        rank: async (_q, docs) => {
+          calls++;
+          return new Map(docs.filter((d) => scores[d.id] !== undefined).map((d) => [d.id, scores[d.id]!]));
+        },
+      };
+    };
+
+    it('surfaces a tool the keywords never touch (semantic-only match)', async () => {
+      const semantic = ranker({ 'tool:RestartDaemon': 0.8 });
+      const handle = createToolSearchHandle(new Set(TOOLS.map((t) => t.name)), undefined, undefined, { semantic });
+      handle.session = fakeSession(['ToolSearch'], TOOLS);
+      // No token of the query appears in either tool's name or description — the keyword pass is empty.
+      const res = await run(toolSearchTool(handle), 'host is unresponsive');
+      expect((res.details as { matched: string[] }).matched).toEqual(['RestartDaemon']);
+      expect(handle.activated.has('RestartDaemon')).toBe(true);
+    });
+
+    it('keeps exact paths exactly: select:, bare name and mcp__ prefix never consult semantics', async () => {
+      const semantic = ranker({ 'tool:BakeBread': 0.9 });
+      const handle = createToolSearchHandle(new Set(TOOLS.map((t) => t.name)), undefined, undefined, { semantic });
+      handle.session = fakeSession(['ToolSearch'], TOOLS);
+      const tool = toolSearchTool(handle);
+      const before = semantic.calls;
+      await runWithPolicy(POLICY, () => tool.execute('id', { query: 'select:BakeBread' }, undefined, undefined, {} as never));
+      await runWithPolicy(POLICY, () => tool.execute('id', { query: 'BakeBread' }, undefined, undefined, {} as never));
+      expect((handle.session as ReturnType<typeof fakeSession>).getActiveToolNames()).toContain('BakeBread');
+      // The ranker was never called: exact lookups are the model naming what it wants.
+      expect(semantic.calls).toBe(before);
+    });
+
+    it('spends at most ONE semantic ranking per search, covering tools and skills together', async () => {
+      const semantic = ranker({ 'tool:RestartDaemon': 0.8, 'skill:daemon-triage': 0.7 });
+      const handle = createToolSearchHandle(new Set(['RestartDaemon']), undefined, undefined, {
+        semantic,
+        skills: async () => [{ name: 'daemon-triage', description: 'Diagnose a broken daemon' }],
+      });
+      handle.session = fakeSession(['ToolSearch'], TOOLS);
+      await run(toolSearchTool(handle), 'daemon broken');
+      expect(semantic.calls).toBe(1);
+    });
+
+    it('still enforces a required +term on the semantic blend', async () => {
+      const semantic = ranker({ 'tool:RestartDaemon': 0.9, 'tool:BakeBread': 0.8 });
+      const all = [...TOOLS, { name: 'mcp__slack__post_message', description: 'Send a message to a Slack channel' }];
+      const handle = createToolSearchHandle(new Set(all.map((t) => t.name)), undefined, undefined, { semantic });
+      handle.session = fakeSession(['ToolSearch'], all);
+      // Both tools score highly semantically, but "+slack" excludes them; only the slack tool qualifies.
+      const res = await run(toolSearchTool(handle), '+slack notify');
+      expect((res.details as { matched: string[] }).matched).toEqual(['mcp__slack__post_message']);
+    });
+
+    it('answers with the keyword result alone when the semantic half is unavailable', async () => {
+      const handle = createToolSearchHandle(new Set(TOOLS.map((t) => t.name)), undefined, undefined, {
+        semantic: { rank: async () => new Map() }, // unconfigured / timed out / failed
+      });
+      handle.session = fakeSession(['ToolSearch'], TOOLS);
+      const res = await run(toolSearchTool(handle), 'docker');
+      expect((res.details as { matched: string[] }).matched).toEqual(['RestartDaemon']);
+    });
+  });
+
+  // Skills are SEARCHED, never activated: a match is reported (details.skills + a text pointer at
+  // SkillLoad) so the model can load it deliberately. They never enter details.matched.
+  describe('skill reporting', () => {
+    const TOOLS = [{ name: 'RestartDaemon', description: 'Restart the docker daemon over ssh' }];
+    const skillsGetter = (skills: { name: string; description: string }[]) => async () => skills;
+
+    it('reports matching skills in details.skills and points at SkillLoad', async () => {
+      const handle = createToolSearchHandle(new Set(['RestartDaemon']), undefined, undefined, {
+        skills: skillsGetter([{ name: 'daemon-triage', description: 'Diagnose a broken daemon' }]),
+      });
+      handle.session = fakeSession(['ToolSearch'], TOOLS);
+      const res = await run(toolSearchTool(handle), 'daemon broken');
+      expect((res.details as { skills?: string[] }).skills).toEqual(['daemon-triage']);
+      expect(res.content[0].text).toMatch(/Related skills: daemon-triage/);
+      expect(res.content[0].text).toMatch(/SkillLoad/);
+      // The skill is advice, not an activation: only the tool entered matched and the active set.
+      expect((res.details as { matched: string[] }).matched).toEqual(['RestartDaemon']);
+    });
+
+    it('mentions a skill even when no tool matched', async () => {
+      const handle = createToolSearchHandle(new Set(['RestartDaemon']), undefined, undefined, {
+        skills: skillsGetter([{ name: 'daemon-triage', description: 'Diagnose a broken daemon' }]),
+      });
+      handle.session = fakeSession(['ToolSearch'], TOOLS);
+      const res = await run(toolSearchTool(handle), 'triage checklist');
+      expect((res.details as { matched: string[] }).matched).toEqual([]);
+      expect((res.details as { skills?: string[] }).skills).toEqual(['daemon-triage']);
+      expect(res.content[0].text).toMatch(/matched nothing/i);
+      expect(res.content[0].text).toMatch(/Related skills: daemon-triage/);
+    });
+
+    it('omits details.skills when there is no getter or no match', async () => {
+      const withoutGetter = createToolSearchHandle(new Set(['RestartDaemon']));
+      withoutGetter.session = fakeSession(['ToolSearch'], TOOLS);
+      const noGetter = await run(toolSearchTool(withoutGetter), 'daemon');
+      expect((noGetter.details as { skills?: string[] }).skills).toBeUndefined();
+
+      const emptyGetter = createToolSearchHandle(new Set(['RestartDaemon']), undefined, undefined, {
+        skills: skillsGetter([{ name: 'bread-baking', description: 'Bake a loaf of bread' }]),
+      });
+      emptyGetter.session = fakeSession(['ToolSearch'], TOOLS);
+      const noMatch = await run(toolSearchTool(emptyGetter), 'daemon');
+      expect((noMatch.details as { skills?: string[] }).skills).toBeUndefined();
+      expect(noMatch.content[0].text).not.toMatch(/Related skills/);
+    });
+  });
+
   // A shared room composes every account's personal MCP tools into ONE registry, and `activated` is
   // session-wide: a colleague's `select:` would otherwise fetch somebody else's tool schema into the prompt
   // and keep it there for every later writer. The execute gate still refuses the CALL — this is about the

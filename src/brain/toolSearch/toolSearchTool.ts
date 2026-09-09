@@ -34,8 +34,33 @@ export interface ToolSearchHandle {
    *  ownership itself: without it, one member's `select:` would fetch a colleague's tool schema into the
    *  shared prompt for the rest of the conversation. */
   readonly personalToolOwners?: ReadonlyMap<string, ReadonlySet<number>>;
+  /** Optional search extensions wired by the spawner: semantic re-ranking and the live skill catalog.
+   *  Both are read at CALL time, never captured at spawn. */
+  readonly search?: ToolSearchExtras;
   /** The live PI session, wired once created; undefined until then (the tool reports a clear error). */
   session?: ToolActivationTarget;
+}
+
+/** One searchable skill entry — name and description only; a body is fetched later via SkillLoad. */
+export interface SkillEntry {
+  name: string;
+  description: string;
+}
+
+/** The semantic half of a search: cosine scores (0..1) for the given documents, strongest implied by the
+ *  value. Structurally satisfied by the daemon's `ToolSemanticIndex`; tests inject stubs. An empty map
+ *  means "unavailable this time" (unconfigured model, timeout, endpoint error) — the caller falls back
+ *  to keyword ranking. */
+export interface SemanticRanker {
+  rank(query: string, docs: readonly { id: string; text: string }[]): Promise<Map<string, number>>;
+}
+
+/** Search extensions the spawner wires onto a handle. The skills getter resolves the LIVE plugin
+ *  registry per call (never a captured generation) and returns only the skills this turn may be told
+ *  about — SkillLoad visible and model-invocable ones. */
+export interface ToolSearchExtras {
+  readonly semantic?: SemanticRanker;
+  readonly skills?: () => Promise<readonly SkillEntry[]>;
 }
 
 /** Create a fresh handle for a session whose deferral policy withholds `deferred`. */
@@ -43,8 +68,16 @@ export function createToolSearchHandle(
   deferred: Set<string>,
   pluginNames?: ReadonlySet<string>,
   personalToolOwners?: ReadonlyMap<string, ReadonlySet<number>>,
+  search?: ToolSearchExtras,
 ): ToolSearchHandle {
-  return { deferred, activated: new Set(), pluginNames, ...(personalToolOwners ? { personalToolOwners } : {}), session: undefined };
+  return {
+    deferred,
+    activated: new Set(),
+    pluginNames,
+    ...(personalToolOwners ? { personalToolOwners } : {}),
+    ...(search ? { search } : {}),
+    session: undefined,
+  };
 }
 
 /** The subset of a rehydrated message this module reads. Kept structural (not the PI import) so the seed
@@ -218,6 +251,48 @@ function scoreCandidate(cand: Candidate, terms: readonly string[], patterns: Map
   return score;
 }
 
+/** The scoring machinery of one keyword query, parsed once and shared by the keyword search and the
+ *  semantic blend so both can never disagree about what a term means. */
+interface QueryTerms {
+  /** `+term` marks a term as REQUIRED: a candidate must match it (in name parts or text) to qualify. */
+  required: readonly string[];
+  scoringTerms: readonly string[];
+  patterns: Map<string, RegExp>;
+}
+
+function parseQueryTerms(query: string): QueryTerms | null {
+  const rawTerms = query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  if (rawTerms.length === 0) return null;
+  const required = rawTerms.filter((t) => t.startsWith('+') && t.length > 1).map((t) => t.slice(1));
+  const scoringTerms = rawTerms.map((t) => (t.startsWith('+') && t.length > 1 ? t.slice(1) : t));
+  return { required, scoringTerms, patterns: compileTermPatterns(scoringTerms) };
+}
+
+/** Whether `name`/`text` satisfies every REQUIRED term — the one eligibility rule for tools and skills
+ *  alike, so a `+term` query restricts both channels identically. */
+function requiredTermsSatisfied(name: string, text: string, terms: QueryTerms): boolean {
+  if (terms.required.length === 0) return true;
+  const parts = nameParts(name);
+  return terms.required.every((term) => namePartMatches(parts, term) || terms.patterns.get(term)?.test(text));
+}
+
+/** Rank one candidate list: keyword score plus whatever the semantic half contributes, strongest first,
+ *  capped. `semanticOf` returns the UNWEIGHTED cosine (0 when absent/unavailable). Pure and synchronous
+ *  — the caller resolves the semantic scores beforehand. */
+function blendCandidates(
+  candidates: readonly Candidate[],
+  terms: QueryTerms,
+  semanticOf: (name: string) => number,
+  maxResults: number,
+): string[] {
+  return candidates
+    .map((c) => ({ name: c.name, score: scoreCandidate(c, terms.scoringTerms, terms.patterns) + semanticOf(c.name) }))
+    .filter((s) => s.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, maxResults)
+    .map((s) => s.name);
+}
+
 /** Result of resolving a query against the deferred set: the tool names to activate. Pure — no side
  *  effects — so it is unit-testable in isolation from the session. */
 export function resolveToolSearch(
@@ -248,26 +323,70 @@ export function resolveToolSearch(
     if (byPrefix.length > 0) return byPrefix;
   }
 
-  const rawTerms = q.split(/\s+/).filter(Boolean);
-  if (rawTerms.length === 0) return [];
-  // `+term` marks a term as REQUIRED: a candidate must match it (in name parts or description) to qualify.
-  const required = rawTerms.filter((t) => t.startsWith('+') && t.length > 1).map((t) => t.slice(1));
-  const scoringTerms = rawTerms.map((t) => (t.startsWith('+') && t.length > 1 ? t.slice(1) : t));
-  const patterns = compileTermPatterns(scoringTerms);
+  const terms = parseQueryTerms(trimmed);
+  if (!terms) return [];
+  const eligible = candidates.filter((c) => requiredTermsSatisfied(c.name, candidateText(c), terms));
+  return blendCandidates(eligible, terms, () => 0, maxResults);
+}
 
-  const eligible = candidates.filter((c) => {
-    if (required.length === 0) return true;
-    const parts = nameParts(c.name);
-    const text = candidateText(c);
-    return required.every((term) => namePartMatches(parts, term) || patterns.get(term)?.test(text));
-  });
+/** Skill matches beyond this count are dropped — they are a pointer, not a result page. */
+const MAX_SKILL_RESULTS = 3;
 
-  return eligible
-    .map((c) => ({ name: c.name, score: scoreCandidate(c, scoringTerms, patterns) }))
-    .filter((s) => s.score > 0)
-    .sort((a, b) => b.score - a.score)
-    .slice(0, maxResults)
-    .map((s) => s.name);
+/** How much one point of cosine similarity adds to a keyword score. Calibrated against the keyword
+ *  scale (name-part hit 10, prefix 5, description word 2): a strong semantic match (~0.9 → 2.7) outranks
+ *  a single description-word hit but never a name hit, and vocabulary the model shares with the tool
+ *  still dominates — semantics fill gaps, they do not overwrite exact words. */
+const SEMANTIC_BOOST_WEIGHT = 3;
+
+/** Whether resolveToolSearch answered this query from an EXACT path (`select:`, a bare name, an
+ *  `mcp__` prefix with hits) rather than keyword scoring. Those are lookups where the model already
+ *  named what it wants — the semantic half must never reorder or extend them. */
+function isExactQuery(query: string, candidates: readonly Candidate[]): boolean {
+  const trimmed = query.trim();
+  if (/^select:(.+)$/i.test(trimmed)) return true;
+  if (!trimmed) return false;
+  const q = trimmed.toLowerCase();
+  if (candidates.some((c) => c.name.toLowerCase() === q)) return true;
+  return q.startsWith('mcp__') && q.length > 5 && candidates.some((c) => c.name.toLowerCase().startsWith(q));
+}
+
+/** The full resolution ONE ToolSearch call runs: the exact paths untouched, then a HYBRID keyword +
+ *  semantic ranking for keyword queries, and the skill matches for the same query. Tools and skills
+ *  share ONE semantic ranking (the index's per-call embedding budget), distinguished by id prefixes. */
+async function resolveToolSearchHybrid(
+  query: string,
+  candidates: readonly Candidate[],
+  skills: readonly SkillEntry[],
+  maxResults: number,
+  semantic?: SemanticRanker,
+): Promise<{ tools: string[]; skills: SkillEntry[] }> {
+  const found = resolveToolSearch(query, candidates, maxResults);
+  const terms = parseQueryTerms(query);
+  if (isExactQuery(query, candidates) || !terms) return { tools: found, skills: [] };
+
+  const eligible = candidates.filter((c) => requiredTermsSatisfied(c.name, candidateText(c), terms));
+  const eligibleSkills = skills.filter((s) => requiredTermsSatisfied(s.name, s.description.toLowerCase(), terms));
+
+  // ONE semantic ranking per search, tools and skills together — the index embeds its misses in a
+  // single batch, so splitting the channels would double that batch. An empty result (unconfigured
+  // model, timeout, endpoint error) degrades both channels to the keyword answer below.
+  const semanticScores = semantic && (eligible.length > 0 || eligibleSkills.length > 0)
+    ? await semantic.rank(query, [
+        ...eligible.map((c) => ({ id: `tool:${c.name}`, text: `${c.name} ${candidateText(c)}` })),
+        ...eligibleSkills.map((s) => ({ id: `skill:${s.name}`, text: `${s.name} ${s.description}` })),
+      ])
+    : new Map<string, number>();
+  const contribution = (prefix: string) => (name: string) => (semanticScores.get(`${prefix}:${name}`) ?? 0) * SEMANTIC_BOOST_WEIGHT;
+
+  return {
+    tools: blendCandidates(eligible, terms, contribution('tool'), maxResults),
+    skills: blendCandidates(
+      eligibleSkills.map((s) => ({ name: s.name, description: s.description })),
+      terms,
+      contribution('skill'),
+      MAX_SKILL_RESULTS,
+    ).map((name) => eligibleSkills.find((s) => s.name === name)!).filter(Boolean),
+  };
 }
 
 /** The `<available_tools_deferred>` awareness block appended to the system prompt: one line per deferred
@@ -474,7 +593,15 @@ export function toolSearchTool(handle: ToolSearchHandle): ToolDefinition {
           description: t.description ?? '',
           parameterNames: schemaParameterNames(t.parameters),
         }));
-      const found = resolveToolSearch(p.query, candidates, max);
+      // Keyword queries rank HYBRID: keyword scores plus the daemon's semantic index when wired (exact
+      // lookups — select:, bare name, mcp__ prefix — bypass semantics entirely). Skills ride the same
+      // search and are REPORTED, never activated: a match is a pointer at SkillLoad, nothing more.
+      const skillEntries = handle.search?.skills ? await handle.search.skills() : [];
+      const { tools: found, skills: skillHits } = await resolveToolSearchHybrid(p.query, candidates, skillEntries, max, handle.search?.semantic);
+      const skillNote = skillHits.length
+        ? `\nRelated skills: ${skillHits.map((s) => s.name).join(', ')} — load one with SkillLoad(name) for its full instructions.`
+        : '';
+      const skillDetails = skillHits.length ? { skills: skillHits.map((s) => s.name) } : {};
       // Defense in depth: only activate tools the ACTING sender is allowed to use. The execute-time gate
       // already refuses a forbidden call, and the per-turn visibility pass hides a forbidden tool again on
       // the next turn — but filtering here stops a forbidden tool's schema from being advertised at all and
@@ -531,7 +658,7 @@ export function toolSearchTool(handle: ToolSearchHandle): ToolDefinition {
         const why = found.length > 0
           ? `matched ${found.length} tool(s) but your permissions allow none of them`
           : `matched nothing`;
-        return ok(`ToolSearch ${why} for "${p.query}". ${handle.deferred.size} tool(s) are deferred; try different keywords or "select:<exact-name>".`, { matched: [] });
+        return ok(`ToolSearch ${why} for "${p.query}". ${handle.deferred.size} tool(s) are deferred; try different keywords or "select:<exact-name>".${skillNote}`, { matched: [], ...skillDetails });
       }
       // Record for future turns, then activate now. `activated` is the authoritative record the per-turn
       // applyToolVisibility reconciles against (it recomputes desired = visible ∩ (¬deferred ∪ activated)
@@ -556,7 +683,7 @@ export function toolSearchTool(handle: ToolSearchHandle): ToolDefinition {
       const note = failed.length
         ? `\n${failed.join(', ')} could NOT be activated — proceed without ${failed.length === 1 ? 'it' : 'them'}.`
         : '';
-      return ok(`${functions}${note}`, { matched: stuck });
+      return ok(`${functions}${note}${skillNote}`, { matched: stuck, ...skillDetails });
     },
   });
 }
