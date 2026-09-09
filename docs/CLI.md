@@ -4,7 +4,7 @@ The `elowen` command is the terminal client and local service manager for Elowen
 
 ## Requirements and authentication
 
-The CLI requires Node.js `22` or newer. Interactive chat and login require a TTY. A token is resolved in this order:
+The CLI requires Node.js `22.12` or newer. Interactive chat and login require a TTY. A token is resolved in this order:
 
 1. `ELOWEN_TOKEN` from the environment;
 2. the cached token in `$HOME/.config/elowen/cli.json`;
@@ -29,13 +29,15 @@ The CLI sends `Authorization: Bearer <token>` directly to the daemon. The Web UI
 | `elowen install` | Provision a shared installation; inspect `elowen install --help` first. |
 | `elowen uninstall` | Remove what `install` created; data is retained unless purge is requested. |
 | `elowen up` | Start the daemon and Web UI. |
-| `elowen down [--force]` | Stop services gracefully, or immediately with `--force`/`-f`. |
+| `elowen down [--force]` | Stop services gracefully; running turns are checkpointed rather than discarded. `--force`/`-f` skips the drain and kills immediately, abandoning whatever was running. |
 | `elowen status` | Show daemon and Web UI process/health state. |
 | `elowen restart <daemon\|web\|all>` | Queue a safe non-blocking restart of the selected managed service(s). |
 | `elowen update` | Check for a newer npm release and restart in place. |
 | `elowen menu` | Open the interactive service launcher. |
 
-Lifecycle commands manage services themselves and do not auto-start a second daemon. API-backed commands may auto-start a local unmanaged daemon unless `ELOWEN_AUTOSTART=0` is set.
+`elowen setup` runs the onboarding wizard on demand. For unattended installs it takes flags on the command line: `--reset`, `--non-interactive`, `--admin-user`, `--admin-password`, `--project`, `--project-slug`, `--no-project`, `--provider`, `--api-key`, `--base-url`, `--model`, `--memory` (one of `reuse`, `openrouter`, or `skip`), `--memory-key`, `--embedding-model`, `--skip-test`, and `--lsp`. Secrets can be supplied through the `ELOWEN_ADMIN_PASSWORD`, `ELOWEN_API_KEY`, and `ELOWEN_OPENROUTER_KEY` environment variables instead of the command line, which keeps them out of the process arguments.
+
+Lifecycle commands manage services themselves and do not auto-start a second daemon. Only the API-backed commands (`api`, `chat`, `login`, and the `run`/`-p` family) auto-start a local unmanaged daemon, and `ELOWEN_AUTOSTART=0` disables that entirely. When the daemon is not running on a systemd-managed host, the probe refuses to spawn a stray daemon and tells the operator to start the service instead, for example with `systemctl start elowen-daemon elowen-web`.
 
 On a systemd-managed installation, restart only the service you need or both services together:
 
@@ -45,7 +47,7 @@ elowen restart web      # Web UI only
 elowen restart all      # daemon and Web UI
 ```
 
-The command maps to `systemctl restart --no-block` and returns after systemd has queued the job, before the selected service stops. Do not replace it with a blocking `systemctl restart` from inside the daemon: that can terminate the process issuing the request. `/restart` is the administrator-only in-chat equivalent for restarting the daemon itself; it drains active work and lets the supervisor bring it back.
+The command maps to `systemctl restart --no-block` and returns once systemd has queued the job, before the selected service stops. `systemctl` is invoked directly when the CLI runs as root and through `sudo` otherwise. A blocking restart is refused by design because the caller may itself be running inside the daemon's own cgroup: systemd would stop the daemon while its graceful drain waits for the calling process, and the two wait on each other. `/restart` is the administrator-only in-chat equivalent for restarting the daemon itself; it drains active work and lets the supervisor bring it back.
 
 ## Interactive chat
 
@@ -71,6 +73,30 @@ Type `/` to open the command menu. The command catalog comes from `src/brain/sla
 - Text attachments are limited to `256 KiB`; images are approximately limited to `5 MB`; a message can contain at most four images.
 - `/cd [path]` reports or changes the CLI process working directory. It affects later shell commands, attachments, exports, and local prompt history, but it does not grant access to another daemon Project.
 - `/editor` suspends the TUI and opens `$VISUAL`, then `$EDITOR`, falling back to `vi`. A non-zero editor exit preserves the original draft.
+
+### Key bindings
+
+Shortcuts live in two layers. A small set of structural keys is fixed on purpose and cannot be rebound: `Ctrl+D`, `Ctrl+L`, `Ctrl+R`, and `Ctrl+U` keep their meaning inside modals such as the rename and delete pickers, and Escape, Enter, Backspace, Tab, the arrow keys, Page Up, and Page Down remain plain editor and navigation keys.
+
+Everything else resolves through named actions:
+
+| Action | Default |
+| --- | --- |
+| Leader prefix | `Ctrl+X` |
+| Quit | `Ctrl+C` or `Ctrl+Z` |
+| Cycle work mode (build, plan, workflow) | `Shift+Tab` or `Ctrl+Tab` |
+| Cycle reasoning level | `Ctrl+R` |
+| Stash the current draft, or restore the last one | `Ctrl+S` |
+| Cycle parent and sub-agent views | `Ctrl+O` |
+| Background foreground work (sub-agents, workflows, commands) | `Ctrl+B` |
+| Show or hide the telemetry rail | `Ctrl+P` |
+| Remove the last queued message | `Ctrl+X` then `x` |
+| Help | `Ctrl+X` then `h` |
+| Theme picker | `Ctrl+X` then `t` |
+| Model picker | `Ctrl+X` then `m` |
+| Sessions picker | `Ctrl+X` then `l` |
+
+Overrides live under `keybinds` in `cli-prefs.json`. A spec lists comma-separated alternatives; a direct chord combines `ctrl`, `shift`, `alt`, or `super` with a key; a leader sequence is written as `leader <key>`; and `none` unbinds the action. A direct binding must carry a real modifier, or be one of `f1` through `f12`, `pageup`, `pagedown`, or `insert`, or be exactly `shift+tab`; anything else is refused because it would shadow typing. After the leader chord the TUI waits two seconds for the second key. An invalid override keeps the default and warns, and when two actions resolve to the same chord the TUI warns about the unreachable one without changing which action wins.
 
 ### Slash commands
 
@@ -100,16 +126,17 @@ The following built-in commands are available to the CLI when their required plu
 | `/maskot [on\|off]` | Show or hide the local terminal mascot. |
 | `/keybinds` | Inspect and edit configurable shortcuts. |
 | `/statusline` | Choose fields in the bottom status line when the plugin is installed. |
-| `/lsp` | Inspect or toggle language-server support when the plugin is installed and access permits it. |
+| `/lsp` | Inspect or toggle language-server support; administrator-only, available when the lsp plugin is installed. |
 | `/mcp` | Inspect MCP servers and reconnect health when the plugin is installed. |
 | `/skills` | Inspect and load available skills when the plugin is installed. |
-| `/tools` | Inspect active plugin tools and ownership. The current endpoint is administrator-only; non-administrator sessions may see the catalog entry but receive an authorization error. |
+| `/tasks` | Inspect and manage this conversation's tasks when the todo plugin is installed. |
+| `/tools` | Inspect active plugin tools and ownership. The catalog entry carries no administrator flag, so the command is offered to everyone, but the endpoint behind it is administrator-only and a non-administrator session receives an authorization error. |
 | `/export [html\|jsonl]` | Save the current conversation in the launch directory. |
 | `/restart` | Restart the daemon; administrator-only. |
 | `/help` | Show the commands available to this CLI session. |
 | `/quit` | Exit the TUI. |
 
-Platform-only controls such as channel voice/display commands are not CLI commands. Plugin prompt macros are added to the menu by the running plugin and are sent to the brain as native slash prompts.
+`/cd`, `/paste`, and `/editor` belong to this command set too; they are described under Input features above. Platform-only controls, such as the channel `/voice` and `/display` commands, the `/project` channel re-key, and the platforms' own `/context` conversation picker, are not CLI commands. Plugin prompt macros are added to the menu by the running plugin and are sent to the brain as native slash prompts.
 
 ### Queue, interruption, and child sessions
 
@@ -143,6 +170,8 @@ ToolSearch({"query":"+github create","max_results":5})
 
 Both `query` and `max_results` are required. `max_results` defaults to `5` in the schema and limits keyword results up to the hard safety cap of `25`. `select:<name>[,<name>...]` fetches exact names and ignores the keyword limit, while still obeying the hard cap; a bare exact name also works. A keyword query searches tool names, descriptions, and parameter names, while `+term` makes a term required. Already active tools should be called directly. ToolSearch activation is permission-filtered and does not grant access; normal account, plugin, and execution-time policy checks still apply.
 
+Where an embedding model is configured, keyword results are also ranked by meaning: the semantic contribution is weighted so a strong semantic match outranks a description-word hit but never a name hit, and any failure of that layer degrades to keyword-only ranking. Candidates are filtered by the acting account's policy before ranking, so a tool the account may not use cannot consume the result budget. Matching skills are reported in the same answer, at most three, as a pointer naming `SkillLoad` rather than being activated, and that pointer is included even when no tool matched.
+
 ## Non-interactive runs
 
 `run` starts or resumes a conversation, streams one turn or command, and exits:
@@ -173,6 +202,8 @@ Options:
 | `--json` | Emit JSONL events to stdout. |
 | `--verbose` | Print steps, tools, and notices to stderr in plain-text mode. |
 | `--timeout <seconds>` | Set the whole-command timeout; default `600` seconds. |
+
+Defaults: a run continues the active conversation rather than starting a fresh one, uses `build` mode, writes plain text to stdout, stays quiet, and times out after `600` seconds. Output has exactly two modes, plain text and JSONL events through `--json`, and `--verbose` is an orthogonal stderr channel on top of plain-text output. The CLI installs `EPIPE` handlers, so a piped run exits `0` when the consumer closes the pipe.
 
 A bare positional argument is treated as the prompt. A prompt beginning with `/` runs a slash command, for example `elowen -p "/compact"` or `elowen -p "/goal pause"`. Headless mode cannot answer interactive questions: it reports `[needs input]` and exits.
 
