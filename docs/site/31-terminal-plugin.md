@@ -45,9 +45,9 @@ The working directory persists between successful foreground calls in a session,
 
 ## Foreground runs
 
-A foreground `Bash` call holds the turn while it runs and returns combined output with the exit code. Its `timeout` is in milliseconds, defaults to 120 seconds, and cannot exceed 600 seconds.
+A foreground `Bash` call holds the turn while it runs and returns combined output with the exit code. Its `timeout` is in milliseconds, defaults to 120 seconds, and cannot exceed 600 seconds. A deployment can raise both figures through its own environment configuration, and the ceiling is never allowed below the default.
 
-A foreground command whose timeout is longer than 30 seconds is normally moved to the background at the 30 second mark instead of being killed at its deadline. The result reports a process id, the command keeps running with no time limit, and `ProcessOutput` waits for the rest. The move is skipped when the user approved the command at a permission prompt, when the conversation's background slots are full, or when the turn is not an interactive chat of its own, such as a sub-agent or workflow node whose caller needs the output rather than a process id. In those cases the plain deadline applies and the result says so.
+The run has one deadline, the `timeout` of the call that started it. When it is reached in an ordinary interactive conversation, the command is moved to the background rather than killed: the result reports a process id, the command keeps running with no time limit, and `ProcessOutput` waits for the rest, so its output is never thrown away. The move is skipped when the user approved the command at a permission prompt, when the conversation's background slots are full, or when the turn is not an interactive chat of its own, such as a sub-agent or workflow node whose caller needs the output rather than a process id. In those cases the deadline kills the command and the result says so.
 
 A bare `sleep` of two seconds or more as the entire command is refused, because a foreground wait that produces nothing spends the turn for nothing. Background runs are untouched, and commands that continue after a short pause are also allowed. For waiting on started work, the process tools are the way to wait.
 
@@ -85,8 +85,8 @@ The plugin is user-grantable, so the per-user grant in **Users → Granted plugi
 
 | Area | Limit |
 | --- | --- |
-| `Bash` timeout | 120 seconds by default; between 1 ms and 600 seconds |
-| Auto-background | A foreground run moves to the background after 30 seconds when its timeout is longer; otherwise the deadline kills it |
+| `Bash` timeout | 120 seconds by default; between 1 ms and 600 seconds, unless the deployment raises the default and the ceiling |
+| At the deadline | In an interactive conversation the run moves to the background and keeps its output; for an approved command, a full background list, or a sub-agent or workflow turn, the deadline kills it |
 | Output cap | 60 kB by default, range 10,000 to 500,000 bytes; background buffers keep a rolling tail under the same cap |
 | Background processes | 16 by default, range 1 to 64, counted per session and account |
 | `ProcessOutput` wait | 30 seconds by default, 600 seconds maximum; the process keeps running after a timed-out wait |
