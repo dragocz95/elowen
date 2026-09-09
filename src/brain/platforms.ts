@@ -20,6 +20,7 @@ import { resolveAgentTools, READ_ONLY_AGENT_TOOLS, type AgentDef } from './agent
 import { renderAgentPrompt } from './agents/agentPrompt.js';
 import { buildReadOnlyBoundary, resolveReadOnlyOrigin } from './agents/readOnlyBoundary.js';
 import { bindingRef, resolveDelegatedWorkspace } from './workspaceScope.js';
+import type { SwitchableProject } from './service/workDir.js';
 
 export interface PlatformOrchestratorDeps {
   /** The daemon-wide plugin registry resolver (undefined when plugins aren't wired). */
@@ -64,6 +65,14 @@ export interface PlatformOrchestratorDeps {
   /** Bind (MOVE) one of the caller's own conversations into the channel slot — see
    *  BrainService.bindChannelContext. Rejects when the sender is unlinked or a guard fails. */
   bindContext?: (platform: string, platformUserId: string, channelKey: string, sessionId: string) => Promise<{ title: string }>;
+  /** /project picker data: the invoking sender's OWN reachable Projects, resolved from their linked
+   *  Elowen account. Null when that sender is not linked to any account (they have none to offer). */
+  listProjects?: (platform: string, platformUserId: string) => SwitchableProject[] | null;
+  /** Move THIS channel conversation into one of the sender's Projects — the same validated move owner
+   *  chat's /cd performs, through BrainService.switchChannelProject. Rejects on an unlinked sender or a
+   *  guard failure (unknown project, one the account does not reach, a running process in the bound
+   *  worktree). The caller is responsible for its own operator gate. */
+  switchProject?: (platform: string, platformUserId: string, channelKey: string, projectId: number) => Promise<{ workDir: string; slug: string }>;
 }
 
 /** THE single expression mapping an inbound conversation to its registry channel key — used by both the
@@ -559,6 +568,15 @@ export class PlatformOrchestrator {
             const bind = this.d.bindContext;
             if (!bind) return Promise.reject(new Error('context binding is not available on this deployment'));
             return bind(ref.platform, senderPlatformId, keyOf(ref), sessionId);
+          },
+          // /project picker core. No adapter draws the chooser yet — the shared control core deliberately
+          // leaves pickers per-surface — so the methods exist and are typed, and a future one keys them
+          // exactly like a message (keyOf) without a second host seam.
+          listProjects: (ref, senderPlatformId) => this.d.listProjects?.(ref.platform, senderPlatformId) ?? null,
+          switchProject: (ref, senderPlatformId, projectId) => {
+            const fn = this.d.switchProject;
+            if (!fn) return Promise.reject(new Error('project switching is not available on this deployment'));
+            return fn(ref.platform, senderPlatformId, keyOf(ref), projectId);
           },
           relay: (src, text) => {
             if (src.platform !== adapter.name) return Promise.reject(new Error('relay platform mismatch'));

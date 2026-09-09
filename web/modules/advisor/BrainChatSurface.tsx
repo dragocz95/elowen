@@ -1273,7 +1273,6 @@ function ChatComposer({ variant, composerRef, pinToNewest }: {
           ref={fileRef}
           type="file"
           multiple
-          accept="image/*,.txt,.md,.log,.json,.yaml,.yml,.csv,.ts,.tsx,.js,.py,.php,.sql,.sh,.env.example"
           className="hidden"
           onChange={(e) => { if (e.target.files) void addFiles(e.target.files); e.target.value = ''; }}
         />

@@ -339,6 +339,13 @@ export class TurnRenderer {
   }
 
   private subagentBlock(subagent: NonNullable<ToolItem['sub']>, width: number): TranscriptRow[] {
+    // A DelegateContinue sent to a child that is still mid-turn is STEERED into that running turn: the
+    // message enters its context and the call returns at once, having run nothing. Its row is terminal
+    // and truthful, but rendered like any settled run it read "✓ Sub-agent … · 0 tools · 10s" — a
+    // finished sub-agent, while the delegation it steered into was still working. So it says what
+    // happened instead, and carries no tally at all: the counters of a call that ran nothing are exactly
+    // what made it look complete. The original delegation's own row keeps showing the live run.
+    if (subagent.steered) return this.steeredBlock(subagent, width);
     const glyph = subagent.status === 'running'
       ? color.warning('●')
       : subagent.status === 'done' ? color.success('✓') : color.error('✗');
@@ -365,6 +372,19 @@ export class TurnRenderer {
       { line: '' },
       { line: `  ${glyph} ${color.text('Sub-agent')} ${color.faint('click')} ${color.dim(label)}`, kind: 'subagent', key: subagent.sessionId },
       { line: `    ${color.faint(metaLine)}${hint ? color.faint(hint) : ''}`, kind: 'subagent', key: subagent.sessionId },
+    ];
+  }
+
+  /** The row a steered DelegateContinue leaves: the follow-up's own label, and one line saying where the
+   *  message went. It stays clickable on the child's session — the transcript the steer is now part of is
+   *  exactly what a reader wants to open from here — and its wording matches the result the model gets
+   *  back ("steered into its RUNNING turn"). */
+  private steeredBlock(subagent: NonNullable<ToolItem['sub']>, width: number): TranscriptRow[] {
+    const label = truncateToWidth(terminalInlineText(subagent.name || subagent.task), Math.max(12, width - 26), '…');
+    return [
+      { line: '' },
+      { line: `  ${color.dim('→')} ${color.text('Sub-agent')} ${color.faint('click')} ${color.dim(label)}`, kind: 'subagent', key: subagent.sessionId },
+      { line: `    ${color.faint('↳ steered into the running turn')}`, kind: 'subagent', key: subagent.sessionId },
     ];
   }
 

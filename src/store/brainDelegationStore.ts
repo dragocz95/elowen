@@ -28,6 +28,9 @@ interface BrainSubagentRunState {
   /** Sandbox workspace the child was confined to (Delegate's `workspaceId`). Mirrors BrainSubagentView;
    *  display-only, drives the sandboxed-run glyph. */
   workspaceId?: string;
+  /** This call was a DelegateContinue STEERED into the child's running turn — it finished nothing. Mirrors
+   *  BrainSubagentView; written only when true, so rows without it serialize byte for byte as before. */
+  steered?: true;
 }
 /** Store-neutral display shape consumed by shapeBrainMessages. */
 export interface BrainSubagentRun extends BrainSubagentRunState {
@@ -358,6 +361,7 @@ function normalizeSubagentState(raw: unknown): BrainSubagentRunState | undefined
   if (o.autoDeliver !== undefined && typeof o.autoDeliver !== 'boolean') return undefined;
   if (o.resultDelivery !== undefined && o.resultDelivery !== 'pending' && o.resultDelivery !== 'acknowledged') return undefined;
   if (o.workspaceId !== undefined && typeof o.workspaceId !== 'string') return undefined;
+  if (o.steered !== undefined && typeof o.steered !== 'boolean') return undefined;
   return {
     status: o.status,
     task: bounded(o.task, 8_000),
@@ -375,6 +379,9 @@ function normalizeSubagentState(raw: unknown): BrainSubagentRunState | undefined
     ...(typeof o.autoDeliver === 'boolean' ? { autoDeliver: o.autoDeliver } : {}),
     ...(o.resultDelivery === 'pending' || o.resultDelivery === 'acknowledged' ? { resultDelivery: o.resultDelivery } : {}),
     ...(typeof o.workspaceId === 'string' ? { workspaceId: bounded(o.workspaceId, 256) } : {}),
+    // Only the true case is carried: `steered: false` is what every ordinary call already means, and
+    // writing it would change the stored JSON of rows that used to omit the field entirely.
+    ...(o.steered === true ? { steered: true as const } : {}),
   };
 }
 

@@ -284,9 +284,20 @@ export class LiveSessionSpawner {
     // (the model would otherwise claim/act on that path). Same resolution as the per-turn workDir.
     const execution = preparePersonalProject(this.d, opts);
     opts = { ...opts, policy: execution.policy };
+    // A managed project answers this before any host path does: its directory lives inside the guest, so
+    // neither a client-reported cwd nor a restored durable home describes where its turns run.
     const managed = execution.projectRef?.kind === 'managed';
+    // A channel conversation respawns through here WITHOUT a lifecycle carrying its stored work_dir
+    // back in (ensureLive does that for owner chat), so a spawn whose caller names no cwd restores the
+    // conversation's durable home first — only ever written from a validated client report or a
+    // validated project move — before the policy-root fallback, or the respawn would silently revert a
+    // move the conversation had already made. Nothing is ever stamped here: writing the row stays the
+    // lifecycle's job, so a fallback-resolved cwd cannot dress up as a client report.
+    const restoredWorkDir = opts.pathView?.root || opts.clientCwd
+      ? undefined
+      : this.d.store.getSession(sessionId)?.work_dir || undefined;
     const cwd = managed ? '/workspace' : opts.pathView?.root
-      ?? turnWorkDir(opts.policy, opts.clientCwd, this.d.projectPath) ?? this.d.cwd ?? process.cwd();
+      ?? turnWorkDir(opts.policy, opts.clientCwd ?? restoredWorkDir, this.d.projectPath) ?? this.d.cwd ?? process.cwd();
     // SIZE GUARD, before anything is built. A fork inherits the whole parent conversation, and the child
     // may be running a different model: a 480k-token owner chat forked onto a 200k-window model produced a
     // request the transport refused, which surfaced as `Connection error.` and named nothing. Refuse it
@@ -767,6 +778,7 @@ export class LiveSessionSpawner {
       // applies on the next spawn without a daemon restart.
       planSafeToolNames,
       workDir: cwd,
+      advertisedWorkDir: cwd,
       queuedSteer, queuedFollowUp, deliveringUserEchoes: [],
       // Baseline for owner mode-switch detection: left undefined so the FIRST turn on a fresh live (new
       // session or a respawn after a model switch) only records the mode without emitting a marker — a

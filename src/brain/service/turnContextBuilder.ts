@@ -392,7 +392,10 @@ export class TurnContextBuilder {
         sessionId: live.sessionId,
         model: { provider: live.providerId, model: live.model, thinkingLevel: live.thinkingLevel },
       },
-      workDirReorientation: workDirReorientation(live.workDir, effective.workDir),
+      // Compared against the ADVERTISED cwd, never the live one: a validated move updates `workDir`,
+      // and comparing the reminder against it would make the supersede silently vanish exactly when the
+      // static prompt is most stale.
+      workDirReorientation: workDirReorientation(live.advertisedWorkDir ?? live.workDir, effective.workDir),
     };
   }
 

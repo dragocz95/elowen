@@ -1,11 +1,24 @@
 import { describe, it, expect } from 'vitest';
 // @ts-expect-error — plain .mjs plugin module, no types
-import { botControlCommandsFrom, controlCommandsFrom, localCommandsFrom, runControlCommand } from '../../packages/plugin-shared/chatCommands.mjs';
+import { PICKER_CONTEXT, PICKER_PROJECT, SHARED_PICKERS, applyPickerChoice, botControlCommandsFrom, controlCommandsFrom, localCommandsFrom, runControlCommand, runPickerCommand } from '../../packages/plugin-shared/chatCommands.mjs';
 import { commandsWithPlugins } from '../../src/brain/slashCommands.js';
 
 const MSG = {
   newConversation: 'NEW',
   controlForbidden: 'FORBIDDEN',
+  pickContext: 'PICK_CONTEXT',
+  contextPlaceholder: 'CONTEXT_PLACEHOLDER',
+  contextBound: (title: string) => `BOUND ${title}`,
+  noContextSessions: 'NO_CONTEXT_SESSIONS',
+  contextError: (m: string) => `CONTEXT_ERROR ${m}`,
+  pickProject: 'PICK_PROJECT',
+  projectPlaceholder: 'PROJECT_PLACEHOLDER',
+  projectSwitched: (slug: string) => `PROJECT_SWITCHED ${slug}`,
+  projectNotFound: (arg: string) => `PROJECT_NOT_FOUND ${arg}`,
+  projectError: (m: string) => `PROJECT_ERROR ${m}`,
+  projectUnavailable: 'PROJECT_UNAVAILABLE',
+  noProjects: 'NO_PROJECTS',
+  projectAccountRequired: 'PROJECT_ACCOUNT_REQUIRED',
   fastUsage: 'USAGE',
   fastUnavailable: 'FAST_NA',
   fastAccountRequired: 'FAST_ACCOUNT',
@@ -33,12 +46,15 @@ function fakeState(init: Record<string, unknown> = {}) {
 function binding(over: Record<string, unknown> = {}) {
   const replies: string[] = [];
   const state = fakeState((over.stateInit as Record<string, unknown>) ?? {});
+  const showings: { d: unknown; page: number }[] = [];
   return {
-    replies, state,
+    replies, state, showings,
     b: {
       msg: MSG, reply: (t: string) => { replies.push(t); }, isAdmin: () => over.admin !== false,
-      state, stateId: 'X', ctl: over.ctl, ref: 'ref', arg: over.arg, senderPlatformId: 'sender-1',
+      state, stateId: 'X', ctl: over.ctl, ref: 'ref', arg: over.arg,
+      senderPlatformId: (over.senderPlatformId as string) ?? 'sender-1',
       activeModel: async () => over.active ?? null,
+      showPicker: async (d: unknown, page = 0) => { showings.push({ d, page }); },
       ...(over.binding as object ?? {}),
     },
   };
@@ -57,18 +73,18 @@ const PLATFORM_CATALOG = commandsWithPlugins(
 );
 
 describe('control set derived from the published catalog', () => {
-  it('routes the session-control non-pickers and nothing else', () => {
+  it('routes the session-control commands, pickers included', () => {
     expect([...controlCommandsFrom(PLATFORM_CATALOG)].sort())
-      .toEqual(['compact', 'fast', 'new', 'restart', 'stats', 'stop']);
+      .toEqual(['compact', 'context', 'fast', 'new', 'project', 'restart', 'stats', 'stop']);
   });
 
-  /** The complement, and the half that used to be answered by a hardcoded switch in every adapter: the
-   *  pickers each surface draws itself plus `/help`. Together with the control set it must partition the
-   *  projection exactly — a name in neither set is a published command nobody runs, a name in both is a
-   *  command two code paths claim. */
+  /** The complement, and the half that used to be answered by a hardcoded switch in every adapter: /help
+   *  plus the surface-local pickers. Together with the control set it must partition the projection
+   *  exactly — a name in neither set is a published command nobody runs, a name in both is a command two
+   *  code paths claim. */
   it('claims the surface-run remainder, and the two sets partition the projection', () => {
     expect([...localCommandsFrom(PLATFORM_CATALOG)].sort())
-      .toEqual(['context', 'help', 'model', 'reasoning']);
+      .toEqual(['help', 'model', 'reasoning']);
 
     const control = controlCommandsFrom(PLATFORM_CATALOG);
     const local = localCommandsFrom(PLATFORM_CATALOG);
@@ -86,6 +102,7 @@ describe('control set derived from the published catalog', () => {
   it('claims nothing at all from an empty projection, adapter-owned names included', () => {
     expect(localCommandsFrom([]).size).toBe(0);
     expect(localCommandsFrom([], ['voice', 'display']).size).toBe(0);
+    expect(controlCommandsFrom([]).size).toBe(0);
     expect(botControlCommandsFrom([], ['voice', 'display']).size).toBe(0);
     for (const bad of [undefined, null, 'nonsense', 42, {}]) {
       expect(localCommandsFrom(bad as never, ['voice']).size, String(bad)).toBe(0);
@@ -99,14 +116,29 @@ describe('control set derived from the published catalog', () => {
     expect(local.has('deploy')).toBe(false);
   });
 
-  /** `/context` is `session-control` too, but its chooser is drawn per surface and its listing/binding go
-   *  through dedicated PlatformControlApi methods — routing it here would hand the core a command whose
-   *  UI it cannot draw. `/model` is the mirror case on the other axis (a picker the daemon never runs). */
-  it('never routes a picker, whichever side owns the execution', () => {
+  /** The published `session-control` pickers ARE in the control set — that is what moved them out of the
+   *  per-surface switches: a `session-control` picker is the daemon's operation, and the shared core owns
+   *  the gate, listing, empty/unlinked states and the call behind it. What stays per-surface is only the
+   *  DRAWING (`b.showPicker`) and the choice round-trip (`applyPickerChoice`). A picker the core has no
+   *  case for still behaves like any other control command an older core cannot run: `runControlCommand`
+   *  and `runPickerCommand` both return false and the adapter falls through. */
+  it('routes every published picker through the control set', () => {
     const set = controlCommandsFrom(PLATFORM_CATALOG);
-    expect(set.has('context')).toBe(false);
-    expect(set.has('model')).toBe(false);
+    expect(set.has('context')).toBe(true);
+    expect(set.has('project')).toBe(true);
     expect(set.has('deploy')).toBe(false);
+    // …while a surface-local picker never enters it: the daemon owns nothing behind /model.
+    expect(controlCommandsFrom(PLATFORM_CATALOG.filter((c) => c.name === 'model')).size).toBe(0);
+  });
+
+  /** The adapters route their chooser components through these exported names, so they must stay the
+   *  names the catalog publishes for the session-control pickers — a drift here would route a component
+   *  no descriptor ever built. */
+  it('exports the shared picker names the catalog publishes', () => {
+    expect(SHARED_PICKERS).toEqual(['context', 'project']);
+    expect(SHARED_PICKERS).toEqual([PICKER_CONTEXT, PICKER_PROJECT]);
+    const control = controlCommandsFrom(PLATFORM_CATALOG);
+    for (const name of SHARED_PICKERS) expect(control.has(name)).toBe(true);
   });
 
   /** The catalog arrives from the daemon over HTTP, so a surface running against a core that predates
@@ -129,7 +161,7 @@ describe('control set derived from the published catalog', () => {
    *  bot runs is kept out of the transcript" is stated independently of it. */
   it('treats every daemon- and surface-executed command, plus the adapter own, as bot control', () => {
     expect([...botControlCommandsFrom(PLATFORM_CATALOG, ['display'])].sort())
-      .toEqual(['compact', 'context', 'display', 'fast', 'help', 'model', 'new', 'reasoning', 'restart', 'stats', 'stop']);
+      .toEqual(['compact', 'context', 'display', 'fast', 'help', 'model', 'new', 'project', 'reasoning', 'restart', 'stats', 'stop']);
     expect(botControlCommandsFrom(PLATFORM_CATALOG, ['display']).has('deploy')).toBe(false);
   });
 });
@@ -273,5 +305,210 @@ describe('shared control-command core', () => {
     });
     await runControlCommand('fast', unlinked.b);
     expect(unlinked.replies).toEqual(['FAST_ACCOUNT']);
+  });
+});
+
+/** The published `session-control` pickers (`/context`, `/project`) run through the shared picker core:
+ *  the gate, the listing, the empty/unlinked states and the bind/switch call live here, and the adapter
+ *  only draws the descriptor and hands the choice back. The descriptor is the contract between the two
+ *  halves — `items` carry a transport value, a label and an optional secondary hint, and nothing else. */
+describe('shared picker core', () => {
+  const contextCtl = () => ({
+    listContext: () => ({ items: [{ id: 'brain-7-1', title: 'Refactor', model: 'gpt-5' }], total: 1, hasMore: false }),
+    bindContext: async () => ({ title: 'Refactor' }),
+  });
+  const projectCtl = () => ({
+    listProjects: () => [{ id: 7, slug: 'kolin', path: '/srv/private/kolin' }, { id: 12, slug: 'elowen' }],
+    switchProject: async () => ({ workDir: '/srv/private/kolin', slug: 'kolin' }),
+  });
+
+  it('/context offers the caller’s own conversations as a normalized descriptor', async () => {
+    const { b, showings, replies } = binding({ ctl: contextCtl() });
+    expect(await runPickerCommand('context', b)).toBe(true);
+    expect(showings).toEqual([{
+      d: {
+        picker: 'context', title: 'PICK_CONTEXT', placeholder: 'CONTEXT_PLACEHOLDER',
+        items: [{ value: 'brain-7-1', label: 'Refactor', hint: 'gpt-5' }],
+      },
+      page: 0,
+    }]);
+    expect(replies).toEqual([]); // nothing terminal was said; the chooser was rendered instead
+  });
+
+  it('/context is operator-gated, like /model', async () => {
+    const { b, showings, replies } = binding({ admin: false, ctl: contextCtl() });
+    expect(await runPickerCommand('context', b)).toBe(true);
+    expect(showings).toEqual([]);
+    expect(replies).toEqual(['FORBIDDEN']);
+  });
+
+  it('/context answers an empty or unresolvable listing as "nothing to bind"', async () => {
+    const empty = binding({ ctl: { listContext: () => ({ items: [], total: 0, hasMore: false }) } });
+    expect(await runPickerCommand('context', empty.b)).toBe(true);
+    expect(empty.replies).toEqual(['NO_CONTEXT_SESSIONS']);
+    expect(empty.showings).toEqual([]);
+
+    const unlinked = binding({ ctl: { listContext: () => null } });
+    expect(await runPickerCommand('context', unlinked.b)).toBe(true);
+    expect(unlinked.replies).toEqual(['NO_CONTEXT_SESSIONS']);
+  });
+
+  it('/context descriptor answers a missing host with no session, not an empty listing', async () => {
+    const noCtl = binding({ ctl: undefined });
+    expect(await runPickerCommand('context', noCtl.b)).toBe(true);
+    expect(noCtl.replies).toEqual(['NO_SESSION']);
+    expect(noCtl.showings).toEqual([]);
+  });
+
+  it('/project offers the caller’s projects and never carries a host path', async () => {
+    const { b, showings, replies } = binding({ ctl: projectCtl() });
+    expect(await runPickerCommand('project', b)).toBe(true);
+    expect(showings[0].d).toEqual({
+      picker: 'project', title: 'PICK_PROJECT', placeholder: 'PROJECT_PLACEHOLDER',
+      items: [{ value: '7', label: 'kolin' }, { value: '12', label: 'elowen' }],
+    });
+    expect(JSON.stringify(showings)).not.toContain('/srv');
+    expect(replies).toEqual([]);
+  });
+
+  it('/project has no operator gate: every linked sender may open it', async () => {
+    const { b, showings, replies } = binding({ admin: false, ctl: projectCtl() });
+    expect(await runPickerCommand('project', b)).toBe(true);
+    expect(showings).toHaveLength(1);
+    expect(replies).toEqual([]);
+  });
+
+  it('/project distinguishes an unlinked sender from an empty list', async () => {
+    const unlinked = binding({ ctl: { listProjects: () => null } });
+    expect(await runPickerCommand('project', unlinked.b)).toBe(true);
+    expect(unlinked.replies).toEqual(['PROJECT_ACCOUNT_REQUIRED']);
+
+    const none = binding({ ctl: { listProjects: () => [] } });
+    expect(await runPickerCommand('project', none.b)).toBe(true);
+    expect(none.replies).toEqual(['NO_PROJECTS']);
+  });
+
+  it('/project is unhandled when the host predates the optional methods', async () => {
+    const missing = binding({ ctl: {} });
+    expect(await runPickerCommand('project', missing.b)).toBe(true);
+    expect(missing.replies).toEqual(['PROJECT_UNAVAILABLE']);
+  });
+
+  it('/project <slug|id> skips the chooser: exact slug first, then the decimal id', async () => {
+    let switched: number | undefined;
+    const ctl = {
+      listProjects: () => [{ id: 7, slug: 'kolin', path: '/srv/k' }],
+      switchProject: async (_ref: unknown, _sender: string, id: number) => { switched = id; return { workDir: '/x', slug: 'kolin' }; },
+    };
+    const bySlug = binding({ arg: 'kolin', ctl });
+    expect(await runPickerCommand('project', bySlug.b)).toBe(true);
+    expect(switched).toBe(7);
+    expect(bySlug.replies).toEqual(['PROJECT_SWITCHED kolin']);
+    expect(bySlug.showings).toEqual([]);
+
+    switched = undefined;
+    const byId = binding({ arg: '42', ctl });
+    expect(await runPickerCommand('project', byId.b)).toBe(true);
+    expect(switched).toBe(42);
+
+    // An all-digit slug is still a slug first — the decimal reading is the fallback, not the rule.
+    switched = undefined;
+    const digits = binding({ arg: '42', ctl: {
+      listProjects: () => [{ id: 7, slug: '42', path: '/srv/d' }],
+      switchProject: async (_ref: unknown, _s: string, id: number) => { switched = id; return { workDir: '/x', slug: '42' }; },
+    } });
+    expect(await runPickerCommand('project', digits.b)).toBe(true);
+    expect(switched).toBe(7);
+  });
+
+  it('/project reports an unknown slug or id without touching the host', async () => {
+    let switched = 0;
+    const { b, replies } = binding({ arg: 'nope', ctl: {
+      listProjects: () => [{ id: 7, slug: 'kolin', path: '/srv/k' }],
+      switchProject: async () => { switched += 1; return { workDir: '/x', slug: 'kolin' }; },
+    } });
+    expect(await runPickerCommand('project', b)).toBe(true);
+    expect(replies).toEqual(['PROJECT_NOT_FOUND nope']);
+    expect(switched).toBe(0);
+  });
+
+  it('/context choice binds through the host as the person who chose', async () => {
+    const { b, replies } = binding({ senderPlatformId: 'clicker-9', ctl: {
+      bindContext: async (_ref: unknown, sender: string, _session: string) => { expect(sender).toBe('clicker-9'); return { title: 'Refactor' }; },
+    } });
+    expect(await applyPickerChoice('context', 'brain-7-1', b)).toBe(true);
+    expect(replies).toEqual(['BOUND Refactor']);
+  });
+
+  it('/context choice re-checks the operator gate on submit', async () => {
+    let called = false;
+    const { b, replies } = binding({ admin: false, ctl: { bindContext: async () => { called = true; return { title: 'x' }; } } });
+    expect(await applyPickerChoice('context', 'brain-7-1', b)).toBe(true);
+    expect(replies).toEqual(['FORBIDDEN']);
+    expect(called).toBe(false);
+  });
+
+  it('/context choice surfaces a bind guard rejection', async () => {
+    const { b, replies } = binding({ ctl: { bindContext: async () => { throw new Error('unknown session'); } } });
+    expect(await applyPickerChoice('context', 'brain-7-1', b)).toBe(true);
+    expect(replies).toEqual(['CONTEXT_ERROR unknown session']);
+  });
+
+  it('/project choice switches by decimal id and reports the slug', async () => {
+    let called: { sender: string; id: number } | undefined;
+    const { b, replies } = binding({ senderPlatformId: 'clicker-9', ctl: {
+      listProjects: () => [{ id: 7, slug: 'kolin', path: '/srv/k' }],
+      switchProject: async (_ref: unknown, sender: string, id: number) => { called = { sender, id }; return { workDir: '/x', slug: 'kolin' }; },
+    } });
+    expect(await applyPickerChoice('project', '7', b)).toBe(true);
+    expect(called).toEqual({ sender: 'clicker-9', id: 7 });
+    expect(replies).toEqual(['PROJECT_SWITCHED kolin']);
+  });
+
+  it('/project choice reports a switch failure through the shared error text', async () => {
+    const { b, replies } = binding({ ctl: {
+      listProjects: () => [{ id: 7, slug: 'kolin', path: '/srv/k' }],
+      switchProject: async () => { throw new Error('project is not readable or not allowed'); },
+    } });
+    expect(await applyPickerChoice('project', '7', b)).toBe(true);
+    expect(replies).toEqual(['PROJECT_ERROR project is not readable or not allowed']);
+  });
+
+  /** A chooser value is ALWAYS the decimal id the descriptor listed, so the choice switches straight on
+   *  it — the listing round-trip would re-ask a question the descriptor already answered, and a host whose
+   *  `listProjects` is missing or stubbed must not break an id it handed out itself. */
+  it('/project choice switches straight on the decimal id, without a listing round-trip', async () => {
+    let listed = 0;
+    let called: { sender: string; id: number } | undefined;
+    const { b, replies } = binding({ senderPlatformId: 'clicker-9', ctl: {
+      listProjects: () => { listed += 1; return undefined; },
+      switchProject: async (_ref: unknown, sender: string, id: number) => { called = { sender, id }; return { workDir: '/x', slug: 'kolin' }; },
+    } });
+    expect(await applyPickerChoice('project', '7', b)).toBe(true);
+    expect(listed).toBe(0);
+    expect(called).toEqual({ sender: 'clicker-9', id: 7 });
+    expect(replies).toEqual(['PROJECT_SWITCHED kolin']);
+  });
+
+  /** A typed argument still resolves through the listing — but a listing that comes back as anything but
+   *  an array is a host that cannot list, which is "unavailable", not "unlinked" (null alone means that). */
+  it('/project typed argument answers a broken listing as unavailable, not unlinked', async () => {
+    const stubbed = binding({ arg: 'kolin', ctl: {
+      listProjects: () => undefined,
+      switchProject: async () => ({ workDir: '/x', slug: 'kolin' }),
+    } });
+    expect(await runPickerCommand('project', stubbed.b)).toBe(true);
+    expect(stubbed.replies).toEqual(['PROJECT_UNAVAILABLE']);
+    expect(stubbed.showings).toEqual([]);
+  });
+
+  it('is unhandled for a picker it does not own, without touching the binding', async () => {
+    const { b, replies, showings } = binding({ ctl: {} });
+    // `/model` is a surface-local picker: the daemon owns nothing behind it, so the picker core must
+    // return false the same way runControlCommand does for a name outside its switch.
+    expect(await runPickerCommand('model', b)).toBe(false);
+    expect(await applyPickerChoice('model', 'p::m', b)).toBe(false);
+    expect(replies).toEqual([]);
+    expect(showings).toEqual([]);
   });
 });

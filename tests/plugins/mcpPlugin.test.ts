@@ -12,7 +12,8 @@ import { channelSessionId, contributionOwnerForSession } from '../../src/brain/s
 import { composeSessionTools } from '../../src/brain/session/capabilities.js';
 import { currentIdentity, runWithPolicy } from '../../src/plugins/policyContext.js';
 // The plugin is a plain ESM module (no build step) — import it directly.
-import { register, killTree, sanitize, mapResult, DetachedStdioTransport, configNumber, listMcpServers, reconnectMcpServer, mcpBridgeSnapshot } from '../../plugins/mcp/index.mjs';
+// @ts-expect-error - .mjs plugin has no type declarations
+import { register, killTree, sanitize, mapResult, DetachedStdioTransport, configNumber, listMcpServers, reconnectMcpServer, mcpBridgeSnapshot, validateServerInput } from '../../plugins/mcp/index.mjs';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const MOCK_SERVER = join(here, '../fixtures/mock-mcp-server.mjs');
@@ -127,6 +128,23 @@ describe('mcp plugin — helpers', () => {
     expect((await mapResult({ content: [{ type: 'image', data: 'AAAA', mimeType: 'image/tiff' }] })).content)
       .toEqual([{ type: 'text', text: '[image content omitted]' }]);
     expect((await mapResult({ content: [{}] })).content).toEqual([{ type: 'text', text: '[unknown content omitted]' }]);
+  });
+
+  // A remote URL is stored as configuration and shown back in the register, so a secret carried inside it
+  // would be persisted and displayed where a password field never would be. Refuse it at the boundary.
+  it('validateServerInput refuses a remote URL carrying credentials or a secret query parameter', () => {
+    expect(() => validateServerInput({ name: 'remote', transport: 'http', url: 'https://user:password@example.test/mcp' }))
+      .toThrow(/must not contain credentials or secret query parameters/);
+    expect(() => validateServerInput({ name: 'remote', transport: 'sse', url: 'https://example.test/mcp?access_token=secret' }))
+      .toThrow(/must not contain credentials or secret query parameters/);
+  });
+
+  it('validateServerInput accepts an ordinary remote URL and leaves an unreplaced environment absent', () => {
+    expect(validateServerInput({ name: 'remote', transport: 'http', url: 'https://example.test/mcp?project=docs' }))
+      .toEqual({ name: 'remote', enabled: true, transport: 'http', url: 'https://example.test/mcp?project=docs' });
+    // No `env` key at all: an empty object would clear the stored secrets of the server being edited.
+    expect(validateServerInput({ name: 'local', transport: 'stdio', command: 'node' }))
+      .toEqual({ name: 'local', enabled: true, transport: 'stdio', command: 'node', args: [] });
   });
 
   it('killTree kills the whole process group (negative pid)', () => {

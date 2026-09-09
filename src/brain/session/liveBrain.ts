@@ -213,6 +213,12 @@ export interface LiveBrain {
    *  and re-passed on respawns (model switch, vision hop, restart) so the session cwd never silently
    *  reverts away from where the user launched their CLI. */
   workDir?: string;
+  /** The IMMUTABLE spawn-time copy of `workDir` — the directory PI's static system prompt advertised
+   *  when the session was created. A validated move (`/cd`, the project switch) updates `workDir` but
+   *  never this, so the per-turn reorientation compares against what the model was actually told and
+   *  keeps superseding it until a respawn bakes the new directory into the static prompt. Comparing
+   *  against the mutable `workDir` instead made the reminder silently vanish the moment a move landed. */
+  advertisedWorkDir?: string;
   /** One-shot, model-facing notices of owner session-state changes (model/mode/rename/reasoning/cwd),
    *  drained into the NEXT turn's context as a <system-reminder> and cleared (see turnContextBuilder).
    *  Ephemeral like the mode reminder — never persisted. The durable, user-visible marker is the

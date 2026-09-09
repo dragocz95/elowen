@@ -977,6 +977,16 @@ export interface PlatformControlApi {
    *  a guard failure (foreign/unknown/non-bindable session) or an unlinked sender. The caller is
    *  responsible for its own operator gate. */
   bindContext(ref: ChannelRef, senderPlatformId: string, sessionId: string): Promise<{ title: string }>;
+  /** The invoking sender's OWN Projects a /project picker may offer, resolved from `senderPlatformId`'s
+   *  linked Elowen account; null when that sender is not linked to any account (they have none to
+   *  offer). No adapter draws this chooser yet — the method exists so a future one can list without a
+   *  second host seam. */
+  listProjects?(ref: ChannelRef, senderPlatformId: string): { id: number; slug: string; path: string }[] | null;
+  /** Move THIS channel conversation into one of the sender's reachable Projects (the /project switch's
+   *  core). Resolves with the validated directory and the project's slug (the reply's label); rejects
+   *  on an unlinked sender or a guard failure (unknown project, one the account does not reach, a
+   *  running process in the bound worktree). The caller is responsible for its own operator gate. */
+  switchProject?(ref: ChannelRef, senderPlatformId: string, projectId: number): Promise<{ workDir: string; slug: string }>;
   /** Run a synthetic platform message through the SAME identity, policy, durable session and locking path
    *  as inbound traffic. The adapter remains responsible for delivering the returned reply. */
   relay(src: SessionSource, text: string): Promise<string | undefined>;

@@ -14,7 +14,7 @@ import {
   type DelegatedExecutionScope,
 } from './delegatedScope.js';
 import type { AskQuestion, BrainEvent, BrainUsage, CompactResult, SubagentCompletion, SubagentUpdate, WorkflowCompletion, WorkflowUpdate } from './events.js';
-import { recordWorkflowFinishMarker, workDirReorientation } from './service/sessionEvents.js';
+import { recordWorkflowFinishMarker, drainSessionNotices, workDirReorientation } from './service/sessionEvents.js';
 import { recordSubagentProgress } from './subagentRuns.js';
 import { runCompaction, withDescendantUsage, sessionUsageSnapshot } from './events.js';
 import type { ElicitationRegistry } from './elicitation.js';
@@ -45,7 +45,7 @@ import type { PermissionSettings, TurnPermissions } from './toolPermissions.js';
 import type { MemoryService } from './memoryService.js';
 import type { MemoryCategoryStore } from '../store/memoryCategoryStore.js';
 import { globalMemoryRecallScope } from './memoryRecallScope.js';
-import { effectiveTurnWorkDir, turnWorkDir } from './service/workDir.js';
+import { effectiveTurnWorkDir, moveSessionWorkDir, projectMoveTarget, turnWorkDir } from './service/workDir.js';
 import type { MemoryCurator } from './memoryCurator.js';
 import type { ConversationTitler } from './conversationTitler.js';
 import { DelegationAbortedError, type LiveSessionRegistry, type PendingAbort } from './session/liveRegistry.js';
@@ -1110,7 +1110,10 @@ export class ChannelSessionService {
               sandbox: this.d.sandbox?.(),
             });
         const effectiveWorkDir = resolveWorkDir();
-        const workspaceReminder = workDirReorientation(ch.workDir, effectiveWorkDir.workDir);
+        // Compared against the ADVERTISED cwd, never `ch.workDir`: a validated move updates the live
+        // cwd, and comparing against it would make the supersede silently vanish exactly when the
+        // static prompt — which PI wrote at spawn and never rewrites — is most stale.
+        const workspaceReminder = workDirReorientation(ch.advertisedWorkDir ?? ch.workDir, effectiveWorkDir.workDir);
         try {
           // …and, in a room, narrowed to the tools this writer OWNS as well as the ones they were granted.
           // The two are different questions and both have to be asked: the grant says what an admin gave
@@ -1139,6 +1142,7 @@ export class ChannelSessionService {
             let prompted = turnText;
             // Assigned by the drain below and called only after the prompt has reached the provider.
             let commitOrientation = (): void => {};
+            let commitSessionNotices = (): void => {};
             let commitSkillsDigest = (): void => {};
             let commitRecall = (): void => {};
             // A CONTINUATION sends no prompt at all: composing one (post-compaction orientation, the
@@ -1154,6 +1158,12 @@ export class ChannelSessionService {
               // every channel the way this composition used to allow.
               const { block: postCompaction, compacted, commit } = await drainPostCompactionContext(this.d.store, ch, this.d.sandbox);
               commitOrientation = commit;
+              // One-shot session-change notices (a model reasoning flip, a validated cwd/project move)
+              // reach the model exactly once, like they do in owner chat — prepared here, committed only
+              // once the prompt carrying them reached the provider. Without the drain a room's notices
+              // sat queued forever: the marker was visible in the transcript, the model never was told.
+              const { block: sessionChanges, commit: commitNotices } = drainSessionNotices(ch);
+              commitSessionNotices = commitNotices;
               // The compaction took the memory blocks with it, so what the model can still read is empty
               // again. Cleared before the recall below, or this turn would suppress memories the compacted
               // transcript no longer carries.
@@ -1213,6 +1223,7 @@ export class ChannelSessionService {
                 text: forkChild ? buildForkChildMessage(turnText) : turnText,
                 afterUser: turnContext.afterUser,
                 workDirReorientation: workspaceReminder,
+                sessionChanges,
                 postCompaction,
                 // A room's turns are minutes apart with other people's messages in between, so an agent
                 // that delegated here needs the reminder more than the owner chat does, not less.
@@ -1249,6 +1260,7 @@ export class ChannelSessionService {
             // The re-orientation counts as delivered only now, once the prompt carrying it actually
             // reached the provider — an error or abort before this must leave it pending, not consumed.
             commitOrientation();
+            commitSessionNotices();
             commitSkillsDigest();
             // A parent stop that landed during prompt() must make the child terminally unsuccessful;
             // otherwise an empty aborted assistant is mistaken for a successful "returned nothing" job.
@@ -1713,6 +1725,44 @@ export class ChannelSessionService {
       const result = await runCompaction(ch.session, customInstruction);
       result.usage = withDescendantUsage(result.usage, this.d.store.descendantUsage(ch.sessionId));
       return result;
+    });
+  }
+
+  /** Move this channel conversation into one registered Project's directory — the /project switch's
+   *  core, the same validated move owner chat's `/cd` performs through the shared
+   *  {@link moveSessionWorkDir}. The caller's policy is the gate (a project their account does not
+   *  reach is refused exactly like an unreachable client cwd), the Sandbox bindings that do not belong
+   *  to the destination project are released through the plugin's own operation, the durable home is
+   *  persisted, and the live record — when the channel has one — moves with a one-shot cwd notice the
+   *  next turn drains into the model's context.
+   *
+   *  Serialized under the channel lock like `/compact`, so a running turn holds the lock for its whole
+   *  duration and the move waits rather than straddling it. Returns the validated directory plus the
+   *  project's slug (the reply's label); throws when no durable conversation exists here, or the
+   *  project is unknown or unreachable. The chat surfaces reach it through the shared control core's
+   *  /project (which draws the chooser per surface); the PlatformControlApi still calls it directly. */
+  async switchProject(channelId: string, input: { policy: Policy; accountUserId: number; projectId: number }): Promise<{ workDir: string; slug: string }> {
+    const sessionId = channelSessionId(channelId);
+    return this.d.registry.withLock(sessionId, async () => {
+      const target = projectMoveTarget(input.policy, this.d.projects, input.projectId);
+      if (!target) throw new Error('project is not readable or not allowed');
+      if (!this.d.store.getSession(sessionId)) throw new Error('no conversation in this channel');
+      const ch = this.d.registry.channelGet(channelId);
+      const sandbox = this.d.sandbox?.();
+      const moved = moveSessionWorkDir({
+        store: this.d.store,
+        policy: input.policy,
+        accountUserId: input.accountUserId,
+        sessionId,
+        ...(ch ? { live: ch } : {}),
+        workDir: target.workDir,
+        // The room's next turn drains the notice whatever writer sends it, so it names the project's
+        // slug instead of carrying the absolute path into a shared channel's context.
+        noticeDetail: target.slug,
+        ...(this.d.projects ? { projects: this.d.projects } : {}),
+        ...(sandbox ? { sandbox } : {}),
+      });
+      return { workDir: moved.workDir, slug: target.slug };
     });
   }
 

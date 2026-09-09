@@ -5,7 +5,6 @@ import {
   filterConversationTree,
   groupJobLinks,
   sortConversationTree,
-  subagentSessionIds,
   type ConversationRow,
 } from '../../lib/conversationTree';
 import type { ConversationJobLink, ConversationSubagentNode } from '../../lib/types';
@@ -104,34 +103,13 @@ describe('buildConversationTree', () => {
 });
 
 describe('countSubagentNodes', () => {
-  it('counts every row a branch would render, nested ones included', () => {
+  /** The number the row menu shows, and what decides whether that item has anything to open. */
+  it('counts every row the tree would render, nested ones included', () => {
     expect(countSubagentNodes([
       agent('a', { children: [agent('a1'), agent('a2', { children: [agent('a2x')] })] }),
       agent('b'),
     ])).toBe(5);
     expect(countSubagentNodes([])).toBe(0);
-  });
-});
-
-describe('subagentSessionIds', () => {
-  /** The admin register already nests a delegated session under the conversation that started it. Those
-   *  same sessions are now rows of the sub-agent branch, so the register needs to know which ones the
-   *  branch already shows — otherwise one sub-agent appears twice under one conversation. */
-  it('collects every openable session a branch covers, at any depth', () => {
-    const collected = subagentSessionIds({
-      root: [
-        agent('a', { children: [agent('a1')] }),
-        { kind: 'workflow', key: 'wf:1', name: 'Batch', status: 'running', children: [agent('n1')] },
-      ],
-      other: [agent('b')],
-    });
-    expect([...collected].sort()).toEqual([
-      'brain-ch-subagent-sub-a', 'brain-ch-subagent-sub-a1', 'brain-ch-subagent-sub-b', 'brain-ch-subagent-sub-n1',
-    ]);
-  });
-
-  it('ignores a row with nothing to open, so a purged child never hides a real session', () => {
-    expect(subagentSessionIds({ root: [{ ...agent('gone'), childSessionId: undefined }] }).size).toBe(0);
   });
 });
 

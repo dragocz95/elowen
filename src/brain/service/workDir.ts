@@ -6,6 +6,10 @@ import type { KnownControls, SandboxWorkspace } from '../../plugins/api.js';
 import type { Policy } from '../../plugins/policy.js';
 import { realPathWithin } from '../../plugins/pathGuard.js';
 import { runWithContributionUser } from '../../plugins/policyContext.js';
+import type { BrainStore } from '../../store/brainStore.js';
+import type { Project } from '../../store/projectStore.js';
+import type { LiveBrain } from '../session/liveBrain.js';
+import { recordSessionEvent } from './sessionEvents.js';
 
 /** The client-reported directory, validated: a real directory the caller may access (all-access:
  *  anywhere; scoped: inside an allowed repo root), realpath-resolved. Undefined otherwise. */
@@ -184,4 +188,112 @@ export function releaseWorkspacesForMove(input: {
     projectIds,
     ...(keepProjectId === undefined ? {} : { keepProjectId }),
   }));
+}
+
+/** A Project a conversation may be moved into, as the /project picker offers it. */
+export interface SwitchableProject { id: number; slug: string; path: string }
+
+/** Resolve ONE registered Project as a move destination — the /project switch's project resolver.
+ *
+ *  The caller must be ASSIGNED to the project: path containment alone is not the gate, because a project
+ *  registered inside another allowed project's root (or inside a supplemental Sandbox root) clears that
+ *  check by accident. Assignment first, then the same `clientDir` gate a client-reported cwd clears —
+ *  the registered path must still be a real directory the caller's policy reaches TODAY, so a switch can
+ *  never name a directory the caller's turns could not run in. The validated realpath is the move target
+ *  — never the raw registered string, which may be a symlink. Undefined when the project is unknown,
+ *  unassigned, its path has vanished, or the caller does not reach it. */
+export function projectMoveTarget(
+  policy: Policy,
+  projects: { list(): Project[] } | undefined,
+  projectId: number,
+): { workDir: string; slug: string } | undefined {
+  if (!projects) return undefined;
+  const project = projects.list().find((candidate) => candidate.id === projectId);
+  if (!project) return undefined;
+  if (policy.allowedProjectIds !== 'all' && !policy.allowedProjectIds.has(project.id)) return undefined;
+  const workDir = clientDir(policy, project.path);
+  return workDir ? { workDir, slug: project.slug } : undefined;
+}
+
+/** The Projects one account may move a conversation into — the picker's data side of the same gate.
+ *  A project whose path has vanished, or one the caller is not assigned to or whose path their policy
+ *  does not reach, is simply not offered. */
+export function switchableProjects(policy: Policy, projects?: { list(): Project[] }): SwitchableProject[] {
+  if (!projects) return [];
+  return projects.list()
+    .filter((project) => policy.allowedProjectIds === 'all' || policy.allowedProjectIds.has(project.id))
+    .map((project) => ({ project, validated: clientDir(policy, project.path) }))
+    .filter((entry): entry is { project: Project; validated: string } => entry.validated !== undefined)
+    .map(({ project }) => ({ id: project.id, slug: project.slug, path: project.path }));
+}
+
+export interface MoveSessionWorkDirInput {
+  store: Pick<BrainStore, 'getSession' | 'setWorkDir' | 'lastMessageAt' | 'appendSessionEvent'>;
+  policy: Policy;
+  /** The account whose Sandbox bindings the move may release. Owner chat's /cd passes the contribution
+   *  owner; the channel project switch passes the calling room writer — whoever the caller is, only
+   *  THEIR OWN bindings are ever released, never another account's. */
+  accountUserId: number | null;
+  sessionId: string;
+  /** The live record when the conversation is running; absent (cold) → only the durable home moves. */
+  live?: LiveBrain;
+  /** The requested directory, client-reported or a registered project path — validated here. */
+  workDir: string;
+  /** What the cwd marker and its one-shot notice say instead of the validated path. Absent (owner
+   *  chat's /cd) keeps the absolute path, which only the owner's own turns drain. The channel project
+   *  switch passes the project slug: the notice is handed to the next turn WHATEVER writer sends in
+   *  the room, so a shared channel must not be given the absolute path of a project only the switching
+   *  account is assigned to. Label only — the persisted home and the live cwd keep the real path. */
+  noticeDetail?: string;
+  projects?: { list(): ProjectView[] };
+  sandbox?: KnownControls['sandbox'];
+}
+
+export interface MoveSessionWorkDirResult {
+  /** The validated, realpath-resolved directory. */
+  workDir: string;
+  /** Whether anything actually moved: a repeat reports false and stays silent. */
+  moved: boolean;
+  released: number;
+}
+
+/** Apply ONE explicit move of a conversation to a directory — the single implementation every surface
+ *  shares (owner chat's /cd, the channel project switch). In order:
+ *
+ *  1. VALIDATE the destination through the caller's policy (`clientDir` — an unreachable directory is
+ *     the caller's mistake and the agent must not be told the work moved somewhere it cannot go);
+ *  2. RELEASE the Sandbox bindings that do not belong to the destination's project, through the
+ *     plugin's own operation (`releaseWorkspacesForMove`, which owns the rule and the inference) —
+ *     BEFORE anything moves, so a `workspace_in_use` refusal leaves the conversation exactly where it
+ *     was, instead of reporting a move whose next turn would run somewhere else;
+ *  3. PERSIST the durable home — `brain_sessions.work_dir` — which is what a cold respawn (daemon
+ *     restart, plugin reload, last client detach) restores; a move that only updated the live record
+ *     silently reverted on the next boot;
+ *  4. MOVE the live record and queue the one-shot cwd notice, only when the live cwd actually changed
+ *     — assigning it is what makes the reminder comparison mean "has it moved since we last said so".
+ *
+ *  A repeat of the current directory re-runs the release (the latest explicit statement still wins)
+ *  but moves nothing and says nothing. */
+export function moveSessionWorkDir(input: MoveSessionWorkDirInput): MoveSessionWorkDirResult {
+  const resolved = clientDir(input.policy, input.workDir);
+  if (!resolved) throw new Error('directory is not readable or not allowed');
+  const released = releaseWorkspacesForMove({
+    policy: input.policy,
+    accountUserId: input.accountUserId,
+    sessionId: input.sessionId,
+    workDir: resolved,
+    ...(input.projects ? { projects: input.projects } : {}),
+    ...(input.sandbox ? { sandbox: input.sandbox } : {}),
+  }).released;
+  const persisted = (input.store.getSession(input.sessionId)?.work_dir ?? '') !== resolved;
+  if (persisted) input.store.setWorkDir(input.sessionId, resolved);
+  const liveMoved = !!input.live && input.live.workDir !== resolved;
+  // The visible marker lands whenever the conversation actually moved — with the live record when it
+  // moved live (the marker rides the stream and the notice), and marker-only for a cold move, exactly
+  // like a rename from the picker. A silent heal (row stale, live already there) says nothing.
+  if (liveMoved || (!input.live && persisted)) {
+    recordSessionEvent(input.store, input.sessionId, input.live, 'cwd', input.noticeDetail ?? resolved);
+  }
+  if (liveMoved) input.live!.workDir = resolved;
+  return { workDir: resolved, moved: persisted || liveMoved, released };
 }

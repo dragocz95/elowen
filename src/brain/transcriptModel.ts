@@ -429,6 +429,9 @@ export class TranscriptModel implements TranscriptRead {
       autoDeliver: event.autoDeliver,
       resultDelivery: event.resultDelivery,
       workspaceId: event.workspaceId,
+      // The stored row carries it too; dropping it here is what made a live steer paint as a finished run
+      // until the next reload.
+      ...(event.steered === true ? { steered: true as const } : {}),
     };
     if (!this.patchTool(location, (item) => ({ ...item, sub }))) return false;
     this.upsertSubagent(location.source, sub, true);

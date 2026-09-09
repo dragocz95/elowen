@@ -39,7 +39,7 @@ import { GoalLoopService } from './service/goalLoop.js';
 import { LiveSessionSpawner } from './service/spawner.js';
 import { ConversationLifecycle } from './service/lifecycle.js';
 import { recordSessionEvent, recordWorkflowFinishMarker, scheduleReasoningMarker } from './service/sessionEvents.js';
-import { clientDir, releaseWorkspacesForMove, effectiveTurnWorkDir } from './service/workDir.js';
+import { moveSessionWorkDir, switchableProjects, effectiveTurnWorkDir, type SwitchableProject } from './service/workDir.js';
 import type { ProjectExecutionRef } from '../shared/projectExecution.js';
 import { runWithContributionUser } from '../plugins/policyContext.js';
 import { BrainTurnRunner, subagentResultReminder } from './service/turnRunner.js';
@@ -537,6 +537,19 @@ export class BrainService {
         const linked = d.resolvePlatformUser?.(platform, platformUserId);
         if (!linked) throw new Error('unknown session'); // no linked account → none of their sessions exist here
         return this.bindChannelContext(linked.id, channelKey, sessionId);
+      },
+      // /project picker core (platform surfaces; the shared control core draws the chooser per surface):
+      // resolve the sender to their linked Elowen account, then list the Projects that account reaches and
+      // move the CHANNEL conversation into the chosen one — the same validated move owner chat's /cd
+      // performs. An unlinked sender has neither: listing returns null, the switch refuses.
+      listProjects: (platform, platformUserId) => {
+        const linked = d.resolvePlatformUser?.(platform, platformUserId);
+        return linked ? this.listSwitchableProjects(linked.id) : null;
+      },
+      switchProject: async (platform, platformUserId, channelKey, projectId) => {
+        const linked = d.resolvePlatformUser?.(platform, platformUserId);
+        if (!linked) throw new Error('project switching requires a linked account');
+        return this.switchChannelProject(linked.id, channelKey, projectId);
       },
     });
     // Destructive-lifecycle unit. Every collaborator is a live instance built above.
@@ -1567,22 +1580,16 @@ export class BrainService {
     return this.lifecycle.switchModel(userId, sel, session);
   }
 
-  /** Record that the client moved its working directory (the CLI's /cd), as a visible marker plus a
-   *  one-shot notice telling the agent on its next turn.
+  /** Enter a Project as this conversation's execution target (the /project switch's managed side).
    *
-   *  The directory itself needs no plumbing: every turn already reports the client's cwd and it beats the
-   *  session's stored one. What it does NOT do is tell the MODEL — that is composed once, when the session
-   *  spawns, so without this the agent keeps describing the directory it started in until something
-   *  respawns it. The marker closes exactly that gap, the same way a model or reasoning switch does.
+   *  Selecting an environment is not a directory move: the working directory that follows is derived
+   *  from the project's execution kind, so it goes through the same effectiveTurnWorkDir every turn
+   *  uses rather than through a client-reported path.
    *
-   *  Policy-checked, not merely recorded: an unreachable directory is the caller's mistake and the agent
-   *  must not be told the work moved somewhere it cannot go.
-   *
-   *  It is also the LATEST EXPLICIT statement of where this conversation works, so it wins over an earlier
-   *  Sandbox switch: the bindings that do not belong to the project being entered are released through the
-   *  plugin's own operation (see releaseWorkspacesForMove, which owns the rule and the inference). A
-   *  refusal — a process is still running in the bound workspace — refuses the MOVE, because reporting a
-   *  move whose next turn would run somewhere else is exactly the contradiction this closes. */
+   *  Nothing may be running. A turn, a child session or a tracked job in flight would keep executing
+   *  against the target it was launched with while the conversation claimed to be somewhere else, and a
+   *  restricted Sandbox workspace still bound to this session has to be released by its owner first,
+   *  because a project environment and a bound workspace are two answers to the same question. */
   selectProjectExecution(userId: number, ref: ProjectExecutionRef, session?: string): { projectRef: ProjectExecutionRef; workDir: string } {
     const sessionId = session ? this.lifecycle.ownedUserSession(userId, session) : this.lifecycle.activeSessionId(userId);
     const live = this.sessions.get(sessionId);
@@ -1598,31 +1605,61 @@ export class BrainService {
     return { projectRef: ref, workDir: effective.workDir };
   }
 
+  /** Record that the client moved its working directory (the CLI's /cd), as a visible marker plus a
+   *  one-shot notice telling the agent on its next turn.
+   *
+   *  The directory itself needs no plumbing: every turn already reports the client's cwd and it beats the
+   *  session's stored one. What it does NOT do is tell the MODEL — that is composed once, when the session
+   *  spawns, so without this the agent keeps describing the directory it started in until something
+   *  respawns it. The marker closes exactly that gap, the same way a model or reasoning switch does.
+   *
+   *  Policy-checked, not merely recorded: an unreachable directory is the caller's mistake and the agent
+   *  must not be told the work moved somewhere it cannot go.
+   *
+   *  It is also the LATEST EXPLICIT statement of where this conversation works, so it wins over an earlier
+   *  Sandbox switch. Everything that means — validation, releasing the bindings that do not belong to the
+   *  entered project, persisting the durable home (a cold respawn restores brain_sessions.work_dir), the
+   *  live update and the notice — is the one shared {@link moveSessionWorkDir}, which the channel project
+   *  switch runs too.
+   *
+   *  A managed project is the one conversation this cannot move: its directory lives inside the project's
+   *  environment and is chosen by entering the project, so a client-reported cwd has nothing to say about
+   *  it. Refusing here keeps that the single way in. */
   noteWorkDir(userId: number, dir: string, session?: string): { workDir: string } {
     const b = session ? this.sessions.get(this.lifecycle.ownedUserSession(userId, session)) : this.lifecycle.activeLive(userId);
     if (!b) throw new Error('brain not started');
     if (this.d.store.getProjectExecution(b.sessionId)?.kind === 'managed') throw new Error('managed project directories must be selected through the environment');
-    const resolved = clientDir(b.policy, dir);
-    if (!resolved) throw new Error('directory is not readable or not allowed');
     const sandbox = this.d.plugins?.peek()?.control('sandbox');
-    releaseWorkspacesForMove({
+    return { workDir: moveSessionWorkDir({
+      store: this.d.store,
       policy: b.policy,
       accountUserId: b.contributionUserId ?? userId,
       sessionId: b.sessionId,
-      workDir: resolved,
+      live: b,
+      workDir: dir,
       ...(this.d.projects ? { projects: this.d.projects } : {}),
       ...(sandbox ? { sandbox } : {}),
-    });
-    // Assigning is what makes the comparison mean "has it moved since we last said so". `workDir` is
-    // otherwise written once at spawn and only carried across respawns, so without this the guard forever
-    // compares against the launch directory: it would re-announce every /cd to a directory that is not the
-    // launch one, and stay silent on a move BACK to it. It also keeps the per-turn fallback honest — a
-    // goal continuation carries no client cwd and would otherwise resolve where the session started.
-    if (resolved !== b.workDir) {
-      recordSessionEvent(this.d.store, b.sessionId, b, 'cwd', resolved);
-      b.workDir = resolved;
-    }
-    return { workDir: resolved };
+    }).workDir };
+  }
+
+  /** The Projects one account may move a conversation into — the platform /project picker's data.
+   *  Fails closed, like the delegated-boundary snapshot: a missing policy resolver is a wiring gap,
+   *  not an implicit admin grant. */
+  listSwitchableProjects(userId: number): SwitchableProject[] {
+    const policy = this.d.policy?.(userId);
+    if (!policy) return [];
+    return switchableProjects(policy, this.d.projects);
+  }
+
+  /** Move a CHANNEL conversation into one of the caller's own Projects (the /project switch's core) —
+   *  the policy gate uses the CALLER's account, the channel key is the exact registry key a message from
+   *  that channel targets, and the move runs through the same shared implementation a `/cd` does. The
+   *  target itself is resolved once, inside the channel lock (the caller re-validates there), so this
+   *  method only decides the policy question. */
+  async switchChannelProject(userId: number, channelKey: string, projectId: number): Promise<{ workDir: string; slug: string }> {
+    const policy = this.d.policy?.(userId);
+    if (!policy) throw new Error('project is not readable or not allowed');
+    return this.channelService.switchProject(channelKey, { policy, accountUserId: userId, projectId });
   }
 
   /** Set the reasoning effort of the ACTIVE conversation live (the /think command) — PI applies it to

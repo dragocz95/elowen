@@ -288,8 +288,10 @@ describe('PluginRegistry', () => {
       expect(cmds.find((c) => c.name === 'model')).toMatchObject({ kind: 'picker', execution: 'surface-local' });
       expect(cmds.find((c) => c.name === 'deploy')).toMatchObject({ kind: 'prompt', execution: 'plugin-prompt' });
       expect(cmds.every((c) => typeof c.execution === 'string')).toBe(true);
-      // The six the shared control core owns, derived from what this call publishes.
-      expect([...controlCommandsFrom(cmds) as Set<string>].sort()).toEqual(['compact', 'fast', 'new', 'restart', 'stats', 'stop']);
+      // Everything `session-control` this projection carries — actions and the published pickers alike —
+      // derived from what this call publishes; the surface-local pickers stay out.
+      expect([...controlCommandsFrom(cmds) as Set<string>].sort())
+        .toEqual(['compact', 'context', 'fast', 'new', 'project', 'restart', 'stats', 'stop']);
     });
 
     /** A portable argument set travels with the command, so an adapter builds its option schema from the

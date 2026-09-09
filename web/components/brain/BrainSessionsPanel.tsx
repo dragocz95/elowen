@@ -2,7 +2,7 @@
 import { useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Trash2, Circle, ChevronRight, CornerDownRight, FileCode, FileJson, MoreHorizontal } from 'lucide-react';
+import { ArrowLeft, Bot, Trash2, Circle, ChevronRight, CornerDownRight, FileCode, FileJson, MoreHorizontal } from 'lucide-react';
 import { elowenClient } from '../../lib/elowenClient';
 import { openBrainSession } from '../../lib/brainDock';
 import { localDateTime, formatTokens } from '../../lib/format';
@@ -11,10 +11,10 @@ import { useToast } from '../ui/Toast';
 import { useConversationJobLinks, useMe, QUERY_KEYS } from '../../lib/queries';
 import {
   buildConversationTree,
+  countSubagentNodes,
   filterConversationTree,
   groupJobLinks,
   sortConversationTree,
-  subagentSessionIds,
   type ConversationRow,
   type ConversationTreeNode,
 } from '../../lib/conversationTree';
@@ -31,7 +31,7 @@ import { ConfirmDialog } from '../ui/ConfirmDialog';
 import { HelpTip } from '../ui/HelpTip';
 import { Button } from '../ui/Button';
 import { DataTable, DataTableCell, DataTableRow, DataTableSortCell, type SortDirection } from '../ui/DataTable';
-import { ActionMenu } from '../ui/ActionMenu';
+import { ActionMenu, type ActionMenuItem } from '../ui/ActionMenu';
 import { ContextMenu, type ContextMenuState } from '../ui/ContextMenu';
 import { ControlSurfaceRegister, ControlSurfaceToolbar } from '../ui/ControlSurface';
 import { LoadingLine } from '../ui/states';
@@ -152,14 +152,9 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
 
   const subagents = jobLinks.data?.subagents ?? EMPTY_BRANCHES;
   const subagentsFailed = jobLinks.data?.subagentStatus === 'error';
-  // This register already nests a delegated session under the conversation that started it, from the
-  // session ancestry alone. Every session the sub-agent branch can open is therefore shown by BOTH — so
-  // the ancestry rendering yields, and the ones the branch does not cover (older data with no run row and
-  // no DAG snapshot) keep their existing place rather than disappearing.
-  const coveredBySubagents = useMemo(() => subagentSessionIds(subagents), [subagents]);
+  /** The sub-agent runs recorded under one conversation, or none. */
+  const branchNodes = (sessionId: string) => subagents[sessionId] ?? [];
   const subagentLabels: SubagentBranchLabels = {
-    branch: t.subagentBranch.branch,
-    toggle: t.subagentBranch.toggle,
     expand: t.subagentBranch.expand,
     workflow: t.subagentBranch.workflow,
     unavailable: t.subagentBranch.unavailable,
@@ -179,8 +174,9 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
   // top WITHOUT writing here, which is what restores the reader's own state when the query is cleared.
   const [openBranches, setOpenBranches] = useState<ReadonlySet<string>>(EMPTY_IDS);
   const [openJobBranches, setOpenJobBranches] = useState<ReadonlySet<string>>(EMPTY_IDS);
-  const [openAgentBranches, setOpenAgentBranches] = useState<ReadonlySet<string>>(EMPTY_IDS);
   const [openAgentNodes, setOpenAgentNodes] = useState<ReadonlySet<string>>(EMPTY_IDS);
+  // The conversation whose sub-agent tree the reader drilled into, from a row's own action menu.
+  const [agentsFor, setAgentsFor] = useState<{ id: string; title: string } | null>(null);
   const branchOpen = (id: string): boolean => openBranches.has(id) || filtered.expanded.has(id);
   const jobBranchOpen = (id: string): boolean => openJobBranches.has(id) || filtered.jobsExpanded.has(id);
   const toggle = (setter: typeof setOpenBranches) => (id: string) => setter((current) => {
@@ -228,7 +224,16 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
     catch { toast(t.common.error, 'error'); }
   };
 
-  const rowActions = (session: ConversationRow) => [
+  /** The row's actions. The sub-agent tree is one of them rather than a branch under the row: the register
+   *  is a list of conversations, and a tree hanging off every one of them turned it into a forest. The
+   *  item carries the number of runs it would open and stays present but unselectable at zero. */
+  const rowActions = (session: ConversationRow): ActionMenuItem[] => [
+    {
+      label: t.subagentBranch.menu.replace('{count}', String(countSubagentNodes(branchNodes(session.id)))),
+      icon: Bot,
+      disabled: branchNodes(session.id).length === 0,
+      onSelect: () => setAgentsFor({ id: session.id, title: session.title || t.sessionsPanel.untitled }),
+    },
     { label: t.sessionsPanel.exportHtml, icon: FileCode, onSelect: () => { void doExport(session.id, 'html'); } },
     { label: t.sessionsPanel.exportJsonl, icon: FileJson, onSelect: () => { void doExport(session.id, 'jsonl'); } },
     { label: t.common.delete, icon: Trash2, tone: 'danger' as const, onSelect: () => setConfirmId(session.id) },
@@ -243,6 +248,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
         label: item.label,
         icon: item.icon,
         danger: item.tone === 'danger',
+        disabled: item.disabled,
         onClick: item.onSelect,
       })),
     });
@@ -254,7 +260,6 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
   const rowDomId = (sessionId: string) => `${uid}-row-${encodeURIComponent(sessionId)}`;
   const jobsRowDomId = (sessionId: string) => `${uid}-jobs-${encodeURIComponent(sessionId)}`;
   const agentRowDomId = (sessionId: string, suffix: string) => `${uid}-${encodeURIComponent(sessionId)}-${suffix}`;
-  const branchNodes = (sessionId: string) => subagents[sessionId] ?? [];
   const indentOf = (depth: number) => ({ paddingInlineStart: Math.min(depth, MAX_INDENT_LEVELS) * INDENT_STEP });
 
   /** The leading slot of the title cell: the branch disclosure when there is something to reveal, the
@@ -265,7 +270,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
    *  The revealed rows are table rows, so they have no single wrapper to point `aria-controls` at; the
    *  ids of the rows this button reveals are listed instead. */
   const branchToggle = (node: ConversationTreeNode): ReactNode => {
-    const hasBranch = node.children.length > 0 || node.jobs.length > 0 || branchNodes(node.row.id).length > 0;
+    const hasBranch = node.children.length > 0 || node.jobs.length > 0;
     if (!hasBranch) {
       return node.depth > 0
         ? <CornerDownRight size={12} aria-hidden className="w-5 shrink-0 text-muted-foreground/70" />
@@ -275,11 +280,10 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
     // Named after what it actually uncovers. A conversation that delegated nothing has only its schedules
     // branch below it, and the digit — which counts SESSIONS — is hidden there, so the tooltip explaining
     // that digit goes with it.
-    const delegated = node.children.length > 0 || branchNodes(node.row.id).length > 0;
+    const delegated = node.children.length > 0;
     const revealed = [
       ...(node.jobs.length > 0 ? [jobsRowDomId(node.row.id)] : []),
-      ...(branchNodes(node.row.id).length > 0 ? [agentRowDomId(node.row.id, 'agents')] : []),
-      ...node.children.filter((child) => !coveredBySubagents.has(child.row.id)).map((child) => rowDomId(child.row.id)),
+      ...node.children.map((child) => rowDomId(child.row.id)),
     ];
     return (
       <button
@@ -387,7 +391,10 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
             label={`${title}: ${t.common.actions}`}
             items={rowActions(s)}
             trigger={<MoreHorizontal size={16} aria-hidden />}
-            triggerClassName="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+            // Export, delete and the sub-agent tree are reachable ONLY through this button, so it is
+            // never hidden: quiet at rest, the ordinary foreground wash on hover, filled while its own
+            // menu is open.
+            triggerClassName="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70 data-[state=open]:bg-accent data-[state=open]:text-foreground"
           />
         </DataTableCell>
       </DataTableRow>
@@ -460,15 +467,12 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
   };
 
   /** One conversation and, when its branch is open, what hangs under it: its schedules as their own
-   *  collapsed branch, then the sub-agents that ran under it as theirs, then whatever sessions it
-   *  delegated that the sub-agent branch does not already account for, each recursing the same way. A
-   *  closed register is therefore exactly as long as its list of roots.
+   *  collapsed branch, then the sessions it delegated, each recursing the same way. A closed register is
+   *  therefore exactly as long as its list of roots.
    *
-   *  The last part is what keeps one sub-agent from appearing twice. This register nests a delegated
-   *  session from the session ancestry alone, and the sub-agent branch now shows the same sessions with
-   *  the run status and the workflow grouping the ancestry cannot know. Where both could draw a row the
-   *  branch wins; a session neither a run row nor a DAG snapshot records — older data — keeps its
-   *  ancestry place instead of vanishing. */
+   *  The sub-agent tree is deliberately NOT here. It carries a run status and a workflow grouping the
+   *  ancestry cannot know, but it is a view of ONE conversation — reached from that row's own menu — and
+   *  splicing it into every row made the register a forest of half-open trees. */
   const renderNode = (node: ConversationTreeNode): ReactNode[] => {
     const rows: ReactNode[] = [sessionRow(node)];
     if (!branchOpen(node.row.id)) return rows;
@@ -476,27 +480,65 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
       rows.push(jobsBranchRow(node));
       if (jobBranchOpen(node.row.id)) node.jobs.forEach((link, i) => rows.push(jobRow(node, link, i === node.jobs.length - 1)));
     }
-    rows.push(...subagentBranchRows({
-      conversation: { id: node.row.id, title: node.row.title || t.sessionsPanel.untitled },
-      nodes: branchNodes(node.row.id),
+    for (const child of node.children) rows.push(...renderNode(child));
+    return rows;
+  };
+
+  /** The sub-agents that ran under one conversation, as a view of their own in place of the register.
+   *
+   *  Following a row opens its transcript READ-ONLY: the daemon accepts no post into a delegated child, so
+   *  offering "continue" here would only fail at send. */
+  const agentsView = (target: { id: string; title: string }): ReactNode => {
+    const rows = subagentBranchRows({
+      conversation: target,
+      nodes: branchNodes(target.id),
       labels: subagentLabels,
-      rowDomId: (suffix) => agentRowDomId(node.row.id, suffix),
-      indent: indentOf(node.depth).paddingInlineStart,
-      open: openAgentBranches.has(node.row.id),
-      onToggleBranch: () => toggle(setOpenAgentBranches)(node.row.id),
+      rowDomId: (suffix) => agentRowDomId(target.id, suffix),
+      indent: 0,
       openKeys: openAgentNodes,
       onToggleNode: (key) => toggle(setOpenAgentNodes)(key),
       forceOpen: false,
-      // A sub-agent transcript opens READ-ONLY: the daemon accepts no post into a delegated child, so
-      // offering "continue" here would only fail at send.
       onOpenSession: (sessionId) => { openBrainSession(sessionId, false); afterOpen?.(); },
-    }));
-    for (const child of node.children) {
-      if (coveredBySubagents.has(child.row.id)) continue;
-      rows.push(...renderNode(child));
-    }
-    return rows;
+    });
+    return (
+      <section className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <ControlSurfaceToolbar testId="brain-sessions-subagents-toolbar" layout="split">
+          <div className="flex min-w-0 items-center gap-2">
+            <button
+              type="button"
+              onClick={() => setAgentsFor(null)}
+              aria-label={t.subagentBranch.back}
+              title={t.subagentBranch.back}
+              className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
+            >
+              <ArrowLeft size={16} aria-hidden />
+            </button>
+            <h2 className="truncate text-base font-semibold text-foreground">{target.title}</h2>
+            <span className="shrink-0 text-xs text-muted-foreground">{t.subagentBranch.branch}</span>
+          </div>
+        </ControlSurfaceToolbar>
+        <ControlSurfaceRegister className="flex min-h-0 flex-1 flex-col">
+          <div className="min-h-0 flex-1 overflow-y-auto">
+            {rows.length === 0 ? (
+              <p className="py-8 text-xs italic text-muted-foreground">{t.subagentBranch.empty}</p>
+            ) : (
+              <DataTable
+                ariaLabel={t.subagentBranch.branch}
+                columns="minmax(0,1fr)"
+                data-testid="brain-sessions-subagents-tree"
+              >
+                {rows}
+              </DataTable>
+            )}
+          </div>
+        </ControlSurfaceRegister>
+      </section>
+    );
   };
+
+  // The drill-down takes the whole surface, so the reader reads one thing at a time and the host modal
+  // keeps its shape — same window on a desktop, same full screen on a phone.
+  if (agentsFor) return agentsView(agentsFor);
 
   return (
     <section className="flex min-h-0 min-w-0 flex-1 flex-col">
