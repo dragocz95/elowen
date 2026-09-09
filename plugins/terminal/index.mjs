@@ -61,15 +61,12 @@ const MIN_TIMEOUT_S = 1;
 // service cgroup on restart anyway — the in-memory registry that addresses it does not survive either.
 const DEFAULT_BLOCK_S = 30;
 const MAX_BLOCK_S = 600;
-// How long a FOREGROUND run may hold the turn before it is moved to the background instead of being
-// killed at its deadline. The reference has the same idea with a smaller number (15 s, BashTool.tsx:57);
-// 30 s here is how long an interactive chat waits before a process id is worth more than the wait.
-// It now sits BELOW the 120 s default deadline rather than above it, so the budget is what an ordinary
-// call meets first: a slow command is PRESERVED as a process the caller can read, not killed two minutes
-// later with its output thrown away. The rule the description states is unchanged — a run detaches when
-// its `timeout` is longer than this budget — and the exclusions below still decide where that trade makes
-// sense at all.
-const AUTO_BACKGROUND_BUDGET_MS = 30_000;
+// A foreground run has ONE deadline: the `timeout` of the call that started it. The caller decides how
+// long the turn waits, so a separate, shorter blocking budget could only cut that wait short against the
+// caller's stated intent. What the deadline DOES changes instead: instead of killing the run and throwing
+// its output away, it moves the run to the background, where it keeps running and can be read with
+// ProcessOutput. The exclusions below decide WHERE that trade makes sense.
+//
 // …and WHERE that trade makes sense. Handing back a process id instead of the result only helps someone
 // who can ask for the rest: a person in their own chat, who sees the process card and can read the run
 // later. A delegated turn — a sub-agent or a workflow node — reports one final answer to its parent and is
@@ -557,6 +554,10 @@ class ForegroundRun {
     this._cwdDecoder = new StringDecoder('utf8');
     this._reportedCwd = '';
     this._timer = null;
+    /** Asked ONCE, when the run's own deadline expires: return true to move the run to the background
+     *  instead of killing it. The tool call installs it only where auto-background applies; without it
+     *  the deadline stays a plain kill. */
+    this.onDeadline = null;
     this._resolveDetached = null;
     this.detachedPromise = new Promise((resolve) => { this._resolveDetached = resolve; });
   }
@@ -625,6 +626,9 @@ class ForegroundRun {
       emitProgress();
     };
     this._timer = setTimeout(() => {
+      // The deadline is reached. Where auto-background applies the run is PRESERVED as a background
+      // process instead of being killed with its output thrown away; `detach()` resolves the tool's race.
+      if (this.onDeadline?.()) return;
       this.timedOut = true;
       this.kill().catch((error) => { this.spawnError = `guest cancellation failed: ${this.sanitizeOutput(error.message)}`; });
     }, this.timeoutMs);
@@ -1074,7 +1078,8 @@ export function register(ctx) {
       'Quote paths that contain spaces. Write and Edit create a file\'s missing parent directories themselves, so mkdir -p is only needed for a directory that stays empty.',
       'Running multiple commands: if the commands are independent and can run in parallel, make multiple Bash tool calls in a single message. Example: if you need to run "git status" and "git diff", send a single message with two Bash tool calls in parallel. If the commands depend on each other and must run sequentially, use a single Bash call with \'&&\' to chain them together. Use \';\' only when you need to run commands sequentially but don\'t care if earlier commands fail. DO NOT use newlines to separate commands (newlines are ok in quoted strings).',
       `\`timeout\` is milliseconds, defaults to ${DEFAULT_TIMEOUT_MS} (${durationLabel(DEFAULT_TIMEOUT_MS)}), and may not exceed ${MAX_TIMEOUT_MS} (${durationLabel(MAX_TIMEOUT_MS)}).`,
-      `A foreground command whose \`timeout\` exceeds ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} is normally MOVED to the background at ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} instead of being killed at that deadline: the result then reports a process id, and ProcessOutput(id) waits for the rest. It is not moved when the user approved it at a permission prompt, when this conversation's background slots are full, or when the turn is not an interactive chat of its own (a sub-agent or workflow node, whose caller needs the output rather than a process id) — then the deadline still applies and the result says so.`,
+      `A foreground command waits for its own \`timeout\` and no less — pass a longer \`timeout\` when you expect the command to take longer, and run_in_background=true for work you do not want to wait for at all. At that deadline the run is normally MOVED to the background instead of being killed: the result then reports a process id, and ProcessOutput(id) waits for the rest, so its output is never thrown away. It is not moved when the user approved it at a permission prompt, when this conversation's background slots are full, or when the turn is not an interactive chat of its own (a sub-agent or workflow node, whose caller needs the output rather than a process id) — then the deadline kills the command and the result says so.`,
+      'The user can also move a waiting command to the background at any time with Ctrl+B, which settles the call with a process id while the command keeps running.',
       `Do not send a bare \`sleep N\` (N >= ${MIN_BLOCKED_SLEEP_S}) as the whole command to wait for something — that is refused. Start the work with run_in_background=true and wait for it with ProcessOutput(id).`,
       'Pass run_in_background=true for detached work. Manage detached work with ListProcesses, ProcessOutput, and KillProcess. backgroundMode="service" marks a long-lived server or watcher.',
       'description is the live display context for the command. dangerouslyDisableSandbox=false is a no-op; true is always refused before any process is spawned.',
@@ -1086,7 +1091,7 @@ export function register(ctx) {
       timeout: Type.Optional(Type.Number({
         minimum: MIN_TIMEOUT_MS,
         maximum: MAX_TIMEOUT_MS,
-        description: `Optional timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}, i.e. ${durationLabel(DEFAULT_TIMEOUT_MS)}; max ${MAX_TIMEOUT_MS}, i.e. ${durationLabel(MAX_TIMEOUT_MS)}). Above ${AUTO_BACKGROUND_BUDGET_MS} — which the default already is — it is not a kill deadline: the run is normally moved to the background at ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} and then continues with no time limit.`,
+        description: `Optional timeout in milliseconds (default ${DEFAULT_TIMEOUT_MS}, i.e. ${durationLabel(DEFAULT_TIMEOUT_MS)}; max ${MAX_TIMEOUT_MS}, i.e. ${durationLabel(MAX_TIMEOUT_MS)}). This is how long the call waits in the foreground; in an interactive chat the run is then normally moved to the background rather than killed, and continues with no time limit.`,
       })),
       description: Type.Optional(Type.String({ description: 'Clear, concise active-voice description of what the command does. Use 5-10 words for simple commands; add enough context for piped commands or obscure flags. Describe the action directly without labels such as "complex" or "risky".' })),
       run_in_background: Type.Optional(Type.Boolean({ description: 'Run the command in the background. You get a process id back and are notified when it completes — never poll. ProcessOutput(id) waits for it when you need the result now.' })),
@@ -1149,7 +1154,7 @@ export function register(ctx) {
               accountUserId: foregroundAccountUserId,
               principal: foregroundAccountUserId !== null ? `elowen:${foregroundAccountUserId}` : null,
               releaseBackgroundSlot: null,
-              // Why the run left the foreground, once it has: 'manual' (Ctrl+B) or 'budget'. Only the
+              // Why the run left the foreground, once it has: 'manual' (Ctrl+B) or 'deadline'. Only the
               // wording of the settled result reads it.
               detachReason: null,
             };
@@ -1167,10 +1172,9 @@ export function register(ctx) {
             emitProcCard(fgSession, foregroundAccountUserId);
             ctx.processes.markExited(id);
           });
-          // THE BLOCKING BUDGET. A caller that asked for a deadline longer than the budget wants the
-          // command to FINISH, not to be killed halfway — so at the budget the run moves to the
-          // background, keeping its output and its process, instead of dying at `timeout`. With the
-          // default 20 s deadline the budget is never reached and nothing about this call changes.
+          // THE DEADLINE. The run waits in the foreground for exactly as long as this call asked for.
+          // When that deadline expires the caller wanted the command to FINISH, not to lose it — so the
+          // run moves to the background, keeping its output and its process, instead of dying.
           //
           // Three runs are deliberately excluded. One the human just approved at an `ask` prompt: they
           // agreed to watch this command run, and turning it into a detached process behind them is a
@@ -1179,26 +1183,25 @@ export function register(ctx) {
           // condition that already makes Ctrl+B unavailable there. And any turn that is not an
           // interactive chat of its own: see AUTO_BACKGROUND_CONVERSATIONS.
           //
-          // The timer only detaches: that resolves the race below and the detached branch redraws the
-          // process card, exactly as it already does for Ctrl+B.
+          // The hook only detaches: that resolves the race below and the detached branch redraws the
+          // process card, exactly as it already does for Ctrl+B. The run's own timer owns the deadline, so
+          // there is no second one to arm, clear or leak.
           //
           // The callback is the one place in this file that reaches the process registry from OUTSIDE the
           // tool call's try/catch, and an uncaught throw in a timer takes the daemon down. Failing to
-          // detach costs the run nothing worse than the deadline it already had.
-          const budgetTimer = foregroundEntry && !approvedByAsk && interactiveConversation && timeoutMs > AUTO_BACKGROUND_BUDGET_MS
-            ? setTimeout(() => {
-              try { detachRun(foregroundEntry, 'budget'); }
-              catch (error) { ctx.logger.warn(`terminal: auto-background failed for ${id}: ${error instanceof Error ? error.message : String(error)}`); }
-            }, AUTO_BACKGROUND_BUDGET_MS)
-            : null;
-          budgetTimer?.unref?.();
+          // detach leaves the deadline the plain kill it was before.
+          if (foregroundEntry && !approvedByAsk && interactiveConversation) {
+            run.onDeadline = () => {
+              try { return detachRun(foregroundEntry, 'deadline'); }
+              catch (error) {
+                ctx.logger.warn(`terminal: auto-background failed for ${id}: ${error instanceof Error ? error.message : String(error)}`);
+                return false;
+              }
+            };
+          }
           try {
             await Promise.race([execPromise, run.detachedPromise]);
           } finally {
-            // The race has settled: either the run finished or it is already detached. A timer left armed
-            // past this point could detach a run whose tool call has returned — it holds `foregroundEntry`
-            // directly, so leaving `foregroundRuns` is not enough to stop it.
-            if (budgetTimer) clearTimeout(budgetTimer);
             _signal?.removeEventListener('abort', abortRun);
           }
           if (run.detached) {
@@ -1209,11 +1212,11 @@ export function register(ctx) {
               foregroundEntry?.releaseBackgroundSlot?.();
             }
             emitProcCard(fgSession, foregroundAccountUserId);
-            // Same first line either way, so the id is found in one place. The budget adds why it moved
-            // and how to get the rest — a blocking read is what the caller actually wanted here, since
-            // they asked for a long deadline in order to see the command through.
-            const why = foregroundEntry?.detachReason === 'budget'
-              ? `\nIt passed the ${durationLabel(AUTO_BACKGROUND_BUDGET_MS)} blocking budget, so it was moved here instead of being killed at its ${durationLabel(timeoutMs)} timeout.`
+            // Same first line either way, so the id is found in one place. A deadline detach adds why it
+            // moved and how to get the rest — a blocking read is what the caller actually wanted here,
+            // since they asked for that deadline in order to see the command through.
+            const why = foregroundEntry?.detachReason === 'deadline'
+              ? `\nIt reached its ${durationLabel(timeoutMs)} timeout, so it was moved here instead of being killed with its output thrown away.`
               : '';
             return ok(`Moved to background as process ${id}: ${run.command}\n(cwd: ${run.cwd})\nStill running with no time limit. You will be notified when it completes — do not poll. If you need its result now, ProcessOutput("${id}") waits for it.${why}`);
           }
@@ -1238,10 +1241,10 @@ export function register(ctx) {
           }
           // Name the deadline that actually applied so the model knows whether to re-run with a longer
           // `timeout` or move to the background; a bare kill (registry/session delete) reads as `[killed]`.
-          // An approved command is never auto-backgrounded, so when one times out past the budget the
-          // note says why it was killed rather than moved — otherwise the model sees the same command
+          // An approved command is never auto-backgrounded, so when one times out the note says why it
+          // was killed rather than moved — otherwise the model sees the same command
           // survive in one turn and die in the next with nothing to explain the difference.
-          const heldForApproval = approvedByAsk && timeoutMs > AUTO_BACKGROUND_BUDGET_MS
+          const heldForApproval = approvedByAsk
             ? '; a command you approved is never moved to the background on its own'
             : '';
           const note = cwdWarning + (run.timedOut

@@ -266,7 +266,10 @@ describe('managed builtin consumer routing', () => {
       cancel: vi.fn(async () => { events.push('cancel'); await new Promise(resolve => setTimeout(resolve, 10)); events.push('verified'); }),
       lease: { ...base.lease, release: vi.fn(() => { events.push('release'); }) } };
     provider.prepareExecution.mockResolvedValue(prepared);
-    const { run } = fixture(terminal, provider);
+    const { run, ctx } = fixture(terminal, provider);
+    // A delegated turn keeps the plain kill deadline — an interactive chat MOVES the run to the background
+    // at it instead, and the guest cancellation this test is about would never run.
+    ctx.currentIdentity = () => ({ conversation: 'delegated' });
     expect((await run('Bash', { command: 'guest script' })).content[0].text).toContain('stdin reached guest');
     events.length = 0;
     prepared.stdin = 'exec /bin/sleep 20';
@@ -284,7 +287,8 @@ describe('managed builtin consumer routing', () => {
     provider.prepareExecution.mockResolvedValue({ ...base,
       launch: { type: 'argv', file: process.execPath, args: ['-e', 'setInterval(()=>{},1000)'], env: {} },
       cancel: vi.fn(async () => { throw new Error('termination unverified'); }) });
-    const { run } = fixture(terminal, provider);
+    const { run, ctx } = fixture(terminal, provider);
+    ctx.currentIdentity = () => ({ conversation: 'delegated' }); // the kill deadline, not the background move
     const result = await run('Bash', { command: 'guest job', timeout: 20 });
     expect(result.content[0].text).toContain('termination unverified');
     expect(result.content[0].text).not.toContain('[exit 0]');
