@@ -1,5 +1,5 @@
 // Read only the known script prefix. Buffered readers may consume protocol frames before exec.
-export const MANAGED_BOOTSTRAP = `import os, sys
+const MANAGED_BOOTSTRAP = `import os, sys
 remaining = int(sys.argv[1])
 if not 0 <= remaining <= 1048576:
     raise SystemExit('Invalid managed bootstrap size')

@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { dirname, isAbsolute, join, normalize } from 'node:path';
 
 const trustedSpecs = new WeakSet();
-export const DEFAULT_CONTAINER_LIMITS = Object.freeze({ cpus: 1, memoryMb: 1024, pidsLimit: 512 });
+const DEFAULT_CONTAINER_LIMITS = Object.freeze({ cpus: 1, memoryMb: 1024, pidsLimit: 512 });
 
 export function resourceToken(value) {
   if (typeof value !== 'string' || !/^[a-z0-9][a-z0-9-]{0,63}$/.test(value)) throw new Error('Invalid resource token');

@@ -264,8 +264,6 @@ export const elowenClient = {
   brainSetModel: (sel: { provider?: string; model?: string }, session?: string) => req<{ model: string }>('/brain/model', json({ ...sel, ...(session ? { session } : {}) })),
   /** Select a durable execution identity. The daemon rechecks project membership and host authority. */
   brainSetExecution: (target: import('./types').ProjectExecutionRef, session: string) => req<{ projectRef: import('./types').ProjectExecutionRef; workDir: string }>('/brain/execution', json({ target, session })),
-  // Legacy cwd selection, used by the CLI's /cd; never selects a managed environment.
-  brainSetCwd: (dir: string, session?: string) => req<{ workDir: string }>('/brain/cwd', json({ dir, ...(session ? { session } : {}) })),
   /** Set the conversation's reasoning effort live (the `/reasoning` picker). Applies to the running
    *  conversation AND becomes the account default shown in Account → Elowen AI — one value, so the
    *  choice survives a reload instead of being replaced by the saved one. */

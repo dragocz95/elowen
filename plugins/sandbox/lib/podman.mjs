@@ -202,6 +202,13 @@ export class PodmanClient {
     return { version: info.version?.Version, rootless: true, graphRoot: info.store?.graphRoot, runRoot: info.store?.runRoot, cgroupManager: info.host?.cgroupManager };
   }
 
+  /** The preflight both container creation and project image builds run. `info --format json` above
+   *  answers the same question for a diagnostic read; this is the narrow probe on the write paths. */
+  async #assertRootless() {
+    const rootless = await this.#run(['info', '--format', '{{.Host.Security.Rootless}}']);
+    if (rootless.stdout.trim() !== 'true') throw new Error('Rootless Podman is required');
+  }
+
   async #exists(kind, name) {
     const result = await this.#run([kind, 'exists', name], { allowFailure: true });
     if (result.code === 0) return true;
@@ -268,8 +275,7 @@ export class PodmanClient {
     this.#assertScope(spec);
     if (spec.legacy) throw new Error('Legacy bindings cannot create or recreate a container');
     if (spec.expectedId) throw new Error('An immutable container binding cannot be recreated');
-    const rootless = await this.#run(['info', '--format', '{{.Host.Security.Rootless}}']);
-    if (rootless.stdout.trim() !== 'true') throw new Error('Rootless Podman is required');
+    await this.#assertRootless();
     if (await this.#exists('container', spec.name)) throw new Error('Container already exists; lifecycle adoption must validate it');
     for (const volume of spec.volumes) await this.inspectVolume(spec, volume.component);
     for (const mount of spec.mounts.filter((entry) => entry.type === 'bind')) checkedHostPath(mount.source, { file: mount.target === '/workspace/.git' });
@@ -549,8 +555,7 @@ export class PodmanClient {
   async ensureProjectImage(dataDir) {
     const context = checkedHostPath(join(hostPath(dataDir), 'environment-base', PROJECT_BASE_IMAGE_TAG.split(':').at(-1)), { create: true });
     if (await this.#exists('image', PROJECT_BASE_IMAGE_TAG)) return PROJECT_BASE_IMAGE_TAG;
-    const rootless = await this.#run(['info', '--format', '{{.Host.Security.Rootless}}']);
-    if (rootless.stdout.trim() !== 'true') throw new Error('Rootless Podman is required');
+    await this.#assertRootless();
     const file = join(context, 'Containerfile');
     try { writeFileSync(file, PROJECT_CONTAINERFILE, { flag: 'wx', mode: 0o600 }); }
     catch (error) {

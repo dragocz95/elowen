@@ -54,13 +54,13 @@ const WORKBENCH_MAX = 'max-w-[var(--workbench-max)]';
 
 /** Which of the three measures a route is read at. Named rather than boolean because the frame class and
  *  the `data-page-measure` attribute the inner page shell keys off must come from ONE decision. */
-export type PageMeasure = 'document' | 'chat' | 'workbench';
+type PageMeasure = 'document' | 'chat' | 'workbench';
 const MEASURE_CLASS: Record<PageMeasure, string> = { document: CONTENT_MAX, chat: CHAT_MAX, workbench: WORKBENCH_MAX };
 
 /** The measure for a path, given the plugin UI listing the shell already holds for its navigation.
  *  Only `/p/<plugin>` can be a workbench, and only if that plugin's manifest said so — an unknown plugin,
  *  an unloaded listing and an older daemon that sends no `layout` all read as the page measure. */
-export function pageMeasureFor(pathname: string | null, listing: PluginUiListing[] | undefined): PageMeasure {
+function pageMeasureFor(pathname: string | null, listing: PluginUiListing[] | undefined): PageMeasure {
   if (pathname === '/chat') return 'chat';
   const plugin = pathname?.startsWith('/p/') ? pathname.slice(3).split('/')[0] : undefined;
   if (!plugin) return 'document';

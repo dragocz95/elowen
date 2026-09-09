@@ -840,5 +840,5 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   };
   return { ...control, control, prepareExecution, reconcile,
     async revokeAccount(userId) { for (const row of store.all()) await cancelLeases(row, userId); },
-    async dispose() { disposed = true; for (const release of [...previews]) await release(); }, store };
+    async dispose() { disposed = true; for (const release of [...previews]) await release(); } };
 }
