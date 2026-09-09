@@ -220,8 +220,15 @@ export const useProjectMemberProfiles = (id: number | null, enabled = true) =>
 export const useProjectMemoryMembers = (id: number | null, enabled = true) =>
   useQuery({ queryKey: ['project-memory-members', id], queryFn: () => elowenClient.projectMemoryMembers(id as number), enabled: !!id && enabled });
 
-export const useProjectFiles = (id: number | null) =>
-  useQuery({ queryKey: ['project-files', id], queryFn: () => elowenClient.projectFiles(id as number), enabled: !!id });
+export const useProjectFiles = (id: number | null, enabled = true) =>
+  useQuery({ queryKey: ['project-files', id], queryFn: () => elowenClient.projectFiles(id as number), enabled: !!id && enabled });
+
+/** A managed project's environment state, from the Sandbox plugin's read-only overview. Callers use it
+ *  to decide whether the guest filesystem can be asked for anything at all: the file routes provision a
+ *  missing environment as a side effect of being called, so a screen that only wants to LOOK has to
+ *  learn the state from a route that cannot start one. */
+export const useProjectEnvironmentState = (id: number | null) =>
+  useQuery({ queryKey: ['project-environment-state', id], queryFn: () => elowenClient.projectEnvironmentState(id as number), enabled: !!id });
 
 export const useProjectFile = (id: number | null, path: string | null) =>
   useQuery({ queryKey: ['project-file', id, path], queryFn: () => elowenClient.projectFile(id as number, path as string), enabled: !!id && !!path });

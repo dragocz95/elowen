@@ -7,7 +7,7 @@ import type { Project } from '../../lib/types';
 import type { PluginUiListing } from '../../lib/types';
 import { usePluginUi, useProjectMemoryMembers, useProjectUsers, useUsers } from '../../lib/queries';
 import { useAssignProject, useSetProjectMemoryMembers, useUpdateProject } from '../../lib/mutations';
-import { useTranslation } from '../../lib/i18n';
+import { plural, useTranslation } from '../../lib/i18n';
 import { PLUGIN_UI_API_VERSION, loadPluginUi } from '../../lib/pluginUi';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
 import { Segmented } from '../../components/ui/Segmented';
@@ -108,7 +108,7 @@ function ProjectAccessPanel({ project }: { project: Project }) {
         selected={new Set(assigned.map((user) => String(user.id)))}
         onSave={save}
         saving={assign.isPending}
-        countLabel={(count) => t.projects.accessSelected.replace('{n}', String(count))}
+        countLabel={(count) => plural(t.projects.accessSelected, count).replace('{n}', String(count))}
       />
     </div>
   );

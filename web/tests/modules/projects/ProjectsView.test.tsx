@@ -133,6 +133,27 @@ describe('ProjectsView', () => {
     const notice = (await screen.findAllByRole('alert')).find((element) => /environment is running/i.test(element.textContent ?? ''));
     expect(notice, 'the repository section reports the stopped environment').toBeTruthy();
     expect(within(notice!).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    // ONE answer. A second, generic failure block used to render under the same condition, so the tab
+    // said "nothing is wrong here" and "failed to load" at the same time, in two different tones.
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Retry' })).toHaveLength(1);
+    expect(screen.queryByText(/Failed to load git info/i)).toBeNull();
+  });
+
+  // Any other repository failure keeps the same single surface; only the wording differs, because the
+  // API's own message is more useful than a generic one.
+  it('reports a non-409 repository failure once, in the words the API used', async () => {
+    server.use(
+      http.get('*/api/projects', () => HttpResponse.json([{ id: 3, slug: 'analysis', path: '', notes: '', icon: '', executionKind: 'managed' }])),
+      http.get('*/api/projects/3/git', () => HttpResponse.json({ error: 'environment provider unavailable' }, { status: 503 })),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open project analysis' }));
+
+    expect(await screen.findByText(/environment provider unavailable/i)).toBeInTheDocument();
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
+    expect(screen.getAllByRole('button', { name: 'Retry' })).toHaveLength(1);
   });
 
   // Removal used to be excluded from a managed project's action menu and offered instead as a red button

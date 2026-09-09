@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { ChevronDown, ShieldAlert } from 'lucide-react';
+import { ChevronDown } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useMe, useProjects } from '../../lib/queries';
 import { apiErrorMessage, elowenClient } from '../../lib/elowenClient';
@@ -36,8 +36,11 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
   const target = confirmed?.session === activeSessionId ? confirmed.target : reported;
   const items = (projects.data ?? []).filter((p) => p.lifecycle !== 'deleting' && (p.executionKind === 'managed' || isAdmin));
   const current = target?.projectId ? projects.data?.find((p) => p.id === target.projectId) : undefined;
-  const host = target?.kind === 'host';
-  const label = host ? `${s.hostMode}${current ? `: ${current.slug}` : ''}` : current?.slug ?? s.unknownTarget;
+  // The picker names the project a conversation runs in, and nothing else. A host target with no project
+  // behind it has no name to show, so it reads as an unselected target — the same neutral wording any
+  // other nameless target gets. This is presentation: the conversation's execution state is untouched,
+  // and host authority still lives in the confirmation below and in the daemon.
+  const label = current?.slug ?? s.unknownTarget;
   const ready = Boolean(activeSessionId) && !projects.isLoading && !projects.isError && !me.isLoading && !me.isError;
 
   const move = async (next: ProjectExecutionRef) => {
@@ -62,23 +65,25 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
   return <div data-testid="chat-project-picker" className="relative shrink-0">
     <DropdownMenu open={open} onOpenChange={setOpen}>
       <DropdownMenuTrigger asChild>
-        <button type="button" disabled={moving || !ready} title={host ? s.hostWarning : s.executionKind}
-          className={`flex items-center gap-1.5 rounded-md border transition-colors hover:bg-accent disabled:opacity-40 ${host ? 'border-destructive text-destructive font-semibold' : 'border-border text-muted-foreground'} ${variant === 'compact' ? 'h-7 max-w-[180px] px-2 text-tiny' : 'h-8 max-w-[240px] px-2.5 text-xs'}`}>
-          {host ? <ShieldAlert size={14} aria-hidden /> : current ? <ProjectIcon project={current} size={14} /> : null}
+        <button type="button" disabled={moving || !ready} title={s.executionKind}
+          className={`flex items-center gap-1.5 rounded-md border border-border text-muted-foreground transition-colors hover:bg-accent disabled:opacity-40 ${variant === 'compact' ? 'h-7 max-w-[180px] px-2 text-tiny' : 'h-8 max-w-[240px] px-2.5 text-xs'}`}>
+          {current ? <ProjectIcon project={current} size={14} /> : null}
           <span className="truncate">{label}</span><ChevronDown size={12} aria-hidden />
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent aria-label={s.executionKind} align="end" className="max-h-80 w-64">
+        {/* Every entry is a registered project, named the way it is named everywhere else. Choosing a host
+            project still produces a `host` target, still asks for confirmation and still travels the same
+            authorized execution endpoint — the change here is presentation, not authority. Standalone
+            host mode is not offered as a destination of its own; host administration keeps its home in
+            Projects, the CLI and the API. */}
         <DropdownMenuRadioGroup value={target ? `${target.kind}:${target.projectId ?? ''}` : ''} onValueChange={(value) => {
-          if (value === 'host:') { select({ kind: 'host' }); return; }
           const project = items.find((p) => `${p.executionKind ?? 'host'}:${p.id}` === value);
           if (project) select({ kind: project.executionKind === 'managed' ? 'managed' : 'host', projectId: project.id });
         }}>
           {items.map((p) => <DropdownMenuRadioItem key={p.id} value={`${p.executionKind ?? 'host'}:${p.id}`} className="gap-2 text-xs">
             <ProjectIcon project={p} size={14} /><span className="min-w-0 flex-1 truncate">{p.slug}</span>
-            {p.executionKind !== 'managed' ? <span className="text-destructive">{s.hostMode}</span> : null}
           </DropdownMenuRadioItem>)}
-          {isAdmin ? <DropdownMenuRadioItem value="host:" className="gap-2 text-xs text-destructive"><ShieldAlert size={14} />{s.hostMode}</DropdownMenuRadioItem> : null}
         </DropdownMenuRadioGroup>
       </DropdownMenuContent>
     </DropdownMenu>

@@ -3,7 +3,7 @@ import { useState } from 'react';
 import { apiErrorMessage } from '../../lib/elowenClient';
 import { useMe, useProjectMemberProfiles, useUsers } from '../../lib/queries';
 import { useAssignProject } from '../../lib/mutations';
-import { useTranslation } from '../../lib/i18n';
+import { plural, useTranslation } from '../../lib/i18n';
 import type { Project, ProjectMemberView } from '../../lib/types';
 import { managedProjectStrings } from './managedProjectStrings';
 import { Avatar } from '../../components/ui/Avatar';
@@ -102,7 +102,7 @@ export function ManagedProjectMembers({ project }: { project: Project }) {
         // part of. A member sees no directory, so there is no total to state and the count says so.
         countText={isAdmin
           ? t.projects.accessCount.replace('{n}', String(assignable.filter((user) => memberIds.has(user.id)).length)).replace('{total}', String(assignable.length))
-          : s.accessCountMembers.replace('{n}', String(rows.length))}
+          : plural(s.accessCountMembers, rows.length).replace('{n}', String(rows.length))}
         samples={rows.slice(0, 3).map((member) => ({ id: String(member.id), label: labelOf(member), icon: <Avatar user={member} size={16} /> }))}
         moreCount={Math.max(0, rows.length - 3)}
         onManage={() => setOpen(true)}
@@ -141,7 +141,7 @@ export function ManagedProjectMembers({ project }: { project: Project }) {
         selected={selected}
         onSave={save}
         saving={assign.isPending}
-        countLabel={(count) => t.projects.accessSelected.replace('{n}', String(count))}
+        countLabel={(count) => plural(t.projects.accessSelected, count).replace('{n}', String(count))}
       />
       <ConfirmDialog
         open={inviting !== null}

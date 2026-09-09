@@ -142,6 +142,6 @@ describe('managed project membership', () => {
     // revocation DID land on the daemon even though the runtime cleanup that followed it did not.
     expect(await dialog.findByRole('alert')).toBeInTheDocument();
     fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.getByText('1 users have access')).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText('1 user has access')).toBeInTheDocument());
   });
 });
