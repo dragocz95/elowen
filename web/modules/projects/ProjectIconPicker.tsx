@@ -9,7 +9,8 @@ import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { Button } from '../../components/ui/Button';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { Input } from '../../components/ui/Input';
-import { LoadingState, EmptyState } from '../../components/ui/states';
+import { LoadingState, EmptyState, ErrorState } from '../../components/ui/states';
+import { apiErrorMessage } from '../../lib/elowenClient';
 import { useToast } from '../../components/ui/Toast';
 import { useTranslation } from '../../lib/i18n';
 
@@ -63,6 +64,9 @@ export function ProjectIconPicker({ project, onClose }: { project: Project; onCl
       </div>
       <ModalBody gap={6}>
         {files.isLoading ? <LoadingState />
+          // A listing that was refused or failed is not the same thing as a project without images, and
+          // a managed project reads this through its environment, where a refusal is ordinary.
+          : files.isError ? <ErrorState message={apiErrorMessage(files.error)} onRetry={() => { void files.refetch(); }} />
           : images.length === 0 ? <EmptyState title={t.projects.noImages} icon={ImageIcon} />
           : groups.map(([dir, paths]) => (
             <div key={dir} className="flex flex-col gap-2">

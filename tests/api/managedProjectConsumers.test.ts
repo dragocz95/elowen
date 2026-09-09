@@ -14,7 +14,7 @@ import type { SandboxControl } from '../../src/plugins/api.js';
 
 const databases: Db[] = [];
 afterEach(() => { for (const db of databases.splice(0)) db.close(); });
-function setup() {
+function setup(environmentState: 'running' | 'stopped' | 'unprovisioned' = 'running') {
   const db = openDb(':memory:'); databases.push(db);
   const users = new UserStore(db); const projects = new ProjectStore(db); const userProjects = new UserProjectStore(db);
   const home = projects.create({ slug: 'host', path: '/host' });
@@ -33,6 +33,9 @@ function setup() {
       .map(name => [name, () => { throw new Error(`unexpected ${name}`); }])),
     workspaceRoots: () => [], resolveWorkspace() {}, acquireDelegationLease() {}, workspacesFor: () => [], activeWorkspace: () => null,
     prepareExecution() { throw new Error('unexpected execution'); }, projectFiles,
+    // A cheap state read that provisions nothing — what a Git inspection consults before it decides
+    // whether entering the environment is even possible.
+    environmentFor: async () => ({ projectId: 1, generation: 1, state: environmentState, desiredState: 'running', lastError: null, limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240 } }),
   } as never);
   registry.controlOwner.set('sandbox', 'sandbox');
   const prepareExecution = vi.fn<SandboxControl['prepareExecution']>(async (input) => ({
@@ -123,6 +126,17 @@ describe('managed project API consumers', () => {
     expect((await patch('assets/logo.png')).status).toBe(503);
     expect((await patch('')).status).toBe(200);
     expect(projectFiles).not.toHaveBeenCalled();
+  });
+
+  // The Overview reads this on open now, so it must never be the thing that starts a container. The
+  // execution path provisions an environment that has none and waits for it; a state read costs nothing
+  // and is the right answer for a project nobody is working in.
+  it.each(['stopped', 'unprovisioned'] as const)('refuses a Git read on a %s environment without entering it', async (state) => {
+    const { app, project, token, prepareExecution } = setup(state);
+    const response = await app.request(`/projects/${project.id}/git`, { headers: { authorization: `Bearer ${token}` } });
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'project environment is not running', state });
+    expect(prepareExecution).not.toHaveBeenCalled();
   });
 
   it('reads managed project Git through the canonical provider and parses guest output', async () => {

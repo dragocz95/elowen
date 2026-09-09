@@ -130,6 +130,13 @@ function oneJson(result) {
   if (!Array.isArray(rows) || rows.length !== 1 || !rows[0] || typeof rows[0] !== 'object') throw new Error('Invalid Podman inspection response');
   return rows[0];
 }
+/** `systemctl show --property=…` output as a plain record; an absent property reads as undefined. */
+function unitProperties(stdout) {
+  return Object.fromEntries(String(stdout).trim().split('\n').map((line) => {
+    const at = line.indexOf('=');
+    return [line.slice(0, at), line.slice(at + 1)];
+  }));
+}
 function volumeFor(spec, component) {
   assertContainerSpec(spec);
   const volume = spec.volumes.find((entry) => entry.component === component);
@@ -587,8 +594,12 @@ export class PodmanClient {
   }
 
   async cancelExecution(spec, executionId, { persistent = false } = {}) {
+    return await this.#tombstone(spec, executionId, await this.#owned(spec), persistent);
+  }
+
+  /** The termination tombstone, against a container row this call stack has already verified. */
+  async #tombstone(spec, executionId, row, persistent) {
     const unit = executionUnit(spec, executionId);
-    const row = await this.#owned(spec);
     if (row.state !== 'running') throw new Error('Guest termination cannot be verified in this container state');
     // The runtime mask is a tombstone: it blocks StartTransientUnit arriving after cancellation.
     // Keep it until the runtime generation ends, rather than reopening a late-launch race.
@@ -598,7 +609,7 @@ export class PodmanClient {
     // tombstone after collection and verify it; not-found alone is not proof against late starts.
     await this.#run(['exec', row.id, 'systemctl', 'mask', ...(persistent ? [] : ['--runtime']), unit]);
     const shown = await this.#run(['exec', row.id, 'systemctl', 'show', '--property=LoadState,ActiveState,SubState,ControlGroup', unit]);
-    const fields = Object.fromEntries(shown.stdout.trim().split('\n').map((line) => { const at = line.indexOf('='); return [line.slice(0, at), line.slice(at + 1)]; }));
+    const fields = unitProperties(shown.stdout);
     if (shown.truncated || fields.LoadState !== 'masked' || !['inactive', 'failed'].includes(fields.ActiveState)
       || !['dead', 'failed'].includes(fields.SubState) || fields.ControlGroup !== '' || (stop.code !== 0 && stop.code !== 5)) {
       throw new Error('Guest execution termination could not be verified');
@@ -615,12 +626,30 @@ export class PodmanClient {
   /** Only after the owning launcher has settled and the durable lease forbids redispatch. Timed-out
    * launchers keep their tombstone until daemon recovery establishes that fact or retires the runtime. */
   async releaseExecution(spec, executionId, { persistent = false } = {}) {
-    // The cancellation immediately above verified ownership and running state, and the only guest work
-    // between it and the unmask is this method's own. Re-inspecting the container and every volume a
-    // second time here cost five extra Podman invocations per guest operation and could not observe
-    // anything the cancellation had not just established.
-    const { container } = await this.cancelExecution(spec, executionId, { persistent });
-    await this.#run(['exec', container.id, 'systemctl', 'unmask', ...(persistent ? [] : ['--runtime']), executionUnit(spec, executionId)]);
+    // The cancellation below verifies ownership and running state, and the only guest work between it
+    // and the unmask is this method's own. Re-inspecting the container and every volume a second time
+    // here cost five extra Podman invocations per guest operation and could not observe anything the
+    // cancellation had not just established.
+    const row = await this.#owned(spec);
+    const unit = executionUnit(spec, executionId);
+    if (row.state === 'running') {
+      // A launcher that settled normally leaves nothing to terminate: `--collect` retires the transient
+      // unit as it deactivates, and the mask tombstone only closes a late-StartTransientUnit race that
+      // stays open while a unit is still loaded. Establishing that absence costs one guest round trip
+      // where masking, stopping, re-masking, verifying and unmasking cost six, which was the dominant
+      // term in a managed Git read: five subcommands paid it five times over. Proven absence is the only
+      // thing that takes this path, so every other outcome, including a masked tombstone left by an
+      // earlier cancellation, still runs the full termination below.
+      const shown = await this.#run(['exec', row.id, 'systemctl', 'show', '--property=LoadState,ActiveState,SubState,ControlGroup', unit], { allowFailure: true });
+      const fields = unitProperties(shown.stdout);
+      if (!shown.truncated && shown.code === 0 && fields.LoadState === 'not-found'
+        && fields.ActiveState === 'inactive' && fields.SubState === 'dead' && fields.ControlGroup === '') {
+        await this.#run(['exec', row.id, '/usr/bin/rm', '-f', '--', completionArtifact(executionId)], { allowFailure: true, timeoutMs: 30000 });
+        return;
+      }
+    }
+    const { container } = await this.#tombstone(spec, executionId, row, persistent);
+    await this.#run(['exec', container.id, 'systemctl', 'unmask', ...(persistent ? [] : ['--runtime']), unit]);
   }
 
   /** Persist the host-generated executionId in the existing lease BEFORE calling. A timeout or aborted

@@ -29,35 +29,54 @@ function mount() {
 }
 
 describe('managed project membership', () => {
-  // The tab used to render a bare "Account 3" for everyone but an administrator, because the member
-  // list was a list of numbers. `onUnhandledRequest: 'error'` is the other half of the guard: a member
-  // must reach that identity without ever touching the admin-only account directory.
-  it('shows a member who each account is, without reading the instance directory', async () => {
+  // This tab used to be a bespoke roster: a heading, a paragraph, one row per person and a Remove button
+  // on each. A host project shows a one-line access summary with a Manage button, and a managed project
+  // is the same kind of record, so it now shows the same thing built from the same components.
+  it('presents access exactly as a host project does, with one summary and one Manage button', async () => {
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'root', name: 'Root', is_admin: true } })),
+      http.get('*/api/users', () => HttpResponse.json([
+        { id: 3, username: 'dana', name: 'Dana Nováková', email: 'dana@example.test', avatar: '', is_admin: false },
+        { id: 4, username: 'petr', name: 'Petr Malý', email: 'petr@example.test', avatar: '', is_admin: false },
+      ])),
+    );
     mount();
-    expect(await screen.findByText('Dana Nováková')).toBeInTheDocument();
-    expect(screen.getByText('@dana · dana@example.test')).toBeInTheDocument();
-    expect(screen.getByText('You')).toBeInTheDocument();
+    // The host count line: members out of the directory the reader can actually see.
+    expect(await screen.findByText('1 of 2 users have access')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Manage' })).toBeInTheDocument();
+    // No roster underneath it, and no second removal control competing with the picker.
+    expect(screen.queryByRole('button', { name: 'Remove member' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Leave project' })).toBeNull();
+    // The people are still named, as avatar chips in the summary.
     expect(screen.getByLabelText('Dana Nováková')).toBeInTheDocument();
-    // The identity came from the explicit opt-in, not from the endpoint's default answer.
     expect(requestedViews).toContain('profiles');
   });
 
-  it('lets any member remove another member but does not offer invitations without a grant', async () => {
+  // A member without the directory grant must still learn who shares the environment, and the count has
+  // to stay truthful: there is no total to compare against when the directory is not readable.
+  it('counts only what a member can see and never requests the instance directory', async () => {
+    mount();
+    expect(await screen.findByText('2 users have access')).toBeInTheDocument();
+    expect(screen.queryByText(/of 2 users/)).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByText('Dana Nováková')).toBeInTheDocument();
+    expect(dialog.getByText('dana@example.test')).toBeInTheDocument();
+  });
+
+  it('states the sharing consequence in the picker and removes through the canonical route', async () => {
     let removed = false;
     server.use(http.delete('*/api/users/3/projects/7', () => { removed = true; return HttpResponse.json({ ok: true }); }));
     mount();
-    expect(await screen.findByText('Dana Nováková')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Invite member' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Add members' })).toBeNull();
-    fireEvent.click(screen.getByRole('button', { name: 'Remove member' }));
-    const dialog = within(await screen.findByRole('alertdialog'));
-    expect(dialog.getByText(/Copied credentials/)).toBeInTheDocument();
-    expect(removed).toBe(false);
-    fireEvent.click(dialog.getByRole('button', { name: 'Remove member' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.getByText(/all existing project files/)).toBeInTheDocument();
+    fireEvent.click(dialog.getByRole('button', { name: /Dana Nováková/ }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(removed).toBe(true));
   });
 
-  it('requires full-project sharing confirmation and posts through the canonical membership route', async () => {
+  it('requires full-project sharing confirmation for an invitation by account id', async () => {
     let submitted: unknown;
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 2, username: 'me', name: 'Me', is_admin: false, can_share_projects: true } })),
@@ -73,9 +92,16 @@ describe('managed project membership', () => {
     await waitFor(() => expect(submitted).toEqual({ projectId: 7 }));
   });
 
-  // The administrator is the only account that may read the directory, so the searchable picker is
-  // theirs alone. It offers additions only: removal stays on the row that shows the person.
-  it('lets an administrator add members from the searchable account picker', async () => {
+  it('offers no invitation at all without the sharing grant', async () => {
+    mount();
+    expect(await screen.findByRole('button', { name: 'Manage' })).toBeInTheDocument();
+    expect(screen.queryByLabelText('Account ID')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Invite member' })).toBeNull();
+  });
+
+  // The administrator adds through the directory picker, and an account that already reaches every
+  // project without an assignment row is not offered as a grant that would change nothing.
+  it('lets an administrator grant access from the shared account picker', async () => {
     const granted: number[] = [];
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'root', name: 'Root', is_admin: true } })),
@@ -87,13 +113,8 @@ describe('managed project membership', () => {
       http.post('*/api/users/4/projects', () => { granted.push(4); return HttpResponse.json({ ok: true }); }),
     );
     mount();
-    const open = await screen.findByRole('button', { name: 'Add members' });
-    // Disabled until the directory has actually arrived: there is nothing to pick from before that.
-    await waitFor(() => expect(open).toBeEnabled());
-    fireEvent.click(open);
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
     const dialog = within(await screen.findByRole('dialog'));
-    // Already a member, and an administrator whose access needs no row: neither is a candidate.
-    expect(dialog.queryByText('Dana Nováková')).toBeNull();
     expect(dialog.queryByText('Root')).toBeNull();
     fireEvent.click(dialog.getByRole('button', { name: /Petr Malý/ }));
     fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }));
@@ -112,11 +133,15 @@ describe('managed project membership', () => {
       http.delete('*/api/users/3/projects/7', () => { revoked = true; return HttpResponse.json({ error: 'membership revoked; runtime cleanup unavailable' }, { status: 503 }); }),
     );
     mount();
-    fireEvent.click(await screen.findByRole('button', { name: 'Remove member' }));
-    const dialog = within(await screen.findByRole('alertdialog'));
-    fireEvent.click(dialog.getByRole('button', { name: 'Remove member' }));
-    expect(await dialog.findByRole('alert')).toHaveTextContent('membership revoked; runtime cleanup unavailable');
+    fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    fireEvent.click(dialog.getByRole('button', { name: /Dana Nováková/ }));
+    fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }));
+    // The shared picker reports a failed save in its own words and stays open, exactly as it does for a
+    // host project. What matters here is that the summary behind it tells the truth afterwards: the
+    // revocation DID land on the daemon even though the runtime cleanup that followed it did not.
+    expect(await dialog.findByRole('alert')).toBeInTheDocument();
     fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
-    await waitFor(() => expect(screen.queryByText('Dana Nováková')).toBeNull());
+    await waitFor(() => expect(screen.getByText('1 users have access')).toBeInTheDocument());
   });
 });

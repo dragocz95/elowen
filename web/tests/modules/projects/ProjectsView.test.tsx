@@ -39,7 +39,9 @@ describe('ProjectsView', () => {
       http.get('*/api/projects', () => HttpResponse.json(opened ? [project] : [])),
       http.post('*/api/projects/default', () => { opened = true; return HttpResponse.json(project); }),
       http.post('*/api/plugins/sandbox/api/projects/3/environment', () => { environmentRequested = true; return HttpResponse.json({}); }),
-      http.get('*/api/projects/3/git', () => { environmentRequested = true; return HttpResponse.json({ isRepo: false }); }),
+      // Reading the repository is not provisioning: the daemon answers a non-running environment from
+      // its own records. Only an explicit lifecycle request may start a container.
+      http.get('*/api/projects/3/git', () => HttpResponse.json({ isRepo: false, status: null, remotes: [], branches: [], commits: [] })),
     );
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
@@ -82,6 +84,139 @@ describe('ProjectsView', () => {
     expect(dialog.queryByRole('button', { name: 'Browse' })).toBeNull();
     expect(dialog.getByRole('button', { name: 'Save' })).toBeEnabled();
   });
+  // Opening a managed project used to render an "Inspect repository" button and read nothing until it
+  // was pressed, because the read could provision a cold environment and block on it. The daemon answers
+  // a non-running environment from its own records now, so the tab simply asks.
+  it('reads a managed project repository on open, with no inspect step to press first', async () => {
+    let asked = 0;
+    server.use(
+      http.get('*/api/projects', () => HttpResponse.json([{ id: 3, slug: 'analysis', path: '', notes: 'Research notes', icon: '', executionKind: 'managed' }])),
+      http.get('*/api/projects/3/git', () => {
+        asked += 1;
+        return HttpResponse.json({ isRepo: true, status: { branch: 'main', head: 'abc', upstream: null, ahead: 0, behind: 0, dirty: 0, untracked: 0, clean: true }, remotes: [], branches: [{ name: 'main', current: true }], commits: [] });
+      }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open project analysis' }));
+
+    expect(screen.queryByRole('button', { name: /Inspect repository/i })).toBeNull();
+    // What the register already holds is on screen straight away; only the repository is still coming.
+    expect(await screen.findByText('Research notes')).toBeInTheDocument();
+    expect(await screen.findByText('main')).toBeInTheDocument();
+    expect(asked).toBe(1);
+  });
+
+  // A project without a repository is an ordinary project, not an invitation to create one.
+  it('states plainly that a managed project holds no repository', async () => {
+    server.use(
+      http.get('*/api/projects', () => HttpResponse.json([{ id: 3, slug: 'analysis', path: '', notes: '', icon: '', executionKind: 'managed' }])),
+      http.get('*/api/projects/3/git', () => HttpResponse.json({ isRepo: false, status: null, remotes: [], branches: [], commits: [] })),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open project analysis' }));
+    expect(await screen.findByText('Not a git repository')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Inspect repository|Create repository/i })).toBeNull();
+  });
+
+  // A stopped environment is the ordinary state of a project nobody is working in. Saying so is the
+  // whole answer; starting a container because a tab opened is not.
+  it('says the environment is not running instead of starting one', async () => {
+    server.use(
+      http.get('*/api/projects', () => HttpResponse.json([{ id: 3, slug: 'analysis', path: '', notes: '', icon: '', executionKind: 'managed' }])),
+      http.get('*/api/projects/3/git', () => HttpResponse.json({ error: 'project environment is not running', state: 'stopped' }, { status: 409 })),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open project analysis' }));
+    const notice = (await screen.findAllByRole('alert')).find((element) => /environment is running/i.test(element.textContent ?? ''));
+    expect(notice, 'the repository section reports the stopped environment').toBeTruthy();
+    expect(within(notice!).getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+
+  // Removal used to be excluded from a managed project's action menu and offered instead as a red button
+  // inside the environment panel, so the same decision lived in two places depending on where the project
+  // ran. It is one menu item now, it still tells a managed project the truth about its environment, and
+  // it still travels the durable teardown the daemon owns.
+  it('removes a managed project from the same action menu every project has', async () => {
+    let deleted = false;
+    server.use(
+      http.get('*/api/projects', () => HttpResponse.json([{ id: 3, slug: 'analysis', path: '', notes: '', icon: '', executionKind: 'managed' }])),
+      http.delete('*/api/projects/3', () => {
+        deleted = true;
+        return HttpResponse.json({ operation: { id: 'op-delete', requestId: 'r', projectId: 3, generation: 1, accountUserId: 1, action: { kind: 'delete' }, status: 'pending', error: null } }, { status: 202 });
+      }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'analysis: Actions' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove project' }));
+    const dialog = within(await screen.findByRole('alertdialog'));
+    // The managed wording, not the host one: this takes the environment down with the project.
+    expect(dialog.getByText(/environment/i)).toBeInTheDocument();
+    expect(deleted).toBe(false);
+    fireEvent.click(dialog.getByRole('button', { name: 'Remove' }));
+    await waitFor(() => expect(deleted).toBe(true));
+    // Cleanup is asynchronous, so the answer is that deletion was requested rather than finished.
+    expect(await screen.findByText(/deletion requested/i)).toBeInTheDocument();
+  });
+
+  // A managed project has no host path, which is why the menu used to go one item short of a host
+  // project's. It does have the guest root everything inside the environment works from, and that is
+  // what the same action now copies -- never a host backing path, which nothing outside the daemon sees.
+  it('copies the guest root for a managed project from the same action a host project uses', async () => {
+    const copied: string[] = [];
+    Object.assign(navigator, { clipboard: { writeText: async (text: string) => { copied.push(text); } } });
+    server.use(http.get('*/api/projects', () => HttpResponse.json([
+      { id: 3, slug: 'analysis', path: '', notes: '', icon: '', executionKind: 'managed' },
+      { id: 4, slug: 'elowen', path: '/var/www/elowen', notes: '', icon: '' },
+    ])));
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'analysis: Actions' }));
+    const managedActions = (await screen.findAllByRole('menuitem')).map((item) => item.textContent);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy path' }));
+    await waitFor(() => expect(copied).toEqual(['/workspace']));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'elowen: Actions' }));
+    const hostActions = (await screen.findAllByRole('menuitem')).map((item) => item.textContent);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy path' }));
+    await waitFor(() => expect(copied).toEqual(['/workspace', '/var/www/elowen']));
+    // The same menu, item for item, in the same order.
+    expect(managedActions).toEqual(hostActions);
+  });
+
+  // Choosing an icon from the project's own files was refused for a managed project outright, although
+  // the daemon already resolved and validated an icon path inside the environment and the editor already
+  // served that project's files from the guest. Only this button stood in the way.
+  it('offers a managed project the icon picker a host project has', async () => {
+    server.use(
+      http.get('*/api/projects', () => HttpResponse.json([
+        { id: 3, slug: 'analysis', path: '', notes: '', icon: '', executionKind: 'managed' },
+      ])),
+      // The picker reads and renders through the editor's project file routes, so it is offered only
+      // where that plugin is installed -- for a managed project exactly as for a host one.
+      http.get('*/api/plugins/ui', () => HttpResponse.json([{ name: 'editor', url: '/plugins/editor/web/hash.js', apiVersion: 3, nav: [], account: [], settings: [] }])),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+
+    fireEvent.click(await screen.findByRole('button', { name: 'analysis: Actions' }));
+    // The editor plugin is what serves and reads the files, and the menu names it once the listing that
+    // gates every one of its affordances has arrived.
+    await waitFor(() => expect(screen.getByRole('menuitem', { name: 'Open editor' })).toBeInTheDocument());
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Edit project' }));
+    // Editing opens the detail rail over the modal, and the rail is the topmost dialog, so the modal's
+    // own controls are reached inside it rather than from the document.
+    const dialog = within(await screen.findByRole('dialog', { name: 'Edit project', hidden: true }));
+    expect(await dialog.findByText('Choose icon')).toBeEnabled();
+    // And no host path field appears alongside it: the icon comes from the environment, not a host tree.
+    expect(dialog.queryByLabelText(/path/i)).toBeNull();
+  });
+
   it('lists projects and shows git on select', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);

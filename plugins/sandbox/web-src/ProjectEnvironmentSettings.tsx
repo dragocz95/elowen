@@ -70,9 +70,7 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
     if (!accountId || !query.data) throw new Error('project_forbidden');
     const request = environmentRequest(accountId, project.id, JSON.stringify(action), query.data.environment.generation);
     try {
-      const operation = action.kind === 'delete'
-        ? (await api(`/projects/${project.id}`, { ...jsonBody(request), method: 'DELETE' }) as { operation: EnvironmentOperation & { requestId: string } }).operation
-        : await api(endpoint, jsonBody({ action, ...request })) as EnvironmentOperation & { requestId: string };
+      const operation = await api(endpoint, jsonBody({ action, ...request })) as EnvironmentOperation & { requestId: string };
       setRequested(operation);
       acknowledgeEnvironmentRequest(accountId, project.id, [operation.requestId]);
       return operation;
@@ -130,8 +128,8 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   const values = draft ?? environment.limits;
   const labels: Record<LimitKey, string> = { cpus: s.cpuLimit, memoryMb: s.memoryLimit, pidsLimit: s.processLimit, diskSoftMb: s.diskSoftLimit };
   const units: Record<LimitKey, string> = { cpus: s.unitCpu, memoryMb: 'MiB', pidsLimit: s.unitProcesses, diskSoftMb: 'MiB' };
-  const confirmation = confirm?.kind === 'restore' ? s.restoreWarning : confirm?.kind === 'delete' ? s.deleteProjectWarning : confirm?.kind === 'snapshot' ? s.snapshotWarning : s.stopWarning;
-  const actionLabel = confirm?.kind === 'restore' ? s.restoreEnvironment : confirm?.kind === 'delete' ? s.deleteProject : confirm?.kind === 'snapshot' ? s.snapshotEnvironment : s.stopEnvironment;
+  const confirmation = confirm?.kind === 'restore' ? s.restoreWarning : confirm?.kind === 'snapshot' ? s.snapshotWarning : s.stopWarning;
+  const actionLabel = confirm?.kind === 'restore' ? s.restoreEnvironment : confirm?.kind === 'snapshot' ? s.snapshotEnvironment : s.stopEnvironment;
   return <section className="flex flex-col gap-4 border-b border-border py-4">
     <div className="flex flex-wrap items-center gap-2"><C.Badge tone={environment.state === 'running' ? 'success' : environment.state === 'failed' ? 'danger' : 'muted'}>{s[`state_${environment.state}`]}</C.Badge><span className="text-xs text-muted-foreground">{s.generation}: {environment.generation}</span></div>
     <p className="text-xs leading-relaxed text-muted-foreground">{s.projectTrust}</p>
@@ -201,8 +199,10 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
       <C.Button disabled={busy || environment.state === 'running' || environment.state === 'starting'} onClick={() => mutate.mutate({ kind: 'start' })}>{s.startEnvironment}</C.Button>
       <C.Button disabled={busy || environment.state !== 'running'} onClick={() => setConfirm({ kind: 'stop' })}>{s.stopEnvironment}</C.Button>
       <C.Button disabled={busy || !['running', 'stopped'].includes(environment.state)} onClick={() => setConfirm({ kind: 'snapshot' })}>{s.snapshotEnvironment}</C.Button>
-      <C.Button variant="danger" disabled={busy} onClick={() => setConfirm({ kind: 'delete' })}>{s.deleteProject}</C.Button>
     </div>
+    {/* Deleting the project is not an environment control. It lives in the project's own action menu,
+        beside every other project's removal, so the decision is offered in one place whichever way the
+        project happens to run. The environment is still torn down with it. */}
     <C.Field label={s.snapshots}>
       {completeSnapshots.length ? <div className="flex flex-wrap gap-2"><C.SelectMenu label={s.snapshots} value={snapshotId} onChange={setSnapshotId} options={completeSnapshots.map((item) => ({ value: item.id, label: `${item.createdAt}${item.note ? `: ${item.note}` : ''}` }))} /><C.Button disabled={busy || !completeSnapshots.some((item) => item.id === snapshotId)} onClick={() => setConfirm({ kind: 'restore', snapshotId })}>{s.restoreEnvironment}</C.Button></div> : <p className="text-xs text-muted-foreground">{s.noSnapshots}</p>}
     </C.Field>

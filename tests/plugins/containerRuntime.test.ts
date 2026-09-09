@@ -330,6 +330,80 @@ describe('clean and confined Podman client', () => {
     const guest = executor.run.mock.calls.filter(([, args]) => args[0] === 'exec').map(([, args]) => args.slice(2));
     expect(guest.at(-1)).toEqual(['systemctl', 'unmask', '--runtime', executionUnit(spec, 'd'.repeat(32))]);
   });
+  it('releases a settled execution on one guest round trip instead of the termination tombstone', async () => {
+    // A managed Git read runs five subcommands, and every one of them paid six guest round trips to
+    // mask, stop, re-mask, verify and unmask a transient unit that `--collect` had already retired.
+    // Measured on the live running project-12 container, seven guest execs cost 5.4s of a 7.3s command
+    // while all twenty of its metadata calls together cost 1.9s, so this is the dominant term.
+    const { spec } = fixture();
+    const { client, executor } = fake(spec);
+    const unit = executionUnit(spec, 'e'.repeat(32));
+    const original = executor.run.getMockImplementation()!;
+    executor.run.mockImplementation(async (file: string, args: string[], options: any) => {
+      // A settled launcher's unit is gone: this is what systemd reports for a collected transient unit.
+      if (args[0] === 'exec') return { code: 0, stdout: 'LoadState=not-found\nActiveState=inactive\nSubState=dead\nControlGroup=\n', stderr: '' };
+      return original(file, args, options);
+    });
+    await client.releaseExecution(spec, 'e'.repeat(32), { persistent: true });
+    const guest = executor.run.mock.calls.filter(([, args]) => args[0] === 'exec').map(([, args]) => args.slice(2));
+    expect(guest).toEqual([
+      ['systemctl', 'show', '--property=LoadState,ActiveState,SubState,ControlGroup', unit],
+      ['/usr/bin/rm', '-f', '--', expect.stringContaining('e'.repeat(32))],
+    ]);
+    // Nothing was masked, so nothing has to be unmasked, and ownership was still verified exactly once.
+    expect(executor.run.mock.calls.filter(([, args]) => args[0] === 'inspect' && args.includes('container'))).toHaveLength(1);
+  });
+
+  it('still terminates and unmasks when the unit is anything other than proven absent', async () => {
+    // The saving is proven absence, never an assumption of it: a unit still loaded, and the masked
+    // tombstone an earlier cancellation left behind, both take the full termination path.
+    for (const state of ['LoadState=masked\nActiveState=inactive\nSubState=dead\nControlGroup=\n',
+      'LoadState=loaded\nActiveState=active\nSubState=running\nControlGroup=/system.slice/x\n']) {
+      const { spec } = fixture();
+      const { client, executor } = fake(spec);
+      let shown = 0;
+      const original = executor.run.getMockImplementation()!;
+      executor.run.mockImplementation(async (file: string, args: string[], options: any) => {
+        // Only the first `show` is the release probe; the tombstone's own verification follows it.
+        if (args[0] === 'exec' && args.includes('show') && shown++ === 0) return { code: 0, stdout: state, stderr: '' };
+        return original(file, args, options);
+      });
+      await client.releaseExecution(spec, 'f'.repeat(32));
+      const guest = executor.run.mock.calls.filter(([, args]) => args[0] === 'exec')
+        .map(([, args]) => (args[2] === 'systemctl' ? args[3] : args[2]));
+      expect(guest, `unit reported as ${state.split('\n')[0]}`).toEqual(['show', 'mask', 'stop', 'mask', 'show', '/usr/bin/rm', 'unmask']);
+    }
+  });
+
+  it('does not read a refused or truncated probe as a retired unit', async () => {
+    // A probe that could not answer says nothing about the unit. Treating that silence as absence would
+    // skip the termination on exactly the runs where the guest is least healthy, so it terminates instead.
+    for (const probe of [{ code: 1, stdout: '', stderr: 'container is not running' },
+      { code: 0, stdout: 'LoadState=not-found\nActiveState=inactive\nSubState=dead\nControlGroup=\n', stderr: '', truncated: true }]) {
+      const { spec } = fixture();
+      const { client, executor } = fake(spec);
+      let shown = 0;
+      const original = executor.run.getMockImplementation()!;
+      executor.run.mockImplementation(async (file: string, args: string[], options: any) => {
+        if (args[0] === 'exec' && args.includes('show') && shown++ === 0) return probe;
+        return original(file, args, options);
+      });
+      await client.releaseExecution(spec, 'f'.repeat(32));
+      const guest = executor.run.mock.calls.filter(([, args]) => args[0] === 'exec')
+        .map(([, args]) => (args[2] === 'systemctl' ? args[3] : args[2]));
+      expect(guest, `probe rc=${probe.code} truncated=${probe.truncated ?? false}`).toEqual(['show', 'mask', 'stop', 'mask', 'show', '/usr/bin/rm', 'unmask']);
+    }
+  });
+
+  it('refuses to release a container that is no longer running', async () => {
+    // Release verifies the container it is releasing from. A stopped or replaced one cannot prove that
+    // the execution ended, and that is reported rather than passed off as a completed cleanup.
+    const { spec } = fixture();
+    const { client, row } = fake(spec);
+    row.State.Status = 'stopped';
+    await expect(client.releaseExecution(spec, 'f'.repeat(32))).rejects.toThrow(/termination cannot be verified/i);
+  });
+
   it('bounds command input before launching and retains truncation metadata', async () => {
     const { spec } = fixture();
     const { client, executor } = fake(spec);

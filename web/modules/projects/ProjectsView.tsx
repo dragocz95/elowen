@@ -1,13 +1,14 @@
 'use client';
-import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { apiErrorMessage, elowenClient } from '../../lib/elowenClient';
+import { ElowenApiError, apiErrorMessage, elowenClient } from '../../lib/elowenClient';
 import { SelectMenu } from '../../components/ui/SelectMenu';
 import { managedProjectStrings } from './managedProjectStrings';
 import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, MoreHorizontal, Code2, Copy, Pencil, Trash2, ImageIcon, Search, FileText } from 'lucide-react';
 import { useProjects, useProjectSummaries, useProjectGit, usePluginPresent, useMe } from '../../lib/queries';
 import { useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
 import type { Project } from '../../lib/types';
+import { MANAGED_PROJECT_ROOT } from '../../lib/types';
 import { useToast } from '../../components/ui/Toast';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -102,10 +103,11 @@ export function ProjectsView() {
   };
   const openEditor = (commit: string | null) => openProjectEditor(selectedId, commit);
   const openWorking = () => openProjectEditor(selectedId, null, true);
-  const [managedGitProjectId, setManagedGitProjectId] = useState<number | null>(null);
-  useEffect(() => { setManagedGitProjectId(null); }, [selectedId]);
-  const managedGitDeferred = projects.data?.find((p) => p.id === selectedId)?.executionKind === 'managed' && managedGitProjectId !== selectedId;
-  const git = useProjectGit(managedGitDeferred ? null : selectedId);
+  // Opening a project reads its repository, whichever way that project runs. A managed one used to hide
+  // this behind an "Inspect repository" button because the read could provision a cold environment and
+  // block on it; the daemon now answers a non-running environment from its own records instead, so there
+  // is nothing left for a person to authorise by clicking.
+  const git = useProjectGit(selectedId);
 
   const { toast } = useToast();
   const { t, locale } = useTranslation();
@@ -155,8 +157,15 @@ export function ProjectsView() {
       ...(editorEnabled ? [{ label: t.projects.ctxOpenEditor, icon: Code2, onSelect: () => openProjectEditor(p.id, null) }] : []),
       ...(canManage(p) ? [{ label: t.projects.ctxEditProject, icon: Pencil, onSelect: () => { setSelectedId(p.id); openEdit(p); } }] : []),
     ],
-    ...(p.executionKind === 'managed' ? [] : [[{ label: t.projects.ctxCopyPath, icon: Copy, onSelect: () => { void copyText(p.path).then((ok) => { if (ok) toast(t.projects.ctxPathCopied); else toast(t.projects.copyFailed, 'error'); }); } }]]),
-    ...(canManage(p) && p.executionKind !== 'managed' ? [[{ label: t.projects.ctxRemove, icon: Trash2, tone: 'danger' as const, onSelect: () => setRemoving(p) }]] : []),
+    // A managed project has no host path, but it does have a path: the guest root its own terminal,
+    // editor and executions all work from. Copying that is the same useful action, so the menu offers it
+    // rather than going a member short of what a host project gets.
+    [{ label: t.projects.ctxCopyPath, icon: Copy, onSelect: () => { void copyText(p.executionKind === 'managed' ? MANAGED_PROJECT_ROOT : p.path).then((ok) => { if (ok) toast(t.projects.ctxPathCopied); else toast(t.projects.copyFailed, 'error'); }); } }],
+    // Removal lives here for EVERY project. A managed one used to be deleted from a button of its own
+    // inside the environment panel, so the same decision sat in two unrelated places depending on where
+    // the project happened to run. The confirmation below still tells a managed project the truth about
+    // its environment, and the request still travels the same durable teardown the panel used.
+    ...(canManage(p) ? [[{ label: t.projects.ctxRemove, icon: Trash2, tone: 'danger' as const, onSelect: () => setRemoving(p) }]] : []),
   ];
   const projectActions = (p: Project): ActionMenuItem[] => projectActionGroups(p).flat();
   // Project whose icon is being chosen (drives the icon-picker modal, stacked over the edit modal).
@@ -172,8 +181,9 @@ export function ProjectsView() {
           setPath('');
           setNotes('');
           toast(t.projects.created);
-          // The picker reads through the optional editor's project-file routes.
-          if (editorEnabled && created.executionKind !== 'managed') setIconFor(created);
+          // The picker reads through the optional editor's project-file routes, which serve a managed
+          // project from its own guest filesystem, so the offer does not depend on where it runs.
+          if (editorEnabled) setIconFor(created);
         },
         onError: (e) => toast(apiErrorMessage(e), 'error'),
       }
@@ -367,9 +377,16 @@ export function ProjectsView() {
                     </div>
 
                     <ProjectDetailTabs project={selectedProject} isAdmin={isAdmin} overview={<>
-                      {managedGitDeferred ? <div className="py-3"><Button onClick={() => setManagedGitProjectId(selectedProject.id)}>{s.inspectGit}</Button></div> : null}
                       {selectedProject.notes ? <p className="border-b border-border/70 py-4 text-xs leading-relaxed text-muted-foreground">{selectedProject.notes}</p> : null}
                       {git.isLoading ? <LoadingLine /> : null}
+                      {/* A repository read that could not happen is said out loud. A stopped environment
+                          is the ordinary case and is not an error: nothing here starts one. */}
+                      {git.isError ? (
+                        <p role="alert" className="flex flex-wrap items-center gap-2 py-4 text-xs text-muted-foreground">
+                          {git.error instanceof ElowenApiError && git.error.status === 409 ? s.gitEnvironmentStopped : apiErrorMessage(git.error)}
+                          <Button variant="ghost" onClick={() => { void git.refetch(); }}>{t.common.retry}</Button>
+                        </p>
+                      ) : null}
                       {git.data && !git.data.isRepo ? <div className="py-4"><Badge tone="muted">{t.projects.notGit}</Badge></div> : null}
                       {git.data?.status ? (
                         <section className="border-b border-border/70 py-4">
@@ -471,7 +488,10 @@ export function ProjectsView() {
                     <span className="flex h-10 w-10 items-center justify-center overflow-hidden rounded-lg border border-border bg-muted">
                       <ProjectIcon project={live} size={live.icon ? 36 : 22} className="text-muted-foreground" />
                     </span>
-                    {editorEnabled && live.executionKind !== 'managed' ? <Button icon={ImageIcon} onClick={() => setIconFor(live)}>{t.projects.chooseIcon}</Button> : null}
+                    {/* A managed project picks its icon from its own workspace: the editor's file and raw
+                        routes read a managed project through the guest filesystem, and the daemon
+                        validates the chosen path inside that same environment before it persists. */}
+                    {editorEnabled ? <Button icon={ImageIcon} onClick={() => setIconFor(live)}>{t.projects.chooseIcon}</Button> : null}
                     {live.icon ? <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground" title={live.icon}>{live.icon}</span> : null}
                   </div>
                 );
@@ -491,7 +511,7 @@ export function ProjectsView() {
 
           </ModalBody>
           <ModalFooter>
-            {editProject.executionKind !== 'managed' ? <Button variant="danger" icon={Trash2} onClick={() => setRemoving(editProject)}>{t.projects.removeProject}</Button> : null}
+            <Button variant="danger" icon={Trash2} onClick={() => setRemoving(editProject)}>{t.projects.removeProject}</Button>
             <div className="flex-1" />
             <Button variant="ghost" onClick={() => setEditProject(null)}>{t.common.cancel}</Button>
             <Button variant="accent" onClick={handleUpdate} disabled={updateProject.isPending || !canManage(editProject) || (editProject.executionKind !== 'managed' && !editPath.trim())}>{t.common.save}</Button>
