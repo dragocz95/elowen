@@ -110,7 +110,14 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     else if (!stores().usersRead.list().some((user) => user.id === userId) || !stores().usersRead.mayUsePlugin(userId, 'sandbox')) throw error('account_forbidden', 'Account access is unavailable', 403);
     if (kind === 'project') {
       const scope = ctx.currentAccess();
-      if (!internal && ctx.currentAccountUserId() != null && (scope.workspaceRef || (scope.projectRef && scope.projectRef.projectId !== Number(id)) || (!scope.admin && scope.projectIds && !scope.projectIds.includes(Number(id))))) throw error('project_scope', 'Project is outside the current turn scope', 403);
+      // The narrowing below is a TURN's: a selected Project, an exact workspace, the policy's project list.
+      // An authenticated API request has none of those — it is an identity, so `projectIds` is empty and
+      // `admin` false even for an administrator, and reading them as a turn scope refused every member and
+      // every admin on their own Project. `apiRequest` is the host's positive marker for that scope and is
+      // the only thing that skips the narrowing; absence still denies, so no policy is never a way in. What
+      // authorizes the request is what authorized it before it reached here (`auth.accessibleProjects` on
+      // the API surface) plus the freshly resolved membership below, which revocation still refuses.
+      if (!internal && !scope.apiRequest && ctx.currentAccountUserId() != null && (scope.workspaceRef || (scope.projectRef && scope.projectRef.projectId !== Number(id)) || (!scope.admin && scope.projectIds && !scope.projectIds.includes(Number(id))))) throw error('project_scope', 'Project is outside the current turn scope', 403);
       const project = stores().projects.get(Number(id));
       if (!project || project.executionKind !== 'managed' || !(manage ? stores().userProjects.canManage(userId, project.id) : stores().userProjects.canAccess(userId, project.id))) throw error('project_forbidden', 'Project access is denied', 403);
       return project;
