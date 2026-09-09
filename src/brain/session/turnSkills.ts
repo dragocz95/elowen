@@ -37,6 +37,24 @@ export function skillLoadVisible(
   return composed('SkillLoad') && toolPermitted('SkillLoad', toolPolicy);
 }
 
+/** The skills ToolSearch may REPORT for one turn: entries from the LIVE `skillCatalog` host control,
+ *  reduced to what the model could actually act on. Same one-capability rule as the prompt catalog —
+ *  a turn that may not load skills gets no suggestions — and manual-only entries stay hidden, exactly
+ *  as formatSkillsForPrompt drops them from the announcement. Resolved per call so a plugin reload's
+ *  fresh catalog and the turn's live policy are both honored; never a captured registry generation. */
+export async function searchableSkills(
+  plugins: PluginRegistry | undefined,
+  composed: (name: string) => boolean,
+  toolPolicy?: ToolPolicy,
+): Promise<{ name: string; description: string }[]> {
+  const control = plugins?.control('skillCatalog');
+  if (!plugins || !control) return [];
+  if (!skillLoadVisible(plugins.toolOwner, composed, toolPolicy)) return [];
+  return control.visibleSkills()
+    .filter((skill) => !skill.disableModelInvocation)
+    .map((skill) => ({ name: skill.name, description: skill.description }));
+}
+
 /** The plugin system-prompt fragments a session carries. The skills plugin's `<skill_loading>` block is an
  * instruction — load every advertised skill through SkillLoad — so a session whose policy hides that tool is
  * left with a standing order it can only fail, and nothing in the prompt says why. Dropped only where ONE

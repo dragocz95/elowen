@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expandTurnSkillCommand, turnSkillsBlock } from '../../src/brain/session/turnSkills.js';
+import { expandTurnSkillCommand, searchableSkills, turnSkillsBlock } from '../../src/brain/session/turnSkills.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import type { PluginSkill } from '../../src/plugins/api.js';
 
@@ -88,5 +88,56 @@ describe('turnSkillsBlock', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+// The skills ToolSearch may REPORT for a turn. Same capability gate as the prompt catalog — without
+// SkillLoad the model could not act on a match — and manual-only skills stay hidden, exactly as
+// formatSkillsForPrompt drops them from the announcement.
+describe('searchableSkills', () => {
+  const manualSkill = { ...fakeSkill('runbook'), disableModelInvocation: true } as PluginSkill;
+
+  const registryWith = (skills: PluginSkill[], skillLoadComposed: boolean) => {
+    const registry = new PluginRegistry();
+    if (skillLoadComposed) {
+      registry.contextFor('skills', {}, noopLog).registerTool(fakeTool('SkillLoad'));
+      registry.setUserGrantable('skills', true);
+    }
+    registry.contextFor('raynet', {}, noopLog).registerSkill(...skills);
+    registry.setUserGrantable('raynet', true);
+    // The host control the daemon registers in brainCore, pointed at the live catalog.
+    registry.registerHostControl('skillCatalog', {
+      visibleSkills: () => registry.skillsFor(7, { is_admin: false, granted_plugins: ['skills', 'raynet'] }),
+      canonicalBaseDir: () => null,
+    });
+    return registry;
+  };
+
+  const composed = (name: string) => name === 'SkillLoad';
+
+  it('returns model-invocable skills only when SkillLoad is composed and permitted', async () => {
+    const registry = registryWith([fakeSkill('raynet-crm')], true);
+    expect(await searchableSkills(registry, composed)).toEqual([
+      { name: 'raynet-crm', description: 'Use raynet-crm.' },
+    ]);
+    expect(await searchableSkills(registry, composed, { allow: new Set(['SkillLoad']) })).toHaveLength(1);
+    // The one capability gate: a turn that may not load skills gets no suggestions either.
+    expect(await searchableSkills(registry, composed, { deny: new Set(['SkillLoad']) })).toEqual([]);
+  });
+
+  it('is empty without the skillCatalog control or a composed SkillLoad', async () => {
+    const bare = new PluginRegistry();
+    bare.contextFor('raynet', {}, noopLog).registerSkill(fakeSkill('raynet-crm'));
+    expect(await searchableSkills(bare, composed)).toEqual([]);
+
+    const uncomposed = registryWith([fakeSkill('raynet-crm')], false);
+    expect(await searchableSkills(uncomposed, composed)).toEqual([]);
+  });
+
+  it('drops manual-only (disable-model-invocation) skills from the suggestions', async () => {
+    const registry = registryWith([fakeSkill('raynet-crm'), manualSkill], true);
+    expect(await searchableSkills(registry, composed)).toEqual([
+      { name: 'raynet-crm', description: 'Use raynet-crm.' },
+    ]);
   });
 });

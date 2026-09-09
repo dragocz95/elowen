@@ -23,8 +23,9 @@ export interface EmbeddingConfig {
  *  configured provider OR an explicit local baseUrl — `credentials()` supports either). Shared by the
  *  embed queue (whether to embed) and MemoryService (whether to take the vector path) so the two can
  *  never disagree — a divergence silently strands one side (e.g. queue no-ops while retrieval expects
- *  vectors → empty results with no keyword fallback). */
-export function isEmbeddingConfigured(cfg: EmbeddingConfig | null | undefined): boolean {
+ *  vectors → empty results with no keyword fallback). A type predicate, so a caller that guards on it
+ *  keeps a usable `EmbeddingConfig` afterwards. */
+export function isEmbeddingConfigured(cfg: EmbeddingConfig | null | undefined): cfg is EmbeddingConfig {
   return !!cfg && cfg.model.trim() !== '' && (!!cfg.providerId || !!cfg.baseUrl);
 }
 
