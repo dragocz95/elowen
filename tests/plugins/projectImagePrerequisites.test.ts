@@ -30,6 +30,9 @@ describe('project base image prerequisites', () => {
     // Grep resolves ripgrep through the guest PATH, so an image without it fails the tool on every
     // managed project — which is how this was found: from the real tool, not from a stand-in provider.
     expect(packages).toContain('ripgrep');
+    // The editor's office preview converts docx/xlsx/pptx with `soffice` inside the guest; without the
+    // three distro components the managed preview can only answer 501.
+    for (const component of ['libreoffice-writer', 'libreoffice-calc', 'libreoffice-impress']) expect(packages).toContain(component);
     // No arbitrary install scripts, no tarballs, no host paths for either toolchain.
     expect(PROJECT_CONTAINERFILE).not.toMatch(/nodesource|setup_\d+\.x|nodejs\.org|\bcurl\s+[^\\]*\|\s*(ba)?sh|\/var\/www|workspace\/\.\./i);
   });

@@ -10,6 +10,7 @@ RUN apt-get update \\
       systemd systemd-sysv dbus ca-certificates curl iproute2 procps less \\
       git openssh-client python3 bash tar util-linux ripgrep \\
       chromium fonts-liberation \\
+      libreoffice-writer libreoffice-calc libreoffice-impress \\
  && apt-get clean \\
  && rm -rf /var/lib/apt/lists/* \\
  && mkdir -p /workspace /data /run/elowen \\
