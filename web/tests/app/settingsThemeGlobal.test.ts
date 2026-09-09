@@ -107,7 +107,9 @@ describe('settings row layout contract', () => {
   it('gives the trailing side one shared band: status, control, actions in fixed columns', () => {
     const stack = block(core, '.settings-group__body:has(> .settings-row),\n.settings-group__column {');
     expect(stack).toMatch(/grid-template-columns:\s*minmax\(10rem,\s*1fr\)\s+minmax\(0,\s*auto\)\s+minmax\(0,\s*1\.05fr\)\s+auto/);
-    expect(studio).toMatch(/minmax\(0,\s*1fr\)\s+minmax\(0,\s*auto\)\s+minmax\(0,\s*20rem\)\s+auto/);
+    // Studio's control ceiling is capped against the card as well as in rem — a bare length is no ceiling
+    // on a surface narrower than the length. See tests/styles/settingsControlTrack.test.ts for why.
+    expect(studio).toMatch(/minmax\(0,\s*1fr\)\s+minmax\(0,\s*auto\)\s+minmax\(0,\s*min\(20rem,\s*50%\)\)\s+auto/);
 
     // The cell spans every trailing track it is given, so a skin may retune them without touching the DOM.
     expect(block(core, '\n.settings-row__trailing {')).toMatch(/grid-column:\s*2\s*\/\s*-1/);

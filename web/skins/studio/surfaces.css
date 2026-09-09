@@ -586,13 +586,22 @@
    `minmax(0, 20rem)` is a ceiling and not a fixed width: a record whose control is a single switch keeps
    its track narrow and gives the room back to the text, while everything wider than 20rem is held at
    20rem so the column edge stays put. A record with no control at all resolves the track to 0.
+   The ceiling is capped against the CARD as well as in rem, because a bare length is not a ceiling on a
+   card narrower than the length itself. A control that asks for its whole track — a slider is
+   `width: 100%` — makes the track take its 20rem maximum, and a non-flexible maximum is satisfied before
+   the label's `1fr` sees any space at all. Measured in the user drawer at a 390px viewport: the card is
+   348px, the control column resolved to the full 320px and the label column to 12px, which stood a
+   two-word Czech label seven lines tall beside a switch 36px wide. The percentage resolves against the
+   card, so the room a control may claim now scales with the surface it is on and the label keeps its
+   half; on any card at least 40rem wide the 20rem ceiling is still what applies, so the wide layout this
+   rule was written for does not move.
    The status track before it belongs to STACKED records only (see the base stylesheet): an inline
    record's status reads on its label's line, so a card without a stacked record resolves that track to
    0. The column gap on either side of the collapsed track stays — a grid gap does not collapse with an
    empty track — which simply widens the space between label and control by one gap on such a card. */
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__body:has(> .settings-row),
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .settings-group__column {
-  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, 20rem) auto;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(0, min(20rem, 50%)) auto;
 }
 /* Studio's own answer to the base stylesheet's segmented rule: 20rem is a ceiling for controls that can
    be told to fit, and a three-option segmented cannot. The card raises the track's floor to what the set
