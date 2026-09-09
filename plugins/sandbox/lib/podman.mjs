@@ -124,11 +124,14 @@ function legacyLabelsMatch(labels, siteId) {
   return labels?.['io.elowen.site'] === siteId
     && Object.keys(labels).every((key) => !key.startsWith('io.elowen.') || key === 'io.elowen.site');
 }
-function oneJson(result) {
+function manyJson(result, count) {
   if (result.truncated) throw new Error('Podman inspection output exceeded its bound');
   const rows = JSON.parse(result.stdout);
-  if (!Array.isArray(rows) || rows.length !== 1 || !rows[0] || typeof rows[0] !== 'object') throw new Error('Invalid Podman inspection response');
-  return rows[0];
+  if (!Array.isArray(rows) || rows.length !== count || rows.some((row) => !row || typeof row !== 'object')) throw new Error('Invalid Podman inspection response');
+  return rows;
+}
+function oneJson(result) {
+  return manyJson(result, 1)[0];
 }
 /** `systemctl show --property=…` output as a plain record; an absent property reads as undefined. */
 function unitProperties(stdout) {
@@ -271,7 +274,7 @@ export class PodmanClient {
   async #owned(spec) {
     const container = await this.inspect(spec);
     if (!container) throw new Error('Container is missing');
-    for (const volume of spec.volumes) await this.inspectVolume(spec, volume.component);
+    await this.#inspectVolumes(spec, spec.volumes.map((volume) => volume.component));
     if (spec.legacy) {
       for (const mount of spec.mounts.filter((entry) => entry.type === 'bind')) checkedHostPath(mount.source, { file: mount.target === '/workspace/.git' });
     }
@@ -321,16 +324,39 @@ export class PodmanClient {
     await this.#run(['unpause', row.id]);
   }
 
-  async inspectVolume(spec, component) {
+  /** Verify one already-fetched volume row against what the spec says that component must be. Split out
+   *  so the single and batched inspections below hold every volume to exactly the same bar. */
+  #verifyVolume(spec, component, row) {
     const volume = this.#volumeFor(spec, component);
-    if (!await this.#exists('volume', volume.name)) throw new Error('Owned volume is missing');
-    const row = oneJson(await this.#run(['volume', 'inspect', volume.name]));
     const storageMatches = spec.legacy
       ? row.Mountpoint === volume.path && row.Options != null && Object.keys(row.Options).length === 0 && legacyLabelsMatch(row.Labels, spec.resource.id)
       : row.Options?.type === 'none' && row.Options?.o === 'bind' && row.Options?.device === volume.path;
     if (row.Name !== volume.name || !labelsMatch(row.Labels, volumeLabels(spec, component)) || row.Driver !== 'local' || !storageMatches) throw new Error('Volume ownership or storage specification mismatch');
     if (spec.legacy) checkedHostPath(volume.path);
     return volume;
+  }
+
+  /** Every named volume in ONE `volume inspect`. Podman accepts several names and answers with one array,
+   *  so a three-volume project costs one subprocess where a loop of existence-check-then-inspect cost six.
+   *  Nothing is verified less: each row still goes through the same ownership check, and the identifying
+   *  Name comparison is what rejects a reordered or short answer. The slow per-volume existence probe is
+   *  kept for the FAILURE path only, where it buys the precise "which one is missing" message. */
+  async #inspectVolumes(spec, components) {
+    if (components.length === 0) return [];
+    const names = components.map((component) => this.#volumeFor(spec, component).name);
+    const result = await this.#run(['volume', 'inspect', ...names], { allowFailure: true });
+    if (result.code !== 0) {
+      for (const component of components) {
+        if (!await this.#exists('volume', this.#volumeFor(spec, component).name)) throw new Error('Owned volume is missing');
+      }
+      throw new Error(`Podman volume inspection failed (${result.code}): ${result.stderr.trim()}`);
+    }
+    const rows = manyJson(result, names.length);
+    return components.map((component, index) => this.#verifyVolume(spec, component, rows[index]));
+  }
+
+  async inspectVolume(spec, component) {
+    return (await this.#inspectVolumes(spec, [component]))[0];
   }
 
   async ensureVolume(spec, component) {
@@ -593,12 +619,36 @@ export class PodmanClient {
     return row.Id;
   }
 
+  /** The row an in-call cleanup may reuse instead of inspecting the container a second time.
+   *
+   *  PRIVATE, and it must stay private: a row is data, so a caller able to hand one in could name any
+   *  container id and have the cleanup address it without a single inspection. That is why neither public
+   *  entry point below accepts one, and why the only producer of `trusted` is `#prepareGuest`, one step
+   *  earlier in the same call.
+   *
+   *  Even then the row is not taken on its word. It is accepted only when it matches the IMMUTABLE
+   *  container identity already pinned into the specification, which is host-derived and frozen, so a row
+   *  naming anything else buys nothing — and any spec without a pinned identity falls back to the full
+   *  ownership check rather than to trust. Reuse is then safe because that identity is content-addressed
+   *  and the durable execution lease fences lifecycle changes for the length of the execution. */
+  async #reusableRow(spec, trusted) {
+    this.#assertScope(spec);
+    const pinned = spec.expectedId;
+    if (!trusted || typeof trusted.state !== 'string' || typeof trusted.id !== 'string'
+      || !/^[a-f0-9]{64}$/.test(pinned ?? '') || trusted.id !== pinned) {
+      return await this.#owned(spec);
+    }
+    return trusted;
+  }
+
+  /** Public cancellation. ALWAYS performs its own full ownership verification; there is deliberately no
+   *  option by which a caller can supply a container row or skip the inspection. */
   async cancelExecution(spec, executionId, { persistent = false } = {}) {
-    return await this.#tombstone(spec, executionId, await this.#owned(spec), persistent);
+    return await this.#tombstone(spec, executionId, await this.#owned(spec), persistent, true);
   }
 
   /** The termination tombstone, against a container row this call stack has already verified. */
-  async #tombstone(spec, executionId, row, persistent) {
+  async #tombstone(spec, executionId, row, persistent, completionCapture = true) {
     const unit = executionUnit(spec, executionId);
     if (row.state !== 'running') throw new Error('Guest termination cannot be verified in this container state');
     // The runtime mask is a tombstone: it blocks StartTransientUnit arriving after cancellation.
@@ -616,7 +666,10 @@ export class PodmanClient {
     }
     // The completion artifact is derived from the execution ID, so removal can never touch another
     // execution's state. Best effort only: a leftover is benign tmpfs state scoped to this container.
-    await this.#run(['exec', row.id, '/usr/bin/rm', '-f', '--', completionArtifact(executionId)], { allowFailure: true, timeoutMs: 30000 });
+    // An execution that never ARMED capture cannot have created one, and only `prepareExecution` arms it,
+    // so removing it for a file or Git helper was a guest round trip spent deleting a file that has never
+    // existed. `completionCapture` stays true by default: only a caller that knows capture was off says so.
+    if (completionCapture) await this.#run(['exec', row.id, '/usr/bin/rm', '-f', '--', completionArtifact(executionId)], { allowFailure: true, timeoutMs: 30000 });
     // `container` is the ownership-verified row this cancellation ran against. Returning it lets an
     // immediately following step in the SAME call reuse the verification instead of repeating it; it is
     // not a cache, and nothing outside one call stack may hold it.
@@ -626,11 +679,12 @@ export class PodmanClient {
   /** Only after the owning launcher has settled and the durable lease forbids redispatch. Timed-out
    * launchers keep their tombstone until daemon recovery establishes that fact or retires the runtime. */
   async releaseExecution(spec, executionId, { persistent = false } = {}) {
-    // The cancellation below verifies ownership and running state, and the only guest work between it
-    // and the unmask is this method's own. Re-inspecting the container and every volume a second time
-    // here cost five extra Podman invocations per guest operation and could not observe anything the
-    // cancellation had not just established.
-    const row = await this.#owned(spec);
+    return await this.#release(spec, executionId, await this.#owned(spec), persistent, true);
+  }
+
+  /** The release body, against a row THIS call stack established. Private for the same reason as
+   *  `#reusableRow`: the row decides which container every command below is sent to. */
+  async #release(spec, executionId, row, persistent, completionCapture) {
     const unit = executionUnit(spec, executionId);
     if (row.state === 'running') {
       // A launcher that settled normally leaves nothing to terminate: `--collect` retires the transient
@@ -644,12 +698,12 @@ export class PodmanClient {
       const fields = unitProperties(shown.stdout);
       if (!shown.truncated && shown.code === 0 && fields.LoadState === 'not-found'
         && fields.ActiveState === 'inactive' && fields.SubState === 'dead' && fields.ControlGroup === '') {
-        await this.#run(['exec', row.id, '/usr/bin/rm', '-f', '--', completionArtifact(executionId)], { allowFailure: true, timeoutMs: 30000 });
+        if (completionCapture) await this.#run(['exec', row.id, '/usr/bin/rm', '-f', '--', completionArtifact(executionId)], { allowFailure: true, timeoutMs: 30000 });
         return;
       }
     }
-    const { container } = await this.#tombstone(spec, executionId, row, persistent);
-    await this.#run(['exec', container.id, 'systemctl', 'unmask', ...(persistent ? [] : ['--runtime']), unit]);
+    const settled = await this.#tombstone(spec, executionId, row, persistent, completionCapture);
+    await this.#run(['exec', settled.container.id, 'systemctl', 'unmask', ...(persistent ? [] : ['--runtime']), unit]);
   }
 
   /** Persist the host-generated executionId in the existing lease BEFORE calling. A timeout or aborted
@@ -670,7 +724,11 @@ export class PodmanClient {
     // of that budget, so a 512-PID environment let an execution reach only ~76 tasks: headless Chromium
     // peaks near 155 threads and died on pthread_create while the container was 84% idle. The bound is
     // not weakened, it is moved back to the one place that states it.
-    return { timeoutMs, args: ['exec', '--interactive', row.id, 'systemd-run', '--quiet', '--pipe', '--wait', '--collect', `--unit=${unit}`,
+    // `container` is the ownership verification for this fenced execution. The cleanup that follows in the
+    // same call reuses it instead of repeating the full container-and-volume inspection, which is the one
+    // trusted inspection per execution; see `#reusableRow`, which admits it only when it matches the
+    // identity pinned into the specification.
+    return { timeoutMs, container: row, args: ['exec', '--interactive', row.id, 'systemd-run', '--quiet', '--pipe', '--wait', '--collect', `--unit=${unit}`,
       '--service-type=exec', '--property=KillMode=control-group', '--property=TimeoutStopSec=5s', '--property=TasksMax=infinity',
       `--property=RuntimeMaxSec=${Math.ceil(timeoutMs / 1000)}s`, `--working-directory=${workdir}`, '--', ...argv] };
   }
@@ -736,7 +794,13 @@ export class PodmanClient {
     return { cwd: parseCompletionCwd(read.stdout, { truncated: read.truncated }) };
   }
 
+  /** Runs a guest command to completion and settles it. On EVERY exit from here the guest execution has
+   *  been dealt with — released after a normal launch, terminated after a failed one, and never dispatched
+   *  at all when preparation threw — EXCEPT when the cleanup itself failed. That one case is tagged
+   *  `guestSettled = false` on the thrown error, because it is the only one where a caller must not retire
+   *  the durable lease that still fences the guest. */
   async exec(spec, executionId, argv, options = {}) {
+    const persistent = options.persistent === true;
     const prepared = await this.#prepareGuest(spec, executionId, argv, options);
     let result;
     let failure;
@@ -744,9 +808,17 @@ export class PodmanClient {
       result = await this.#run(prepared.args, { input: options.input, timeoutMs: prepared.timeoutMs, signal: options.signal, allowFailure: true });
     } catch (error) { failure = error; }
     try {
-      if (failure) await this.cancelExecution(spec, executionId, { persistent: options.persistent === true });
-      else await this.releaseExecution(spec, executionId, { persistent: options.persistent === true });
-    } catch (error) { throw new AggregateError([...(failure ? [failure] : []), error], `Guest command cleanup failed: ${error.message}`); }
+      // The cleanup runs through the PRIVATE entry points, which is the only place a row verified one step
+      // earlier in this same call may stand in for a second inspection — and only after `#reusableRow` has
+      // matched it against the specification's pinned immutable identity. The final `false` says capture
+      // was never armed: only `prepareExecution` arms it, so nothing this path launches can have written
+      // the artifact whose removal would otherwise cost a guest round trip.
+      const row = await this.#reusableRow(spec, prepared.container);
+      if (failure) await this.#tombstone(spec, executionId, row, persistent, false);
+      else await this.#release(spec, executionId, row, persistent, false);
+    } catch (error) {
+      throw Object.assign(new AggregateError([...(failure ? [failure] : []), error], `Guest command cleanup failed: ${error.message}`), { guestSettled: false });
+    }
     if (failure) throw failure;
     return result;
   }

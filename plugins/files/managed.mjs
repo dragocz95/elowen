@@ -39,15 +39,39 @@ export function managedFiles(ctx, signal) {
     }
     return { ...result, bytes };
   };
-  // `initialVersion` pins the first chunk to a stat the caller already took (the read wrapper's),
-  // so a mutation between that stat and the transport cannot slip past; without it, chunk-to-chunk
-  // consistency and the final stat below still bound the whole iteration.
-  async function* chunks(path, initialVersion) {
+  /** The FIRST read of a file, which is also its existence check, its type check, its classification probe
+   *  and — for anything that fits in one transport chunk — its entire content.
+   *
+   *  Every one of those used to be a separate `projectFiles` call, and each of those is a container round
+   *  trip costing hundreds of milliseconds, so a 67-byte file was paying four of them to answer a question
+   *  one could answer. It is not a shortcut past a check: the guest read operation takes the content
+   *  version, reads, and re-verifies that version inside a single guest process, which is a stronger
+   *  guarantee than a host stat taken on either side of the transport. A missing path and a directory are
+   *  reported by that same operation, so they are translated here rather than pre-empted by a stat. */
+  const open = async (path) => {
+    try {
+      const first = await chunk(path, 0, CHUNK_BYTES);
+      return { bytes: first.bytes, totalBytes: first.totalBytes, version: first.version, complete: first.bytes.length >= first.totalBytes };
+    } catch (error) {
+      if (error?.code === 'not_found') throw new Error(`File does not exist: ${path}`);
+      if (error?.code === 'not_regular_file') throw new Error('path is not a regular file');
+      throw error;
+    }
+  };
+  // `initialVersion` pins the first chunk to a version the caller already established (the read wrapper's
+  // opening chunk), so a mutation between that read and the rest of the transport cannot slip past;
+  // without it, chunk-to-chunk consistency and the final stat below still bound the whole iteration.
+  // `opened` hands back the chunk the caller already paid for instead of fetching offset 0 twice.
+  async function* chunks(path, initialVersion, opened = null) {
     let offset = 0;
     let version;
     let total;
+    let pending = opened;
+    let transfers = 0;
     do {
-      const result = await chunk(path, offset, CHUNK_BYTES);
+      const result = pending ?? await chunk(path, offset, CHUNK_BYTES);
+      pending = null;
+      transfers += 1;
       if (version !== undefined && (version !== result.version || total !== result.totalBytes)) {
         throw new Error('file changed while it was being read; retry the Read');
       }
@@ -60,22 +84,26 @@ export function managedFiles(ctx, signal) {
       offset += result.bytes.length;
       yield result.bytes;
     } while (offset < total);
-    const final = await stat(path);
-    if (!final || final.version !== version) throw new Error('file changed while it was being read; retry the Read');
+    // Only a file that took SEVERAL transfers needs the closing stat, because only then is there a gap
+    // between reads for a writer to land in. One transfer was already version-checked around itself
+    // inside the guest, and a second host round trip cannot make that stronger.
+    if (transfers > 1) {
+      const final = await stat(path);
+      if (!final || final.version !== version) throw new Error('file changed while it was being read; retry the Read');
+    }
   }
-  const read = async (path, maxBytes) => {
-    const before = await stat(path);
-    if (!before) throw new Error(`File does not exist: ${path}`);
-    if (before.kind !== 'file') throw new Error('path is not a regular file');
-    if (before.size > maxBytes) throw new Error(`File exceeds the ${maxBytes} byte read limit`);
+  const read = async (path, maxBytes, opened = null) => {
+    const first = opened ?? await open(path);
+    if (first.totalBytes > maxBytes) throw new Error(`File exceeds the ${maxBytes} byte read limit`);
+    if (first.complete) return { bytes: first.bytes.subarray(0, first.totalBytes), version: first.version };
     const parts = [];
     let length = 0;
-    for await (const bytes of chunks(path, before.version)) {
+    for await (const bytes of chunks(path, first.version, first)) {
       length += bytes.length;
       if (length > maxBytes) throw new Error(`File exceeds the ${maxBytes} byte read limit`);
       parts.push(bytes);
     }
-    return { bytes: Buffer.concat(parts), version: before.version };
+    return { bytes: Buffer.concat(parts), version: first.version };
   };
   const write = async (path, bytes, expectedVersion) => {
     const missing = [];
@@ -141,8 +169,12 @@ export function managedFiles(ctx, signal) {
       catch (cleanup) { throw new AggregateError([...(failure ? [failure] : []), cleanup], 'Guest command cleanup failed'); }
     }
   };
+  // The listing already carries each entry's modification time, so `mtimes` hands it to the caller
+  // instead of making it stat every match back over the container boundary — which is what turned a Glob
+  // over a handful of files into one guest round trip per match.
   const walk = async (root, limit, skip) => {
     const files = [];
+    const mtimes = new Map();
     let truncated = false;
     let visited = 0;
     const visit = async (path) => {
@@ -151,12 +183,15 @@ export function managedFiles(ctx, signal) {
       truncated ||= listing.truncated;
       for (const entry of listing.entries) {
         if (++visited > limit) { truncated = true; break; }
-        if (entry.kind === 'file') files.push(entry.path);
+        if (entry.kind === 'file') { files.push(entry.path); mtimes.set(entry.path, Date.parse(entry.modifiedAt ?? '') || 0); }
         else if (entry.kind === 'directory' && !skip.has(posix.basename(entry.path))) await visit(entry.path);
       }
     };
     await visit(root);
-    return { files, truncated };
+    return { files, mtimes, truncated };
   };
-  return { project, resolve, stat, chunk, chunks, read, write, list, exec, walk };
+  // Resolving the control does no I/O, so a caller that must tell "this managed project has no filesystem
+  // behind it" apart from "the filesystem failed to answer" can establish the first before it starts.
+  const assertProvider = () => { provider(); };
+  return { project, resolve, assertProvider, stat, chunk, chunks, open, read, write, list, exec, walk };
 }

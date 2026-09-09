@@ -37,7 +37,15 @@ function fake(spec: any) {
     if (args[0] === 'rm') { for (const [name, id] of containers) if (id === args[1]) containers.delete(name); return { code: 0, stdout: '', stderr: '' }; }
     if (args[0] === 'inspect') return { code: 0, stdout: JSON.stringify([row]), stderr: '' };
     if (args[0] === 'volume' && args[1] === 'exists') return { code: volumes.has(args[2]!) ? 0 : 1, stdout: '', stderr: '' };
-    if (args[0] === 'volume' && args[1] === 'inspect') return { code: 0, stdout: JSON.stringify([volumes.get(args[2]!)]), stderr: '' };
+    // Real `podman volume inspect` accepts several names and answers with one row per name, in order,
+    // and fails when any of them is absent. The ownership check inspects every volume of a spec in one
+    // invocation, so a fake that only ever answered for args[2] would not be modelling the tool.
+    if (args[0] === 'volume' && args[1] === 'inspect') {
+      const names = args.slice(2);
+      const rows = names.map((name) => volumes.get(name!)).filter(Boolean);
+      if (rows.length !== names.length) return { code: 125, stdout: '[]', stderr: 'no such volume' };
+      return { code: 0, stdout: JSON.stringify(rows), stderr: '' };
+    }
     if (args[0] === 'exec') return { code: 0, stdout: 'LoadState=masked\nActiveState=inactive\nSubState=dead\nControlGroup=\n', stderr: '' };
     return { code: 0, stdout: '', stderr: '' };
   }) };
@@ -316,6 +324,29 @@ describe('clean and confined Podman client', () => {
     await expect(client.remove(spec)).rejects.toThrow(/missing/i);
     expect(executor.run.mock.calls.filter(([, args]) => args[0] === 'rm')).toHaveLength(1);
   });
+  // A container row is DATA. If a public cleanup entry point accepted one, any caller could name a
+  // different 64-character id and have every `podman exec` below aimed at it without a single inspection
+  // — the in-call reuse that saves the duplicate ownership check would have become a way to skip the
+  // check entirely. So the public surface takes no row at all, and this pins that: the options a caller
+  // can reach must not contain one, and passing one anyway changes nothing.
+  it.each(['releaseExecution', 'cancelExecution'] as const)('cannot be made to skip verification by handing %s a forged container row', async (method) => {
+    const { spec } = fixture();
+    const { client, executor } = fake(spec);
+    const forged = { id: 'f'.repeat(64), state: 'running' };
+    const executionId = 'c'.repeat(32);
+
+    await client[method](spec, executionId, { persistent: true, container: forged, completionCapture: false } as never)
+      .catch(() => { /* the assertions below are about what it DID, not whether it resolved */ });
+
+    // The full ownership check ran regardless: the container and every volume were inspected.
+    expect(executor.run.mock.calls.filter(([, args]) => args[0] === 'container' && args[1] === 'exists')).toHaveLength(1);
+    expect(executor.run.mock.calls.filter(([, args]) => args[0] === 'inspect')).toHaveLength(1);
+    expect(executor.run.mock.calls.filter(([, args]) => args[0] === 'volume' && args[1] === 'inspect')).toHaveLength(1);
+    // And nothing was ever addressed to the forged identity.
+    expect(executor.run.mock.calls.some(([, args]) => args.includes(forged.id))).toBe(false);
+    for (const [, args] of executor.run.mock.calls.filter(([, a]) => a[0] === 'exec')) expect(args[1]).toBe('a'.repeat(64));
+  });
+
   it('verifies container ownership once per release instead of twice in a row', async () => {
     // A release cancels and then unmasks. The cancellation already inspected the container and every
     // volume; repeating that inspection immediately afterwards cost five extra Podman invocations on

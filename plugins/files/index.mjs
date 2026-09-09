@@ -620,23 +620,26 @@ function readNotebook(raw, supportsImages, readCap) {
 // parent's edits — each conversation must have seen a file itself. Outside a turn there is no session to
 // key on and the guard is inert rather than wrong.
 //
-// The subtlety is our own formatters plugin: it rewrites the file from a `tools.call.after` hook, AFTER
-// Write/Edit has already returned, so the bytes on disk stop matching what we recorded — and we
-// get no signal that it happened. Treating that as "changed behind your back" would refuse every edit that
-// follows a formatted write: the guard would spend its life blocking us rather than protecting us.
+// ONE bar, for Write and Edit alike: the bytes on disk must be the bytes this conversation last saw.
 //
-// We cannot tell a formatter's rewrite from an outsider's, so the two mutations are held to DIFFERENT bars,
-// on one principle: a blind full overwrite is never allowed against bytes the agent has not seen; a targeted
-// edit is, because its `old_string` anchor still has to match the current content to apply at all.
-//   - Write: any divergence refuses. Post-formatter, an overwrite means re-reading first — rare, and
-//     the refusal says exactly that.
-//   - Edit: a divergence from content WE authored (`ours`) is forgiven once and re-baselined — that is
-//     the formatter's window — while a file we only READ and never wrote is fully protected either way.
+// Edit used to hold a lower one. A file whose current content the conversation had WRITTEN carried an
+// `ours` marker, and a divergence from those bytes was forgiven, on the reasoning that a formatter hook
+// rewrites a file after Write returns and gives no signal that it did. The marker also survived any later
+// Read, so it was not a narrow post-write window at all — it was a standing exemption for every file the
+// conversation had ever written. An external writer changing such a file between a Read and an Edit was
+// forgiven by exactly the same rule, which is the data loss this guard exists to prevent, and no
+// attribution was ever performed: the exemption trusted a disk change because of who had written the
+// PREVIOUS content, not because anything proved who wrote the current content.
+//
+// A formatter can be readmitted, but only by proving what it did — reporting the final content or its
+// hash for the specific tool result it reshaped — so that the re-baseline is attributed rather than
+// assumed. Until such a signal exists, the cost of the strict rule is one extra Read after an
+// unattributed change, and the refusal names that remedy.
 const READ_STATE_MAX_SESSIONS = 64;
 const READ_STATE_MAX_FILES = 512;
 /** sessionId → (path-state key → authorization). Any successful Read of a file authorizes mutation, paged
  * or not; what the guard still enforces is that the bytes on disk are the ones that read hashed.
- * An entry is `{ hash, ours }`, and a text Read adds the `offset`/`limit` it returned — the one extra
+ * An entry is `{ hash }`, and a text Read adds the `offset`/`limit` it returned — the one extra
  * thing the dedup below needs, kept on the SAME entry so the hash stays the only authorization. */
 const readState = new Map();
 
@@ -663,26 +666,19 @@ function recordEntry(files, key, entry) {
   if (files.size > READ_STATE_MAX_FILES) files.delete(files.keys().next().value);
 }
 
-function recordHash(sessionId, key, hash, ours) {
+/** Record that this conversation now knows `key` holds exactly `content` — whether it learned that by
+ * reading the file or by writing those exact bytes to it. */
+export function markFileRead(sessionId, key, content) {
   if (!sessionId) return;
-  recordEntry(sessionFiles(sessionId), key, { hash, ours });
-}
-
-/** Record that this conversation now knows `key` holds exactly `content`. `ours` marks bytes written by us,
- * which earns Edit's narrow post-formatter tolerance in the live process only. */
-export function markFileRead(sessionId, key, content, ours = false) {
-  recordHash(sessionId, key, hashOf(content), ours);
+  recordEntry(sessionFiles(sessionId), key, { hash: hashOf(content) });
 }
 
 /** Record what a text Read saw, and which range it put in front of the model. A page of the file authorizes
  * mutation just as a whole-file read does — the hash is of the WHOLE file either way, so the staleness check
- * keeps its teeth. Re-reading bytes we authored keeps the `ours` marker: the formatter tolerance is about who
- * wrote the file, not how often it was read. */
+ * keeps its teeth. */
 function recordTextRead(sessionId, key, hash, offset, limit) {
   if (!sessionId) return;
-  const files = sessionFiles(sessionId);
-  const prior = files.get(key);
-  recordEntry(files, key, { hash, ours: prior?.hash === hash && prior.ours === true, offset, limit });
+  recordEntry(sessionFiles(sessionId), key, { hash, offset, limit });
 }
 
 /** The reference's two non-content Read outcomes, verbatim (`FileReadTool.ts:706-707`). Neither is an
@@ -703,9 +699,7 @@ const FILE_UNCHANGED_STUB = 'File unchanged since last read. The content from th
  *
  * The range is what says a READ recorded this entry: a Write/Edit baseline, a PDF/image/notebook read and a
  * transcript replay all record a hash without one, and none of them displayed this text. That is exactly the
- * reference's `existingState.offset !== undefined` (`FileReadTool.ts:547-551`) — `ours` is a different
- * question (who wrote the bytes, for Edit's formatter tolerance) and stays sticky across re-reads, so using
- * it here would silence the dedup for every file the conversation has ever edited. */
+ * reference's `existingState.offset !== undefined` (`FileReadTool.ts:547-551`). */
 function readIsDuplicate(sessionId, key, hash, offset, limit) {
   if (!sessionId) return false;
   const entry = readState.get(sessionId)?.get(key);
@@ -721,7 +715,7 @@ function readIsDuplicate(sessionId, key, hash, offset, limit) {
 function dropReadRange(sessionId, key) {
   const files = sessionFiles(sessionId);
   const prior = files.get(key);
-  recordEntry(files, key, { hash: prior.hash, ours: prior.ours });
+  recordEntry(files, key, { hash: prior.hash });
 }
 
 /** Rebuild this session's authorization atomically from the visible transcript. Only successful Read results
@@ -739,7 +733,7 @@ export function seedReadStateFromHistory(sessionId, messages) {
     const key = d.projectRef?.kind === 'managed' && Number.isSafeInteger(d.projectRef.projectId)
       ? `managed:${d.projectRef.projectId}\0${d.path}`
       : typeof d.workspaceId === 'string' && d.workspaceId ? `${d.workspaceId}\0${d.path}` : d.path;
-    recordEntry(files, key, { hash: d.contentHash, ours: false });
+    recordEntry(files, key, { hash: d.contentHash });
     seeded++;
   }
   installSessionFiles(sessionId, files);
@@ -749,13 +743,12 @@ export function seedReadStateFromHistory(sessionId, messages) {
 /** Why a mutation must not proceed, or null when it may. The wording is Claude Code's verbatim, so a model
  * trained on that phrasing reacts to the refusal the way it was trained to — no path is prepended, because
  * that would change the sentence. */
-export function readGuardError(sessionId, key, current, tolerateAuthoredDrift = false) {
+export function readGuardError(sessionId, key, current) {
   if (!sessionId) return null;
   if (current === null) return null;
   const entry = readState.get(sessionId)?.get(key);
   if (!entry) return 'File has not been read yet. Read it first before writing to it.';
   if (hashOf(current) === entry.hash) return null;
-  if (entry.ours && tolerateAuthoredDrift) return null;
   return 'File has been modified since read, either by the user or by a linter. '
     + 'Read it again before attempting to write it.';
 }
@@ -806,7 +799,7 @@ function* hostTextChunks(abs) {
   } finally { closeSync(fd); }
 }
 
-async function readTextSnapshot(abs, start, requestedLines, readCap, expectedProbe, guest = null) {
+async function readTextSnapshot(abs, start, requestedLines, readCap, expectedProbe, guest = null, opened = null) {
     const hash = createHash('sha256');
     const retained = [];
     const retainLimit = readCap + 4;
@@ -833,7 +826,7 @@ async function readTextSnapshot(abs, start, requestedLines, readCap, expectedPro
       selectedLines += 1;
       atLineStart = false;
     };
-    for await (const data of guest ? guest.chunks(abs) : hostTextChunks(abs)) {
+    for await (const data of guest ? guest.chunks(abs, opened?.version, opened) : hostTextChunks(abs)) {
       const bytesRead = data.length;
       if (actualProbeBytes < actualProbe.length) {
         const copy = Math.min(data.length, actualProbe.length - actualProbeBytes);
@@ -1215,22 +1208,25 @@ export function register(ctx) {
   // The bounds MUST mirror the manifest's: the server stores plugin config unvalidated, so this clamp is
   // the only one there is.
   const pdfMaxPages = Math.min(Math.max(Number(ctx.config.pdfMaxPages) || DEFAULT_PDF_MAX_PAGES, 10), DEFAULT_PDF_MAX_PAGES);
-  const pathMeta = (abs) => {
+  // `hostOwned` marks the one file a managed turn may read from the host: a support file of a visible
+  // skill, admitted by the skill catalog alone. It is reported and keyed as the host path it is, never as
+  // a file of the project, so neither this result nor its replay can authorize a guest mutation.
+  const pathMeta = (abs, hostOwned = false) => {
     const access = ctx.currentAccess();
-    if (access.projectRef?.kind === 'managed') return { path: abs, projectRef: access.projectRef };
-    const path = ctx.displayPath(abs);
-    const workspaceId = access.workspaceRef?.workspaceId;
+    if (!hostOwned && access.projectRef?.kind === 'managed') return { path: abs, projectRef: access.projectRef };
+    const path = hostOwned ? abs : ctx.displayPath(abs);
+    const workspaceId = hostOwned ? undefined : access.workspaceRef?.workspaceId;
     return { path, ...(workspaceId ? { workspaceId } : {}) };
   };
-  const statePath = (abs) => ctx.currentAccess().projectRef?.kind === 'managed'
+  const statePath = (abs, hostOwned = false) => !hostOwned && ctx.currentAccess().projectRef?.kind === 'managed'
     ? `managed:${ctx.currentAccess().projectRef.projectId}\0${abs}` : ctx.pathStateKey(abs);
   const safeError = (error) => new Error(ctx.sanitizePathOutput(error instanceof Error ? error.message : String(error)));
-  const sanitizeResult = (result, abs) => ({
+  const sanitizeResult = (result, abs, hostOwned = false) => ({
     ...result,
     content: result.content?.map((item) => item?.type === 'text'
       ? { ...item, text: ctx.sanitizePathOutput(item.text) }
       : item),
-    details: { ...(result.details ?? {}), ...pathMeta(abs) },
+    details: { ...(result.details ?? {}), ...pathMeta(abs, hostOwned) },
   });
 
   // A conversation coming back after a daemon restart brings its history with it — and with it every
@@ -1272,42 +1268,83 @@ export function register(ctx) {
         // The read intent is what lets a fork child open the spill file its INHERITED placeholder names —
         // the file lives under the parent's directory, and no other tool here promises to read it back.
         const guest = managedFiles(ctx, _signal);
-        const abs = guest ? guest.resolve(p.file_path) : ctx.assertPathAllowed(p.file_path, { intent: 'read' });
+        // A managed session's filesystem is the guest, but SkillLoad hands the model the canonical HOST
+        // skill directory, and the guest cannot read /var/www at all. A directory-form skill whose body
+        // says "see reference.md next to this file" therefore names a path that provably fails, which
+        // makes the skill unusable in every managed session.
+        //
+        // `skillResources` is the ONE authority allowed to widen this, and the whole gate is its answer:
+        // it re-resolves visibility for the current contribution owner, contains the path inside a base
+        // pinned at registration, decides containment on realpaths so a symlink out of the directory is
+        // refused, and resolves only a regular file. It is a narrow control of its own rather than the
+        // broadly readable skill catalog, so the ability to turn a path into a readable host file is not
+        // handed to everything that merely wants to list skills.
+        //
+        // Resolved at call time, because a registry reload disposes controls. Asked only in a managed
+        // session, because a host session already reaches these files through the ordinary path policy.
+        // And asked only about an ABSOLUTE path: a relative one belongs to the guest working directory
+        // and must never be re-pointed at a host skill root, which is the one way this could redirect an
+        // ordinary project read. A null answer — refused or missing alike — falls through untouched, so
+        // nothing here can turn into a refusal of its own.
+        const skillFile = guest && typeof p.file_path === 'string' && p.file_path.startsWith('/')
+          ? (ctx.control?.('skillResources')?.resolveResource?.(p.file_path) ?? null)
+          : null;
+        // Reading a skill resource is a HOST read that happens to occur inside a managed turn, so the
+        // guest adapter stands down for this call and the existing host path serves it unchanged.
+        const reader = skillFile ? null : guest;
+        const hostOwned = skillFile !== null;
+        const abs = skillFile ?? (guest ? guest.resolve(p.file_path) : ctx.assertPathAllowed(p.file_path, { intent: 'read' }));
+        // The project's identity must not travel with a host file. It would key the read state to
+        // `managed:<projectId>` and stamp the same ref into the result, so a replayed transcript would
+        // rebuild a MANAGED authorization for a host path and let Edit aim at a skill root. The host key
+        // is a different key, which is exactly why a managed Edit of this path still refuses.
+        const readMeta = () => pathMeta(abs, hostOwned);
+        const readStateKey = () => statePath(abs, hostOwned);
         if (p.offset !== undefined && (!Number.isSafeInteger(p.offset) || p.offset < 0)) {
-          return fail('Read', new Error('offset must be a non-negative integer.'), pathMeta(abs));
+          return fail('Read', new Error('offset must be a non-negative integer.'), readMeta());
         }
         if (p.limit !== undefined && (!Number.isSafeInteger(p.limit) || p.limit < 1)) {
-          return fail('Read', new Error('limit must be a positive integer.'), pathMeta(abs));
+          return fail('Read', new Error('limit must be a positive integer.'), readMeta());
         }
         // Both checks are on the PATH and run before any I/O: opening a blocking device to find out that it
         // blocks is the failure they exist to prevent, and a binary file has nothing to show either way.
         if (isBlockedDevicePath(abs)) {
-          return fail('Read', new Error(`Cannot read '${ctx.displayPath(abs)}': this device file would block or produce infinite output.`), pathMeta(abs));
+          return fail('Read', new Error(`Cannot read '${ctx.displayPath(abs)}': this device file would block or produce infinite output.`), readMeta());
         }
         const binaryExt = binaryExtensionOf(abs);
         if (binaryExt) {
-          return fail('Read', new Error(`This tool cannot read binary files. The file appears to be a binary ${binaryExt} file. Please use appropriate tools for binary file analysis.`), pathMeta(abs));
+          return fail('Read', new Error(`This tool cannot read binary files. The file appears to be a binary ${binaryExt} file. Please use appropriate tools for binary file analysis.`), readMeta());
         }
-        if (guest ? !(await guest.stat(abs)) : !existsSync(abs)) {
-          return fail('Read', new Error(guest ? `File does not exist: ${abs}` : pathNotFoundMessage('File does not exist.', abs, ctx.defaultCwd(), (value) => ctx.displayPath(value))), pathMeta(abs));
+        // ONE guest read opens the file: it proves the path exists and is a regular file, supplies the
+        // classification probe below, and for anything inside a single transport chunk it is already the
+        // whole content. It used to take a stat, then a 64-byte probe read, then a full read that stated
+        // the file again on both sides — four container round trips to answer a question about 67 bytes.
+        // The host path keeps its own cheap existence check and probe, which cost a syscall, not a
+        // container.
+        let opened = null;
+        if (reader) {
+          try { opened = await reader.open(abs); }
+          catch (e) { return fail('Read', safeError(e), readMeta()); }
+        } else if (!existsSync(abs)) {
+          return fail('Read', new Error(pathNotFoundMessage('File does not exist.', abs, ctx.defaultCwd(), (value) => ctx.displayPath(value))), readMeta());
         }
-        const probe = guest ? (await guest.chunk(abs, 0, FILE_PROBE_BYTES)).bytes : readFileProbe(abs);
+        const probe = opened ? opened.bytes.subarray(0, FILE_PROBE_BYTES) : readFileProbe(abs);
         // An existing empty file is not a failed read: the reference answers it with a warning and marks
         // the file read, and so do we. There is no content the model could be editing blind against —
         // there is no content at all — so the hash of those zero bytes authorizes a later Write exactly
         // as any other full read would, and the staleness check keeps its teeth if anything is appended.
         if (probe.length === 0) {
           const empty = Buffer.alloc(0);
-          markFileRead(ctx.currentSessionId?.(), statePath(abs), empty);
-          return ok('Read', EMPTY_FILE_REMINDER, { ...pathMeta(abs), bytes: 0, contentHash: hashOf(empty) });
+          markFileRead(ctx.currentSessionId?.(), readStateKey(), empty);
+          return ok('Read', EMPTY_FILE_REMINDER, { ...readMeta(), bytes: 0, contentHash: hashOf(empty) });
         }
         const model = ectx?.model ?? ctx.model;
         const supportsImages = !model || (Array.isArray(model.input) ? model.input.includes('image') : true);
         if (isPdf(probe)) {
-          const snapshot = guest ? await guest.read(abs, MAX_EDIT_BYTES) : null;
+          const snapshot = reader ? await reader.read(abs, MAX_EDIT_BYTES, opened) : null;
           const raw = snapshot ? snapshot.bytes : readFileSync(abs);
-          const result = sanitizeResult(await readPdf(abs, p.pages, supportsImages, readCap, pdfMaxPages, guest), abs);
-          if (guest && (await guest.stat(abs))?.version !== snapshot.version) {
+          const result = sanitizeResult(await readPdf(abs, p.pages, supportsImages, readCap, pdfMaxPages, reader), abs, hostOwned);
+          if (reader && (await reader.stat(abs))?.version !== snapshot.version) {
             throw new Error('file changed while it was being converted; retry the Read');
           }
           if (!result.details?.ok) return result;
@@ -1316,24 +1353,24 @@ export function register(ctx) {
           // restart — so it is emitted only for such a read.
           const { fullContentVisible, ...details } = result.details;
           if (fullContentVisible !== true) return { ...result, details };
-          markFileRead(ctx.currentSessionId?.(), statePath(abs), raw);
+          markFileRead(ctx.currentSessionId?.(), readStateKey(), raw);
           return { ...result, details: { ...details, contentHash: hashOf(raw) } };
         }
         if (extname(abs).toLowerCase() === '.ipynb') {
-          const raw = guest ? (await guest.read(abs, MAX_EDIT_BYTES)).bytes : readFileSync(abs);
-          const result = sanitizeResult(readNotebook(raw, supportsImages, readCap), abs);
+          const raw = reader ? (await reader.read(abs, MAX_EDIT_BYTES, opened)).bytes : readFileSync(abs);
+          const result = sanitizeResult(readNotebook(raw, supportsImages, readCap), abs, hostOwned);
           if (!result.details?.ok) return result;
           // Same rule as the PDF branch: a truncated render, or one whose images the model cannot see, is
           // not a read of the notebook and must not vouch for overwriting it.
           if (result.details.truncated === true) return result;
-          markFileRead(ctx.currentSessionId?.(), statePath(abs), raw);
+          markFileRead(ctx.currentSessionId?.(), readStateKey(), raw);
           return { ...result, details: { ...result.details, contentHash: hashOf(raw) } };
         }
         if (looksLikeImage(probe)) {
-          const raw = guest ? (await guest.read(abs, MAX_EDIT_BYTES)).bytes : readFileSync(abs);
+          const raw = reader ? (await reader.read(abs, MAX_EDIT_BYTES, opened)).bytes : readFileSync(abs);
           const mime = detectImageMime(raw);
           if (mime) {
-            const details = { ok: true, tool: 'Read', truncated: false, ...pathMeta(abs), bytes: raw.length, image: true, mimeType: mime };
+            const details = { ok: true, tool: 'Read', truncated: false, ...readMeta(), bytes: raw.length, image: true, mimeType: mime };
             const resized = await resizeImage(raw, mime, { maxWidth: 2000, maxHeight: 2000 }).catch(() => null);
             let data = resized?.data;
             let outMime = resized?.mimeType ?? mime;
@@ -1357,7 +1394,7 @@ export function register(ctx) {
               note += `\n[Current model does not support images. The image will be omitted from this request.]`;
               return { content: [{ type: 'text', text: note }], details };
             }
-            markFileRead(ctx.currentSessionId?.(), statePath(abs), raw);
+            markFileRead(ctx.currentSessionId?.(), readStateKey(), raw);
             return {
               content: [{ type: 'text', text: note }, { type: 'image', data, mimeType: outMime }],
               details: { ...details, contentHash: hashOf(raw) },
@@ -1370,24 +1407,24 @@ export function register(ctx) {
         // applies to it. Without one, an oversized selection is an ERROR rather than a silent truncation:
         // quietly handing back a prefix is how a model ends up editing against content it never saw.
         const byteCap = p.limit === undefined ? readCap : Infinity;
-        const snapshot = await readTextSnapshot(abs, start, requestedLines, byteCap, probe, guest);
+        const snapshot = await readTextSnapshot(abs, start, requestedLines, byteCap, probe, reader, opened);
         const total = snapshot.totalLines;
         if (total === 0) {
-          markFileRead(ctx.currentSessionId?.(), statePath(abs), Buffer.alloc(0));
-          return ok('Read', EMPTY_FILE_REMINDER, { ...pathMeta(abs), bytes: 0, contentHash: snapshot.contentHash });
+          markFileRead(ctx.currentSessionId?.(), readStateKey(), Buffer.alloc(0));
+          return ok('Read', EMPTY_FILE_REMINDER, { ...readMeta(), bytes: 0, contentHash: snapshot.contentHash });
         }
         // An offset past the end is answered, not refused — but it is the one read that displays NOTHING
         // of a file that HAS content, so it deliberately records no authorization and emits no
         // `contentHash`: neither this session nor a replayed transcript may treat it as having seen the
         // file. (The reference does mark it read; that is the divergence, and it is the direction that
         // keeps "a blind overwrite is never allowed against bytes the agent has not seen" true.)
-        if (start >= total) return ok('Read', overOffsetReminder(p.offset, total), { ...pathMeta(abs), bytes: snapshot.totalBytes });
+        if (start >= total) return ok('Read', overOffsetReminder(p.offset, total), { ...readMeta(), bytes: snapshot.totalBytes });
         if (snapshot.byteTruncated) {
           return fail('Read', new Error(
             `File content (${formatSize(snapshot.totalBytes)}) exceeds maximum allowed size (${formatSize(readCap)}). `
             + 'Use offset and limit parameters to read specific portions of the file, or search for specific '
             + 'content instead of reading the whole file.',
-          ), pathMeta(abs));
+          ), readMeta());
         }
         // Same scope as the byte cap: an explicit `limit` is the caller taking responsibility for the page
         // it asked for, and that rule is what the paged-read contract rests on. What this adds is the
@@ -1400,13 +1437,13 @@ export function register(ctx) {
             `File content (${tokens} tokens) exceeds maximum allowed tokens (${MAX_READ_TOKENS}). `
             + 'Use offset and limit parameters to read specific portions of the file, or search for specific '
             + 'content instead of reading the whole file.',
-          ), pathMeta(abs));
+          ), readMeta());
         }
         const endShown = snapshot.selectedEnd;
         const truncated = endShown < total;
         const sessionId = ctx.currentSessionId?.();
-        const key = statePath(abs);
-        const details = { ...pathMeta(abs), bytes: snapshot.totalBytes, truncated, contentHash: snapshot.contentHash };
+        const key = readStateKey();
+        const details = { ...readMeta(), bytes: snapshot.totalBytes, truncated, contentHash: snapshot.contentHash };
         // Re-reading the same range of a file that has not moved would send a second copy of content the
         // earlier tool_result still carries. Point at that copy instead, once: dropping the range keeps the
         // entry (a file read through the stub is still a file in use, and without that touch a busy
@@ -1462,7 +1499,7 @@ export function register(ctx) {
             try { beforeBuf = readFileSync(abs); } catch { /* new file */ }
           }
           const display = ctx.displayPath(abs);
-          const guard = readGuardError(sessionId, statePath(abs), beforeBuf, false);
+          const guard = readGuardError(sessionId, statePath(abs), beforeBuf);
           if (guard) return ok('Write', `Error: ${guard}`, { ok: false, ...pathMeta(abs) });
           // Create the parent tree the way the reference does, so writing into a new directory costs no
           // extra round trip. It runs AFTER the guard and before the write: the guard decides whether this
@@ -1475,7 +1512,7 @@ export function register(ctx) {
             writeFileSync(abs, p.content, 'utf-8');
           }
           const written = Buffer.from(p.content, 'utf-8');
-          markFileRead(sessionId, statePath(abs), written, true);
+          markFileRead(sessionId, statePath(abs), written);
           const base = beforeBuf?.toString('utf-8') ?? '';
           const diff = displayDiff(base, p.content);
           const patch = unifiedPatch(display, base, p.content);
@@ -1537,7 +1574,7 @@ export function register(ctx) {
               writeFileSync(abs, p.new_string, 'utf-8');
             }
             const created = Buffer.from(p.new_string, 'utf-8');
-            markFileRead(sessionId, statePath(abs), created, true);
+            markFileRead(sessionId, statePath(abs), created);
             const newDiff = displayDiff('', p.new_string);
             const newPatch = unifiedPatch(display, '', p.new_string);
             return ok('Edit', `File created successfully at: ${display}`, {
@@ -1548,7 +1585,10 @@ export function register(ctx) {
           // The same missing-path answer Read, Glob and Grep give, and the reference's own for this tool:
           // a raw ENOENT from the stat below names neither the directory the path was resolved against nor
           // the neighbour the caller probably meant.
-          if (guest && !(await guest.stat(abs))) throw new Error(`File does not exist: ${abs}`);
+          // One guest stat answers both existence and size; it used to take two, and each one is a
+          // container round trip.
+          const entry = guest ? await guest.stat(abs) : null;
+          if (guest && !entry) throw new Error(`File does not exist: ${abs}`);
           if (!guest && !existsSync(abs)) {
             return ok('Edit', `Error: ${pathNotFoundMessage(
               'File does not exist.', abs, ctx.defaultCwd(), (value) => ctx.displayPath(value),
@@ -1556,7 +1596,7 @@ export function register(ctx) {
           }
           // Checked on the stat, before the slurp: reading a gigabyte-plus file into a single string is the
           // out-of-memory failure this refusal exists to prevent, so it cannot come after the read.
-          const size = guest ? (await guest.stat(abs)).size : statSync(abs).size;
+          const size = guest ? entry.size : statSync(abs).size;
           if (size > MAX_EDIT_BYTES) {
             return ok('Edit', `Error: File is too large to edit (${formatSize(size)}). Maximum editable file size is 1 GB.`,
               { ok: false, ...pathMeta(abs) });
@@ -1566,7 +1606,7 @@ export function register(ctx) {
           // `true`: an anchored edit may proceed through a post-write reformat of our OWN content — its
           // old_string still has to match what is on disk now. A blind overwrite (Write) gets no such pass.
           const display = ctx.displayPath(abs);
-          const guard = readGuardError(sessionId, statePath(abs), beforeBuf, true);
+          const guard = readGuardError(sessionId, statePath(abs), beforeBuf);
           if (guard) return ok('Edit', `Error: ${guard}`, { ok: false, ...pathMeta(abs) });
           const before = beforeBuf.toString('utf-8');
           if (p.old_string === p.new_string) return ok('Edit', 'Error: No changes to make: old_string and new_string are exactly the same.', { ok: false, ...pathMeta(abs) });
@@ -1583,7 +1623,7 @@ export function register(ctx) {
           if (guest) await guest.write(abs, Buffer.from(plan.after, 'utf8'), snapshot.version);
           else writeFileSync(abs, plan.after, 'utf-8');
           const written = Buffer.from(plan.after, 'utf-8');
-          markFileRead(sessionId, statePath(abs), written, true);
+          markFileRead(sessionId, statePath(abs), written);
           const diff = displayDiff(plan.content, plan.newContent);
           const patch = unifiedPatch(display, plan.content, plan.newContent);
           return ok('Edit', `Edited ${display} (${plan.count > 1 ? `${plan.count} replacements` : '1 replacement'})`, {
@@ -1764,16 +1804,30 @@ export function register(ctx) {
       path: Type.Optional(Type.String({ description: 'The directory to search in. Defaults to the current working directory.' })),
     }),
     execute: async (_id, p, _signal) => {
+      // An absolute pattern carries its own search root, which is what makes it match at all: the
+      // matcher only ever sees paths relative to that root.
+      const anchored = extractGlobBase(p.pattern);
+      let guest;
+      let searchRoot;
       try {
-        // An absolute pattern carries its own search root, which is what makes it match at all: the
-        // matcher only ever sees paths relative to that root.
-        const guest = managedFiles(ctx, _signal);
-        const anchored = extractGlobBase(p.pattern);
-        const searchRoot = guest ? guest.resolve(anchored?.base ?? p.path) : anchored
+        guest = managedFiles(ctx, _signal);
+        guest?.assertProvider();
+        searchRoot = guest ? guest.resolve(anchored?.base ?? p.path) : anchored
           ? ctx.assertPathAllowed(anchored.base)
           : (p.path ? ctx.assertPathAllowed(p.path) : ctx.defaultCwd());
+      } catch (e) {
+        // Resolving WHERE to search, before any searching happens: an unusable path, a root this turn may
+        // not search, or a managed project with no filesystem provider behind it. Every file tool answers
+        // these the same way, and that shared contract is deliberately not what F5 changes.
+        return fail('Glob', safeError(e));
+      }
+      try {
         const entry = guest ? await guest.stat(searchRoot) : null;
-        if (guest && !entry) throw new Error(`Path does not exist: ${searchRoot}`);
+        if (guest && !entry) {
+          return ok('Glob', `Error: ${pathNotFoundMessage(
+            `Directory does not exist: ${ctx.displayPath(searchRoot)}.`, searchRoot, ctx.defaultCwd(), (value) => ctx.displayPath(value),
+          )}`, { ok: false, ...pathMeta(searchRoot) });
+        }
         if (!guest && !existsSync(searchRoot)) {
           return ok('Glob', `Error: ${pathNotFoundMessage(
             `Directory does not exist: ${ctx.displayPath(searchRoot)}.`, searchRoot, ctx.defaultCwd(), (value) => ctx.displayPath(value),
@@ -1798,7 +1852,10 @@ export function register(ctx) {
         for (const file of files) {
           const rel = relative(abs, file) || file;
           if (regex.test(rel) || regex.test(rel.split('/').at(-1) ?? rel)) {
-            const mtime = guest ? Date.parse((await guest.stat(file))?.modifiedAt ?? '') || 0 : mtimeOf(file);
+            // The guest listing already carried each file's modification time, so sorting by it costs
+            // nothing further; statting every match back across the container boundary made the sort cost
+            // one guest round trip per matching file.
+            const mtime = guest ? guestWalk.mtimes.get(file) ?? 0 : mtimeOf(file);
             matched.push({ path: rel, mtime });
           }
         }
@@ -1821,7 +1878,15 @@ export function register(ctx) {
         return ok('Glob', text, {
           ...pathMeta(abs), pattern: p.pattern, matches: results.length, truncated, walkTruncated,
         });
-      } catch (e) { return fail('Glob', safeError(e)); }
+      } catch (e) {
+        // Everything the model can act on is answered above as ordinary text: an unusable or forbidden
+        // root, a directory that is not there, an invalid pattern, a traversal that hit its cap. What
+        // reaches here is the filesystem failing to answer at all — a repository lease timeout, a stopped
+        // or unreachable managed environment, a guest protocol fault — and returning that as a successful
+        // result with an error sentence inside is what let a broken Glob be persisted, and re-read on the
+        // next turn, as though it had found no files.
+        throw safeError(e);
+      }
     },
   }), { workspaceSafe: true });
 

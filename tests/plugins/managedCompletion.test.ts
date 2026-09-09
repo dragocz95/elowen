@@ -41,7 +41,15 @@ function fakeExecutor(spec: any, options: { id?: string; state?: string; exists?
     if (args[0] === 'container' && args[1] === 'exists') return { code: options.exists === false ? 1 : 0, stdout: '', stderr: '' };
     if (args[0] === 'inspect') return { code: 0, stdout: JSON.stringify([row]), stderr: '' };
     if (args[0] === 'volume' && args[1] === 'exists') return { code: volumes.has(args[2]!) ? 0 : 1, stdout: '', stderr: '' };
-    if (args[0] === 'volume' && args[1] === 'inspect') return { code: 0, stdout: JSON.stringify([volumes.get(args[2]!)]), stderr: '' };
+    // Real `podman volume inspect` accepts several names and answers with one row per name, in order,
+    // and fails when any of them is absent. The ownership check inspects every volume of a spec in one
+    // invocation, so a fake that only ever answered for args[2] would not be modelling the tool.
+    if (args[0] === 'volume' && args[1] === 'inspect') {
+      const names = args.slice(2);
+      const rows = names.map((name) => volumes.get(name!)).filter(Boolean);
+      if (rows.length !== names.length) return { code: 125, stdout: '[]', stderr: 'no such volume' };
+      return { code: 0, stdout: JSON.stringify(rows), stderr: '' };
+    }
     if (rest[0] === '/usr/bin/stat') {
       const content = files.get(rest.at(-1)!);
       if (content === undefined) return { code: 1, stdout: '', stderr: 'No such file' };
@@ -213,10 +221,11 @@ describe('completion artifact cleanup on the existing release and cancellation p
     const { spec } = fixture();
     const { client, executor } = fakeExecutor(spec);
     await client.exec(spec, ID_A, ['/usr/bin/python3', '-c', 'helper'], { input: 'op', persistent: true });
-    // Helpers are never instrumented: no capture prelude is ever fed on stdin, and the only
-    // completion-path reference is the execution-scoped cleanup of an artifact never created.
+    // Helpers are never instrumented: no capture prelude is ever fed on stdin. Only `prepareExecution`
+    // arms the capture, so a helper cannot have created the artifact — and cleaning it up anyway was a
+    // guest round trip spent deleting a file that never existed, paid on every managed file operation.
     expect(executor.run.mock.calls.some(([, , options]) => typeof options?.input === 'string' && options.input.includes('pwd -P'))).toBe(false);
-    expect(executor.run.mock.calls.filter(([, args]) => args[2] === '/usr/bin/rm').map(([, args]) => args[5])).toEqual([completionArtifact(ID_A)]);
+    expect(executor.run.mock.calls.filter(([, args]) => args[2] === '/usr/bin/rm')).toEqual([]);
     expect(executor.run.mock.calls.some(([, args]) => args.includes('unmask'))).toBe(true);
   });
 });
