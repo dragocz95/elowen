@@ -11,7 +11,8 @@
     "tests/plugins/managedToolCallers.podman.test.ts",
     "../elowen-plugins-environments/tests/browserManagedGuest.podman.test.ts",
     "../elowen-plugins-environments/tests/editorManagedGuest.podman.test.ts",
-    "../elowen-plugins-environments/tests/codebaseManagedGuest.podman.test.ts"
+    "../elowen-plugins-environments/tests/codebaseManagedGuest.podman.test.ts",
+    "../elowen-plugins-environments/tests/cronManagedGuest.podman.test.ts"
   ],
   "rows": [
     {
@@ -61,10 +62,10 @@
     {
       "area": "lifecycle",
       "capability": "member revocation cancels that account's guest leases",
-      "evidence": "unit",
-      "suite": "environmentLifecycle",
-      "negative": "unit",
-      "notes": "Covered by environmentLifecycle against the runtime's own lease store rather than a live guest: the assertion is that revocation cancels the leases and the generation moves, which the store shows directly. Revocation while a real guest command is mid-flight is NOT covered."
+      "evidence": "real-guest",
+      "suite": "managedToolCallers.podman",
+      "negative": "real-guest",
+      "notes": "Now exercised mid-flight against a real guest: a second member's command is running when the revocation lands, and the kill is judged by the command never reaching its own last statement and returning in seconds rather than its 300-second sleep, because systemd reports a unit stopped by SIGTERM as a clean stop. The revoked account is then refused while the project keeps serving its remaining member."
     },
     {
       "area": "execution",
@@ -196,7 +197,7 @@
       "evidence": "real-guest",
       "suite": "containerRuntime.podman",
       "negative": "unit",
-      "notes": "Engine proven; the browser TOOL surface below is not."
+      "notes": "Engine level only: proves Chromium starts in the container. The browser TOOL surface is covered separately by browserManagedGuest.podman, which drives navigation, evaluate, click, screenshot and downloads; this row is not the gap it used to describe."
     },
     {
       "area": "browser",
@@ -204,7 +205,7 @@
       "evidence": "real-guest",
       "negative": "unit",
       "suite": "browserManagedGuest.podman",
-      "notes": "Real guest Chromium over the CDP pipe on an execution lease. Download handling is NOT covered here and stays outstanding."
+      "notes": "Real guest Chromium over the CDP pipe on an execution lease. Downloads are no longer outstanding: they are covered by the 'in-page download handling in a guest' row in the same suite."
     },
     {
       "area": "editor",
@@ -212,7 +213,7 @@
       "evidence": "real-guest",
       "suite": "editorManagedGuest.podman",
       "negative": "real-guest",
-      "notes": "Chunked upload, byte-identical raw download, range request, version-guarded save. Office converters are NOT covered and stay outstanding."
+      "notes": "Chunked upload, byte-identical raw download, range request, version-guarded save. Office converters are no longer outstanding: the 'office preview converters in a guest' row covers them in this same suite, against the guest's own LibreOffice."
     },
     {
       "area": "sites",
@@ -248,10 +249,10 @@
     {
       "area": "cron",
       "capability": "scheduled turn scoping to a managed project",
-      "evidence": "unit",
-      "suite": "cronjob suites",
-      "negative": "unit",
-      "notes": "Covered by the cronjob suites. A scheduled turn resolves its project through the same wire contract a live turn does, so the scoping is asserted there; running the scheduler against a real container would add the container, not the scoping."
+      "evidence": "real-guest",
+      "suite": "cronManagedGuest.podman",
+      "negative": "real-guest",
+      "notes": "The real projectCheck now runs in the selected project's environment: it reads a marker written into that guest, a failing check reports its exit rather than reading as a pass, the environment stays usable afterwards, and a job owned by a non-member is refused. Scheduling CADENCE stays with the cronjob suites; what is real here is where the check executes."
     },
     {
       "area": "subagent",
@@ -275,7 +276,7 @@
       "evidence": "real-guest",
       "negative": "real-guest",
       "suite": "managedToolCallers.podman",
-      "notes": "The guest exec unit carries only PATH, LANG and its own systemd bookkeeping; daemon environment sentinels including GH_TOKEN are absent. The other half of separation is a gap rather than a pass: no account GitHub token reaches a managed guest at all, so authenticated git push from a managed project is not supported."
+      "notes": "Two halves, both verified. The guest exec unit carries only PATH, LANG and its own systemd bookkeeping, and daemon environment sentinels including GH_TOKEN are absent from it (managedToolCallers.podman). Authenticated publishing IS supported and is not a gap: publishManaged builds a git bundle inside the guest, reads it out through projectFiles, validates and stages it on the HOST, and pushes from there with the account's token, which githubStaging asserts never appears in the managed launch. What remains forbidden is injecting a token into the guest and pushing from it. LIMIT: no push to a real remote is exercised anywhere, because that would publish."
     },
     {
       "area": "codebase",
@@ -328,18 +329,18 @@
     {
       "area": "artifacts",
       "capability": "ShareImage resolves a managed guest path",
-      "evidence": "unit",
-      "negative": "unit",
-      "suite": "shareImageTool",
-      "notes": "Shares the managed helper with ShareFile but was not driven against a real guest; listed separately rather than claimed by association."
+      "evidence": "real-guest",
+      "negative": "real-guest",
+      "suite": "managedToolCallers.podman",
+      "notes": "A real PNG written into the project comes back byte-identical in conversation storage, verified by its header and full contents, and a text file named .png is refused on its sniffed bytes. No longer claimed by association with ShareFile."
     },
     {
       "area": "plans",
       "capability": "conversation transcripts and tool-result spills under a managed project",
-      "evidence": "unit",
+      "evidence": "real-guest",
       "negative": "unit",
-      "notes": "Transcripts are central storage and have no guest side. The guest-side piece is the tool-result spill, which writes into the environment's artifact prefix and is covered by managedColdClearing and managedDeliverySpill. Not promoted to real-guest: driving it needs a full live session rather than a tool caller.",
-      "suite": "managedColdClearing"
+      "notes": "The cold clearing pass runs with a real BrainStore and the real provider; the spill is read back OUT of the guest, the transcript row names the guest path, the newest turn stays intact and nothing lands in the host spill directory. Transcripts themselves are central storage with no guest side, so only the spill has a guest journey to verify.",
+      "suite": "managedToolCallers.podman"
     },
     {
       "area": "performance",
