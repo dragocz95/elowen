@@ -8,6 +8,7 @@ import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { openDb } from '../../src/store/db.js';
 import { DashDigestStore } from '../../src/store/dashDigestStore.js';
+import type { ConversationRef } from '../../src/brain/service/statusService.js';
 
 /** The /dash/recap surface: strictly per-caller, lazily generated once per (user, UTC day), filtered
  *  by the admin toggles, and free for a user who has no yesterday to summarize. */
@@ -28,7 +29,7 @@ const REPLY = JSON.stringify({
   ],
 });
 
-function setup(opts: { reply?: string; sessions?: boolean } = {}) {
+function setup(opts: { reply?: string; sessions?: boolean; hangingInference?: boolean } = {}) {
   const db = openDb(':memory:');
   const users = new UserStore(db);
   const admin = users.create('admin', 'pw');
@@ -39,15 +40,27 @@ function setup(opts: { reply?: string; sessions?: boolean } = {}) {
   const prompts: string[] = [];
   const inference = {
     model: 'test-model',
-    decide: (prompt: string) => { calls += 1; prompts.push(prompt); return Promise.resolve({ text: opts.reply ?? REPLY }); },
+    decide: (prompt: string) => {
+      calls += 1; prompts.push(prompt);
+      return opts.hangingInference
+        ? new Promise<{ text: string }>(() => { /* a model that never answers */ })
+        : Promise.resolve({ text: opts.reply ?? REPLY });
+    },
   };
   // The admin has a yesterday (one conversation + usage); bob has nothing at all.
-  const sessions = opts.sessions === false ? [] : [
-    { id: 's-live', title: 'Right now', provider: 'p', model: 'm', updated_at: ts(0, '08:00:00'), running: false, active: true, attached: 0 },
-    { id: 's-y1', title: 'Vzhled dashboardu', provider: 'p', model: 'm', updated_at: ts(1, '20:00:00'), running: false, active: false, attached: 0 },
-    { id: 's-old', title: 'Older thread', provider: 'p', model: 'm', updated_at: ts(5, '09:00:00'), running: false, active: false, attached: 0 },
+  const sessions: ConversationRef[] = opts.sessions === false ? [] : [
+    { id: 's-live', title: 'Right now', updatedAt: ts(0, '08:00:00'), active: true },
+    { id: 's-y1', title: 'Vzhled dashboardu', updatedAt: ts(1, '20:00:00'), active: false },
+    { id: 's-old', title: 'Older thread', updatedAt: ts(5, '09:00:00'), active: false },
   ];
-  const brain = { listSessions: (userId: number) => (userId === admin.id ? sessions : []) };
+  // The full listing is COUNTED rather than answered. Every item it builds carries a per-conversation
+  // token total rolled up from every message the account has ever stored, and this route renders the
+  // /dash document — so reaching for it here puts a whole-database scan in front of the HTML.
+  let fullListings = 0;
+  const brain = {
+    listConversationRefs: (userId: number) => (userId === admin.id ? sessions : []),
+    listSessions: () => { fullListings += 1; return []; },
+  };
   const brainStore = { userMessagesBetween: () => ['Udělej mi mockup dashboardu'] };
   const usageOrigins = {
     topOrigins: ({ group }: { group: string }) =>
@@ -63,6 +76,7 @@ function setup(opts: { reply?: string; sessions?: boolean } = {}) {
   });
   return {
     app, config, dashDigests, users, calls: () => calls, prompts: () => prompts, db,
+    fullListings: () => fullListings,
     adminTok: users.issueToken(admin.id), bobTok: users.issueToken(bob.id), adminId: admin.id,
   };
 }
@@ -82,6 +96,30 @@ describe('GET /dash/recap', () => {
   it('requires authentication', async () => {
     const { app } = setup();
     expect((await app.request('/dash/recap')).status).toBe(401);
+  });
+
+  it('reads conversation refs, never the token-rolled listing, on the request that renders /dash', async () => {
+    // /dash is a server component: whatever this route spends lands in the document's TTFB. The full
+    // listing's token rollup reads every stored message of the account, synchronously, and the
+    // dashboard uses none of it — it needs titles, timestamps and which conversation is active.
+    const { app, adminTok, fullListings } = setup();
+    const first = await getRecap(app, adminTok);
+    expect(first.continue?.map((s) => s.id)).toEqual(['s-y1', 's-old']);
+    await settle();
+    // The generation the first request started reads yesterday's conversations too, and must reuse
+    // the refs the request already has rather than list them again.
+    await getRecap(app, adminTok);
+    expect(fullListings()).toBe(0);
+  });
+
+  it('answers while the digest is still being written, never awaiting the inference call', async () => {
+    // The seed exists to remove a flash. A route that awaited generation would replace that flash
+    // with a document that waits on a model — the one cost no dashboard may put in front of a reader.
+    // The model here never replies at all, so an awaited generation could not answer.
+    const { app, adminTok } = setup({ hangingInference: true });
+    const r = await getRecap(app, adminTok);
+    expect(r.digest?.status).toBe('generating');
+    expect(r.yesterday?.turns).toBe(14);
   });
 
   it('reports {enabled:false} and never generates when the recap is switched off', async () => {

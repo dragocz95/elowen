@@ -119,6 +119,46 @@ describe('fetchPluginUiListing', () => {
   });
 });
 
+describe('fetchDashRecap', () => {
+  beforeEach(() => { vi.resetModules(); cookieHeader = null; forwardedProto = null; });
+  afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+
+  const okResponse = (body: unknown) => ({ ok: true, status: 200, json: async () => body }) as Response;
+  const RECAP = { enabled: true, continue: [], yesterday: null, digest: { status: 'ready', summary: 'Včera.' } };
+  const nativeTimeout = AbortSignal.timeout.bind(AbortSignal);
+  /** Record what bound each seed asks for, keeping a real signal so the abort path stays real. */
+  const recordBounds = (bounds: number[], override?: number) =>
+    vi.spyOn(AbortSignal, 'timeout').mockImplementation((ms: number) => {
+      bounds.push(ms);
+      return nativeTimeout(override ?? ms);
+    });
+
+  it('bounds the document far tighter than the seeds that build the shell', async () => {
+    // This one seeds a heading inside a page that renders fine without it, and the client query
+    // refills it either way. The shell seeds decide what the chrome IS, so they may wait longer.
+    cookieHeader = 'elowen_session=token-of-alice';
+    const bounds: number[] = [];
+    recordBounds(bounds);
+    vi.stubGlobal('fetch', vi.fn(async () => okResponse(RECAP)));
+    const mod = await import('../../lib/serverPrefetch');
+    expect(await mod.fetchDashRecap()).toEqual(RECAP);
+    await mod.fetchMe();
+    const [recapBound, identityBound] = bounds;
+    expect(recapBound).toBeLessThanOrEqual(1_000);
+    expect(identityBound).toBeGreaterThan(recapBound);
+  });
+
+  it('gives up on a daemon that stopped answering instead of holding the document open', async () => {
+    cookieHeader = 'elowen_session=token-of-alice';
+    recordBounds([], 5);
+    vi.stubGlobal('fetch', vi.fn((_url: string, init: RequestInit) => new Promise<Response>((_ok, fail) => {
+      init.signal?.addEventListener('abort', () => fail(new Error('TimeoutError')));
+    })));
+    const mod = await import('../../lib/serverPrefetch');
+    expect(await mod.fetchDashRecap()).toBeNull();
+  });
+});
+
 describe('readLocale', () => {
   beforeEach(() => { vi.resetModules(); cookieHeader = null; forwardedProto = null; });
 
