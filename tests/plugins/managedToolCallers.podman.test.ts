@@ -4,6 +4,7 @@ import { join, resolve as resolvePath } from 'node:path';
 import { hostname, tmpdir } from 'node:os';
 import { randomBytes } from 'node:crypto';
 import { it, expect, vi } from 'vitest';
+import { spawn } from 'node:child_process';
 import { PodmanClient, SpawnExecutor, isolatedPodmanOptions } from '../../plugins/sandbox/lib/podman.mjs';
 import { createEnvironmentRuntime } from '../../plugins/sandbox/lib/environmentRuntime.mjs';
 import { initSandboxDb } from '../../plugins/sandbox/lib/db.mjs';
@@ -13,7 +14,12 @@ import { ProcessRegistry } from '../../src/brain/processRegistry.js';
 import type { PluginContext } from '../../src/plugins/api.js';
 import { buildShareFileTool } from '../../src/brain/tools/shareFileTool.js';
 import { buildExitPlanModeTool } from '../../src/brain/tools/exitPlanMode.js';
-import { guestPlanPath, writeGuestFile } from '../../src/brain/managedArtifacts.js';
+import { guestPlanPath, writeGuestFile, guestSpillDirForNamespace } from '../../src/brain/managedArtifacts.js';
+import { buildShareImageTool } from '../../src/brain/tools/shareImageTool.js';
+import { BrainStore } from '../../src/store/brainStore.js';
+import { clearColdToolResults } from '../../src/brain/session/coldToolResultClearing.js';
+import { CLEAR_MIN_BYTES, setManagedSandboxResolver } from '../../src/brain/session/toolResultClearing.js';
+import { setSpillNamespaceResolver, sessionToolResultSpillNamespace, toolResultSpillDir } from '../../src/shared/paths.js';
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
 
 /** The file and shell TOOLS against a real guest, not the runtime underneath them.
@@ -34,6 +40,8 @@ const OTHER_PROJECT_ID = 8;
 const ACTOR = 1;
 /** A linked account that is NOT a member of the project. */
 const OUTSIDER = 2;
+/** A second real member, so revocation can remove SOMEONE without touching the acting admin. */
+const MEMBER = 3;
 const GUEST_MCP_FIXTURE = resolvePath('tests/fixtures/guest-mcp-server.mjs');
 
 it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell tools against a managed guest', async () => {
@@ -59,9 +67,15 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
     // The acting account of the current "turn", as the runtime sees it; the MCP stage below switches it
     // to an outsider so the denial comes from project membership rather than an actor mismatch.
     let actingAccount = ACTOR;
+    // Membership the revocation stage actually removes from. A frozen predicate would make the refusal
+    // below prove nothing: it has to start out permitting MEMBER and stop.
+    const members = new Set<number>([ACTOR, MEMBER]);
     const runtimeCtx: any = { db: () => db, currentAccountUserId: () => actingAccount, currentAccess: () => ({ readOnly: false }), config: {}, host: { stores: () => ({
-      usersRead: { list: () => [{ id: ACTOR }, { id: OUTSIDER }], mayUsePlugin: () => true, isAdmin: (id: number) => id === ACTOR },
-      userProjects: { canAccess: (u: number, id: number) => id === PROJECT_ID && u === ACTOR, canManage: (u: number, id: number) => id === PROJECT_ID && u === ACTOR },
+      usersRead: { list: () => [{ id: ACTOR }, { id: OUTSIDER }, { id: MEMBER }], mayUsePlugin: () => true, isAdmin: (id: number) => id === ACTOR },
+      userProjects: {
+        canAccess: (u: number, id: number) => id === PROJECT_ID && members.has(u),
+        canManage: (u: number, id: number) => id === PROJECT_ID && u === ACTOR,
+      },
       projects: { get: (id: number) => (id === PROJECT_ID ? project : undefined), beginDeletion: () => true, finishDeletion: () => true },
     }) } };
     initSandboxDb(runtimeCtx);
@@ -313,6 +327,143 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs the real file and shell t
     expect(refused.details?.ok).toBe(false);
     expect(JSON.stringify(refused)).toMatch(/sandbox|unavailable/i);
     expect(orphan.hostGuard).not.toHaveBeenCalled();
+
+    enter('revoking a member kills that account command mid-flight and leaves the project running');
+    // The lifecycle row said revocation was only ever checked against the lease store. Here a REAL guest
+    // command belonging to MEMBER is running when the revocation lands.
+    // The runtime refuses an execution whose account differs from the ambient actor, so the member's own
+    // turn has to BE the member's turn; the revocation below then runs back as the managing admin.
+    actingAccount = MEMBER;
+    const longRun = await runtime.prepareExecution(
+      { projectRef, cwd: '/workspace', leaseKind: 'terminal', command: { type: 'argv', file: '/bin/sh', args: ['-c', 'sleep 300; echo completed > /workspace/long-run-finished.txt'] } },
+      MEMBER,
+    );
+    actingAccount = ACTOR;
+    expect(longRun.mode).toBe('managed');
+    const child = spawn(longRun.launch.file, longRun.launch.args, { env: longRun.launch.env, stdio: ['pipe', 'pipe', 'pipe'] });
+    const exited = new Promise<number | null>((resolve) => child.on('close', (code) => resolve(code)));
+    child.stdin.end(longRun.stdin ?? '');
+    // Let the guest unit actually start before revoking, or the kill would race the launch.
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    await runtime.control.revokeProjectAccess({ projectId: PROJECT_ID, accountUserId: MEMBER });
+    members.delete(MEMBER);
+
+    // The launcher must come back: the guest unit was stopped under it, not left orphaned.
+    const launchedAt = Date.now();
+    const closedWith = await Promise.race([
+      exited,
+      new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 60_000)),
+    ]);
+    expect(closedWith, 'the revoked member command was still running a minute later').not.toBe('timeout');
+    // The exit CODE is not the evidence: systemd treats a unit stopped by SIGTERM as a clean stop, so a
+    // killed command can still report 0. What proves the kill is that the command never reached its own
+    // last statement, and that it came back in seconds rather than the 300 it asked to sleep.
+    expect(Date.now() - launchedAt).toBeLessThan(120_000);
+    const finished = await runtime.control.projectFiles({
+      project: projectRef, accountUserId: ACTOR, operation: { kind: 'stat', path: '/workspace/long-run-finished.txt' },
+    });
+    expect(finished.entry, 'the revoked command ran to completion instead of being cancelled').toBeNull();
+
+    enter('the revoked member is refused while the project keeps working for its remaining member');
+    actingAccount = MEMBER;
+    await expect(runtime.control.projectFiles({
+      project: projectRef, accountUserId: MEMBER, operation: { kind: 'stat', path: '/workspace' },
+    })).rejects.toThrow();
+    actingAccount = ACTOR;
+    // The environment itself is untouched: revocation is scoped to an account, not to the project.
+    const survivor = await run('Bash', { command: 'echo project-still-serving', description: 'post-revocation' });
+    expect(survivor.content[0].text).toContain('project-still-serving');
+
+    enter('ShareImage sends real guest PNG bytes and refuses a file that only looks like one');
+    const sharp = (await import('sharp')).default;
+    const png = await sharp({ create: { width: 8, height: 8, channels: 3, background: { r: 20, g: 140, b: 90 } } }).png().toBuffer();
+    await runtime.control.projectFiles({
+      project: projectRef, accountUserId: ACTOR,
+      operation: { kind: 'write', path: '/workspace/shot.png', base64: png.toString('base64'), expectedVersion: null },
+    });
+    await runtime.control.projectFiles({
+      project: projectRef, accountUserId: ACTOR,
+      operation: { kind: 'write', path: '/workspace/not-really.png', base64: Buffer.from('plain text, not an image').toString('base64'), expectedVersion: null },
+    });
+    // The same conversation image store ShareFile used; a second directory would not exercise the
+    // shared storage path.
+    // A real store, because the tool takes one; the managed branch never reads it, and passing a stub
+    // would hide it if that ever changed.
+    const imageDb = openDb(':memory:');
+    const imageStore = new BrainStore(imageDb);
+    const shareImage = (path: string) => runWithPolicy(
+      { allowedProjectIds: 'all', allowedPaths: () => [] } as any,
+      () => buildShareImageTool({ imagesDir, sandbox: async () => sandbox as any, store: imageStore })
+        .execute('img', { path } as never, undefined as never, undefined as never, {} as never) as never,
+      { sessionId: 'image-session', projectRef, identity: { owner: true, admin: true, elowenUserId: ACTOR } as any },
+    ) as Promise<any>;
+
+    const sharedImage = await shareImage('/workspace/shot.png');
+    expect(sharedImage.details?.sharedImage, JSON.stringify(sharedImage.content)).toBeTruthy();
+    // The bytes that reached conversation storage must be the guest's PNG, not a placeholder.
+    const storedPath = join(imagesDir, String(sharedImage.details.sharedImage.file).split('/').pop()!);
+    const storedBytes = readFileSync(storedPath);
+    expect(storedBytes.subarray(0, 4).toString('hex')).toBe('89504e47');
+    expect(storedBytes.equals(png)).toBe(true);
+
+    const refusedImage = await shareImage('/workspace/not-really.png');
+    expect(refusedImage.details?.sharedImage).toBeUndefined();
+    expect(JSON.stringify(refusedImage.content)).toMatch(/not a png, jpeg, gif or webp/i);
+    imageDb.close();
+
+    enter('the cold tool-result spill lands in the guest through the real clearing pass');
+    const brainDb = openDb(':memory:');
+    const brainStore = new BrainStore(brainDb);
+    const SPILL_SESSION = 'spill-session';
+    brainStore.createSession({ id: SPILL_SESSION, userId: ACTOR, model: 'm' });
+    brainStore.setProjectExecution(SPILL_SESSION, ACTOR, projectRef);
+    setSpillNamespaceResolver((id) => brainStore.spillNamespace(id));
+    setManagedSandboxResolver(async () => sandbox as any);
+    try {
+      const big = 'y'.repeat(CLEAR_MIN_BYTES + 500);
+      const messages: any[] = [
+        { role: 'user', content: [{ type: 'text', text: 'one' }], timestamp: 1_000 },
+        { role: 'assistant', timestamp: 1_050, content: [{ type: 'toolCall', id: 'call-a', name: 'Bash', arguments: {} }] },
+        { role: 'toolResult', toolCallId: 'call-a', toolName: 'Bash', isError: false, timestamp: 1_100, details: {}, content: [{ type: 'text', text: big }] },
+        { role: 'user', content: [{ type: 'text', text: 'two' }], timestamp: 2_000 },
+        { role: 'assistant', timestamp: 2_050, content: [{ type: 'toolCall', id: 'call-kept', name: 'Bash', arguments: {} }] },
+        { role: 'toolResult', toolCallId: 'call-kept', toolName: 'Bash', isError: false, timestamp: 2_100, details: {}, content: [{ type: 'text', text: big }] },
+      ];
+      messages.forEach((message, index) => brainStore.appendMessage({
+        id: `sm${index}`, sessionId: SPILL_SESSION, parentId: null, role: message.role, content: message,
+      }));
+      await clearColdToolResults(
+        {
+          store: brainStore,
+          sessions: { get: () => ({ session: { isStreaming: false, getSteeringMessages: () => [], getFollowUpMessages: () => [] } }),
+            isParentAborting: () => false, hasPendingAbort: () => false, hasActiveChildren: () => false },
+          elicitation: { pendingForSession: () => null },
+        } as any,
+        { session: { messages, isStreaming: false, isCompacting: false }, sessionId: SPILL_SESSION, lastRequestCacheTtlMs: 60 * 60_000 },
+        { now: () => Date.now() + 2 * 60 * 60_000 },
+      );
+
+      const spillDir = guestSpillDirForNamespace(sessionToolResultSpillNamespace(SPILL_SESSION));
+      const spillPath = `${spillDir}/call-a.v1-time-${big.length}.txt`;
+      // The spill is READ BACK OUT OF THE GUEST, so this asserts a real transfer rather than a rewritten
+      // placeholder over an in-memory stand-in.
+      const spilled = await runtime.control.projectFiles({
+        project: projectRef, accountUserId: ACTOR,
+        operation: { kind: 'read', path: spillPath, maxBytes: 512 * 1024, length: 512 * 1024 },
+      });
+      expect(Buffer.from(spilled.base64, 'base64').toString('utf8').startsWith('y'.repeat(64))).toBe(true);
+      expect(spilled.totalBytes).toBe(big.length);
+      // The transcript row names the GUEST path, and the newest turn is still intact.
+      const row = brainStore.getMessages(SPILL_SESSION).find((entry: any) => entry.id === 'sm2')!;
+      expect(JSON.parse(row.content).content[0].text).toContain(spillPath);
+      expect(messages[5].content[0].text).toBe(big);
+      // Nothing was written to the host spill directory.
+      expect(existsSync(toolResultSpillDir(process.env, sessionToolResultSpillNamespace(SPILL_SESSION)))).toBe(false);
+    } finally {
+      setManagedSandboxResolver(undefined);
+      setSpillNamespaceResolver(undefined);
+      brainDb.close();
+    }
 
     enter('teardown');
     const deleted = await runtime.requestEnvironment({ project: projectRef, accountUserId: ACTOR, action: { kind: 'delete' } });
