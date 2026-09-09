@@ -715,6 +715,28 @@ describe('toolSearchTool.execute', () => {
       const res = await run(toolSearchTool(handle), 'docker');
       expect((res.details as { matched: string[] }).matched).toEqual(['RestartDaemon']);
     });
+
+    // The semantic document text used to carry the schema's parameter names (up to 2048 chars via the
+    // lexical candidateText): they diluted the signal and changed the durable cache key on every schema
+    // edit. Name and description only; the lexical channel keeps its parameter matching.
+    it('embeds only the name and description in the semantic channel, never parameter names', async () => {
+      const seen: { id: string; text: string }[] = [];
+      const semantic = {
+        rank: async (_q: string, docs: readonly { id: string; text: string }[]) => {
+          seen.push(...docs);
+          return new Map<string, number>();
+        },
+      };
+      const handle = createToolSearchHandle(new Set(['RestartDaemon']), undefined, undefined, { semantic });
+      handle.session = fakeSession(['ToolSearch'], [{
+        name: 'RestartDaemon',
+        description: 'Restart the docker daemon over ssh',
+        parameters: { type: 'object', properties: { service_unit: { type: 'string' } } },
+      }]);
+      await run(toolSearchTool(handle), 'host is unresponsive');
+      const toolDoc = seen.find((d) => d.id === 'tool:RestartDaemon');
+      expect(toolDoc?.text).toBe('RestartDaemon Restart the docker daemon over ssh');
+    });
   });
 
   // Skills are SEARCHED, never activated: a match is reported (details.skills + a text pointer at

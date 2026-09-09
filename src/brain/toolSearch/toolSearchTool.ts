@@ -372,7 +372,9 @@ async function resolveToolSearchHybrid(
   // model, timeout, endpoint error) degrades both channels to the keyword answer below.
   const semanticScores = semantic && (eligible.length > 0 || eligibleSkills.length > 0)
     ? await semantic.rank(query, [
-        ...eligible.map((c) => ({ id: `tool:${c.name}`, text: `${c.name} ${candidateText(c)}` })),
+        // Name + description only, mirroring the skill channel: parameter names (the lexical channel
+        // keeps them) diluted the semantic signal and changed the durable cache key on every schema edit.
+        ...eligible.map((c) => ({ id: `tool:${c.name}`, text: `${c.name} ${c.description}` })),
         ...eligibleSkills.map((s) => ({ id: `skill:${s.name}`, text: `${s.name} ${s.description}` })),
       ])
     : new Map<string, number>();
