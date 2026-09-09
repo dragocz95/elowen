@@ -110,16 +110,21 @@ describe('ToolSemanticIndex', () => {
     expect(calls.filter((c) => c.includes('Docker tools'))).toHaveLength(1);
   });
 
-  it('returns an empty map when embeddings time out, and warns at most once per boot', async () => {
+  it('aborts a hung embeddings response at the timeout and returns an empty map, warning once per boot', async () => {
     const captured: Capture[] = [];
     setLogSink({ push: (e) => captured.push(e) });
     const index = new ToolSemanticIndex({
-      embeddings: { embedBatch: async () => { await new Promise((r) => setTimeout(r, 100)); return []; } },
+      // A HUNG endpoint: the promise never settles unless the caller aborts — the real embedBatch
+      // contract. A stub that resolves on its own (even with []) would exercise the malformed-response
+      // branch instead of the timeout, which is exactly the mistake the original test made.
+      embeddings: { embedBatch: (_cfg, _texts, signal) => new Promise<Float32Array[]>((_, reject) => {
+        signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true });
+      }) },
       embeddingConfig: () => CFG,
       timeoutMs: 20,
     });
-    const hits = await index.rank('q', [{ id: 'a', text: 'doc' }]);
-    expect(hits.size).toBe(0);
+    expect((await index.rank('q', [{ id: 'a', text: 'doc' }])).size).toBe(0);
+    // Inside the breaker cooldown the second call stays off the network; the warn count must still be one.
     await index.rank('q2', [{ id: 'a', text: 'doc' }]);
     const warns = captured.filter((c) => c.level === 'warn' && c.scope === 'tool-search-semantic');
     expect(warns).toHaveLength(1);
