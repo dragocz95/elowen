@@ -1,4 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import Database from 'better-sqlite3';
 import { openDb, type Db } from '../../src/store/db.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserStore } from '../../src/store/userStore.js';
@@ -23,6 +27,40 @@ describe('managed project foundation', () => {
     expect(p).toMatchObject({ executionKind: 'managed', path: '', creatorUserId: member.id, lifecycle: 'active' });
     expect(() => projects.update(p.id, { path: '/etc' })).toThrow(/managed/);
   });
+  /** The upgrade an existing instance actually performs. Every project on disk predates the execution
+   *  columns, and the one thing that must not happen is a project silently becoming managed: its path
+   *  would stop describing where its turns run. Written against a database built WITHOUT the columns,
+   *  because a fresh schema already carries the defaults and would prove nothing about the upgrade. */
+  it('leaves a database written before the execution columns entirely on the host', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'legacy-db-'));
+    const file = join(dir, 'legacy.db');
+    try {
+      const old = new Database(file);
+      old.exec("CREATE TABLE projects (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT UNIQUE NOT NULL, path TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '', memory_shared INTEGER NOT NULL DEFAULT 0)");
+      old.prepare('INSERT INTO projects (slug, path, notes) VALUES (?, ?, ?)').run('kolin', '/var/www/kolin', 'shop');
+      old.prepare('INSERT INTO projects (slug, path, notes) VALUES (?, ?, ?)').run('elowen', '/var/www/elowen', '');
+      old.close();
+
+      const db = openDb(file); databases.push(db);
+      const rows = new ProjectStore(db).list();
+      expect(rows.map((r) => r.slug)).toEqual(['kolin', 'elowen']);
+      for (const row of rows) {
+        expect(row.executionKind).toBe('host');
+        expect(row.lifecycle).toBe('active');
+        expect(row.creatorUserId).toBeNull();
+      }
+      // The paths are the whole point: a backfill that rewrote or blanked them would move every existing
+      // conversation's working directory without anyone asking for it.
+      expect(rows.map((r) => r.path)).toEqual(['/var/www/kolin', '/var/www/elowen']);
+      // And the upgrade is not a one-shot: reopening must not reclassify anything either.
+      const again = openDb(file); databases.push(again);
+      expect(new ProjectStore(again).list().map((r) => [r.path, r.executionKind]))
+        .toEqual([['/var/www/kolin', 'host'], ['/var/www/elowen', 'host']]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
   it('provisions one private default project idempotently, not a runtime', () => {
     const { projects, member, users, memberships } = fixture();
     const first = projects.ensureDefault(member.id);
