@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { StreamCoordinator } from '../../../src/cli/chat/streamCoordinator.js';
+import { StreamCoordinator, foregroundWork, type StreamCoordinatorPort } from '../../../src/cli/chat/streamCoordinator.js';
 import type { Flows } from '../../../src/cli/chat/flows.js';
 import { BrainClient, type BrainStreamFrame } from '../../../src/cli/chat/brainClient.js';
 import type { BrainEvent } from '../../../src/brain/events.js';
@@ -1960,5 +1960,35 @@ describe('StreamCoordinator — background title announcement', () => {
     // Metadata, not transcript: the event must not have grown a turn.
     expect(serialized(rt.transcript)).not.toContain('Výběr brzdových destiček');
     stream.stop();
+  });
+});
+
+// Ctrl+B has to be offered while a blocking ProcessOutput read is waiting: the read holds the turn just
+// like an in-flight Bash call does, and the same /brain/commands/background call releases it. Counting
+// only `foreground` handles left the chord reporting "nothing running in the foreground to background".
+describe('foregroundWork — command work Ctrl+B can release', () => {
+  const port = {
+    subagentStates: () => [],
+    workflowStates: () => [],
+  } as unknown as StreamCoordinatorPort;
+  const proc = (over: Record<string, unknown>): ChatState['processes'][number] => ({
+    id: 'p1', command: 'npm test', cwd: '/tmp', startedAt: '2026-09-09T10:00:00.000Z',
+    sessionId: 'brain-1', running: true, exitCode: null, ...over,
+  }) as ChatState['processes'][number];
+
+  it('counts an in-flight foreground command', () => {
+    expect(foregroundWork(port, [proc({ completionMode: 'foreground' })]).commands).toBe(1);
+  });
+
+  it('counts a background job that a blocking read is parked on', () => {
+    expect(foregroundWork(port, [proc({ completionMode: 'job', blockedRead: true })]).commands).toBe(1);
+  });
+
+  it('ignores an ordinary background job and anything already exited', () => {
+    expect(foregroundWork(port, [
+      proc({ completionMode: 'job' }),
+      proc({ id: 'p2', completionMode: 'foreground', running: false }),
+      proc({ id: 'p3', completionMode: 'job', blockedRead: true, running: false }),
+    ]).commands).toBe(0);
   });
 });

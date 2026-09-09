@@ -1281,6 +1281,16 @@ describe('terminal plugin — ProcessOutput(block)', () => {
 
   const inSession = (sessionId: string, name: string, params: Record<string, unknown>) =>
     runWithPolicy(userPolicy([dir]), () => runTool(reg, name, params), { identity: owner, sessionId });
+  // The detach control matches on `elowen:<id>`, which only an identity carrying elowenUserId produces.
+  const uidOwner: TurnIdentity = { platform: 'elowen', userId: '1', admin: true, owner: true, elowenUserId: 1, conversation: 'own' };
+  const asUid = (sessionId: string, name: string, params: Record<string, unknown>) =>
+    runWithPolicy(userPolicy([dir]), () => runTool(reg, name, params), { identity: uidOwner, sessionId });
+  const startBgAsUid = async (sessionId: string, command: string): Promise<string> => {
+    const res = await asUid(sessionId, 'Bash', { command, run_in_background: true });
+    const id = /Started background process (\S+):/.exec(res.content[0].text)?.[1];
+    expect(id).toBeTruthy();
+    return id!;
+  };
   const startBg = async (sessionId: string, command: string): Promise<string> => {
     const res = await inSession(sessionId, 'Bash', { command, run_in_background: true });
     const id = /Started background process (\S+):/.exec(res.content[0].text)?.[1];
@@ -1337,6 +1347,46 @@ describe('terminal plugin — ProcessOutput(block)', () => {
     expect(res.content[0].text).toContain('[still running after waiting 1s]');
     // Not collected — the caller can block again, or kill it.
     expect(processRegistry.list().find((p) => p.id === id)?.running).toBe(true);
+  }, 20_000);
+
+  // Ctrl+B has to reach a blocked read as well: it holds the turn exactly like a foreground command, and
+  // before this it was invisible to the clients ("nothing running in the foreground to background") and
+  // unreachable by the control, so the user could only wait the deadline out.
+  it('Ctrl+B releases a blocked read: the flag is visible while waiting and the tool returns the output so far', async () => {
+    const session = 'brain-term-block-release';
+    const control = reg.controls.get('terminal') as unknown as {
+      detachForeground: (i: { sessionId: string; principal: string }) => { detached: number };
+    };
+    const id = await startBgAsUid(session, `node -e "console.log('early'); setTimeout(() => {}, 30000)"`);
+    const read = asUid(session, 'ProcessOutput', { id, block: true, timeout: 600 });
+    await new Promise((r) => setTimeout(r, 400));
+    // The clients learn about the wait through the process list they already read.
+    expect(processRegistry.list().find((p) => p.id === id)?.blockedRead).toBe(true);
+
+    expect(control.detachForeground({ sessionId: session, principal: 'elowen:1' })).toEqual({ detached: 1 });
+    const res = await read;
+    expect(res.content[0].text).toContain('early');
+    expect(res.content[0].text).toContain('[still running — wait released by the user]');
+    // The process is untouched and readable again; the flag is gone with the wait.
+    const listed = processRegistry.list().find((p) => p.id === id);
+    expect(listed?.running).toBe(true);
+    expect(listed?.blockedRead).toBeUndefined();
+    await asUid(session, 'KillProcess', { id });
+  }, 20_000);
+
+  it('a session or principal mismatch releases no blocked read', async () => {
+    const session = 'brain-term-block-release-mismatch';
+    const control = reg.controls.get('terminal') as unknown as {
+      detachForeground: (i: { sessionId: string; principal: string }) => { detached: number };
+    };
+    const id = await startBgAsUid(session, `node -e "setTimeout(() => {}, 30000)"`);
+    const read = asUid(session, 'ProcessOutput', { id, block: true, timeout: 1 });
+    await new Promise((r) => setTimeout(r, 300));
+    expect(control.detachForeground({ sessionId: 'brain-other', principal: 'elowen:1' })).toEqual({ detached: 0 });
+    expect(control.detachForeground({ sessionId: session, principal: 'elowen:999' })).toEqual({ detached: 0 });
+    const res = await read;
+    expect(res.content[0].text).toContain('[still running after waiting 1s]'); // its own deadline, not a release
+    await asUid(session, 'KillProcess', { id });
   }, 20_000);
 
   it('block=false is a non-waiting snapshot', async () => {

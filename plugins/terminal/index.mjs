@@ -958,6 +958,11 @@ export function register(ctx) {
   // Bash tool call is genuinely running: it is added at spawn and removed the moment the run settles or
   // detaches. `detachForeground` (registered below) resolves each matching run's race.
   const foregroundRuns = new Map();
+  // In-flight BLOCKING `ProcessOutput` reads. A blocked read holds the turn open exactly like a foreground
+  // command does, so Ctrl+B has to be able to release it: `detachForeground` resolves each matching wait
+  // early and the tool returns the output so far, leaving the process itself untouched.
+  const blockedReads = new Map();
+  let blockedReadSeq = 0;
   // Pending explicit launches and Ctrl+B conversions reserve capacity synchronously before any await or
   // detach. JavaScript's run-to-completion semantics make this check-and-increment atomic on the daemon
   // event loop, while the release closure keeps every failure path idempotent.
@@ -1341,6 +1346,7 @@ export function register(ctx) {
       `By default this WAITS for the process to finish: the call returns as soon as it exits, or after \`timeout\` seconds (default ${DEFAULT_BLOCK_S}, max ${MAX_BLOCK_S}) with the output so far and a note that it is still running — then simply call it again. Never poll in a loop with block=false.`,
       'Each call returns only what was written SINCE your last read; pass all=true for the whole retained buffer. For an explicit background process this is a byte-capped tail, and a loss notice says when earlier output was dropped.',
       'Pass block=false to peek at the output of a long-lived process (a server, a watcher) without waiting.',
+      'The user can release a waiting read at any time with Ctrl+B: the call then returns the output so far marked `[still running — wait released by the user]`, the process keeps running, and you can read it again later.',
       'The process id comes from the Bash call that started it; use ListProcesses if you no longer have it. Only processes of THIS conversation are readable, and the buffer keeps the last part of the output — an extremely chatty process loses its earliest lines.',
       'Reading a process that has already exited returns its remaining output and then collects it, so that id stops working afterwards. This tool is only for shell processes — a background sub-agent result comes back through DelegateResult.',
     ].join(' '),
@@ -1361,9 +1367,32 @@ export function register(ctx) {
       // on the ALREADY-SCOPED handle is what keeps this safe — an id from another session was rejected
       // above, so nobody can block on a conversation they can't read.
       let waitedOut = false;
+      let released = false;
       if (p.block !== false && handle.running()) {
         const waitS = clampSeconds(p.timeout, DEFAULT_BLOCK_S, MIN_TIMEOUT_S, MAX_BLOCK_S);
-        waitedOut = await ctx.processes.waitForExit(p.id, waitS * 1000) === 'timeout';
+        const key = `read-${blockedReadSeq += 1}`;
+        const readerAccountUserId = currentAccountUserId();
+        const releasedByUser = new Promise((resolve) => {
+          blockedReads.set(key, {
+            sessionId: handle.sessionId ?? null,
+            principal: readerAccountUserId !== null ? `elowen:${readerAccountUserId}` : null,
+            release: () => { released = true; resolve('released'); },
+          });
+        });
+        // Flag the process while the read waits and re-register it. The registry change is the SAME seam
+        // the process card and the clients already read, so both learn that something is waiting in the
+        // foreground and offer their background control — without a second mechanism beside it.
+        handle.blockedRead = true;
+        ctx.processes.register(handle);
+        try {
+          waitedOut = await Promise.race([ctx.processes.waitForExit(p.id, waitS * 1000), releasedByUser]) === 'timeout';
+        } finally {
+          blockedReads.delete(key);
+          handle.blockedRead = false;
+          // Only if the handle is still registered: a process killed or collected while we waited has left
+          // the registry, and re-registering it here would resurrect a corpse.
+          if (ctx.processes.get(p.id)) ctx.processes.register(handle);
+        }
       }
       // Sample `running` BEFORE reading: a process that exits between the read and the check would
       // otherwise be collected here while output written after our read is still lost. Reading first from a
@@ -1371,8 +1400,12 @@ export function register(ctx) {
       await authorizeProcess(handle); // Membership may have changed while ProcessOutput was waiting.
       const running = handle.running();
       const text = handle.readNew(p.all === true);
+      // A released wait says so instead of naming a deadline it never reached: the process keeps running
+      // and the model can simply read it again later.
       const state = running
-        ? `[still running${waitedOut ? ` after waiting ${clampSeconds(p.timeout, DEFAULT_BLOCK_S, MIN_TIMEOUT_S, MAX_BLOCK_S)}s` : ''}]`
+        ? released
+          ? '[still running — wait released by the user]'
+          : `[still running${waitedOut ? ` after waiting ${clampSeconds(p.timeout, DEFAULT_BLOCK_S, MIN_TIMEOUT_S, MAX_BLOCK_S)}s` : ''}]`
         : `[exited ${handle.exitCode()}]`;
       if (!running) { ctx.processes.remove(p.id); emitProcCard(); } // final read collects the corpse
       return ok(`${text || '(no new output)'}\n${state}`);
@@ -1410,6 +1443,14 @@ export function register(ctx) {
       for (const entry of foregroundRuns.values()) {
         if (entry.sessionId !== sessionId || entry.principal !== principal) continue;
         if (detachRun(entry, 'manual')) detached += 1;
+      }
+      // A blocked `ProcessOutput` is the other way this plugin holds the turn. Releasing the wait settles
+      // the tool with the output so far; the process is left alone, so this is only ever additive.
+      for (const [key, read] of blockedReads) {
+        if (read.sessionId !== sessionId || read.principal !== principal) continue;
+        blockedReads.delete(key);
+        read.release();
+        detached += 1;
       }
       return { detached };
     },

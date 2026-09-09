@@ -31,7 +31,7 @@ import { scoreModels, type ModelOption } from './fuzzy.js';
 import { workModeNotice } from './brainClient.js';
 import type { ChatState } from './chatState.js';
 import type { ChatApplicationActions, ChatApplicationResources } from './chatCapabilities.js';
-import { foregroundWork, type StreamCoordinatorPort } from './streamCoordinator.js';
+import { foregroundWork, releasableCommand, type StreamCoordinatorPort } from './streamCoordinator.js';
 import { AnimationController } from './animationController.js';
 import { InputRouter } from './inputRouter.js';
 import { OverlayController } from './overlayController.js';
@@ -608,7 +608,7 @@ export function createChatComposition(
       interruptArmedUntil > Date.now(),
       rt.queued.length > 0,
       currentAgents.some((agent) => agent.status === 'running' && agent.background !== true),
-      rt.processes.some((proc) => proc.running && proc.completionMode === 'foreground'),
+      rt.processes.some((proc) => releasableCommand(proc)),
       stopRequested,
     );
     const suffix = footerState === 'idle' && shellContext.pending
