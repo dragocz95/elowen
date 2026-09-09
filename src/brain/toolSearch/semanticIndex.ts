@@ -23,7 +23,9 @@ export interface ToolSemanticIndexDeps {
   embeddings: Pick<EmbeddingService, 'embedBatch'>;
   /** Live Settings → Memory embedding config, read per search so a change applies immediately. */
   embeddingConfig: () => EmbeddingConfig | null | undefined;
-  /** Vector cache for tool/skill descriptions and queries. Absent → embed every time (tests). */
+  /** Vector cache for tool/skill description vectors. Absent → embed every time (tests). The QUERY is
+   *  deliberately never written here: queries are unbounded in cardinality and the store prunes FIFO,
+   *  so caching them would evict the small, long-lived document vector set. */
   cache?: SemanticVectorCache;
   /** Test seam for the per-search timeout; production uses {@link SEMANTIC_SEARCH_TIMEOUT_MS}. */
   timeoutMs?: number;
@@ -43,14 +45,14 @@ const MIN_SEMANTIC_SCORE = 0.3;
 const MAX_DOC_CHARS = 1_000;
 
 /** Cosine-ranks documents against a query, backed by the shared EmbeddingService and the durable
- *  `search_vectors` cache.
- *
- *  Budget, enforced per call: AT MOST ONE embedding request, carrying the query and only the documents
- *  whose vectors are not cached yet. The query rides the cache too, so the steady state on this
- *  instance — 180 tool + 11 skill descriptions already cached after the first search — is a single
- *  one-item batch per distinct query. Any failure (no embedding model configured, timeout, endpoint
- *  error) returns an EMPTY map, which the caller reads as "rank by keywords": the tool degrades, never
- *  breaks. At most one WARN per boot, whichever condition trips it first. */
+ *  `search_vectors` cache — DOCUMENTS only. The query is never written to the cache: queries are
+ *  unbounded in cardinality and the cache prunes FIFO by insertion age, so a stream of fresh searches
+ *  would evict exactly the small, long-lived tool/skill vector set, and every ToolSearch would re-embed
+ *  the whole surface inside one 1500 ms budget. Instead the query rides the per-call batch, which is
+ *  otherwise only the documents not cached yet: the steady state is a single one-item batch per
+ *  distinct query against cached documents. Any failure (no embedding model configured, timeout,
+ *  endpoint error) returns an EMPTY map, which the caller reads as "rank by keywords": the tool
+ *  degrades, never breaks. At most one WARN per boot, whichever condition trips it first. */
 export class ToolSemanticIndex {
   private readonly embeddings: ToolSemanticIndexDeps['embeddings'];
   private readonly embeddingConfig: ToolSemanticIndexDeps['embeddingConfig'];
@@ -78,35 +80,40 @@ export class ToolSemanticIndex {
 
     const q = clamp(query);
     const docTexts = docs.map((d) => clamp(d.text));
-    const cached = this.cache?.get(cfg.model, [q, ...docTexts]) ?? new Map<string, Float32Array>();
-    // Distinct texts only: duplicate descriptions must not pay for one vector twice.
-    const missing = [...new Set([q, ...docTexts])].filter((text) => !cached.has(text));
+    const cached = this.cache?.get(cfg.model, docTexts) ?? new Map<string, Float32Array>();
+    // Distinct texts only: duplicate descriptions must not pay for one vector twice. The query rides
+    // every batch (unsorted, always first) but is never persisted — see the put() below.
+    const missing = [...new Set(docTexts)].filter((text) => !cached.has(text));
+    const batch = [q, ...missing];
 
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), this.timeoutMs);
+    let vectors: Float32Array[];
+    try {
+      vectors = await this.embeddings.embedBatch(cfg, batch, controller.signal);
+    } catch (e) {
+      this.warnOnce(`semantic ToolSearch ranking unavailable (${e instanceof Error ? e.message : String(e)}) — falling back to keyword ranking`);
+      return scores;
+    } finally {
+      clearTimeout(timer);
+    }
+    if (vectors.length !== batch.length) {
+      this.warnOnce('semantic ToolSearch ranking unavailable (embeddings malformed response) — falling back to keyword ranking');
+      return scores;
+    }
+    const byText = new Map<string, Float32Array>();
+    batch.forEach((text, i) => byText.set(text, vectors[i]!));
+    // Persist DOCUMENT vectors only. Storing the query's vector would make a stream of fresh queries
+    // evict the durable tool/skill vectors through the FIFO prune (unbounded cardinality vs a fixed
+    // cache cap), after which every search pays for the whole surface again.
     if (missing.length > 0) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), this.timeoutMs);
-      let vectors: Float32Array[];
-      try {
-        vectors = await this.embeddings.embedBatch(cfg, missing, controller.signal);
-      } catch (e) {
-        this.warnOnce(`semantic ToolSearch ranking unavailable (${e instanceof Error ? e.message : String(e)}) — falling back to keyword ranking`);
-        return scores;
-      } finally {
-        clearTimeout(timer);
-      }
-      if (vectors.length !== missing.length) {
-        this.warnOnce('semantic ToolSearch ranking unavailable (embeddings malformed response) — falling back to keyword ranking');
-        return scores;
-      }
-      const fresh = missing.map((text, i) => ({ text, vector: vectors[i]! }));
-      this.cache?.put(cfg.model, fresh);
-      for (const entry of fresh) cached.set(entry.text, entry.vector);
+      this.cache?.put(cfg.model, missing.map((text) => ({ text, vector: byText.get(text)! })));
     }
 
-    const queryVector = cached.get(q);
+    const queryVector = byText.get(q);
     if (!queryVector) return scores;
     docs.forEach((doc, i) => {
-      const vector = cached.get(docTexts[i]!);
+      const vector = cached.get(docTexts[i]!) ?? byText.get(docTexts[i]!);
       if (!vector) return;
       const score = cosine(queryVector, vector);
       if (score >= MIN_SEMANTIC_SCORE) scores.set(doc.id, score);

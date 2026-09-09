@@ -25,6 +25,26 @@ const unitVec = (a: number, b: number): Float32Array => {
   return Float32Array.from([a / n, b / n]);
 };
 
+/** A bounded FIFO vector cache shaped like `SemanticVectorCache`: past `max` entries the oldest inserted
+ *  row is dropped, which is how the durable store's prune behaves. Keyed by text (one model per test). */
+function boundedCache(max: number) {
+  const store = new Map<string, Float32Array>();
+  return {
+    get: (_model: string, texts: readonly string[]) => {
+      const found = new Map<string, Float32Array>();
+      for (const text of texts) {
+        const vector = store.get(text);
+        if (vector) found.set(text, vector);
+      }
+      return found;
+    },
+    put: (_model: string, entries: readonly { text: string; vector: Float32Array }[]) => {
+      for (const entry of entries) store.set(entry.text, entry.vector);
+      while (store.size > max) store.delete(store.keys().next().value!);
+    },
+  };
+}
+
 afterEach(() => setLogSink(undefined));
 
 describe('ToolSemanticIndex', () => {
@@ -53,7 +73,7 @@ describe('ToolSemanticIndex', () => {
     expect(calls).toEqual([['docker', 'Docker tools', 'Slack tools']]);
   });
 
-  it('serves documents and the query from the vector cache (no embedding for repeats)', async () => {
+  it('serves documents from the vector cache and embeds the query alone for repeats', async () => {
     const store = new SearchVectorStore(openDb(':memory:'));
     const calls: string[][] = [];
     const index = new ToolSemanticIndex({
@@ -63,14 +83,31 @@ describe('ToolSemanticIndex', () => {
     });
     const docs = [{ id: 'a', text: 'Docker tools' }, { id: 'b', text: 'Slack tools' }];
     await index.rank('docker', docs);
-    expect(calls).toHaveLength(1);
-    // Same query again: everything (docs AND the query) is cached → zero embedding work.
+    expect(calls).toEqual([['docker', 'Docker tools', 'Slack tools']]);
+    // Same query again: the DOCUMENTS come from the cache, but the query is embedded every call — it
+    // must never enter the durable cache, where its unbounded cardinality would evict the small,
+    // long-lived document vectors through the FIFO prune.
     await index.rank('docker', docs);
-    expect(calls).toHaveLength(1);
-    // A fresh query against cached documents embeds the query alone.
+    expect(calls).toEqual([['docker', 'Docker tools', 'Slack tools'], ['docker']]);
+    // A fresh query against cached documents embeds that query alone.
     await index.rank('container daemon', docs);
-    expect(calls).toHaveLength(2);
-    expect(calls[1]).toEqual(['container daemon']);
+    expect(calls[2]).toEqual(['container daemon']);
+  });
+
+  // A stream of distinct queries must never evict the durable document vectors: queries are unbounded
+  // in cardinality and the store prunes FIFO, so a cached query would push the tool/skill vectors out
+  // and every ToolSearch would re-embed the whole surface inside the 1500 ms budget.
+  it('caches documents but never the query (a query stream must not evict document vectors)', async () => {
+    const calls: string[][] = [];
+    const index = new ToolSemanticIndex({
+      embeddings: stubEmbeddings((texts) => texts.map(() => unitVec(1, 0)), calls),
+      embeddingConfig: () => CFG,
+      cache: boundedCache(2),
+    });
+    const docs = [{ id: 'a', text: 'Docker tools' }];
+    for (const query of ['q1', 'q2', 'q3', 'q4']) await index.rank(query, docs);
+    // The document vector survived the whole query stream: embedded once, then served from the cache.
+    expect(calls.filter((c) => c.includes('Docker tools'))).toHaveLength(1);
   });
 
   it('returns an empty map when embeddings time out, and warns at most once per boot', async () => {
