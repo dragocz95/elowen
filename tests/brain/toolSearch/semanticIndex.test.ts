@@ -1,7 +1,7 @@
 import { describe, it, expect, afterEach } from 'vitest';
 import { openDb } from '../../../src/store/db.js';
 import { SearchVectorStore } from '../../../src/store/searchVectorStore.js';
-import { EmbeddingService, type EmbeddingConfig } from '../../../src/embeddings/embeddingService.js';
+import type { EmbeddingConfig } from '../../../src/embeddings/embeddingService.js';
 import { ToolSemanticIndex, SEMANTIC_SEARCH_TIMEOUT_MS } from '../../../src/brain/toolSearch/semanticIndex.js';
 import { setLogSink } from '../../../src/shared/logger.js';
 
