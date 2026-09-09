@@ -15,6 +15,9 @@ export interface AnthropicHostedReplayMetadata {
   v: 1;
   /** Exact assistant content returned by Anthropic, including server-owned search blocks. */
   content: JsonObject[];
+  /** Anthropic returned a built-in tool-search call without its matching result. The content is captured
+   *  and replayed anyway: see the incomplete-pair branch of {@link AnthropicSseCapture.finish}. */
+  unpaired?: true;
 }
 
 interface AnthropicHostedUnsafeMetadata {
@@ -105,11 +108,11 @@ class AnthropicSseCapture {
 
   /** Capturing is BEST-EFFORT and must never fail the turn it is watching.
    *
-   *  Everything here observes a stream the model's answer is riding on. A syntactically complete response
-   *  can still be unsafe to replay: Anthropic accepts a hosted search while producing the answer, but rejects
-   *  that assistant message on the next request unless every built-in tool-search call has its matching result.
-   *  Such a response survives without replay metadata as long as omitting its hosted blocks leaves the signed
-   *  thinking chain intact; malformed or truncated hosted content remains fail-closed. */
+   *  Everything here observes a stream the model's answer is riding on. A response whose built-in tool-search
+   *  call never got its matching result still replays verbatim when omitting the hosted blocks would modify
+   *  signed thinking, and continues without replay when it would not. Malformed or truncated hosted content
+   *  yields no metadata at all; the marker it leaves lets a later request drop the turn if Anthropic refuses
+   *  it back, which is the only repair that check accepts. */
   feed(chunk: Uint8Array): void {
     try {
       this.buffer += this.decoder.decode(chunk, { stream: true });
@@ -134,8 +137,11 @@ class AnthropicSseCapture {
       const content = indexes.map((index) => clone(this.blocks.get(index)!.block));
       if (!hasCompleteToolSearchPairs(content)) {
         if (omittingHostedContentBreaksThinking(content)) {
-          log.warn('hosted-search replay not captured and unsafe to omit: an incomplete search pair sits between signed thinking blocks');
-          return { unsafeHostedContent: true };
+          // Omitting the hosted blocks would modify the signed thinking chain, which Anthropic rejects on the
+          // next request. Replaying the response as it arrived is the only body that can still match what the
+          // provider produced, so capture it verbatim rather than refusing every later request.
+          log.warn('hosted-search response has an incomplete search pair between signed thinking blocks: replaying it verbatim');
+          return { metadata: { v: REPLAY_VERSION, content, unpaired: true }, unsafeHostedContent: false };
         }
         log.warn('hosted-search replay not captured, continuing without it: response contained an incomplete search pair');
         return { unsafeHostedContent: false };
@@ -256,10 +262,14 @@ function replayMetadata(message: unknown): AnthropicHostedReplayMetadata | undef
   const meta = record(record(message)?.[META_KEY]);
   if (meta?.v !== REPLAY_VERSION || !Array.isArray(meta.content)) return undefined;
   const content = meta.content.map(record);
-  if (content.some((block) => !block)
-    || !content.some(isAnthropicServerOwnedBlock)
-    || !hasCompleteToolSearchPairs(content as JsonObject[])) return undefined;
-  return { v: REPLAY_VERSION, content: content as JsonObject[] };
+  if (content.some((block) => !block) || !content.some(isAnthropicServerOwnedBlock)) return undefined;
+  // An incomplete pair is replayable only when THIS capture deliberately recorded it as one. Metadata that
+  // merely arrives with mismatched pairs stays rejected: it cannot be told apart from corruption.
+  const unpaired = meta.unpaired === true;
+  if (!unpaired && !hasCompleteToolSearchPairs(content as JsonObject[])) return undefined;
+  return unpaired
+    ? { v: REPLAY_VERSION, content: content as JsonObject[], unpaired: true }
+    : { v: REPLAY_VERSION, content: content as JsonObject[] };
 }
 
 function hasUnsafeReplayMetadata(message: unknown): boolean {
@@ -369,6 +379,73 @@ function matchingAssistantIndex(messages: readonly unknown[], meta: AnthropicHos
     return object?.role === 'assistant' && Array.isArray(object.content)
       && isDeepStrictEqual(normalizedKnownContent(object.content), expected);
   });
+}
+
+/** How an assistant turn looks with its hosted blocks set aside: the same projection
+ *  {@link matchingAssistantIndex} compares, in a form that survives being carried between requests. */
+function assistantIdentity(content: readonly unknown[]): string {
+  return JSON.stringify(normalizedKnownContent(content));
+}
+
+/** The assistant turns this session cannot hand back exactly as Anthropic produced them: a response whose
+ *  hosted content was never captured, or one captured with an incomplete search pair. */
+function unreplayableIdentities(contextMessages: readonly unknown[]): Set<string> {
+  const identities = new Set<string>();
+  for (const message of contextMessages) {
+    const object = record(message);
+    if (object?.role !== 'assistant' || !Array.isArray(object.content)) continue;
+    if (hasUnsafeReplayMetadata(object) || replayMetadata(object)?.unpaired) {
+      identities.add(assistantIdentity(object.content));
+    }
+  }
+  return identities;
+}
+
+function answeredToolUseIds(content: readonly unknown[]): string[] {
+  return content.flatMap((raw) => {
+    const block = record(raw);
+    return (block?.type === 'tool_use' || block?.type === 'toolCall') && typeof block.id === 'string' ? [block.id] : [];
+  });
+}
+
+/** Drop an assistant turn Anthropic refuses to take back, together with the tool results that answered it.
+ *
+ *  Anthropic re-validates the latest assistant message against the response it produced, so a turn whose
+ *  hosted blocks cannot be replayed verbatim is rejected on every later request — the conversation is over
+ *  unless something removes it. Removing only the hosted or thinking blocks does not help: a tool-use turn
+ *  must carry its thinking blocks back, and any edit inside the body is exactly what the check refuses. The
+ *  turn therefore leaves together with its `tool_result` answers, which would otherwise dangle. */
+function withoutUnreplayableTurns(
+  payload: JsonObject,
+  identities: ReadonlySet<string>,
+): { payload: JsonObject; dropped: string[] } | undefined {
+  if (identities.size === 0 || !Array.isArray(payload.messages)) return undefined;
+  const dropped: string[] = [];
+  const orphaned = new Set<string>();
+  const messages: unknown[] = [];
+  for (const raw of payload.messages) {
+    const message = record(raw);
+    const content = message && Array.isArray(message.content) ? message.content : undefined;
+    if (message?.role === 'assistant' && content) {
+      const identity = assistantIdentity(content);
+      if (identities.has(identity)) {
+        dropped.push(identity);
+        for (const id of answeredToolUseIds(content)) orphaned.add(id);
+        continue;
+      }
+    }
+    if (content && orphaned.size > 0) {
+      const kept = content.filter((entry) => {
+        const block = record(entry);
+        return !(block?.type === 'tool_result' && typeof block.tool_use_id === 'string' && orphaned.has(block.tool_use_id));
+      });
+      if (kept.length === 0) continue;
+      messages.push(kept.length === content.length ? raw : { ...message, content: kept });
+      continue;
+    }
+    messages.push(raw);
+  }
+  return dropped.length > 0 && messages.length > 0 ? { payload: { ...payload, messages }, dropped } : undefined;
 }
 
 /** Restore the COMPLETE raw assistant content after the hosted projector but before cache monitoring and
@@ -491,6 +568,19 @@ export interface AnthropicHostedToolReplay {
   install: (session: AgentSession) => void;
 }
 
+/** Anthropic's refusals of an assistant turn whose hosted content came back changed. Narrow on purpose:
+ *  every other 400, above all an oversized prompt, must reach its own handling untouched. */
+const HOSTED_TURN_REJECTION = /cannot be modified|tool_search|server_tool_use/i;
+
+/** Hand an already-read error body back to the consumer. Length and encoding describe the transport that
+ *  was consumed here, not this body, so they cannot travel with it. */
+function readResponse(response: Response, body: string): Response {
+  const headers = new Headers(response.headers);
+  headers.delete('content-length');
+  headers.delete('content-encoding');
+  return new Response(body, { status: response.status, statusText: response.statusText, headers });
+}
+
 function replayError(model: Model<Api>, error: unknown, base?: AssistantMessage): AssistantMessage {
   const message = error instanceof Error ? error.message : 'unknown replay failure';
   return {
@@ -508,24 +598,22 @@ function replayError(model: Model<Api>, error: unknown, base?: AssistantMessage)
   };
 }
 
-/** Elowen-side compatibility shim for pi-ai 0.84.2. Remove it once pi-ai preserves Anthropic
- * server_tool_use/tool_search_tool_result blocks in AssistantMessage and convertMessages itself. */
+/** Elowen-side compatibility shim, still required at pi-ai 0.85.1: pi's Anthropic API layer neither keeps
+ * server_tool_use/tool_search_tool_result blocks in AssistantMessage nor sends them back in convertMessages.
+ * Remove it once pi-ai preserves those blocks itself. */
 export function createAnthropicHostedToolReplay(
   expected: Pick<Model<Api>, 'id' | 'api' | 'provider'>,
 ): AnthropicHostedToolReplay {
   const expectedModelId = expected.id;
   let currentContext: readonly unknown[] = [];
-  let unsafeHostedReplay = false;
   /** Tool names already reported as dropped from a replayed hosted-search result — see the warn below. */
   const droppedToolReferences = new Set<string>();
-  const compactionSignals = new WeakSet<AbortSignal>();
+  /** Assistant turns Anthropic has already refused in this session, kept so the refusal is paid once. */
+  const refusedTurns = new Set<string>();
   const installed = new WeakSet<AgentSession['agent']>();
 
   return {
     extension(pi) {
-      // PI's own compaction is the recovery path for an unsafe durable turn: its standalone summary request
-      // does not replay that turn as signed assistant content, and a successful rewrite removes the marker.
-      pi.on('session_before_compact', (event) => { compactionSignals.add(event.signal); });
       pi.on('before_provider_request', (event) =>
         restoreAnthropicHostedReplay(event.payload, currentContext, expectedModelId, (names) => {
           // One line per NAME for the life of the session, not one per request: a fork child whose catalog
@@ -543,9 +631,6 @@ export function createAnthropicHostedToolReplay(
       const agent = session.agent;
       if (installed.has(agent)) return;
       installed.add(agent);
-      session.subscribe?.((event) => {
-        if (event.type === 'compaction_end' && !event.aborted && event.result) unsafeHostedReplay = false;
-      });
       const nativeStream = agent.streamFunction;
       agent.streamFunction = (model: Model<Api>, context, options) => {
         if (model.id !== expected.id || model.api !== expected.api || model.provider !== expected.provider) {
@@ -555,18 +640,37 @@ export function createAnthropicHostedToolReplay(
           return nativeStream(model, context, options);
         }
         currentContext = context.messages;
-        const recoveryRequest = options?.signal !== undefined && compactionSignals.has(options.signal);
         const captures: CaptureHandle[] = [];
         const baseFetch = options?.fetch ?? globalThis.fetch;
         const fetchWithCapture: typeof globalThis.fetch = async (input, init) => {
           const body = requestBody(init);
-          if (!recoveryRequest && (unsafeHostedReplay || currentContext.some(hasUnsafeReplayMetadata))) {
-            throw new Error('previous Anthropic hosted-search response could not be captured safely');
-          }
           if (!verifyAnthropicHostedReplay(body, currentContext, expectedModelId)) {
-            throw new Error('final Anthropic request is missing persisted hosted-search response blocks');
+            // The SDK reports a fetch throw as a bare `Connection error.`, so the reason has to be logged here
+            // to survive at all; the message still names the shim for whoever reads the failed turn.
+            const detail = 'Anthropic hosted tool-search replay shim: the final request lost persisted hosted-search blocks';
+            log.error(detail);
+            throw new Error(detail);
           }
-          const tapped = tapAnthropicResponse(await baseFetch(input, init));
+          const payload = record(body);
+          // A turn already refused once is removed before it is sent again, so the refusal costs one request
+          // per session rather than one per turn for the rest of the conversation.
+          const pruned = payload && refusedTurns.size > 0 ? withoutUnreplayableTurns(payload, refusedTurns) : undefined;
+          let response = await baseFetch(input, pruned ? { ...init, body: JSON.stringify(pruned.payload) } : init);
+          const sent = pruned?.payload ?? payload;
+          if (response.status === 400 && sent) {
+            const detail = await response.text();
+            const repaired = HOSTED_TURN_REJECTION.test(detail)
+              ? withoutUnreplayableTurns(sent, unreplayableIdentities(currentContext))
+              : undefined;
+            if (!repaired) {
+              response = readResponse(response, detail);
+            } else {
+              for (const identity of repaired.dropped) refusedTurns.add(identity);
+              log.warn(`Anthropic refused a hosted-search assistant turn this session cannot replay; dropping the turn and retrying once: ${detail.slice(0, 400)}`);
+              response = await baseFetch(input, { ...init, body: JSON.stringify(repaired.payload) });
+            }
+          }
+          const tapped = tapAnthropicResponse(response);
           if (tapped.capture) captures.push(tapped.capture);
           return tapped.response;
         };
@@ -581,10 +685,9 @@ export function createAnthropicHostedToolReplay(
               const latest = captures.at(-1);
               const outcome = latest ? await latest.result : undefined;
               if (outcome?.metadata) (event.message as AssistantWithReplay)[META_KEY] = outcome.metadata;
-              // The provider answer is already complete and must survive. If its final response contained
-              // unsafe hosted content, persist a fail-closed marker; compaction above is the explicit escape.
+              // The provider answer is already complete and must survive. Mark a response whose hosted content
+              // was never captured, so a later request can recognise the turn if Anthropic refuses it back.
               if (outcome?.unsafeHostedContent) {
-                unsafeHostedReplay = true;
                 (event.message as AssistantWithReplay)[META_KEY] = { v: REPLAY_VERSION, unsafe: true };
               }
             } else if (event.type === 'error' && captures.length > 0) {
