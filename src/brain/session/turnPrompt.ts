@@ -62,7 +62,16 @@ export interface TurnWireFrames {
   /** The model-facing text itself, stored only when it differs from the row's own clean text (an
    *  attachment marker, a fork child's boilerplate). Absent means the row's text IS what went out. */
   text?: string;
+  /** The cold pass has already replaced this turn's runtime framing with its marker (see
+   *  `runtimeFrames.stripHistoricalFrames`). Structural, so a rehydrated row, a fork seed and a live
+   *  message answer alike, and a second cold pass leaves the message alone. */
+  stripped?: true;
 }
+
+/** The field a user row keeps its turn's ephemeral frames under. Lives here, beside the type it names, so
+ *  the projector that writes it, the rehydration that reads it and the cold pass that rewrites it all
+ *  agree on one key. */
+export const WIRE_FRAMES_KEY = 'wireFrames';
 
 /** Compose the parts into the final prompt string, and report the frames that surround the user's text.
  *
@@ -98,14 +107,20 @@ export function composeTurnPrompt(parts: TurnPromptParts): string {
  *  where an older writer, a hand-edited row or a corrupt blob can put anything in this field. */
 export function parseTurnWireFrames(value: unknown): TurnWireFrames | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const frames = value as { v?: unknown; lead?: unknown; trail?: unknown; text?: unknown };
+  const frames = value as { v?: unknown; lead?: unknown; trail?: unknown; text?: unknown; stripped?: unknown };
   if (frames.v !== 1) return undefined;
   const string = (part: unknown): string | undefined => (typeof part === 'string' && part ? part : undefined);
   const lead = string(frames.lead);
   const trail = string(frames.trail);
   const text = typeof frames.text === 'string' ? frames.text : undefined;
   if (lead === undefined && trail === undefined && text === undefined) return undefined;
-  return { v: 1, ...(lead ? { lead } : {}), ...(trail ? { trail } : {}), ...(text !== undefined ? { text } : {}) };
+  return {
+    v: 1,
+    ...(lead ? { lead } : {}),
+    ...(trail ? { trail } : {}),
+    ...(text !== undefined ? { text } : {}),
+    ...(frames.stripped === true ? { stripped: true as const } : {}),
+  };
 }
 
 /** The exact bytes this turn sent, rebuilt from the row's clean text and its stored frames. */

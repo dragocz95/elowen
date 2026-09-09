@@ -15,6 +15,7 @@ import { OPENAI_CACHE_MAX_RETENTION_MS } from './cacheTiming.js';
 import { cacheDefinitelyCold } from './coldStartCompaction.js';
 import { collapseHistoricalImages, type PiAgentMessage } from './historyImageStripping.js';
 import { imagesRejected } from './imageRejection.js';
+import { selectHistoricalFrameStrips } from './runtimeFrames.js';
 import {
   TURN_START_KEEP_USER_TURNS,
   clearedToolResultContent,
@@ -65,7 +66,9 @@ const log = logger('brain-tool-clearing');
  *  it with the dependencies they already hold. */
 export interface ColdToolResultClearingDeps extends SessionQuiescenceDeps {
   store: SessionQuiescenceDeps['store']
-    & Pick<BrainStore, 'getSession' | 'lastMessageAt' | 'lastForkChildMessageAt' | 'clearToolResultRows' | 'getProjectExecution'>;
+    & Pick<BrainStore,
+      'getSession' | 'lastMessageAt' | 'lastForkChildMessageAt' | 'clearToolResultRows' | 'getProjectExecution'
+      | 'getMessages' | 'clearHistoricalFrameRows'>;
 }
 
 /** The live-session facts the pass reads — the same structural shape as {@link ColdCompactionSession}, so
@@ -141,6 +144,7 @@ async function clearCold(
     }
   }
   if (!cold) return;
+  stripColdHistoricalFrames(d, live.sessionId, messages);
   const selected = selectClearableToolResults(messages, TURN_START_KEEP_USER_TURNS);
   if (selected.length === 0) return;
 
@@ -227,6 +231,39 @@ async function clearCold(
     log.info(`cleared ${mutation.toolCallId} (cold turn start, ${mutation.bytes} bytes)`);
   }
   log.info(`cleared ${mutations.length} tool result(s) on ${live.sessionId} at a cold turn start (${rewritten} row(s) rewritten)`);
+}
+
+/** The framing half of the same pass: the runtime blocks a turn embedded in the user messages BEFORE the
+ *  cut — memory, permissions, plugin context, system reminders — replaced by one marker.
+ *
+ *  Same gate, same cut and the same order of effects as the tool results above, for the same reason: those
+ *  bytes are in the prefix the provider was sent, so they may only be rewritten once that prefix is
+ *  provably gone. Unlike a tool result there is nothing to spill — every one of these blocks is composed
+ *  again from live state on the next turn, and the user's own words are what the row stores.
+ *
+ *  It runs BEFORE the tool-result selection and returns nothing, so a session with no clearable result
+ *  (the common conversational case, where the framing is most of the history) still gets its framing back.
+ *  A failure here throws into the caller's own catch and leaves the history whole. */
+function stripColdHistoricalFrames(
+  d: ColdToolResultClearingDeps,
+  sessionId: string,
+  messages: PiAgentMessage[],
+): void {
+  const strips = selectHistoricalFrameStrips(messages, d.store.getMessages(sessionId), TURN_START_KEEP_USER_TURNS);
+  if (strips.length === 0) return;
+  const rewritten = d.store.clearHistoricalFrameRows(
+    sessionId,
+    strips.map((strip) => ({ id: strip.rowId, frames: strip.frames })),
+  );
+  // Rows first, then the live objects synchronously: the store and the wire must never be observably in
+  // disagreement by a request that starts in the gap.
+  let bytes = 0;
+  for (const strip of strips) {
+    (strip.message as { content: unknown }).content = strip.content;
+    bytes += strip.removedBytes;
+  }
+  log.info(`stripped runtime framing from ${strips.length} user message(s) on ${sessionId}`
+    + ` at a cold turn start (${bytes} bytes, ${rewritten} row(s) rewritten)`);
 }
 
 /** Write the spill write-once, adopting a byte-identical file already at the path (a previous pass whose

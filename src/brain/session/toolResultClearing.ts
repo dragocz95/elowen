@@ -48,9 +48,27 @@ const log = logger('brain-tool-clearing');
  *  names the message index, and this names who rewrote it. */
 type SpillTrigger = 'time' | 'size' | 'group';
 
-/** Results smaller than this stay in context: clearing them saves a handful of tokens while costing a
- *  spill file and a placeholder. 4 KB ≈ 1k tokens. */
+/** The ceiling every placeholder stays under, and the floor a build WITHOUT the structural marker would
+ *  select on. 4 KB ≈ 1k tokens.
+ *
+ *  It is no longer the cold pass's own floor ({@link COLD_CLEAR_MIN_BYTES} is), and the two have different
+ *  jobs: this one keeps a placeholder from ever being mistaken for a clearable result by a build that can
+ *  only judge by size — a rollback to one — while the cold floor decides what is worth clearing today. */
 export const CLEAR_MIN_BYTES = 4096;
+
+/** Results smaller than this stay in context at a cold turn start: clearing them costs a spill file and a
+ *  placeholder of ~200 bytes, so the saving has to be worth the file.
+ *
+ *  1 KB rather than 4 KB because 4 KB measured badly on real conversations. Simulated over four live
+ *  sessions, the old floor cleared nothing at all on the owner's own session (its largest tool result was
+ *  2 864 B) and left 19k tokens on the table on a tool-heavy one; 1 KB clears 2 928 and 25 931 tokens
+ *  there respectively. Below 1 KB the placeholder starts to be a comparable fraction of what it replaces.
+ *
+ *  The DELIVERY triggers are deliberately untouched by this: they fire on {@link SPILL_MAX_RESULT_BYTES}
+ *  and {@link TOOL_RESULT_GROUP_BUDGET_BYTES}, both far above either floor, and their placeholder preview
+ *  is bounded by {@link CLEAR_MIN_BYTES} — lowering that bound instead would have shrunk the preview the
+ *  model reads on every large result. */
+export const COLD_CLEAR_MIN_BYTES = 1024;
 
 /** A single fresh result above this size is spilled the moment it would be delivered, without waiting
  *  for the idle gate: at ~12k tokens one result of this size costs more context than the whole rest of
@@ -380,11 +398,16 @@ export interface ClearableResult {
 }
 
 /** Pure selection: which tool results may be cleared. Eligible = toolResult before the cut,
- *  ≥ CLEAR_MIN_BYTES of text, with a toolCallId (no id → no spill path → never cleared) and not already
- *  cleared ({@link isClearedToolResult}). Exported for tests. */
+ *  ≥ {@link COLD_CLEAR_MIN_BYTES} of text, with a toolCallId (no id → no spill path → never cleared) and
+ *  not already cleared ({@link isClearedToolResult}). Exported for tests.
+ *
+ *  A delivery-time preview placeholder is larger than this floor and is skipped by the structural marker
+ *  alone — which is exactly what that marker exists for, and what stops a placeholder being nested inside
+ *  a second one. */
 export function selectClearableToolResults(
   messages: PiAgentMessage[],
   keepUserTurns = KEEP_USER_TURNS,
+  minBytes = COLD_CLEAR_MIN_BYTES,
 ): ClearableResult[] {
   const cut = clearingCutIndex(messages, keepUserTurns);
   if (cut <= 0) return [];
@@ -394,7 +417,7 @@ export function selectClearableToolResults(
     if (message?.role !== 'toolResult') continue;
     if (!message.toolCallId || isClearedToolResult(message)) continue;
     const bytes = textBytes(message);
-    if (bytes < CLEAR_MIN_BYTES) continue;
+    if (bytes < minBytes) continue;
     selection.push({ index, toolCallId: message.toolCallId, occurredAt: messageOccurredAt(message), bytes });
   }
   return selection;

@@ -8,7 +8,7 @@ import { isSubagentSession } from './sessionId.js';
 import { collapseImageBlocks } from './session/historyImageStripping.js';
 import { externalizeImageBlocks } from './chatImages.js';
 import type { StoredChatImage } from './chatImages.js';
-import { applyTurnWireFrames, parseTurnWireFrames, type TurnWireFrames } from './session/turnPrompt.js';
+import { applyTurnWireFrames, parseTurnWireFrames, WIRE_FRAMES_KEY, type TurnWireFrames } from './session/turnPrompt.js';
 
 import { currentMeter } from './openrouterMeter.js';
 import { isErroredContextOverflow } from './events.js';
@@ -30,9 +30,6 @@ export function projectUserTurn(store: BrainStore, sessionId: string, text: stri
   store.touchSession(sessionId);
   return { id: row.id, createdAt: row.created_at };
 }
-
-/** The field a user row keeps its turn's ephemeral frames under. */
-const WIRE_FRAMES_KEY = 'wireFrames';
 
 /** Record what this turn actually sent around the user's words.
  *
