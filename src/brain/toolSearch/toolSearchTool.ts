@@ -458,9 +458,17 @@ export function toolSearchTool(handle: ToolSearchHandle): ToolDefinition {
       const personal = handle.personalToolOwners
         ? { owners: handle.personalToolOwners, contributionUserId: currentContributionUserId() }
         : undefined;
+      // Same for the turn's tool policy: it is a CANDIDATE filter, applied BEFORE the search ranks. A
+      // forbidden tool that outscored every allowed one used to consume the max_results budget and push
+      // the permitted tool out of the result — with max_results 1 the model was told "your permissions
+      // allow none of them" while a perfectly reachable tool existed. Read the exact same plugin/allow
+      // and wildcard-deny predicate as `visibleToolNames`, so immediate visibility and deferred schema
+      // visibility cannot disagree. No turn policy (tests) means allow.
+      const tp = currentToolPolicy();
+      const visibleHere = (name: string) => toolVisibleUnderPolicy(name, handle.pluginNames?.has(name) === true, tp);
       // Only deferred tools are searchable — an already-active tool needs no fetch.
       const candidates: Candidate[] = session.getAllTools()
-        .filter((t) => handle.deferred.has(t.name) && !toolOwnedByOtherAccount(t.name, personal))
+        .filter((t) => handle.deferred.has(t.name) && !toolOwnedByOtherAccount(t.name, personal) && visibleHere(t.name))
         .map((t) => ({
           name: t.name,
           description: t.description ?? '',
@@ -470,11 +478,7 @@ export function toolSearchTool(handle: ToolSearchHandle): ToolDefinition {
       // Defense in depth: only activate tools the ACTING sender is allowed to use. The execute-time gate
       // already refuses a forbidden call, and the per-turn visibility pass hides a forbidden tool again on
       // the next turn — but filtering here stops a forbidden tool's schema from being advertised at all and
-      // stops a foreign/read-only caller from writing it into the shared `activated` set. Read the exact same
-      // plugin/allow and wildcard-deny predicate as `visibleToolNames`, so immediate visibility and deferred
-      // schema visibility cannot disagree. No turn policy (tests) means allow.
-      const tp = currentToolPolicy();
-      const visibleHere = (name: string) => toolVisibleUnderPolicy(name, handle.pluginNames?.has(name) === true, tp);
+      // stops a foreign/read-only caller from writing it into the shared `activated` set.
       const matched = found.filter(visibleHere);
       if (matched.length === 0) {
         // A query that named tools EXACTLY deserves an exact answer, and three different facts used to hide

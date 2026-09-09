@@ -604,6 +604,27 @@ describe('toolSearchTool.execute', () => {
     expect((res.details as { matched: string[] }).matched).toEqual(['mcp__github__list_issues']);
   });
 
+  // The audited mutation: policy was applied AFTER ranking, so a forbidden tool that outscored every
+  // allowed one consumed the max_results budget and pushed the permitted tool out of the result entirely —
+  // with max_results 1 the model was told "your permissions allow none of them" while a perfectly
+  // reachable tool existed. Visibility is a candidate filter, applied BEFORE the search runs.
+  it('a forbidden top candidate must not consume the max_results budget (filtered before ranking)', async () => {
+    const deferred = new Set(CANDIDATES.map((c) => c.name));
+    const handle = createToolSearchHandle(deferred, new Set(CANDIDATES.map((c) => c.name)));
+    handle.session = fakeSession(['Read', 'ToolSearch']);
+    const tool = toolSearchTool(handle);
+    // create_issue out-ranks list_issues for "github", but the sender may not have it: list_issues —
+    // the strongest ALLOWED match — must answer instead of the query collapsing to "allowed none".
+    const res = await runWithPolicy(
+      POLICY,
+      () => tool.execute('id', { query: 'github', max_results: 1 }, undefined, undefined, {} as never),
+      { toolPolicy: { deny: new Set(['mcp__github__create_issue']) } },
+    );
+    expect((res.details as { matched: string[] }).matched).toEqual(['mcp__github__list_issues']);
+    expect(handle.activated.has('mcp__github__list_issues')).toBe(true);
+    expect(res.content[0].text).not.toMatch(/permissions allow none/i);
+  });
+
   it('applies allow-list filtering to plugins but not built-ins', async () => {
     const tools = [
       { name: 'DiscordCreateChannel', description: 'Create a Discord channel' },
