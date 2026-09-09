@@ -194,7 +194,16 @@ function compileTermPatterns(terms: readonly string[]): Map<string, RegExp> {
   return patterns;
 }
 
-/** Score one candidate against the query terms. Exact name-part hit weighs most, then partial name-part,
+/** Whether a term names one of a tool's name parts, either whole or from its beginning. A name part is a
+ *  WORD, so a term may complete it from the front but must never be matched somewhere inside it: a free
+ *  substring made `load` hit `upload`, which is how "skill load" answered with a browser upload tool while
+ *  the tool actually named SkillLoad ranked below it. Prefix keeps the useful half (`upl` → upload,
+ *  `issue` → issues) and drops the accidental one. */
+function namePartMatches(parts: readonly string[], term: string): boolean {
+  return parts.some((p) => p.startsWith(term));
+}
+
+/** Score one candidate against the query terms. Exact name-part hit weighs most, then a name-part prefix,
  *  then a word-boundary DESCRIPTION hit — the same ordering Claude Code's ToolSearch uses, trimmed to what
  *  we need (no MCP-vs-non weighting: deferred tools may come from any source; no searchHint: PI tools have none). */
 function scoreCandidate(cand: Candidate, terms: readonly string[], patterns: Map<string, RegExp>): number {
@@ -203,7 +212,7 @@ function scoreCandidate(cand: Candidate, terms: readonly string[], patterns: Map
   let score = 0;
   for (const term of terms) {
     if (parts.includes(term)) score += 10;
-    else if (parts.some((p) => p.includes(term))) score += 5;
+    else if (namePartMatches(parts, term)) score += 5;
     if (patterns.get(term)?.test(text)) score += 2;
   }
   return score;
@@ -250,7 +259,7 @@ export function resolveToolSearch(
     if (required.length === 0) return true;
     const parts = nameParts(c.name);
     const text = candidateText(c);
-    return required.every((term) => parts.some((p) => p.includes(term)) || patterns.get(term)?.test(text));
+    return required.every((term) => namePartMatches(parts, term) || patterns.get(term)?.test(text));
   });
 
   return eligible
@@ -349,13 +358,14 @@ export function formatHostedToolCatalogBlock(
 
 /** The exact tool names a query TARGETS by name (not by fuzzy search): the `select:` list, or a bare
  *  single-token query. Empty for a multi-word keyword query (that is a search, not a name request). Used to
- *  detect a re-selection of an already-active tool. Lowercased. */
+ *  detect a re-selection of an already-active tool and to answer about a name this session does not hold.
+ *  Returned AS TYPED, because those answers quote the name back and matching is case-insensitive anyway —
+ *  callers lowercase where they compare. */
 export function requestedExactNames(query: string): string[] {
   const trimmed = query.trim();
   const select = /^select:(.+)$/i.exec(trimmed);
-  if (select) return (select[1] ?? '').split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
-  const q = trimmed.toLowerCase();
-  return q && !/\s/.test(q) ? [q] : [];
+  if (select) return (select[1] ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  return trimmed && !/\s/.test(trimmed) ? [trimmed] : [];
 }
 
 const ok = (text: string, details: Record<string, unknown> = {}) => ({ content: [{ type: 'text' as const, text }], details });
@@ -464,26 +474,54 @@ export function toolSearchTool(handle: ToolSearchHandle): ToolDefinition {
       // plugin/allow and wildcard-deny predicate as `visibleToolNames`, so immediate visibility and deferred
       // schema visibility cannot disagree. No turn policy (tests) means allow.
       const tp = currentToolPolicy();
-      const matched = found.filter((name) => toolVisibleUnderPolicy(name, handle.pluginNames?.has(name) === true, tp));
+      const visibleHere = (name: string) => toolVisibleUnderPolicy(name, handle.pluginNames?.has(name) === true, tp);
+      const matched = found.filter(visibleHere);
       if (matched.length === 0) {
-        // The model may have re-selected a tool that is ALREADY active (common after compaction/respawn,
-        // where its own history says "Activated …"). That name is not in the deferred set, so the search
-        // finds nothing — but it is callable right now. Report that instead of a misleading "matched
-        // nothing" that invites retry churn (mirrors Claude Code's fall-back-to-full-set behaviour).
+        // A query that named tools EXACTLY deserves an exact answer, and three different facts used to hide
+        // behind one "matched nothing": the name is ALREADY active (common after compaction/respawn, where
+        // the model's own history says "Activated …"), it is composed but hidden by this turn's policy — so
+        // the execute gate would refuse the call and calling it active is simply untrue — or this session
+        // holds no such tool at all. Only the first case is a reason to try other keywords, and the last two
+        // are why a model that was told "already active" kept looking for a way to call a tool it never had.
+        //
+        // The registry is read only for names the CALLER typed, so an answer repeats what the query already
+        // contained and never enumerates tools this sender may not hold.
         if (found.length === 0) {
-          const wanted = requestedExactNames(p.query);
-          const alreadyActive = wanted.length
-            // Same ownership filter as the candidate list: this branch reads the REGISTERED set, which in a
-            // room holds every account's tools, so without it the fallback would confirm the existence of a
-            // colleague's tool by name.
-            ? session.getAllTools()
-              .filter((t) => wanted.includes(t.name.toLowerCase()) && !handle.deferred.has(t.name)
-                && !toolOwnedByOtherAccount(t.name, personal))
-              .map((t) => t.name)
+          const wanted = requestedExactNames(p.query).map((name) => name.toLowerCase());
+          const registry = session.getAllTools();
+          // Same ownership filter as the candidate list: this branch reads the REGISTERED set, which in a
+          // room holds every account's tools, so without it the fallback would confirm the existence of a
+          // colleague's tool by name. Such a name lands in none of the three groups below and falls through
+          // to the non-committal answer, exactly as before.
+          const named = wanted.length
+            ? registry.filter((t) => wanted.includes(t.name.toLowerCase()) && !handle.deferred.has(t.name)
+              && !toolOwnedByOtherAccount(t.name, personal))
             : [];
+          const alreadyActive = named.filter((t) => visibleHere(t.name)).map((t) => t.name);
+          const forbidden = named.filter((t) => !visibleHere(t.name)).map((t) => t.name);
+          // Measured against the WHOLE registry, ownership included: a colleague's tool exists, so it must
+          // not be reported as nonexistent either.
+          const unknown = requestedExactNames(p.query)
+            .filter((name) => !registry.some((t) => t.name.toLowerCase() === name.toLowerCase()));
+          const clauses: string[] = [];
           if (alreadyActive.length) {
             const one = alreadyActive.length === 1;
-            return ok(`${alreadyActive.join(', ')} ${one ? 'is' : 'are'} already active — call ${one ? 'it' : 'them'} directly; no ToolSearch needed.`, { matched: [], alreadyActive });
+            clauses.push(`${alreadyActive.join(', ')} ${one ? 'is' : 'are'} already active — call ${one ? 'it' : 'them'} directly; no ToolSearch needed.`);
+          }
+          if (forbidden.length) {
+            const one = forbidden.length === 1;
+            clauses.push(`${forbidden.join(', ')} ${one ? 'is' : 'are'} not available in this session — the active tool policy does not permit ${one ? 'it' : 'them'}.`);
+          }
+          if (unknown.length) {
+            clauses.push(`No tool named ${unknown.join(', ')} exists in this session. ${handle.deferred.size} tool(s) are deferred; try different keywords if that was a search.`);
+          }
+          if (clauses.length) {
+            return ok(clauses.join(' '), {
+              matched: [],
+              ...(alreadyActive.length ? { alreadyActive } : {}),
+              ...(forbidden.length ? { unavailable: forbidden } : {}),
+              ...(unknown.length ? { unknown } : {}),
+            });
           }
         }
         const why = found.length > 0
