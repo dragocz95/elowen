@@ -200,12 +200,17 @@ export function localResidentContextTokens(
 }
 
 /** Statusline context usage with the same provider-specific ownership rule as compaction. Billing totals
- * remain read directly from message usage elsewhere. */
+ * remain read directly from message usage elsewhere.
+ *
+ * PI reports `tokens: null` while a compaction has no assistant reply after it: its own count would be
+ * the pre-compaction size, so it declines to answer and the meter reads 0 until the next model response.
+ * The structured resident estimate already measures exactly the post-compaction request (summary + kept
+ * tail + system prompt + active tools), so it answers that window instead of leaving the meter blank. */
 export function residentContextUsageOf(session: AgentSession): ReturnType<AgentSession['getContextUsage']> | undefined {
   const providerUsage = providerContextUsage(session);
-  if (!locallyEstimatedSessions.has(session)) return providerUsage;
+  if (!locallyEstimatedSessions.has(session) && providerUsage?.tokens != null) return providerUsage;
   const contextWindow = session.model?.contextWindow ?? providerUsage?.contextWindow ?? 0;
-  if (contextWindow <= 0) return undefined;
+  if (contextWindow <= 0) return providerUsage;
   const tokens = estimateResidentContextTokens(residentInputs(session));
   return { tokens, contextWindow, percent: (tokens / contextWindow) * 100 };
 }

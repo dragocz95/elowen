@@ -148,6 +148,27 @@ describe('resident context ownership', () => {
     expect(result.categories[0]?.percent).toBeCloseTo(expected / 10);
   });
 
+  /** PI answers `tokens: null` for the window between a compaction and the next model reply — its own
+   *  count would still describe the pre-compaction context. Before this fix the statusline and the web
+   *  meter took that null literally and read 0 until the user sent another message. */
+  it('estimates the post-compaction context while the provider count is unknown', () => {
+    const session = {
+      model: { contextWindow: 200_000 },
+      systemPrompt: 's'.repeat(400),
+      getAllTools: () => [{ name: 'Read', description: 'd'.repeat(36), parameters: undefined }],
+      getActiveToolNames: () => ['Read'],
+      // What a fresh compaction leaves resident: the summary plus the kept tail.
+      messages: [user(4_000), assistant(2_000)],
+      getContextUsage: () => ({ tokens: null, contextWindow: 200_000, percent: null }),
+    } as unknown as AgentSession;
+
+    // 100 (system) + 10 (tool schema) + 1_000 (user) + 500 (assistant)
+    const usage = residentContextUsageOf(session);
+    expect(usage?.tokens).toBe(1_610);
+    expect(usage?.contextWindow).toBe(200_000);
+    expect(usage?.percent).toBeCloseTo(0.805);
+  });
+
   it('retains provider-backed context usage for ordinary sessions', () => {
     const session = {
       getContextUsage: () => ({ tokens: 123_456, contextWindow: 200_000, percent: 61.728 }),
