@@ -927,5 +927,10 @@ export function toolOutputBlock(output: ToolOutputView, width: number, expanded 
   const title = heading !== undefined
     ? terminalPlainText(heading).replace(/\s+/g, ' ').trim()
     : (output.kind === 'console' ? '' : terminalPlainText(output.title).replace(/\s+/g, ' ').trim());
-  return simpleBlock(title, lines.map((line) => CODE_ROW(line, Math.max(1, width - 6))), width, undefined, connector);
+  // Wrap, never clip: a shell line wider than the block used to be cut at the edge with an ellipsis, so a
+  // long path or a one-line JSON result was unreadable in the transcript. The row width is what
+  // simpleBlock leaves inside its frame; wrapTextWithAnsi keeps the tone SGR intact across the split.
+  const inner = Math.max(1, width - 6);
+  const rows = lines.flatMap((line) => (line === '' ? [''] : wrapTextWithAnsi(line, inner)));
+  return simpleBlock(title, rows.map((line) => CODE_ROW(line, inner)), width, undefined, connector);
 }

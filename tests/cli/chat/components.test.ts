@@ -226,6 +226,16 @@ describe('chat components', () => {
     expect(lines.every((line) => visibleWidth(line) <= 60)).toBe(true);
   });
 
+  it('wraps a long output line instead of clipping it at the block edge', () => {
+    const long = 'word '.repeat(40).trim(); // 199 columns, far wider than the block
+    const plain = toolOutputBlock({ title: 'console output', kind: 'console', text: long, tone: 'success' }, 60)
+      .map((line) => line.replace(/\x1b\[[0-9;]*m/g, ''));
+    expect(plain.every((line) => visibleWidth(line) <= 60)).toBe(true);
+    expect(plain.join('\n')).not.toContain('…');
+    // Every word survives: the tail of the line is wrapped onto following rows, not cut off.
+    expect(plain.join(' ').split('word').length - 1).toBe(40);
+  });
+
   it('keeps a non-zero tool exit visible', () => {
     const rendered = toolOutputBlock({
       title: 'console output', kind: 'console', text: 'failed', status: '[exit 2]', tone: 'danger',
@@ -255,12 +265,12 @@ describe('chat components', () => {
     expect(performance.now() - startedAt).toBeLessThan(40);
   });
 
-  it('still truncates an overflowing nested tool row inside the terminal width', () => {
+  it('wraps an overflowing wide-glyph row inside the terminal width and keeps its tail', () => {
     const lines = toolOutputBlock({
-      title: 'tool result', kind: 'text', text: `prefix-${'界'.repeat(200)}-unsafe-tail`,
+      title: 'tool result', kind: 'text', text: `prefix-${'界'.repeat(200)}-kept-tail`,
     }, 40);
     expect(lines.every((line) => visibleWidth(line) <= 40)).toBe(true);
-    expect(lines.join('\n')).not.toContain('unsafe-tail');
+    expect(lines.join('\n')).toContain('kept-tail');
   });
 
   it('CardPanel renders pinned cards as real rows and collapses an all-done checklist / non-pinned cards', () => {
