@@ -12,7 +12,7 @@ elowen api GET /projects
 elowen api POST /brain/send '{"text":"Summarize this project","mode":"build"}'
 ```
 
-`ELOWEN_URL` overrides the daemon URL and `ELOWEN_TOKEN` overrides the token cached by `elowen login`. The web application normally reaches the daemon through its same-origin `/api` proxy and an httpOnly session cookie.
+`ELOWEN_URL` overrides the daemon URL and `ELOWEN_TOKEN` overrides the token cached by `elowen login`. The web application reaches the daemon through its same-origin BFF, which injects the `Authorization` header server-side, including for SSE. The daemon itself reads no cookie.
 
 ## Authentication and access
 
@@ -22,7 +22,7 @@ Before the first user is created, the daemon is in setup mode and requests are o
 Authorization: Bearer <token>
 ```
 
-Tokens are accepted in the `Authorization` header only. Query-string tokens are not accepted.
+Tokens are accepted in the `Authorization` header only. Query-string tokens are not accepted. A token's lifetime is `security.tokenTtlDays`, 30 days by default, and login and impersonation return `tokenTtlDays` so the caller can size its own session.
 
 The following paths are public:
 
@@ -38,7 +38,7 @@ The following paths are public:
 - `GET /users/:id/avatar` when a valid `exp` and `sig` are supplied
 - `/hooks/*` plugin webhook mounts
 
-Authentication is separate from authorization. After authentication, handlers apply administrator checks, per-user plugin grants, project assignments, and resource ownership. A non-administrator with project assignments can access any assigned project; access is not limited to the daemon's home project.
+Authentication is separate from authorization. After authentication, handlers apply administrator checks, per-user plugin grants, project assignments, and resource ownership. A non-administrator with project assignments can access any assigned project; access is not limited to the daemon's home project. A non-administrator with no project assignments is refused with `403` on `/activity`, `/events`, and `/usage` before any handler runs.
 
 Delegated sub-agents do not receive an `agent` API token. Their captured project, tool, permission, owner, and read-only boundaries are enforced by the delegation runtime.
 
@@ -47,10 +47,10 @@ Delegated sub-agents do not receive an `agent` API token. Their captured project
 - Send JSON with `Content-Type: application/json` unless a route says otherwise.
 - `POST /brain/uploads` accepts one raw file stream, not multipart form data.
 - `POST /auth/me/avatar` accepts multipart form data with a field named `avatar`.
-- Handled validation failures normally return `{ "error": "…" }`.
-- Invalid JSON and failed Zod validation return HTTP `400`.
+- One error envelope everywhere: `{ "error": "<message>" }`. Malformed JSON answers `400` `{ "error": "invalid JSON body" }`, a failed schema check answers `400` with `path: message` pairs, and anything unhandled answers `500` `{ "error": "internal error" }`.
 - Common status codes are `401` (missing or invalid token), `403` (authorization or project access), `404` (unknown resource), `409` (conflict or runtime state), `413` (payload too large), `415` (unsupported media type), `429` (rate limit), `500` (server error), and `503` (an optional subsystem is unavailable or disabled).
-- Error text is diagnostic, not a stable enum. Plugin routes may define additional response shapes and status codes.
+- Error text is diagnostic, not a stable enum, apart from the fixed bodies above and the machine-readable `503` codes the site-search routes return. Plugin routes may define additional response shapes and status codes.
+- Body caps: `POST /auth/login` and the Microsoft SSO routes accept 16 KiB, webhook routes 1 MiB, and plugin API routes 4 MiB. An over-limit body answers `413` `{ "error": "payload too large" }`.
 
 ### Revisioned writes
 
@@ -62,15 +62,21 @@ Configuration responses that expose a `revision` support optimistic concurrency.
 
 A successful plugin-config write returns the canonical masked configuration and new revision. HTTP `202` with `pending: true` means persistence succeeded but the live registry has not activated that generation yet. Secret values are write-only: omitted, empty, or `null` secret fields keep the stored value, and no read response contains plaintext.
 
+### Rate limits and client origins
+
+Login and the Microsoft SSO routes share one fixed-window limiter: 10 attempts per 5 minutes, keyed on the resolved client origin. The site-search routes add their own per-user budgets, documented with those routes. There is no other rate limiting.
+
+The resolved client origin comes from one place in the daemon: an `x-real-ip` header wins and is trusted only when `security.trustProxy` is on; otherwise the first element of `x-forwarded-for` is used and is always treated as untrusted, because the client writes it and the BFF refuses to forward it. With no forwarding header at all the origin is the literal `local`. There is no trusted-proxy address list, no hop count, and no configurable header name; `security.trustProxy` defaults to `true` because the install wizard writes the reverse-proxy configuration that sets the header. Work with no HTTP request behind it, such as cron, boot recovery, and sub-agent respawn, is attributed to a distinct `internal` origin rather than the last human IP, and platform turns carry a `platform:<name>` origin. The origin feeds login and SSO rate limiting and usage attribution.
+
 ## Health, setup, configuration, and events
 
 | Method | Path | Access | Purpose |
 | --- | --- | --- |
 | `GET` | `/health` | Public | Return `ok`, daemon version, event-loop diagnostics, and optionally sub-agent pool status. |
 | `GET` | `/setup` | Public | Return `{ "needsSetup": boolean }`. |
-| `GET` | `/public/theme` | Public | Return the active public brand, colors, fonts, text, and asset URLs. |
-| `GET` | `/public/theme/assets/:file` | Public | Serve a whitelisted active-theme asset. |
-| `GET` | `/config` | Authenticated | Read the runtime configuration. |
+| `GET` | `/public/theme` | Public | Return the active public brand, colors, fonts, text, and asset URLs, with an ETag and a short `max-age`. |
+| `GET` | `/public/theme/assets/:file` | Public | Serve a whitelisted active-theme asset; URLs are versioned and cached immutably for a year, and a stale version answers `404`. |
+| `GET` | `/config` | Authenticated | Read the runtime configuration; secrets are excluded from the snapshot. |
 | `PUT` | `/config` | Admin or setup mode | Apply a validated configuration patch, optionally guarded by `expectedRevision`. |
 | `GET` | `/config/tool-deferral` | Admin or setup mode | Read effective tool-loading and deferral settings. |
 | `GET` | `/system` | Authenticated | Read running version, latest version, update availability, auto-update state, and diagnostics. |
@@ -81,7 +87,7 @@ A successful plugin-config write returns the canonical masked configuration and 
 | `GET` | `/system/logs/:name` | Admin | Read a bounded tail of one log file (`?lines=`). |
 | `DELETE` | `/system/logs/:name` | Admin | Delete one log file. |
 | `DELETE` | `/system/logs` | Admin | Delete all log files. |
-| `GET` | `/events` | Authenticated SSE | Stream core and enabled-plugin state-change events, filtered by project access and memory ownership. |
+| `GET` | `/events` | Authenticated SSE | Stream instance events (`activity`, `memory`, `auth`, `plugin`, `plugins`); conversation events are always withheld. Memory is scoped to its owner, plugins and activity reach every subscriber, and the rest require a resolvable accessible project. |
 | `ALL` | `/mcp` | Authenticated | Handle a stateless MCP request using the caller's available Elowen and plugin tools. |
 
 Web Push uses the following endpoints:
@@ -98,11 +104,11 @@ Web Push uses the following endpoints:
 
 | Method | Path | Access | Purpose |
 | --- | --- | --- | --- |
-| `POST` | `/auth/login` | Public | Verify `username` and `password`; return a bearer token, user, and token TTL. |
+| `POST` | `/auth/login` | Public (rate-limited) | Verify `username` and `password`; return a bearer token, user, and `tokenTtlDays`. |
 | `POST` | `/auth/logout` | Authenticated | Revoke the current bearer token. |
 | `GET` | `/auth/sso/providers` | Public | List configured SSO providers. |
-| `POST` | `/auth/sso/msteams/start` | Public | Start a Microsoft Teams SSO flow. |
-| `POST` | `/auth/sso/msteams/callback` | Public | Complete a Microsoft Teams SSO flow with `flowId`, `state`, and `code`. |
+| `POST` | `/auth/sso/msteams/start` | Public (rate-limited) | Start a Microsoft Teams SSO flow. |
+| `POST` | `/auth/sso/msteams/callback` | Public (rate-limited) | Complete a Microsoft Teams SSO flow with `flowId`, `state`, and `code`. |
 
 Example login:
 
@@ -133,20 +139,20 @@ elowen api GET /auth/me
 | `GET` | `/users/:id/avatar/url` | Mint a short-lived signed avatar URL. |
 | `GET` | `/users/:id/avatar` | Serve an avatar using authentication or a valid signed URL. |
 
-### Administrator user management
+### User management
 
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/users` | List users. Open during setup; administrator-only afterwards. |
 | `POST` | `/users` | Create a user. Open during setup; administrator-only afterwards. |
-| `PATCH` | `/users/:id` | Update username, profile, administrator status, executable allow-list, tool grants, disabled tools, and plugin grants. |
-| `DELETE` | `/users/:id` | Delete a non-admin user after account processes and plugin-owned data are cleaned up. |
+| `PATCH` | `/users/:id` | Update username, profile, administrator status, project-creation and sharing permissions, the per-account model allow-list, tool grants, disabled tools, and plugin grants. The last administrator cannot be demoted. |
+| `DELETE` | `/users/:id` | Delete a user and cascade the account's settings, memory, conversation data, and plugin-owned data. The last user and the administrator cannot be deleted. |
 | `GET` | `/users/:id/tools` | Show the tools available to a user and their effective state. |
 | `GET` | `/users/:id/stats` | Read aggregate memory count, session count, and most-used model. |
 | `POST` | `/users/:id/impersonate` | Issue a token for an administrator to inspect another user's view. |
 | `GET` | `/users/:id/projects` | List a user's project assignments. |
-| `POST` | `/users/:id/projects` | Assign a project to a user; the JSON body contains `projectId`. |
-| `DELETE` | `/users/:id/projects/:pid` | Remove a project assignment. |
+| `POST` | `/users/:id/projects` | Assign a project to a user; the JSON body contains `projectId`. Any authenticated account may assign within the project's membership rules; the legacy home project stays administrator-only. |
+| `DELETE` | `/users/:id/projects/:pid` | Remove a project assignment under the same membership gate. Revoking a managed-project membership also revokes that account's managed runtime access. |
 
 ## Projects and repository access
 
@@ -157,9 +163,10 @@ elowen api GET /auth/me
 | `GET` | `/projects/:id/users` | Admin; a managed project's own members | List the account ids assigned to a project. `?view=profiles` returns the same membership as `{ id, username, name, email, avatar }` objects instead, for a surface that names its members. Neither view reaches beyond the project's own members; the instance directory stays on the admin-only `GET /users`. |
 | `GET` | `/fs/dirs` | Admin | Browse permitted server directories for project registration (`?path=`). It returns directory names, not file contents. |
 | `POST` | `/fs/dirs` | Admin | Create a directory with `{ "parent": "…", "name": "…" }`; returns `201`, `409` when it already exists, or a validation/access error. |
-| `POST` | `/projects` | Admin | Register a project with `slug`, `path`, and optional `notes`. |
-| `PATCH` | `/projects/:id` | Admin | Update a project's path, notes, or project-relative image icon. The slug is immutable. |
-| `DELETE` | `/projects/:id` | Admin | Remove a project from Elowen's registry and access grants. It does not delete files on disk, and the home project cannot be removed. |
+| `POST` | `/projects` | Managed: create-projects capability; host: admin | Register a project. A host project sends `slug`, `path`, and optional `notes`; a managed project sends `executionKind: "managed"` and a `slug` with no path. |
+| `POST` | `/projects/default` | Authenticated | Ensure the caller has a default project, creating it if needed. |
+| `PATCH` | `/projects/:id` | Managed: project member; host: admin | Update a host project's path, notes, or project-relative image icon; managed project members may update notes, icon, and the `memoryShared` flag. The slug is immutable. |
+| `DELETE` | `/projects/:id` | Managed: project manage rights; host: admin | Remove a project from Elowen's registry and access grants without touching host files. A managed project is deleted through the environment provider and answers `202` with the deletion operation. The home project cannot be removed. |
 | `GET` | `/projects/:id/memory-members` | Admin | Read the accounts allowed to use the Project's shared memory pool. An empty share list means every Project member is included. |
 | `PUT` | `/projects/:id/memory-members` | Admin | Replace the shared-memory member list with `{ "userIds": [ ... ] }`; every account must exist and already be assigned to the Project. |
 | `GET` | `/projects/:id/git` | Project access | Read the project's Git snapshot, branches, and recent commits. |
@@ -179,14 +186,18 @@ Core does not expose general file browsing or editing routes. Those are provided
 
 The usage-by-model and usage-by-day responses support private ETags and return `304 Not Modified` when the caller sends a matching `If-None-Match` header.
 
+`GET /usage/by-origin` is served from the `usage_by_origin` write-time rollup alone and never joins back to the message table. Its grain is day, account, and origin, where an origin is an IP address or the literal `local`, `internal`, `redacted`, or a platform name. A row's trust reflects the weakest contribution that formed it, and a cost stays absent rather than being reported as zero when no contributing turn reported one. The response carries the group and a `trackingSince` date, and answers `503` when the origin store is not wired. IP-bearing rows are collapsed into a single `redacted` bucket after `runtime.limits.originIpRetentionDays`, 30 days by default, and deleted outright after the event-retention window.
+
 ### Activity
 
 | Method | Path | Query parameters | Purpose |
 | --- | --- | --- | --- |
 | `GET` | `/activity` | `limit` 1–500, optional `type` and `target` | Read the activity feed, scoped by project access. |
 | `GET` | `/activity/presence` | — | List people currently or recently active without conversation content. |
-| `GET` | `/activity/pulse` | — | Return the dashboard pulse: active people, running sub-agents, usage, surfaces, memory hits, cache ratios, and daily/monthly activity. |
+| `GET` | `/activity/pulse` | — | Return the dashboard tile: who is working, the open conversation titles, today's spend and per-person hourly rhythm, the rolling 30-day totals, surfaces, memory hits, and cache ratios. |
 | `GET` | `/activity/heatmap` | `days` 1–90; default `14` | Return hourly activity counts. |
+
+Unlike `/activity/presence` and `/activity/heatmap`, `/activity/pulse` deliberately exposes conversation titles and per-person token and dollar spend to every authenticated account. That is a recorded product decision, not an oversight.
 
 ### Dashboard recap
 
@@ -211,8 +222,8 @@ Brain routes operate on the authenticated user's own active conversation unless 
 | `GET` | `/brain/context-usage` | Read the live conversation context breakdown; use `?session=` for a specific session. |
 | `POST` | `/brain/start` | Start or resume a conversation. Use `fresh: true` for a new conversation. |
 | `GET` | `/brain/sessions` | List the caller's conversations. Add `limit` and/or `offset` for a `{ items, total, hasMore }` response; without them the legacy array response is retained. |
-| `POST` | `/brain/sessions/:id/read` | Mark owned-session activity as read. The body accepts the optional activity boundary and surface. Unknown sessions return `404`. |
-| `GET` | `/brain/conversation-links` | Return scheduled-job links for the caller's visible conversations. Use `?scope=all` for the administrator register; it returns `403` for non-administrators and distinguishes `available`, `unavailable`, and `error` states when the scheduling plugin or grant is unavailable. |
+| `POST` | `/brain/sessions/:id/read` | Mark owned-session activity as read. The body carries the activity boundary `through` and the reading `surface`. Unknown sessions return `404`. |
+| `GET` | `/brain/conversation-links` | Return the schedules filed under each conversation and the sub-agents that ran under it. `?scope=all` is the administrator register (`403` for non-administrators) and `?ids=` narrows to the conversations on screen, intersected with the authorized set. Each branch reports `available`, `unavailable`, or `error`. |
 | `GET` | `/brain/conversations` | Authenticated SSE stream of content-free conversation invalidations for the caller. It returns `503` when the brain is unavailable. |
 | `GET` | `/brain/managed-sessions` | Administrator view of managed conversations, including platform sessions. |
 | `DELETE` | `/brain/managed-sessions` | Administrator bulk deletion; use `?scope=all` for the cross-account register. |
@@ -221,10 +232,10 @@ Brain routes operate on the authenticated user's own active conversation unless 
 | `GET` | `/brain/search` | Search the caller's conversation messages with `?q=`. Queries shorter than two characters return an empty result. |
 | `PATCH` | `/brain/sessions/:id` | Rename an owned conversation with `{ "title": "…" }`. |
 | `DELETE` | `/brain/sessions/:id` | Delete an owned conversation. |
-| `POST` | `/brain/sessions/:id/fork` | Create a new conversation seeded with an owned conversation's history. |
+| `POST` | `/brain/sessions/:id/fork` | Create a new conversation seeded with an owned conversation's history; returns `201`, and a foreign or unknown source answers `404`. |
 | `GET` | `/brain/sessions/:id/export` | Download an owned conversation as HTML by default or JSONL with `?format=jsonl`. |
 | `GET` | `/brain/chat-images/:file` | Serve an image attachment referenced by an owned message. |
-| `GET` | `/brain/chat-files/:file` | Download a non-image attachment referenced by an owned message. |
+| `GET` | `/brain/chat-files/:file` | Download a non-image attachment referenced by an owned message; the response is a forced opaque download. |
 | `GET` | `/brain/images/:file` | Serve a generated PNG from the image-generation or image-edit plugin data directory. |
 | `POST` | `/brain/uploads` | Stream one file into a permitted project. Pass the original name as `?name=`; the response identifies the stored path and project. |
 
@@ -253,9 +264,9 @@ GET /brain/stream?heartbeat=1
 Accept: text/event-stream
 ```
 
-The stream is Server-Sent Events. By default it follows the active conversation; `?session=<id>` selects an explicit session. A drill-in client can request `snapshot=1` with a session to receive an initial `snapshot` event and then live events. `?history=<n>` limits that snapshot's history window. `?client=<id>&generation=<n>` binds client lifecycle operations. `?heartbeat=1` emits a named `heartbeat` event every 30 seconds; otherwise keep-alives are SSE comments.
+The stream is Server-Sent Events. By default it follows the active conversation; `?session=<id>` selects an explicit session, and `?surface=web|cli` declares which owner surface is attaching. A drill-in client can request `snapshot=1` with a session to receive an initial `snapshot` event and then live events; this is also the sub-agent drill-in stream, and it survives that session's respawns. `?history=<n>` limits that snapshot's history window. `?client=<id>&generation=<n>` binds client lifecycle operations. `?heartbeat=1` emits a named `heartbeat` event every 30 seconds; otherwise keep-alives are SSE comments. An administrator may read a foreign conversation this way with `snapshot=1`, read-only.
 
-The global `GET /events` stream is separate from the conversation stream. It reports application state changes, while `/brain/stream` reports brain events and transcript updates.
+All three SSE streams (`/events`, `/brain/conversations`, and `/brain/stream`) write a connect comment immediately so a proxy connects on a quiet system, and ping every 30 seconds. `/events` reports instance state changes, `/brain/conversations` reports content-free conversation invalidations, and `/brain/stream` reports brain events and transcript updates.
 
 ### Turn controls, queue, goals, and sub-agents
 
@@ -270,7 +281,8 @@ The global `GET /events` stream is separate from the conversation stream. It rep
 | `POST` | `/brain/fast` | Set or toggle the caller account's durable Fast preference; the selected session reports current route support. |
 | `POST` | `/brain/yolo` | Enable or disable the conversation-scoped YOLO override. Deny rules still apply. |
 | `POST` | `/brain/cwd` | Record a validated working-directory change. |
-| `POST` | `/brain/compact` | Compact conversation context, optionally with an `instruction`. |
+| `POST` | `/brain/execution` | Select the project environment a conversation executes in (the managed side of the project switch). The reply carries the resolved working directory; the conversation must have no active work, or the route answers `409`. |
+| `POST` | `/brain/compact` | Compact conversation context, optionally with an `instruction`. A no-op answers `200` with `compacted: false`. |
 | `GET` | `/brain/queue` | Read pending messages for the active or selected session. |
 | `DELETE` | `/brain/queue/:id` | Clear pending queued messages; the path ID is retained for wire compatibility. |
 | `POST` | `/brain/queue/recall` | Pop and return the last queued message. |
@@ -307,31 +319,31 @@ The corresponding process tools are conversation-scoped and apply the same owner
 | `GET` | `/brain/models` | Authenticated | List configured models permitted for the caller. |
 | `POST` | `/brain/providers/probe` | Admin or setup mode | Probe an OpenAI-compatible provider's `/models` endpoint. |
 | `GET` | `/brain/providers/hosted-tool-search/status` | Admin or setup mode | Read verification status for Azure OpenAI hosted tool search. |
-| `POST` | `/brain/providers/hosted-tool-search/probe` | Admin or setup mode | Verify one configured Azure OpenAI hosted tool-search model. |
+| `POST` | `/brain/providers/hosted-tool-search/probe` | Admin or setup mode | Verify one configured Azure OpenAI hosted tool-search model and persist the verified capability. |
 | `POST` | `/brain/test` | Admin or setup mode | Run one non-streaming provider smoke test; provider failures are returned as `{ "ok": false, "error": "…" }`. |
 | `GET` | `/brain/oauth/status` | Admin or setup mode | Show connection status for supported built-in OAuth providers. |
 | `GET` | `/brain/oauth/:type/catalog` | Admin or setup mode | List the built-in model catalog for an OAuth provider. |
-| `POST` | `/brain/oauth/:type/start` | Admin or setup mode | Start an OAuth flow; `?method=` selects the provider's method. |
+| `POST` | `/brain/oauth/:type/start` | Admin or setup mode | Start an OAuth flow and answer `201`; `?method=` selects the provider's method. |
 | `GET` | `/brain/oauth/flow/:id` | Admin or setup mode | Poll one OAuth flow. |
 | `POST` | `/brain/oauth/flow/:id/input` | Admin or setup mode | Submit input requested by a flow. |
 | `DELETE` | `/brain/oauth/:type` | Admin or setup mode | Disconnect an OAuth provider. |
 
 ### Diagnostic routes
 
-`/brain/debug/*` is an administrator-only, private, non-cacheable diagnostic surface. It includes session, request, segment, raw-request, and legacy-transcript inspection routes. It is intended for debugging the daemon, not for normal chat clients.
+`/brain/debug/*` is an administrator-only, private, non-cacheable diagnostic surface. It includes session, request, segment, raw-request, and legacy-transcript inspection routes. A bad filter or cursor answers `400`, and an oversized payload answers `413` naming the required bytes. It is intended for debugging the daemon, not for normal chat clients.
 
 ### Semantic command-palette search
 
 | Method | Path | Access | Purpose |
 | --- | --- | --- | --- |
-| `POST` | `/search/rank` | Authenticated | Rank caller-supplied `{ query, candidates: [{ id, text }] }` by embedding similarity. The route is limited to 30 requests per minute and returns `503` when embeddings are not configured or unavailable. |
-| `POST` | `/search/ask` | Authenticated | Ask the configured search model to select caller-supplied `{ query, candidates: [{ id, title, subtitle? }] }`. The route is limited to 10 requests per minute and returns `503` when no model is configured or the request fails. |
+| `POST` | `/search/rank` | Authenticated | Rank caller-supplied `{ query, candidates: [{ id, text }] }` by embedding similarity. Limited to 30 requests per minute; answers `503` with `embeddings-not-configured` or `embeddings-unavailable`. |
+| `POST` | `/search/ask` | Authenticated | Ask the configured search model to select caller-supplied `{ query, candidates: [{ id, title, subtitle? }] }`. Limited to 10 requests per minute; answers `503` with `model-not-configured` or `ask-failed`. |
 
-Both routes validate bounded candidate lists and return `400` for invalid JSON or schemas. They rank or select only the candidates supplied by the caller.
+Both routes accept at most 400 candidates and 200 characters per text, id, title, subtitle, and query, and refuse over-limit input with `400` rather than truncating it. Over the per-user budget a route answers `429` `{ "error": "rate-limited" }`. They rank or select only the candidates supplied by the caller.
 
 ## Memory
 
-Memory is private to the authenticated account by default. An administrator can configure a Project shared pool; eligible Project members can then recall and manage accessible rows in that pool. The routes do not all share the same scope: row reads and access-scoped row operations widen to shared pools, while creation, audit feeds, maintenance, legacy reindex, and reclassify remain account-owned. A patch is an access-scoped row operation and can update an accessible shared-pool row. Core memory works without embeddings; semantic search and re-indexing use embeddings when configured.
+Memory is private to the authenticated account by default. An administrator can configure a Project shared pool; eligible Project members can then recall and manage accessible rows in that pool. The routes do not all share the same scope: row reads and access-scoped row operations widen to shared pools, while creation, audit feeds, maintenance, legacy reindex, and reclassify remain account-owned. A patch is an access-scoped row operation and can update an accessible shared-pool row. Core memory works without embeddings; semantic search and re-indexing use embeddings when configured. When the memory store is not wired, the family answers `400` `{ "error": "memory unavailable" }`.
 
 | Method | Path | Access | Purpose |
 | --- | --- | --- | --- |
@@ -372,7 +384,7 @@ A foreign or unknown memory/category ID is normally reported as `404`, so IDs ca
 
 ### Plugin platform routes
 
-The core plugin administration surface is under `/plugins` and is administrator-only unless noted.
+The core plugin administration surface is under `/plugins` and is administrator-only unless noted. Most of these routes are also open during first-run setup; `GET /plugins/destinations` and `GET /plugins/tools` require an administrator at all times.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
@@ -380,10 +392,10 @@ The core plugin administration surface is under `/plugins` and is administrator-
 | `GET` | `/plugins/runtime` | Report the contributions actually registered by the live plugin registry. |
 | `GET` | `/plugins/tools` | List built-in and plugin tools. |
 | `GET` | `/plugins/destinations` | List notification destinations from enabled platform plugins. |
-| `GET` | `/plugins/marketplace` | Read the curated marketplace catalog; `?refresh=1` refreshes it. |
+| `GET` | `/plugins/marketplace` | Read the curated marketplace catalog; `?refresh=1` refreshes it. Answers `503` when the marketplace service is not wired. |
 | `POST` | `/plugins/marketplace/:name/install` | Install a marketplace plugin, optionally enabling it after grant consent. |
 | `POST` | `/plugins/marketplace/:name/update` | Update a marketplace plugin. |
-| `GET` | `/plugins/:name` | Read one plugin manifest, configuration schema, capabilities, and data summary. |
+| `GET` | `/plugins/:name` | Read one plugin manifest, configuration schema and values (secrets reported only as set or unset), capabilities, and data summary. |
 | `PATCH` | `/plugins/:name` | Enable or disable a plugin. Enabling may require the manifest's declared grant consent. |
 | `DELETE` | `/plugins/:name` | Uninstall a marketplace plugin or soft-remove a bundled plugin. |
 | `POST` | `/plugins/:name/restore` | Restore a soft-removed bundled plugin. |
@@ -395,8 +407,8 @@ The core plugin administration surface is under `/plugins` and is administrator-
 | `GET` | `/plugins/:name/icon` | Serve a plugin icon; this route is not administrator-only. |
 | `GET` | `/plugins/user-config` | List per-account configuration forms available to the caller. |
 | `PATCH` | `/plugins/:name/user-config` | Save the caller's own revisioned per-plugin configuration; no registry reload is required. |
-| `GET` | `/plugins/ui` | Return the authenticated plugin UI bundle listing. |
-| `GET` | `/plugins/:name/web/:file` | Serve a plugin's web asset. |
+| `GET` | `/plugins/ui` | Return the authenticated listing of enabled plugins with a browser UI, localized and filtered by the caller's plugin grants. |
+| `GET` | `/plugins/:name/web/:file` | Serve a plugin's bundle or stylesheet at its content-hash URL, cached immutably for a year. A stale hash answers `404`, and an `adminOnly` plugin requires an administrator. |
 
 Plugin API handlers are resolved from the live registry on every request:
 
@@ -404,7 +416,7 @@ Plugin API handlers are resolved from the live registry on every request:
 - A plugin may declare a root mount in its manifest; root-mounted routes are resolved after core routes, so core routes win on conflicts.
 - Plugin routes declare their access level. The dispatcher enforces administrator access and, for `userGrantable` plugins, the caller's plugin grant.
 - Buffered plugin API request bodies are capped at 4 MiB. Plugin handlers may also return SSE responses.
-- Root-mounted plugin routes are live contributions and can change with the installed plugin set. Core routes take precedence when a root mount conflicts with a core path.
+- Root-mounted plugin routes are live contributions and can change with the installed plugin set. Core routes take precedence when a root mount conflicts with a core path, and a path owned by a declared but inactive plugin answers `503` stating either that the plugin is disabled or that it is enabled but not installed.
 
 The external MCP bridge plugin contributes management routes for external stdio, HTTP, and SSE servers. Personal servers require a linked account and are visible only to that account. Instance servers require `identity.owner === true`; stdio creation or start requires the same instance-owner authority regardless of the row's scope. The `GET` route also requires a linked account, including for an administrator's view.
 
@@ -435,7 +447,7 @@ The bundled subagent plugin currently contributes these administrator-only compa
 
 ### Webhooks
 
-`/hooks/*` is public at the daemon authentication layer because external providers cannot send an Elowen bearer token. The matching plugin authenticates and validates each webhook request. Webhook bodies are capped at 1 MiB. Unknown mounts return `404`; handler failures return `{ "error": "hook handler failed" }` with HTTP `500`.
+`/hooks/*` is public at the daemon authentication layer because external providers cannot send an Elowen bearer token. The matching plugin authenticates and validates each webhook request. Webhook bodies are capped at 1 MiB. Unknown mounts return `404` without revealing which mounts exist; handler failures return `{ "error": "hook handler failed" }` with HTTP `500`, and the failure detail stays daemon-side.
 
 ### Platform delivery and channel sessions
 

@@ -15,6 +15,22 @@ Bundled folders win when both roots contain the same plugin name. Only names in 
 
 The source checkout currently bundles `askuser`, `changelog`, `elowen-docs`, `files`, `mcp`, `runtime-context`, `sandbox`, `statusline`, `subagent`, `terminal`, and `web`. Optional integrations and extracted domain plugins are owned by the curated plugin registry at `https://github.com/dragocz95/elowen-plugins` and are installed from that registry. Marketplace installation is allowlisted by its `registry.json`; it does not accept arbitrary URLs or local folders. The daemon shallow-clones the registry, caches the last good checkout, and copies `plugins/<name>/` atomically into the instance plugin directory. An installed marketplace plugin is enabled separately and may require explicit capability acknowledgement. If an enabled plugin was moved out of the bundled package, boot reconciliation can restore it from the registry without changing the enabled set.
 
+What each bundled plugin contributes:
+
+- `askuser` registers `AskUserQuestion`, which is workspace-safe and plan-safe.
+- `changelog` registers no tools. It serves the entries, seen-state, and asset API routes plus a web page, ships Elowen's release notes as Markdown so an update carries the new notes to every instance, and shows each account an unread count on its navigation entry until the page is opened.
+- `elowen-docs` registers `DocsSearch`, semantic search over the product documentation.
+- `files` registers the file tools `Read`, `Write`, `Edit`, `ListDir`, `Search`, `FileInfo`, `GitStatus`, `Glob`, and `Grep`; all are plan-safe except `Write` and `Edit`.
+- `mcp` manages external MCP servers through `AddMcpServer`, `ListMcpServers`, `RemoveMcpServer`, `ReconnectMcpServer`, `ListMcpResources`, `ReadMcpResource`, and the dynamic `mcp__*` tool family, with the two resource tools deferred into `ToolSearch`.
+- `runtime-context` registers no tools. It injects date, time, timezone, sender, and chat type into every turn, in the user message so the prompt cache is preserved.
+- `sandbox` registers the Sandbox and Environment tool family and publishes the `sandbox` control; see "Managed projects and environments" below.
+- `statusline` registers no tools. It renders context, token totals, speed, and cost below the conversation.
+- `subagent` registers the delegation and workflow tools, from `Delegate` and its status and result helpers to `WorkflowStart` and the other workflow controls.
+- `terminal` registers `Bash`, `ListProcesses`, `ProcessOutput`, and `KillProcess`, and is `userGrantable`.
+- `web` registers `WebSearch` and `WebFetch`, both plan-safe, with a provider enum of `auto`, `tavily`, and `serper` and a list of preapproved documentation hosts returned as Markdown instead of model-summarized.
+
+Four of them ship a browser bundle source tree, `subagent`, `sandbox`, `mcp`, and `changelog`; the other seven declare no `web` block at all.
+
 A plugin reload replaces the whole registry generation. Do not retain a plugin control, configuration object, or other live registry value across reloads. Resolve live controls when they are used.
 
 ## Plugin layout
@@ -78,11 +94,12 @@ The file must be named `elowen-plugin.json`:
 
 Required fields are `name`, `version`, `apiVersion`, `description`, and `entry`.
 
-- The directory name must equal `name`.
+- The directory name must equal `name`. `name` is the technical id: it keys the plugin's configuration, its control, the API mount, the data directory, and every stored grant, so renaming it is a migration, not an edit.
+- `label` is the human title the plugin register and plugin detail show. Localize it through `i18n/<lang>.json`; when absent, the surfaces fall back to `name`. `userConfigLabel` does the same for the plugin's per-account settings section.
 - `entry` is relative to the plugin directory and must stay inside it.
-- `apiVersion` is currently `"1"`.
-- `requiresCore` is an optional minimum Elowen version for additive host APIs.
-- `requiresSharedApi` is an optional **exact** integer contract version for `elowen-plugin-shared`. Declare it when the plugin imports that package. The value must match the version shipped by the daemon.
+- `apiVersion` is currently `"1"` and must equal it exactly.
+- `requiresCore` is an optional minimum Elowen version, such as `"0.28.36"`, for a host API the plugin needs. It is enforced at install time: the marketplace refuses the plugin with "needs Elowen X or newer" instead of letting it fail later inside `register(ctx)`.
+- `requiresSharedApi` is an optional **exact** integer contract version for `elowen-plugin-shared`. Declare it when the plugin imports that package. The value must match the version shipped by the daemon, and the host compares it at install time and again before the entry module is imported.
 
 ### `provides`
 
@@ -102,7 +119,7 @@ Declare the public surfaces the plugin contributes:
 }
 ```
 
-`registerHttpRoute`, `registerApiRoute`, `registerWebSocketRoute`, `registerNotificationDestinationProvider`, and `registerMcpTool` are deny-by-default: their paths or names must be declared in the corresponding manifest list. A published control key must be declared in `provides.controls`; `requiresControls` names control contracts this plugin cannot operate without. Tools, skills and platforms should also be declared so the manifest remains an accurate audit surface.
+`registerPlatform`, `registerHttpRoute`, `registerApiRoute`, `registerWebSocketRoute`, `registerNotificationDestinationProvider`, and `registerMcpTool` are deny-by-default: their names or paths must be declared in the corresponding manifest list. A published control key must be declared in `provides.controls`, so the daemon can answer from manifests alone which plugin satisfies which dependency; `requiresControls` names control contracts this plugin cannot operate without. Tools and skills should also be declared so the manifest remains an accurate audit surface.
 
 There is no `provides.hooks` field. Hooks are registered with `registerHook`; their mutations are governed by `capabilities.mutates`.
 
@@ -110,7 +127,7 @@ There is no `provides.hooks` field. Hooks are registered with `registerHook`; th
 
 - `icons`: per-tool display icons. Keys may be exact tool names.
 - `showOutput`: exact names or `prefix*` patterns whose successful output should appear in chat. Successful output is otherwise hidden; failures remain visible.
-- `planSafe`: exact tool names that may be used in plan mode. Patterns are not accepted.
+- `planSafe`: exact tool names that may be used in plan mode. Patterns are not accepted, and a tool not listed is treated as mutating.
 - `deferLoading`: exact names or `prefix*` patterns that should be deferred into `ToolSearch`. Patterns expand only to tools registered by the same plugin.
 - `icon`: optional SVG path relative to the plugin directory. If omitted, `icon.svg` is used when present.
 
@@ -128,7 +145,9 @@ section, enum, multiSelect, code, prompt, json, embeddingModel, mcpServers,
 destination, projects, plugins, tools, models, timezone, tokenList
 ```
 
-Common field properties include `key`, `label`, `type`, `hint`, `help`, `required`, `default`, `min`, `max`, `step`, `placeholder`, `options`, `language`, `risk`, `advanced`, `fullWidth`, and `visibleWhen`.
+Common field properties include `key`, `label`, `type`, `hint`, `help`, `required`, `default`, `min`, `max`, `step`, `placeholder`, `options`, `language`, `risk`, `advanced`, `fullWidth`, and `visibleWhen`. A numeric field may declare `display.control` as `'input' | 'slider'`, with `display.unit` and `display.divisor` for the rendered value, and a `tokenList` field may declare `browse: 'directory'` to add a directory picker beside free-form values. `browse` is refused on any other field type and anywhere in `userConfigSchema`.
+
+A field whose type this build cannot render is dropped from the form with a warning rather than failing the whole manifest, and the stored value is left untouched.
 
 Keep English text in the manifest as the fallback. Add translations under `i18n/<lang>.json`; manifest fields use `description` and `fields`, while browser UI metadata uses `web`.
 
@@ -194,7 +213,7 @@ export function register(ctx) {
 
 Use PI's `defineTool` and TypeBox parameter schemas. Return a normal PI tool result. Validate external input inside the handler and keep side effects explicit.
 
-Tools can be scoped to one account by passing `ownerUserId` to `registerTool`. Omit it for an instance-wide contribution:
+`registerTool` takes options alongside the tool: `ownerUserId` scopes the tool to one account, `hostFilesystem` marks a tool whose implementation can see the daemon host filesystem outside the path view (workspace-scoped children then omit it fail-closed), `workspaceSafe` declares it safe inside an exact delegated workspace, and `projectId` binds the tool's declaration to one managed Project. Omit the scoping options for an instance-wide contribution:
 
 ```javascript
 ctx.registerTool(tool, { ownerUserId });
@@ -210,7 +229,7 @@ The main registration methods are:
 | --- | --- |
 | `registerTool` | Add a PI tool. |
 | `registerSkill` | Add a markdown-backed skill; `ownerUserId` can scope it to one account. |
-| `registerCommand` | Add a kebab-case prompt macro such as `/review`. |
+| `registerCommand` | Add a kebab-case prompt macro or picker such as `/review`. |
 | `registerSystemPromptFragment` | Add stable plugin instructions to the system prompt. |
 | `registerTurnContext` | Add ephemeral per-turn context without changing stored history. |
 | `registerHook` | Observe a typed lifecycle point and, for supported hooks, return a gated patch. |
@@ -225,9 +244,12 @@ The main registration methods are:
 | `registerBootReconcile` | Reconcile durable plugin state on boot and reload. |
 | `registerUserRemoved` | Delete account-owned rows, files, secrets, and schedules. |
 | `registerProjectRemoved` | Clean up plugin state when a core Project is removed. |
+| `publishEvent` / `subscribeEvents` | Publish and observe host events; both are gated by `mutates: ["events"]`. |
+| `registerProjectIndicators` | Contribute plugin-owned status rows to the core Project register. |
+| `registerReadinessCheck` | Report rows in the daemon's first-run readiness report. |
 | `requestReload` | Ask the host to apply files written by the plugin after the current turn. |
 
-Other context surfaces include `ctx.dataDir()`, `ctx.config`, `ctx.userConfig()`, `ctx.instanceSecrets()`, `ctx.userSecrets()`, `ctx.host`, `ctx.embeddings`, `ctx.processes`, `ctx.askUser()`, `ctx.emitCard()`, `ctx.notify()`, and the current-turn identity and access accessors. Every host capability is either scoped to the active turn or gated by the manifest.
+Other context surfaces include `ctx.dataDir()`, `ctx.config`, `ctx.userConfig()`, `ctx.instanceSecrets()`, `ctx.userSecrets()`, `ctx.host`, `ctx.embeddings`, `ctx.images`, `ctx.chatArtifacts`, `ctx.processes`, `ctx.askUser()`, `ctx.emitCard()`, `ctx.notify()`, and the current-turn identity and access accessors. Every host capability is either scoped to the active turn or gated by the manifest.
 
 ### Filesystem access
 
@@ -249,10 +271,10 @@ When a tool result can only carry a bounded excerpt of what the tool produced, p
 
 ```javascript
 const spill = await ctx.persistToolOutput({ toolCallId, text: fullOutput });
-const note = spill ? `full output saved to ${spill.path} (${spill.bytes} bytes) — read it with the Read tool` : '';
+const note = spill ? `full output saved to ${spill.path} (${spill.bytes} bytes), read it with the Read tool` : '';
 ```
 
-`toolCallId` is the first argument PI passes to a tool's `execute`. The text lands in the host's existing tool-result spill directory for the current conversation, so the session Reads it back through the ordinary path guard and it is removed when that conversation is cleared or deleted. Do not build a second store or a plugin-private directory for this. The call resolves `null` whenever no readable path can be produced: outside a prompt turn, inside a workspace-confined turn, and when a different file already occupies the name. Handle that instead of assuming a path.
+`toolCallId` is the first argument PI passes to a tool's `execute`, and the host encodes it for the filesystem. The text lands in the host's existing tool-result spill directory for the current conversation, so the session reads it back through the ordinary path guard and it is removed when that conversation is cleared or deleted. Do not build a second store or a plugin-private directory for this. The call resolves `null` whenever no readable path can be produced: outside a prompt turn, inside a workspace-confined turn, and when a different file already occupies the name. It rejects, loudly rather than truncating, on a real write failure or on text above the maximum size, because the excerpt promises the complete output. Handle both outcomes instead of assuming a path.
 
 ### Secrets
 
@@ -264,6 +286,30 @@ Use encrypted secret bags for credentials:
 Each bag supports `get`, `has`, `set(key, value, expectedVersion?)`, and `delete`. Use the returned version for compare-and-swap updates. Do not put new credentials in `ctx.config` or `ctx.userConfig()`.
 
 `ctx.publicWebUrl()` returns the canonical URL from trusted installation metadata, or `null`. Do not construct OAuth callbacks from request `Host`, `Origin`, or forwarded headers.
+
+### Outbound HTTP
+
+`ctx.host.publicHttp()` is the host's outbound transport, and it is gated by `capabilities.network: true`. It returns an object with `validate(url)` and `request(url, opts)`. The host resolves and validates every destination, then pins the validated address into the socket lookup while preserving the URL host for HTTP and TLS. Route every fetch through it instead of opening sockets directly.
+
+### Images
+
+`ctx.images` renders images without the plugin ever holding a provider credential. Core owns both transports it may use: an API-key endpoint's OpenAI-compatible Images API, and the ChatGPT OAuth account's image backend, whose access token stays inside the daemon and is refreshed by the same runtime every model request uses. The plugin receives only the finished bytes plus the provider's usage.
+
+```javascript
+const { png, usage } = await ctx.images.generate({
+  providerId,
+  model,
+  prompt: 'A small line icon of a lighthouse',
+});
+```
+
+A request carries `providerId`, `model`, `prompt`, and optional `size`, `quality`, `background`, `n`, and `signal`. `edit(req)` adds `images` as `{ bytes, mime? }` sources, and the host owns the encoding, whether data URL or multipart, so a plugin never picks the transport. The result is `{ png, model, size, quality, format, usage }`, where `usage` carries input, output, and image tokens, or `null`. Gating works like provider resolution: the plugin may name only a provider wired into its own config, or any provider id once it declares `reads: ["providers"]`. A denial rejects rather than returning `null`, because an image call has no meaningful empty result and a silent no-op would look like a provider outage. The call also rejects in a process that wired no image host, such as a worker or a unit-test context. The seam first exists in core `0.28.36`, so an out-of-tree plugin that needs it declares `requiresCore: "0.28.36"`.
+
+### Cards and artifacts
+
+`ctx.emitCard(card)` pushes a structured card to the current conversation's clients, keyed by `card.id`. Re-emitting the same id replaces the card, and emitting an empty card removes it. Web and Discord render every card; the CLI shows only `pinned` cards, in its fixed panel above the status bar, so a non-pinned card never surfaces there. The call is a no-op outside an interactive prompt turn; cron and worker sessions wire no emitter.
+
+`ctx.chatArtifacts` attaches artifacts beside the durable tool segment of the conversation rather than in an out-of-band panel. `open(toolCallId, artifact)` is valid only inside a prompt tool execution and throws otherwise; `update(ref, update)` and `close(ref)` take an opaque serializable ref that can be used later from an API route, a cleanup job, or boot reconciliation. Core stamps the plugin name, authorizes every ref mutation, and enforces expiry independently of plugin liveness. All three throw when the host seam is unwired.
 
 ## Authenticated routes and webhooks
 
@@ -317,7 +363,7 @@ An API handler may return a buffered body, a byte stream, or an SSE callback thr
 
 ### Streaming a large response
 
-Both HTTP surfaces accept a `ReadableStream<Uint8Array>` as `response.body`. The daemon pipes it to the client without buffering it, so a response may be far larger than the daemon's heap — a webhook route serving a published file is the reason the seam exists.
+Both HTTP surfaces accept a `ReadableStream<Uint8Array>` as `response.body`. The daemon pipes it to the client without buffering it, so a response may be far larger than the daemon's heap; a webhook route serving a published file is the reason the seam exists.
 
 ```javascript
 import { createReadStream, statSync } from 'node:fs';
@@ -340,7 +386,7 @@ A registry plugin runs on older daemons too, so check `req.acceptsStreamBody` be
 
 ### WebSocket routes
 
-Use a WebSocket route for a bidirectional byte protocol that SSE cannot carry, such as a VNC/RFB stream. The route is served at `/ws/plugins/<plugin>/<path>` on the daemon port; the installed nginx vhost already proxies `/ws/` there, so the browser connects to it directly rather than through the web application.
+Use a WebSocket route for a bidirectional byte protocol that SSE cannot carry, such as a VNC/RFB stream. The route is served at `/ws/plugins/<plugin>/<path>` on the daemon port; the browser connects to that mount directly rather than through the web application.
 
 ```json
 {
@@ -374,7 +420,7 @@ ctx.registerWebSocketRoute({
 });
 ```
 
-Because the browser reaches this mount directly, it carries no Elowen bearer token and the daemon's authentication middleware cannot run on the upgrade. Authentication is therefore by ticket: the page fetches one from an authenticated API route and connects to `wss://<host>/ws/plugins/<plugin>/stream?ticket=<ticket>`. A ticket is single-use, expires after 30 seconds by default (five minutes at most), and is bound to the account named in `userId` — pass `req.auth.userId`, because nothing else re-checks who asked.
+Because the browser reaches this mount directly, it carries no Elowen bearer token and the daemon's authentication middleware cannot run on the upgrade. Authentication is therefore by ticket: the page fetches one from an authenticated API route and connects to `wss://<host>/ws/plugins/<plugin>/stream?ticket=<ticket>`. A ticket is single-use, expires after 30 seconds by default (five minutes at most), and is bound to the account named in `userId`; pass `req.auth.userId`, because nothing else re-checks who asked.
 
 The daemon redeems the ticket before the handshake. An invalid, expired, foreign or already-used ticket is answered with HTTP 401 and no upgrade at all, and a route declared `access: 'admin'` refuses a ticket whose owner is not an administrator. An upgrade whose `Origin` header does not match the request `Host` is refused with 403; a request without an `Origin` header, which is what a non-browser client sends, is accepted.
 
@@ -463,9 +509,9 @@ ctx.registerCommand({
 });
 ```
 
-Command names must be 1–32 characters of lowercase letters, digits, and dashes. They must not shadow a built-in or reserved command and must be unique across plugins. Supported substitutions include `$ARGUMENTS`, `$@`, `$1`–`$9`, `${N:-default}`, and `${@:N}`. Plugin commands are prompt macros, not new control-plane endpoints.
+Command names must be 1–32 characters of lowercase letters, digits, and dashes. They must not shadow a built-in or reserved command and must be unique across plugins. A command declares `kind: 'prompt'` (the default) or `kind: 'picker'`. A picker carries no prompt and gets no model turn: the surface draws its own chooser from the picker's items. A plugin picker is clamped to the CLI and web surfaces, because a plugin can ship neither a TUI overlay nor a web dock modal; declaring a platform surface for one is dropped with a warning. There is no manifest field for slash commands: commands are contributed only at runtime through `ctx.registerCommand`, so disabling the plugin removes them from every menu through the same registry gate. Supported substitutions include `$ARGUMENTS`, `$@`, `$1`–`$9`, `${N:-default}`, and `${@:N}`. Plugin prompt commands are macros the agent runtime expands, not new control-plane endpoints.
 
-Adapters should obtain their complete command metadata with `ctx.chatCommands(surface)`. Do not maintain a second hard-coded command list. The returned `execution` field distinguishes session controls, surface-local pickers, and plugin prompt commands.
+Adapters should obtain their complete command metadata with `ctx.chatCommands(surface)`. Do not maintain a second hard-coded command list. The returned `kind` field says how a surface renders the command (`action`, `info`, `picker`, `mode`, or `prompt`), and the `execution` field says which mechanism runs it (`session-control`, `surface-local`, `adapter-state`, or `plugin-prompt`). The host's own catalog lives in `src/brain/slashCommands.ts` and is the single source of truth for every surface, in display order.
 
 ### Editable prompt templates
 
@@ -491,12 +537,14 @@ The file is `<dir>/<name>.md`. Names are bare, lowercase template names; a user'
 
 Register a hook with a name from the typed union in `src/plugins/api.ts`. Current hook families cover platform ingress, brain session/turn lifecycle, tool registry and calls, memory I/O, and plugin reloads.
 
-Two hook mutations are runtime-wired:
+Two hook mutations are runtime-wired. A hook handler may return `{ patch?, annotations?, audit? }`, and the patch carries `appendContext` and `denyToolCall`:
 
 - `appendContext` from a turn-context hook, gated by `mutates: ["turnContext"]`.
 - `denyToolCall` from `tools.call.before`, gated by `mutates: ["tools"]`.
 
 A hook may also be a pure observer. Hook failures do not grant permission or block a call; implement critical enforcement in the tool or route's own authorization path.
+
+Host events are a separate seam from hooks. `publishEvent`, `deleteEventsForTarget`, `registerEventRowResolver`, and `subscribeEvents` are all gated by `mutates: ["events"]`. `subscribeEvents` returns an unsubscribe function, and the host detaches the old registry's subscriptions when the plugin reloads.
 
 ### Observing a file mutation
 
@@ -504,7 +552,7 @@ A hook may also be a pure observer. Hook failures do not grant permission or blo
 
 - Act on `tool === 'Edit'` or `tool === 'Write'`, and only when `result.details.ok === true`. A failed or guard-refused Edit resolves with an error result instead of throwing, so the event fires for it too and `ok` is the only thing separating a real write from nothing having happened. A call the permission gate denied never reaches the hook at all.
 - Resolve the path with `ctx.assertPathAllowed(params.file_path)`. The hook runs inside the tool's turn scope, so a workspace-relative path resolves exactly as it did for the tool. `result.details.path` is a display path, not a filesystem path.
-- Do not assume the bytes on disk are final. Subscribers for one hook name run concurrently, and one of them may still rewrite the file — a formatter does exactly that. Prefer invalidating what you cached over capturing content here.
+- Do not assume the bytes on disk are final. Subscribers for one hook name run concurrently, and one of them may still rewrite the file; a formatter does exactly that. Prefer invalidating what you cached over capturing content here.
 - Do no slow work. The tool result waits for this hook, so notify or invalidate and return; anything that has to run long belongs behind a subsequent tool call.
 
 `tests/plugins/filesMutationObserver.test.ts` pins this payload contract.
@@ -539,7 +587,21 @@ const roots = sandbox.workspaceRoots({ projectIds: [projectId] });
 
 Never cache the result across calls: a plugin reload replaces the live generation. Treat `undefined` as a legitimate disabled or unavailable dependency. Do not return fabricated empty domain state.
 
-Use domain keys such as `sandbox`, `mcp`, or `workflow`, not the current plugin name. `registerControl(name, control, { requires })` can make one control unavailable until another domain control resolves.
+The registry also restricts the credential and process-launch controls to named consumers: `github` is available only to `sandbox`, `publishedSitesGateway` only to `sites`, and `sandbox` only to `files`, `terminal`, `github`, `onedrive`, `sites`, `editor`, `lsp`, `mcp`, `browser`, `cronjob`, and `codebase`. A consumer outside that list resolving `sandbox` receives a facade whose site-environment methods throw. The control keys shipped today are `subagent`, `terminal`, `cron`, `workflow`, `mcp`, `lsp`, `sandbox`, `microsoftIdentity`, `github`, `publishedSitesGateway`, and `skillCatalog`.
+
+Use domain keys such as `sandbox`, `mcp`, or `workflow`, not the current plugin name. `registerControl(name, control, { requires })` can make one control unavailable until another domain control resolves, and two plugins publishing the same key is caught when registries merge.
+
+## Managed projects and environments
+
+A Project's execution target is declared in the shared wire contract, never inferred from a filesystem path. The Project DTO carries an `executionKind` of `host` or `managed`, and a managed target always names its stable registry identity.
+
+A managed Project runs in its own rootless Podman container that survives across turns. Three volumes are mounted read-write: a workspace at `/workspace`, a home directory, and a data volume at `/data`. Each execution runs inside the container as a transient systemd unit. Networking is either shared with the host with loopback denied, or none. Default limits are 1 CPU, 1024 MB of memory, and 512 pids. Container specs are frozen and host-derived; a caller-authored mount list is not an execution capability.
+
+Plugins reach this machinery through the `sandbox` control, subject to the consumer allowlist described above. The control's workspace half exposes workspace roots and listings, the active workspace for a conversation and Project, workspace resolution that refuses stale, orphaned, foreign, path-mismatched, or inaccessible workspaces, delegation lease acquisition, and `prepareExecution`. `prepareExecution` takes a closed set of lease kinds (`terminal`, `github`, `sites`, `files`, `editor`, `lsp`, `mcp`, `browser`, `cron`) and offers no way to ask for unconfined execution: an explicit request always runs under bubblewrap. Its result carries a mode of `confined`, `direct`, or `managed`, a host working directory beside the logical display directory a workspace-scoped model sees, the home, the roots, the launch shape, bounded stdin, completion metadata, cancel, the workspace, the lease, and an output sanitizer.
+
+The control's environment half exposes environment lookup and provisioning requests, environment operations, guest project files, access revocation, snapshots, logs, managed worktrees, and preview bindings. Environment state is one of `unprovisioned`, `starting`, `running`, `stopped`, `failed`, `deleting`, or `deleted`, and desired state is one of `running`, `stopped`, or `deleted`. Actions are start, stop, restart, delete, snapshot, restore, and limits. Guest file operations are a closed union that includes chunked writes, and an upload handle is bound to the original account, Project, generation, target, and version.
+
+An execution lease is durable and persisted in shared SQLite, so the daemon and forked runners observe the same blockers. The caller owns the process lifecycle: heartbeat while alive, transfer the handle when foreground work detaches, and release only on spawn failure or a real exit. Releasing a conversation's workspace bindings is refused with HTTP 409 while a lease is held, and a managed lease cancels and verifies guest processes, not merely the outer container client. The optional `SandboxControl` methods `activeSessionWorkspace` and `releaseSessionWorkspaces` do not exist on an older Sandbox build, so feature-detect them and degrade.
 
 ## Browser UI
 
@@ -563,7 +625,9 @@ A plugin browser bundle is declared in the manifest:
 }
 ```
 
-The `web` block may also declare `nav`, `user`, `strings`, `adminOnly`, and `navKind`. Panels can mount in the main navigation, Account, a selected User, a selected Project, or Settings.
+The `web` block may also declare `nav`, `user`, `strings`, `adminOnly`, `navKind`, and `layout`. `navKind` is `'domain' | 'infrastructure'`, defaulting to `domain`: a domain world has its own objects and workflow, while `infrastructure` configures a capability the assistant already ships. `layout` is `'document' | 'workbench'`, defaulting to `document`: `document` renders in the shared reading column and `workbench` asks for the wider application frame. The frame belongs to the host shell, which sits above the plugin's markup in the DOM, so it has to be a manifest declaration, and a host too old to know the field behaves as `document`.
+
+Panels can mount in the main navigation, Account, a selected User, a selected Project, or Settings. A `settings` section declares `layout: 'classic' | 'orbital'` for its rendering and `placement: 'page' | 'pluginDetail'` for where it is offered: `page` (the default) gives it a world in the main navigation, while `pluginDetail` offers it only inside Settings, Plugins, that plugin; the direct address keeps working either way. An `account` panel declares `placement: 'section' | 'linkedAccount'`, the latter mounting it as a row of the Linked accounts drawer; both are grant-filtered server-side. The `user` panels receive the selected user's DTO and the `project` panels the Project DTO. `strings` holds flat English view strings for the bundle, with per-locale overrides under `web.strings` in `i18n/<lang>.json`.
 
 For bundled plugins, put browser sources under `web-src/index.tsx` (or `.ts`, `.jsx`, `.js`) and run:
 
@@ -607,6 +671,8 @@ ctx.registerNavBadge(({ userId, isAdmin }) => unreadFor(userId) || null);
 
 The probe is synchronous and runs on every `/plugins/ui` request, so it must answer from state the plugin already holds and must never reach the network. Return `null` or `0` for no badge; the field is then absent from the listing entirely, because a row permanently wearing a `0` is noise. A probe that throws loses its own badge and is warned, leaving the rest of the listing untouched. Feature-detect with `typeof ctx.registerNavBadge === 'function'` when the plugin must also load on an older daemon.
 
+Two related filters run on the same listing. `ctx.registerUiVisibility(fn)` filters this plugin's own account and project panels per account, synchronously and server-side, so a hidden panel's id never reaches the browser; it is presentation, not authorization, so route-level authorization still belongs to the plugin's API routes. `ctx.registerProjectIndicators(provider)` contributes compact plugin-owned status rows to the core Project register in one tenancy-filtered server-side batch.
+
 The host web application is prebuilt. If the plugin needs Tailwind utility classes not already present in the host CSS, ship the plugin stylesheet. The generated sheet contains utilities inside `@layer utilities`, has no preflight, and uses host design tokens. Do not rely on a development-only host build to generate plugin classes.
 
 ## Platform adapters
@@ -628,9 +694,15 @@ ctx.registerPlatform({
 
 The adapter owns transport authentication, inbound message normalization, outbound formatting, and platform-specific state. `PlatformAdapter` supports `connect`, `disconnect`, `listen`, `send`, optional proactive `notify`, and optional channel `control` wiring.
 
-For Discord, Telegram, Teams, WhatsApp, and similar adapters, reuse the published `elowen-plugin-shared` package instead of copying transport-neutral behavior. The daemon currently ships shared API contract 3. Its modules include `stateStore`, `display`, `format`, `images`, `messages`, `help`, `chatCommands`, `liveTrace`, `liveMessage`, `turnRunner`, `turnResult`, `voice`, `httpClient`, `lifecycle`, `atomicJson`, and `access`. Declare `"requiresSharedApi": 3` in the manifest when importing it. This is an exact contract match, not a minimum: the host refuses a plugin declaring another number before importing its entry module.
+For Discord, Telegram, Teams, WhatsApp, and similar adapters, reuse the published `elowen-plugin-shared` package instead of copying transport-neutral behavior. The daemon currently ships shared API contract 4. The package root exports only `PLUGIN_SHARED_API_VERSION`; every helper lives on its own export path, so importing one small helper does not pull in the live-message engine or the voice pipeline. The modules include `stateStore`, `display`, `format`, `images`, `messages`, `help`, `chatCommands`, `liveTrace`, `liveMessage`, `turnRunner`, `turnResult`, `voice`, `httpClient`, `lifecycle`, `atomicJson`, `access`, and the `cronGrammar.json` data export. Declare `"requiresSharedApi": 4` in the manifest when importing it. This is an exact contract match, not a minimum: the host refuses a plugin declaring another number before importing its entry module. The number changes only when an existing export changes shape or disappears, never when something is added.
+
+Additions to the shared API are feature-detected rather than version-branched: when the adapter must also load on a daemon that predates them, check for `PlatformControlApi.fastStatus`, `setAccountFast`, `listProjects`, and `switchProject` with `typeof` the way the route surfaces are feature-detected above.
 
 The shared command catalog is authoritative. Use `ctx.chatCommands(surface)` and the helpers from `elowen-plugin-shared/chatCommands`; do not accept commands merely because a local name list contains them. Keep only transport-specific chunk sizes, markup, reply shapes, and SDK integration in the adapter.
+
+The `/chatCommands` module is the shared picker bridge. It defines the picker names in one place, a context picker and a project picker, and derives the routing sets each adapter needs from the published command catalog: the session-control names, the surface-local names plus adapter-owned ones (fail-closed, so an empty projection yields an empty set), and their union, which is kept out of transcripts. `runControlCommand` implements the shared pure actions `new`, `fast`, `stop`, `stats`, `compact`, and `restart`. `runPickerCommand` lets a typed `/project <slug|id>` argument skip the chooser and switch in one step, while a bare `/project` opens the same chooser as `/context`. `applyPickerChoice(picker, value, b)` resolves as the person choosing at click time, never whoever opened the chooser, and the context picker re-checks its operator gate on submit. A surface keeps exactly two seams: it renders the descriptor (`picker`, `title`, `placeholder`, `items` of `{ value, label, hint? }`) and hands the choice back. A project's absolute path is never copied into the descriptor, so no renderer can leak it into a shared room.
+
+`cronGrammar.json` is a frozen contract shipped with the package so both sides of the cron grammar read the same file. The grammar is hand-mirrored in three implementations that cannot import one another: the scheduling plugin's parser, which is the authority, and two web helpers. The daemon checks its web copies against this file, and the plugin registry checks the plugin against it.
 
 Platform-specific prompt fragments can be placed in `prompt/*.md`. The loader applies them only to platforms declared in `provides.platforms` and actually registered by the plugin. It reads at most 16 files, 8,000 characters per file, and 32,000 characters in total.
 
@@ -657,7 +729,7 @@ The request function is bound to the calling MCP client's token. A plugin MCP to
 
 Keep these version axes separate:
 
-- The daemon version is the root `package.json` version (`0.28.34` in this checkout) and is the version used by `requiresCore` checks. Update it through the repository's normal release process; do not infer it from a plugin manifest or the marketplace catalog.
+- The daemon version is the root `package.json` version (`0.28.36` in this checkout) and is the version used by `requiresCore` checks. Update it through the repository's normal release process; do not infer it from a plugin manifest or the marketplace catalog.
 - A plugin's manifest `version` is that plugin's own release version. Bump it whenever its installed bytes change, so reload cache-busting and marketplace update detection see the new build. It does not need to match the daemon version.
 - `apiVersion` is the plugin API breaking-change axis and is currently `"1"`; `requiresCore` is a minimum daemon version for additive host APIs. `requiresSharedApi` is the exact shared-helper contract, currently `4`.
 - `web.requiresApiVersion` is the host browser-runtime compatibility ceiling, currently `16`; it must not be used to signal removals.
@@ -670,8 +742,8 @@ Add a file named after the version, with front matter and a body:
 
 ```markdown
 ---
-version: 0.28.34
-date: 2026-09-14
+version: 0.28.36
+date: 2026-09-09
 title: What this release gives the reader
 tags: [Chat, Plugins]
 pinned: false

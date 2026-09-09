@@ -1,6 +1,6 @@
 # Concepts
 
-Elowen is easiest to operate when its durable objects and authority boundaries are kept distinct. This page is a mental model for the current system; it intentionally does not describe the retired missions, coding-agent worker, Pilot, or pull-request verticals.
+Elowen is easiest to operate when its durable objects and authority boundaries are kept distinct. This page is a mental model for the current system.
 
 ## Instance
 
@@ -38,10 +38,13 @@ A **Project** is a registered filesystem root with a stable slug and numeric ID.
 
 An **effective workspace** is the directory a particular turn actually uses. It starts with the Project root and may be replaced by an account-owned Sandbox workspace. The Sandbox plugin can expose a worktree with its own branch, base reference, label, and path while keeping it attached to the same Project policy.
 
+A Project's execution target is declared, never inferred from a path: it is either the host filesystem or a managed environment. A managed Project runs in its own persistent container that survives across turns, with its own workspace, home, and data volumes, and the file, shell, and related surfaces reach it through the Sandbox control instead of the host filesystem. This is a third answer to where a turn actually runs, alongside the Project root and an account-owned Sandbox worktree.
+
 This distinction matters operationally:
 
 - Project access answers **which project** an account may use.
 - Sandbox selection answers **which account-owned checkout** the turn should use for that Project.
+- The execution target answers **whether the turn runs on the host filesystem or in the Project's managed container**.
 - The path guard answers **whether a concrete path** is inside the permitted roots.
 
 File and terminal integrations must use this shared resolution instead of accepting arbitrary paths. A read-only shell clamp is a tool-policy guard; Sandbox confinement is the runtime isolation layer.
@@ -105,7 +108,7 @@ An `ask` permission can pause an interactive owner turn for approval. Channel, s
 
 ## Plugins
 
-A **plugin** is an independently loaded capability package. It can contribute tools, skills, prompt commands, platform adapters, routes, MCP tools, services, database state, configuration forms, and browser pages.
+A **plugin** is an independently loaded capability package. It can contribute tools, skills, prompt commands, platform adapters, routes, MCP tools, services, database state, configuration forms, browser pages, and a browser navigation badge, and it registers into core's host-owned seams for images, live cards, and inline chat artifacts rather than inventing its own.
 
 Plugins are not all equivalent:
 
@@ -150,6 +153,8 @@ The scope can capture:
 
 The child cannot widen that scope. Continuation re-checks the parent's current authority, so revoked Projects, plugin grants, and stricter permission settings affect old children. The only supported widening is promotion of a read-only child that the same principal explicitly requested as read-only; the promoted scope is minted from the caller's current authority.
 
+The child is a fresh sub-agent or a fork of the calling conversation. A fork inherits the parent's full context and prompt prefix, which makes it cheap on the same provider and model because it reuses the parent's prompt cache, and it is the right choice when the child's intermediate output is not worth keeping in the parent's context. A fresh sub-agent is right when the child needs a narrower toolset, read-only tools, a different model, or a workspace scope, because a fork must keep the parent's exact tools and prompt.
+
 A delegation and a workflow node each choose their own reasoning effort with an optional `thinkingLevel`, picked from the difficulty of that task: omitted or low for mechanical work, high for design, unexplained failures, or security-sensitive review. Omitting it inherits the delegating turn's level. A level the child's model does not offer is refused with the levels it does, never silently reduced.
 
 A **workflow DAG** is a set of delegated nodes with explicit dependencies. Independent nodes can run in parallel; a dependent receives only the direct dependency's `## Handover` block, capped at 4,000 characters. Without that heading, it receives only the bounded end of the dependency result. Nodes inherit the effective boundary of their creating node. The workflow engine is plugin-owned, while the host owns the durable session and recovery seams.
@@ -160,21 +165,23 @@ Delegated runs survive process boundaries through SQLite. The optional sub-agent
 
 A configured brain provider identifies the credentials and endpoint used to run a conversation. The durable session stores the configured provider entry together with the model because the same model ID can exist under multiple provider entries.
 
-Context management is provided by PI plus Elowen extensions:
+Context management is provided by PI plus Elowen extensions. There are three distinct mechanisms, and it is worth keeping them apart.
 
-- automatic compaction can create a readable summary when the context fills;
-- ChatGPT OAuth sessions can optionally use provider-side remote compaction;
-- provider request capture is an attempt-level diagnostic read model;
-- deferred tools can be activated through `ToolSearch` instead of occupying the initial prompt;
-- prompt-cache stability is preserved by deterministic tool ordering and volatile per-turn reminders.
+**Compaction** replaces a stretch of history with a model-written summary and costs one provider request. It is triggered at a turn boundary when the context crosses its threshold, or at the start of a turn whose provider cache has gone cold and where a break-even calculation says compacting costs less than re-sending the prefix. By default the summary is written by the session's own model against its warm prefix; an account can pin a separate compaction model, and a ChatGPT-account session can use provider-side remote compaction instead. A circuit breaker stops automatic compaction after repeated failures, and refuses a compaction whose result could not get under the threshold anyway; both are bypassed by a manual `/compact`, and both tell the user once, in the conversation.
 
-A model switch or plugin reload can require a session rebuild so the live in-memory session reflects the current prompt, tools, or provider route while the durable transcript remains intact.
+**Cold clearing** is mechanical and costs no provider request. Once the provider cache is provably cold, old tool-result text is replaced by a placeholder naming a spill file, and historical runtime framing (memory, permissions, plugin context, reminders) is replaced by a marker, because every one of those blocks is composed again from live state on the next turn. The full tool output stays readable through the ordinary `Read` path until the conversation is cleared or deleted. Neither of these appears in the transcript; only compaction leaves a visible "context compacted" divider.
+
+**Deferred tools** keep a large tool surface out of the initial prompt: a deferred tool is advertised by name only, and the model fetches its schema through `ToolSearch` before calling it. `ToolSearch` ranks by keyword and, where an embedding model is configured, by meaning; matching skills come back in the same answer as a pointer to `SkillLoad` rather than being activated. Where the provider offers native hosted tool search, the session can use it instead, but that route is subtractive: configuration can only take it away, never grant one that was not probed.
+
+Prompt-cache stability is preserved by deterministic tool ordering and volatile per-turn reminders. A model switch or plugin reload can require a session rebuild so the live in-memory session reflects the current prompt, tools, or provider route while the durable transcript remains intact.
 
 ## Channels and automation
 
 A **platform channel** is a conversation delivered by a Discord, Telegram, Microsoft Teams, WhatsApp, or other adapter plugin. Adapters authenticate their own inbound webhook or gateway traffic and pass verified identity metadata to the core channel service.
 
 The channel service reuses the normal brain pipeline. It applies the linked writer's Project policy, plugin grants, tool rules, memory toggles, model settings, and Sandbox workspace where applicable. Shared rooms remain shared; scheduled direct delivery is still a channel turn rather than an owner-chat send.
+
+In a chat platform, the `/project` command moves that channel's conversation into one of the sender's own Projects. A bare `/project` opens a chooser listing the Projects that sender can reach, by slug; `/project <slug|id>` switches in one step. The switch re-validates the sender's own project policy and is refused for an unlinked sender, an unknown or unreachable project, or while a process is still running in the bound worktree. It is not operator-gated, because it can only move the conversation into a directory the switching account itself reaches. The related `/context` picker continues the channel in one of the sender's own conversations and is operator-gated.
 
 **Scheduling** is plugin-owned. Personal jobs execute as the owning account and re-check ownership and grants when they fire. Owner-chat and Web-created recurring jobs use a dedicated job conversation unless a permitted explicit notification channel is configured; direct one-to-one platform jobs retain their direct origin, while shared-room jobs use the normal channel path. An explicit notification channel takes precedence over the normal ownership-based destination. Instance jobs execute with operator authority and may notify configured channels. Filing a job under a conversation is organizational only and does not change execution context, model, permissions, or delivery.
 
@@ -186,6 +193,8 @@ When investigating behavior, use the layer that owns the decision:
 - **Authentication** — `src/api/auth.ts` and `src/api/middleware.ts`.
 - **Project/path access** — `src/store/projectStore.ts`, `src/plugins/pathGuard.ts`, and `src/brain/service/workDir.ts`.
 - **Tool composition** — `src/brain/session/capabilities.ts` and `src/brain/service/spawner.ts`.
+- **Context management** — `src/brain/session/`.
+- **Tool deferral** — `src/brain/toolSearch/`.
 - **Per-account plugin access** — `src/shared/pluginAccess.ts` and `src/plugins/registry.ts`.
 - **Delegated authority** — `src/brain/delegatedScope.ts` and `src/brain/delegatedTurn.ts`.
 - **Persistence** — `src/store/schema.sql`, `src/store/db.ts`, and `src/store/brainStore.ts`.
