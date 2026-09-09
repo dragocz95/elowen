@@ -10,7 +10,8 @@
     "../elowen-plugins-environments/tests/lspManagedGuest.podman.test.ts",
     "tests/plugins/managedToolCallers.podman.test.ts",
     "../elowen-plugins-environments/tests/browserManagedGuest.podman.test.ts",
-    "../elowen-plugins-environments/tests/editorManagedGuest.podman.test.ts"
+    "../elowen-plugins-environments/tests/editorManagedGuest.podman.test.ts",
+    "../elowen-plugins-environments/tests/codebaseManagedGuest.podman.test.ts"
   ],
   "rows": [
     {
@@ -236,9 +237,10 @@
     {
       "area": "mcp",
       "capability": "project MCP install, reconnect, schema visibility",
-      "evidence": "unverified",
-      "negative": "unverified",
-      "notes": "Not implemented rather than untested: the MCP plugin accepts only the personal and instance scopes (ownerForScope in plugins/mcp/index.mjs rejects anything else) and never resolves the sandbox control, so no MCP server runs inside a managed environment. The row stays as the record that this capability does not exist."
+      "evidence": "real-guest",
+      "negative": "real-guest",
+      "suite": "managedToolCallers.podman",
+      "notes": "An earlier version of this row claimed the capability did not exist; that was wrong. A stdio server created while a managed project is selected is bound to it (projectRef, immutable) within the existing personal/instance scopes, and every connect, tools/list and call runs inside that project's guest on an mcp lease. Proven against a real guest with a dependency-free stdio fixture written into /workspace: AddMcpServer binds and discovers the tool through the guest, ReconnectMcpServer bridges it, the bridged call reports the container's hostname and a guest-only file, no lease survives the call. Negatives: the same bridged tool refuses from another project without touching the provider, a non-member is denied at the project boundary, the central host reconnect path refuses a bound server, and removal leaves no server process in the guest. Schema visibility is per owner scope, not per project: a bound tool is declared in every session of its scope and refuses at execution from the wrong project."
     },
     {
       "area": "cron",
@@ -273,10 +275,10 @@
     {
       "area": "codebase",
       "capability": "codebase indexing/search inside a managed project",
-      "evidence": "unit",
-      "negative": "unit",
-      "notes": "The semantic index now refuses on a managed turn. Before the fix it resolved the guest path /workspace against the host, so on a host owning that directory a managed project's search would have returned host content as its own code.",
-      "suite": "codebase"
+      "evidence": "real-guest",
+      "negative": "real-guest",
+      "notes": "Indexed through the provider's guest file operations (list/read) and keyed by the project's stable id (managed:<projectId>), never by /workspace, which every project shares; before this the index resolved /workspace against the host and then merely refused. Embedding stays central (the guest never sees provider credentials); a search re-checks membership through environmentFor before reading any chunk; host sessions, admin all-access included, never see managed rows; the scheduled indexer skips managed keys because a timer has no acting member; project removal prunes the rows. Real guest: reindex walks and reads the guest, search answers with guest-relative paths, an unchanged workspace costs no reads or embeddings, a non-member is denied at the project boundary, the host path guard is never consulted. Cost: one guest operation per directory listed and per 256 KiB read, each several seconds on this host, so a first index of a large project is slow and bounded by the 20,000-file cap rather than by the embedding budget.",
+      "suite": "codebaseManagedGuest.podman"
     },
     {
       "area": "integrations",
@@ -312,10 +314,10 @@
     {
       "area": "editor",
       "capability": "office preview converters in a guest",
-      "evidence": "unit",
-      "negative": "unit",
-      "notes": "Not supported rather than untested: the project image ships no office suite, so the endpoint now answers 501 with the reason instead of a generic command failure. Adding LibreOffice to every project image is a product decision, not a test gap.",
-      "suite": "editorManagedOperations"
+      "evidence": "real-guest",
+      "negative": "real-guest",
+      "notes": "The project image now ships libreoffice-writer/calc/impress, so the managed preview runs soffice inside the guest: a docx uploaded through the editor's own upload route comes back as a PDF from the preview route, and the converter's scratch directory does not survive the request. A non-office file is refused with 415. An environment created from an earlier image keeps its root filesystem until rebuilt and still answers 501 naming the missing converter (unit: editorManagedOperations). Cost: a conversion takes tens of seconds end to end on this host because each guest operation, not only soffice, costs several seconds.",
+      "suite": "editorManagedGuest.podman"
     },
     {
       "area": "artifacts",
