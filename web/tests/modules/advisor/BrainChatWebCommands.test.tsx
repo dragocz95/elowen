@@ -7,6 +7,7 @@ import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { BrainChat } from '../../../modules/advisor/BrainChat';
 import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
+import { en } from '../../../lib/i18n/dictionaries/en';
 
 /** EventSource stand-in — the surface only needs the stream to exist and to be drivable by hand. */
 class FakeES {
@@ -361,7 +362,8 @@ describe('web slash commands: plugin-contributed pickers', () => {
     await waitFor(() => expect(FakeES.instances.length).toBe(1));
     await runSlash('sandbox');
 
-    expect(await screen.findByRole('dialog', { name: 'Sandbox workspaces' })).toBeInTheDocument();
+    // Named from the dictionary the modal itself reads, so the assertion follows the shipped title.
+    expect(await screen.findByRole('dialog', { name: en.sandboxModal.modalTitle })).toBeInTheDocument();
     // Opening a picker is a local render, never a turn: nothing was said to the model.
     expect(sendBodies).toEqual([]);
     expect(commandBodies).toEqual([]);
@@ -382,7 +384,7 @@ describe('web slash commands: plugin-contributed pickers', () => {
     await waitFor(() => expect(FakeES.instances.length).toBe(1));
     await runSlash('sandbox');
 
-    expect(screen.queryByRole('dialog', { name: 'Sandbox workspaces' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: en.sandboxModal.modalTitle })).toBeNull();
     // …and the sandbox plugin's routes were never touched on that command's behalf.
     expect(sendBodies).toEqual([]);
     expect(commandBodies).toEqual([]);
@@ -429,7 +431,7 @@ describe('web slash commands: plugin-contributed pickers', () => {
     await send('/sandbox');
     await waitFor(() => expect(sendBodies.length).toBe(1));
     expect(sendBodies[0]).toMatchObject({ text: '/sandbox' });
-    expect(screen.queryByRole('dialog', { name: 'Sandbox workspaces' })).toBeNull();
+    expect(screen.queryByRole('dialog', { name: en.sandboxModal.modalTitle })).toBeNull();
   });
 });
 

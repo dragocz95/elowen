@@ -9,6 +9,7 @@ import { BrainChat } from '../../../modules/advisor/BrainChat';
 import { BrainChatProvider } from '../../../modules/advisor/BrainChatProvider';
 import { TelemetryPanel } from '../../../modules/advisor/TelemetryPanel';
 import type { ProcessInfo } from '../../../lib/types';
+import { en } from '../../../lib/i18n/dictionaries/en';
 
 // The rail is the web's answer to the CLI telemetry panel: what runs RIGHT NOW (goal, workflows,
 // sub-agents, background processes) must be visible without opening the transcript, and it must survive
@@ -443,7 +444,7 @@ describe('telemetry rail — live work sections', () => {
   // A conversation bound to a Sandbox workspace runs every shell command in that worktree's container, so
   // the foot has to say so beside the directory — and explain, behind the shared help affordance, what
   // that changes and how to leave. Nothing is shown when no workspace is bound.
-  it('shows a Sandbox badge with the workspace label when the daemon reports a bound workspace', async () => {
+  it('shows the workspace badge with the workspace label when the daemon reports a bound workspace', async () => {
     server.use(http.get('*/api/brain/status', () => HttpResponse.json({
       running: true, sessionId: 'brain-1', model: 'm', usage: null, statusline: null, cards: [], queued: [],
       project: {
@@ -453,7 +454,8 @@ describe('telemetry rail — live work sections', () => {
     })));
     await renderRail();
     const badge = await screen.findByTestId('telemetry-workspace');
-    expect(badge.textContent).toContain('Sandbox');
+    // The badge's own dictionary entry, so the assertion tracks the shipped label.
+    expect(badge.textContent).toContain(en.telemetry.workspaceBadge);
     expect(badge.textContent).toContain('lease-fixes');
     expect(within(badge).getByRole('button', { name: 'Help' })).toBeInTheDocument();
     // The client's own directory is still the one shown; the worktree lives under the badge.
