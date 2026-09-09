@@ -84,6 +84,27 @@ describe('ctx.control — one plugin reaching another plugin domain', () => {
     expect(contextOver(merged, { reads: ['controls'] }, undefined, 'terminal').control('sandbox')).toBeDefined();
   });
 
+  /** `skillResources` hands back a host path core then READS for a caller that cannot read it itself, so
+   *  it is gated like the other authority controls. `skillCatalog` is the listing and stays open to any
+   *  loader that declares the capability — the two must not share a key, or every catalog reader inherits
+   *  the read. */
+  it('restricts skill resource resolution to the managed read path owner while the catalog stays open', () => {
+    const merged = new PluginRegistry();
+    ownerMerges(merged, 'core', 'skillResources', { resolveResource: () => '/pinned/skill/refs/reference.md' });
+    ownerMerges(merged, 'core', 'skillCatalog', { visibleSkills: () => [], canonicalBaseDir: () => null });
+    const warnings: string[] = [];
+
+    const untrusted = contextOver(merged, { reads: ['controls'] }, (message) => warnings.push(message), 'subagent');
+    expect(untrusted.control('skillResources')).toBeUndefined();
+    expect(untrusted.control('skillCatalog')).toBeDefined();
+    expect(warnings.join('\n')).toContain("control('skillResources') denied");
+
+    const files = contextOver(merged, { reads: ['controls'] }, undefined, 'files');
+    expect(files.control('skillResources')?.resolveResource('/pinned/skill/refs/reference.md')).toBe('/pinned/skill/refs/reference.md');
+    // Declaring the capability is not the grant: the name comes from the loader, not the manifest.
+    expect(contextOver(merged, { reads: ['controls'] }, undefined, 'files-helper').control('skillResources')).toBeUndefined();
+  });
+
   it('refuses an incomplete known control', () => {
     const merged = new PluginRegistry();
     ownerMerges(merged, 'workflow', 'workflow', { activeCount: () => 0 } as unknown as PluginControl);

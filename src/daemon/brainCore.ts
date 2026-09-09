@@ -61,6 +61,7 @@ import { platformTurnParkEligible } from '../brain/platformTurnRecovery.js';
 import { createConversationTargets } from '../brain/conversationTargets.js';
 import { setSpillMaxResultBytes, setToolResultGroupBudget } from '../brain/session/toolResultClearing.js';
 import { dataDir, dbPath as configuredDbPath, setForkParentSpillNamespaceResolver, setSpillNamespaceResolver } from '../shared/paths.js';
+import { containedSkillResource, directorySkillResourceRoot } from '../shared/skillResource.js';
 import { setCompactionFailureLimit } from '../brain/session/compactionCircuitBreaker.js';
 import { makeToolOutputPolicy } from '../brain/toolOutput.js';
 import { BUILTIN_TOOL_OUTPUT_SHOWN, builtinToolMetas } from '../brain/tools/index.js';
@@ -79,7 +80,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { mkdirSync } from 'node:fs';
 import { randomBytes } from 'node:crypto';
-import { isExecAllowedForUser, isModelVisibleForUser, elowenExec } from '../shared/execs.js';
+import { isExecAllowedForUser, isModelVisibleForUser, elowenExec, parseExecRef } from '../shared/execs.js';
+import { brainDefaultSelection, buildBrainRegistry } from '../brain/providers.js';
 import { webBaseUrl } from '../cli/installInfo.js';
 import { trustedPublicWebUrl } from '../shared/publicWebUrl.js';
 import { WORKFLOW_ADD_NODES_RPC, type WorkflowExpansionRpc } from '../subagent/hostRpc.js';
@@ -761,6 +763,25 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         },
         canonicalBaseDir: (skill) => registry.skillCanonicalBaseDir(skill),
       });
+      // Its OWN key, not a third method on the catalog above: this one returns a path core then reads for
+      // a caller that cannot read it, so `CONTROL_CONSUMERS` can hold it to the single plugin that owns
+      // the managed read path while the catalog stays readable by every loader.
+      registry.registerHostControl('skillResources', {
+        resolveResource: (requestedPath) => {
+          const userId = currentContributionUserId();
+          for (const skill of registry.skillsFor(userId, userId == null ? null : users.get(userId))) {
+            // Directory-form skills only. A FLAT skill's pinned base is the shared loader folder it sits
+            // in, which on the instance skills directory also holds every account's personal skills — so
+            // one visible flat skill would have authorized reading all of them. Its own file is already
+            // what SkillLoad returned, so it needs no support root.
+            const root = directorySkillResourceRoot(registry.skillCanonicalBaseDir(skill), skill.filePath);
+            if (root === null) continue;
+            const resolved = containedSkillResource(root, requestedPath);
+            if (resolved !== null) return resolved;
+          }
+          return null;
+        },
+      });
       if (publishedSitesGateway) {
         registry.registerHostControl('publishedSitesGateway', publishedSitesGateway);
         // A wildcard vhost deliberately survives as a deny tombstone. Whenever the sites owner is absent
@@ -862,6 +883,36 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         // an existence check, not a permission — which is what makes a session pinned to a removed model
         // fall back to the default (lifecycle's candidate loop) instead of running it anyway.
         execAllowed: (userId, exec) => isExecAllowedForUser(users.get(userId), config.get().allowedExecs, exec, configuredBrainProviders(config, brainCreds)),
+        // The pair a spawn lands on when the account named none. `brainDefaultSelection` is what an empty
+        // selection resolves to inside the provider layer, so judging it HERE is the difference between a
+        // member being offered the instance default and being silently run on it. Resolution order is the
+        // account's own catalog: the instance default when they may run it, then the first spec their own
+        // allow-list carries, then the first configured entry model. Deliberately catalog-only — no
+        // provider /models fetch on a spawn path, and no network term added to session start.
+        allowedFallbackSelection: (userId) => {
+          const cfg = brainConfig();
+          if (!cfg) return null;
+          const providers = configuredBrainProviders(config, brainCreds);
+          const globalExecs = config.get().allowedExecs;
+          const user = users.get(userId);
+          const permits = (provider: string, model: string): boolean =>
+            isExecAllowedForUser(user, globalExecs, elowenExec(provider, model), providers);
+          const fallback = brainDefaultSelection(buildBrainRegistry(cfg, brainRuntime), cfg);
+          if (fallback && permits(fallback.provider, fallback.model)) {
+            return { provider: fallback.provider, model: fallback.model };
+          }
+          for (const spec of user?.allowed_execs ?? []) {
+            const ref = parseExecRef(spec);
+            if (ref?.program !== 'elowen' || !ref.provider || !ref.model) continue;
+            if (permits(ref.provider, ref.model)) return { provider: ref.provider, model: ref.model };
+          }
+          for (const entry of cfg.providers) {
+            for (const model of entry.models) {
+              if (permits(entry.id, model)) return { provider: entry.id, model };
+            }
+          }
+          return null;
+        },
         // Delegated scopes still need explicit project-id policies; platform human turns resolve only
         // through their linked account policy. The admin's token anchors shared channel sessions.
         policyForProjects,

@@ -2,7 +2,8 @@
 import { useMemo, useState } from 'react';
 import { ImageIcon } from 'lucide-react';
 import type { Project } from '../../lib/types';
-import { useProjectFiles } from '../../lib/queries';
+import { useProjectEnvironmentState, useProjectFiles } from '../../lib/queries';
+import { managedProjectStrings } from './managedProjectStrings';
 import { useSetProjectIcon } from '../../lib/mutations';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
@@ -21,9 +22,17 @@ const MAX_SHOWN = 300; // bound the grid (and the data-URL cache) on image-heavy
  *  Lists the project's images (the tree endpoint already skips .git/node_modules/dist), groups them by
  *  directory, and previews each. Selecting one persists its project-relative path as the icon. */
 export function ProjectIconPicker({ project, onClose }: { project: Project; onClose: () => void }) {
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
+  const s = managedProjectStrings[locale];
   const { toast } = useToast();
-  const files = useProjectFiles(project.id);
+  // A managed project's images live in its environment, and the file route PROVISIONS a missing
+  // environment just by being asked. Opening a picker is a look, not a decision to run a container, so
+  // the state is read first from the overview that cannot start anything, and the listing is requested
+  // only once the environment is already running. A host project has no such gate.
+  const managed = project.executionKind === 'managed';
+  const environment = useProjectEnvironmentState(managed ? project.id : null);
+  const environmentReady = !managed || environment.data?.environment.state === 'running';
+  const files = useProjectFiles(project.id, environmentReady);
   const setIcon = useSetProjectIcon();
   const [query, setQuery] = useState('');
   const [selected, setSelected] = useState<string | null>(project.icon || null);
@@ -63,7 +72,14 @@ export function ProjectIconPicker({ project, onClose }: { project: Project; onCl
         <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder={t.projects.iconSearch} autoFocus />
       </div>
       <ModalBody gap={6}>
-        {files.isLoading ? <LoadingState />
+        {managed && environment.isLoading ? <LoadingState />
+          // The environment read is what decides whether anything else may be asked, so its own failure
+          // is reported here rather than being reported as an empty project.
+          : managed && environment.isError ? <ErrorState message={apiErrorMessage(environment.error)} onRetry={() => { void environment.refetch(); }} />
+          // Not running is the ordinary case, not a failure: say so quietly and ask for nothing. Starting
+          // the environment stays an explicit decision on the Environment tab.
+          : !environmentReady ? <EmptyState title={s.iconEnvironmentStopped} icon={ImageIcon} />
+          : files.isLoading ? <LoadingState />
           // A listing that was refused or failed is not the same thing as a project without images, and
           // a managed project reads this through its environment, where a refusal is ordinary.
           : files.isError ? <ErrorState message={apiErrorMessage(files.error)} onRetry={() => { void files.refetch(); }} />

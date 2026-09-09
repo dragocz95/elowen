@@ -1079,6 +1079,15 @@ interface GitBranch { name: string; current: boolean }
 interface GitCommit { hash: string; subject: string; author: string; relative: string }
 export interface ProjectGit { isRepo: boolean; status: GitStatus | null; remotes: GitRemote[]; branches: GitBranch[]; commits: GitCommit[] }
 
+/** The lifecycle a managed project's environment is in (mirrors the daemon's `ProjectEnvironment`
+ *  state). Only `running` can answer a file route; every other state means the guest filesystem is not
+ *  there to read. */
+type ProjectEnvironmentState = 'unprovisioned' | 'starting' | 'running' | 'stopped' | 'failed' | 'deleting' | 'deleted';
+/** The bounded slice of the Sandbox plugin's read-only environment overview that core screens use. The
+ *  plugin owns the full projection; core reads only the state, and only to decide what it may ask for
+ *  next. */
+export interface ProjectEnvironmentOverview { environment: { state: ProjectEnvironmentState } }
+
 /** One entry in a project's file tree. */
 export interface FileNode { path: string; type: 'file' | 'dir' }
 /** A shallow directory listing for the new-project path picker (server-side filesystem browse). */

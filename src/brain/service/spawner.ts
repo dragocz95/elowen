@@ -56,6 +56,12 @@ interface SpawnerDeps {
   activeUserInstructions?: BrainDeps['activeUserInstructions'];
   /** The single account tool-authority resolver used by every turn surface. */
   toolAuthorityFor(userId: number): ToolPolicy | undefined;
+  /** PermissionApprovalService.selectionAllowed — whether an account may run a COMPLETE provider+model
+   *  pair. Absent means no authorization wiring at all (tests, open mode) and every selection stands. */
+  selectionAllowed?(userId: number, sel?: { provider?: string; model?: string }): boolean;
+  /** The complete pair a spawn falls back to when the selection it was handed is empty, half-filled or
+   *  refused. `null` means the account may run nothing that is configured; absent means no wiring. */
+  allowedFallbackSelection?: BrainDeps['allowedFallbackSelection'];
   brand?: BrainDeps['brand'];
   maxSteps?: () => number;
   runtimeConfig?: BrainDeps['runtimeConfig'];
@@ -171,6 +177,36 @@ export class LiveSessionSpawner {
     return cfg;
   }
 
+  /** The one place a session's model pair is judged against the account's allow-list.
+   *
+   *  `selectionAllowed` can only answer for a COMPLETE pair — a partial or empty selection names nothing,
+   *  so it is "allowed" by definition, and then `resolveBrainModelRoute` quietly turns it into the
+   *  instance default. That is the pair nobody checked, and it is what actually runs and gets billed. So
+   *  the check has to be paired with resolving the default UP FRONT and judging that instead.
+   *
+   *  It lives at the spawn boundary rather than in each caller because the callers are the problem: the
+   *  guard was written once in `ConversationLifecycle.ensureLive`, and a platform channel spawn (which
+   *  passes an empty selection when no `/model` is pinned) and the `/clear` respawn (which repeats the
+   *  disposed session's provider and model verbatim, revoked or not) both went straight past it. Every
+   *  session composed anywhere passes through here.
+   *
+   *  A refused pair falls back rather than throwing: the account keeps a working conversation on a model
+   *  it may run, which is the same treatment a since-removed model preference already gets a few lines
+   *  above. Only an account that may run NOTHING configured is refused outright, because there is no
+   *  session to open. Without authorization wiring at all (tests, open mode) the selection stands. */
+  private authorizedSelection(userId: number, selection: { provider?: string; model?: string } | undefined): { provider?: string; model?: string } | undefined {
+    if (!this.d.selectionAllowed || !this.d.allowedFallbackSelection) return selection;
+    const complete = selection?.provider && selection.model ? selection : undefined;
+    if (complete && this.d.selectionAllowed(userId, complete)) return complete;
+    const fallback = this.d.allowedFallbackSelection(userId);
+    if (fallback === null) throw new Error('no configured model is allowed for this account — ask an administrator to grant one');
+    if (!fallback) return selection;
+    if (complete) {
+      logger('brain').warn(`account ${userId}: model ${complete.provider}/${complete.model} is not allowed for this account — starting this session on ${fallback.provider}/${fallback.model} instead`);
+    }
+    return fallback;
+  }
+
   async spawn(opts: SpawnOpts): Promise<LiveBrain> {
     const { sessionId, ownerUserId } = opts;
 
@@ -245,7 +281,10 @@ export class LiveSessionSpawner {
       logger('brain').warn(`account ${ownerUserId}: model preference ${storedSel.provider}/${storedSel.model} is no longer configured in Settings → Brain — starting this session on the default instead`);
     }
     const selection = opts.selection.provider || opts.selection.model ? opts.selection : chatSel;
-    const route = resolveBrainModelRoute(registry, cfg, selection, compactSel);
+    // EVERY session's model pair is authorized here, at the one boundary all of them pass through.
+    // Judged for `settingsUserId` because that is the account whose preference produced the selection
+    // above and whose bill the session runs on — for a room, the opener; everywhere else, the owner.
+    const route = resolveBrainModelRoute(registry, cfg, this.authorizedSelection(settingsUserId, selection), compactSel);
     const { model } = route;
     // Per-model auto-compact threshold: the user's override for THIS model (keyed providerId/model) wins
     // over their global percentage, which in turn wins over the built-in default. Both halves are read

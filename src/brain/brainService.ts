@@ -314,6 +314,9 @@ export class BrainService {
       get fastMode() { return d.fastMode; },
       get activeUserInstructions() { return d.activeUserInstructions; },
       toolAuthorityFor: (userId) => toolAuthorityForUser(d, userId),
+      // Model authorization, at the single boundary every spawn passes through.
+      selectionAllowed: (userId, sel) => this.permissionSvc.selectionAllowed(userId, sel),
+      get allowedFallbackSelection() { return d.allowedFallbackSelection; },
       get brand() { return d.brand; },
       get maxSteps() { return d.maxSteps; },
       get runtimeConfig() { return d.runtimeConfig; },

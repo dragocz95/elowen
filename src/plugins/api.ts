@@ -1527,6 +1527,31 @@ export interface SkillCatalogControl {
   canonicalBaseDir(skill: PluginSkill): string | null;
 }
 
+/** Turn a support-file path of a currently VISIBLE skill into a readable host path, so a session whose
+ *  filesystem is the guest — a managed project — can still follow the relative references inside a
+ *  directory-form skill. SkillLoad already hands the model the canonical HOST skill directory, and the
+ *  guest provably cannot read it, so a skill that says "read reference.md next to this file" is unusable
+ *  there today.
+ *
+ *  Split out of `SkillCatalogControl` on purpose, and kept to this ONE method. The catalog is a broadly
+ *  readable listing that any loader plugin may hold; this returns a path core will then read on the
+ *  caller's behalf, which is authority of a different kind. Sharing one key would have handed that
+ *  authority to every present and future catalog reader by accident, so the split is enforced twice: by
+ *  the separate key here, and by `CONTROL_CONSUMERS.skillResources`, which the loader matches against the
+ *  caller name it assigns rather than anything the manifest declares.
+ *
+ *  Deliberately NOT a new addressing scheme: the argument is the ordinary absolute path SkillLoad already
+ *  disclosed, which is why nothing new has to be advertised for this to start working. Visibility is
+ *  re-resolved for the current contribution owner on EVERY call, so a revoked grant or another account's
+ *  personal skill stops resolving; the base directories are the ones pinned at registration, compared as
+ *  strings and never re-resolved, so a base since replaced by a symlink stops matching instead of
+ *  following; and the target is contained by realpath, which refuses a symlink pointing out of the
+ *  directory and anything outside every visible skill root. Relative input is refused outright. Only a
+ *  regular file resolves. `null` means refused or missing, without distinguishing the two. */
+export interface SkillResourcesControl {
+  resolveResource(requestedPath: string): string | null;
+}
+
 /** The controls whose shape core needs to CALL by key. `registerControl` stays generic (a plugin may
  *  register any control), but `PluginRegistry.control(name)` returns these known keys already typed —
  *  the single place the registry narrows an opaque `PluginControl` to a usable contract. */
@@ -1542,6 +1567,7 @@ export interface KnownControls {
   github: GitHubIdentityControl;
   publishedSitesGateway: PublishedSitesGatewayControl;
   skillCatalog: SkillCatalogControl;
+  skillResources: SkillResourcesControl;
 }
 
 /** A plugin-contributed chat slash command. Two kinds, and `kind` is what a surface RENDERS from:

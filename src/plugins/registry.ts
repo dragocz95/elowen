@@ -137,6 +137,7 @@ const KNOWN_CONTROL_METHODS: { [K in keyof KnownControls]: readonly (keyof Known
     'prepareRuntimeSocket', 'sealRuntimeSocket', 'removeRuntimeSocket',
   ],
   skillCatalog: ['visibleSkills', 'canonicalBaseDir'],
+  skillResources: ['resolveResource'],
 };
 
 /** The surfaces a plugin-declared PICKER may be published to.
@@ -155,6 +156,10 @@ const PICKER_SURFACES: readonly SlashSurface[] = ['cli', 'web'];
 const CONTROL_CONSUMERS: Partial<Record<keyof KnownControls, readonly string[]>> = {
   github: ['sandbox'],
   publishedSitesGateway: ['sites'],
+  // Returns a host path core then reads on the caller's behalf, for a guest that cannot read it itself.
+  // Only the plugin that owns the managed read path needs it. `skillCatalog` stays off this list: listing
+  // the skills a turn may use is not the same authority and several loaders legitimately read it.
+  skillResources: ['files'],
   sandbox: ['files', 'terminal', 'github', 'onedrive', 'sites', 'editor', 'lsp', 'mcp', 'browser', 'cronjob', 'codebase'],
 };
 

@@ -12,11 +12,25 @@ import { ProjectIcon } from '../../../components/ui/ProjectIcon';
 // validates a chosen icon path inside that same environment before it persists — so the picker needs
 // nothing managed-specific. What it must never do is reach for a host path or a host fallback.
 const managed = { id: 7, slug: 'analysis', path: '', notes: '', icon: '', executionKind: 'managed' as const };
-const requested: { files: number; raw: string[]; patched: unknown[] } = { files: 0, raw: [], patched: [] };
+const requested: { files: number; raw: string[]; patched: unknown[]; environment: number; other: string[] } =
+  { files: 0, raw: [], patched: [], environment: 0, other: [] };
+/** The read-only environment overview. It is the ONLY thing the picker may ask for before it knows the
+ *  environment is running, because every file route provisions a missing environment as a side effect. */
+const environmentState = (state: string) => http.get('*/api/plugins/sandbox/api/projects/7/environment', () => {
+  requested.environment += 1;
+  return HttpResponse.json({ environment: { projectId: 7, generation: 1, state, desiredState: 'running', lastError: null, limits: {} } });
+});
+/** Anything that could start or change the environment. Reaching one of these at all is the defect. */
+const lifecycleTrap = http.post('*/api/plugins/sandbox/api/projects/7/environment', async ({ request }) => {
+  requested.other.push(`POST environment ${JSON.stringify(await request.json())}`);
+  return HttpResponse.json({ error: 'the picker must never request a lifecycle change' }, { status: 500 });
+});
 const server = setupServer(
   http.get('*/api/plugins/ui', () => HttpResponse.json([
     { name: 'editor', url: '/plugins/editor/web/hash.js', apiVersion: 4, nav: [], account: [], user: [], project: [], settings: [], strings: {} },
   ])),
+  environmentState('running'),
+  lifecycleTrap,
   http.get('*/api/projects/7/files', () => {
     requested.files += 1;
     return HttpResponse.json([
@@ -35,7 +49,7 @@ const server = setupServer(
   }),
 );
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
-afterEach(() => { server.resetHandlers(); requested.files = 0; requested.raw = []; requested.patched = []; });
+afterEach(() => { server.resetHandlers(); requested.files = 0; requested.raw = []; requested.patched = []; requested.environment = 0; requested.other = []; });
 afterAll(() => server.close());
 
 function mount(node: React.ReactNode) {
@@ -69,6 +83,44 @@ describe('project icon from a managed workspace', () => {
     await waitFor(() => expect(requested.raw).toEqual(['assets/logo.png']));
     const image = await screen.findByRole('presentation', { hidden: true }).catch(() => null);
     expect(image ?? document.querySelector('[data-project-icon="assets/logo.png"]')).toBeTruthy();
+  });
+
+  // Opening a picker is a look. The file route provisions a missing environment as a side effect of
+  // being called, so a stopped or never-provisioned project must be answered from the read-only state
+  // alone — no listing, and above all no start.
+  it.each(['stopped', 'unprovisioned', 'failed'])('asks for nothing while the environment is %s', async (state) => {
+    server.use(environmentState(state));
+    mount(<ProjectIconPicker project={managed} onClose={() => {}} />);
+
+    const dialog = within(await screen.findByRole('dialog', { name: 'Choose icon' }));
+    expect(await dialog.findByText(/environment is running/i)).toBeInTheDocument();
+    // The state was read; the guest filesystem and the lifecycle were never touched.
+    expect(requested.environment).toBeGreaterThan(0);
+    expect(requested.files).toBe(0);
+    expect(requested.other).toEqual([]);
+    expect(requested.patched).toEqual([]);
+    // Not running is an ordinary state, not a failure, so it is not dressed as one.
+    expect(dialog.queryByRole('button', { name: 'Retry' })).toBeNull();
+  });
+
+  it('reports the environment read itself failing, without reaching the files route', async () => {
+    server.use(http.get('*/api/plugins/sandbox/api/projects/7/environment', () => HttpResponse.json({ error: 'project_forbidden' }, { status: 403 })));
+    mount(<ProjectIconPicker project={managed} onClose={() => {}} />);
+
+    const dialog = within(await screen.findByRole('dialog', { name: 'Choose icon' }));
+    expect(await dialog.findByText(/project_forbidden/i)).toBeInTheDocument();
+    expect(dialog.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(requested.files).toBe(0);
+    expect(requested.other).toEqual([]);
+  });
+
+  // A host project has no environment to consult, so it must not grow a request for one.
+  it('lists a host project straight from its files, with no environment read', async () => {
+    mount(<ProjectIconPicker project={{ ...managed, executionKind: 'host', path: '/srv/analysis' }} onClose={() => {}} />);
+
+    const dialog = within(await screen.findByRole('dialog', { name: 'Choose icon' }));
+    expect(await dialog.findByTitle('assets/logo.png')).toBeInTheDocument();
+    expect(requested.environment).toBe(0);
   });
 
   it('reports a refused read instead of falling back to anything on the host', async () => {

@@ -142,6 +142,57 @@ describe('managed builtin consumer routing', () => {
     expect(provider.projectFiles).toHaveBeenCalledWith(expect.objectContaining({ operation: expect.objectContaining({ kind: 'write', path: '/etc/new', expectedVersion: null }) }));
   });
 
+  // The same rule the host guard enforces, through the managed provider: the external writer here is the
+  // HTTP editor endpoint, which writes into the guest without going near this conversation's read state.
+  it('refuses a managed edit after an external guest write, even on a file this conversation authored', async () => {
+    const provider = memoryProvider({ '/workspace/race.md': 'seed\n' });
+    const { run } = fixture(files, provider);
+    await run('Read', { file_path: '/workspace/race.md' });
+    await run('Write', { file_path: '/workspace/race.md', content: 'ours line\n' });
+    await run('Read', { file_path: '/workspace/race.md' });
+    provider.data.set('/workspace/race.md', Buffer.from('ours line\nappended by the HTTP writer\n'));
+
+    const refused = await run('Edit', { file_path: '/workspace/race.md', old_string: 'ours line', new_string: 'edited' });
+    expect(refused.details?.ok).toBe(false);
+    expect(refused.content[0].text).toMatch(/File has been modified since read/);
+    expect(provider.data.get('/workspace/race.md')!.toString()).toBe('ours line\nappended by the HTTP writer\n');
+
+    await run('Read', { file_path: '/workspace/race.md' });
+    expect((await run('Edit', { file_path: '/workspace/race.md', old_string: 'ours line', new_string: 'edited' })).details?.ok).toBe(true);
+  });
+
+  // Every one of these operations is a container round trip costing hundreds of milliseconds, so the
+  // COUNT is the latency. A tiny file has to cost one.
+  it('reads a tiny managed file with a single guest read and no surrounding stat', async () => {
+    const provider = memoryProvider({ '/workspace/tiny.txt': 'hello world\n' });
+    const { run } = fixture(files, provider);
+    expect((await run('Read', { file_path: '/workspace/tiny.txt' })).content[0].text).toContain('hello world');
+
+    const kinds = provider.projectFiles.mock.calls.map(([call]) => call.operation.kind);
+    expect(kinds.filter(kind => kind === 'read')).toHaveLength(1);
+    expect(kinds).not.toContain('stat');
+    expect(kinds).toHaveLength(1);
+  });
+
+  it('still chunks and re-verifies a managed file larger than one transport chunk', async () => {
+    // An explicit `limit` is the caller taking responsibility for the page, which lifts the byte cap and
+    // lets the whole file stream through the chunked path.
+    const provider = memoryProvider({ '/workspace/big.txt': `${'x'.repeat(200 * 1024)}\nlast\n` });
+    const { run } = fixture(files, provider);
+    expect((await run('Read', { file_path: '/workspace/big.txt', limit: 1 })).details?.ok).toBe(true);
+    const kinds = provider.projectFiles.mock.calls.map(([call]) => call.operation.kind);
+    expect(kinds.filter(kind => kind === 'read').length).toBeGreaterThan(1);
+    // The multi-chunk path keeps its closing stat, which is what bounds the whole iteration.
+    expect(kinds.at(-1)).toBe('stat');
+  });
+
+  it('reports a managed Glob transport failure as a failed tool call rather than an answer', async () => {
+    const provider = memoryProvider({ '/data/a.ts': 'needle' });
+    provider.projectFiles.mockRejectedValue(Object.assign(new Error('repository worktree metadata is busy in another process'), { code: 'lease_timeout' }));
+    const { run } = fixture(files, provider);
+    await expect(run('Glob', { pattern: '/data/*.ts' })).rejects.toThrow(/busy in another process/);
+  });
+
   it('routes metadata, filename traversal, both searches and Git inspections without host fs', async () => {
     const provider = memoryProvider({ '/data/a.ts': 'needle', '/data/b.txt': 'other' });
     provider.responses.set('rg', '/data/a.ts:1:needle\n');
@@ -339,10 +390,12 @@ describe('managed guest read version consolidation', () => {
     const ops: string[] = [];
     const seen = new Map<string, number>();
     let mutation: { on: string; nth: number; apply(): void } | null = null;
+    let failure: { on: string; error: Error } | null = null;
     const projectFiles = vi.fn(async ({ operation: op }): Promise<GuestFileResult> => {
       const count = (seen.get(op.kind) ?? 0) + 1;
       seen.set(op.kind, count);
       ops.push(op.kind);
+      if (failure?.on === op.kind) { const error = failure.error; failure = null; throw error; }
       if (mutation?.on === op.kind && count >= mutation.nth) { const apply = mutation.apply; mutation = null; apply(); }
       if (op.kind === 'stat') return { kind: 'stat', entry: stat(op.path) };
       if (op.kind === 'read') {
@@ -357,13 +410,20 @@ describe('managed guest read version consolidation', () => {
       currentAccess: () => ({ projectRef: { kind: 'managed', projectId: 7 } }),
       currentAccountUserId: () => 1, control: () => ({ projectFiles }), defaultCwd: () => '/workspace',
     });
-    return { guest, ops, data, mutateBeforeNext: (on: string, nth: number, apply: () => void) => { mutation = { on, nth, apply }; } };
+    return { guest, ops, data,
+      mutateBeforeNext: (on: string, nth: number, apply: () => void) => { mutation = { on, nth, apply }; },
+      failNext: (on: string, error: Error) => { failure = { on, error }; } };
   }
 
-  it('rejects a read whose file changes between the initial stat and the first chunk', async () => {
+  // A file that arrives in ONE transfer is verified by the guest itself: it takes the content version,
+  // reads, and re-checks that version inside a single process, and reports `version_conflict` when they
+  // differ. Host stats taken on either side of that transport could not observe anything it had not
+  // already established, and each one cost a container round trip.
+  it('surfaces the guest version conflict for a file that changed during its single read', async () => {
     const p = versioningProvider('first');
-    p.mutateBeforeNext('read', 1, () => p.data.set('/etc/log', Buffer.from('second')));
-    await expect(p.guest.read('/etc/log', 1024 * 1024)).rejects.toThrow('file changed while it was being read; retry the Read');
+    p.failNext('read', Object.assign(new Error('File changed while reading'), { code: 'version_conflict' }));
+    await expect(p.guest.read('/etc/log', 1024 * 1024)).rejects.toThrow('File changed while reading');
+    expect(p.ops).toEqual(['read']);
   });
 
   it('rejects a read whose file changes between chunks', async () => {
@@ -372,28 +432,35 @@ describe('managed guest read version consolidation', () => {
     await expect(p.guest.read('/etc/log', 1024 * 1024)).rejects.toThrow('file changed while it was being read; retry the Read');
   });
 
-  it('rejects a standalone chunks read whose file changes before the final stat', async () => {
-    const p = versioningProvider('payload');
+  // The closing stat still bounds a MULTI-transfer read, where there is a real gap between transfers for
+  // a writer to land in.
+  it('rejects a multi-chunk read whose file changes before the final stat', async () => {
+    const p = versioningProvider('x'.repeat(CHUNK_BYTES + 16));
     p.mutateBeforeNext('stat', 1, () => p.data.set('/etc/log', Buffer.from('mutated')));
-    const collected: Buffer[] = [];
-    await expect((async () => { for await (const bytes of p.guest.chunks('/etc/log')) collected.push(bytes); })())
+    await expect((async () => { for await (const bytes of p.guest.chunks('/etc/log')) void bytes; })())
       .rejects.toThrow('file changed while it was being read; retry the Read');
-    expect(collected.map(bytes => bytes.toString())).toEqual(['payload']);
+    expect(p.ops).toEqual(['read', 'read', 'stat']);
   });
 
-  it('answers an unchanged read with one initial and one final stat', async () => {
+  it('answers an unchanged tiny read with exactly one guest operation', async () => {
     const p = versioningProvider('stable guest bytes');
     const snapshot = await p.guest.read('/etc/log', 1024 * 1024);
     expect(snapshot.bytes.toString()).toBe('stable guest bytes');
     expect(snapshot.version).toBe(createHash('sha256').update('stable guest bytes').digest('hex'));
-    expect(p.ops).toEqual(['stat', 'read', 'stat']);
+    expect(p.ops).toEqual(['read']);
   });
 
-  it('keeps standalone chunks free of an initial stat while validating the final version', async () => {
-    const p = versioningProvider('payload');
+  it('keeps the closing version check for a read that took several transfers', async () => {
+    const p = versioningProvider('x'.repeat(CHUNK_BYTES + 16));
     const collected: Buffer[] = [];
     for await (const bytes of p.guest.chunks('/etc/log')) collected.push(bytes);
-    expect(collected.map(bytes => bytes.toString())).toEqual(['payload']);
-    expect(p.ops).toEqual(['read', 'stat']);
+    expect(Buffer.concat(collected).length).toBe(CHUNK_BYTES + 16);
+    expect(p.ops).toEqual(['read', 'read', 'stat']);
+  });
+
+  it('refuses a file past the read limit without transferring more than one chunk', async () => {
+    const p = versioningProvider('x'.repeat(CHUNK_BYTES * 3));
+    await expect(p.guest.read('/etc/log', 1024)).rejects.toThrow(/exceeds the 1024 byte read limit/);
+    expect(p.ops).toEqual(['read']);
   });
 });
