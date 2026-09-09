@@ -1,6 +1,6 @@
 # Web UI UX and accessibility contract
 
-This document records the web UI contract implemented in the Elowen `0.28.34` checkout. It describes implemented behavior, not proposed redesigns. The source of truth is `web/`, its focused tests, and the shared plugin UI kit.
+This document records the web UI contract implemented in the current `main` checkout. It describes implemented behavior, not proposed redesigns. The source of truth is `web/`, its focused tests, and the shared plugin UI kit.
 
 ## Visual system
 
@@ -21,6 +21,28 @@ Use semantic tokens from `web/app/styles/` and the shared UI components. Do not 
 - `deck`: a configuration surface with a section sidebar on tablet and desktop, and tabs on phones;
 - `single`: one working surface without section navigation.
 
+The primary navigation is one left sidebar column, mounted once by the shell and built on the shadcn `Sidebar` primitive. The former profile-based swap between a spatial rail and a flat column is gone; a skin restyles the single column through its `--sidebar-*` tokens.
+
+Its anatomy, top to bottom: an instance-switcher header with the brand mark, the app name and the running version, linking to `/account` and `/settings`; a search row that opens the command palette and prints the `⌘K` / `Ctrl K` hint; the grouped destination list; and a footer button that reveals hidden entries. Entries are drawn in three groups: an unlabelled primary group with Home and Chat, a Work group with Projects, Memory and every plugin world, and an Instance group with Settings, Users, the changelog page and Account. Empty groups are dropped.
+
+Users rearrange the menu in the menu itself; there is no editor dialog and no settings page for it. Right-click or long-press on an entry offers Hide, Move up, Move down, a `Hidden (n)` submenu to restore a hidden entry, and Restore default order. Right-clicking empty sidebar space, or the footer button, opens the same menu. Drag to reorder is pointer-driven with a 5 px threshold and desktop only: it is disabled in drawer mode and for touch input, so the context menu is the only reordering path on a phone.
+
+The layout is stored as two id lists, hidden and order, saved server-side with an optimistic cache write and mirrored to local storage per account. Unknown ids are carried rather than dropped, and new entries append at the end.
+
+Submenus are inline collapsible accordions. An entry gets a submenu only when it has two or more sub-pages; a single child stays a plain link. Where a submenu exists the parent is a button rather than a link, and the parent's own page sits inside the submenu as its first item. Several submenus can be open at once, the open set persists per account, the route's own submenu opens on arrival, and once the user folds it, it stays folded. In collapsed icon-rail mode a submenu collapses to its parent destination.
+
+Settings and Account are decks whose sections are declared as sidebar sub-items, so the sidebar is the only navigation between their sections; the in-page section rail that used to sit inside Account is gone.
+
+The active route is resolved once for the whole column by scoring the path prefix plus a matching `?cat=` query and a matching hash, so `/settings?cat=models` outranks `/settings`. Only `cat` is treated as an addressing parameter.
+
+The only live badge is on Chat: the number of conversations currently working, and zero renders no badge. Where the shell has no counter of its own, a plugin's own badge is used.
+
+The shell measures the width of the navigation plus content region, that is the window minus the advisor dock, not the viewport. Below 768 px of that region the navigation becomes a drawer, a dialog sheet with a scrim, a close button and a focus trap, and arriving at a route closes it. Below 1280 px the column is forced to its icon rail. At 1280 px and above the user's pin decides and the collapse handle is offered.
+
+Keyboard: `Ctrl`/`⌘` + `\` toggles the sidebar fold and `Ctrl`/`⌘` + `K` toggles the command palette. The fold binding is matched by key code so non-US layouts work, and both are advertised with `aria-keyshortcuts` on their triggers. There are no other global key bindings.
+
+The top bar has two variants, a frameless floating masthead and a sticky ruled bar. It carries the hamburger in drawer mode, a navigation collapse toggle in bar mode, the page location or eyebrow plus heading, a portal slot where route-owned toolbars mount, and an action cluster with the palette search glyph, sign out, the skin switcher, the language switcher and an avatar linking to `/account`. On `/chat` at phone width the floating design withholds the bar entirely.
+
 The secondary section navigation is responsive by measured mobile viewport, not by duplicating breakpoint decisions in each page:
 
 - deck navigation is a vertical `Segmented` menu at widths above the phone limit;
@@ -32,6 +54,18 @@ The secondary section navigation is responsive by measured mobile viewport, not 
 Keyboard navigation for section rails supports Arrow Left/Right and Arrow Up/Down, plus Home and End. Selecting an item moves focus to the selected option. Counts belong to the accessible option name when present. The phone tab presentation omits decorative icons so the compact control remains readable.
 
 The shell also accounts for the advisor dock and constrained regions. Wide layouts may use the Studio navigation column or compact rail; narrow layouts use a drawer. `/chat` is an application layout rather than a capped document column and protects the composer from the mobile keyboard viewport.
+
+## Command palette
+
+The command palette opens with `Ctrl`/`⌘` + `K`, which toggles it, or from the sidebar search row or the top-bar search glyph; both dispatch the same window event. The dialog mounts only while it is open and is portaled to the document body; Escape is handled by the dialog primitive.
+
+The palette navigates. Selecting a row routes to it and closes. It does not search conversations and it does not search documentation. With an empty query it lists pages plus the Settings and Account sections only; typing reveals the individual rows inside those sections and the plugin pages.
+
+The lexical index is built in the browser from static sources: core module routes, Settings sections and their static rows, the provider group titles of the Settings models section, Account sections and their rows, and plugin pages. Runtime plugin and model lists, plugin account sections, per-user plugin config sections and dynamic counts are deliberately not indexed, so the palette never advertises a row that only exists for some accounts. Titles are read from the localization dictionary rather than re-typed, so the palette cannot drift from the page it points at. Matching ignores diacritics and highlights the matched substring.
+
+A semantic pass runs only when the query is at least 3 characters and produced fewer than 3 lexical hits. It is debounced 300 ms, aborted on each keystroke, and renders under a separate suggestions heading without highlighting. A failure silences that layer for the rest of the palette session rather than showing an error.
+
+The **Ask AI** item is explicit-click only and appears solely in the empty state, when a query produced no lexical group and no suggestion. It shows a spinner while pending and renders its failure inside the palette rather than as a toast. A new query aborts an in-flight ask.
 
 ## Controls and accessibility
 
@@ -87,6 +121,8 @@ Plugin browser pages are hosted under `/p/<plugin>/...` and are loaded only when
 Plugin bundles must build with `elowen-plugin-ui-kit`, use the host runtime, and never import the host `web/` application or ship another React/query runtime. The runtime publishes the same page chrome and interaction primitives as core, including `WorkspaceShell`, `WorkspaceHero`, `PageToolbar`, `Modal`, `ConfirmDialog`, `ManageSelectionModal`, `SelectionSummary`, `DirectoryPicker`, `Slider`, `DataTable`, `WorkspaceTakeover`, `AutoSaveStatus`, `useAutoSaveStatus`, `usePluginConfigDraft`, and the shared loading/error/empty states. A plugin may contribute main pages, account panels, administrator User panels, Project panels, and Settings sections. Settings sections report host-visible save state through `onSaveState`; sections that render their own complete frame declare `ownsPageFrame` and own their save indicator too.
 
 Plugin pages inherit authentication, localization, query/event invalidation, navigation, overlay policy, and semantic theme tokens. A disabled, unauthorized, incompatible, or failed plugin receives an explicit unavailable/error state rather than an invented empty page.
+
+A plugin declares the measure its pages are framed at in its manifest, as `web.layout` accepting `'document'` or `'workbench'`. It has to be a manifest declaration because the page frame belongs to the host shell, which sits above the plugin's markup in the DOM: no stylesheet the bundle ships can widen it. A `/p/<plugin>` route is treated as a workbench only when the cached plugin UI listing reports that layout; everything else, including an unknown plugin or a daemon too old to send the field, reads as document. Document is a capped centered reading column; workbench is 90% of the room left after the advisor dock, and on a workbench route the shell's own content cap stands down so the two caps do not multiply.
 
 ## Verification expectations
 
