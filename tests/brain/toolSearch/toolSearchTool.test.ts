@@ -124,14 +124,34 @@ describe('resolveToolSearch', () => {
     expect(resolveToolSearch('   ', CANDIDATES, 5)).toEqual([]);
     expect(resolveToolSearch('zzzznomatch', CANDIDATES, 5)).toEqual([]);
   });
+
+  // A name part is a WORD, so a term may complete it from the front but never appear anywhere inside it:
+  // `load` sitting in `upload` ranked a browser upload tool as the best answer to "skill load".
+  it('matches a name part by prefix, never by a bare substring', () => {
+    const cands = [
+      { name: 'mcp__chrome__upload_file', description: 'Send a local file to the page' },
+      { name: 'SkillLoad', description: 'Load one skill by name' },
+    ];
+    expect(resolveToolSearch('load', cands, 5)).toEqual(['SkillLoad']);
+    expect(resolveToolSearch('skill load', [cands[0]!], 5)).toEqual([]);
+    // A prefix still matches: the term may be shorter than the part it names.
+    expect(resolveToolSearch('upl', [cands[0]!], 5)).toEqual(['mcp__chrome__upload_file']);
+  });
+
+  it('applies the same prefix rule to a required +term', () => {
+    const cands = [{ name: 'mcp__chrome__upload_file', description: 'Send a local file to the page' }];
+    expect(resolveToolSearch('+load file', cands, 5)).toEqual([]);
+  });
 });
 
 describe('requestedExactNames', () => {
   it('extracts the select: list', () => {
     expect(requestedExactNames('select:mcp__a__x, mcp__b__y')).toEqual(['mcp__a__x', 'mcp__b__y']);
   });
-  it('treats a bare single token as an exact name', () => {
-    expect(requestedExactNames('Read')).toEqual(['read']);
+  it('treats a bare single token as an exact name, as typed', () => {
+    // Kept in the caller's casing: the answers built from it quote the name back, and every comparison
+    // against the registry is case-insensitive anyway.
+    expect(requestedExactNames('Read')).toEqual(['Read']);
   });
   it('returns nothing for a multi-word keyword query (that is a search, not a name)', () => {
     expect(requestedExactNames('github create issue')).toEqual([]);
@@ -497,13 +517,56 @@ describe('toolSearchTool.execute', () => {
     expect(res.content[0].text).toMatch(/no deferred tools/i);
   });
 
-  it('reports when a query matches nothing without touching the active set', async () => {
+  it('reports when a keyword query matches nothing without touching the active set', async () => {
     const deferred = new Set(CANDIDATES.map((c) => c.name));
     const handle = createToolSearchHandle(deferred);
     handle.session = fakeSession(['Read']);
-    const res = await run(toolSearchTool(handle), 'zzzznomatch');
+    const res = await run(toolSearchTool(handle), 'zzzz nomatch');
     expect((handle.session as ReturnType<typeof fakeSession>).calls).toHaveLength(0);
     expect(res.content[0].text).toMatch(/matched nothing/i);
+  });
+
+  // Three different facts hid behind one "matched nothing": the search found no deferred tool, the name
+  // is not in this session at all, or the name is active already. Only the first invites another query.
+  it('says an exact name is not a tool in this session instead of inviting a retry', async () => {
+    const handle = createToolSearchHandle(new Set(CANDIDATES.map((c) => c.name)));
+    handle.session = fakeSession(['Read']);
+    const res = await run(toolSearchTool(handle), 'select:NoSuchTool');
+    expect(res.content[0].text).toMatch(/No tool named NoSuchTool exists in this session/);
+    expect((handle.session as ReturnType<typeof fakeSession>).calls).toHaveLength(0);
+  });
+
+  // The audited failure: a delegated child whose allow-list omits the skills plugin still had SkillLoad
+  // COMPOSED, so the fallback read it out of the registry and called it active. The child could not have
+  // called it — the execute gate would have refused — and nothing else told it so.
+  it('reports a policy-hidden plugin tool as unavailable, not as already active', async () => {
+    const registry = [...CANDIDATES, { name: 'SkillLoad', description: 'Load one skill by name' }];
+    const handle = createToolSearchHandle(new Set(CANDIDATES.map((c) => c.name)), new Set(['SkillLoad']));
+    handle.session = fakeSession(['ToolSearch'], registry);
+    const tool = toolSearchTool(handle);
+    const res = await runWithPolicy(
+      POLICY,
+      () => tool.execute('id', { query: 'select:SkillLoad' }, undefined, undefined, {} as never),
+      { toolPolicy: { allow: new Set(['mcp__*']) } },
+    );
+    expect(res.content[0].text).not.toMatch(/already active/i);
+    expect(res.content[0].text).toMatch(/SkillLoad is not available in this session/);
+    expect((res.details as { alreadyActive?: string[] }).alreadyActive).toBeUndefined();
+    expect((handle.session as ReturnType<typeof fakeSession>).calls).toHaveLength(0);
+  });
+
+  it('still reports a permitted active tool as already active', async () => {
+    const registry = [...CANDIDATES, { name: 'SkillLoad', description: 'Load one skill by name' }];
+    const handle = createToolSearchHandle(new Set(CANDIDATES.map((c) => c.name)), new Set(['SkillLoad']));
+    handle.session = fakeSession(['ToolSearch', 'SkillLoad'], registry);
+    const tool = toolSearchTool(handle);
+    const res = await runWithPolicy(
+      POLICY,
+      () => tool.execute('id', { query: 'select:SkillLoad' }, undefined, undefined, {} as never),
+      { toolPolicy: { allow: new Set(['SkillLoad']) } },
+    );
+    expect(res.content[0].text).toMatch(/already active/i);
+    expect((res.details as { alreadyActive: string[] }).alreadyActive).toEqual(['SkillLoad']);
   });
 
   it('reports an already-active tool re-selected post-respawn instead of "matched nothing"', async () => {

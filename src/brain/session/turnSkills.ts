@@ -17,6 +17,40 @@ interface TurnSkillDeps {
   users: { get(userId: number): Partial<PluginAccessUser> | null | undefined };
 }
 
+/** The plugin that owns SkillLoad — a reserved cross-plugin contract (see RESERVED_TOOL_OWNERS), named here
+ * because the skills catalog and the skills PROMPT text both have to agree on it. */
+export const SKILLS_PLUGIN = 'skills';
+
+/** Whether SkillLoad is composed for a session AND permitted by `toolPolicy`: the one authority behind the
+ * `<available_skills>` catalog, `/skill:name` expansion and the skills plugin's own loading guidance, so
+ * none of them can announce what another one withholds. `composed` is a lookup rather than a list because
+ * each caller asks its own registry — the spawner the definitions it has just built, a live turn the
+ * grant-filtered set for the writer. */
+export function skillLoadVisible(
+  toolOwner: ReadonlyMap<string, string> | undefined,
+  composed: (name: string) => boolean,
+  toolPolicy?: ToolPolicy,
+): boolean {
+  // The catalog and its loader are one capability, even when a skill came from another plugin. SkillLoad is
+  // a reserved cross-plugin contract; accepting a same-named tool from another owner would be a false positive.
+  if (toolOwner?.get('SkillLoad') !== SKILLS_PLUGIN) return false;
+  return composed('SkillLoad') && toolPermitted('SkillLoad', toolPolicy);
+}
+
+/** The plugin system-prompt fragments a session carries. The skills plugin's `<skill_loading>` block is an
+ * instruction — load every advertised skill through SkillLoad — so a session whose policy hides that tool is
+ * left with a standing order it can only fail, and nothing in the prompt says why. Dropped only where ONE
+ * policy governs the whole session: a shared room decides per writer, and its live per-turn catalog already
+ * narrows what it announces to each of them. */
+export function sessionPromptFragments(
+  fragments: readonly string[],
+  owners: readonly string[],
+  skillLoad: 'advertised' | 'hidden' | 'per-writer',
+): string[] {
+  if (skillLoad !== 'hidden') return [...fragments];
+  return fragments.filter((_, index) => owners[index] !== SKILLS_PLUGIN);
+}
+
 async function resolvedTurnSkills(
   deps: TurnSkillDeps,
   contributionUserId: number | null,
@@ -25,11 +59,12 @@ async function resolvedTurnSkills(
   const plugins = await deps.plugins?.();
   if (!plugins) return null;
   const user = contributionUserId == null ? null : deps.users.get(contributionUserId);
-  // The catalog and its loader are one capability, even when a skill came from another plugin. SkillLoad is
-  // a reserved cross-plugin contract; accepting a same-named tool from another owner would be a false positive.
-  if (plugins.toolOwner.get('SkillLoad') !== 'skills') return null;
-  if (!plugins.toolsFor(contributionUserId, user).some((tool) => tool.name === 'SkillLoad')) return null;
-  if (!toolPermitted('SkillLoad', toolPolicy)) return null;
+  const visible = skillLoadVisible(
+    plugins.toolOwner,
+    (name) => plugins.toolsFor(contributionUserId, user).some((tool) => tool.name === name),
+    toolPolicy,
+  );
+  if (!visible) return null;
   return { plugins, skills: plugins.skillsFor(contributionUserId, user) };
 }
 

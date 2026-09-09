@@ -21,14 +21,15 @@ import { estimateTokens, formatSkillsForPrompt } from '@earendil-works/pi-coding
 import { forkExceedsChildWindow, formatForkCacheLine, forkWindowRefusal } from '../session/forkPrefix.js';
 import type { Api, Model } from '@earendil-works/pi-ai';
 import { personalityText } from '../personality.js';
-import { currentWorkDir, toolPermitted, type ToolPolicy } from '../../plugins/policyContext.js';
+import { currentWorkDir, type ToolPolicy } from '../../plugins/policyContext.js';
 import { globalMemoryRecallScope, memoryRecallScope } from '../memoryRecallScope.js';
 import type { BrainSessionFactory } from '../session/factory.js';
 import { resolveAutoCompactPct } from '../session/factory.js';
 import { DEFAULT_AUTO_COMPACT_PCT, type LiveBrain, type SpawnOpts, type QueuedMsg, type TurnContextBlocks } from '../session/liveBrain.js';
 import { renderTurnContextFrame } from '../session/turnContextFrame.js';
 import { providerCacheRetentionFloorMs } from '../session/cacheTiming.js';
-import { liveSkillCommandExtension } from '../session/turnSkills.js';
+import { liveSkillCommandExtension, sessionPromptFragments, skillLoadVisible } from '../session/turnSkills.js';
+import { delegatedVisibilityToolPolicy } from '../delegatedScope.js';
 import type { BrainEvent } from '../events.js';
 import type { BrainDeps } from '../brainDeps.js';
 import { clientDir, turnWorkDir } from './workDir.js';
@@ -492,16 +493,35 @@ export class LiveSessionSpawner {
     const staticSkillToolPolicy = contributionOwnerUserId == null
       ? { allow: new Set<string>() }
       : this.d.toolAuthorityFor(contributionOwnerUserId);
-    const staticSkillLoadVisible = ownerChatShape
-      && plugins?.toolOwner.get('SkillLoad') === 'skills'
-      && allTools.some((tool) => tool.name === 'SkillLoad')
-      && toolPermitted('SkillLoad', staticSkillToolPolicy);
+    // What this session may ADVERTISE about skills. A delegated child runs under its frozen scope narrowed by
+    // the account grant it was minted from — the very policy `delegatedVisibilityToolPolicy` hands its tool
+    // block — and its current denies can only narrow it further, so reading the scope alone never claims less
+    // than the child holds. A FORK reads the account authority instead: its prompt must stay byte-identical
+    // to the owner-chat parent whose warm cache it was spawned to reuse.
+    const promptSkillToolPolicy = opts.delegatedAccess && !forkChild
+      ? delegatedVisibilityToolPolicy(opts.delegatedAccess, [], staticSkillToolPolicy?.allow)
+      : staticSkillToolPolicy;
+    const skillLoadAdvertised = skillLoadVisible(
+      plugins?.toolOwner,
+      (name) => allTools.some((tool) => tool.name === name),
+      promptSkillToolPolicy,
+    );
+    const staticSkillLoadVisible = ownerChatShape && skillLoadAdvertised;
     const skills = plugins?.skillsFor(contributionOwnerUserId, contributionOwnerUser) ?? [];
     // Plugin prompt-command macros → PI PromptTemplate[]: PI exposes them as `/name` slash commands and
     // expands their arguments natively in prompt()/steer()/followUp(). Every surface just sends the raw
     // slash. All registered commands go in (surface filtering is only a menu concern, not expansion).
     const promptTemplates = buildPromptTemplates(plugins?.commands.values() ?? []);
-    const fragments = plugins?.promptFragments ?? [];
+    // A session that cannot call SkillLoad does not carry the skills plugin's instruction to use it. Only a
+    // session with ONE governing policy can be decided here: a shared room, and any session composed for no
+    // account at all, keeps the fragment and lets the live per-turn catalog narrow what it announces.
+    const fragments = sessionPromptFragments(
+      plugins?.promptFragments ?? [],
+      plugins?.promptFragmentOwners ?? [],
+      perTurnContributions || contributionOwnerUserId == null
+        ? 'per-writer'
+        : skillLoadAdvertised ? 'advertised' : 'hidden',
+    );
     // The composing account's global instructions layer AFTER the persona as a separate appended chunk,
     // never the per-turn context (they are stable system-prompt material, so putting them per-turn would
     // waste the prompt cache). Undefined when empty → NOTHING appended, preserving the byte-identical
