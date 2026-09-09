@@ -71,6 +71,15 @@ describe('changelog entries on disk', () => {
     expect(entries.findIndex((e) => !e.pinned)).toBeGreaterThanOrEqual(entries.filter((e) => e.pinned).length);
   });
 
+  it('pins at most the current release, so a stale pin cannot hold an old note at the top', () => {
+    // A pin outranks the version sort, which is the point of it and also the way it goes wrong: the pin
+    // set for one release stays in the file, and every release after it opens on last month's news.
+    const entries = loadEntries(join(pluginsDir, 'changelog', 'entries'), log);
+    const pinned = entries.filter((e) => e.pinned).map((e) => e.version);
+    expect(pinned.length).toBeLessThanOrEqual(1);
+    if (pinned.length === 1) expect(pinned[0]).toBe(entries[0]!.version);
+  });
+
   it('ships every release in Czech and Slovak beside the English original', () => {
     // App copy exists in all three locales; a release note is app copy the reader sees on a page.
     const entries = loadEntries(join(pluginsDir, 'changelog', 'entries'), log);
