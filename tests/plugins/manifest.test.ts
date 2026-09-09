@@ -107,6 +107,13 @@ describe('parseManifest', () => {
     }
     expect(m.configSchema?.find((f) => f.type === 'provider')?.providerType).toBe('openai');
     expect(m.configSchema?.find((f) => f.type === 'tokenList')?.browse).toBe('directory');
+    // A field may accept SEVERAL provider types — the image plugins take an API-key endpoint or the
+    // ChatGPT account, and a single string could only ever name one of them.
+    const manyTypes = parseManifest({
+      ...good,
+      configSchema: [{ key: 'prov', label: 'Provider', type: 'provider', providerType: ['openai', 'oauth-openai-codex'] }],
+    });
+    expect(manyTypes.configSchema?.[0]?.providerType).toEqual(['openai', 'oauth-openai-codex']);
     expect(() => parseManifest({
       ...good,
       configSchema: [{ key: 'bad', label: 'Bad', type: 'string', browse: 'directory' }],

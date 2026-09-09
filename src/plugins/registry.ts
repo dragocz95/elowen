@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ENVIRONMENT_CONTROL_METHODS, SITE_ENVIRONMENT_CONTROL_METHODS } from './environmentTypes.js';
 import type { ToolDefinition } from '@earendil-works/pi-coding-agent';
-import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessRows, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginChatArtifactRef, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginLogger, PluginMcpTool, PluginModelOption, PluginNavBadge, PluginProjectIndicatorProvider, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginUiVisibility, PluginWebSocketRoute, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
+import type { DelegatedChildBridge, EventPersistenceRow, KnownControls, NotificationDestinationOption, NotificationDestinationProvider, PluginSubagentCatalog, PluginReadinessRows, PluginApiAccess, PluginApiRoute, PluginCapabilities, PluginChatArtifactRef, PluginCommand, PluginContext, PluginControl, PluginDb, PluginElowenCli, PluginEmbeddings, PluginHook, PluginHost, PluginHostExternalUsers, PluginHostPrompts, PluginHostPush, PluginHostStores, PluginHttpRoute, PluginImages, PluginLogger, PluginMcpTool, PluginModelOption, PluginNavBadge, PluginProjectIndicatorProvider, PluginPromptEntry, PluginProjectFiles, PluginService, PluginSkill, PluginUiVisibility, PluginWebSocketRoute, PluginWebUi, PlatformAdapter, ProviderCredentials, TurnContextContribution } from './api.js';
 import { webSocketTickets } from './wsTickets.js';
 import type { BrainInlineArtifact, PluginChatArtifact, PluginChatArtifactUpdate } from '../brain/events.js';
 import type { TmuxDriver } from '../tmux/types.js';
@@ -212,6 +212,9 @@ export interface PluginHostWiring {
     update(plugin: string, ref: PluginChatArtifactRef, update: PluginChatArtifactUpdate): BrainInlineArtifact;
     close(plugin: string, ref: PluginChatArtifactRef): void;
   };
+  /** Core-owned image client behind `ctx.images` (see ImageService). Absent in a process that renders no
+   *  images — a worker or a unit-test context — where the seam rejects instead of pretending. */
+  images?: PluginImages;
 }
 
 /** Drop the tools whose DECLARATION belongs to a managed project other than the one this session runs in.
@@ -986,6 +989,16 @@ export class PluginRegistry {
     const configProviderIds = new Set<string>();
     collectStringValues(config, configProviderIds);
     const baseResolveProvider = resolveProvider ?? (() => null);
+    // Gate + availability for ctx.images, resolved per call so a host wired late (or a provider id added
+    // to the config) is honoured without a registry rebuild.
+    const imageHost = async (providerId: string): Promise<PluginImages> => {
+      const allowed = configProviderIds.has(providerId) || (capabilities.reads?.includes('providers') ?? false);
+      if (!allowed) {
+        throw new Error(`images denied for provider '${providerId}': not in this plugin's config and no 'providers' read capability declared`);
+      }
+      if (!host?.images) throw new Error('image generation is not available in this process');
+      return host.images;
+    };
     // Deny-by-default embeddings gate: the shared embedder is reachable only when the plugin declared
     // `reads:['embeddings']`. An existing plugin without it sees isConfigured()===false and rejecting
     // embed*(), so this adds zero capability to already-installed plugins.
@@ -1605,6 +1618,14 @@ export class PluginRegistry {
           return null;
         }
         return baseResolveProvider(id);
+      },
+      // The image seam carries the SAME provider gate as resolveProvider — it reaches the very
+      // credentials that resolver guards, only without handing them over. A denial REJECTS rather than
+      // answering null: an image call has no meaningful empty result, and a silent no-op would look like
+      // a provider outage to the tool that asked.
+      images: {
+        generate: (req) => imageHost(req.providerId).then((images) => images.generate(req)),
+        edit: (req) => imageHost(req.providerId).then((images) => images.edit(req)),
       },
       embeddings,
       dataDir: () => {
