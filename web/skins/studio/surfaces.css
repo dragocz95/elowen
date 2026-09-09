@@ -332,10 +332,6 @@
 :root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-chevron {
   display: none;
 }
-/* And a bar beside a number that states the same value is the number said twice. The figure stays. */
-:root:is([data-skin='studio-light'], [data-skin='studio-oled']) .data-table-meter {
-  display: none;
-}
 
 /* The sticky header stays OPAQUE — rows scroll under it. --color-sticky is derived from
    --color-document, so it follows the variant instead of being a fixed tint: on the light canvas it
