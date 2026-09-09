@@ -116,30 +116,58 @@ describe('files plugin — read-before-modify guard', () => {
     expect(readFileSync(path, 'utf-8')).toContain('someone else was here');
   });
 
-  // The formatters plugin rewrites a file from a tools.call.after hook, AFTER Write returns, and gives
-  // us no signal that it did. We cannot tell its rewrite from an outsider's, so the two mutations are held
-  // to different bars — see the guard's note. This pins BOTH halves of that contract.
-  describe('after our own write is reshaped by the formatter hook', () => {
-    it('a targeted edit still applies — its old_string anchor must match the current bytes anyway', async () => {
+  // Having WRITTEN a file once is not standing permission to keep editing it. An outside writer changed
+  // this file after the conversation's most recent Read, which is exactly the window the hash exists to
+  // close, and authorship of an earlier version says nothing about the bytes that are there now.
+  it('refuses to edit after an external write, even on a file this conversation authored', async () => {
+    const path = fixture('authored-then-external.txt', 'seed\n');
+    await inSession('Read', { file_path: path });
+    await inSession('Write', { file_path: path, content: 'ours line\n' });
+    // Re-reading our own bytes used to CARRY the authorship marker forward, so the divergence below was
+    // forgiven even though the most recent thing this conversation knew about the file was that Read.
+    await inSession('Read', { file_path: path });
+    writeFileSync(path, 'ours line\nappended by someone else\n'); // an external HTTP writer, not a formatter
+
+    const res = await inSession('Edit', { file_path: path, old_string: 'ours line', new_string: 'edited line' });
+    expect(res.content[0].text).toMatch(/File has been modified since read, either by the user or by a linter\./);
+    expect(readFileSync(path, 'utf-8')).toBe('ours line\nappended by someone else\n');
+
+    // …and a fresh Read is what unblocks it, so the guard costs a round trip rather than the edit.
+    await inSession('Read', { file_path: path });
+    const after = await inSession('Edit', { file_path: path, old_string: 'ours line', new_string: 'edited line' });
+    expect(after.content[0].text).toContain('Edited');
+  });
+
+  // A formatter rewriting a file from a tools.call.after hook and an outsider rewriting it over HTTP are
+  // indistinguishable on disk, and the guard used to resolve that ambiguity in the writer's favour for any
+  // file the conversation had authored. That forgave the outsider too, which is the hole this closes: both
+  // mutations are now held to the SAME bar, and the way past it is a Read.
+  describe('after our own write is reshaped on disk by something that did not say so', () => {
+    it('a targeted edit is refused — authorship of the previous bytes does not vouch for these', async () => {
       const path = fixture('formatted-edit.txt', 'x\n');
       await inSession('Read', { file_path: path });
       await inSession('Write', { file_path: path, content: 'const a=1' });
-      writeFileSync(path, 'const a = 1;\n'); // the formatter reshapes what we just wrote
+      writeFileSync(path, 'const a = 1;\n'); // reshaped, with no signal that it was a formatter
 
       const res = await inSession('Edit', { file_path: path, old_string: 'const a = 1;', new_string: 'const b = 2;' });
-      expect(res.content[0].text).toContain('Edited');  // not blocked by our own formatter
+      expect(res.content[0].text).toMatch(/File has been modified since read, either by the user or by a linter\./);
+      expect(readFileSync(path, 'utf-8')).toBe('const a = 1;\n');
+
+      // Reading the reshaped bytes is what re-authorizes the edit, and it is the whole cost of the rule.
+      await inSession('Read', { file_path: path });
+      const after = await inSession('Edit', { file_path: path, old_string: 'const a = 1;', new_string: 'const b = 2;' });
+      expect(after.content[0].text).toContain('Edited');
       expect(readFileSync(path, 'utf-8')).toBe('const b = 2;\n');
     });
 
-    it('a stale old_string is still rejected — the pass is on the guard, never on the match', async () => {
+    it('a stale old_string is refused at the guard, before the anchor is ever consulted', async () => {
       const path = fixture('formatted-mismatch.txt', 'x\n');
       await inSession('Read', { file_path: path });
       await inSession('Write', { file_path: path, content: 'const a=1' });
       writeFileSync(path, 'const a = 1;\n');
 
-      // The agent edits against what it THINKS it wrote (unformatted). That anchor no longer exists.
       const res = await inSession('Edit', { file_path: path, old_string: 'const a=1', new_string: 'const b=2' });
-      expect(res.content[0].text).toMatch(/String to replace not found in file\./);
+      expect(res.content[0].text).toMatch(/File has been modified since read, either by the user or by a linter\./);
       expect(readFileSync(path, 'utf-8')).toBe('const a = 1;\n'); // unchanged
     });
 
@@ -154,20 +182,17 @@ describe('files plugin — read-before-modify guard', () => {
       expect(readFileSync(path, 'utf-8')).toBe('const a = 1;\n');
     });
 
-    // The guard DECIDES; only a mutation that lands RECORDS. If a failed edit re-baselined the divergent
-    // bytes, it would bless content the agent never saw and the blind overwrite above would sail through.
-    it('an edit that FAILS does not bless the bytes it never applied to', async () => {
+    // The guard DECIDES; only a mutation that lands RECORDS. A refused edit must leave the baseline where
+    // it was, so a blind overwrite behind it cannot inherit an authorization the edit never earned.
+    it('a refused edit does not bless the bytes it never applied to', async () => {
       const path = fixture('failed-edit.txt', 'x\n');
       await inSession('Read', { file_path: path });
       await inSession('Write', { file_path: path, content: 'const a=1' });
-      writeFileSync(path, 'const a = 1;\n'); // formatter reshapes it
+      writeFileSync(path, 'const a = 1;\n');
 
-      // The edit is allowed past the guard, then fails on its own anchor — the agent still has not seen
-      // the current bytes.
       const failed = await inSession('Edit', { file_path: path, old_string: 'nothing like this', new_string: 'x' });
-      expect(failed.content[0].text).toMatch(/String to replace not found in file\./);
+      expect(failed.details).toMatchObject({ ok: false });
 
-      // …so a blind overwrite must STILL be refused.
       const blind = await inSession('Write', { file_path: path, content: 'clobber' });
       expect(blind.content[0].text).toMatch(/File has been modified since read, either by the user or by a linter\./);
       expect(readFileSync(path, 'utf-8')).toBe('const a = 1;\n');

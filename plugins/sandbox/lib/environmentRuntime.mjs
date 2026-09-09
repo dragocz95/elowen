@@ -231,7 +231,12 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     return operationView(op);
   }
 
-  async function ready(kind, id, userId) {
+  /** `verifyRuntime` false is for a caller whose very next step is a prepared or direct guest execution:
+   *  that execution opens with the full ownership and running-state check, so the probe here observed
+   *  nothing it would not observe a moment later and cost two Podman invocations to say it. The durable
+   *  record checks above still run either way, so a stopped or pending environment is still refused here,
+   *  cheaply and without ever reaching the container. */
+  async function ready(kind, id, userId, verifyRuntime = true) {
     let row = await rowFor(kind, id, userId);
     if (row.state === 'unprovisioned') {
       await request(kind, id, { accountUserId: userId, action: { kind: 'start' } });
@@ -246,8 +251,18 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     }
     if (store.active(kind, id)) throw error('environment_pending', 'Environment lifecycle work is pending; retry after the operation completes', 503);
     if (row.state !== 'running') throw error('environment_stopped', `Environment is ${row.state}; request an explicit start`);
-    if ((await podman.inspect(specFor(row.spec)))?.state !== 'running') throw error('runtime_unavailable', 'The validated container is not running', 503);
+    if (verifyRuntime && (await podman.inspect(specFor(row.spec)))?.state !== 'running') throw error('runtime_unavailable', 'The validated container is not running', 503);
     return row;
+  }
+
+  /** The container-level answer to "the record says running but the runtime disagrees", in the wording
+   *  and with the 503 that `ready` used to produce from a preflight inspection of its own. The
+   *  authoritative ownership check inside the execution reports the same fact one step later and without
+   *  a second round trip, so this is where that fact is now named. */
+  function runtimeUnavailable(cause) {
+    const message = cause instanceof Error ? cause.message : String(cause);
+    if (!/Container is (missing|not running)/.test(message)) return cause;
+    return error('runtime_unavailable', 'The validated container is not running', 503);
   }
 
   async function mint(row, userId, kind) {
@@ -289,6 +304,18 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         db.prepare('DELETE FROM p_sandbox_execution_leases WHERE id=? AND execution_id=?').run(lease.id, lease.execution_id);
         released = true;
       },
+      /** Retire the DURABLE lease for a guest execution the client has already settled. Only a caller
+       *  that ran the execution through `PodmanClient.exec` may use this: that method releases or
+       *  terminates the guest unit itself before returning, so repeating the release here inspected the
+       *  container and every volume a second time and re-ran the whole termination probe — half the
+       *  Podman invocations of a trivial file operation, spent proving again what had just been proven.
+       *  What still has to happen is the part the client does not own: deleting the row that fences
+       *  lifecycle changes. Anything that cannot establish the guest is settled must use `release`. */
+      finalize() {
+        if (released) return;
+        db.prepare('DELETE FROM p_sandbox_execution_leases WHERE id=? AND execution_id=?').run(lease.id, lease.execution_id);
+        released = true;
+      },
     };
   }
 
@@ -297,10 +324,16 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const handle = leaseHandle(row, leased);
     let failure;
     try { return await podman.exec(specFor(row.spec), leased.execution_id, argv, { ...options, persistent: true }); }
-    catch (cause) { failure = cause; throw cause; }
+    catch (cause) { failure = cause; throw runtimeUnavailable(cause); }
     finally {
-      try { await handle.release(); }
-      catch (cause) { throw new AggregateError([...(failure ? [failure] : []), cause], `Managed execution cleanup failed: ${cause.message}`); }
+      // `exec` has already released or terminated the guest unit on every exit except a cleanup failure,
+      // which is the one case it marks. So the ordinary path only has to retire the durable lease, while
+      // an unsettled guest still gets the full release — and a lease that cannot be retired safely is
+      // deliberately left in place for lifecycle recovery rather than deleted to make the call look clean.
+      try {
+        if (failure?.guestSettled === false) await handle.release();
+        else handle.finalize();
+      } catch (cause) { throw new AggregateError([...(failure ? [failure] : []), cause], `Managed execution cleanup failed: ${cause.message}`); }
     }
   }
 
@@ -308,7 +341,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const id = projectId(input.projectRef);
     account(userId, true);
     if (input.workspace || ctx.currentAccess().workspaceRef) throw error('workspace_pinned', 'A legacy narrow workspace cannot widen into a managed Project', 403);
-    const row = await ready('project', id, userId);
+    const row = await ready('project', id, userId, false);
     const program = command(input.command);
     const cwd = guestPath(input.cwd ?? '/workspace');
     const leased = await mint(row, userId, input.leaseKind);
@@ -325,7 +358,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const id = projectId(input.project);
     const op = fileOperation(input.operation);
     account(input.accountUserId, ['write', 'remove', 'mkdir', 'rename', ...UPLOAD_KINDS].includes(op.kind));
-    const row = await ready('project', id, input.accountUserId);
+    // An upload keeps the readiness probe: its transport does its own staging before any guest command,
+    // so the execution's ownership check is not the very next thing to run.
+    const row = await ready('project', id, input.accountUserId, UPLOAD_KINDS.includes(op.kind));
     assertGeneration(row, input.expectedGeneration);
     return await withRepoLease(db, `environment-files:project:${id}`, async () => {
       if (UPLOAD_KINDS.includes(op.kind)) return await transfers.perform({ row, accountUserId: input.accountUserId, operation: op });
