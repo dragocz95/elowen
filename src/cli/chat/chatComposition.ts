@@ -550,7 +550,11 @@ export function createChatComposition(
     // seconds and reasoning level all come from the matching subagent rail entry; its activity from the
     // child transcript. Work mode stays the parent's — it is a session-wide setting the sub-agent
     // inherits, not a per-agent one.
-    const childEntry = child ? currentAgents.find((agent) => agent.sessionId === child.sessionId) : undefined;
+    // A workflow node is not on the subagent rail; its live seconds and level sit on the workflow snapshot.
+    const childEntry = child
+      ? currentAgents.find((agent) => agent.sessionId === child.sessionId)
+        ?? currentWorkflows.flatMap((wf) => wf.nodes).find((node) => node.sessionId === child.sessionId)
+      : undefined;
     // The child snapshot is authoritative. A parent rail entry may be stale after a model switch, and the
     // parent itself may use an entirely different model from this delegated session.
     // `showProvider: false` (the statusline setting) drops the provider half. Taking the bare model id
@@ -565,7 +569,7 @@ export function createChatComposition(
     // (dropped only when nothing reported one, e.g. a model with no reasoning ladder). A raw level is
     // mapped through the SAME label table the parent renders, so drilling in cannot switch the field from
     // a translated label to a bare id for what is usually the very same ladder.
-    const childLevel = childEntry?.thinkingLabel
+    const childLevel = (childEntry && 'thinkingLabel' in childEntry ? childEntry.thinkingLabel : undefined)
       ?? (childEntry?.thinkingLevel ? rt.thinkingLevelLabels[childEntry.thinkingLevel] ?? childEntry.thinkingLevel : '');
     const level = opts.level === false
       ? ''

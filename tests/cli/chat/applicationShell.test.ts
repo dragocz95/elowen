@@ -1234,6 +1234,39 @@ describe('chat application shell ownership', () => {
     composition.dispose();
   });
 
+  // A workflow node is a sub-agent too, but it lives in the workflow projection, not the subagent rail —
+  // the drilled-in status line looked only at the rail and left the level empty for every node.
+  it('shows a drilled-in workflow node\'s own reasoning level', async () => {
+    const h = compositionHarness({ columns: 140, rows: 24, turns: 4 });
+    h.rt.thinkingLevel = 'high';
+    h.rt.thinkingLevelLabels = { high: 'vysoká', low: 'nízká' };
+    h.stream.subagentStates = () => [];
+    h.stream.workflowStates = () => ([{
+      id: 'wf-1', status: 'running', nodes: [
+        { id: 'plan', task: 'plan it', status: 'running', deps: [], sessionId: 'node-1', model: 'node-model', thinkingLevel: 'low', seconds: 7 },
+      ],
+    }] as unknown as ReturnType<typeof h.stream.workflowStates>);
+    h.rt.childView = {
+      sessionId: 'node-1',
+      model: 'node-model',
+      provider: 'test',
+      transcript: new TranscriptModel([{ role: 'assistant', text: 'node output' }]),
+      processes: [],
+      loading: false,
+      usage: null,
+      cards: [],
+    };
+    const composition = makeComposition(h);
+    composition.resume();
+    composition.renderForced('test:node-level');
+    await vi.runOnlyPendingTimersAsync();
+
+    const frame = renderMountedRoot(h).map(terminalPlainText).join('\n');
+    expect(frame).toContain('nízká');
+    expect(frame).not.toContain('vysoká');
+    composition.dispose();
+  });
+
   it('keeps the background-process card when the rail cannot fit (narrow terminal)', async () => {
     const h = compositionHarness({ columns: 100, rows: 24, turns: 4 });
     h.rt.cards = [{
