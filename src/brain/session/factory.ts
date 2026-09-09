@@ -42,6 +42,7 @@ import { logger } from '../../shared/logger.js';
 import { ProviderRequestRecorder } from './providerRequestRecorder.js';
 import { wrapFastModeRuntime, type FastModeRoute } from '../fastMode.js';
 import { recoverMalformedToolCalls } from './malformedToolCallRecovery.js';
+import { guardProviderStreamIdle } from './providerStreamWatchdog.js';
 import { installExitPlanModeTermination } from './exitPlanModeTermination.js';
 import { realPathWithin } from '../../plugins/pathGuard.js';
 import {
@@ -696,7 +697,10 @@ export class BrainSessionFactory {
     // Fast is the OUTER wrapper: its onPayload runs before the inner recorder opens the attempt, so provider
     // diagnostics capture the exact body that leaves the process, including service_tier/speed.
     const recordedRuntime = spec.runtime && typeof spec.runtime === 'object'
-      ? requestRecorder.wrapRuntime(recoverMalformedToolCalls(spec.runtime))
+      // The idle watchdog is the INNERMOST wrapper: it installs its fetch last, so it guards the request
+      // every outer wrapper (Fast headers, the hosted-search replay shim) has already shaped, and its
+      // failure reaches the recorder as an ordinary stream error that closes the attempt row.
+      ? requestRecorder.wrapRuntime(recoverMalformedToolCalls(guardProviderStreamIdle(spec.runtime)))
       : spec.runtime;
     const captureRuntime = recordedRuntime && spec.fastMode
       ? wrapFastModeRuntime(recordedRuntime, spec.fastMode.enabled, spec.fastMode.routeFor)
