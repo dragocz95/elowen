@@ -52,21 +52,20 @@ function mount(u: User, projects: Project[] = []) {
 }
 
 describe('UserDetailPane', () => {
-  it('saves account project creation, sharing and limit through the user API', async () => {
-    let patch: unknown;
+  // The project grants persist on change through the real user route, one field per PATCH. The
+  // record-level behaviour (bounds, bursts, failures) is pinned in ProjectPermissions.test.tsx; this
+  // case only holds the wiring through the drawer.
+  it('persists an account project grant through the user API without a save button', async () => {
+    const bodies: unknown[] = [];
     server.use(
       http.get('*/api/users/2/projects', () => HttpResponse.json([])),
       http.get('*/api/brain/models', () => HttpResponse.json([])),
-      http.patch('*/api/users/2', async ({ request }) => { patch = await request.json(); return HttpResponse.json(user({ can_create_projects: true, can_share_projects: true, project_limit: 5 })); }),
+      http.patch('*/api/users/2', async ({ request }) => { bodies.push(await request.json()); return HttpResponse.json(user({ can_create_projects: true })); }),
     );
     mount(user({ project_limit: 3 }));
+    expect(screen.queryByRole('button', { name: 'Save project permissions' })).toBeNull();
     fireEvent.click(screen.getByRole('switch', { name: 'Allow additional projects' }));
-    fireEvent.click(screen.getByRole('switch', { name: 'Allow project invitations' }));
-    fireEvent.change(screen.getByLabelText('Managed project limit'), { target: { value: '0' } });
-    expect(screen.getByRole('button', { name: 'Save project permissions' })).toBeDisabled();
-    fireEvent.change(screen.getByLabelText('Managed project limit'), { target: { value: '5' } });
-    fireEvent.click(screen.getByRole('button', { name: 'Save project permissions' }));
-    await waitFor(() => expect(patch).toEqual({ can_create_projects: true, can_share_projects: true, project_limit: 5 }));
+    await waitFor(() => expect(bodies).toEqual([{ can_create_projects: true }]), { timeout: 2000 });
   });
   it('summarizes an unrestricted user from the live brain catalog', async () => {
     server.use(
