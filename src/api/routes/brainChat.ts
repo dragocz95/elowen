@@ -475,8 +475,9 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
     try { brain.preflightSubagentSend(c.get('user').id, body.session); }
     catch (e) { return c.json({ error: (e as Error).message }, 409); }
     // The child's own session, not the parent's: a sub-agent turn ordered by hand is attributed to the
-    // human who typed into it. A sub-agent turn the PARENT spawns has no request of its own and settles
-    // as `internal`, which is the honest answer — nobody typed it.
+    // human who typed into it. A sub-agent turn the PARENT spawns has no request of its own and is billed
+    // through the delegation's carried origin instead (see brain/spawnOrigin.ts) — the pin here only has
+    // to cover the turns a human actually ordered.
     pinOrigin(c, body.session);
     void brain.sendToSubagent(c.get('user').id, body.session, body.text).catch(() => { /* surfaced on the child's stream */ });
     return c.json({ ok: true });

@@ -18,6 +18,7 @@ import type { DelegatedContinueResult, KnownControls, SubagentProgressEvent } fr
 import type { RecoveryOutcome } from '../recovery/types.js';
 import { logger } from '../../shared/logger.js';
 import { bindingRef, resolveDelegatedWorkspace } from '../workspaceScope.js';
+import { spawnOriginOfTurn } from '../spawnOrigin.js';
 import { openDelegatedTurn, type TurnOriginPin } from '../session/turnSettled.js';
 
 /** Parse a `provider/model` spec into a brain model selection. Splits on the FIRST slash only — model
@@ -735,13 +736,20 @@ export class DelegatedSessionService {
     const authority = toolAuthorityForUser(this.d, userId);
     const deniedTools = [...(authority?.deny ?? []), ...(opts?.extraDeny ?? [])];
     // Every turn that reaches a child through this dispatch — a continuation, an owner drill-in, a durable
-    // result delivery, a boot-recovery respawn — is billed to the request that ordered the delegation,
-    // read from the child's own row. A restart-recovered child therefore INHERITS its stored origin rather
-    // than falling back to `internal`: the work is still the answer to that request, and the alternative
-    // would move a long delegation's tail into the automation bucket purely because the daemon restarted.
-    // A child spawned before the column existed, or one ordered by a turn with no request behind it, has
-    // no stored origin and stays `internal`.
-    const opened = openDelegatedTurn(this.d.usageOrigins, sessionId, this.d.store.spawnOriginFor(sessionId));
+    // result delivery, a boot-recovery respawn — is billed to the request that ordered the work. The
+    // parent turn running RIGHT NOW wins first: it is whoever is actually driving this continuation, and
+    // in a shared room that is the colleague calling DelegateContinue, not whoever spawned the child.
+    // Without a live pin — the ordering turn is long gone (a recovery respawn, a durable drain) or the
+    // caller typed into the child by hand — the child's stored spawn origin stands in, which keeps a
+    // restart from demoting a long delegation's tail into the automation bucket. A child with neither
+    // settles as `internal`.
+    const liveParentOrigin = this.d.usageOrigins
+      ? spawnOriginOfTurn(this.d.usageOrigins, parentSessionId)
+      : undefined;
+    const opened = openDelegatedTurn(
+      this.d.usageOrigins, sessionId,
+      liveParentOrigin ?? this.d.store.spawnOriginFor(sessionId),
+    );
     try {
       return await this.d.channelService.send({
         channelId: channelIdOf(sessionId),
