@@ -130,9 +130,11 @@ describe('UsersView', () => {
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] } })),
       http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
+      // Two administrators, so demoting alice is something the daemon would actually accept.
       http.get('*/api/users', () => HttpResponse.json([
         { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] },
         { id: 2, username: 'bob', created_at: '2026-01-02', is_admin: false, allowed_execs: [] },
+        { id: 3, username: 'carol', created_at: '2026-01-03', is_admin: true, allowed_execs: [] },
       ])),
       http.patch('*/api/users/1', async () => {
         patchHits += 1;
@@ -143,7 +145,7 @@ describe('UsersView', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><UsersView /></ToastProvider></Wrapper>);
 
-    await screen.findByText('Admin');
+    await screen.findAllByText('Admin');
     fireEvent.click(screen.getByRole('button', { name: 'alice: Actions' }));
     fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Remove admin' }));
     const firstConfirm = await screen.findByRole('alertdialog', { name: 'Remove administrator access from alice?' });
@@ -170,6 +172,78 @@ describe('UsersView', () => {
     expect(patchHits).toBe(1);
   });
 
+  // The daemon refuses to demote the last administrator and to delete an administrator at all
+  // (`cannot demote the last admin` / `cannot delete the admin`). The row must say so where the reader
+  // decides, instead of routing them through a confirmation dialog into a 400.
+  it('marks demotion and deletion unavailable for the only administrator', async () => {
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] } })),
+      http.get('*/api/users', () => HttpResponse.json([
+        { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] },
+        { id: 2, username: 'bob', created_at: '2026-01-02', is_admin: false, allowed_execs: [] },
+      ])),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><UsersView /></ToastProvider></Wrapper>);
+
+    await screen.findByText('Admin');
+    fireEvent.click(screen.getByRole('button', { name: 'alice: Actions' }));
+    const adminMenu = screen.getByRole('menu');
+    expect(within(adminMenu).getByRole('menuitem', { name: 'Remove admin' })).toHaveAttribute('aria-disabled', 'true');
+    expect(within(adminMenu).getByRole('menuitem', { name: 'Delete alice' })).toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(within(adminMenu).getByRole('menuitem', { name: 'Remove admin' }));
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+
+    // A member row is unaffected: both of its actions remain live.
+    fireEvent.keyDown(adminMenu, { key: 'Escape' });
+    fireEvent.click(screen.getByRole('button', { name: 'bob: Actions' }));
+    const memberMenu = screen.getByRole('menu');
+    expect(within(memberMenu).getByRole('menuitem', { name: 'Make admin' })).not.toHaveAttribute('aria-disabled', 'true');
+    expect(within(memberMenu).getByRole('menuitem', { name: 'Delete bob' })).not.toHaveAttribute('aria-disabled', 'true');
+  });
+
+  it('marks the same two actions unavailable in the right-click menu of the only administrator', async () => {
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] } })),
+      http.get('*/api/users', () => HttpResponse.json([
+        { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] },
+        { id: 2, username: 'bob', created_at: '2026-01-02', is_admin: false, allowed_execs: [] },
+      ])),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><UsersView /></ToastProvider></Wrapper>);
+
+    await screen.findByText('Admin');
+    const aliceRow = screen.getByRole('button', { name: 'Open user alice' }).closest('[role="row"]');
+    if (!aliceRow) throw new Error('alice row not rendered');
+    fireEvent.contextMenu(aliceRow);
+    const menu = screen.getByRole('menu');
+    expect(within(menu).getByRole('menuitem', { name: 'Remove admin' })).toHaveAttribute('aria-disabled', 'true');
+    expect(within(menu).getByRole('menuitem', { name: 'Remove access' })).toHaveAttribute('aria-disabled', 'true');
+  });
+
+  // With a second administrator the demotion is genuinely possible, so nothing is dimmed on that path.
+  it('keeps demotion available while another administrator remains', async () => {
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] } })),
+      http.get('*/api/users', () => HttpResponse.json([
+        { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] },
+        { id: 2, username: 'bob', created_at: '2026-01-02', is_admin: false, allowed_execs: [] },
+        { id: 3, username: 'carol', created_at: '2026-01-03', is_admin: true, allowed_execs: [] },
+      ])),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><UsersView /></ToastProvider></Wrapper>);
+
+    await screen.findAllByText('Admin');
+    fireEvent.click(screen.getByRole('button', { name: 'carol: Actions' }));
+    const menu = screen.getByRole('menu');
+    const demote = within(menu).getByRole('menuitem', { name: 'Remove admin' });
+    expect(demote).not.toHaveAttribute('aria-disabled', 'true');
+    fireEvent.click(demote);
+    expect(await screen.findByRole('alertdialog', { name: 'Remove administrator access from carol?' })).toBeInTheDocument();
+  });
+
   it('shows a specific create error and preserves the submitted form draft', async () => {
     server.use(http.post('*/api/users', () => HttpResponse.json({ error: 'username taken' }, { status: 409 })));
     const { wrapper: Wrapper } = createWrapper();
@@ -192,9 +266,12 @@ describe('UsersView', () => {
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] } })),
       http.get('*/api/config', () => HttpResponse.json({ allowedExecs: [], customModels: [], hiddenPresets: [], providers: {}, defaults: {} })),
+      // The directory shows two admins, so the demotion is offered — and the daemon still refuses it,
+      // which is what a client whose list went stale between the read and the click actually meets.
       http.get('*/api/users', () => HttpResponse.json([
         { id: 1, username: 'alice', created_at: '2026-01-01', is_admin: true, allowed_execs: [] },
         { id: 2, username: 'bob', created_at: '2026-01-02', is_admin: false, allowed_execs: [] },
+        { id: 3, username: 'carol', created_at: '2026-01-03', is_admin: true, allowed_execs: [] },
       ])),
       http.patch('*/api/users/1', () => HttpResponse.json({ error: 'cannot demote the last admin' }, { status: 400 })),
       http.delete('*/api/users/2', () => HttpResponse.json({ error: 'account processes are still active' }, { status: 409 })),
@@ -202,7 +279,7 @@ describe('UsersView', () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><UsersView /></ToastProvider></Wrapper>);
 
-    await screen.findByText('Admin');
+    await screen.findAllByText('Admin');
     fireEvent.click(screen.getByRole('button', { name: 'alice: Actions' }));
     fireEvent.click(within(screen.getByRole('menu')).getByRole('menuitem', { name: 'Remove admin' }));
     const roleConfirm = await screen.findByRole('alertdialog');

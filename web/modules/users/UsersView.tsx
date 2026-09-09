@@ -113,6 +113,9 @@ export function UsersView() {
     return data.filter((user) => !needle || `${user.name} ${user.username} ${user.email}`.toLowerCase().includes(needle));
   }, [data, deferredQuery]);
   const adminCount = data.filter((user) => user.is_admin).length;
+  /** Whether this row is the instance's only administrator — the state `PATCH /users/:id` refuses to
+   *  leave (`cannot demote the last admin`). */
+  const lastAdmin = (user: ElowenUser) => user.is_admin && adminCount <= 1;
 
   function userActions(user: ElowenUser): ActionMenuItem[] {
     return [
@@ -124,12 +127,18 @@ export function UsersView() {
       ...(isAdmin ? [{
         label: user.is_admin ? t.users.removeAdmin : t.users.makeAdmin,
         icon: user.is_admin ? Shield : ShieldCheck,
+        // The daemon refuses to demote the last admin, so the row says so here rather than sending the
+        // reader through a confirmation into a 400. `data` is the whole directory (GET /users is not
+        // paginated) and the count ignores the search box, so this reads the real instance.
+        disabled: lastAdmin(user),
         onSelect: () => { if (!updateUser.isPending) setConfirmRole(user); },
       }] : []),
       ...(data.length > 1 ? [{
         label: t.users.deleteLabel.replace('{username}', user.username),
         icon: Trash2,
         tone: 'danger' as const,
+        // An admin account is never deletable — the flag has to be handed over first.
+        disabled: user.is_admin,
         onSelect: () => setConfirmDelete(user),
       }] : []),
     ];
@@ -150,6 +159,7 @@ export function UsersView() {
         ...(isAdmin ? [{
           label: user.is_admin ? t.users.removeAdmin : t.users.makeAdmin,
           icon: user.is_admin ? Shield : ShieldCheck,
+          disabled: lastAdmin(user),
           onClick: () => { if (!updateUser.isPending) setConfirmRole(user); },
         }] : []),
         ...(isAdmin ? [DIVIDER as typeof DIVIDER] : []),
@@ -157,8 +167,8 @@ export function UsersView() {
           label: t.users.ctxRemoveAccess,
           icon: Trash2,
           danger: true,
-          onClick: () => { if (data.length > 1) setConfirmDelete(user); },
-          disabled: data.length <= 1,
+          onClick: () => { if (data.length > 1 && !user.is_admin) setConfirmDelete(user); },
+          disabled: data.length <= 1 || user.is_admin,
         },
       ],
     });
