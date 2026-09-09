@@ -154,7 +154,7 @@ const PICKER_SURFACES: readonly SlashSurface[] = ['cli', 'web'];
 const CONTROL_CONSUMERS: Partial<Record<keyof KnownControls, readonly string[]>> = {
   github: ['sandbox'],
   publishedSitesGateway: ['sites'],
-  sandbox: ['files', 'terminal', 'github', 'onedrive', 'sites', 'editor', 'lsp', 'mcp', 'browser', 'cronjob'],
+  sandbox: ['files', 'terminal', 'github', 'onedrive', 'sites', 'editor', 'lsp', 'mcp', 'browser', 'cronjob', 'codebase'],
 };
 
 /** A missing account is not plugin-access open mode: shared channels and unlinked callers
