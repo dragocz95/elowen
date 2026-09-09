@@ -1,6 +1,6 @@
 import type { BrainEvent } from './events.js';
 import { isSubagentToolName } from './messageView.js';
-import { laterChildRunSpeaks } from './subagentRuns.js';
+import { laterChildRunSpeaks } from '../store/brainDelegationStore.js';
 import {
   submittedPlanOf,
   toolRunJoinMode,

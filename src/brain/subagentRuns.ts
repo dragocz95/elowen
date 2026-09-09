@@ -1,32 +1,8 @@
 import type { BrainStore } from '../store/brainStore.js';
-import type { BrainSubagentRun } from '../store/brainDelegationStore.js';
+import { laterChildRunSpeaks, type BrainSubagentRun } from '../store/brainDelegationStore.js';
 import type { BrainEvent, SubagentUpdate } from './events.js';
 import type { ChildClaimSource } from './session/liveRegistry.js';
 import { recordSubagentFinishMarker } from './service/sessionEvents.js';
-
-/** One run row is one CALL on a child, never the child itself. A child routinely carries two at once: the
- *  original Delegate, still working, and a DelegateContinue whose message was steered into that running
- *  turn and which therefore returns within a second. Any view that shows one row per child has to choose
- *  between them, and this is that choice — a call still running outranks one that already returned, and
- *  among equals the newest row wins (insertion order; a boot-claimed recovery keeps the pause's
- *  updated_at, so the timestamp cannot decide).
- *
- *  The alternative — letting whichever update landed last speak — is what froze a finished continuation
- *  on the CLI rail as a running sub-agent with no model and no elapsed time, and what reported a working
- *  child as finished when a recovering continuation followed a completed delegation.
- *
- *  This is the rule itself, for a caller that already knows which of the two calls is the LATER one — a
- *  projection built by replaying events in order, where arrival order is the only "newest" there is. The
- *  daemon's rows carry a rowid instead, so {@link preferChildRun} orders the pair first and then applies
- *  this. Both the read model and the CLI rail read the rule from here; the web keeps a mirrored copy
- *  (`collectSubagents`) because the web toolchain cannot import daemon sources, pinned by its own test. */
-export function laterChildRunSpeaks(
-  current: { status: BrainSubagentRun['status'] },
-  later: { status: BrainSubagentRun['status'] },
-): boolean {
-  if (later.status === 'running') return true;
-  return current.status !== 'running';
-}
 
 /** Which of two calls on one child speaks for it, ordered by rowid — insertion order, because a
  *  boot-claimed recovery keeps the pause's `updated_at` and the timestamp therefore cannot decide. */

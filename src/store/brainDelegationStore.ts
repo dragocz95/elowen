@@ -2,7 +2,6 @@ import type { Db } from './db.js';
 import { withWriteLock } from './db.js';
 import type { WorkflowNode, WorkflowUpdate } from '../brain/events.js';
 import { SUBAGENT_PREFIX } from '../brain/sessionId.js';
-import { laterChildRunSpeaks } from '../brain/subagentRuns.js';
 import { resolveSubagentName } from '../brain/subagentName.js';
 import { logger } from '../shared/logger.js';
 
@@ -43,6 +42,31 @@ export interface BrainSubagentRun extends BrainSubagentRunState {
   startedAt?: string;
   /** The run sidecar's existing brain_subagent_runs.updated_at value. */
   updatedAt?: string;
+}
+
+/** One run row is one CALL on a child, never the child itself. A child routinely carries two at once: the
+ *  original Delegate, still working, and a DelegateContinue whose message was steered into that running
+ *  turn and which therefore returns within a second. Any view that shows one row per child has to choose
+ *  between them, and this is that choice — a call still running outranks one that already returned, and
+ *  among equals the newest row wins (insertion order; a boot-claimed recovery keeps the pause's
+ *  updated_at, so the timestamp cannot decide).
+ *
+ *  The alternative — letting whichever update landed last speak — is what froze a finished continuation
+ *  on the CLI rail as a running sub-agent with no model and no elapsed time, and what reported a working
+ *  child as finished when a recovering continuation followed a completed delegation.
+ *
+ *  This is the rule itself, for a caller that already knows which of the two calls is the LATER one — a
+ *  projection built by replaying events in order, where arrival order is the only "newest" there is. The
+ *  daemon's rows carry a rowid instead, so `preferChildRun` in brain/subagentRuns orders the pair first
+ *  and then applies this. It lives beside the status it reads: the read model here, the projection in
+ *  brain and the CLI rail all take the rule from this module, and the web keeps a mirrored copy
+ *  (`collectSubagents`) because the web toolchain cannot import daemon sources, pinned by its own test. */
+export function laterChildRunSpeaks(
+  current: { status: BrainSubagentRun['status'] },
+  later: { status: BrainSubagentRun['status'] },
+): boolean {
+  if (later.status === 'running') return true;
+  return current.status !== 'running';
 }
 /** One restart-orphaned delegation claimed for recovery at boot: enough to rehydrate the child session,
  *  classify its discarded suffix and decide respawn vs recovery_required. `attempt` is the post-increment
