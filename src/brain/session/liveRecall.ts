@@ -252,6 +252,9 @@ interface PendingRetrieval {
   issuedAt: number;
   correlation: LiveRecallCorrelation;
   settled: boolean;
+  /** Set when the retrieval REJECTED: the slot frees with nothing to inject, and the failure must not
+   *  count as a fruitless search — a provider outage is not the store saying it has nothing to say. */
+  failed: boolean;
   found: LiveRecallMemory[];
 }
 
@@ -275,15 +278,16 @@ export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): vo
     byteBudget: number,
     recall: LiveRecallCorrelation,
   ): PendingRetrieval => {
-    const issued: PendingRetrieval = { issuedAt: now(), correlation: recall, settled: false, found: [] };
+    const issued: PendingRetrieval = { issuedAt: now(), correlation: recall, settled: false, failed: false, found: [] };
     // The rejection handler is attached HERE, at creation: nothing ever awaits this promise, so a
     // rejection would otherwise escape as an unhandled one and take the process with it. Recall is
-    // best-effort — a failure settles the slot empty, and the next pass consumes the nothing, frees
-    // the slot and moves on.
+    // best-effort — a failure settles the slot marked failed, and the next pass frees it without
+    // injecting and without spending a fruitless pass (see FRUITLESS_SEARCH_LIMIT).
     opts.retrieve(query, maxCount, byteBudget).then(
       (found) => { issued.settled = true; issued.found = found; },
       (e: unknown) => {
         issued.settled = true;
+        issued.failed = true;
         // Provider errors may echo request/query text. The correlation is enough to investigate the
         // failed delivery without copying prompt content into a production log.
         void e;
@@ -368,9 +372,15 @@ export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): vo
     let foundCorrelation: LiveRecallCorrelation | undefined;
     if (pending) {
       if (pending.settled) {
-        found = pending.found;
-        foundCorrelation = pending.correlation;
-        pending = undefined;
+        // An ERROR frees the slot with nothing injected and no fruitless pass spent: three provider
+        // timeouts in a row must not silence recall for the rest of the turn. The failure itself was
+        // logged the moment the retrieval rejected.
+        if (pending.failed) pending = undefined;
+        else {
+          found = pending.found;
+          foundCorrelation = pending.correlation;
+          pending = undefined;
+        }
       } else if (now() - pending.issuedAt <= PENDING_ABANDON_MS) {
         return reEmit();
       } else {

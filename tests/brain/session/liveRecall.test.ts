@@ -423,6 +423,46 @@ describe('live recall — budget and switches', () => {
     expect(calls).toBe(3);
   });
 
+  it('does not count failed retrievals as fruitless: a provider outage must not silence recall', async () => {
+    // Three provider timeouts each settle as an error. Under error-as-fruitless counting the third one
+    // fired "no more searching this turn" and the rest of the turn ran with recall silenced — the store
+    // was never asked a fourth time. An error is not an empty answer: the slot frees without injecting
+    // and without spending a fruitless pass, so the next search may still land a memory.
+    let calls = 0;
+    const lines: string[] = [];
+    const logSpy = vi.spyOn(console, 'log').mockImplementation((line) => { lines.push(String(line)); });
+    try {
+      const { fire } = harness({
+        passes: 10,
+        retrieve: async () => {
+          calls += 1;
+          if (calls <= 3) throw new Error('embedding endpoint timing out');
+          return [mem(1, 'Fourth search fact')];
+        },
+      });
+
+      let out: Msg[] = [];
+      for (let step = 1; step <= 4; step += 1) {
+        const work: Msg[] = [
+          { role: 'user', content: 'go' },
+          ...Array.from({ length: step }, (_, i) => ({
+            role: 'toolResult', content: `distinct work step ${i + 1} with fresh output so the query moves on`,
+          })),
+        ];
+        await fire(work); // issues the step's search
+        await flush(); // let the rejection settle the slot
+        out = await fire(work); // consumes the failure: no injection, no fruitless increment
+      }
+
+      // The fourth search was still issued and its memory injected; the fruitless gate never fired.
+      expect(calls).toBe(4);
+      expect(textOf(out[out.length - 1] as Msg)).toContain('Fourth search fact');
+      expect(lines.join('\n')).not.toContain('no more searching this turn');
+    } finally {
+      logSpy.mockRestore();
+    }
+  });
+
   it('caps each injected batch but keeps recall available across many work steps', async () => {
     const requestedCounts: number[] = [];
     let calls = 0;
