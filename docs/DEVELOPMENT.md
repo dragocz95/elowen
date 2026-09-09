@@ -4,7 +4,7 @@ Elowen is a TypeScript/ESM daemon with a Next.js web application, SQLite persist
 
 ## Prerequisites and setup
 
-Use Node.js 22 or newer and npm. Install `tmux` for CLI/TUI and real-daemon integration paths. Linux CI also installs `poppler-utils`, `ripgrep`, and `bubblewrap` for PDF, search, and confined-execution coverage.
+Use Node.js 22.12 or newer and npm; that is the floor declared in `package.json`, and an older 22.x release will be refused on install. Install `tmux` for CLI/TUI and real-daemon integration paths. Linux CI also installs `poppler-utils`, `ripgrep`, and `bubblewrap` for PDF, search, and confined-execution coverage.
 
 ```bash
 npm ci
@@ -42,6 +42,12 @@ Files tools (`Read`, `Write`, `Edit`, `Search`, `ListDir`, `Grep`, `Glob`, `File
 A sub-agent (`Delegate`) or workflow node spawned from a bound conversation inherits the binding: it starts in the worktree, and its shell commands whose working directory is inside the workspace run in the same container without passing `workspaceId`. Passing `workspaceId` additionally pins the child's logical filesystem view to that worktree (workspace-relative paths, no wider host access). Explicit workspace-scoped composition withholds host-filesystem tools, including `WorkflowStart`, because workflow definitions use the host workflow directory. A `read_only` child has no `Write` tool and no scratch directory beyond the per-command `/tmp`, so a plan or document it produces must be returned as the delegation RESULT for the parent to save; it cannot leave a file behind.
 
 To leave the container, release the binding rather than removing the workspace: `SandboxReleaseWorkspace` (the model tool, acting on the calling conversation's own bindings; `projectId` narrows it to one Project), the `/sandbox` picker in the CLI and web, or `POST /plugins/sandbox/api/workspaces/release`. The next turn runs in the Project directory again; the workspace, its branch and its directory are preserved and can be re-activated. A release is refused with `workspace_in_use` while a process still runs in the worktree — wait for it or kill it first. The chat surfaces show a `Sandbox · <label>` badge (web telemetry foot) or a `[S] <label>` marker (CLI project line) while a conversation is bound and its next turn starts in the worktree; the client's own directory stays what the panel shows as the cwd.
+
+### Managed project environments
+
+A Project declares its execution target rather than having one inferred from its path: either the host filesystem or a managed environment. A managed Project runs in its own persistent rootless Podman container that survives across turns, with a workspace volume at `/workspace`, a home volume and a data volume at `/data`, and each command running inside as a transient systemd unit. The container's network is either shared with host loopback denied, or none at all.
+
+The practical consequence when developing against a managed Project is that the file, shell, browser, editor, LSP, MCP and codebase surfaces reach the guest through the Sandbox control instead of the host filesystem, so a host path is not a meaningful address there. Guest file operations are a closed set that includes chunked writes for large uploads, and even a spilled tool result is written inside the guest and named by a guest path. Container specifications are host-derived and frozen; a caller-supplied mount list is deliberately not an execution capability, and `prepareExecution` offers no way to request unconfined execution.
 
 ## Commands
 
