@@ -187,10 +187,19 @@ describe('ToolSemanticIndex', () => {
     expect(captured.filter((c) => c.level === 'warn' && c.scope === 'tool-search-semantic')).toHaveLength(1);
   });
 
-  it('keeps the search bounded: the batch timeout defaults to 1500 ms and doc text is clamped', () => {
+  it('keeps the search bounded: the batch timeout defaults to 1500 ms and doc text is clamped', async () => {
     expect(SEMANTIC_SEARCH_TIMEOUT_MS).toBe(1500);
-    const index = new ToolSemanticIndex({ embeddings: stubEmbeddings(() => []), embeddingConfig: () => CFG });
+    const calls: string[][] = [];
+    const index = new ToolSemanticIndex({
+      embeddings: stubEmbeddings((texts) => texts.map(() => unitVec(1, 0)), calls),
+      embeddingConfig: () => CFG,
+    });
     // 191 documents (the current tool+skill surface) ride ONE batch — never one request per document.
-    expect(index).toBeInstanceOf(ToolSemanticIndex);
+    const many = Array.from({ length: 191 }, (_, i) => ({ id: `t${i}`, text: `tool number ${i}` }));
+    await index.rank('q', many);
+    expect(calls).toHaveLength(1);
+    // A hostile/outlier schema is clamped so one batch stays one batch.
+    await index.rank('huge', [{ id: 'h', text: 'x'.repeat(2_000) }]);
+    expect(calls[1]?.[1]?.length).toBe(1_000);
   });
 });

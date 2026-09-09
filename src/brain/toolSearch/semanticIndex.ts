@@ -145,5 +145,8 @@ export class ToolSemanticIndex {
 }
 
 function clamp(text: string): string {
-  return text.length > MAX_DOC_CHARS ? text.slice(0, MAX_DOC_CHARS) : text;
+  if (text.length <= MAX_DOC_CHARS) return text;
+  // Code points, not UTF-16 units: String.slice could split a surrogate pair and hand the embedder a
+  // broken string.
+  return Array.from(text).slice(0, MAX_DOC_CHARS).join('');
 }

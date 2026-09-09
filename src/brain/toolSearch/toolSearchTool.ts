@@ -293,13 +293,21 @@ function blendCandidates(
     .map((s) => s.name);
 }
 
-/** Result of resolving a query against the deferred set: the tool names to activate. Pure — no side
- *  effects — so it is unit-testable in isolation from the session. */
-export function resolveToolSearch(
-  query: string,
-  candidates: readonly Candidate[],
-  maxResults: number,
-): string[] {
+/** Skill matches beyond this count are dropped — they are a pointer, not a result page. */
+const MAX_SKILL_RESULTS = 3;
+
+/** How much one point of cosine similarity adds to a keyword score. Calibrated against the keyword
+ *  scale (name-part hit 10, prefix 5, description word 2): a strong semantic match (~0.9 → 2.7) outranks
+ *  a single description-word hit but never a name hit, and vocabulary the model shares with the tool
+ *  still dominates — semantics fill gaps, they do not overwrite exact words. */
+const SEMANTIC_BOOST_WEIGHT = 3;
+
+/** The exact-path answer for a query — the `select:` list, a bare deferred-tool name, or every deferred
+ *  tool under an `mcp__<server>` prefix (up to the keyword cap). Those are lookups where the model
+ *  already named what it wants: no keyword scoring, and the semantic half must never reorder or extend
+ *  them. Returns null when the query is a keyword search — including an `mcp__` prefix nothing answers
+ *  to, which falls through to scoring exactly as before. */
+function resolveExactQuery(query: string, candidates: readonly Candidate[], maxResults: number): string[] | null {
   const trimmed = query.trim();
 
   // `select:A,B,C` — activate these exact deferred tools by name (case-insensitive). The model named them
@@ -322,37 +330,30 @@ export function resolveToolSearch(
     const byPrefix = candidates.filter((c) => c.name.toLowerCase().startsWith(q)).map((c) => c.name).slice(0, maxResults);
     if (byPrefix.length > 0) return byPrefix;
   }
+  return null;
+}
 
-  const terms = parseQueryTerms(trimmed);
+/** Result of resolving a query against the deferred set: the tool names to activate. Pure — no side
+ *  effects — so it is unit-testable in isolation from the session. */
+export function resolveToolSearch(
+  query: string,
+  candidates: readonly Candidate[],
+  maxResults: number,
+): string[] {
+  const exact = resolveExactQuery(query, candidates, maxResults);
+  if (exact) return exact;
+
+  const terms = parseQueryTerms(query.trim());
   if (!terms) return [];
   const eligible = candidates.filter((c) => requiredTermsSatisfied(c.name, candidateText(c), terms));
   return blendCandidates(eligible, terms, () => 0, maxResults);
 }
 
-/** Skill matches beyond this count are dropped — they are a pointer, not a result page. */
-const MAX_SKILL_RESULTS = 3;
-
-/** How much one point of cosine similarity adds to a keyword score. Calibrated against the keyword
- *  scale (name-part hit 10, prefix 5, description word 2): a strong semantic match (~0.9 → 2.7) outranks
- *  a single description-word hit but never a name hit, and vocabulary the model shares with the tool
- *  still dominates — semantics fill gaps, they do not overwrite exact words. */
-const SEMANTIC_BOOST_WEIGHT = 3;
-
-/** Whether resolveToolSearch answered this query from an EXACT path (`select:`, a bare name, an
- *  `mcp__` prefix with hits) rather than keyword scoring. Those are lookups where the model already
- *  named what it wants — the semantic half must never reorder or extend them. */
-function isExactQuery(query: string, candidates: readonly Candidate[]): boolean {
-  const trimmed = query.trim();
-  if (/^select:(.+)$/i.test(trimmed)) return true;
-  if (!trimmed) return false;
-  const q = trimmed.toLowerCase();
-  if (candidates.some((c) => c.name.toLowerCase() === q)) return true;
-  return q.startsWith('mcp__') && q.length > 5 && candidates.some((c) => c.name.toLowerCase().startsWith(q));
-}
-
 /** The full resolution ONE ToolSearch call runs: the exact paths untouched, then a HYBRID keyword +
  *  semantic ranking for keyword queries, and the skill matches for the same query. Tools and skills
- *  share ONE semantic ranking (the index's per-call embedding budget), distinguished by id prefixes. */
+ *  share ONE semantic ranking (the index's per-call embedding budget), distinguished by id prefixes.
+ *  The exact paths return BEFORE any scoring, so a keyword search never computes the keyword-only
+ *  ranking that the blend immediately discards. */
 async function resolveToolSearchHybrid(
   query: string,
   candidates: readonly Candidate[],
@@ -360,9 +361,9 @@ async function resolveToolSearchHybrid(
   maxResults: number,
   semantic?: SemanticRanker,
 ): Promise<{ tools: string[]; skills: SkillEntry[] }> {
-  const found = resolveToolSearch(query, candidates, maxResults);
-  const terms = parseQueryTerms(query);
-  if (isExactQuery(query, candidates) || !terms) return { tools: found, skills: [] };
+  const terms = parseQueryTerms(query.trim());
+  const exact = resolveExactQuery(query, candidates, maxResults);
+  if (exact || !terms) return { tools: exact ?? [], skills: [] };
 
   const eligible = candidates.filter((c) => requiredTermsSatisfied(c.name, candidateText(c), terms));
   const eligibleSkills = skills.filter((s) => requiredTermsSatisfied(s.name, s.description.toLowerCase(), terms));
@@ -387,7 +388,8 @@ async function resolveToolSearchHybrid(
       terms,
       contribution('skill'),
       MAX_SKILL_RESULTS,
-    ).map((name) => eligibleSkills.find((s) => s.name === name)!).filter(Boolean),
+    ).map((name) => eligibleSkills.find((s) => s.name === name))
+      .filter((s): s is SkillEntry => s !== undefined),
   };
 }
 
