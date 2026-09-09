@@ -13,7 +13,7 @@ import type { OverrideKey } from '../overrides.ts';
 import { setResponseOverride, setMessagesOverride, resetOverrides } from '../overrides.ts';
 import { setSetupMode, needsSetup, resetSetup } from '../setup.ts';
 import { sandboxCalls, resetSandbox } from './sandbox.ts';
-import { realPlugins } from '../realPlugins.ts';
+import { localizeListing, realPlugins } from '../realPlugins.ts';
 
 export function registerControlRoutes(app: Hono): void {
   // Push one arbitrary BrainEvent into every stream matching {client?, session?} (both omitted =
@@ -92,7 +92,11 @@ export function registerControlRoutes(app: Hono): void {
   // an explicit per-test act and the default listing is still empty for every other spec. Returned
   // rather than armed here so the spec can see which plugins the checkout actually built and skip the
   // pages it has no bundle for, instead of asserting against a page that was never served.
-  app.get('/__test/real-plugins', (c) => c.json({ plugins: [...realPlugins().values()].map((p) => p.listing) }));
+  // `?lang=` mirrors the real `/plugins/ui` route: the listing a spec arms is already resolved for one
+  // language, so a plugin's Czech surface can be measured instead of only its manifest English.
+  app.get('/__test/real-plugins', (c) => c.json({
+    plugins: [...realPlugins().values()].map((p) => localizeListing(p, c.req.query('lang'))),
+  }));
 
   // Clear per-test recorded state AND seed overrides (call from a spec's beforeEach / afterEach).
   app.post('/__test/reset', (c) => {

@@ -31,6 +31,20 @@ function limits(value) {
   for (const key of ['memoryMb', 'pidsLimit', 'diskSoftMb']) positive(result[key], key);
   return result;
 }
+/** The limits a project environment is provisioned with, from the administrator's plugin settings.
+ *  An unset or unusable field falls back to the built-in figure per key, so a single bad value cannot
+ *  leave a new environment without a ceiling. Read once per provisioning; the settings snapshot refreshes
+ *  when the plugin reloads, and environments that already exist keep the limits they were created with. */
+function configuredDefaults(config) {
+  const keys = { cpus: 'defaultCpus', memoryMb: 'defaultMemoryMb', pidsLimit: 'defaultPidsLimit', diskSoftMb: 'defaultDiskSoftMb' };
+  const chosen = {};
+  for (const [key, setting] of Object.entries(keys)) {
+    const value = config?.[setting];
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) chosen[key] = value;
+  }
+  try { return limits(chosen); }
+  catch { return { ...DEFAULT_LIMITS }; }
+}
 function action(value, kind) {
   if (!value || typeof value !== 'object') throw error('invalid_action', 'An environment action is required', 400);
   const fields = { start: [], stop: [], restart: [], delete: [], snapshot: ['note', 'includeData'], restore: ['snapshotId', 'restoreData'], limits: ['limits'],
@@ -110,7 +124,14 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     else if (!stores().usersRead.list().some((user) => user.id === userId) || !stores().usersRead.mayUsePlugin(userId, 'sandbox')) throw error('account_forbidden', 'Account access is unavailable', 403);
     if (kind === 'project') {
       const scope = ctx.currentAccess();
-      if (!internal && ctx.currentAccountUserId() != null && (scope.workspaceRef || (scope.projectRef && scope.projectRef.projectId !== Number(id)) || (!scope.admin && scope.projectIds && !scope.projectIds.includes(Number(id))))) throw error('project_scope', 'Project is outside the current turn scope', 403);
+      // The narrowing below is a TURN's: a selected Project, an exact workspace, the policy's project list.
+      // An authenticated API request has none of those — it is an identity, so `projectIds` is empty and
+      // `admin` false even for an administrator, and reading them as a turn scope refused every member and
+      // every admin on their own Project. `apiRequest` is the host's positive marker for that scope and is
+      // the only thing that skips the narrowing; absence still denies, so no policy is never a way in. What
+      // authorizes the request is what authorized it before it reached here (`auth.accessibleProjects` on
+      // the API surface) plus the freshly resolved membership below, which revocation still refuses.
+      if (!internal && !scope.apiRequest && ctx.currentAccountUserId() != null && (scope.workspaceRef || (scope.projectRef && scope.projectRef.projectId !== Number(id)) || (!scope.admin && scope.projectIds && !scope.projectIds.includes(Number(id))))) throw error('project_scope', 'Project is outside the current turn scope', 403);
       const project = stores().projects.get(Number(id));
       if (!project || project.executionKind !== 'managed' || !(manage ? stores().userProjects.canManage(userId, project.id) : stores().userProjects.canAccess(userId, project.id))) throw error('project_forbidden', 'Project access is denied', 403);
       return project;
@@ -142,7 +163,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       if (!same(binding(authority), binding(row.spec.registration))) throw error('site_binding_changed', 'The trusted Site binding changed; an explicit handover is required');
     }
     if (!row) {
-      const effective = limits(DEFAULT_LIMITS);
+      const effective = configuredDefaults(ctx.config);
       const spec = { input: { resource: { kind: 'project', id: Number(id) }, generation: 1, image: PROJECT_BASE_IMAGE_TAG, previewBroker: true, limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } }, paths: { sandboxDataDir: dataDir, namespace } };
       row = store.insert(kind, id, Number(id), spec, effective);
     }
@@ -772,7 +793,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       const id = projectId(input.project);
       await authorize('project', id, input.accountUserId, true);
       const row = store.get('project', id);
-      return row ? view(row) : { projectId: id, generation: 1, state: 'unprovisioned', desiredState: 'running', lastError: null, limits: { ...DEFAULT_LIMITS } };
+      // An unprovisioned project has no stored limits yet, so it reports the defaults it WOULD be
+      // created with rather than the built-in figures the administrator may have moved away from.
+      return row ? view(row) : { projectId: id, generation: 1, state: 'unprovisioned', desiredState: 'running', lastError: null, limits: configuredDefaults(ctx.config) };
     },
     async projectOverview(input) {
       const environment = await control.environmentFor(input);

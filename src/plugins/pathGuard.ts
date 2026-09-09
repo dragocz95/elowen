@@ -1,6 +1,6 @@
 import { basename, dirname, join } from 'node:path';
 import type { ProjectExecutionRef } from '../shared/projectExecution.js';
-import { currentAccountUserId, currentContributionUserId, currentIdentity, currentPathView, currentPolicy, currentProjectRef, currentSessionId, currentSettingsUserId, currentToolPolicy, currentTurnMode, currentTurnPermissions, currentWorkDir, turnPrincipal } from './policyContext.js';
+import { currentAccountUserId, currentApiRequest, currentContributionUserId, currentIdentity, currentPathView, currentPolicy, currentProjectRef, currentSessionId, currentSettingsUserId, currentToolPolicy, currentTurnMode, currentTurnPermissions, currentWorkDir, turnPrincipal } from './policyContext.js';
 import { noninteractivePermissionBoundary, type NoninteractivePermissionBoundary } from '../brain/toolPermissions.js';
 import { forkParentToolResultSpillDir, planFilePath, sessionToolResultSpillDir } from '../shared/paths.js';
 import { realAbs, realPathWithin } from './pathUtils.js';
@@ -47,8 +47,15 @@ export function isAllAccess(): boolean {
  *  `accountUserId` is the ONE account resolver (`currentAccountUserId`): contribution owner, else the
  *  verified identity. `contributionUserId` keeps its exact, narrower meaning beside it — the delegated
  *  scope, personal tool ownership and the child's inherited contributions all depend on it being ONLY the
- *  contribution owner, never an identity fallback. */
-export function currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; settingsUserId: number | null; contributionUserId: number | null; accountUserId: number | null; readOnly?: boolean; planMode?: boolean; principal?: string; workspaceRef?: { workspaceId: string; projectId: number }; projectRef?: ProjectExecutionRef } {
+ *  contribution owner, never an identity fallback.
+ *
+ *  `apiRequest` says this descriptor came from an authenticated plugin API request rather than a turn (see
+ *  `currentApiRequest`). It is what separates the two things `projectIds: []` used to mean: a turn scoped
+ *  to no project, and no turn at all. Only a reader that NARROWS by the turn's scope needs it, and only to
+ *  skip a narrowing that has no subject — the request carries its own `auth.accessibleProjects`, and
+ *  durable membership still decides what the account may reach. It never widens `projectIds` or `admin`,
+ *  so a reader that ignores it keeps refusing exactly as before. */
+export function currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; apiRequest?: true; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; settingsUserId: number | null; contributionUserId: number | null; accountUserId: number | null; readOnly?: boolean; planMode?: boolean; principal?: string; workspaceRef?: { workspaceId: string; projectId: number }; projectRef?: ProjectExecutionRef } {
   const p = currentPolicy();
   const principal = turnPrincipal(currentIdentity());
   const tools = currentToolPolicy();
@@ -66,6 +73,7 @@ export function currentAccess(): { projectIds: number[]; admin: boolean; owner: 
     settingsUserId: currentSettingsUserId(),
     contributionUserId: currentContributionUserId(),
     accountUserId: currentAccountUserId(),
+    ...(currentApiRequest() ? { apiRequest: true as const } : {}),
     ...(toolPolicy ? { toolPolicy } : {}),
     ...(currentTurnMode() === 'plan' ? { readOnly: true, planMode: true } : {}),
     ...(principal ? { principal } : {}),

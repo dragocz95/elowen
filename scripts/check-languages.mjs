@@ -13,7 +13,7 @@
  *    suffix, may legitimately be absent from a translation).
  *
  * Plugin manifests (plugins/<name>/): each detected locale's `i18n/<lang>.json` must translate
- * ALL manifest strings (description, userConfigLabel + each config field's label/hint/option labels)
+ * ALL manifest strings (description, label, userConfigLabel + each config field's label/hint/option labels)
  * and must not carry orphan keys for fields or options that no longer exist in the manifest.
  *
  * Loaded via `node --experimental-strip-types` so the TS dictionaries import directly.
@@ -227,8 +227,8 @@ for (const name of pluginNames) {
 
     // Orphans — keys that translate nothing in the manifest anymore.
     for (const key of Object.keys(i18n)) {
-      if (key !== 'description' && key !== 'userConfigLabel' && key !== 'fields' && key !== 'web') {
-        errors.push(`plugin ${name} (${locale}): unknown top-level key "${key}" (only description/userConfigLabel/fields/web are read)`);
+      if (key !== 'description' && key !== 'label' && key !== 'userConfigLabel' && key !== 'fields' && key !== 'web') {
+        errors.push(`plugin ${name} (${locale}): unknown top-level key "${key}" (only description/label/userConfigLabel/fields/web are read)`);
       }
     }
     // Inside the `web` block only these keys are read (pluginUi.ts localized()); anything else is a
@@ -295,6 +295,9 @@ for (const name of pluginNames) {
     // Coverage — every English string in the manifest needs a translation.
     if (typeof manifest.description === 'string' && manifest.description.trim() !== '' && !i18n.description) {
       errors.push(`plugin ${name} (${locale}): missing description translation`);
+    }
+    if (typeof manifest.label === 'string' && manifest.label.trim() !== '' && !i18n.label) {
+      errors.push(`plugin ${name} (${locale}): missing label translation`);
     }
     if (typeof manifest.userConfigLabel === 'string' && manifest.userConfigLabel.trim() !== '' && !i18n.userConfigLabel) {
       errors.push(`plugin ${name} (${locale}): missing userConfigLabel translation`);

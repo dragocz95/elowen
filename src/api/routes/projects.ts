@@ -9,7 +9,7 @@ import type { ElowenApp, RouteContext } from '../context.js';
 import type { PluginProjectIndicator } from '../../plugins/api.js';
 import { isPluginAllowedForUser } from '../../shared/pluginAccess.js';
 import type { Project as StoredProject } from '../../store/projectStore.js';
-import type { ProjectView } from '../../shared/wireContract.js';
+import type { ProjectMemberView, ProjectView } from '../../shared/wireContract.js';
 
 const MAX_MEMBER_SAMPLES = 3;
 const MAX_INDICATORS_PER_PLUGIN = 3;
@@ -118,15 +118,33 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
       };
     }));
   });
-  // Project-centric access projection for the administrator's Project detail. Assignment writes keep
-  // using the canonical /users/:id/projects routes so there is still only one mutation contract.
+  // Project-centric access projection. Assignment writes keep using the canonical /users/:id/projects
+  // routes so there is still only one mutation contract.
+  //
+  // The DEFAULT answer is the account-id list it has always been; `?view=profiles` is an opt-in that
+  // asks the same authorized membership for the bounded identity a member row renders. It is additive
+  // on purpose: a client that predates the option keeps the array of numbers it was written against.
+  //
+  // The option changes the SHAPE, never the audience. Both views answer the one membership authority
+  // above, so a managed project's own members read it and everyone else is refused — which is the point
+  // of the profile view: membership here grants access to every file, worktree and stored credential in
+  // the shared environment, and a bare number never let a member check who that is. It lists only
+  // accounts ALREADY assigned to this project, so it is not a way to enumerate the instance directory —
+  // `GET /users` remains admin-only.
   app.get('/projects/:id/users', (c) => {
     if (!d.projects || !d.userProjects || !d.users) return c.json({ error: 'projects unavailable' }, 400);
     const id = Number(c.req.param('id'));
     const project = d.projects.get(id);
     if (!project) return c.json({ error: 'project not found' }, 404);
     if (project.executionKind === 'managed' ? !canAccessProject(c, id) : notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
-    return c.json(d.userProjects.forProject(id));
+    const members = d.userProjects.forProject(id);
+    if (c.req.query('view') !== 'profiles') return c.json(members);
+    // `UserStore.delete` clears `user_projects` in the same transaction as the account row, so every
+    // membership id resolves; the flatMap only spells that invariant out.
+    return c.json(members.flatMap((userId): ProjectMemberView[] => {
+      const user = d.users!.get(userId);
+      return user ? [{ id: user.id, username: user.username, name: user.name, email: user.email, avatar: user.avatar }] : [];
+    }));
   });
   // Browse the server's directory tree to pick a new project's path (the new-project file manager).
   // Admin-only — it lists directory names outside any project root, so it sits behind the same gate as

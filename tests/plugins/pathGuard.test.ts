@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { rmSync } from 'node:fs';
 import { assertPathAllowed, allowedRoots, currentAccess, defaultCwd, isAllAccess } from '../../src/plugins/pathGuard.js';
-import { runWithPolicy, type TurnIdentity } from '../../src/plugins/policyContext.js';
+import { runWithIdentity, runWithPolicy, type TurnIdentity } from '../../src/plugins/policyContext.js';
 import type { Policy } from '../../src/plugins/policy.js';
 
 const userPolicy = (roots: string[]): Policy => ({ allowedProjectIds: new Set([1]), allowedPaths: () => roots });
@@ -253,6 +253,23 @@ describe('currentAccess', () => {
     runWithPolicy(userPolicy(['/repo/a']), () => {
       expect(currentAccess()).toMatchObject({ accountUserId: 3, contributionUserId: 3 });
     }, { identity: delegated, contributionUserId: 3 });
+  });
+
+  /** `apiRequest` says "this execution is an authenticated API request", which is exactly the claim a turn
+   *  must not inherit: a turn nested inside a request handler IS a turn, and a plugin that narrows by turn
+   *  scope has to start narrowing again the moment the Policy takes over. `runWithPolicy` builds a fresh
+   *  scope instead of extending the ambient one, so the marker cannot survive into it, and the request's own
+   *  scope is unchanged once the nested turn returns. */
+  it('clears apiRequest inside a turn nested in an API request and restores the request scope after it', () => {
+    runWithIdentity(owner, () => {
+      expect(currentAccess()).toMatchObject({ apiRequest: true, projectIds: [], admin: false, accountUserId: 7 });
+      runWithPolicy(userPolicy(['/repo/a']), () => {
+        const nested = currentAccess();
+        expect(nested.apiRequest).toBeUndefined();
+        expect(nested).toMatchObject({ projectIds: [1], admin: false, accountUserId: 7 });
+      }, { identity: owner });
+      expect(currentAccess()).toMatchObject({ apiRequest: true, projectIds: [], admin: false, accountUserId: 7 });
+    });
   });
 
   it('resolves no account when neither an identity account nor a contribution owner exists', () => {

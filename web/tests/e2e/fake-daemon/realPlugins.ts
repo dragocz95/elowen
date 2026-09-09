@@ -33,6 +33,19 @@ function pluginRoots(): string[] {
   return [join(repoRoot, 'plugins'), ...extra].filter((dir) => existsSync(dir));
 }
 
+/** One plugin's `i18n/<lang>.json`, narrowed to the keys the browser listing carries. */
+interface PluginTranslation {
+  label?: string;
+  web?: {
+    nav?: Record<string, string>;
+    account?: Record<string, string>;
+    user?: Record<string, string>;
+    project?: Record<string, string>;
+    settings?: Record<string, string>;
+    strings?: Record<string, string>;
+  };
+}
+
 /** One row of `GET /plugins/ui`, plus the on-disk assets its URLs point at. */
 export interface RealPlugin {
   listing: {
@@ -48,6 +61,8 @@ export interface RealPlugin {
     settings: { id: string; label: string; icon?: string; layout?: string }[];
     strings: Record<string, string>;
   };
+  /** Per-language manifest overrides, applied by {@link localizeListing}. */
+  translations: Record<string, PluginTranslation>;
   assets: Map<string, { body: string; type: string }>;
 }
 
@@ -91,6 +106,7 @@ function readPlugin(dir: string, name: string): RealPlugin | null {
   }
 
   const arr = <T>(value: unknown): T[] => (Array.isArray(value) ? value as T[] : []);
+  const translations = readTranslations(dir);
   return {
     listing: {
       name,
@@ -104,7 +120,47 @@ function readPlugin(dir: string, name: string): RealPlugin | null {
       settings: arr(web.settings),
       strings: (web.strings ?? {}) as Record<string, string>,
     },
+    translations,
     assets,
+  };
+}
+
+/** A plugin's `i18n/<lang>.json` files, keyed by language. The real `/plugins/ui` route serves a listing
+ *  already resolved for the requested `?lang=`, so without these the harness could only ever measure a
+ *  plugin's English copy — and a plugin that says one thing in its manifest and another in Czech would
+ *  pass. Missing or malformed files simply leave the manifest's English in place, as the loader does. */
+function readTranslations(dir: string): Record<string, PluginTranslation> {
+  const i18nDir = join(dir, 'i18n');
+  if (!existsSync(i18nDir)) return {};
+  const out: Record<string, PluginTranslation> = {};
+  for (const file of readdirSync(i18nDir)) {
+    const lang = /^([a-z]{2})\.json$/.exec(file)?.[1];
+    if (!lang) continue;
+    try { out[lang] = JSON.parse(readFileSync(join(i18nDir, file), 'utf8')) as PluginTranslation; }
+    catch { /* malformed translation → keep the manifest English */ }
+  }
+  return out;
+}
+
+/** Apply one language's overrides to a listing, exactly where the real route applies them: the plugin's
+ *  own display name, each surface entry by id (nav by route) and the `web.strings` bundle. */
+export function localizeListing(plugin: RealPlugin, lang: string | undefined): RealPlugin['listing'] {
+  const tr = lang ? plugin.translations[lang] : undefined;
+  if (!tr) return plugin.listing;
+  const byId = <T extends { id: string; label: string }>(items: T[], map: Record<string, string> | undefined): T[] =>
+    items.map((item) => (map?.[item.id] ? { ...item, label: map[item.id]! } : item));
+  return {
+    ...plugin.listing,
+    ...(tr.label ? { label: tr.label } : {}),
+    nav: plugin.listing.nav.map((item) => {
+      const text = tr.web?.nav?.[item.route ?? ''];
+      return text ? { ...item, label: text } : item;
+    }),
+    account: byId(plugin.listing.account, tr.web?.account),
+    user: byId(plugin.listing.user, tr.web?.user),
+    project: byId(plugin.listing.project, tr.web?.project),
+    settings: byId(plugin.listing.settings, tr.web?.settings),
+    strings: { ...plugin.listing.strings, ...(tr.web?.strings ?? {}) },
   };
 }
 

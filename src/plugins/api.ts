@@ -1891,8 +1891,15 @@ export interface PluginContext {
   /** The current turn's complete delegable authorization descriptor. `owner` is independent from admin,
    *  toolPolicy carries exact allow+deny sets, and permissionBoundary carries the effective unattended
    *  granular-rule context so a child inherits exactly the caller's scope. `readOnly` is stamped by the
-   *  host when the caller's turn is PLANNING — forward it untouched; never clear it. */
-  currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; settingsUserId?: number | null; contributionUserId?: number | null; accountUserId?: number | null; readOnly?: boolean; workspaceRef?: SandboxWorkspaceRef; projectRef?: ProjectExecutionRef };
+   *  host when the caller's turn is PLANNING — forward it untouched; never clear it.
+   *
+   *  `apiRequest` marks the descriptor of an authenticated plugin API request, which is an identity and not
+   *  a turn: `projectIds` and `admin` describe a turn's narrowing and there is none to describe here, so
+   *  they read empty/false for every caller including an administrator. A plugin that narrows by turn scope
+   *  skips that narrowing when this is set and authorizes the request the way the API surface already does
+   *  — `req.auth.accessibleProjects` plus durable membership for the acting account. Everything else must
+   *  ignore it: it is not a grant, and it never appears inside a turn. */
+  currentAccess(): { projectIds: number[]; admin: boolean; owner: boolean; apiRequest?: true; toolPolicy?: { allow?: string[]; deny?: string[] }; permissionBoundary: NoninteractivePermissionBoundary | null; settingsUserId?: number | null; contributionUserId?: number | null; accountUserId?: number | null; readOnly?: boolean; workspaceRef?: SandboxWorkspaceRef; projectRef?: ProjectExecutionRef };
   /** Who is driving the current turn (platform sender, resolved Elowen account, admin flag) — plugins
    *  that persist per-user state (long-term memory) key it on this. Null outside a prompt turn. */
   currentIdentity(): TurnIdentity | null;

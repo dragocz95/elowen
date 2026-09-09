@@ -37,12 +37,18 @@ interface MutationResult<TVars, TData = unknown> {
   isPending: boolean;
 }
 interface QueryClient { invalidateQueries: (input: { queryKey: unknown[] }) => Promise<void> }
+export type SaveStatus = 'idle' | 'saving' | 'saved' | 'pending' | 'error';
 interface RuntimeHooks {
   usePluginStrings(plugin: string): Record<string, string>;
   useToast(): { toast(message: string, tone?: 'ok' | 'error'): void };
   useQuery<T>(options: Record<string, unknown>): QueryResult<T>;
   useMutation<TData, _TError, TVars>(options: Record<string, unknown>): MutationResult<TVars, TData>;
   useQueryClient(): QueryClient;
+  useAutoSaveStatus(
+    deps: readonly unknown[],
+    save: () => unknown | Promise<unknown>,
+    options?: { ready?: boolean; savable?: boolean; delay?: number },
+  ): { status: SaveStatus; retry: () => Promise<void>; flush: () => Promise<SaveStatus> };
 }
 interface RuntimeComponents {
   Button: AnyComponent; Input: AnyComponent; Badge: AnyComponent; Field: AnyComponent;
@@ -52,6 +58,7 @@ interface RuntimeComponents {
   DataTable: AnyComponent; DataTableRow: AnyComponent; DataTableCell: AnyComponent; DataTableChevronCell: AnyComponent;
   PatchView: AnyComponent; ConfirmDialog: AnyComponent; PluginSection: AnyComponent;
   SettingsDocument: AnyComponent; SettingsGroup: AnyComponent; SettingsRow: AnyComponent;
+  Slider: AnyComponent; AutoSaveStatus: AnyComponent; HelpTip: AnyComponent;
   // The host's own preview-plus-manage row, so the account drawer reads the same as its neighbours.
   SelectionSummary: AnyComponent;
 }

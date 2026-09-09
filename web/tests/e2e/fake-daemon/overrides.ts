@@ -15,6 +15,9 @@ export type OverrideKey =
   | 'tasks/ready'
   | 'missions'
   | 'projects'
+  // One project's members, as `GET /projects/:id/users` serves them. Empty by default: the register
+  // opens on a project nobody shares, which is the quiet state every other spec was written against.
+  | 'projects/members'
   | 'activity/pulse'
   // The account directory. `listUsers()` belongs to the onboarding lane and is empty outside it, so a
   // spec that needs the users register to lay out rather than render its empty state seeds one here.

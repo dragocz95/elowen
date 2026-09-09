@@ -24,6 +24,7 @@ import { useTranslation } from '../../lib/i18n';
 import { usePlugins, useMarketplace } from '../../lib/queries';
 import { useUpdatePlugin, useUninstallPlugin, useRestorePlugin } from '../../lib/mutations';
 import { usePluginConsent } from './usePluginConsent';
+import { pluginDisplayName } from './pluginDisplayName';
 import type { PluginInfo, MarketplaceEntry } from '../../lib/types';
 import { MotionLayoutItem, MotionPresence } from '../../components/ui/Motion';
 import { SettingsGroup, SettingsState } from '../../components/ui/SettingsSurface';
@@ -86,6 +87,7 @@ function PluginCard({ p, updatable, onDetail, onFlip, onUpdate, onUninstall, onC
 }) {
   const { t, locale } = useTranslation();
   const description = p.i18n?.[locale]?.description ?? p.description;
+  const title = pluginDisplayName(p, locale);
   const health = p.health ?? 'ok';
   // A health pill only carries meaning for a running plugin (health derives from its recent log ring),
   // so a healthy/disabled plugin shows nothing; errors always surface.
@@ -111,7 +113,7 @@ function PluginCard({ p, updatable, onDetail, onFlip, onUpdate, onUninstall, onC
           </span>
           <span className="min-w-0 flex-1">
             <span className="flex min-w-0 items-center gap-2">
-              <span className="truncate text-sm font-semibold text-foreground transition-colors group-hover:text-primary">{p.name}</span>
+              <span className="truncate text-sm font-semibold text-foreground transition-colors group-hover:text-primary">{title}</span>
               <span className="flex shrink-0 items-center gap-1 font-mono text-[9px] text-muted-foreground" title={p.source === 'bundled' ? t.plugins.bundled : t.plugins.user}>
                 {p.source === 'bundled' ? <Package size={10} aria-hidden /> : <UserIcon size={10} aria-hidden />}v{p.version}
               </span>
@@ -127,9 +129,9 @@ function PluginCard({ p, updatable, onDetail, onFlip, onUpdate, onUninstall, onC
           {showHealth ? (
             <Badge tone={health === 'error' ? 'danger' : 'success'}>{health === 'error' ? t.plugins.healthError : t.plugins.healthOk}</Badge>
           ) : null}
-          <Toggle checked={p.enabled} onChange={onFlip} label={`${p.name}: ${p.enabled ? t.plugins.disable : t.plugins.enable}`} disabled={busy} />
+          <Toggle checked={p.enabled} onChange={onFlip} label={`${title}: ${p.enabled ? t.plugins.disable : t.plugins.enable}`} disabled={busy} />
           <ActionMenu
-            label={`${p.name}: ${t.common.actions}`}
+            label={`${title}: ${t.common.actions}`}
             trigger={<MoreHorizontal size={16} aria-hidden />}
             triggerClassName="inline-flex h-9 w-9 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70"
             items={[
@@ -178,7 +180,7 @@ function RemovedCard({ p, onRestore, busy }: { p: PluginInfo; onRestore: () => v
         <PluginIcon name={p.name} hasIcon={p.hasIcon} size={38} />
         <div className="flex min-w-0 flex-1 flex-col gap-0.5">
           <div className="flex min-w-0 items-center gap-2">
-            <span className="truncate text-sm font-semibold text-foreground">{p.name}</span>
+            <span className="truncate text-sm font-semibold text-foreground">{pluginDisplayName(p, locale)}</span>
             <span className="shrink-0 font-mono text-tiny text-muted-foreground">v{p.version}</span>
           </div>
           <p className="truncate text-xs text-muted-foreground" title={description}>{description}</p>
@@ -226,7 +228,7 @@ export function PluginsSection() {
   const uninstall = useUninstallPlugin();
   const restore = useRestorePlugin();
   const { toast } = useToast();
-  const { t } = useTranslation();
+  const { t, locale } = useTranslation();
   const [detail, setDetail] = useState<string | null>(null);
   const [detailFromUrl, setDetailFromUrl] = useState(false);
   const [urlReady, setUrlReady] = useState(false);
@@ -302,9 +304,12 @@ export function PluginsSection() {
     return installed.filter((p) => {
       if (category !== 'all' && categorize(p.name, p.provides.platforms?.length ?? 0) !== category) return false;
       if (!q) return true;
-      return p.name.toLowerCase().includes(q) || (p.description ?? '').toLowerCase().includes(q);
+      // The title too, or a plugin found under its own displayed name would come back empty.
+      return p.name.toLowerCase().includes(q)
+        || pluginDisplayName(p, locale).toLowerCase().includes(q)
+        || (p.description ?? '').toLowerCase().includes(q);
     });
-  }, [installed, query, category]);
+  }, [installed, query, category, locale]);
 
   const filteredAvailable = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -390,7 +395,10 @@ export function PluginsSection() {
       onReset: () => setCategory('all'),
     };
   // Whether the plugin pending removal is bundled (soft-remove) vs user (hard uninstall) — drives the confirm copy.
-  const removeIsBundled = plugins.find((p) => p.name === confirmRemove)?.source === 'bundled';
+  const removeTarget = plugins.find((p) => p.name === confirmRemove);
+  const removeIsBundled = removeTarget?.source === 'bundled';
+  // The question names what the reader sees in the list, not the id behind it.
+  const removeTitle = removeTarget ? pluginDisplayName(removeTarget, locale) : confirmRemove ?? '';
 
   const pluginList = (items: PluginInfo[], testId: string) => (
     <div role="list" className="@container divide-y divide-border/70" data-testid={testId}>
@@ -452,7 +460,7 @@ export function PluginsSection() {
       <ConfirmDialog
         open={confirmRemove !== null}
         title={removeIsBundled ? t.plugins.remove : t.plugins.uninstall}
-        description={(removeIsBundled ? t.plugins.removeConfirm : t.plugins.uninstallConfirm).replace('{name}', confirmRemove ?? '')}
+        description={(removeIsBundled ? t.plugins.removeConfirm : t.plugins.uninstallConfirm).replace('{name}', removeTitle)}
         confirmLabel={removeIsBundled ? t.plugins.remove : t.plugins.uninstall}
         onConfirm={() => { if (confirmRemove) doUninstall(confirmRemove); }}
         onClose={() => setConfirmRemove(null)}

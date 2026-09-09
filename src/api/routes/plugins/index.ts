@@ -240,6 +240,9 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
     const removed = new Set(cfg.removed);
     return discoverPlugins(d.pluginDirs ?? []).map((p) => ({
       name: p.manifest.name,
+      // The technical id above keys config, controls, mounts and grants; this is what the surfaces
+      // CALL it. Absent means the plugin never declared one and the id stays the title.
+      label: p.manifest.label,
       version: p.manifest.version,
       description: p.manifest.description,
       provides: p.manifest.provides ?? {},

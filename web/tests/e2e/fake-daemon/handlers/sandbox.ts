@@ -114,9 +114,16 @@ export function sandboxCalls(): readonly SandboxCall[] {
   return calls;
 }
 
+/** The project environment behind the drawer's Environments tab. Its limits are STATE, not a canned
+ *  answer: the resource rows auto-save through a durable lifecycle action, so a spec has to be able to
+ *  see the figure it moved come back on the next poll, exactly as the running container reports it. */
+const seedLimits = () => ({ cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240 });
+let environmentLimits = seedLimits();
+
 /** Restore the seed workspaces and drop the recorded writes (the control channel's `/__test/reset`). */
 export function resetSandbox(): void {
   workspaces = seedWorkspaces();
+  environmentLimits = seedLimits();
   calls.length = 0;
 }
 
@@ -127,6 +134,25 @@ export function registerSandboxRoutes(app: Hono): void {
   app.get('/plugins/sandbox/api/overview', (c) => {
     const overview: SandboxOverview = { projects, sessions, workspaces };
     return c.json(overview);
+  });
+
+  app.get('/plugins/sandbox/api/projects/:id/environment', (c) => c.json({
+    environment: {
+      projectId: Number(c.req.param('id')), generation: 2, state: 'running', desiredState: 'running',
+      lastError: null, limits: environmentLimits,
+    },
+    snapshots: [], operations: [], diskBytes: 734_003_200,
+  }));
+
+  // The resource change the rows auto-save. The real plugin answers with a pending operation and applies
+  // the figures to the container; the fake applies them immediately so the next poll shows the new state.
+  app.post('/plugins/sandbox/api/projects/:id/environment', async (c) => {
+    const body = (await c.req.json().catch(() => ({}))) as { action?: { kind?: string; limits?: typeof environmentLimits }; requestId?: string };
+    if (body.action?.kind === 'limits' && body.action.limits) environmentLimits = { ...body.action.limits };
+    return c.json({
+      id: `op-${body.action?.kind ?? 'unknown'}`, requestId: body.requestId ?? 'op', projectId: Number(c.req.param('id')),
+      accountUserId: 1, generation: 2, action: body.action ?? { kind: 'unknown' }, status: 'succeeded', error: null,
+    });
   });
 
   app.post('/plugins/sandbox/api/workspaces/create', async (c) => {

@@ -12,7 +12,7 @@ import type { ContainerStorage } from '../../plugins/sandbox/lib/containerStorag
 
 const cleanup: (() => void)[] = [];
 afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });
-function setup() {
+function setup(config: Record<string, unknown> = {}) {
   const root = mkdtempSync(join(tmpdir(), 'env-test-'));
   const sql = openDb(':memory:');
   const db = makePluginDb(sql, 'sandbox', { canMigrate: true });
@@ -22,7 +22,7 @@ function setup() {
   const stores = { usersRead: { list: () => [...users].map((id) => ({ id })), isAdmin: (id: number) => id === 3, mayUsePlugin: () => true },
     userProjects: { canAccess: (id: number) => project.lifecycle === 'active' && (members.has(id) || id === 3), canManage: (id: number) => members.has(id) || id === 3 },
     projects: { get: (id: number) => id === 7 ? project : null, list: () => [project], beginDeletion: () => { project.lifecycle = 'deleting'; return true; }, finishDeletion: vi.fn(() => true) } };
-  const ctx: any = { db: () => db, host: { stores: () => stores }, currentAccountUserId: () => null, currentAccess: () => ({ readOnly: false }), config: {} };
+  const ctx: any = { db: () => db, host: { stores: () => stores }, currentAccountUserId: () => null, currentAccess: () => ({ readOnly: false }), config };
   initSandboxDb(ctx);
   const containers = new Map<string, any>();
   const podman = { ensureProjectImage: vi.fn(async () => 'localhost/elowen-project-base:test'),
@@ -46,6 +46,25 @@ function setup() {
 const input = { project: { kind: 'managed', projectId: 7 }, accountUserId: 1 };
 
 describe('durable managed environment lifecycle', () => {
+  // A new project environment used to be pinned to the figures compiled into the plugin, with nowhere to
+  // change them; the administrator's settings now decide what it is provisioned with.
+  it('provisions a project environment with the administrator resource defaults', async () => {
+    const { runtime, podman } = setup({ defaultCpus: 2.5, defaultMemoryMb: 4096, defaultPidsLimit: 1024, defaultDiskSoftMb: 20480 });
+    const expected = { cpus: 2.5, memoryMb: 4096, pidsLimit: 1024, diskSoftMb: 20480 };
+    // Reported before the environment exists, so the figures shown are the ones it would be created with.
+    expect((await runtime.environmentFor(input)).limits).toEqual(expected);
+    await runtime.requestEnvironment({ ...input, requestId: 'defaults-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    expect((await runtime.environmentFor(input)).limits).toEqual(expected);
+    // And they reach the container, not just the record.
+    expect(podman.create.mock.calls[0]![0].limits).toEqual({ cpus: 2.5, memoryMb: 4096, pidsLimit: 1024 });
+  });
+
+  it('keeps the built-in figure for a setting that is missing or unusable', async () => {
+    const { runtime } = setup({ defaultCpus: 0, defaultMemoryMb: 4096, defaultPidsLimit: 'many' });
+    expect((await runtime.environmentFor(input)).limits).toEqual({ cpus: 1, memoryMb: 4096, pidsLimit: 512, diskSoftMb: 10240 });
+  });
+
   it('only the daemon executes a fork-recorded idempotent start', async () => {
     const { runtime, fork, podman } = setup();
     const op = await fork.requestEnvironment({ ...input, requestId: 'start-one', action: { kind: 'start' } });

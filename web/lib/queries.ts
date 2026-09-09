@@ -142,7 +142,9 @@ export const useConfig = () =>
 export const useSystem = () =>
   useQuery({ queryKey: QUERY_KEYS.system, queryFn: elowenClient.system, refetchInterval: 60000 });
 
-export const useUsers = () => useQuery({ queryKey: ['users'], queryFn: elowenClient.listUsers });
+/** The instance account directory. Admin-only on the daemon, so a caller that renders for non-admins
+ *  too passes `enabled: false` for them rather than firing a request that can only come back 403. */
+export const useUsers = (enabled = true) => useQuery({ queryKey: ['users'], queryFn: elowenClient.listUsers, enabled });
 
 /** How long the dashboard keeps polling a 'generating' digest before settling for the deterministic
  *  layer: 12 polls × 5 s ≈ one minute — far past a healthy cheap-model generation, short enough that
@@ -208,6 +210,11 @@ export const useProjectGit = (id: number | null) =>
 
 export const useProjectUsers = (id: number | null, enabled = true) =>
   useQuery({ queryKey: ['project-users', id], queryFn: () => elowenClient.projectUsers(id as number), enabled: !!id && enabled });
+
+/** The same membership, read with identities. Its own cache key, because it is a different shape of the
+ *  same answer — but the assignment mutation invalidates BOTH, so a surface never shows a stale list. */
+export const useProjectMemberProfiles = (id: number | null, enabled = true) =>
+  useQuery({ queryKey: ['project-member-profiles', id], queryFn: () => elowenClient.projectMemberProfiles(id as number), enabled: !!id && enabled });
 
 /** The project's shared-memory share list (admin-only). Empty = every project member shares the pool. */
 export const useProjectMemoryMembers = (id: number | null, enabled = true) =>

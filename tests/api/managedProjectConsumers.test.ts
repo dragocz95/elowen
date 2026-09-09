@@ -49,10 +49,47 @@ function setup() {
   const patch = (icon: string, auth = token) => app.request(`/projects/${project.id}`, {
     method: 'PATCH', headers: { authorization: `Bearer ${auth}`, 'content-type': 'application/json' }, body: JSON.stringify({ icon }),
   });
-  return { app, project, member, token, projectFiles, prepareExecution, patch, registry, outsiderToken };
+  return { app, project, member, token, projectFiles, prepareExecution, patch, registry, outsider, outsiderToken, users, userProjects };
 }
 
 describe('managed project API consumers', () => {
+  // A member shares every file and stored credential in this environment with the others, and used to
+  // be told only their account numbers. The projection answers who they are — and stops there: it is
+  // built from the project's own membership, never from the instance directory.
+  it('serves managed project members the identity of their co-members and nothing wider', async () => {
+    const { app, project, member, token, users, userProjects, outsider, outsiderToken } = setup();
+    users.setProfile(member.id, { name: 'Member One', email: 'member@example.test' });
+    const read = (auth: string, query = '') => app.request(`/projects/${project.id}/users${query}`, { headers: { authorization: `Bearer ${auth}` } });
+
+    // The DEFAULT answer is the account-id list every existing client was written against; the profile
+    // view is an opt-in that must never become what an unaware caller receives.
+    const ids = await read(token);
+    expect(ids.status).toBe(200);
+    expect(await ids.json()).toEqual([member.id]);
+    expect(await (await read(token, '?view=ids')).json()).toEqual([member.id]);
+
+    const profiles = await read(token, '?view=profiles');
+    expect(profiles.status).toBe(200);
+    expect(await profiles.json()).toEqual([{ id: member.id, username: 'member', name: 'Member One', email: 'member@example.test', avatar: '' }]);
+
+    // The option chooses a shape, never an audience: the profile view answers the same membership
+    // authority, so a non-member is refused exactly as they are on the default view.
+    expect((await read(outsiderToken)).status).toBe(403);
+    expect((await read(outsiderToken, '?view=profiles')).status).toBe(403);
+
+    // And it is not a directory: a member reads their co-members here and still cannot list the instance.
+    expect((await app.request('/users', { headers: { authorization: `Bearer ${token}` } })).status).toBe(403);
+
+    // Revoked membership loses both views immediately.
+    userProjects.assign(outsider.id, project.id);
+    expect(((await (await read(token, '?view=profiles')).json()) as { id: number }[]).map((row) => row.id))
+      .toEqual([member.id, outsider.id]);
+    expect((await read(outsiderToken, '?view=profiles')).status).toBe(200);
+    userProjects.unassign(outsider.id, project.id);
+    expect((await read(outsiderToken, '?view=profiles')).status).toBe(403);
+    expect(await (await read(token)).json()).toEqual([member.id]);
+  });
+
   it('validates project icons through guest metadata under the current member identity', async () => {
     const { patch, projectFiles, project, member } = setup();
     const response = await patch('assets/logo.png');

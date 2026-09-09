@@ -154,7 +154,7 @@ elowen api GET /auth/me
 | --- | --- | --- | --- |
 | `GET` | `/projects` | Authenticated | List projects visible to the caller. |
 | `GET` | `/projects/summary` | Authenticated | Return the project register projection, including permitted plugin indicators and administrator member summaries. |
-| `GET` | `/projects/:id/users` | Admin | List users assigned to a project. |
+| `GET` | `/projects/:id/users` | Admin; a managed project's own members | List the account ids assigned to a project. `?view=profiles` returns the same membership as `{ id, username, name, email, avatar }` objects instead, for a surface that names its members. Neither view reaches beyond the project's own members; the instance directory stays on the admin-only `GET /users`. |
 | `GET` | `/fs/dirs` | Admin | Browse permitted server directories for project registration (`?path=`). It returns directory names, not file contents. |
 | `POST` | `/fs/dirs` | Admin | Create a directory with `{ "parent": "…", "name": "…" }`; returns `201`, `409` when it already exists, or a validation/access error. |
 | `POST` | `/projects` | Admin | Register a project with `slug`, `path`, and optional `notes`. |

@@ -173,7 +173,7 @@ export function toolOwnedByOtherAccount(name: string, personal: PersonalToolOwne
  *  layer keeps its one-directional dependency; the brain's TurnMode is structurally identical. */
 export type TurnWorkMode = 'build' | 'plan' | 'workflow';
 
-interface TurnScope { policy?: Policy; workDir?: string; projectRef?: ProjectExecutionRef; resolveProjectRef?: () => ProjectExecutionRef | undefined; resolveWorkDir?: () => string | undefined; pathView?: WorkspacePathView; sessionId?: string; deliveryTarget?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; emitSubagentCompletion?: SubagentCompletionEmitter; emitWorkflow?: WorkflowEmitter; emitWorkflowCompletion?: WorkflowCompletionEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel; mode?: TurnWorkMode; memoryRecallScope?: MemoryRecallScope; settingsUserId?: number | null; contributionUserId?: number | null; forkChild?: boolean; approvedByAsk?: boolean }
+interface TurnScope { policy?: Policy; apiRequest?: boolean; workDir?: string; projectRef?: ProjectExecutionRef; resolveProjectRef?: () => ProjectExecutionRef | undefined; resolveWorkDir?: () => string | undefined; pathView?: WorkspacePathView; sessionId?: string; deliveryTarget?: string; identity?: TurnIdentity; elicit?: Elicitor; emitCard?: CardEmitter; emitSubagent?: SubagentEmitter; emitSubagentCompletion?: SubagentCompletionEmitter; emitWorkflow?: WorkflowEmitter; emitWorkflowCompletion?: WorkflowCompletionEmitter; toolPolicy?: ToolPolicy; permissions?: TurnPermissions; model?: TurnModel; mode?: TurnWorkMode; memoryRecallScope?: MemoryRecallScope; settingsUserId?: number | null; contributionUserId?: number | null; forkChild?: boolean; approvedByAsk?: boolean }
 
 /** pi tools have no per-call session context, so a plugin tool can't be told which user's policy applies
  *  through its arguments. We carry the resolved Policy (+ the sender's identity + their effective tool
@@ -195,7 +195,7 @@ export function runWithPolicy<T>(policy: Policy, fn: () => T, opts?: { workDir?:
  *  this?" through the same `ctx.currentIdentity()` its tools use, instead of every plugin inventing a
  *  second identity channel out of the raw request. */
 export function runWithIdentity<T>(identity: TurnIdentity, fn: () => T): T {
-  return store.run({ identity }, fn);
+  return store.run({ identity, apiRequest: true }, fn);
 }
 
 /** Core-only bridge for account-owned infrastructure that must run just before a turn scope exists. It
@@ -217,6 +217,18 @@ export function runWithApprovedCall<T>(fn: () => T): T {
 /** The Policy in effect for the current prompt turn, or undefined outside a `runWithPolicy` scope. */
 export function currentPolicy(): Policy | undefined {
   return store.getStore()?.policy;
+}
+
+/** Whether this execution is an authenticated plugin API request — the scope `runWithIdentity` establishes,
+ *  and nothing else. It is a POSITIVE marker rather than "there is no Policy" on purpose: a plugin that
+ *  authorizes per project has to tell "the host verified an account over the API and the request carries its
+ *  own scope" apart from "no scope was established at all", and only the first of those may skip a turn's
+ *  project narrowing. Absence still means deny for anything that narrows, so a caller that forgets to
+ *  establish a scope cannot be mistaken for an API request. It authorizes nothing by itself: the account is
+ *  still `currentAccountUserId()`, and what that account may reach is still resolved from durable
+ *  membership by whoever asks. False everywhere else, including `/hooks` (which authenticates in-plugin). */
+export function currentApiRequest(): boolean {
+  return store.getStore()?.apiRequest === true;
 }
 
 /** Read the conversation's current directory at tool execution time. Ordinary turns resolve live
