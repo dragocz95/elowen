@@ -314,13 +314,23 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (p.executionKind === 'managed') {
       const actor = c.get('user');
       if (!actor) return c.json({ error: 'forbidden' }, 403);
+      const sandbox = (await d.plugins?.get().catch(() => undefined))?.control('sandbox');
+      if (!sandbox) return c.json({ error: 'project environment provider unavailable' }, 503);
+      // Reading a project's Overview must never START anything. The execution path below provisions an
+      // environment that has none and then waits up to half a minute for the container, which is the
+      // right thing when somebody asked to RUN something and the wrong thing when a tab merely opened.
+      // A project whose environment is not running answers that plainly and costs one database read.
+      const environment = await sandbox.environmentFor({ project: { kind: 'managed', projectId: p.id }, accountUserId: actor.id })
+        .catch((error: unknown) => {
+          ctx.log.warn(`managed project environment state unavailable: ${error instanceof Error ? error.message : String(error)}`);
+          return null;
+        });
+      if (!environment) return c.json({ error: 'project environment Git inspection unavailable' }, 503);
+      if (environment.state !== 'running') return c.json({ error: 'project environment is not running', state: environment.state }, 409);
       try {
-        const reader = new RealGitReader(async (file, args, options) => {
-          const sandbox = (await d.plugins?.get())?.control('sandbox');
-          if (!sandbox) throw new Error('project environment provider unavailable');
-          return runManagedProjectCommand(sandbox, { kind: 'managed', projectId: p.id }, actor.id,
-            { type: 'argv', file, args: ['-c', 'core.fsmonitor=false', ...args] }, { ...options, signal: c.req.raw.signal });
-        }, true);
+        const reader = new RealGitReader(async (file, args, options) =>
+          runManagedProjectCommand(sandbox, { kind: 'managed', projectId: p.id }, actor.id,
+            { type: 'argv', file, args: ['-c', 'core.fsmonitor=false', ...args] }, { ...options, signal: c.req.raw.signal }), true);
         return c.json(await reader.read('/workspace'));
       } catch (error) {
         ctx.log.warn(`managed project Git inspection failed: ${error instanceof Error ? error.message : String(error)}`);

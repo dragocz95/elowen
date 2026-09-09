@@ -258,18 +258,18 @@ describe('managed environment lifecycle', () => {
     expect(screen.queryByRole('slider', { name: strings.memoryLimit })).toBeNull();
   });
 
-  it('requests durable project deletion through core instead of deleting only the container', async () => {
+  // Deleting the project used to be a red button of its own down here, so the same decision lived in two
+  // unrelated places depending on where a project happened to run. It belongs to the action menu every
+  // project already has; this panel governs the environment and stops there. The menu's own coverage is
+  // in tests/modules/projects/ProjectsView.test.tsx.
+  it('offers environment lifecycle only, and never deletes the project from here', async () => {
     setup();
     let deleted = false;
-    server.use(http.delete('*/api/projects/1', async ({ request }) => { const body = await request.json() as { requestId: string }; expect(body).toEqual({ requestId: expect.any(String), expectedGeneration: 2 }); deleted = true; return HttpResponse.json({ operation: { id: 'op-delete', requestId: body.requestId, projectId: 1, generation: 2, accountUserId: 1, action: { kind: 'delete' }, status: 'pending', error: null } }, { status: 202 }); }));
+    server.use(http.delete('*/api/projects/1', () => { deleted = true; return HttpResponse.json({ ok: true }); }));
     mount(<ProjectEnvironmentSettings project={project} />);
-    fireEvent.click(await screen.findByRole('button', { name: strings.deleteProject }));
-    const dialog = within(await screen.findByRole('alertdialog'));
-    expect(dialog.getByText(strings.deleteProjectWarning!)).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: strings.snapshotEnvironment })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Smazat|Delete|Vymazať/ })).toBeNull();
     expect(deleted).toBe(false);
-    fireEvent.click(dialog.getByRole('button', { name: strings.deleteProject }));
-    await waitFor(() => expect(deleted).toBe(true));
-    expect(await screen.findByText(strings.operationRequested!)).toBeInTheDocument();
   });
 });
 

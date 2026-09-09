@@ -1060,6 +1060,10 @@ export interface ActivityEvent {
   tools?: { name: string; count: number }[];
 }
 export type Project = ProjectView;
+/** Where a managed project's files live inside its environment (mirrors the daemon's guest workdir, the
+ *  cwd every managed execution defaults to). A managed project has no host path, so this is the only
+ *  location any of its paths are ever relative to. */
+export const MANAGED_PROJECT_ROOT = '/workspace';
 /** The sentinel owner of a project's SHARED memory category (mirrors the daemon's
  *  SHARED_CATEGORY_USER_ID — a memory_categories row with user_id = 0 is a shared pool). */
 export const SHARED_CATEGORY_USER_ID = 0;
