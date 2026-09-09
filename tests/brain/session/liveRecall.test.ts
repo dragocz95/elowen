@@ -398,6 +398,31 @@ describe('live recall — budget and switches', () => {
     expect(calls).toBe(2);
   });
 
+  it('stops searching after three passes that inject nothing, however the query keeps drifting', async () => {
+    // A model retrying a failing tool rewrites its output slightly every attempt, so the query changes
+    // just enough to slip past the unchanged-query guard while the store keeps returning the same
+    // already-injected memories. Without the fruitless cap the turn spends its whole pass budget on it.
+    let calls = 0;
+    const { fire } = harness({
+      passes: 10,
+      alreadyInContext: new Set([1, 2]),
+      retrieve: async () => { calls += 1; return [mem(1, 'Already delivered'), mem(2, 'Also delivered')]; },
+    });
+
+    for (let step = 1; step <= 8; step += 1) {
+      const work: Msg[] = [
+        { role: 'user', content: 'go' },
+        ...Array.from({ length: step }, (_, i) => ({
+          role: 'toolResult', content: `Read failed attempt ${i + 1}: no such file, retrying the same path`,
+        })),
+      ];
+      await fire(work);
+      await fire(work);
+    }
+
+    expect(calls).toBe(3);
+  });
+
   it('caps each injected batch but keeps recall available across many work steps', async () => {
     const requestedCounts: number[] = [];
     let calls = 0;

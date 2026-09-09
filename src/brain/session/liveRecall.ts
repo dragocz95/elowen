@@ -89,6 +89,14 @@ interface ContextMessage {
 }
 
 const MIN_QUERY_CHARS = 24;
+/** How many searches in a row may inject NOTHING before the turn stops searching altogether. The
+ *  per-turn pass cap is the outer bound, but a model stuck retrying one failing tool rewrites its own
+ *  output slightly on every attempt, so the query changes just enough to slip past the unchanged-query
+ *  guard while the answer stays the same. One production turn spent seven searches over nine minutes
+ *  re-finding the same four already-injected memories, another ten searches finding none at all. After
+ *  three such passes the store has said what it has to say about this turn; the remaining passes buy
+ *  embedding requests and nothing else. Any search that does inject clears the count. */
+const FRUITLESS_SEARCH_LIMIT = 3;
 /** Nothing awaits a retrieval, so a slow one no longer costs the turn anything — but one that NEVER
  *  settles would hold the single in-flight slot and silently disable recall for the rest of the session.
  *  The embedding client enforces its own 30s deadline, so a pending older than that is a promise that is
@@ -219,16 +227,23 @@ interface TurnState {
   steered: boolean;
   /** Search count for the per-turn embedding safety cap. */
   searches: number;
+  /** Consecutive searches that injected nothing — empty result or all of it already in context. */
+  fruitless: number;
   bytes: number;
   /** Frozen messages and the canonical boundaries after which they were first emitted. */
   blocks: AnchoredBlock[];
   lastQuery: string;
   /** Whether this turn already reported that it had nothing worth searching for. */
   loggedSkip: boolean;
+  /** Whether this turn already reported that it gave up after too many fruitless searches. */
+  loggedFruitless: boolean;
 }
 
 function freshTurn(id: string): TurnState {
-  return { id, steered: false, searches: 0, bytes: 0, blocks: [], lastQuery: '', loggedSkip: false };
+  return {
+    id, steered: false, searches: 0, fruitless: 0, bytes: 0, blocks: [], lastQuery: '',
+    loggedSkip: false, loggedFruitless: false,
+  };
 }
 
 /** The one retrieval a session may have in flight. The hook mutates the object from the promise's own
@@ -370,6 +385,19 @@ export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): vo
 
     if (found === undefined) {
       if (turn.searches >= budget.passes || turn.bytes >= budget.bytes) return reEmit();
+      if (turn.fruitless >= FRUITLESS_SEARCH_LIMIT) {
+        // Once per turn, and content-free: the counts are what tell a reader whether the turn genuinely
+        // had nothing to recall or the store is failing to answer at all.
+        if (!turn.loggedFruitless) {
+          turn.loggedFruitless = true;
+          log.info('no more searching this turn', {
+            ...correlation(),
+            fruitlessSearches: turn.fruitless,
+            fruitlessLimit: FRUITLESS_SEARCH_LIMIT,
+          });
+        }
+        return reEmit();
+      }
 
       const query = liveRecallQuery(messages, turn.steered);
       // Too thin to be worth an embedding call, or the work has not moved since the last search — recalling
@@ -403,6 +431,7 @@ export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): vo
     const injected = opts.alreadyInContext();
     const fresh = found.filter((m) => !injected.has(m.id));
     if (fresh.length === 0) {
+      turn.fruitless += 1;
       // Distinguishes "the search came back empty" from "everything it found is already in context" —
       // the first points at the similarity floor, the second is the dedup working as intended.
       log.info(found.length === 0 ? 'search returned no memory' : 'search results already in context', {
@@ -464,6 +493,9 @@ export function installLiveRecall(pi: ExtensionAPI, opts: LiveRecallOptions): vo
       log.warn('live recall could not record its injection; withdrawing it', recall);
       return reEmit();
     }
+
+    // This search reached the model, so the turn is productive again and earns its remaining passes.
+    turn.fruitless = 0;
 
     // The only positive signal that recall fired at all: without it a silent no-op and a working feature
     // look identical from the outside, and the failure path is the only thing that logs.
