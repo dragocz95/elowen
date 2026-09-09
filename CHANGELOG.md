@@ -11,6 +11,11 @@ This file is the full technical log. The notes users read in the app are the cur
 
 ### Added
 
+- Added project-owned persistent environments: a managed Project now runs in its own rootless Podman
+  container that survives across turns, with the file, shell, browser, editor, LSP, MCP and codebase
+  surfaces reaching it through the Sandbox control instead of the host filesystem. Plugins that consume
+  an environment declare `requiresCore` 0.28.35, which is the first core that provides the control.
+
 - Added a bundled release-notes page. Elowen now ships its own changelog as Markdown inside the
   `changelog` plugin, so an update carries the new notes to every instance, and each account sees an
   unread count on the navigation entry until it opens the page.
