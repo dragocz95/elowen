@@ -458,6 +458,10 @@ export interface PluginUiListing {
   /** Name of the plugin's world in the main navigation (manifest `web.label`, localized). Absent = the
    *  world borrows its first page's name. */
   label?: string;
+  /** The measure the shell frames this plugin's pages at (manifest `web.layout`). 'workbench' asks for
+   *  the wide application frame; absent — which is also what an older daemon sends — means the ordinary
+   *  page measure every core route is read at. */
+  layout?: 'document' | 'workbench';
   nav: { label: string; icon?: string; route?: string }[];
   /** Per-account plugin panels. Optional for compatibility with an older daemon listing.
    *  `placement` picks where the panel hangs: 'section' (the default, and what a daemon too old to send

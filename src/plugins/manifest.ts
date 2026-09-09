@@ -222,6 +222,14 @@ export interface PluginManifest {
      *  its own objects and lifecycle; `infrastructure` configures a capability the assistant already
      *  ships. Fresh-install policy may allow the latter without opening the door to default domain apps. */
     navKind?: 'domain' | 'infrastructure';
+    /** The MEASURE this plugin's pages are read at. 'document' (the default, and what a host too old to
+     *  know the field does) puts them in the shared reading column every core page uses. 'workbench' asks
+     *  for the wider application frame instead — right for a page that is a tool with panes beside each
+     *  other rather than a column of records to read.
+     *
+     *  It has to be declared HERE because the frame belongs to the host shell, which is above the plugin's
+     *  markup in the DOM: no stylesheet a bundle ships can widen it, however specific its selector. */
+    layout?: 'document' | 'workbench';
     nav?: { label: string; icon?: string; route?: string }[];
     /** Per-account integration panels mounted in Account. The listing is grant-filtered server-side with
      *  the rest of the plugin UI, so a user never sees a connector they cannot open.
@@ -346,6 +354,7 @@ const ManifestSchema = Type.Object({
     adminOnly: Type.Optional(Type.Boolean()),
     label: Type.Optional(Type.String({ minLength: 1 })),
     navKind: Type.Optional(Type.Union([Type.Literal('domain'), Type.Literal('infrastructure')])),
+    layout: Type.Optional(Type.Union([Type.Literal('document'), Type.Literal('workbench')])),
     nav: Type.Optional(Type.Array(Type.Object({
       label: Type.String({ minLength: 1 }),
       icon: Type.Optional(Type.String()),

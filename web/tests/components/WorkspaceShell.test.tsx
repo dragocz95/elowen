@@ -307,6 +307,15 @@ describe('the shell stylesheets carry one authority per decision', () => {
     expect(css('spatial-deck')).not.toMatch(/\.spatial-control-deck|\.spatial-deck-heading/);
   });
 
+  it('lets a workbench route keep the frame the shell gave it, instead of re-capping inside it', () => {
+    // A workbench frame is a PERCENTAGE of the workspace (--workbench-max), so a second percentage cap on
+    // the page inside it would multiply — 90% of 90%. The shell frame is the one authority for that
+    // route's width and the page surfaces inside it state none.
+    expect(css('workspace-shell')).toMatch(/\[data-page-measure=(['"])workbench\1\][^{]*\{[^}]*max-width:\s*none/);
+    const tokens = readFileSync(resolve(process.cwd(), 'app', 'styles', 'tokens.css'), 'utf-8');
+    expect(tokens, 'tokens.css declares no --workbench-max').toMatch(/--workbench-max:\s*90%/);
+  });
+
   it('stacks wrapped hero actions predictably instead of alternating their alignment', () => {
     const narrow = atRuleBody(css('workspace-hero'), '@container workspace-hero (width < 48rem)');
     expect(narrow).toMatch(/\.workspace-hero__actions\s*\{[^}]*justify-content:\s*flex-start/);

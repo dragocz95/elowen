@@ -15,6 +15,23 @@ describe('parseManifest', () => {
     const m = parseManifest({ ...good, requires: { env: ['X'] }, provides: { skills: ['*'] } });
     expect(m.provides?.skills).toEqual(['*']);
   });
+  it('lets a web plugin declare the measure its pages are read at, defaulting to a document', () => {
+    // A plugin cannot widen the host's page frame from its own stylesheet — the frame is the host's and
+    // outranks anything a bundle ships. So a plugin whose page is an application rather than a document
+    // (a code workbench) says so in the manifest and the shell hands it the wider frame.
+    expect(parseManifest({ ...good, web: { entry: 'web/index.js' } }).web?.layout).toBeUndefined();
+    const m = parseManifest({ ...good, web: { entry: 'web/index.js', layout: 'workbench' } });
+    expect(m.web?.layout).toBe('workbench');
+    expect(parseManifest({ ...good, web: { entry: 'web/index.js', layout: 'document' } }).web?.layout).toBe('document');
+    expect(() => parseManifest({ ...good, web: { entry: 'web/index.js', layout: 'fullscreen' } })).toThrow();
+  });
+  it('ignores a web key it has never heard of, so a newer plugin still loads on this core', () => {
+    // The compatibility half of the field above: an older core meets `web.layout` as an unknown key. It
+    // must keep the plugin — dropping a whole plugin (its tools, routes and platform contributions) over
+    // one piece of layout metadata is the failure mode `web.layout` must never introduce.
+    const m = parseManifest({ ...good, web: { entry: 'web/index.js', fromTheFuture: 'workbench' } });
+    expect(m.web?.entry).toBe('web/index.js');
+  });
   it('accepts an optional showOutput list (tool-output policy), absent by default', () => {
     expect(parseManifest(good).showOutput).toBeUndefined();
     const m = parseManifest({ ...good, showOutput: ['Bash', 'Lsp*'] });

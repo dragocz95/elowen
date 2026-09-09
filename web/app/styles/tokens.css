@@ -347,6 +347,17 @@
      narrower frame states its own chat measure beside it. */
   --chat-max: 100%;
 
+  /* The third measure: a WORKBENCH — a code editor with its file tree, its editing pane and a diff
+     beside each other. Like /chat it is an application rather than a document, so the reading measure
+     that keeps a table's density tied to its type size is the wrong cap for it: it wants the desk. It
+     stops short of the full width because a workbench pinned to both window edges loses the gutter that
+     separates it from the navigation and the advisor. A page opts in by DECLARING it (plugin manifest
+     `web.layout: "workbench"`), never by out-specifying the frame from its own stylesheet, which cannot
+     work — the shell's frame is above it in the DOM. Percent, so it follows whatever room the workspace
+     has left after the dock, and so a design that centres its pages narrower still gets a full desk
+     here; a design wanting otherwise restates it beside its own --content-max. */
+  --workbench-max: 90%;
+
   /* One stacking order for the whole app, so a new overlay cannot be talked into an arbitrary number.
      Toast sits above the modal on purpose: a confirmation or an error raised BY a dialog has to stay
      readable over it, otherwise the user is told nothing while the dialog waits. */
