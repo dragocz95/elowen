@@ -217,3 +217,77 @@ describe('sandbox Environment settings', () => {
     expect(targetIds).toEqual(['2', '2']);
   });
 });
+
+/** `mode` is computed in `plugins/sandbox/lib/api.mjs` from the account's operator authority, the
+ *  instance-wide `confineNonOperators` setting and the live bubblewrap probe. It is never given a
+ *  project, so it can only describe how commands run DIRECTLY ON THE HOST are contained for this
+ *  account. These cases hold the drawer to that claim and no wider one: the section used to headline the
+ *  bare words "Direct host", which reads as a statement about everywhere the account's work runs — and a
+ *  managed project runs in its own container regardless of this value. */
+describe('sandbox Environment settings — what the account row may claim', () => {
+  const environmentWith = (over: Record<string, unknown>) => ({ ...environment, ...over });
+  const rowFor = (label: string) => screen.getByText(label).closest('.settings-row');
+
+  it('names the scope of the mode instead of stating it bare, and reads as records like the rows above it', async () => {
+    mount(<EnvironmentSettings surface="user" user={targetUser} />);
+    const row = (await screen.findByText(strings.hostExecution!)).closest('.settings-row');
+    expect(row).not.toBeNull();
+    expect(within(row as HTMLElement).getByText(strings.modeConfined!)).toBeInTheDocument();
+    // The scope belongs in the record's own help, not in a paragraph the reader has to hunt for.
+    fireEvent.click(within(row as HTMLElement).getByRole('button', { name: 'Help' }));
+    expect(screen.getByRole('tooltip')).toHaveTextContent(strings.hostExecutionHint!);
+  });
+
+  // An operator, or an instance that turned confinement off, gets 'direct'. The account genuinely runs
+  // host commands unconfined — but that is all it means, and the row must not grow into a claim that
+  // every project is a host directory.
+  it('reports an unconfined account without claiming anything about its managed projects', async () => {
+    server.use(http.get('*/api/plugins/sandbox/api/environment', () => HttpResponse.json(environmentWith({ mode: 'direct', networkAvailable: false }))));
+    mount(<EnvironmentSettings surface="user" user={targetUser} />);
+    expect(await screen.findByText(strings.modeDirect!)).toBeInTheDocument();
+    expect(screen.getByText(strings.hostExecution!)).toBeInTheDocument();
+    // The retired headline is gone in every locale's English source.
+    expect(screen.queryByText('Direct host')).toBeNull();
+    // Nothing in the visible row asserts a runtime for any project; the container story is the project
+    // surface's, and this panel is never handed a project.
+    expect(screen.queryByText(/container/i)).toBeNull();
+  });
+
+  // A failed probe on a confined account is the one state where nothing runs at all. It has to read as a
+  // refusal rather than as a quiet fallback to unconfined execution.
+  it('shows a refusal and the daemon reason when the namespace probe fails', async () => {
+    server.use(http.get('*/api/plugins/sandbox/api/environment', () => HttpResponse.json(environmentWith({
+      mode: 'unavailable', probe: { available: false, reason: 'user namespaces are disabled' }, networkAvailable: false,
+    }))));
+    mount(<EnvironmentSettings surface="user" user={targetUser} />);
+    expect(await screen.findByText(strings.modeUnavailable!)).toBeInTheDocument();
+    const probeRow = rowFor(strings.probe!) as HTMLElement;
+    expect(within(probeRow).getByText(strings.probeFailed!)).toBeInTheDocument();
+    fireEvent.click(within(probeRow).getByRole('button', { name: 'Help' }));
+    expect(screen.getByRole('tooltip')).toHaveTextContent('user namespaces are disabled');
+  });
+
+  it('reads the account HOME and its running commands as their own records', async () => {
+    server.use(http.get('*/api/plugins/sandbox/api/environment', () => HttpResponse.json(environmentWith({
+      home: { ...environment.home, bytes: 3 * 1024 * 1024, activeProcesses: 2 },
+    }))));
+    mount(<EnvironmentSettings surface="user" user={targetUser} />);
+    expect(within((await screen.findByText(strings.home!)).closest('.settings-row') as HTMLElement).getByText('3.0 MB')).toBeInTheDocument();
+    expect(within(rowFor(strings.processes!) as HTMLElement).getByText('2')).toBeInTheDocument();
+  });
+
+  it('states a load failure and offers a retry rather than an empty environment', async () => {
+    let attempts = 0;
+    server.use(http.get('*/api/plugins/sandbox/api/environment', () => {
+      attempts += 1;
+      return attempts === 1 ? HttpResponse.json({ error: 'nope' }, { status: 500 }) : HttpResponse.json(environment);
+    }));
+    mount(<EnvironmentSettings surface="user" user={targetUser} />);
+    const retry = await screen.findByRole('button', { name: 'Retry' });
+    // No mode is asserted while the state is unknown.
+    expect(screen.queryByText(strings.modeConfined!)).toBeNull();
+    expect(screen.queryByText(strings.modeDirect!)).toBeNull();
+    fireEvent.click(retry);
+    expect(await screen.findByText(strings.modeConfined!)).toBeInTheDocument();
+  });
+});

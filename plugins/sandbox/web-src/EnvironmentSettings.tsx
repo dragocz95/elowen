@@ -47,8 +47,19 @@ export function EnvironmentSettings({ user }: { user: User; surface: 'user' }) {
   if (query.isError) return <C.ErrorState message={s.loadError} onRetry={() => query.refetch()} />;
   if (query.isLoading || !query.data) return <C.LoadingState variant="cards" />;
   const state = query.data;
+  // WHAT `mode` ACTUALLY IS. `environmentState` in `lib/api.mjs` derives it from three ACCOUNT-level
+  // inputs and nothing else: whether this account holds instance-operator authority, the instance-wide
+  // `confineNonOperators` setting, and the live bubblewrap probe. It is never handed a project and never
+  // reads one, so what it describes is how commands this account runs DIRECTLY ON THE HOST are
+  // contained — a terminal outside a managed project, and a project whose execution target is a host
+  // directory. It says nothing about a managed project, which runs in its own container on a separate
+  // path (`lib/environmentRuntime.mjs`). Shown bare as this section's headline the word read as a claim
+  // about everything the account does, so the row now names the scope and the badge carries only the
+  // state.
   const modeLabel = state.mode === 'confined' ? s.modeConfined : state.mode === 'direct' ? s.modeDirect : s.modeUnavailable;
+  const modeTone = state.mode === 'confined' ? 'success' : state.mode === 'direct' ? 'warning' : 'danger';
   const ModeIcon = state.mode === 'unavailable' ? ShieldX : ShieldCheck;
+  const numeric = 'font-mono tabular-nums text-foreground';
 
   const facts: [string, string][] = [
     [s.homeSize, `${formatBytes(state.home.bytes)}${state.home.truncated ? '+' : ''}`],
@@ -69,8 +80,11 @@ export function EnvironmentSettings({ user }: { user: User; surface: 'user' }) {
               success/danger), so the brand colour is what it wants. */}
           <ModeIcon size={20} className={state.mode === 'unavailable' ? 'text-destructive' : 'text-primary'} aria-hidden />
         </span>
+        {/* The mode is named by what it governs. On its own the word answered a question the reader had
+            not asked, and the obvious reading — "this is where my work runs" — is the one thing it does
+            not mean. */}
         <div className="min-w-0 flex-1">
-          <div className="truncate text-sm font-medium text-foreground">{modeLabel}</div>
+          <div className="truncate text-sm font-medium text-foreground">{s.hostExecution}: {modeLabel}</div>
           <div className="truncate font-mono text-xs text-muted-foreground" title={state.home.path}>{state.home.path}</div>
         </div>
         <C.Badge tone={state.probe.available ? 'success' : 'danger'}>{state.probe.available ? s.probeReady : s.probeFailed}</C.Badge>
@@ -100,20 +114,54 @@ export function EnvironmentSettings({ user }: { user: User; surface: 'user' }) {
     </>
   );
 
-  // In the user drawer this is ONE row among the account's other summaries, not a page: it reads as the
-  // same kind of preview the tool and project pickers use, and the settings themselves open on top of it.
+  // In the user drawer this is a stack of RECORDS, the same anatomy the account's project permissions
+  // read as directly above it: a label and its help on the left, one value on the right. Each record
+  // states one account-scoped fact, and the settings themselves open on top of it.
+  //
+  // The values sit in the record's `control` cell rather than beside the label, so every reading in the
+  // drawer lands on the one right-hand column the permission switches use. On a phone the record folds
+  // to its two-line band and the badge keeps that trailing line to itself, which is what keeps a long
+  // Czech label from crushing it.
   return <>
     {state.migrationCollision ? <div role="alert" className="rounded-lg border border-destructive/50 bg-destructive/5 p-4 text-sm text-destructive">{s.migrationCollision}</div> : null}
-    <C.SelectionSummary
-      countText={modeLabel}
-      samples={[
-        { label: `${s.homeSize}: ${formatBytes(state.home.bytes)}${state.home.truncated ? '+' : ''}`, icon: <HardDrive size={13} aria-hidden /> },
-        { label: `${s.processes}: ${state.home.activeProcesses}`, icon: <Activity size={13} aria-hidden /> },
-        { label: state.probe.available ? s.probeReady : s.probeFailed, icon: <ModeIcon size={13} aria-hidden /> },
-      ]}
-      onManage={() => setSettingsOpen(true)}
-      manageLabel={s.manageEnvironment}
-    />
+    <C.SettingsGroup>
+      <C.SettingsRow
+        label={s.hostExecution}
+        icon={ModeIcon}
+        description={s.hostExecutionHint}
+        control={<C.Badge tone={modeTone}>{modeLabel}</C.Badge>}
+      />
+      {/* The probe is the reason a confined account can run anything at all, so it is its own reading
+          rather than a chip. A failed probe explains itself in the record's help; the daemon is the only
+          thing that knows why. */}
+      <C.SettingsRow
+        label={s.probe}
+        icon={ShieldCheck}
+        description={s.probeHint}
+        hint={state.probe.reason || undefined}
+        control={<C.Badge tone={state.probe.available ? 'success' : 'danger'}>{state.probe.available ? s.probeReady : s.probeFailed}</C.Badge>}
+      />
+      <C.SettingsRow
+        label={s.home}
+        icon={HardDrive}
+        description={s.homeHint}
+        hint={state.home.path}
+        control={<span className={numeric}>{formatBytes(state.home.bytes)}{state.home.truncated ? '+' : ''}</span>}
+      />
+      <C.SettingsRow
+        label={s.processes}
+        icon={Activity}
+        description={s.processesHint}
+        control={<span className={numeric}>{state.home.activeProcesses}</span>}
+      />
+      {/* The action sits UNDER the records rather than in one of them. A record's trailing actions take a
+          track the whole card shares through subgrid, so a button captioned "Otevřít prostředí" was
+          charging every other row for its width — the Czech labels wrapped four lines deep and the card
+          read as a column of fragments. A free block between records spans the stack instead. */}
+      <div className="flex justify-end">
+        <C.Button variant="ghost" onClick={() => setSettingsOpen(true)}>{s.manageEnvironment}</C.Button>
+      </div>
+    </C.SettingsGroup>
     {settingsOpen ? (
       <C.Modal title={s.environmentTitle} description={s.environmentHint} icon={Boxes} size="md" onClose={() => setSettingsOpen(false)}>
         <C.ModalBody>{document}</C.ModalBody>
