@@ -749,6 +749,11 @@ function registerBridgedTool(ctx, getClient, spec, tool) {
   }), {
     ...(spec.ownerUserId == null ? {} : { ownerUserId: spec.ownerUserId }),
     ...(transportKind(spec) === 'stdio' ? { hostFilesystem: true } : {}),
+    // A bound server's tool name, description and schema are read from inside the project, so the
+    // DECLARATION is project data. Owner scoping cannot carry that: a bound stdio server is admin-only
+    // and may be stored at instance scope, where there is no owner to scope to. The host composes these
+    // only into a session running in the same project.
+    ...(spec.projectRef ? { projectId: spec.projectRef.projectId } : {}),
   });
 }
 

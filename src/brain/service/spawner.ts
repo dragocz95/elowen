@@ -1,6 +1,7 @@
 import { resolvesContributionsPerTurn, contributionOwnerForSession, isChannelSession, isSubagentSession } from '../sessionId.js';
 import { DEFAULT_BRAND } from '../../shared/brand.js';
 import type { PluginRegistry } from '../../plugins/registry.js';
+import { projectScopedTools } from '../../plugins/registry.js';
 import { PluginHookBus } from '../../plugins/hookBus.js';
 import { logger } from '../../shared/logger.js';
 import type { BrainRuntimeConfig } from '../providers.js';
@@ -382,14 +383,21 @@ export class LiveSessionSpawner {
       grantsEnforcedPerTurn: !ownerChatShape,
       allOwners: perTurnContributions,
     }) ?? [];
+    // A project-bound plugin tool is DECLARED from inside one managed project, so its name, description
+    // and schema only belong in a session running there. Nothing else narrows it: such a tool can be
+    // stored at instance scope, where it carries no owner and would otherwise be composed for everyone.
+    const selectedProjectId = execution.projectRef?.kind === 'managed' ? execution.projectRef.projectId : null;
+    const scopedPluginTools = plugins
+      ? projectScopedTools(rawPluginTools, plugins.projectBoundTools, selectedProjectId)
+      : rawPluginTools;
     const pluginTools = opts.pathView
-      ? rawPluginTools
+      ? scopedPluginTools
           .filter((tool) => !plugins?.hostFilesystemTools.has(tool.name)
             && plugins?.workspaceSafeTools.has(tool.name) === true
             && !plugins.workspaceUnsafeTools.has(tool.name))
           .map(workspaceToolDefinition)
           .filter((tool): tool is NonNullable<typeof tool> => !!tool)
-      : rawPluginTools;
+      : scopedPluginTools;
     // One exact set follows the filtered definitions into both per-turn visibility and ToolSearch. Rebuilding
     // it at either consumer risks classifying a plugin definition as a built-in, which would bypass allow-lists.
     const pluginToolNames = new Set(pluginTools.map((tool) => tool.name));

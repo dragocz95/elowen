@@ -1576,7 +1576,7 @@ export interface PluginChatArtifactRef {
 export interface PluginContext {
   /** Contribute a tool. `ownerUserId` scopes it to ONE Elowen account: it is then composed only into
    * that account's own/direct/delegated sessions. Omitted → instance-wide, as before. */
-  registerTool(tool: ToolDefinition, opts?: { ownerUserId?: number; hostFilesystem?: boolean; workspaceSafe?: boolean }): void;
+  registerTool(tool: ToolDefinition, opts?: { ownerUserId?: number; hostFilesystem?: boolean; workspaceSafe?: boolean; projectId?: number }): void;
   /** Contribute a skill. `ownerUserId` scopes it to ONE Elowen account: it is then advertised (and
    *  `/skill:` expandable) only in that user's own sessions. Omitted → instance-wide, as before. */
   registerSkill(skill: PluginSkill, opts?: { ownerUserId?: number }): void;

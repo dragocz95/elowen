@@ -214,6 +214,23 @@ export interface PluginHostWiring {
   };
 }
 
+/** Drop the tools whose DECLARATION belongs to a managed project other than the one this session runs in.
+ *  A project-bound tool reports its name, description and input schema from a server inside that project,
+ *  so composing it elsewhere hands project data to an account that may not reach the project — owner
+ *  scoping cannot cover it, because such a tool can be stored at instance scope with no owner at all.
+ *  Exported so the composer and its regression share ONE rule rather than two that can drift apart. */
+export function projectScopedTools<T extends { name: string }>(
+  tools: readonly T[],
+  projectBoundTools: ReadonlyMap<string, number>,
+  selectedProjectId: number | null,
+): T[] {
+  if (projectBoundTools.size === 0) return [...tools];
+  return tools.filter((tool) => {
+    const boundTo = projectBoundTools.get(tool.name);
+    return boundTo === undefined || boundTo === selectedProjectId;
+  });
+}
+
 export class PluginRegistry {
   readonly tools: ToolDefinition[] = [];
   /** Which plugin registered each tool (tool name → plugin name) — feeds per-role tool filtering. */
@@ -225,6 +242,13 @@ export class PluginRegistry {
   /** Tools whose implementation can see the daemon host filesystem outside PathView (notably stdio MCP).
    * Explicit workspace-scoped children omit them fail-closed; remote/network tools remain available. */
   readonly hostFilesystemTools = new Set<string>();
+  /** Tools whose very DECLARATION is derived from one managed project, as tool name → project id.
+   * An MCP server bound to a project reports its tool names, descriptions and input schemas from inside
+   * that project, so those are project data even before anything is called. A bound stdio server is
+   * admin-only and may therefore be stored at instance scope, where `toolOwnerUsers` is null and the
+   * declaration would otherwise be composed for every account. The session composer drops these unless
+   * the session is running in that same project. */
+  readonly projectBoundTools = new Map<string, number>();
   /** Tools positively declared safe for an exact workspace PathView. */
   readonly workspaceSafeTools = new Set<string>();
   /** At least one registration for this name lacked the workspace-safe declaration. */
@@ -372,6 +396,8 @@ export class PluginRegistry {
       this.toolOwnerUsers.push(other.toolOwnerUsers[i] ?? null);
       this.toolOwner.set(t.name, owner);
       if (other.hostFilesystemTools.has(t.name)) this.hostFilesystemTools.add(t.name);
+      const boundProject = other.projectBoundTools.get(t.name);
+      if (boundProject !== undefined) this.projectBoundTools.set(t.name, boundProject);
       if (other.workspaceSafeTools.has(t.name)) this.workspaceSafeTools.add(t.name);
       if (other.workspaceUnsafeTools.has(t.name)) this.workspaceUnsafeTools.add(t.name);
     }
@@ -1012,6 +1038,7 @@ export class PluginRegistry {
         this.toolOwnerUsers.push(opts?.ownerUserId ?? null);
         this.toolOwner.set(t.name, name);
         if (opts?.hostFilesystem === true) this.hostFilesystemTools.add(t.name);
+        if (typeof opts?.projectId === 'number') this.projectBoundTools.set(t.name, opts.projectId);
         if (opts?.workspaceSafe === true) this.workspaceSafeTools.add(t.name);
         else this.workspaceUnsafeTools.add(t.name);
       },

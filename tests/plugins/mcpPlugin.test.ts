@@ -7,6 +7,7 @@ import { openPluginTablesDb } from '../helpers/pluginTablesDb.js';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import type { Db } from '../../src/store/db.js';
 import { UserStore } from '../../src/store/userStore.js';
+import { projectScopedTools } from '../../src/plugins/registry.js';
 import { channelSessionId, contributionOwnerForSession } from '../../src/brain/sessionId.js';
 import { composeSessionTools } from '../../src/brain/session/capabilities.js';
 import { currentIdentity, runWithPolicy } from '../../src/plugins/policyContext.js';
@@ -612,6 +613,65 @@ describe('mcp plugin — declaring bridged tools from an inherited snapshot', ()
     }
     return [...selected.values()];
   };
+
+  it('keeps a project-bound server schema out of accounts that cannot reach the project', async () => {
+    // A stdio server bound to a managed project is admin-only, so it may be saved at INSTANCE scope —
+    // owner_user_id NULL. Its bridged tool names, descriptions and input schemas are read from the
+    // server running INSIDE that project, so they are project data. Calling one from elsewhere is
+    // already refused; being able to READ it is the part that leaks, and a description or a schema
+    // field name can carry as much as a call would return.
+    const db = openPluginTablesDb();
+    const bootstrap = fakeCtx({}, undefined, db);
+    await register(bootstrap as never);
+    await teardown(bootstrap);
+
+    const users = new UserStore(db);
+    const member = users.create('member', 'pw');
+    const stranger = users.create('stranger', 'pw');
+    const projectTools = [{
+      name: 'deploy',
+      description: 'Deploy the ACME billing pipeline',
+      inputSchema: { type: 'object', properties: { acmeCustomerId: { type: 'string' } } },
+    }];
+    db.prepare('INSERT INTO p_mcp_servers (owner_user_id, name, spec_json, tools_json) VALUES (?, ?, ?, ?)').run(
+      null, 'projsrv',
+      JSON.stringify({ name: 'projsrv', enabled: true, transport: 'stdio', command: 'in-guest-server', projectRef: { kind: 'managed', projectId: 7 } }),
+      JSON.stringify(projectTools),
+    );
+
+    const ctx = fakeCtx({}, undefined, db, { elowenUserId: member.id, admin: true, owner: true });
+    try {
+      await register(ctx as never);
+      // The plugin must MARK the declaration as project data; the host cannot scope what is not marked.
+      const bound = ctx.tools.find((tool) => tool.name === 'mcp__projsrv__deploy') as { projectId?: number } | undefined;
+      expect(bound?.projectId).toBe(7);
+
+      // …and the composer must then drop it outside that project. `projectScopedTools` is the exact
+      // function the session composer runs, so this cannot pass while production diverges.
+      const projectBound = new Map(ctx.tools.flatMap((tool) => {
+        const id = (tool as { projectId?: number }).projectId;
+        return typeof id === 'number' ? [[tool.name, id] as [string, number]] : [];
+      }));
+      const composeFor = (ownerUserId: number | null, selectedProjectId: number | null) =>
+        projectScopedTools(visibleTools(ctx, ownerUserId), projectBound, selectedProjectId);
+
+      // A stranger has no session in project 7 to begin with, and even an unscoped session of theirs
+      // must not carry the declaration.
+      const outside = JSON.stringify(composeFor(stranger.id, null));
+      expect(outside).not.toContain('mcp__projsrv__deploy');
+      expect(outside).not.toContain('ACME billing pipeline');
+      expect(outside).not.toContain('acmeCustomerId');
+      // Another project is not a loophole either.
+      expect(JSON.stringify(composeFor(stranger.id, 8))).not.toContain('mcp__projsrv__deploy');
+      // The admin who owns the binding does not get it outside the project either: the rule is the
+      // project, not the person.
+      expect(JSON.stringify(composeFor(member.id, null))).not.toContain('mcp__projsrv__deploy');
+
+      // NEGATIVE CONTROL: inside the project the tool is still composed, so the assertions above
+      // describe scoping rather than a tool that was never registered.
+      expect(composeFor(member.id, 7).map((tool) => tool.name)).toContain('mcp__projsrv__deploy');
+    } finally { await teardown(ctx); }
+  });
 
   it('keeps another account personal server out of shared-channel sub-agents and other accounts', async () => {
     const db = openPluginTablesDb();
