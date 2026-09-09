@@ -338,6 +338,10 @@ function applyAdditiveMigrations(db: Db): void {
   // Display-only whole-turn timing lives outside message JSON: rehydration reads `content` only, so this
   // additive column cannot alter a provider payload or invalidate the cached transcript prefix.
   addColumn(db, 'brain_messages', 'turn_duration_ms', 'INTEGER');
+  // Who ordered the delegation behind a child session — see brain_sessions.spawn_origin in schema.sql.
+  // Attribution only, and deliberately NOT backfilled: history is never re-billed, so every child spawned
+  // before this column keeps the `internal` bucket its turns were already recorded under.
+  addColumn(db, 'brain_sessions', 'spawn_origin', 'TEXT');
   // Projection triggers may reference both message and projection epoch columns, so install them only after
   // the additive message column exists. The installer adds only metadata to an existing projection; it does
   // not backfill or scan historical messages.

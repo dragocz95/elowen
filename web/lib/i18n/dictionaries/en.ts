@@ -485,7 +485,8 @@ export const en = {
       output: 'What the model wrote back. The priciest tokens, and the fewest.',
     },
     pulseColCache: 'Cache',
-    surfaces: { web: 'web', cli: 'terminal', discord: 'Discord', msteams: 'Teams', telegram: 'Telegram', whatsapp: 'WhatsApp', cron: 'schedule', internal: 'automation', unknown: 'unknown client' },
+    surfaces: { web: 'web', cli: 'terminal', discord: 'Discord', msteams: 'Teams', telegram: 'Telegram', whatsapp: 'WhatsApp', cron: 'schedule', internal: 'Internal', unknown: 'unknown client' },
+    surfaceHint: { internal: 'Turns with no request behind them: scheduled jobs, boot recovery and the daemon’s own internal work. Sub-agent turns no longer land here — they are billed to whoever ordered them.' },
     ev: {
       turn: 'is working',
       someone: 'Someone',

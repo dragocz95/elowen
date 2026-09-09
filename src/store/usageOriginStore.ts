@@ -153,6 +153,16 @@ export class UsageOriginStore {
     return this.turnOrigins.get(sessionId)?.origin ?? null;
   }
 
+  /** The pin currently held for a conversation WITH the account that set it, without consuming it.
+   *  Read by the delegation seam: a child spawned during this turn inherits both halves, so its own spend
+   *  lands on the person and address that ordered the parent turn instead of the `internal` bucket (see
+   *  `src/brain/spawnOrigin.ts`). Nothing pinned means nothing ordered that turn, and the child inherits
+   *  that answer too. */
+  pinnedFor(sessionId: string): { origin: ClientOrigin; userId: number } | null {
+    const pinned = this.turnOrigins.get(sessionId);
+    return pinned ? { origin: pinned.origin, userId: pinned.userId } : null;
+  }
+
   /** A turn that never settles (an abort that skips persistence, a crash mid-turn) would leave its pin
    *  behind, and the next turn of that conversation would inherit it. Nothing in the map is worth
    *  keeping for longer than a turn can plausibly run, so anything older than the window is dropped —

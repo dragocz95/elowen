@@ -5,6 +5,7 @@ import type { BrainEvent } from '../events.js';
 import type { ProviderRequestProfile } from '../modelCapabilities.js';
 import type { LiveEventReplay } from './liveEventReplay.js';
 import type { DelegatedExecutionScope } from '../delegatedScope.js';
+import type { SpawnOrigin } from '../spawnOrigin.js';
 import type { TurnMode } from '../service/turnRequest.js';
 import type { ToolSearchHandle } from '../toolSearch/toolSearchTool.js';
 import type { AssessColdCompaction } from './coldStartCompaction.js';
@@ -309,6 +310,9 @@ export interface SpawnOpts {
   parentSessionId?: string;
   /** Immutable execution boundary minted by the delegating turn and checked on every child respawn. */
   delegatedAccess?: DelegatedExecutionScope;
+  /** Who ordered the delegation, written to the child's row at creation for attribution only (see
+   *  brain/spawnOrigin.ts). Never read as access. */
+  spawnOrigin?: SpawnOrigin;
   /** This delegated child is a FORK: compose it exactly as its owner-chat parent was composed, so its
    *  system prompt and tool schemas are byte-identical and the provider can read the parent's warm cache.
    *

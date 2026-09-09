@@ -5,6 +5,7 @@ import type { ChannelSendOpts } from './channels.js';
 import type { BrainEvent, BrainUsage } from './events.js';
 import { delegatedToolPolicy, normalizeDelegatedExecutionScope, type DelegatedExecutionScope } from './delegatedScope.js';
 import type { HostRpcMethod } from '../subagent/hostRpc.js';
+import { parseSpawnOrigin, type SpawnOrigin } from './spawnOrigin.js';
 import type { BrainStreamSnapshot } from './session/liveEventReplay.js';
 
 /** Everything a delegated child's turn needs that a SECOND PROCESS could not derive for itself.
@@ -38,6 +39,11 @@ export interface DelegatedTurnRequest {
    *  boundary and a `Set` does not survive JSON (see subagentWirePayload.test.ts). */
   accountAllow?: string[];
   scheduled: boolean;
+  /** WHO ordered this delegation — the origin pinned to the parent's turn at spawn time (see
+   *  `spawnOrigin.ts`). Carried rather than looked up, because the runner is a second process with its own
+   *  empty pin map and the child's session row does not exist yet on its first turn. Absent when the
+   *  parent turn had no request behind it (a cron wake-up), and the child then settles as `internal` too. */
+  origin?: SpawnOrigin;
   model?: { provider?: string; model?: string };
   thinkingLevel?: string;
   /** The delegating turn's working directory, inherited so the child's tools resolve relative paths
@@ -82,6 +88,9 @@ export function delegatedChannelSendOpts(
     ...(req.thinkingLevel !== undefined ? { thinkingLevel: req.thinkingLevel } : {}),
     parentSessionId: req.parentSessionId,
     delegatedAccess: scope,
+    // Persisted on the child's session row at creation, so every LATER turn of this child (a
+    // continuation, a result drain, a boot-recovery respawn) is billed to the same request.
+    ...(req.origin ? { spawnOrigin: req.origin } : {}),
     ...(scope.workspaceRef || scope.projectRef?.kind === 'managed' ? {} : req.clientCwd !== undefined ? { clientCwd: req.clientCwd } : {}),
     // The captured scope stays authoritative; the spawning account's CURRENT grant intersects it, exactly
     // as the drill-in continuation path does. Without this the forked runner and every first spawn were
@@ -203,6 +212,8 @@ export function parseDelegatedTurnRequest(raw: unknown): DelegatedTurnRequest | 
   // restriction" — that is the one reading of it that widens the child.
   if (v.accountAllow !== undefined
     && (!Array.isArray(v.accountAllow) || v.accountAllow.some((t) => typeof t !== 'string'))) return undefined;
+  // A malformed origin costs attribution, never the turn: drop it and let the child settle as `internal`.
+  const origin = v.origin === undefined ? undefined : parseSpawnOrigin(v.origin);
   if (v.thinkingLevel !== undefined && typeof v.thinkingLevel !== 'string') return undefined;
   if (v.clientCwd !== undefined && typeof v.clientCwd !== 'string') return undefined;
   if (scope.workspaceRef && v.clientCwd !== undefined) return undefined;
@@ -215,6 +226,7 @@ export function parseDelegatedTurnRequest(raw: unknown): DelegatedTurnRequest | 
     delegatedAccess: scope,
     ...(Array.isArray(v.accountAllow) ? { accountAllow: v.accountAllow as string[] } : {}),
     scheduled: v.scheduled,
+    ...(origin ? { origin } : {}),
     ...(model ? { model } : {}),
     ...(typeof v.thinkingLevel === 'string' ? { thinkingLevel: v.thinkingLevel } : {}),
     ...(typeof v.clientCwd === 'string' ? { clientCwd: v.clientCwd } : {}),

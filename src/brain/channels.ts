@@ -16,6 +16,7 @@ import {
 import type { AskQuestion, BrainEvent, BrainUsage, CompactResult, SubagentCompletion, SubagentUpdate, WorkflowCompletion, WorkflowUpdate } from './events.js';
 import { recordWorkflowFinishMarker, drainSessionNotices, workDirReorientation } from './service/sessionEvents.js';
 import { recordSubagentProgress } from './subagentRuns.js';
+import type { SpawnOrigin } from './spawnOrigin.js';
 import { runCompaction, withDescendantUsage, sessionUsageSnapshot } from './events.js';
 import type { ElicitationRegistry } from './elicitation.js';
 import type { CardRegistry } from './cards.js';
@@ -376,6 +377,9 @@ export interface ChannelSendOpts {
   parentSessionId?: string;
   /** Immutable policy/identity boundary minted by the delegating turn. Required for a child send. */
   delegatedAccess?: DelegatedExecutionScope;
+  /** Who ordered the delegation (see brain/spawnOrigin.ts). Recorded on the child's session row at
+   *  creation so its later turns keep the requester's attribution; it grants nothing. */
+  spawnOrigin?: SpawnOrigin;
 
   /** The delegating turn's working directory, inherited by a delegated child session so its tools resolve
    *  relative paths against — and it advertises — the SAME project the parent runs in, not the daemon's
@@ -893,6 +897,7 @@ export class ChannelSessionService {
           direct: opts.direct === true,
           parentSessionId: opts.parentSessionId,
           delegatedAccess: delegated?.scope,
+          ...(opts.spawnOrigin ? { spawnOrigin: opts.spawnOrigin } : {}),
           selection: opts.model ?? {},
           policy: opts.policy,
           extraAppend: opts.promptAppend,
