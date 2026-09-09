@@ -5,12 +5,13 @@ import { BRAIN_COMPOSE_EVENT, BRAIN_OPEN_EVENT, advisorOpenTarget } from '../../
 import { useMobileViewport } from '../../lib/useMobile';
 import { NAV_COLUMN_MIN_WIDTH, NAV_FULL_MIN_WIDTH } from '../../lib/breakpoints';
 import { Providers, type PluginUiSeed, type MeSeed } from '../../app/providers';
-import { LanguageProvider, type Locale } from '../../lib/i18n';
+import { LanguageProvider, useTranslation, type Locale } from '../../lib/i18n';
 import { SkinProvider, useSkin } from '../../lib/skinContext';
 import { shellProfileFor, type ShellProfile, type SkinName } from '../../lib/skins';
 import { BrandProvider, BUILTIN_THEME, type ThemePayload } from '../../lib/brand';
 import { ToastProvider, resolveToastDuration } from '../ui/Toast';
-import { useConfig } from '../../lib/queries';
+import { useConfig, usePluginUi } from '../../lib/queries';
+import type { PluginUiListing } from '../../lib/types';
 import { LoginGate } from '../auth/LoginGate';
 import { SidebarNav } from './SidebarNav';
 import { TopBar } from './TopBar';
@@ -44,6 +45,27 @@ const CONTENT_MAX = 'max-w-[var(--content-max)]';
  *  wider frame than a page of records, but it is still a frame, centred on the same axis as every other
  *  route. Opting out entirely is what pinned the transcript to the left edge of a wide display. */
 const CHAT_MAX = 'max-w-[var(--chat-max)]';
+/** The measure a WORKBENCH page is read at — a plugin whose page is a tool with panes beside each other
+ *  (the code editor's file tree, editor and diff) rather than a column of records. Third token, same
+ *  reasoning as /chat's: an application layout earns more of the desk than a document does. A plugin
+ *  cannot take it by writing a wider rule in its own stylesheet — this frame is above the plugin's markup
+ *  in the DOM — so it DECLARES the measure in its manifest and the shell applies it here. */
+const WORKBENCH_MAX = 'max-w-[var(--workbench-max)]';
+
+/** Which of the three measures a route is read at. Named rather than boolean because the frame class and
+ *  the `data-page-measure` attribute the inner page shell keys off must come from ONE decision. */
+export type PageMeasure = 'document' | 'chat' | 'workbench';
+const MEASURE_CLASS: Record<PageMeasure, string> = { document: CONTENT_MAX, chat: CHAT_MAX, workbench: WORKBENCH_MAX };
+
+/** The measure for a path, given the plugin UI listing the shell already holds for its navigation.
+ *  Only `/p/<plugin>` can be a workbench, and only if that plugin's manifest said so — an unknown plugin,
+ *  an unloaded listing and an older daemon that sends no `layout` all read as the page measure. */
+export function pageMeasureFor(pathname: string | null, listing: PluginUiListing[] | undefined): PageMeasure {
+  if (pathname === '/chat') return 'chat';
+  const plugin = pathname?.startsWith('/p/') ? pathname.slice(3).split('/')[0] : undefined;
+  if (!plugin) return 'document';
+  return listing?.find((p) => p.name === plugin)?.layout === 'workbench' ? 'workbench' : 'document';
+}
 
 /** What the user pinned the navigation to, when the window is roomy enough to leave them the choice. */
 type NavPin = 'full' | 'rail';
@@ -108,7 +130,11 @@ function ShellLayout({ children }: { children: ReactNode }) {
   const profile = shellProfileFor(skin);
   const mobile = useMobileViewport();
   const studioDockViewport = useStudioDockViewport();
-  const onChat = usePathname() === '/chat';
+  const pathname = usePathname();
+  const onChat = pathname === '/chat';
+  // The same listing the navigation is built from — one query, already cached by the time a plugin page
+  // mounts, so asking it for the page measure costs no extra request.
+  const measure = pageMeasureFor(pathname, usePluginUi(useTranslation().locale).data);
   const dock = useDockState(profile);
   const studioRightAvailable = profile === 'command'
     && studioDockViewport === true
@@ -246,7 +272,11 @@ function ShellLayout({ children }: { children: ReactNode }) {
             column with a telemetry rail docked beside it — so it is capped wider than a page of records,
             and centred on the same axis so the rail sits inside the frame rather than out at the window
             edge with the transcript stranded opposite it. */}
-        <div className={`mx-auto flex w-full flex-col ${onChat ? CHAT_MAX : CONTENT_MAX}`}>
+        {/* A plugin page that DECLARED itself a workbench reads at the third measure, wider still. The
+            declaration lives in its manifest and arrives on the nav listing, so the frame is right on the
+            first paint; the attribute carries the same one decision to CSS, where the page surfaces inside
+            this frame stand down rather than capping the workbench a second time. */}
+        <div data-page-measure={measure} className={`mx-auto flex w-full flex-col ${MEASURE_CLASS[measure]}`}>
           {/* Frameless page heading + global actions. In drawer mode it also opens mobile navigation. On
               /chat at phone width the whole global bar is suppressed: the conversation already carries its
               own bar, and stacking a second one above it (avatar, bell, search) crowds the small screen.

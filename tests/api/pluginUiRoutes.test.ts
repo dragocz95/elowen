@@ -32,6 +32,7 @@ function uiPluginProvider(adminOnly = false): PluginRegistryProvider {
             css: 'web/index.css',
             adminOnly,
             label: 'Demo',
+            layout: 'workbench',
             nav: [{ label: 'Demo world', icon: 'Bot', route: '' }],
             account: [{ id: 'demo-account', label: 'Demo account', icon: 'Github' }],
             user: [{ id: 'demo-user', label: 'Demo user', icon: 'Server' }],
@@ -106,6 +107,19 @@ describe('plugin browser UI routes', () => {
     const adminList = await adminRes.json() as typeof list;
     expect(adminList).toHaveLength(1);
     expect(adminList[0]!.user).toEqual([{ id: 'demo-user', label: 'Demo user', icon: 'Server' }]);
+  });
+
+  it('carries the page measure a plugin declared, and omits it for one that declared none', async () => {
+    // The shell frames /p/<plugin> from THIS listing — it is already loaded before any bundle runs, so
+    // the page opens at its declared width instead of being re-laid-out once the plugin's JS arrives.
+    const { app, token } = await makeApp();
+    const list = await (await app.request('/plugins/ui', auth(token))).json() as { name: string; layout?: string }[];
+    expect(list[0]!.layout).toBe('workbench');
+
+    const { app: probeApp, token: probeToken } = await makeTestApp({ extra: { plugins: probePluginProvider('') } });
+    const probe = await (await probeApp.request('/plugins/ui', auth(probeToken))).json() as { name: string; layout?: string }[];
+    // Absent rather than 'document': the listing says nothing, and the shell's default is the page measure.
+    expect(probe[0]!).not.toHaveProperty('layout');
   });
 
   it('hides admin-only navigation and assets from non-admin accounts', async () => {

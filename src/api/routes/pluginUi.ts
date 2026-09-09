@@ -84,6 +84,10 @@ export function registerPluginUiRoutes(app: ElowenApp, ctx: RouteContext): void 
         // older plugin (and an older listing consumer) is untouched.
         ...(w.cssHash ? { cssUrl: `/plugins/${w.plugin}/web/${w.cssHash}.css` } : {}),
         apiVersion: w.requiresApiVersion,
+        // The measure the shell frames this plugin's pages at. It rides on the listing rather than on
+        // the bundle so the page opens at its declared width on the FIRST paint — the menu metadata is
+        // already here before any plugin JS is fetched, and a width settled afterwards would reflow.
+        ...(w.layout ? { layout: w.layout } : {}),
         ...(badge === undefined ? {} : { badge }),
         ...localized(w, lang, user?.is_admin === true, visibilityOf(
           registry?.uiVisibility.get(w.plugin), w.plugin, user?.id ?? null, user?.is_admin === true, (m) => ctx.log.warn(m),

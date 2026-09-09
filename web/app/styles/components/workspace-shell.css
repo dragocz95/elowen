@@ -20,6 +20,16 @@
   padding-block-end: calc(3rem + var(--safe-bottom));
 }
 
+/* A WORKBENCH route (a plugin page whose manifest declares `web.layout: "workbench"`) has already been
+   framed by the shell at --workbench-max, and the shell marks the frame with `data-page-measure`. The cap
+   above must then stand down: it is stated as a percentage of the workspace, so applying it again inside
+   a frame that is already 90% wide would multiply the two and leave the workbench narrower than declared.
+   One route, one authority — and the authority is the frame, because it is the thing the route asked for. */
+[data-page-measure='workbench'] .workspace-shell,
+[data-page-measure='workbench'] .workspace-page {
+  max-width: none;
+}
+
 /* A sub-workspace inherits the parent document's measure and gutters. It still uses the exact deck grid,
    responsive sidebar/tab switch and toolbar anatomy; only the full-page outer frame is already owned. */
 .workspace-shell--embedded {

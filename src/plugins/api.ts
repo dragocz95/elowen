@@ -894,6 +894,9 @@ export interface PluginWebUi {
   adminOnly?: boolean;
   /** Name of the plugin's world in the main navigation; absent = the world borrows its first page's. */
   label?: string;
+  /** The measure the shell frames this plugin's pages at (manifest `web.layout`). Absent = 'document',
+   *  the shared reading column; 'workbench' asks for the wider application frame. */
+  layout?: 'document' | 'workbench';
   nav: { label: string; icon?: string; route?: string }[];
   account: { id: string; label: string; icon?: string; placement?: 'section' | 'linkedAccount' }[];
   /** Administrator-only panels mounted for a selected core User. */

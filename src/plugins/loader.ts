@@ -354,6 +354,7 @@ export async function loadPlugins(opts: LoadPluginsOptions): Promise<PluginRegis
               ...(manifest.web.adminOnly ? { adminOnly: true } : {}),
               nav: manifest.web.nav ?? [], account: manifest.web.account ?? [], user: manifest.web.user ?? [], project: manifest.web.project ?? [], settings: manifest.web.settings ?? [],
               ...(manifest.web.label ? { label: manifest.web.label } : {}),
+              ...(manifest.web.layout ? { layout: manifest.web.layout } : {}),
               ...(manifest.web.strings ? { strings: manifest.web.strings } : {}),
               ...(Object.keys(webI18n).length > 0 ? { i18n: webI18n } : {}),
             });
