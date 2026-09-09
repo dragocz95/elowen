@@ -286,13 +286,30 @@ export interface WorkflowCompletion {
 /** Result of a manual/auto context compaction. `compacted` is false when there was nothing to compact
  *  (session too small / already compacted) — a benign no-op the clients report as a friendly notice
  *  rather than an error. `usage` is always the fresh post-call context fill. */
-export interface CompactResult { usage: BrainUsage; compacted: boolean; message?: string }
+export interface CompactResult {
+  usage: BrainUsage;
+  compacted: boolean;
+  message?: string;
+  /** Context fill either side of a real compaction, so a caller can report what the summarization
+   *  actually bought instead of only the post-call number. Absent on a no-op, where nothing moved. */
+  contextBefore?: number | null;
+  contextAfter?: number | null;
+}
 
-/** PI throws (not a status) when there's nothing to compact — a small/already-compacted session. Treat
- *  it as a benign no-op instead of a hard error so `/compact` never surfaces an opaque failure. */
-function isNoopCompactError(e: unknown): boolean {
+/** PI decides whether there is anything to compact BEFORE it reaches any extension hook or issues a
+ *  single summarization request: `prepareCompaction` returning nothing is what raises "Already compacted"
+ *  and "Nothing to compact (session too small)". A no-op classified here therefore provably spent no
+ *  model call, which is the property the caller reports on.
+ *
+ *  The two cases are told apart because they are opposites from the user's side. A session that has just
+ *  been summarized has not got "nothing to compact YET" — that wording sent an operator hunting for a
+ *  compaction that had in fact already succeeded and been applied. Anything else is a real failure and
+ *  keeps propagating. */
+function noopCompactMessage(e: unknown): string | undefined {
   const m = e instanceof Error ? e.message : String(e);
-  return /nothing to compact|already compacted|session too small/i.test(m);
+  if (/already compacted/i.test(m)) return 'Already compacted — nothing new to summarize since the last compaction.';
+  if (/nothing to compact|session too small/i.test(m)) return 'Nothing to compact yet.';
+  return undefined;
 }
 
 /** Run a session compaction and normalize the no-op case into a benign result. `session` needs only the
@@ -301,11 +318,16 @@ function isNoopCompactError(e: unknown): boolean {
  *  which appends it to the summary prompt as an "Additional focus" line; empty/undefined runs a default
  *  compaction. */
 export async function runCompaction(session: AgentSession, customInstruction?: string): Promise<CompactResult> {
+  // Measured before the call, because `compact()` replaces the context in place: afterwards there is no
+  // way left to say what the summarization actually bought.
+  const before = usageOf(session).tokens;
   try {
     await session.compact(customInstruction);
-    return { usage: usageOf(session), compacted: true };
+    const usage = usageOf(session);
+    return { usage, compacted: true, contextBefore: before, contextAfter: usage.tokens };
   } catch (e) {
-    if (isNoopCompactError(e)) return { usage: usageOf(session), compacted: false, message: 'Nothing to compact yet.' };
+    const message = noopCompactMessage(e);
+    if (message !== undefined) return { usage: usageOf(session), compacted: false, message };
     throw e;
   }
 }
