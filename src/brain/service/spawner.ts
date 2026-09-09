@@ -21,7 +21,7 @@ import { estimateTokens, formatSkillsForPrompt } from '@earendil-works/pi-coding
 import { forkExceedsChildWindow, formatForkCacheLine, forkWindowRefusal } from '../session/forkPrefix.js';
 import type { Api, Model } from '@earendil-works/pi-ai';
 import { personalityText } from '../personality.js';
-import { currentWorkDir, currentToolPolicy, type ToolPolicy } from '../../plugins/policyContext.js';
+import { currentContributionUserId, currentWorkDir, currentToolPolicy, type ToolPolicy } from '../../plugins/policyContext.js';
 import { globalMemoryRecallScope, memoryRecallScope } from '../memoryRecallScope.js';
 import type { BrainSessionFactory } from '../session/factory.js';
 import { resolveAutoCompactPct } from '../session/factory.js';
@@ -459,8 +459,8 @@ export class LiveSessionSpawner {
         toolSearchHandle = createToolSearchHandle(deferred, pluginToolNames, personalToolOwners, {
           semantic: this.d.toolSearchIndex,
           skills: async () => searchableSkills(
-            await this.d.plugins(),
-            (name) => allTools.some((tool) => tool.name === name),
+            { plugins: this.d.plugins, users: this.d.users },
+            currentContributionUserId(),
             currentToolPolicy(),
           ),
         });

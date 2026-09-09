@@ -37,20 +37,19 @@ export function skillLoadVisible(
   return composed('SkillLoad') && toolPermitted('SkillLoad', toolPolicy);
 }
 
-/** The skills ToolSearch may REPORT for one turn: entries from the LIVE `skillCatalog` host control,
- *  reduced to what the model could actually act on. Same one-capability rule as the prompt catalog —
- *  a turn that may not load skills gets no suggestions — and manual-only entries stay hidden, exactly
- *  as formatSkillsForPrompt drops them from the announcement. Resolved per call so a plugin reload's
- *  fresh catalog and the turn's live policy are both honored; never a captured registry generation. */
+/** The skills ToolSearch may REPORT for one turn: entries from the same `resolvedTurnSkills` catalog the
+ *  prompt block announces, reduced to model-invocable entries — a turn that may not load skills gets no
+ *  suggestions, and manual-only entries stay hidden exactly as formatSkillsForPrompt drops them from the
+ *  announcement. Built on the shared seam rather than its own predicate, so ToolSearch can never suggest
+ *  a skill the turn's grant-filtered catalog withholds (a spawn-time tool superset used to widen it). */
 export async function searchableSkills(
-  plugins: PluginRegistry | undefined,
-  composed: (name: string) => boolean,
+  deps: TurnSkillDeps,
+  contributionUserId: number | null,
   toolPolicy?: ToolPolicy,
 ): Promise<{ name: string; description: string }[]> {
-  const control = plugins?.control('skillCatalog');
-  if (!plugins || !control) return [];
-  if (!skillLoadVisible(plugins.toolOwner, composed, toolPolicy)) return [];
-  return control.visibleSkills()
+  const resolved = await resolvedTurnSkills(deps, contributionUserId, toolPolicy);
+  if (!resolved) return [];
+  return resolved.skills
     .filter((skill) => !skill.disableModelInvocation)
     .map((skill) => ({ name: skill.name, description: skill.description }));
 }
@@ -69,7 +68,11 @@ export function sessionPromptFragments(
   return fragments.filter((_, index) => owners[index] !== SKILLS_PLUGIN);
 }
 
-async function resolvedTurnSkills(
+/** The per-turn skill seam every consumer shares: resolve the registry, then the SAME grant-, owner- and
+ *  policy-filtered catalog that SkillLoad, `/skill:name` and the `<available_skills>` block read. Returns
+ *  null when this turn may not load skills at all. Resolved per call so a plugin reload's fresh catalog
+ *  and the turn's live policy are both honored; never a captured registry generation. */
+export async function resolvedTurnSkills(
   deps: TurnSkillDeps,
   contributionUserId: number | null,
   toolPolicy?: ToolPolicy,
