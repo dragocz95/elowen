@@ -5,8 +5,9 @@ import { fileURLToPath } from 'node:url';
 
 /** The matrix is only worth keeping while it stays honest, so this is what keeps it honest: every row
  *  claiming real-guest evidence must name a suite that exists, and the evidence vocabulary is closed so
- *  a later edit cannot invent a reassuring new level. It deliberately does NOT assert that everything is
- *  verified — the unverified rows are the point, and deleting one to make this pass would be visible. */
+ *  a later edit cannot invent a reassuring new level. It does NOT assert that everything is verified; it
+ *  asserts that the INVENTORY cannot shrink and that anything short of real-guest evidence says why, so
+ *  the cheap way to make it pass is to explain a gap rather than to delete the row that records one. */
 const here = dirname(fileURLToPath(import.meta.url));
 const matrix = JSON.parse(readFileSync(resolve(here, 'managedEnvironmentMatrix.json'), 'utf8')) as {
   evidenceLevels: Record<string, string>;
@@ -35,9 +36,26 @@ describe('managed environment acceptance matrix', () => {
     }
   });
 
-  it('still reports the work that is not done', () => {
-    // A matrix with nothing outstanding, this early, would mean rows were removed rather than verified.
-    expect(matrix.rows.some((row) => row.evidence === 'unverified')).toBe(true);
-    expect(matrix.rows.length).toBeGreaterThanOrEqual(30);
+  it('keeps the inventory whole and every capability named once', () => {
+    // The floor is the count reached once every capability had been walked. Raise it when rows are
+    // added; lowering it is the edit this guard exists to make visible.
+    expect(matrix.rows.length).toBeGreaterThanOrEqual(43);
+    const capabilities = matrix.rows.map((row) => `${row.area}:${row.capability}`);
+    for (const row of matrix.rows) {
+      expect(row.area, 'a row with no area').toBeTruthy();
+      expect(row.capability, `${row.area} has a row with no capability`).toBeTruthy();
+    }
+    expect(new Set(capabilities).size, 'two rows share one capability id').toBe(capabilities.length);
+  });
+
+  it('makes every row short of real-guest evidence explain itself', () => {
+    // Flipping a row down to `unit` is legitimate; doing it silently is what hides a gap. Earlier this
+    // was inferred from the presence of an unverified row, which stopped meaning anything once the last
+    // one was closed — and would have forced a fake gap to keep the suite green.
+    for (const row of matrix.rows.filter((entry) => entry.evidence !== 'real-guest')) {
+      expect(row.notes, `${row.capability} is not real-guest and says nothing about why`).toBeTruthy();
+      expect((row.notes ?? '').length, `${row.capability} explains its gap in too few words to mean anything`)
+        .toBeGreaterThan(40);
+    }
   });
 });

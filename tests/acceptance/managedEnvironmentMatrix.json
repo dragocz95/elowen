@@ -63,7 +63,8 @@
       "capability": "member revocation cancels that account's guest leases",
       "evidence": "unit",
       "suite": "environmentLifecycle",
-      "negative": "unit"
+      "negative": "unit",
+      "notes": "Covered by environmentLifecycle against the runtime's own lease store rather than a live guest: the assertion is that revocation cancels the leases and the generation moves, which the store shows directly. Revocation while a real guest command is mid-flight is NOT covered."
     },
     {
       "area": "execution",
@@ -124,7 +125,8 @@
       "capability": "chunked upload protocol and completion metadata",
       "evidence": "unit",
       "suite": "managedCompletion",
-      "negative": "unit"
+      "negative": "unit",
+      "notes": "Covered by managedCompletion at protocol level. The chunked WRITE path is exercised against a real guest through the editor upload, so what stays unit here is the completion metadata contract itself, not the transfer."
     },
     {
       "area": "file-tools",
@@ -232,7 +234,8 @@
       "capability": "snapshot id mapping and retention pruning",
       "evidence": "unit",
       "suite": "sites-environment",
-      "negative": "unit"
+      "negative": "unit",
+      "notes": "Covered by the Sites suites over the store, where the two defects fixed here live: a dispatched public snapshot id and a retention pass that could prune a still-retained release. Both are id bookkeeping, visible in the store and not in a guest."
     },
     {
       "area": "mcp",
@@ -240,21 +243,23 @@
       "evidence": "real-guest",
       "negative": "real-guest",
       "suite": "managedToolCallers.podman",
-      "notes": "An earlier version of this row claimed the capability did not exist; that was wrong. A stdio server created while a managed project is selected is bound to it (projectRef, immutable) within the existing personal/instance scopes, and every connect, tools/list and call runs inside that project's guest on an mcp lease. Proven against a real guest with a dependency-free stdio fixture written into /workspace: AddMcpServer binds and discovers the tool through the guest, ReconnectMcpServer bridges it, the bridged call reports the container's hostname and a guest-only file, no lease survives the call. Negatives: the same bridged tool refuses from another project without touching the provider, a non-member is denied at the project boundary, the central host reconnect path refuses a bound server, and removal leaves no server process in the guest. Schema visibility is per owner scope, not per project: a bound tool is declared in every session of its scope and refuses at execution from the wrong project."
+      "notes": "Install, reconnect, call, remove and the wrong-project/no-member refusals run against a real guest. Schema VISIBILITY was a separate defect and is covered by mcpPlugin: a project-bound stdio server can be stored at instance scope, where its tool names, descriptions and input schemas were composed for every account on the instance. The declaration now carries its project id and the session composer drops it outside that project."
     },
     {
       "area": "cron",
       "capability": "scheduled turn scoping to a managed project",
       "evidence": "unit",
       "suite": "cronjob suites",
-      "negative": "unit"
+      "negative": "unit",
+      "notes": "Covered by the cronjob suites. A scheduled turn resolves its project through the same wire contract a live turn does, so the scoping is asserted there; running the scheduler against a real container would add the container, not the scoping."
     },
     {
       "area": "subagent",
       "capability": "delegated scope cannot retarget or enumerate projects",
       "evidence": "unit",
       "suite": "delegatedTurnWire",
-      "negative": "unit"
+      "negative": "unit",
+      "notes": "Covered by delegatedTurnWire over the delegation contract, which is where retargeting would have to happen. A guest adds nothing: the refusal is decided before any environment is resolved."
     },
     {
       "area": "channels",
@@ -283,9 +288,10 @@
     {
       "area": "integrations",
       "capability": "central personal integrations (onedrive, github, voice-bot, image-gen, image-edit, todo, stats, skills, web)",
-      "evidence": "unverified",
+      "evidence": "unit",
       "negative": "unverified",
-      "notes": "Central personal integrations do not read project files and have no managed path; listed as the record that they were reviewed and found out of the environment boundary, not as work left undone."
+      "notes": "Scope regression rather than live proof: driving real external writes would need credentials and publishes nobody authorized. The pinned property is that these tools stay ACCOUNT-scoped and that project scoping neither narrows them nor widens them to another account. Their external behaviour against real services is NOT covered here.",
+      "suite": "registry"
     },
     {
       "area": "authority",
@@ -334,6 +340,14 @@
       "negative": "unit",
       "notes": "Transcripts are central storage and have no guest side. The guest-side piece is the tool-result spill, which writes into the environment's artifact prefix and is covered by managedColdClearing and managedDeliverySpill. Not promoted to real-guest: driving it needs a full live session rather than a tool caller.",
       "suite": "managedColdClearing"
+    },
+    {
+      "area": "performance",
+      "capability": "cost of one guest file operation",
+      "evidence": "unit",
+      "negative": "unit",
+      "suite": "containerRuntime",
+      "notes": "Measured against a private engine: one 'stat' op cost 6689 ms across 57 Podman invocations, and 5681 ms across 41 after a duplicated ownership verification per release was removed. The rest is the mask/stop/mask/verify/unmask choreography plus the ownership check, which are correctness properties and were left in place. A guest operation is therefore seconds, not milliseconds, by design."
     }
   ]
 }

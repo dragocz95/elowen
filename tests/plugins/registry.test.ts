@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 // @ts-expect-error — plain .mjs plugin module, no types
 import { controlCommandsFrom } from '../../packages/plugin-shared/chatCommands.mjs';
-import { PluginRegistry } from '../../src/plugins/registry.js';
+import { PluginRegistry, projectScopedTools } from '../../src/plugins/registry.js';
 import { createWorkspacePathView } from '../../src/plugins/pathView.js';
 import { runWithPolicy } from '../../src/plugins/policyContext.js';
 import { assertPathAllowed } from '../../src/plugins/pathGuard.js';
@@ -60,6 +60,36 @@ describe('PluginRegistry', () => {
       expect(reg.toolsFor(5, accessUser()).map((t) => t.name)).toEqual(['shared', 'bob']);
       expect(reg.toolsFor(null).map((t) => t.name)).toEqual(['shared']);
       expect(reg.toolsFor(undefined).map((t) => t.name)).toEqual(['shared']);
+    });
+
+    it('scopes a project-bound declaration to its project without widening anything else', () => {
+      // The central personal integrations (OneDrive, GitHub, image tools, todo, stats, web) are scoped
+      // by ACCOUNT and reach external services with that account's own credentials. Project scoping was
+      // added beside them, so the property worth pinning is that it narrows only what it marks: a
+      // personal tool must not become visible to another account, and must not start depending on which
+      // project happens to be selected.
+      const reg = new PluginRegistry();
+      const ctx = reg.contextFor('mcp', {}, noopLog);
+      ctx.registerTool(tool('OneDriveUpload', 'amy-integration'), { ownerUserId: 4 });
+      ctx.registerTool(tool('shared', 'shared'));
+      ctx.registerTool(tool('mcp__proj__deploy', 'bound'), { projectId: 7 });
+
+      expect(reg.projectBoundTools.get('mcp__proj__deploy')).toBe(7);
+      expect(reg.projectBoundTools.has('OneDriveUpload')).toBe(false);
+
+      const amyTools = reg.toolsFor(4, accessUser());
+      const inProject = projectScopedTools(amyTools, reg.projectBoundTools, 7).map((t) => t.name);
+      const outsideProject = projectScopedTools(amyTools, reg.projectBoundTools, null).map((t) => t.name);
+
+      // The personal integration is present in both, so project scoping did not narrow it…
+      expect(inProject).toContain('OneDriveUpload');
+      expect(outsideProject).toContain('OneDriveUpload');
+      // …and it is still absent for a different account, so project scoping did not widen it either.
+      const bobInProject = projectScopedTools(reg.toolsFor(5, accessUser()), reg.projectBoundTools, 7).map((t) => t.name);
+      expect(bobInProject).not.toContain('OneDriveUpload');
+      // The bound declaration is the only thing the project decides.
+      expect(inProject).toContain('mcp__proj__deploy');
+      expect(outsideProject).not.toContain('mcp__proj__deploy');
     });
 
     it('lets an owner-scoped definition override the same instance tool name only for that owner', () => {
