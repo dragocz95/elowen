@@ -19,6 +19,7 @@ import {
 import type { TurnAutomation } from '../plugins/policyContext.js';
 import { collectImageFiles, isPersistedImageBlock } from '../brain/chatImages.js';
 import { clearedToolResultContent } from '../brain/session/toolResultClearing.js';
+import { WIRE_FRAMES_KEY, type TurnWireFrames } from '../brain/session/turnPrompt.js';
 import { collectChatFiles, type StoredChatFile } from '../brain/chatFiles.js';
 import { rollupActivatedTools } from '../brain/continuity/activatedTools.js';
 import { rollupWorkingSet } from '../brain/continuity/workingSet.js';
@@ -1143,6 +1144,40 @@ export class BrainStore {
         });
         if (serialized === row.content) continue;
         update.run(serialized, sessionId, row.id);
+        rewritten += 1;
+      }
+      return rewritten;
+    })();
+  }
+
+  /** Replace the stored turn frames of the named user rows with the stripped ones the cold pass has just
+   *  put in front of the model, in ONE transaction.
+   *
+   *  Rows are addressed by id because the caller has already paired each of them with the live message it
+   *  reproduces byte for byte; the row's own `content` — the person's words — is never touched, so the
+   *  transcript, the export, the titler and the curator keep reading exactly what they read before. A row
+   *  that no longer carries frames is skipped rather than given any, which is the normal outcome for a
+   *  pass racing a rewrite. Returns how many rows changed. */
+  clearHistoricalFrameRows(sessionId: string, entries: readonly { id: string; frames: TurnWireFrames }[]): number {
+    if (entries.length === 0) return 0;
+    return this.db.transaction((): number => {
+      const read = this.db.prepare(
+        `SELECT content FROM brain_messages WHERE session_id = ? AND id = ? AND role = 'user' AND pending <> ${DISCARDED_MESSAGE}`
+      );
+      const update = this.db.prepare('UPDATE brain_messages SET content = ? WHERE session_id = ? AND id = ?');
+      let rewritten = 0;
+      for (const entry of entries) {
+        const row = read.get(sessionId, entry.id) as { content: string } | undefined;
+        if (!row) continue;
+        let parsed: unknown;
+        try { parsed = JSON.parse(row.content); }
+        catch { continue; } // a corrupt row is skipped here exactly as rehydration skips it
+        if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) continue;
+        const message = parsed as Record<string, unknown>;
+        if (!Object.hasOwn(message, WIRE_FRAMES_KEY)) continue;
+        const serialized = JSON.stringify({ ...message, [WIRE_FRAMES_KEY]: entry.frames });
+        if (serialized === row.content) continue;
+        update.run(serialized, sessionId, entry.id);
         rewritten += 1;
       }
       return rewritten;

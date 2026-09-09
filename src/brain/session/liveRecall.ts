@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import type { ExtensionAPI } from '@earendil-works/pi-coding-agent';
 import type { PiAgentMessage } from './historyImageStripping.js';
-import { stripTurnContextFrames } from './turnContextFrame.js';
+import { stripRuntimeFrames } from './runtimeFrames.js';
 import { isMetaUserMessage, isUserTurn } from './userTurn.js';
 import { frameUntrusted, TOOL_SUBJECT_KEYS } from '../messageView.js';
 import { memoryAgeDays, memoryStalenessNote } from '../memoryStaleness.js';
@@ -148,17 +148,6 @@ function textOf(message: ContextMessage): string {
     }
   }
   return parts.join('\n');
-}
-
-/** Turn-start and plugin context frames are delivered inside canonical user messages, not as PI meta
- *  messages. They are prompt scaffolding rather than work the agent performed, so embedding them would
- *  make recall search from prior memories and runtime instructions instead of the current task. */
-function stripRuntimeFrames(text: string): string {
-  let clean = text;
-  for (const tag of ['user_memories', 'permissions', 'system-reminder', 'plugin_context']) {
-    clean = clean.replace(new RegExp(`<${tag}\\b[^>]*>[\\s\\S]*?<\\/\\s*${tag}\\s*>`, 'gi'), ' ');
-  }
-  return stripTurnContextFrames(clean);
 }
 
 /** Build the search query from what the turn has been DOING — the tail of tool results and assistant
