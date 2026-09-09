@@ -81,6 +81,8 @@ describe('resolveAgentTools', () => {
   it('maps read-only to the read-only toolset including Bash', () => {
     expect(resolveAgentTools(def('read-only'))).toEqual(READ_ONLY_AGENT_TOOLS);
     expect(resolveAgentTools(def('read-only'))).toContain('Bash');
+    // Loading a skill reads a file; a read-only child told to load one must not be left with ToolSearch.
+    expect(resolveAgentTools(def('read-only'))).toContain('SkillLoad');
   });
   it('maps all / inherit to no restriction and a list to itself', () => {
     expect(resolveAgentTools(def('all'))).toBeUndefined();

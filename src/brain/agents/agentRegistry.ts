@@ -29,6 +29,9 @@ export const READ_ONLY_AGENT_TOOLS: readonly string[] = [
   'LspDocumentSymbol', 'LspWorkspaceSymbol',
   // Outside world and documentation.
   'WebSearch', 'WebFetch', 'DocsSearch', 'ScanCode',
+  // Loading a skill is reading a file the catalog already advertised to the child; without it a read-only
+  // child told to load one ends up hunting for SkillLoad through ToolSearch.
+  'SkillLoad',
   // Memory reads are listed one by one rather than by prefix so write operations stay out.
   'MemorySearch', 'MemoryListRecent', 'MemoryCategories',
   // Its own checklist, and reading what earlier sub-agents concluded.
