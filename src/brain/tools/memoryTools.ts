@@ -297,7 +297,13 @@ function memoryListRecent(d: MemoryToolDeps) {
       const userId = actingUserId();
       if (userId === null) return text(LOCKED);
       const rows = d.service.listRecent(userId, p.limit ?? 10);
-      if (rows.length === 0) return text('No memories stored yet.');
+      // The listing is category-scoped by design, so "empty" means "nothing RECALLABLE here" — the
+      // description says so explicitly. Answering "nothing is stored" contradicted that contract and
+      // reported a freshly stored, still-uncategorized memory as absent.
+      if (rows.length === 0) {
+        return text('No memories are recallable in this conversation scope. Stored memories may still be '
+          + 'uncategorized or belong to another project.');
+      }
       return text(rows.map(renderMemory).join('\n'));
     },
   });

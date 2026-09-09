@@ -388,6 +388,31 @@ describe('workflow engine', () => {
     expect(h.runs.find((run) => run.task === 'leaf')?.workspaceRef).toEqual({ workspaceId: 'ws_root', projectId: 1 });
   });
 
+  /** A refusal returned as ordinary text is persisted with `isError: false`, so the transcript records a
+   *  rejected expansion as a SUCCESSFUL call and the model reads its own failure as an answer. Every
+   *  WorkflowAddNodes rejection must throw: PI is what marks a result as an error, and it marks on throw. */
+  it('throws when the workflow has already finished instead of reporting the refusal as success', async () => {
+    const h = harness();
+    await h.tools.get('WorkflowStart')!.execute('finished-wf', {
+      nodesFile: workflowFile([{ id: 'only', task: 'only' }]),
+    });
+    const workflowId = h.snapshots[0]!.id;
+
+    // The origin session stays authorized after completion, so this is the lifecycle refusal itself and
+    // not an authorization miss: the exact case the live audit hit when a one-node DAG finished first.
+    await expect(h.tools.get('WorkflowAddNodes')!.execute('finished-add', {
+      workflowId, nodes: [{ id: 'late', task: 'late' }],
+    })).rejects.toThrow(/already finished/);
+  });
+
+  it('throws for an unknown or unauthorized workflow id rather than reporting success', async () => {
+    const h = harness();
+
+    await expect(h.tools.get('WorkflowAddNodes')!.execute('unknown-add', {
+      workflowId: 'wf-does-not-exist', nodes: [{ id: 'x', task: 'x' }],
+    })).rejects.toThrow();
+  });
+
   it('lets explicit start arguments override reusable file options', async () => {
     const { tools, snapshots, contextOf } = harness();
     const start = tools.get('WorkflowStart');
@@ -1167,10 +1192,12 @@ describe('workflow engine', () => {
       nodes: [{ id: 'leaf', task: 'leaf', deps: ['root'] }],
     });
     expect(added.content[0]!.text).toMatch(/Added 1 node.*leaf/);
-    // A foreign subagent session (not part of this workflow) must still be refused.
+    // A foreign subagent session (not part of this workflow) must still be refused — and the refusal has
+    // to THROW, so the host persists it as an error result instead of a successful call whose text merely
+    // happens to say "no running workflow".
     sessionId = 's-stranger';
-    const denied = await tools.get('WorkflowAddNodes')!.execute('a2', { workflowId: wfId, nodes: [{ id: 'x', task: 'x' }] });
-    expect(denied.content[0]!.text).toMatch(/no running workflow/);
+    await expect(tools.get('WorkflowAddNodes')!.execute('a2', { workflowId: wfId, nodes: [{ id: 'x', task: 'x' }] }))
+      .rejects.toThrow(/no running workflow/);
     releaseRoot();
     const res = await startP;
     expect(launched).toEqual(['root', 'leaf']);
