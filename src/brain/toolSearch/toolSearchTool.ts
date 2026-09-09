@@ -647,8 +647,11 @@ export function toolSearchTool(handle: ToolSearchHandle): ToolDefinition {
             clauses.push(`No tool named ${unknown.join(', ')} exists in this session. ${handle.deferred.size} tool(s) are deferred; try different keywords if that was a search.`);
           }
           if (clauses.length) {
-            return ok(clauses.join(' '), {
+            // Skill matches ride every keyword answer, this exact-name one included: a bare query that
+            // names no tool but IS a skill ("runbook") would otherwise drop the pointer at SkillLoad.
+            return ok(`${clauses.join(' ')}${skillNote}`, {
               matched: [],
+              ...skillDetails,
               ...(alreadyActive.length ? { alreadyActive } : {}),
               ...(forbidden.length ? { unavailable: forbidden } : {}),
               ...(unknown.length ? { unknown } : {}),

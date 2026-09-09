@@ -748,6 +748,21 @@ describe('toolSearchTool.execute', () => {
       expect(res.content[0].text).toMatch(/Related skills: daemon-triage/);
     });
 
+    // A single-word query that names no tool but IS a skill ("runbook") lands in the unknown-exact-name
+    // branch — which used to answer {"matched":[],"unknown":["runbook"]} and dropped the skill pointer
+    // entirely, while the same query with a second word reported the skill fine.
+    it('mentions a matching skill on the unknown-exact-name answer too', async () => {
+      const handle = createToolSearchHandle(new Set(['RestartDaemon']), undefined, undefined, {
+        skills: skillsGetter([{ name: 'runbook', description: 'Operational runbook for on-call' }]),
+      });
+      handle.session = fakeSession(['ToolSearch'], TOOLS);
+      const res = await run(toolSearchTool(handle), 'runbook');
+      expect((res.details as { matched: string[] }).matched).toEqual([]);
+      expect((res.details as { unknown?: string[] }).unknown).toEqual(['runbook']);
+      expect((res.details as { skills?: string[] }).skills).toEqual(['runbook']);
+      expect(res.content[0].text).toMatch(/Related skills: runbook/);
+    });
+
     it('omits details.skills when there is no getter or no match', async () => {
       const withoutGetter = createToolSearchHandle(new Set(['RestartDaemon']));
       withoutGetter.session = fakeSession(['ToolSearch'], TOOLS);
