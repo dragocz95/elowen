@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { openDb } from '../../../src/store/db.js';
 import { SearchVectorStore } from '../../../src/store/searchVectorStore.js';
 import type { EmbeddingConfig } from '../../../src/embeddings/embeddingService.js';
@@ -136,6 +136,36 @@ describe('ToolSemanticIndex', () => {
     // One WARN per boot total — a broken endpoint must not spam one line per ToolSearch call.
     await index.rank('q2', [{ id: 'a', text: 'doc' }]);
     expect(captured.filter((c) => c.level === 'warn')).toHaveLength(1);
+  });
+
+  // warnOnce only quiets the LOG — without a breaker a dead endpoint still costs the full timeout
+  // budget on every ToolSearch call, forever.
+  it('trips a circuit breaker after a failure: the cooldown makes no embedding attempts', async () => {
+    let embedCalls = 0;
+    const index = new ToolSemanticIndex({
+      embeddings: { embedBatch: async () => { embedCalls++; throw new Error('embeddings HTTP 503'); } },
+      embeddingConfig: () => CFG,
+    });
+    expect((await index.rank('q', [{ id: 'a', text: 'doc' }])).size).toBe(0);
+    expect((await index.rank('q2', [{ id: 'a', text: 'doc' }])).size).toBe(0);
+    expect(embedCalls).toBe(1); // the endpoint was not tried again inside the cooldown
+  });
+
+  it('closes the circuit again once the cooldown has passed', async () => {
+    vi.useFakeTimers();
+    try {
+      let embedCalls = 0;
+      const index = new ToolSemanticIndex({
+        embeddings: { embedBatch: async (_cfg, texts) => { embedCalls++; if (embedCalls === 1) throw new Error('down'); return texts.map(() => unitVec(1, 0)); } },
+        embeddingConfig: () => CFG,
+      });
+      expect((await index.rank('q', [{ id: 'a', text: 'doc' }])).size).toBe(0);
+      vi.setSystemTime(Date.now() + 61_000); // past the breaker cooldown
+      expect((await index.rank('q', [{ id: 'a', text: 'doc' }])).get('a')).toBeGreaterThan(0);
+      expect(embedCalls).toBe(2);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('warns once per boot when no embedding model is configured, then stays silent', async () => {

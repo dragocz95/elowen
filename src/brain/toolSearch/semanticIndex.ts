@@ -40,6 +40,11 @@ export const SEMANTIC_SEARCH_TIMEOUT_MS = 1_500;
  *  memory recall: it answers the identical question against the same operator-configured model. */
 const MIN_SEMANTIC_SCORE = 0.3;
 
+/** How long one embeddings failure keeps the ranker off the network. `warnOnce` quiets the LOG, not the
+ *  ATTEMPTS: without this, a dead endpoint costs the full timeout budget on every ToolSearch call for
+ *  as long as the process lives. The breaker is closed again by the next call after the cooldown. */
+const BREAKER_COOLDOWN_MS = 60_000;
+
 /** Longest document text embedded verbatim. Tool descriptions are capped well below this by the prompt
  *  pipeline; the clamp only bounds a hostile/outlier schema so one batch stays one batch. */
 const MAX_DOC_CHARS = 1_000;
@@ -59,6 +64,8 @@ export class ToolSemanticIndex {
   private readonly cache?: SemanticVectorCache;
   private readonly timeoutMs: number;
   private warnedUnavailable = false;
+  /** Epoch ms until which the endpoint is assumed down; 0 = closed. Set on any ranking failure. */
+  private breakerOpenUntil = 0;
 
   constructor(deps: ToolSemanticIndexDeps) {
     this.embeddings = deps.embeddings;
@@ -77,6 +84,8 @@ export class ToolSemanticIndex {
       this.warnOnce(`semantic ToolSearch ranking is off — no embedding model configured (Settings → Memory); keyword ranking answers alone`);
       return scores;
     }
+    // Circuit breaker: within the cooldown after a failure, skip the network attempt entirely.
+    if (Date.now() < this.breakerOpenUntil) return scores;
 
     const q = clamp(query);
     const docTexts = docs.map((d) => clamp(d.text));
@@ -92,12 +101,14 @@ export class ToolSemanticIndex {
     try {
       vectors = await this.embeddings.embedBatch(cfg, batch, controller.signal);
     } catch (e) {
+      this.breakerOpenUntil = Date.now() + BREAKER_COOLDOWN_MS;
       this.warnOnce(`semantic ToolSearch ranking unavailable (${e instanceof Error ? e.message : String(e)}) — falling back to keyword ranking`);
       return scores;
     } finally {
       clearTimeout(timer);
     }
     if (vectors.length !== batch.length) {
+      this.breakerOpenUntil = Date.now() + BREAKER_COOLDOWN_MS;
       this.warnOnce('semantic ToolSearch ranking unavailable (embeddings malformed response) — falling back to keyword ranking');
       return scores;
     }
