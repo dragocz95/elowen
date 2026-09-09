@@ -18,6 +18,17 @@ const rawWorkflowFile = (contents: string): string => {
 
 const workflowFile = (definition: unknown): string => rawWorkflowFile(JSON.stringify(definition));
 
+/** Guest files of a MANAGED project turn, keyed by absolute guest path. They have no host existence at
+ *  all — which is the whole point: on a managed turn the host path guard refuses every path, so a
+ *  definition the model created with Write is reachable only through the host's guest seam. */
+const guestWorkflowFiles = new Map<string, string>();
+const rawGuestWorkflowFile = (contents: string): string => {
+  const path = `/workspace/workflow-${workflowFileCount++}.json`;
+  guestWorkflowFiles.set(path, contents);
+  return path;
+};
+const guestWorkflowFile = (definition: unknown): string => rawGuestWorkflowFile(JSON.stringify(definition));
+
 const assertTestPathAllowed = (path: string): string => {
   const abs = resolve(path);
   if (abs !== workflowFilesDir && !abs.startsWith(`${workflowFilesDir}${sep}`)) {
@@ -62,7 +73,9 @@ interface Tool {
 /** Build a workflow harness: a mock plugin ctx that captures the registered tools + emitted snapshots,
  *  and a controllable fake `run` handler. `run` resolves each node to `done:<task>` unless the task
  *  contains "FAIL" (then it returns an Error), recording the order nodes were launched. */
-const TEST_ACCESS = { admin: false, projectIds: [1], owner: true, permissionBoundary: null, contributionUserId: 1, accountUserId: 1 } as const;
+// Not `as const`: every spread of this into a mutable `currentAccess()` shape would otherwise be a type
+// error, because `as const` makes `projectIds` a readonly tuple.
+const TEST_ACCESS = { admin: false, projectIds: [1], owner: true, permissionBoundary: null, contributionUserId: 1, accountUserId: 1 };
 
 interface WorkflowControl {
   cancelForSession(input: { sessionId: string }): { cancelled: number };
@@ -170,7 +183,7 @@ function harness(opts: {
   /** Mutable so a test can narrow the caller's access boundary between a start and a resume, the way an
    *  operator revoking a project or disabling tools does to a real conversation. */
   const access: {
-    current: { admin: boolean; projectIds: number[]; owner: boolean; permissionBoundary: null; toolPolicy?: { allow?: string[]; deny?: string[] }; readOnly?: boolean; contributionUserId?: number; accountUserId?: number; workspaceRef?: { workspaceId: string; projectId: number } };
+    current: { admin: boolean; projectIds: number[]; owner: boolean; permissionBoundary: null; toolPolicy?: { allow?: string[]; deny?: string[] }; readOnly?: boolean; contributionUserId?: number; accountUserId?: number; workspaceRef?: { workspaceId: string; projectId: number }; projectRef?: { kind: 'managed'; projectId: number } };
   } = {
     current: { ...TEST_ACCESS, toolPolicy: opts.toolPolicyAllow ? { allow: opts.toolPolicyAllow } : undefined },
   };
@@ -181,6 +194,10 @@ function harness(opts: {
   const warnings: string[] = [];
   /** Every sibling control the engine asked for. `sandbox` must never appear: the real registry refuses it. */
   const controlsAsked: string[] = [];
+  /** Paths the engine put through the HOST path guard, and paths it read from the guest. A managed turn
+   *  must appear only in the second list: the two routes never mix. */
+  const pathGuardCalls: string[] = [];
+  const managedReads: string[] = [];
   /** The durable completions a background run handed the host, in delivery order. */
   const completions: { toolCallId: string; status: string; result: string; run?: number }[] = [];
   const ctx = {
@@ -203,7 +220,23 @@ function harness(opts: {
     // path that resolved to nothing in production while every test passed.
     control: (name: string) => { controlsAsked.push(name); return undefined; },
     resolveWorkspaceScope: testWorkspaceScope,
-    assertPathAllowed: assertTestPathAllowed,
+    // The real `assertPathAllowed` refuses EVERY host path on a managed project turn (pathGuard.ts):
+    // the guest is a different filesystem, so there is nothing on the host to resolve against.
+    assertPathAllowed: (path: string) => {
+      pathGuardCalls.push(path);
+      if (access.current.projectRef?.kind === 'managed') throw new Error('managed project paths require the guest filesystem provider');
+      return assertTestPathAllowed(path);
+    },
+    // The host's own guest reader, exposed instead of the Sandbox control the plugin may not have. It
+    // resolves the project from the HOST turn scope, so the plugin names no project and cannot reach
+    // another one.
+    readManagedProjectFile: async (path: string) => {
+      managedReads.push(path);
+      if (access.current.projectRef?.kind !== 'managed') throw new Error('managed project artifacts require a managed project turn');
+      const contents = guestWorkflowFiles.get(path);
+      if (contents === undefined) throw new Error(`cannot find ${path.split('/').pop()}.`);
+      return contents;
+    },
     sanitizePathOutput: (text: string) => text,
     workflowEmitter: () => (u: (typeof snapshots)[number]) => { snapshots.push(u); },
     workflowCompletionEmitter: () => (c: { toolCallId: string; status: string; result: string; run?: number }) => { completions.push(c); },
@@ -229,7 +262,7 @@ function harness(opts: {
   registerWorkflow(ctx, () => run, helpers);
   /** Everything the node can read, as one string — the chunks are a transport detail, not the content. */
   const contextOf = (task: string) => (contexts.get(task) ?? []).join('\n\n');
-  return { tools, controls, snapshots, launched, contexts, contextOf, sessionId, access, model, runs, stoppedSessions, warnings, controlsAsked, completions };
+  return { tools, controls, snapshots, launched, contexts, contextOf, sessionId, access, model, runs, stoppedSessions, warnings, controlsAsked, completions, pathGuardCalls, managedReads };
 }
 
 describe('workflow engine', () => {
@@ -386,6 +419,87 @@ describe('workflow engine', () => {
 
     expect(res.content[0]?.text).toBe(`Error: cannot read workflow file "${outside}": path not allowed: "${outside}" is outside your accessible repositories. Create or correct the file inside an accessible repository, then call WorkflowStart again.`);
     expect(launched).toEqual([]);
+  });
+
+  // The acceptance failure: the tool tells the model to create the definition with Write, Write routes a
+  // managed project through the guest provider, and WorkflowStart then read the HOST filesystem — where
+  // that file does not exist and the path guard refuses every path anyway. The documented sequence could
+  // not complete inside a managed project at all.
+  it('reads a managed project definition from the guest and runs the workflow', async () => {
+    const { tools, launched, access, pathGuardCalls, managedReads } = harness();
+    access.current = { ...TEST_ACCESS, toolPolicy: undefined, projectRef: { kind: 'managed', projectId: 1 } };
+    const start = tools.get('WorkflowStart');
+    if (!start) throw new Error('WorkflowStart was not registered');
+    const nodesFile = guestWorkflowFile([{ id: 'guest', task: 'guest-node' }]);
+
+    const res = await start.execute('managed', { nodesFile });
+
+    expect(res.content[0]?.text).toMatch(/status: done/);
+    expect(res.content[0]?.text).toContain('done:guest-node');
+    expect(launched).toEqual(['guest-node']);
+    // The two routes never mix: the host guard is not consulted at all, and the guest read names only
+    // the path — the project comes from the host turn scope, so no other project is addressable.
+    expect(pathGuardCalls).toEqual([]);
+    expect(managedReads).toEqual([nodesFile]);
+  });
+
+  it('accepts the object form and start-argument overrides from a guest definition', async () => {
+    const { tools, snapshots, access } = harness();
+    access.current = { ...TEST_ACCESS, toolPolicy: undefined, projectRef: { kind: 'managed', projectId: 1 } };
+    const start = tools.get('WorkflowStart');
+    if (!start) throw new Error('WorkflowStart was not registered');
+    const nodesFile = guestWorkflowFile({ title: 'File title', nodes: [{ id: 'guest', task: 'guest-node' }] });
+
+    const res = await start.execute('managed-object', { nodesFile, title: 'Argument title' });
+
+    expect(res.content[0]?.text).toMatch(/status: done/);
+    expect(snapshots[0]?.title).toBe('Argument title');
+  });
+
+  it('reports a missing guest definition without falling back to the host filesystem', async () => {
+    const { tools, launched, access, pathGuardCalls } = harness();
+    access.current = { ...TEST_ACCESS, toolPolicy: undefined, projectRef: { kind: 'managed', projectId: 1 } };
+    const start = tools.get('WorkflowStart');
+    if (!start) throw new Error('WorkflowStart was not registered');
+
+    // A real host path on a managed turn: it exists on disk, and must STILL not be read.
+    const hostPath = workflowFile([{ id: 'host', task: 'host-node' }]);
+    const res = await start.execute('managed-missing', { nodesFile: hostPath });
+
+    // The remedy names the filesystem the caller is actually on. Pointing a managed caller at "an
+    // accessible repository" would send it looking for a host directory it cannot reach.
+    expect(res.content[0]?.text).toMatch(/^Error: cannot read workflow file .* Create or correct the file inside the managed project, for example under \/workspace, then call WorkflowStart again\.$/);
+    expect(res.content[0]?.text).not.toContain('accessible repository');
+    expect(launched).toEqual([]);
+    expect(pathGuardCalls).toEqual([]);
+  });
+
+  // The host-only guidance sent the acceptance run to a directory that does not exist in a managed
+  // project, and told it the directory "already exists" while it did.
+  it('offers a guest path in its guidance and never only the host workflow directory', () => {
+    const { tools } = harness();
+    const start = tools.get('WorkflowStart');
+    if (!start) throw new Error('WorkflowStart was not registered');
+    const nodesFileDoc = (start.parameters?.properties?.nodesFile as { description?: string } | undefined)?.description ?? '';
+    const guidance = `${start.description ?? ''} ${nodesFileDoc}`;
+
+    expect(guidance).toContain('/workspace/workflow.json');
+    expect(guidance).toMatch(/managed project/i);
+    // The "(it already exists)" reassurance stays attached to the host directory it is true of.
+    const alreadyExists = guidance.indexOf('it already exists');
+    expect(alreadyExists).toBeGreaterThan(-1);
+    expect(guidance.slice(0, alreadyExists)).toContain(workflowFilesDir);
+  });
+
+  it('reports invalid guest JSON with the same actionable diagnostic as the host route', async () => {
+    const { tools, access } = harness();
+    access.current = { ...TEST_ACCESS, toolPolicy: undefined, projectRef: { kind: 'managed', projectId: 1 } };
+    const start = tools.get('WorkflowStart');
+    if (!start) throw new Error('WorkflowStart was not registered');
+    const nodesFile = rawGuestWorkflowFile('{');
+
+    expect((await start.execute('managed-json', { nodesFile })).content[0]?.text)
+      .toMatch(/^Error: workflow file .* contains invalid JSON .* Fix the JSON syntax in the file, then call WorkflowStart again\.$/);
   });
 
   it('returns actionable file and node diagnostics without echoing the payload', async () => {

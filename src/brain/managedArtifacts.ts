@@ -174,6 +174,15 @@ export async function statGuestFile(guest: GuestAccess, path: string): Promise<G
   }
 }
 
+/** A size a person can act on, in the unit that actually fits it. Rounding everything to whole megabytes
+ *  reported the 512 KiB guest bound as a "1 MB limit" that a 0.6 MB file was somehow over, and any bound
+ *  under half a megabyte as "0 MB". Below one mebibyte the answer is in KiB; at or above it, megabytes to
+ *  one decimal with a trailing `.0` dropped, so the 25 MB and 10 MB share limits read exactly as before.
+ *  KiB round UP: a file one byte over the bound must not read as "512 KiB, over the 512 KiB limit". */
+function byteLabel(bytes: number): string {
+  return bytes >= 1048576 ? `${Number((bytes / 1048576).toFixed(1))} MB` : `${Math.ceil(bytes / 1024)} KiB`;
+}
+
 /** Read at most `maxBytes` of one guest file, in bounded chunks pinned to the INITIAL stat: the size and
  *  version are fixed up front, every chunk must agree with them (a grown or rewritten file changes its
  *  content version and is refused rather than read across the change), each response is validated BEFORE
@@ -191,7 +200,7 @@ export async function readGuestFileBounded(
   if (!entry) return `cannot find ${name}.`;
   if (entry.kind !== 'file') return `${name} is not a file.`;
   if (entry.size > maxBytes) {
-    return `${name} is ${(entry.size / 1048576).toFixed(1)} MB, over the ${(maxBytes / 1048576).toFixed(0)} MB limit.`;
+    return `${name} is ${byteLabel(entry.size)}, over the ${byteLabel(maxBytes)} limit.`;
   }
   if (typeof entry.version !== 'string' || !entry.version) return `managed filesystem returned an invalid version for ${name}.`;
   const version = entry.version;

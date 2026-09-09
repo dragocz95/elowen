@@ -245,6 +245,18 @@ const safePath = ctx.assertPathAllowed(requestedPath);
 
 `assertPathAllowed` applies the current project and symlink policy. Do not reproduce path checks or infer another plugin's data directory. `ctx.defaultCwd()` is the safe default working directory for the current turn; `ctx.workDir()` reports whether the turn is actually bound to a Project.
 
+A MANAGED project has no host filesystem, so `assertPathAllowed` refuses every path there and the file tools write into the guest instead. A plugin that reads back a file the model just created must branch on the execution target first and take the guest route:
+
+```javascript
+const text = ctx.currentAccess().projectRef?.kind === 'managed'
+  ? await ctx.readManagedProjectFile(requestedPath)
+  : readFileSync(ctx.assertPathAllowed(requestedPath), 'utf8');
+```
+
+Branch on the execution target, never on a refusal message, and never fall back from one route to the other. `readManagedProjectFile` resolves the project and account from the host turn scope, so the path is all the plugin supplies.
+
+It hands back guest file content, so it carries the read half of the Sandbox control's authority and is gated the same way that control is: by the `reads:['controls']` grant AND by an allowlist of caller names in the registry. Declaring the capability does not open it — adding a plugin means editing that list, deliberately, in core.
+
 When a tool result can only carry a bounded excerpt of what the tool produced, persist the whole output rather than discarding the rest:
 
 ```javascript
