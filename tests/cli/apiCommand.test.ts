@@ -1,7 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { runApiCommand } from '../../src/cli/commands.js';
 import { callElowenApi, type CallResult } from '../../src/shared/apiClient.js';
-import { noTimeoutDispatcher } from '../../src/cli/noTimeoutDispatcher.js';
+import { noTimeoutDispatcher, noTimeoutFetch } from '../../src/cli/noTimeoutDispatcher.js';
 
 const okData = (data: unknown): CallResult => ({ status: 200, ok: true, data, text: '' });
 
@@ -61,15 +61,18 @@ describe('runApiCommand', () => {
 
   // Regression: `elowen api POST /brain/compact` died with `fetch failed` after undici's default
   // 300 s headersTimeout/bodyTimeout, while the daemon answered the request successfully.
-  it('passes a no-timeout dispatcher so long routes are not aborted', async () => {
-    let seen: unknown;
+  it('fetches through undici with a no-timeout dispatcher so long routes are not aborted', async () => {
+    let seen: { fetchImpl?: unknown; dispatcher?: unknown } | undefined;
     await runApiCommand(['POST', '/brain/compact'], { ELOWEN_URL: 'http://d', ELOWEN_TOKEN: 't' } as NodeJS.ProcessEnv, {
-      call: async (_m, _p, _b, opts) => { seen = opts.dispatcher; return okData({}); },
+      call: async (_m, _p, _b, opts) => { seen = opts; return okData({}); },
       out: () => {}, err: () => {},
     });
-    expect(seen).toBe(noTimeoutDispatcher());
-    const options = Object.getOwnPropertySymbols(seen as object)
-      .map((s) => (seen as Record<symbol, unknown>)[s])
+    // Node's global fetch ignores a dispatcher from the npm undici package, so the api verb must
+    // fetch through undici's own fetch — the only one that honours init.dispatcher.
+    expect(seen?.fetchImpl).toBe(noTimeoutFetch);
+    expect(seen?.dispatcher).toBe(noTimeoutDispatcher());
+    const options = Object.getOwnPropertySymbols(seen?.dispatcher as object)
+      .map((s) => ((seen?.dispatcher ?? {}) as Record<symbol, unknown>)[s])
       .find((v): v is { headersTimeout: number; bodyTimeout: number } => !!v && typeof v === 'object' && 'headersTimeout' in v);
     expect(options?.headersTimeout).toBe(0);
     expect(options?.bodyTimeout).toBe(0);

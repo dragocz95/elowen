@@ -4,24 +4,20 @@
  * `fetch failed`. `elowen api` is the operator escape hatch for arbitrarily long routes, so it waits
  * as long as the daemon takes: undici reads 0 as "no timeout".
  *
- * undici is not a package dependency here — it is Node's built-in fetch implementation — so the Agent
- * class is taken from the global dispatcher instance, which constructing a `Request` forces Node to
- * create. If that internal shape ever changes, `api` silently keeps the default timeouts rather than
- * failing outright.
+ * The dispatcher has to ride on undici's own `fetch`: Node's global fetch ignores a `dispatcher` from
+ * the npm undici package (a 100 ms headersTimeout agent let an 800 ms response through untouched),
+ * while the package's fetch honours it — so `runApiCommand` passes both through the `CallOpts`
+ * opt-in.
  */
-let cached: { value: unknown } | undefined;
+import { Agent, fetch as undiciFetch } from 'undici';
 
-export function noTimeoutDispatcher(): unknown {
-  if (!cached) {
-    let value: unknown;
-    try {
-      new Request('http://localhost/');
-      const globalDispatcher = (globalThis as unknown as Record<symbol, { constructor: new (opts: unknown) => unknown } | undefined>)[
-        Symbol.for('undici.globalDispatcher.1')
-      ];
-      value = globalDispatcher ? new globalDispatcher.constructor({ headersTimeout: 0, bodyTimeout: 0 }) : undefined;
-    } catch { value = undefined; }
-    cached = { value };
-  }
-  return cached.value;
+let cached: Agent | undefined;
+
+export function noTimeoutDispatcher(): Agent {
+  cached ??= new Agent({ headersTimeout: 0, bodyTimeout: 0 });
+  return cached;
 }
+
+/** The `fetchImpl` for the api command — undici's fetch is the only one that honours the dispatcher
+ *  above. Every other CLI call keeps the default `globalThis.fetch` and its 300 s timeouts. */
+export const noTimeoutFetch = undiciFetch as unknown as typeof fetch;
