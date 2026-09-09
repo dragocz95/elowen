@@ -379,8 +379,9 @@ export function ProjectsView() {
                     <ProjectDetailTabs project={selectedProject} isAdmin={isAdmin} overview={<>
                       {selectedProject.notes ? <p className="border-b border-border/70 py-4 text-xs leading-relaxed text-muted-foreground">{selectedProject.notes}</p> : null}
                       {git.isLoading ? <LoadingLine /> : null}
-                      {/* A repository read that could not happen is said out loud. A stopped environment
-                          is the ordinary case and is not an error: nothing here starts one. */}
+                      {/* A repository read that could not happen is said out loud, ONCE. A stopped
+                          environment is the ordinary case and is not an error: nothing here starts one,
+                          and a second generic failure block below would contradict this one. */}
                       {git.isError ? (
                         <p role="alert" className="flex flex-wrap items-center gap-2 py-4 text-xs text-muted-foreground">
                           {git.error instanceof ElowenApiError && git.error.status === 409 ? s.gitEnvironmentStopped : apiErrorMessage(git.error)}
@@ -428,7 +429,6 @@ export function ProjectsView() {
                           </EntityList>
                         </section>
                       ) : null}
-                      {git.isError ? <ErrorState message={t.projects.gitError} onRetry={() => git.refetch()} /> : null}
                     </>} />
                   </WorkspaceDetailRail>
                 ) : null}
