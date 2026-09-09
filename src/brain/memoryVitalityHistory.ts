@@ -23,10 +23,20 @@ import {
 const DAY_MS = 86_400_000;
 
 /** Points on the reconstructed past. Enough to look like a curve at drawer width without making the
- *  response large; recall instants are added on top so a spike is never missed between samples. */
+ *  response large; recall instants are added on top, up to {@link MAX_RECALL_MARKS}, so a spike between
+ *  samples is not missed. */
 const PAST_SAMPLES = 48;
 /** The forecast is a smooth decay with no events in it, so it needs far fewer points. */
 const FORECAST_SAMPLES = 16;
+/** How many recall instants the window may contribute, to `points` and to `recalls` alike.
+ *
+ *  Without a bound these two arrays are as long as the recall log itself, and the drawer draws one chart
+ *  element per mark: a memory recalled 1135 times in the window blocked the browser's main thread for
+ *  13.9 seconds on open and answered with a 103 kB body for a 168px plot. Bounded, the same memory costs
+ *  0.1s and 8 kB. The cap is PAST_SAMPLES, because a mark the sampled curve cannot resolve is one the
+ *  reader cannot resolve either — at drawer width the marks merge into a solid band long before this
+ *  many, so what is lost above the cap is ink rather than information. */
+const MAX_RECALL_MARKS = PAST_SAMPLES;
 /** How far ahead the forecast may run, and how far the eviction scan looks before giving up. */
 const MAX_FORECAST_DAYS = 90;
 const MAX_EVICTION_SCAN_DAYS = 365;
@@ -49,6 +59,18 @@ function stateAt(memory: VitalityMemory, useCount: number, lastUsedMs: number | 
     last_used_at: lastUsedMs === null ? null : new Date(lastUsedMs).toISOString(),
     created_at: memory.created_at,
   };
+}
+
+/** At most `max` items, evenly spaced by position and keeping the first and the last.
+ *
+ *  Thinning rather than truncating: the marks say WHEN a memory was recalled, so dropping the tail would
+ *  end them weeks short of now and read as "not recalled since" — the opposite of what a heavily recalled
+ *  memory is doing. Spacing by position also preserves relative density, so a busy stretch still looks
+ *  busier than a quiet one. */
+function thin<T>(items: readonly T[], max: number): T[] {
+  if (items.length <= max) return [...items];
+  const step = (items.length - 1) / (max - 1);
+  return Array.from({ length: max }, (_, index) => items[Math.round(index * step)]!);
 }
 
 function sampleTimes(fromMs: number, toMs: number, count: number): number[] {
@@ -100,7 +122,10 @@ export function buildVitalityHistory(input: VitalityHistoryInput): MemoryVitalit
   const windowStartMs = Math.max(now - pastDays * DAY_MS, createdMs > 0 ? createdMs : 0);
   const pastStartMs = historyFromMs === null ? null : Math.max(windowStartMs, historyFromMs);
 
-  const inWindow = recallMs.filter((ms) => (pastStartMs !== null && ms >= pastStartMs) && ms <= now);
+  const inWindow = thin(
+    recallMs.filter((ms) => (pastStartMs !== null && ms >= pastStartMs) && ms <= now),
+    MAX_RECALL_MARKS,
+  );
 
   const points: MemoryVitalityPoint[] = [];
   if (pastStartMs !== null && pastStartMs < now) {

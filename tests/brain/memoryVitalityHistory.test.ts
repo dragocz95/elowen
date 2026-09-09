@@ -81,6 +81,28 @@ describe('buildVitalityHistory', () => {
     expect(history.recalls).toEqual([iso(5)]);
   });
 
+  // Every recall in the window used to become both an extra sample in `points` and a mark in `recalls`,
+  // so a heavily recalled memory answered with arrays as long as its recall log. The drawer draws one
+  // chart element per mark, which is why an unbounded array does not stay a size problem: 1135 marks
+  // measured 13.9s of blocked main thread in the browser, against 0.1s once the arrays are bounded.
+  it('bounds both arrays however often the memory was recalled', () => {
+    const recalls = Array.from({ length: 1200 }, (_, index) => iso(29 - (index * 29) / 1199));
+    const history = build(memory({ use_count: 1200, last_used_at: recalls[1199] }), recalls);
+
+    expect(history.recalls.length).toBeLessThanOrEqual(48);
+    expect(history.points.length).toBeLessThanOrEqual(96);
+  });
+
+  // Thinned, not truncated: dropping the tail would move the last mark weeks back and read as "not
+  // recalled since", which is the opposite of what a memory recalled a thousand times is doing.
+  it('keeps the thinned marks spanning the whole recall window', () => {
+    const recalls = Array.from({ length: 1200 }, (_, index) => iso(29 - (index * 29) / 1199));
+    const history = build(memory({ use_count: 1200, last_used_at: recalls[1199] }), recalls);
+
+    expect(history.recalls[0]).toBe(recalls[0]);
+    expect(history.recalls[history.recalls.length - 1]).toBe(recalls[1199]);
+  });
+
   it('never evicts a pinned memory, and says so', () => {
     const history = build(memory({ importance: 5, use_count: 1, last_used_at: iso(200) }), [iso(200)]);
 
