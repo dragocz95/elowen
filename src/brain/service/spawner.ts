@@ -21,14 +21,14 @@ import { estimateTokens, formatSkillsForPrompt } from '@earendil-works/pi-coding
 import { forkExceedsChildWindow, formatForkCacheLine, forkWindowRefusal } from '../session/forkPrefix.js';
 import type { Api, Model } from '@earendil-works/pi-ai';
 import { personalityText } from '../personality.js';
-import { currentWorkDir, type ToolPolicy } from '../../plugins/policyContext.js';
+import { currentContributionUserId, currentWorkDir, currentToolPolicy, type ToolPolicy } from '../../plugins/policyContext.js';
 import { globalMemoryRecallScope, memoryRecallScope } from '../memoryRecallScope.js';
 import type { BrainSessionFactory } from '../session/factory.js';
 import { resolveAutoCompactPct } from '../session/factory.js';
 import { DEFAULT_AUTO_COMPACT_PCT, type LiveBrain, type SpawnOpts, type QueuedMsg, type TurnContextBlocks } from '../session/liveBrain.js';
 import { renderTurnContextFrame } from '../session/turnContextFrame.js';
 import { providerCacheRetentionFloorMs } from '../session/cacheTiming.js';
-import { liveSkillCommandExtension, sessionPromptFragments, skillLoadVisible } from '../session/turnSkills.js';
+import { liveSkillCommandExtension, searchableSkills, sessionPromptFragments, skillLoadVisible } from '../session/turnSkills.js';
 import { delegatedVisibilityToolPolicy } from '../delegatedScope.js';
 import type { BrainEvent } from '../events.js';
 import type { BrainDeps } from '../brainDeps.js';
@@ -68,6 +68,8 @@ interface SpawnerDeps {
   liveRecallBudget: BrainDeps['liveRecallBudget'];
   memoryCategoryStore?: BrainDeps['memoryCategoryStore'];
   memoryCategorizer?: BrainDeps['memoryCategorizer'];
+  /** Semantic re-ranking for the local ToolSearch (daemon-wide; see BrainDeps.toolSearchIndex). */
+  toolSearchIndex?: BrainDeps['toolSearchIndex'];
   /** Registered projects — the write path resolves the current turn's project id to a slug for the
    *  lazily created project category (see MemoryToolDeps.projects). */
   projects?: BrainDeps['projects'];
@@ -451,7 +453,17 @@ export class LiveSessionSpawner {
         // add the local search tool or a local handle: mixing both paths costs the extra model round again
         // and lets historical `addedToolNames` trigger pi's additional_tools replay.
         if (providerHostedToolSearch) return [];
-        toolSearchHandle = createToolSearchHandle(deferred, pluginToolNames, personalToolOwners);
+        // Search extensions, both resolved at CALL time (never a captured generation): the daemon's
+        // semantic index and the LIVE skill catalog. The catalog rides the same skillLoadVisible gate as
+        // the prompt block, so ToolSearch can only suggest a skill this turn could actually load.
+        toolSearchHandle = createToolSearchHandle(deferred, pluginToolNames, personalToolOwners, {
+          semantic: this.d.toolSearchIndex,
+          skills: async () => searchableSkills(
+            { plugins: this.d.plugins, users: this.d.users },
+            currentContributionUserId(),
+            currentToolPolicy(),
+          ),
+        });
         return [toolSearchTool(toolSearchHandle)];
       },
       // Sharing needs a PERSON on the other end, and a sub-agent has none: whatever it shares lands in

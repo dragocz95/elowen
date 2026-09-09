@@ -321,6 +321,7 @@ export class BrainService {
       get liveRecallBudget() { return d.liveRecallBudget; },
       get memoryCategoryStore() { return d.memoryCategoryStore; },
       get memoryCategorizer() { return d.memoryCategorizer; },
+      get toolSearchIndex() { return d.toolSearchIndex; },
       get projects() { return d.projects; },
       get policy() { return d.policy; },
       plugins: () => this.resolvePlugins(),

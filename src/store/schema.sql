@@ -789,9 +789,11 @@ CREATE TABLE IF NOT EXISTS activity_buckets (
 CREATE INDEX IF NOT EXISTS idx_activity_buckets_day ON activity_buckets(day);
 
 -- Embedding cache for the site-wide search ranking (`POST /search/rank`, the command palette's semantic
--- layer). NOT user-scoped and deliberately so: the rows are vectors of the app's OWN interface strings —
--- page titles, settings labels — which every account sees anyway, so caching them per user would embed
--- the same few hundred strings once per account.
+-- layer) and for the semantic ToolSearch ranking. NOT user-scoped and deliberately so: the rows are
+-- vectors of the application's OWN catalog text — page titles, settings labels, tool and skill
+-- descriptions — which every account sees anyway, so caching them per user would embed the same few
+-- hundred strings once per account. Search QUERIES are deliberately not cached: their cardinality is
+-- unbounded, and the FIFO eviction below would push the small, long-lived document vectors out.
 --
 -- `key` is sha256(model \0 text): the model is part of the key rather than a filter, so switching the
 -- embedding model MISSES instead of scoring a query against vectors of a different (possibly

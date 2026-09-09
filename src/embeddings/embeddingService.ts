@@ -23,8 +23,9 @@ export interface EmbeddingConfig {
  *  configured provider OR an explicit local baseUrl — `credentials()` supports either). Shared by the
  *  embed queue (whether to embed) and MemoryService (whether to take the vector path) so the two can
  *  never disagree — a divergence silently strands one side (e.g. queue no-ops while retrieval expects
- *  vectors → empty results with no keyword fallback). */
-export function isEmbeddingConfigured(cfg: EmbeddingConfig | null | undefined): boolean {
+ *  vectors → empty results with no keyword fallback). A type predicate, so a caller that guards on it
+ *  keeps a usable `EmbeddingConfig` afterwards. */
+export function isEmbeddingConfigured(cfg: EmbeddingConfig | null | undefined): cfg is EmbeddingConfig {
   return !!cfg && cfg.model.trim() !== '' && (!!cfg.providerId || !!cfg.baseUrl);
 }
 
@@ -52,26 +53,31 @@ export class EmbeddingService {
     this.fetchImpl = deps.fetchImpl ?? fetch;
   }
 
-  /** Embed a single string → one Float32 vector. */
-  async embed(cfg: EmbeddingConfig, text: string): Promise<Float32Array> {
-    const vecs = await this.request(cfg, [text]);
+  /** Embed a single string → one Float32 vector. `signal` lets the CALLER bound its own wait (the
+   *  30 s cap below stays in force underneath); an aborted signal rejects immediately. */
+  async embed(cfg: EmbeddingConfig, text: string, signal?: AbortSignal): Promise<Float32Array> {
+    const vecs = await this.request(cfg, [text], signal);
     // request() guarantees data.length === input.length (1), so [0] is present.
     return vecs[0]!;
   }
 
-  /** Embed N strings in a SINGLE request → N vectors, in input order. */
-  async embedBatch(cfg: EmbeddingConfig, texts: string[]): Promise<Float32Array[]> {
+  /** Embed N strings in a SINGLE request → N vectors, in input order. `signal` aborts the whole
+   *  batch for this caller without touching any other in-flight request. */
+  async embedBatch(cfg: EmbeddingConfig, texts: string[], signal?: AbortSignal): Promise<Float32Array[]> {
     if (texts.length === 0) return [];
-    return this.request(cfg, texts);
+    return this.request(cfg, texts, signal);
   }
 
   /** Resolve credentials (explicit baseUrl wins over the resolved provider), POST the batch, and
    *  map the response to Float32Array vectors — throwing (never swallowing) on any failure. */
-  private async request(cfg: EmbeddingConfig, input: string[]): Promise<Float32Array[]> {
+  private async request(cfg: EmbeddingConfig, input: string[], callerSignal?: AbortSignal): Promise<Float32Array[]> {
     const { baseUrl, apiKey } = this.credentials(cfg);
     const body: { model: string; input: string[]; dimensions?: number } = { model: cfg.model, input };
     if (cfg.dimensions !== undefined) body.dimensions = cfg.dimensions;
 
+    // The caller's abort races the internal cap: whichever fires first ends the request. AbortSignal.any
+    // keeps the 30 s ceiling intact when no caller signal is given (every existing caller).
+    const signal = callerSignal ? AbortSignal.any([callerSignal, AbortSignal.timeout(EMBEDDINGS_TIMEOUT_MS)]) : AbortSignal.timeout(EMBEDDINGS_TIMEOUT_MS);
     const res = await this.fetchImpl(embeddingsUrl(baseUrl), {
       method: 'POST',
       headers: {
@@ -80,7 +86,7 @@ export class EmbeddingService {
         ...APP_IDENTITY_HEADERS,
       },
       body: JSON.stringify(body),
-      signal: AbortSignal.timeout(EMBEDDINGS_TIMEOUT_MS),
+      signal,
     });
     if (!res.ok) throw new Error(`embeddings HTTP ${res.status}`);
 

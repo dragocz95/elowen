@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { expandTurnSkillCommand, turnSkillsBlock } from '../../src/brain/session/turnSkills.js';
+import { expandTurnSkillCommand, searchableSkills, turnSkillsBlock } from '../../src/brain/session/turnSkills.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
 import type { PluginSkill } from '../../src/plugins/api.js';
 
@@ -88,5 +88,57 @@ describe('turnSkillsBlock', () => {
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
+  });
+});
+
+// The skills ToolSearch may REPORT for a turn. Built on the same resolvedTurnSkills seam as the prompt
+// catalog — one capability gate, one grant filter — so the search can never suggest a skill the turn's
+// catalog withholds; manual-only skills stay hidden, exactly as formatSkillsForPrompt drops them.
+describe('searchableSkills', () => {
+  const manualSkill = { ...fakeSkill('runbook'), disableModelInvocation: true } as PluginSkill;
+
+  const registryWith = (skills: PluginSkill[]) => {
+    const registry = new PluginRegistry();
+    registry.contextFor('skills', {}, noopLog).registerTool(fakeTool('SkillLoad'));
+    registry.setUserGrantable('skills', true);
+    registry.contextFor('raynet', {}, noopLog).registerSkill(...skills);
+    registry.setUserGrantable('raynet', true);
+    return registry;
+  };
+
+  const searchFor = (registry: PluginRegistry, granted: string[] | null, toolPolicy?: { allow?: Set<string>; deny?: Set<string> }) =>
+    searchableSkills(
+      {
+        plugins: async () => registry,
+        users: { get: () => granted === null ? null : { is_admin: false, granted_plugins: granted } },
+      },
+      granted === null ? null : 7,
+      toolPolicy,
+    );
+
+  it('returns model-invocable skills only when the same writer may use SkillLoad', async () => {
+    const registry = registryWith([fakeSkill('raynet-crm')]);
+    expect(await searchFor(registry, ['skills', 'raynet'])).toEqual([
+      { name: 'raynet-crm', description: 'Use raynet-crm.' },
+    ]);
+    expect(await searchFor(registry, ['skills', 'raynet'], { allow: new Set(['SkillLoad']) })).toHaveLength(1);
+    // The one capability gate: a turn that may not load skills gets no suggestions either.
+    expect(await searchFor(registry, ['skills', 'raynet'], { deny: new Set(['SkillLoad']) })).toEqual([]);
+  });
+
+  it('is empty when the WRITER grants do not compose SkillLoad, not just when the spawn-time set omits it', async () => {
+    const registry = registryWith([fakeSkill('raynet-crm')]);
+    // SkillLoad stays registered (and was composed at spawn), but this writer's grants no longer reach
+    // it: the per-writer toolsFor seam must hide the catalog, where a spawn-time superset widened it.
+    expect(await searchFor(registry, ['raynet'])).toEqual([]);
+    // An unlinked writer (no account behind the turn) gets nothing too.
+    expect(await searchFor(registry, null)).toEqual([]);
+  });
+
+  it('drops manual-only (disable-model-invocation) skills from the suggestions', async () => {
+    const registry = registryWith([fakeSkill('raynet-crm'), manualSkill]);
+    expect(await searchFor(registry, ['skills', 'raynet'])).toEqual([
+      { name: 'raynet-crm', description: 'Use raynet-crm.' },
+    ]);
   });
 });

@@ -167,4 +167,30 @@ describe('EmbeddingService', () => {
     await svc.embed({ baseUrl: 'http://localhost:1234', model: 'm' }, 'x');
     expect(hasAuth).toBe(false);
   });
+
+  // A caller (ToolSearch's 1.5 s semantic budget) must be able to abort a hung request instead of
+  // waiting out the 30 s internal cap. The caller's signal has to reach the REQUEST: the stub models a
+  // real endpoint by honoring the signal it is handed and never answering on its own, so the only way
+  // this resolves is the caller's abort arriving at fetch.
+  it('rejects as soon as the caller aborts, even while the endpoint hangs', async () => {
+    const controller = new AbortController();
+    controller.abort();
+    let fetchStarted = false;
+    const svc = new EmbeddingService({
+      resolveProvider,
+      fetchImpl: (async (_url: string | URL | Request, init?: RequestInit) => {
+        fetchStarted = true;
+        await new Promise<never>((_, reject) => {
+          const signal = init?.signal;
+          const abort = () => reject(Object.assign(new Error('The operation was aborted'), { name: 'AbortError' }));
+          // A real fetch rejects an already-aborted signal immediately — the `abort` event never
+          // fires for one, so the state check comes first.
+          if (signal?.aborted) { abort(); return; }
+          signal?.addEventListener('abort', abort);
+        });
+      }) as unknown as typeof fetch,
+    });
+    await expect(svc.embedBatch(cfg(), ['x'], controller.signal)).rejects.toThrow();
+    expect(fetchStarted).toBe(true);
+  });
 });

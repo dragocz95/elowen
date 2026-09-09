@@ -46,6 +46,7 @@ import { MemoryCategoryStore } from '../store/memoryCategoryStore.js';
 import { MemoryCategorizer } from '../brain/memoryCategorizer.js';
 import type { InferenceClient } from '../inference/types.js';
 import { EmbeddingService } from '../embeddings/embeddingService.js';
+import { ToolSemanticIndex } from '../brain/toolSearch/semanticIndex.js';
 import { EmbeddingQueue } from '../embeddings/embedQueue.js';
 import { MemoryService } from '../brain/memoryService.js';
 import { toEmbeddingConfig } from '../store/configStore.js';
@@ -451,6 +452,10 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
   // control) instead of trusting the row + origin-session liveness — see statusService.workflowRuns.
   setWorkflowLivenessProbe(workflowEngineProbeFrom(() => loadedPluginRegistry));
   const embeddingConfig = () => toEmbeddingConfig(config.embeddingConfig());
+  // Semantic half of the local ToolSearch: cosine-ranks deferred tool + skill descriptions against the
+  // model's query over the SAME shared embedder and vector cache as site search (one batch per search,
+  // keyword fallback whenever it is unavailable). Reads the live config per search, like memory retrieval.
+  const toolSearchIndex = new ToolSemanticIndex({ embeddings, embeddingConfig, cache: searchVectors });
   // Vector retrieval + anti-duplication over the memory store (owner chat only — the caller gates it).
   const memoryService = new MemoryService({
     store: memoryStore, categories: memoryCategoryStore, embeddings, embeddingConfig,
@@ -876,6 +881,8 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         memoryCategorizer, memoryCategoryStore,
         // Cap on curator writes per exchange (Elowen AI → Runtime), read live like the budgets above.
         memoryCuratorMaxOps: () => config.get().runtime.limits.memoryCuratorMaxOps,
+        // Semantic ToolSearch re-ranking over the shared embeddings + search_vectors cache.
+        toolSearchIndex,
       })
     : undefined;
   return {

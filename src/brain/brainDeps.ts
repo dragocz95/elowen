@@ -12,6 +12,7 @@ import type { MemoryCategoryStore } from '../store/memoryCategoryStore.js';
 import type { UserPluginConfigStore } from '../store/userPluginConfigStore.js';
 import type { MemoryStore } from '../store/memoryStore.js';
 import type { MemoryService } from './memoryService.js';
+import type { ToolSemanticIndex } from './toolSearch/semanticIndex.js';
 import type { InferenceClient } from '../inference/types.js';
 import type { PermissionScope, PermissionSettings } from './toolPermissions.js';
 import type { BrainLimits, RuntimeConfig } from '../store/configStore.js';
@@ -151,6 +152,10 @@ export interface BrainDeps {
   memoryCuratorMaxOps?: () => number;
   /** Per-user memory category store — powers the owner's memory_category_* tools. */
   memoryCategoryStore?: MemoryCategoryStore;
+  /** Semantic re-ranking for the local ToolSearch: cosine over the shared embedding model with the
+   *  durable search_vectors cache, covering deferred tools AND skills in one call per search. Absent
+   *  (minimal/test wiring, no embeddings) → ToolSearch answers by keyword ranking alone. */
+  toolSearchIndex?: ToolSemanticIndex;
   /** Each account's own values for plugins that declare a `userConfigSchema` — read by `ctx.userConfig()`
    *  and by the account's own settings routes. */
   userPluginConfig?: UserPluginConfigStore;
