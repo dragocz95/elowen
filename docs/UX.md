@@ -17,9 +17,9 @@ Use semantic tokens from `web/app/styles/` and the shared UI components. Do not 
 
 `WorkspaceShell` is the canonical page frame. Its variants are:
 
-- `register`: a browsable collection with metrics, toolbar, and horizontal section tabs;
-- `deck`: a configuration surface with a section sidebar on tablet and desktop, and tabs on phones;
-- `single`: one working surface without section navigation.
+- `register`: a browsable collection with metrics, a toolbar, and optional view tabs;
+- `deck`: a configuration surface whose sections are addresses, listed in the sidebar's submenu;
+- `single`: one working surface under a title block, with no navigation of its own.
 
 The primary navigation is one left sidebar column, mounted once by the shell and built on the shadcn `Sidebar` primitive. The former profile-based swap between a spatial rail and a flat column is gone; a skin restyles the single column through its `--sidebar-*` tokens.
 
@@ -37,23 +37,22 @@ The active route is resolved once for the whole column by scoring the path prefi
 
 The only live badge is on Chat: the number of conversations currently working, and zero renders no badge. Where the shell has no counter of its own, a plugin's own badge is used.
 
-The shell measures the width of the navigation plus content region, that is the window minus the advisor dock, not the viewport. Below 768 px of that region the navigation becomes a drawer, a dialog sheet with a scrim, a close button and a focus trap, and arriving at a route closes it. Below 1280 px the column is forced to its icon rail. At 1280 px and above the user's pin decides and the collapse handle is offered.
+The shell measures the width of the navigation plus content region, that is the window minus the advisor dock, not the viewport. Both shipped skins use the command shell profile, and under it the rule has one threshold: below 1024 px of that region the navigation becomes a drawer, a dialog sheet with a scrim, a close button and a focus trap, and arriving at a route closes it; at 1024 px and above the user's own pin decides between the full column and the icon rail, and the collapse handle is offered. The wider ladder in `web/lib/breakpoints.ts`, which forces the rail between 768 px and 1280 px, belongs to the older spatial profile that no shipped skin selects.
 
 Keyboard: `Ctrl`/`⌘` + `\` toggles the sidebar fold and `Ctrl`/`⌘` + `K` toggles the command palette. The fold binding is matched by key code so non-US layouts work, and both are advertised with `aria-keyshortcuts` on their triggers. There are no other global key bindings.
 
 The top bar has two variants, a frameless floating masthead and a sticky ruled bar. It carries the hamburger in drawer mode, a navigation collapse toggle in bar mode, the page location or eyebrow plus heading, a portal slot where route-owned toolbars mount, and an action cluster with the palette search glyph, sign out, the skin switcher, the language switcher and an avatar linking to `/account`. On `/chat` at phone width the floating design withholds the bar entirely.
 
-The secondary section navigation is responsive by measured mobile viewport, not by duplicating breakpoint decisions in each page:
+The only navigation left inside a page is a register's own view tabs, and the distinction is deliberate: a register's tabs filter what the page is showing, while a deck's sections are addresses, so they belong in the sidebar. A deck therefore passes no in-page navigation at all.
 
-- deck navigation is a vertical `Segmented` menu at widths above the phone limit;
-- deck navigation becomes one-line, horizontally scrollable `Segmented` tabs on phones;
-- register navigation stays horizontal tabs at every width;
+Register view tabs are one single-line, touch-scrollable track at every width:
+
 - active items are revealed in the scroll track, and horizontal wheel input is converted to track scrolling where applicable;
 - the navigation exposes a labelled `radiogroup` with `radio` options, `aria-checked`, and roving `tabIndex`.
 
-Keyboard navigation for section rails supports Arrow Left/Right and Arrow Up/Down, plus Home and End. Selecting an item moves focus to the selected option. Counts belong to the accessible option name when present. The phone tab presentation omits decorative icons so the compact control remains readable.
+Keyboard navigation for these tabs supports Arrow Left/Right and Arrow Up/Down, plus Home and End. Selecting an item moves focus to the selected option. Counts belong to the accessible option name when present. The phone presentation omits decorative icons so the compact control remains readable.
 
-The shell also accounts for the advisor dock and constrained regions. Wide layouts may use the Studio navigation column or compact rail; narrow layouts use a drawer. `/chat` is an application layout rather than a capped document column and protects the composer from the mobile keyboard viewport.
+The advisor dock changes the measured region rather than the window, so dragging it re-chromes the app exactly as resizing would. `/chat` reads its own wider application measure rather than the capped document column, and protects the composer from the mobile keyboard viewport.
 
 ## Command palette
 
