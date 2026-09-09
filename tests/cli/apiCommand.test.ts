@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { runApiCommand } from '../../src/cli/commands.js';
-import type { CallResult } from '../../src/shared/apiClient.js';
+import { callElowenApi, type CallResult } from '../../src/shared/apiClient.js';
+import { noTimeoutDispatcher } from '../../src/cli/noTimeoutDispatcher.js';
 
 const okData = (data: unknown): CallResult => ({ status: 200, ok: true, data, text: '' });
 
@@ -56,5 +57,28 @@ describe('runApiCommand', () => {
     });
     expect(code).toBe(2);
     expect(called).toBe(false);
+  });
+
+  // Regression: `elowen api POST /brain/compact` died with `fetch failed` after undici's default
+  // 300 s headersTimeout/bodyTimeout, while the daemon answered the request successfully.
+  it('passes a no-timeout dispatcher so long routes are not aborted', async () => {
+    let seen: unknown;
+    await runApiCommand(['POST', '/brain/compact'], { ELOWEN_URL: 'http://d', ELOWEN_TOKEN: 't' } as NodeJS.ProcessEnv, {
+      call: async (_m, _p, _b, opts) => { seen = opts.dispatcher; return okData({}); },
+      out: () => {}, err: () => {},
+    });
+    expect(seen).toBe(noTimeoutDispatcher());
+    const options = Object.getOwnPropertySymbols(seen as object)
+      .map((s) => (seen as Record<symbol, unknown>)[s])
+      .find((v): v is { headersTimeout: number; bodyTimeout: number } => !!v && typeof v === 'object' && 'headersTimeout' in v);
+    expect(options?.headersTimeout).toBe(0);
+    expect(options?.bodyTimeout).toBe(0);
+  });
+
+  it('an ordinary API call keeps the default timeouts (no dispatcher on fetch)', async () => {
+    let init: RequestInit | undefined;
+    const fetchImpl = (async (_u: string, i?: RequestInit) => { init = i; return new Response('{}', { status: 200 }); }) as unknown as typeof fetch;
+    await callElowenApi('GET', '/projects', undefined, { url: 'http://d', token: 't', fetchImpl });
+    expect(init && 'dispatcher' in init).toBe(false);
   });
 });

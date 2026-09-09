@@ -4,7 +4,12 @@
  * error handling) lives in exactly one place — adding a new REST endpoint makes it work in both
  * with zero edits, and there is never any duplicated request logic to keep in sync.
  */
-export interface CallOpts { url: string; token: string; fetchImpl?: typeof fetch }
+export interface CallOpts {
+  url: string; token: string; fetchImpl?: typeof fetch;
+  /** Opt-in undici Dispatcher for this request. Only `elowen api` passes one (see
+   *  `src/cli/noTimeoutDispatcher.ts`); every other caller keeps Node's default 300 s timeouts. */
+  dispatcher?: unknown;
+}
 export interface CallResult { status: number; ok: boolean; data: unknown; text: string }
 
 export async function callElowenApi(method: string, path: string, body: unknown | undefined, opts: CallOpts): Promise<CallResult> {
@@ -17,7 +22,8 @@ export async function callElowenApi(method: string, path: string, body: unknown 
     method: m,
     headers,
     body: hasBody ? JSON.stringify(body) : undefined,
-  });
+    ...(opts.dispatcher ? { dispatcher: opts.dispatcher } : {}),
+  } as RequestInit);
   const text = await res.text();
   let data: unknown;
   // External/daemon response — parse defensively so a non-JSON body never throws here.
