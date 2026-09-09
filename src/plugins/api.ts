@@ -1944,6 +1944,27 @@ export interface PluginContext {
     access: { admin: boolean; projectIds: readonly number[]; accountUserId?: number | null; workspaceRef?: SandboxWorkspaceRef },
     workspaceId?: string,
   ): SandboxWorkspaceRef | undefined;
+  /** Read one bounded UTF-8 file out of the MANAGED project the current turn is bound to — the guest
+   *  counterpart of {@link assertPathAllowed}, for a plugin that must read a file the model created with
+   *  its own file tools. In a managed project those tools write into the guest, and the host path guard
+   *  refuses every host path (there is nothing on the host to resolve against), so a plugin that only
+   *  knows the host route cannot read back what it just told the model to write.
+   *
+   *  Exposed for the same reason as {@link resolveWorkspaceScope}: the read goes through the Sandbox
+   *  control, which `CONTROL_CONSUMERS` restricts to the plugins that own process launch. Routed through
+   *  core's own guest artifact seam, so the bounded, version-pinned read has ONE implementation.
+   *
+   *  Because it hands back guest file CONTENT it carries the read half of that control's authority, so it
+   *  is gated twice: the `reads:['controls']` grant AND an explicit allowlist of loader-assigned caller
+   *  names kept beside `CONTROL_CONSUMERS`. A manifest capability is a declaration, not a permission —
+   *  declaring the grant does not admit a plugin that is not on the list.
+   *
+   *  The project and account come from the HOST turn scope; the caller supplies only a path, so it can
+   *  neither name another project nor widen the account the provider authorizes. Callers branch on the
+   *  ambient execution target (`currentAccess().projectRef`) BEFORE calling — never on a refusal message.
+   *  THROWS, with a message meant for the model, outside a managed turn and on any read failure; there is
+   *  no host fallback. */
+  readManagedProjectFile(path: string): Promise<string>;
   /** The persisted brain-session id the current turn runs in (`brain-…`), or undefined outside a
    *  prompt turn. Lets a plugin bind scheduled work back to the exact conversation it was created
    *  from (a cron wake-up records it as the job's origin and the reply lands there). */

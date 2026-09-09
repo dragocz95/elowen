@@ -20,6 +20,7 @@ import { currentIdentity, currentContributionUserId, currentAccountUserId, curre
 import { persistToolOutputSpill } from '../brain/session/toolResultClearing.js';
 import { sessionToolResultSpillDir } from '../shared/paths.js';
 import { bindingRef, resolveDelegatedWorkspace } from '../brain/workspaceScope.js';
+import { GUEST_WRITE_OP_BYTES, guestAbsolutePath, readGuestFileBounded, resolveManagedArtifactTurn } from '../brain/managedArtifacts.js';
 import { processRegistry } from '../brain/processRegistry.js';
 import { subagentSessionId } from '../brain/sessionId.js';
 import type { AskAnswer } from '../brain/events.js';
@@ -156,6 +157,14 @@ const CONTROL_CONSUMERS: Partial<Record<keyof KnownControls, readonly string[]>>
   publishedSitesGateway: ['sites'],
   sandbox: ['files', 'terminal', 'github', 'onedrive', 'sites', 'editor', 'lsp', 'mcp', 'browser', 'cronjob', 'codebase'],
 };
+
+/** `readManagedProjectFile` hands back the CONTENT of a file inside a managed project's guest, so it
+ * carries the read half of the Sandbox control's authority and is gated exactly like the control itself:
+ * by the loader-assigned caller name, never by a self-declared manifest capability. It gets its OWN list
+ * rather than reusing `CONTROL_CONSUMERS.sandbox`, because every plugin on that list would otherwise gain
+ * arbitrary guest reads it never needed, and because the subagent plugin must NOT be added there — it is
+ * kept off the raw control on purpose (it owns no process launch) and only ever needed this one read. */
+const MANAGED_PROJECT_FILE_READERS: readonly string[] = ['subagent'];
 
 /** A missing account is not plugin-access open mode: shared channels and unlinked callers
  *  must not learn grant-gated skills. The predicate remains the single owner of the grant decision. */
@@ -1522,6 +1531,35 @@ export class PluginRegistry {
         }
         const binding = resolveDelegatedWorkspace(resolveControl?.('sandbox'), access, workspaceId);
         return binding ? bindingRef(binding) : undefined;
+      },
+      // The guest read, exposed for the same reason and behind the same grant as the resolver above: the
+      // Sandbox control it needs is restricted to the plugins that own process launch. The managed turn
+      // (project, account, conversation) is resolved from the HOST scope, so the plugin supplies only a
+      // path — it cannot name another project or another account. Core's guest artifact seam does the
+      // bounded, version-pinned read, so there is no second implementation of it here.
+      readManagedProjectFile: async (path) => {
+        // BOTH gates, and the order matters only for the diagnostic: the manifest capability is the
+        // plugin's own declaration and proves nothing on its own, so the loader-assigned name is checked
+        // against an explicit allowlist as well. A sibling that adds `reads:['controls']` to its manifest
+        // gains nothing here.
+        if (!capabilities.reads?.includes('controls')) {
+          throw new Error(`plugin "${name}" did not declare the reads:['controls'] capability`);
+        }
+        if (!MANAGED_PROJECT_FILE_READERS.includes(name)) {
+          scoped.warn(`readManagedProjectFile denied: plugin '${name}' is not an approved managed-project file reader`);
+          throw new Error(`plugin "${name}" may not read managed project files`);
+        }
+        const resolved = await resolveManagedArtifactTurn(() => resolveControl?.('sandbox'));
+        if (typeof resolved === 'string') throw new Error(resolved);
+        const guestPath = guestAbsolutePath(path);
+        if (!guestPath) throw new Error('an absolute guest path is required');
+        const bytes = await readGuestFileBounded(
+          { sandbox: resolved.sandbox, projectRef: resolved.turn.projectRef, accountUserId: resolved.turn.accountUserId },
+          guestPath,
+          GUEST_WRITE_OP_BYTES,
+        );
+        if (typeof bytes === 'string') throw new Error(bytes);
+        return bytes.toString('utf8');
       },
       currentSessionId,
       currentDeliveryTarget,

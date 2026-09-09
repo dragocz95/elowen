@@ -30,9 +30,23 @@ describe('readGuestFileBounded', () => {
   it('refuses a file larger than the requested bound instead of reading it in part', async () => {
     const fs = managedGuestFs({ '/workspace/data.bin': 'x'.repeat(300_000) });
     const read = await readGuestFileBounded(access(fs), '/workspace/data.bin', 10_000);
-    expect(read as string).toContain('over the 0 MB limit');
+    expect(read as string).toBe('data.bin is 293 KiB, over the 10 KiB limit.');
     // stat only — the chunked read never started.
     expect(fs.calls()).toBe(1);
+  });
+
+  // Whole-megabyte rounding used to describe the 512 KiB guest bound as a "1 MB limit" and then report a
+  // 0.6 MB file as being over it, while any bound under half a megabyte came out as "0 MB".
+  it('states a sub-megabyte bound in the unit that fits it', async () => {
+    const fs = managedGuestFs({ '/workspace/big.json': 'x'.repeat(614_400) });
+    const read = await readGuestFileBounded(access(fs), '/workspace/big.json', GUEST_WRITE_OP_BYTES);
+    expect(read).toBe('big.json is 600 KiB, over the 512 KiB limit.');
+  });
+
+  it('keeps whole megabytes for the multi-megabyte share limits', async () => {
+    const fs = managedGuestFs({ '/workspace/huge.bin': 'x'.repeat(27 * 1048576) });
+    const read = await readGuestFileBounded(access(fs), '/workspace/huge.bin', 25 * 1048576);
+    expect(read).toBe('huge.bin is 27 MB, over the 25 MB limit.');
   });
 
   it('reports a missing file and a directory with the host-branch wording', async () => {
