@@ -601,15 +601,21 @@ export class PodmanClient {
     // The completion artifact is derived from the execution ID, so removal can never touch another
     // execution's state. Best effort only: a leftover is benign tmpfs state scoped to this container.
     await this.#run(['exec', row.id, '/usr/bin/rm', '-f', '--', completionArtifact(executionId)], { allowFailure: true, timeoutMs: 30000 });
-    return { terminated: true, unit };
+    // `container` is the ownership-verified row this cancellation ran against. Returning it lets an
+    // immediately following step in the SAME call reuse the verification instead of repeating it; it is
+    // not a cache, and nothing outside one call stack may hold it.
+    return { terminated: true, unit, container: row };
   }
 
   /** Only after the owning launcher has settled and the durable lease forbids redispatch. Timed-out
    * launchers keep their tombstone until daemon recovery establishes that fact or retires the runtime. */
   async releaseExecution(spec, executionId, { persistent = false } = {}) {
-    await this.cancelExecution(spec, executionId, { persistent });
-    const row = await this.#owned(spec);
-    await this.#run(['exec', row.id, 'systemctl', 'unmask', ...(persistent ? [] : ['--runtime']), executionUnit(spec, executionId)]);
+    // The cancellation immediately above verified ownership and running state, and the only guest work
+    // between it and the unmask is this method's own. Re-inspecting the container and every volume a
+    // second time here cost five extra Podman invocations per guest operation and could not observe
+    // anything the cancellation had not just established.
+    const { container } = await this.cancelExecution(spec, executionId, { persistent });
+    await this.#run(['exec', container.id, 'systemctl', 'unmask', ...(persistent ? [] : ['--runtime']), executionUnit(spec, executionId)]);
   }
 
   /** Persist the host-generated executionId in the existing lease BEFORE calling. A timeout or aborted

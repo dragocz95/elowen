@@ -316,6 +316,20 @@ describe('clean and confined Podman client', () => {
     await expect(client.remove(spec)).rejects.toThrow(/missing/i);
     expect(executor.run.mock.calls.filter(([, args]) => args[0] === 'rm')).toHaveLength(1);
   });
+  it('verifies container ownership once per release instead of twice in a row', async () => {
+    // A release cancels and then unmasks. The cancellation already inspected the container and every
+    // volume; repeating that inspection immediately afterwards cost five extra Podman invocations on
+    // every guest operation and could observe nothing the cancellation had not just established.
+    const { spec } = fixture();
+    const { client, executor } = fake(spec);
+    await client.releaseExecution(spec, 'd'.repeat(32));
+    const inspections = executor.run.mock.calls.filter(([, args]) => args.includes('inspect'));
+    const containerInspections = inspections.filter(([, args]) => args.includes('container'));
+    expect(containerInspections).toHaveLength(1);
+    // The unmask still runs, so the saving is a removed duplicate rather than a removed step.
+    const guest = executor.run.mock.calls.filter(([, args]) => args[0] === 'exec').map(([, args]) => args.slice(2));
+    expect(guest.at(-1)).toEqual(['systemctl', 'unmask', '--runtime', executionUnit(spec, 'd'.repeat(32))]);
+  });
   it('bounds command input before launching and retains truncation metadata', async () => {
     const { spec } = fixture();
     const { client, executor } = fake(spec);
@@ -326,7 +340,7 @@ describe('clean and confined Podman client', () => {
     const { spec } = fixture();
     const { client, executor } = fake(spec);
     const id = 'b'.repeat(32);
-    await expect(client.cancelExecution(spec, id)).resolves.toEqual({ terminated: true, unit: executionUnit(spec, id) });
+    await expect(client.cancelExecution(spec, id)).resolves.toMatchObject({ terminated: true, unit: executionUnit(spec, id) });
     const guest = executor.run.mock.calls.filter(([, args]) => args[0] === 'exec').map(([, args]) => args.slice(2));
     expect(guest[0]).toEqual(['systemctl', 'mask', '--runtime', executionUnit(spec, id)]);
     expect(guest[1]).toEqual(['systemctl', 'stop', executionUnit(spec, id)]);
