@@ -450,7 +450,8 @@ export const sk = {
       output: 'Čo model napísal späť. Najdrahšie tokeny a zároveň najmenej početné.',
     },
     pulseColCache: 'Cache',
-    surfaces: { web: 'web', cli: 'terminál', discord: 'Discord', msteams: 'Teams', telegram: 'Telegram', whatsapp: 'WhatsApp', cron: 'plán', internal: 'automatizácia', unknown: 'neznámy klient' },
+    surfaces: { web: 'web', cli: 'terminál', discord: 'Discord', msteams: 'Teams', telegram: 'Telegram', whatsapp: 'WhatsApp', cron: 'plán', internal: 'Interné', unknown: 'neznámy klient' },
+    surfaceHint: { internal: 'Ťahy bez požiadavky za sebou: plánované úlohy, obnova po reštarte a interná práca démona. Ťahy podriadených agentov sem už nepatria — účtujú sa tomu, kto ich zadal.' },
     ev: {
       turn: 'pracuje',
       someone: 'Niekto',

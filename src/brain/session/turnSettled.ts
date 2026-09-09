@@ -4,6 +4,7 @@ import type { ConversationTitler } from '../conversationTitler.js';
 import type { MemoryCurator } from '../memoryCurator.js';
 import type { PinToken } from '../../store/usageOriginStore.js';
 import type { TurnAutomation } from '../../plugins/policyContext.js';
+import { clientOriginOf, type SpawnOrigin } from '../spawnOrigin.js';
 import { resetConversationActivity, type ConversationActivityChanged, type ConversationActivityStore, type ConversationActivitySurface } from './conversationActivity.js';
 
 /** The ONE place that decides what a turn does BESIDES answering — the settlement side of the same
@@ -42,6 +43,9 @@ import { resetConversationActivity, type ConversationActivityChanged, type Conve
  *  turns settle and is NEVER recovered by querying `brain_messages`, which carries no origin at all. */
 export interface TurnOriginPin {
   recordRequest(sessionId: string, userId: number, origin: ClientOrigin, atMs: number): PinToken | null;
+  /** The pin a turn currently holds, so a delegation spawned by that turn can hand it to its child —
+   *  a child has no request of its own and would otherwise settle as `internal` (see brain/spawnOrigin.ts). */
+  pinnedFor(sessionId: string): { origin: ClientOrigin; userId: number } | null;
   releasePin(sessionId: string, token: PinToken): void;
   repointPin(fromSessionId: string, token: PinToken, toSessionId: string): void;
 }
@@ -233,4 +237,24 @@ export function settleTurn(parts: TurnSettlement): void {
   }
   parts.notify?.();
   parts.drainPluginReload?.();
+}
+
+/** Pin ONE turn of a delegated child to the request that ordered the delegation — the child side of the
+ *  inheritance, applied wherever a child's turn is run: the first turn (in this process or in the runner),
+ *  a `DelegateContinue`, an owner drill-in, a durable result drain and a boot-recovery respawn.
+ *
+ *  The handle must be closed on every exit of the turn, exactly like any other openTurn caller:
+ *  the settling turn consumes the pin, and a turn that never settles must not leave one behind. No origin
+ *  (a legacy child, or a delegation ordered by a turn nobody requested) opens nothing and the child
+ *  settles as `internal`. */
+export function openDelegatedTurn(
+  pin: TurnOriginPin | undefined,
+  sessionId: string,
+  origin: SpawnOrigin | undefined,
+): OpenedTurn | undefined {
+  if (!pin || !origin) return undefined;
+  return openTurn({
+    sessionId,
+    origin: { pin, userId: origin.userId, origin: clientOriginOf(origin), atMs: Date.now() },
+  });
 }

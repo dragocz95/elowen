@@ -190,6 +190,13 @@ CREATE TABLE IF NOT EXISTS brain_sessions (
   -- Immutable, validated execution boundary for a delegated child. NULL is a legacy/non-delegated row;
   -- an idle child without this value must fail closed instead of resuming under its account owner's scope.
   delegated_access TEXT,
+  -- WHO ordered the delegation that created this child, as JSON {value,kind,trusted,userId} — the origin
+  -- pin of the parent's turn at spawn time. Attribution only: it grants nothing and is never read as
+  -- access. Without it every delegated turn settles as `internal`, because a child has no request of its
+  -- own; with it a continuation, a result drain and a boot-recovery respawn stay billed to the person and
+  -- address that asked for the work. NULL on non-delegated rows and on children spawned by a turn that
+  -- itself had no request (a cron wake-up), which stay `internal`.
+  spawn_origin TEXT,
   -- Provenance of a forked conversation: the session whose history was copied into this one. Kept apart
   -- from `parent_session_id` on purpose — a fork is a PEER, not a delegated child, and that column is
   -- read as "delegated child" by the usage roll-up, the retention janitor, the sub-agent listing and the

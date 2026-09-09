@@ -113,6 +113,9 @@ type Surface = PulseResponse['month']['surfaces'][number];
 function SurfaceCard({ surface, share, colour, t }: {
   surface: Surface; share: number; colour: string; t: LocaleDict;
 }) {
+  // Only `internal` carries one: every other surface names a place a person actually wrote from, while
+  // "internal" is the bucket for turns nobody ordered and reads as a mystery without a sentence.
+  const hint = (t.dashboard.surfaceHint as Record<string, string | undefined>)[surface.surface];
   return (
     <CardShell>
       <CardHead colour={colour} title={surfaceLabel(t, surface.surface)} share={share} />
@@ -123,6 +126,7 @@ function SurfaceCard({ surface, share, colour, t }: {
         </CardRow>
         <CardRow icon={Repeat} label={t.dashboard.pulseColTurns}>{surface.turns.toLocaleString()}</CardRow>
       </div>
+      {hint ? <p className="mt-2 text-[10px] leading-4 text-muted-foreground">{hint}</p> : null}
     </CardShell>
   );
 }

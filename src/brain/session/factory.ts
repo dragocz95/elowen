@@ -7,6 +7,7 @@ import type { BrainStore } from '../../store/brainStore.js';
 import { createSessionPersistenceProjector, rehydrate, settlePartialTurn, type SettledTurnUsage } from '../persistence.js';
 import { applyProviderRequestProfile, isCanonicalThinkingLevel, type ProviderRequestProfile } from '../modelCapabilities.js';
 import type { DelegatedExecutionScope } from '../delegatedScope.js';
+import type { SpawnOrigin } from '../spawnOrigin.js';
 import type { ProjectExecutionRef } from '../../shared/projectExecution.js';
 import type { ApplyCompaction } from './liveBrain.js';
 import { installLiveRecall, type LiveRecallOptions } from './liveRecall.js';
@@ -76,6 +77,9 @@ export interface SessionSpec {
   parentSessionId?: string;
   /** Immutable access boundary for a delegated child; verified on every respawn. */
   delegatedAccess?: DelegatedExecutionScope;
+  /** Who ordered the delegation behind this child; persisted at creation for attribution only
+   *  (see brain/spawnOrigin.ts). */
+  spawnOrigin?: SpawnOrigin;
   /** Trusted initial target, persisted atomically with a new personal conversation. */
   executionRef?: ProjectExecutionRef;
   /** Imported platform transcript rows inserted atomically before history rehydration. */
@@ -602,6 +606,7 @@ export class BrainSessionFactory {
       this.d.store.createSession({
         id: spec.sessionId, userId: spec.ownerUserId, model: spec.model.id, provider: spec.providerId,
         parentSessionId: spec.parentSessionId, delegatedAccess: spec.delegatedAccess,
+        ...(spec.spawnOrigin ? { spawnOrigin: spec.spawnOrigin } : {}),
         executionRef: spec.executionRef,
       });
     } else {

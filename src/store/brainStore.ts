@@ -17,6 +17,7 @@ import {
   type ConversationActivityState,
 } from '../brain/session/conversationActivity.js';
 import type { TurnAutomation } from '../plugins/policyContext.js';
+import { parseSpawnOrigin, type SpawnOrigin } from '../brain/spawnOrigin.js';
 import { collectImageFiles, isPersistedImageBlock } from '../brain/chatImages.js';
 import { clearedToolResultContent } from '../brain/session/toolResultClearing.js';
 import { WIRE_FRAMES_KEY, type TurnWireFrames } from '../brain/session/turnPrompt.js';
@@ -78,6 +79,8 @@ const FORK_SEED_ROLES = new Set(['user', 'assistant', 'toolResult', 'compactionS
 export interface BrainSessionRow {
   id: string; user_id: number; title: string; model: string; provider: string; work_dir: string; parent_session_id: string | null;
   delegated_access: string | null;
+  /** Who ordered the delegation that spawned this child (see schema.sql). Attribution only. */
+  spawn_origin: string | null;
   execution_ref: string | null;
   forked_from_session_id: string | null;
   /** Immutable spill namespace (see schema.sql). '' on rows minted by older builds = "use the id". */
@@ -255,6 +258,9 @@ export class BrainStore {
     parentSessionId?: string | null;
     /** Immutable execution boundary for a newly-created delegated child. */
     delegatedAccess?: DelegatedExecutionScope;
+    /** Who ordered the delegation behind this child (see schema.sql). Attribution only — it grants
+     *  nothing, and an absent value simply leaves the child's later turns billed as `internal`. */
+    spawnOrigin?: SpawnOrigin;
     executionRef?: ProjectExecutionRef;
   }): BrainSessionRow {
     const parentSessionId = input.parentSessionId ?? null;
@@ -262,6 +268,9 @@ export class BrainStore {
       ? undefined
       : normalizeDelegatedExecutionScope(input.delegatedAccess);
     if (input.delegatedAccess !== undefined && !delegatedAccess) throw new Error('invalid delegated access');
+    // Validated rather than trusted, like every other stored JSON here — but a malformed value only costs
+    // attribution, so it is dropped instead of failing the spawn.
+    const spawnOrigin = input.spawnOrigin === undefined ? undefined : parseSpawnOrigin(input.spawnOrigin);
     if (delegatedAccess && parentSessionId === null) throw new Error('delegated access requires a parent session');
     const executionRef = input.executionRef === undefined ? undefined : projectExecutionRefSchema.parse(input.executionRef);
     if (executionRef && parentSessionId !== null) throw new Error('delegated execution target belongs in its access scope');
@@ -272,13 +281,14 @@ export class BrainStore {
         if (parent.user_id !== input.userId) throw new Error('parent brain session belongs to another user');
       }
       this.db.prepare(
-        `INSERT INTO brain_sessions (id, user_id, title, model, provider, parent_session_id, delegated_access, execution_ref, spill_ns)
-         VALUES (@id, @user_id, @title, @model, @provider, @parent_session_id, @delegated_access, @execution_ref, @spill_ns)`
+        `INSERT INTO brain_sessions (id, user_id, title, model, provider, parent_session_id, delegated_access, spawn_origin, execution_ref, spill_ns)
+         VALUES (@id, @user_id, @title, @model, @provider, @parent_session_id, @delegated_access, @spawn_origin, @execution_ref, @spill_ns)`
       ).run({
         id: input.id, user_id: input.userId, title: input.title ?? '', model: input.model,
         provider: input.provider ?? '',
         parent_session_id: parentSessionId,
         delegated_access: delegatedAccess ? JSON.stringify(delegatedAccess) : null,
+        spawn_origin: spawnOrigin ? JSON.stringify(spawnOrigin) : null,
         execution_ref: executionRef ? JSON.stringify(executionRef) : null,
         spill_ns: mintSpillNamespace(input.id),
       });
@@ -664,6 +674,17 @@ export class BrainStore {
     const row = this.getSession(sessionId);
     if (!row?.parent_session_id || !row.delegated_access) return undefined;
     try { return normalizeDelegatedExecutionScope(JSON.parse(row.delegated_access)); }
+    catch { return undefined; }
+  }
+
+  /** Who ordered the delegation behind a child session — the pin its later turns are billed to (a
+   *  continuation, a result drain, a boot-recovery respawn). Undefined for a top-level conversation, for a
+   *  child spawned before this column existed, and for one whose parent turn held no pin: all three settle
+   *  as `internal`, which is the honest answer for a turn no request ordered. */
+  spawnOriginFor(sessionId: string): SpawnOrigin | undefined {
+    const row = this.getSession(sessionId);
+    if (!row?.parent_session_id || !row.spawn_origin) return undefined;
+    try { return parseSpawnOrigin(JSON.parse(row.spawn_origin)); }
     catch { return undefined; }
   }
 

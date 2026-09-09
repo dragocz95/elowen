@@ -668,6 +668,7 @@ export class LiveSessionSpawner {
     const replay = new LiveEventReplay(listeners);
     const { session, applyCompaction, assessColdCompaction } = await this.d.factory.create({
       sessionId, ownerUserId, parentSessionId: opts.parentSessionId, delegatedAccess: opts.delegatedAccess,
+      ...(opts.spawnOrigin ? { spawnOrigin: opts.spawnOrigin } : {}),
       executionRef: execution.initialRef,
       ...(managed ? { contextFiles: false } : {}),
       seedMessages: opts.seedMessages,

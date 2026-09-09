@@ -20,6 +20,7 @@ import { ChannelSessionService } from './channels.js';
 import type { ChannelSendOpts, DelegatedSteerOutcome } from './channels.js';
 import { PlatformOrchestrator } from './platforms.js';
 import { delegatedChannelSendOpts, type DelegatedTurnRequest } from './delegatedTurn.js';
+import { openDelegatedTurn } from './session/turnSettled.js';
 import { SubagentDispatch } from '../subagent/dispatch.js';
 import { lastAssistantTextIn, type BrainMessageView } from './messageView.js';
 import { runCompaction, withDescendantUsage } from './events.js';
@@ -459,6 +460,8 @@ export class BrainService {
       ...(d.subagentRunner ? { steerRemote: (channelId: string, text: string) => d.subagentRunner?.steer(channelId, text) ?? Promise.resolve({ outcome: 'idle' as const }) } : {}),
       settleReply: (parentSessionId, childSessionId, reply, onEvent) => this.settleDelegatedReply(parentSessionId, childSessionId, reply, onEvent),
       isSettling: (childSessionId) => this.isSettlingChild(childSessionId),
+      // A child's later turns keep the attribution of the request that ordered the delegation.
+      ...(d.usageOrigins ? { usageOrigins: d.usageOrigins } : {}),
       // The recovered child's answer takes the ordinary background-delivery path into its parent. A parent
       // that was PAUSED on that very delegation (park marker, no resume of its own — see
       // resumeParkedConversation) is un-parked once the answer has actually been consumed by a turn, so
@@ -2634,11 +2637,25 @@ export class BrainService {
    *  when its turn returns, and this process is the one whose registry, inbox drain and workflow engine
    *  see the child's own children — the daemon's view of a runner-hosted child is only a mirror. */
   async runDelegatedTurn(request: DelegatedTurnRequest, text: string, onEvent?: (e: BrainEvent) => void): Promise<string> {
-    const reply = await this.channelService.send(
-      delegatedChannelSendOpts(request, { policyForProjects: this.d.policyForProjects, identity: this.identity }, onEvent),
-      text,
+    const childSessionId = channelSessionId(request.channelId);
+    // Attribute this child's turn to the request that ordered the delegation. The carried origin is the
+    // one that counts on a FIRST turn — the child's row does not exist yet — and the stored one covers a
+    // request minted before this field existed. Without either the turn settles as `internal`.
+    const opened = openDelegatedTurn(
+      this.d.usageOrigins, childSessionId,
+      request.origin ?? this.d.store.spawnOriginFor(childSessionId),
     );
-    return this.settleDelegatedReply(request.parentSessionId, channelSessionId(request.channelId), reply, onEvent);
+    try {
+      const reply = await this.channelService.send(
+        delegatedChannelSendOpts(request, { policyForProjects: this.d.policyForProjects, identity: this.identity }, onEvent),
+        text,
+      );
+      return await this.settleDelegatedReply(request.parentSessionId, childSessionId, reply, onEvent);
+    } finally {
+      // Idempotent and token-keyed: a settled turn already consumed the pin, and a turn refused before its
+      // first provider request must not leave one for the child's next turn to inherit.
+      opened?.close();
+    }
   }
 
   /** Abort a channel session's in-flight turn and its delegated descendants — the same teardown a

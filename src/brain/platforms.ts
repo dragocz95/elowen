@@ -8,6 +8,7 @@ import type { ChannelSessionService } from './channels.js';
 import { channelSessionId, isChannelSession } from './sessionId.js';
 import { platformOrigin } from '../api/clientIp.js';
 import { openTurn, type TurnActivityFeed, type TurnOriginPin } from './session/turnSettled.js';
+import { spawnOriginOfTurn } from './spawnOrigin.js';
 import type { SessionListItem, SessionPage, SessionPageOpts } from './service/statusService.js';
 import {
   normalizeDelegatedExecutionScope,
@@ -326,6 +327,9 @@ export class PlatformOrchestrator {
             // Validated above for the owner lookup; re-checked here so the request below carries the
             // non-optional parent it actually has.
             if (!parentSessionId) throw new Error('invalid parent session');
+            const originPin = this.d.usageOrigins
+              ? spawnOriginOfTurn(this.d.usageOrigins, parentSessionId)
+              : undefined;
             // THE DISPATCH SEAM. `policy`, `toolPolicy` and `identity` are deliberately NOT built here any
             // more: none of the three can cross a process boundary (a closure over the project store, two
             // Sets, and an identity minted against the live owner check), so they are derived from the
@@ -344,6 +348,13 @@ export class PlatformOrchestrator {
               // A scheduled/unattended turn (a plugin sets access.scheduled) uses the focused `scheduled`
               // system prompt, not the coding-agent base. Core stays agnostic to which plugin fired it.
               scheduled: src.access.scheduled === true,
+              // WHO ordered the work: the pin held by the parent's turn RIGHT NOW, read here because this
+              // is the moment the delegating turn is provably still running. A child has no request of its
+              // own, so without this every delegated turn — the bulk of this instance's spend — settled as
+              // `internal`. Nesting is transitive: a child's own turn carries this pin, so a grandchild
+              // reads it here in turn. A parent turn with no pin (a cron wake-up, a boot-recovered
+              // conversation) hands down nothing and its children stay `internal`.
+              ...(originPin ? { origin: originPin } : {}),
               ...(src.access.model ? { model: src.access.model } : {}),
               ...(src.access.thinkingLevel !== undefined ? { thinkingLevel: src.access.thinkingLevel } : {}),
               // A delegated child inherits the delegating turn's working directory so its tools run in —

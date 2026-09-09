@@ -18,6 +18,7 @@ import type { DelegatedContinueResult, KnownControls, SubagentProgressEvent } fr
 import type { RecoveryOutcome } from '../recovery/types.js';
 import { logger } from '../../shared/logger.js';
 import { bindingRef, resolveDelegatedWorkspace } from '../workspaceScope.js';
+import { openDelegatedTurn, type TurnOriginPin } from '../session/turnSettled.js';
 
 /** Parse a `provider/model` spec into a brain model selection. Splits on the FIRST slash only — model
  *  ids themselves may contain slashes (e.g. `ai-coresynth-io/deepseek/deepseek-v4-flash`), so a naive
@@ -126,6 +127,10 @@ interface DelegatedSessionDeps {
    *  reads as a live claim (the fence) with no steerable turn anywhere, which continueSubagent would
    *  otherwise refuse as "starting up"; it can in fact take a fresh turn right now. */
   isSettling?: (childSessionId: string) => boolean;
+  /** The origin pin, so a child's LATER turns (a DelegateContinue, an owner drill-in, a durable result
+   *  drain, a boot-recovery respawn) stay billed to the request that ordered the delegation instead of
+   *  settling as `internal`. Absent (tests, a minimal wiring) ⇒ nothing is attributed. */
+  usageOrigins?: TurnOriginPin;
 }
 
 /** The sub-agent delegation half of the brain facade: the durable boot reconcile of restart-zombie
@@ -729,45 +734,59 @@ export class DelegatedSessionService {
         ?? { allowedProjectIds: new Set(scope.projectIds), allowedPaths: () => [] };
     const authority = toolAuthorityForUser(this.d, userId);
     const deniedTools = [...(authority?.deny ?? []), ...(opts?.extraDeny ?? [])];
-    return this.d.channelService.send({
-      channelId: channelIdOf(sessionId),
-      ownerUserId: row.user_id,
-      // A drill-in continuation is a new child run, not a standalone channel turn. Preserve the durable
-      // edge so parent stop/status and eviction guards keep owning it even after the child respawns.
-      parentSessionId,
-      policy,
-      delegatedAccess: scope,
-      promptAppend: scope.promptAppend,
-      trusted: scope.admin,
-      // The captured allow/deny policy remains authoritative; the account's CURRENT authority may only
-      // narrow it further — its denials add, and its grant intersects, so a tool an admin has since
-      // revoked stops reaching the child. A mid-run steer still executes under the already-running
-      // child's original turn scope.
-      toolPolicy: delegatedToolPolicy(scope, deniedTools, authority?.allow),
-      identity: this.d.identity.forDelegatedTurn(scope, row.user_id),
-      // The child's OWN model, read back from its session row. Without this the continuation passed no
-      // selection at all, and a child whose channel had since been evicted respawned on whatever
-      // resolveBrainModelRoute picks from an EMPTY selection: the first configured provider's first
-      // model (providers.ts:342-346). That is list order, not anybody's default — in practice it meant a
-      // sub-agent delegated to kimi-coding/k3 came back as ai-coresynth-io/gpt-image-2, an image model
-      // that cannot hold a conversation at all. The respawn then WROTE that over the session row, so the
-      // original model was lost and a second continuation could not recover it either. A legacy row with
-      // no recorded model still falls through to the old behaviour, which is all that is left for it.
-      // An explicit `model` from the caller overrides the stored selection: the recorded model may have
-      // become unavailable since the child last ran, or the user consciously wants to switch. Without one
-      // the stored model stays authoritative — it is what the sub-agent originally ran on.
-      ...(opts?.model
-        ? { model: modelSelectionFromSpec(opts.model) }
-        : row.model ? { model: { model: row.model, ...(row.provider ? { provider: row.provider } : {}) } } : {}),
-      // The child's OWN reasoning effort, captured at spawn. Without it a continuation passed no level, so
-      // channels.send saw a "changed" level, disposed a live child mid-conversation and respawned it — and
-      // an evicted or restart-recovered child came back on the model default, silently cheaper than the
-      // sub-agent the delegating turn had asked for.
-      ...(scope.thinkingLevel ? { thinkingLevel: scope.thinkingLevel } : {}),
-      ownerSteer: true,
-      ...(opts?.rebuildSession ? { rebuildSession: true } : {}),
-      ...(opts?.internalSystem ? { internalSystem: opts.internalSystem } : {}),
-      ...(opts?.onEvent ? { onEvent: opts.onEvent } : {}),
-    }, content);
+    // Every turn that reaches a child through this dispatch — a continuation, an owner drill-in, a durable
+    // result delivery, a boot-recovery respawn — is billed to the request that ordered the delegation,
+    // read from the child's own row. A restart-recovered child therefore INHERITS its stored origin rather
+    // than falling back to `internal`: the work is still the answer to that request, and the alternative
+    // would move a long delegation's tail into the automation bucket purely because the daemon restarted.
+    // A child spawned before the column existed, or one ordered by a turn with no request behind it, has
+    // no stored origin and stays `internal`.
+    const opened = openDelegatedTurn(this.d.usageOrigins, sessionId, this.d.store.spawnOriginFor(sessionId));
+    try {
+      return await this.d.channelService.send({
+        channelId: channelIdOf(sessionId),
+        ownerUserId: row.user_id,
+        // A drill-in continuation is a new child run, not a standalone channel turn. Preserve the durable
+        // edge so parent stop/status and eviction guards keep owning it even after the child respawns.
+        parentSessionId,
+        policy,
+        delegatedAccess: scope,
+        promptAppend: scope.promptAppend,
+        trusted: scope.admin,
+        // The captured allow/deny policy remains authoritative; the account's CURRENT authority may only
+        // narrow it further — its denials add, and its grant intersects, so a tool an admin has since
+        // revoked stops reaching the child. A mid-run steer still executes under the already-running
+        // child's original turn scope.
+        toolPolicy: delegatedToolPolicy(scope, deniedTools, authority?.allow),
+        identity: this.d.identity.forDelegatedTurn(scope, row.user_id),
+        // The child's OWN model, read back from its session row. Without this the continuation passed no
+        // selection at all, and a child whose channel had since been evicted respawned on whatever
+        // resolveBrainModelRoute picks from an EMPTY selection: the first configured provider's first
+        // model (providers.ts:342-346). That is list order, not anybody's default — in practice it meant a
+        // sub-agent delegated to kimi-coding/k3 came back as ai-coresynth-io/gpt-image-2, an image model
+        // that cannot hold a conversation at all. The respawn then WROTE that over the session row, so the
+        // original model was lost and a second continuation could not recover it either. A legacy row with
+        // no recorded model still falls through to the old behaviour, which is all that is left for it.
+        // An explicit `model` from the caller overrides the stored selection: the recorded model may have
+        // become unavailable since the child last ran, or the user consciously wants to switch. Without one
+        // the stored model stays authoritative — it is what the sub-agent originally ran on.
+        ...(opts?.model
+          ? { model: modelSelectionFromSpec(opts.model) }
+          : row.model ? { model: { model: row.model, ...(row.provider ? { provider: row.provider } : {}) } } : {}),
+        // The child's OWN reasoning effort, captured at spawn. Without it a continuation passed no level, so
+        // channels.send saw a "changed" level, disposed a live child mid-conversation and respawned it — and
+        // an evicted or restart-recovered child came back on the model default, silently cheaper than the
+        // sub-agent the delegating turn had asked for.
+        ...(scope.thinkingLevel ? { thinkingLevel: scope.thinkingLevel } : {}),
+        ownerSteer: true,
+        ...(opts?.rebuildSession ? { rebuildSession: true } : {}),
+        ...(opts?.internalSystem ? { internalSystem: opts.internalSystem } : {}),
+        ...(opts?.onEvent ? { onEvent: opts.onEvent } : {}),
+      }, content);
+    } finally {
+      // Idempotent and token-keyed: a turn that settled already consumed the pin, and a continuation
+      // refused before its first provider request must not leave one behind for the next turn.
+      opened?.close();
+    }
   }
 }
