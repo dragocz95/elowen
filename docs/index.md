@@ -20,6 +20,7 @@ Elowen is a self-hosted AI agent with one daemon, durable SQLite state, a Web UI
 | Channels | [Discord](site/19-channels-discord.md) · [Telegram](site/20-channels-telegram.md) · [Microsoft Teams](site/21-channels-teams.md) · [WhatsApp](site/22-channels-whatsapp.md) |
 | Extensions and administration | [Skills](site/24-skills.md) · [MCP](site/25-mcp.md) · [Configuration](site/26-configuration.md) · [Users and access](site/27-users-access.md) |
 | Reference | [Troubleshooting](site/28-troubleshooting.md) · [Glossary](site/29-glossary.md) |
+| Plugin reference | [Files](site/30-files-plugin.md) · [Terminal](site/31-terminal-plugin.md) · [Sandbox](site/32-sandbox-plugin.md) · [Sub-agents](site/33-subagent-plugin.md) · [Web](site/34-web-plugin.md) · [MCP](site/35-mcp-plugin.md) · [Session helpers](site/36-session-helpers.md) · [Chat platforms](site/37-chat-platform-plugins.md) · [Microsoft 365](site/38-microsoft-365-plugin.md) · [Code tools](site/39-code-tools.md) · [Browser](site/40-browser-plugin.md) · [Cron jobs](site/41-cronjob-plugin.md) · [Image tools](site/42-image-tools.md) · [OneDrive](site/43-onedrive-plugin.md) · [Sites](site/44-sites-plugin.md) · [Skills](site/45-skills-plugin.md) · [Stats](site/46-stats-plugin.md) · [Todo](site/47-todo-plugin.md) · [Voice bot](site/48-voice-bot-plugin.md) |
 
 ## Developer and operator references
 
