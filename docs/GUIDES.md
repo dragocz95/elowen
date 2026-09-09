@@ -65,6 +65,8 @@ A safe delegation implementation must preserve these invariants:
 - workflow nodes inherit the effective boundary of the node that creates them;
 - forked runner processes use the same `buildBrainCore()` path but do not start another daemon, HTTP server, scheduler, or platform gateway.
 
+A child can also be a fork of the calling conversation rather than a fresh one. A fork inherits the caller's full context, system prompt and toolset, and what it buys is the provider's prompt cache, so it pays off only when the child runs on the same provider and model as the parent. On a different model the child inherits the context but shares no cache, which makes a fresh sub-agent with a focused task the better default there. Because a fork must keep the parent's exact prompt and tools, `tools`, `read_only`, `subagent_type` and `workspaceId` are each refused alongside it; forking is available only from an owner conversation, since a channel turn and a worker have no prompt cache of their own for a child to inherit. An omitted `fork` consults the instance default only where a fork is possible at all, so enabling that default does not break nested or channel delegation. Workflow nodes take the same flag and fork the conversation the workflow was started from.
+
 Workflow nodes should be self-contained and report a bounded result. Independent nodes may run in parallel; dependency edges must be explicit and acyclic. An explicitly workspace-scoped child receives only workspace-safe tools and cannot use host-filesystem tools such as `WorkflowStart`; if it has no write tool, return the plan or document in the node result for the parent to save. Dynamic expansion goes through the host `WorkflowAddNodes` seam rather than allowing a child to fabricate workflow identity or bypass the host.
 
 Delegated state is durable in `brain_subagent_runs` and related session rows. Recovery claims interrupted work in dependency order; unanswered tool calls are not replayed blindly as if their side effects were known.
@@ -111,7 +113,7 @@ For plugin state cleanup, implement both live removal handlers and durable recon
 7. Add the narrowest regression test that would have caught the failure.
 8. Run the focused test, typecheck/lint, and the relevant build or end-to-end path.
 
-For a cross-surface command, add it once to `src/brain/slashCommands.ts`. The daemon publishes the identity-filtered catalog at `GET /brain/commands`; CLI, web, and platform adapters must not maintain competing built-in name lists.
+For a cross-surface command, add it once to `src/brain/slashCommands.ts`. The daemon publishes the identity-filtered catalog at `GET /brain/commands`; CLI, web, and platform adapters must not maintain competing built-in name lists. Each entry declares two independent things: `kind` says how a surface renders it, and `execution` says which mechanism runs it. A `picker` is drawn by the surface itself, so a plugin can declare one but cannot ship the renderer, and plugin pickers are therefore clamped to the CLI and web surfaces. The two built-in session-control pickers, `/context` and `/project`, are published to chat platforms and drawn through the shared descriptor bridge in `packages/plugin-shared/`; a project's absolute path is deliberately kept out of that descriptor so no renderer can leak it into a shared room, and the choice is resolved as the person who clicked rather than whoever opened the chooser.
 
 ## Persistence, migrations, and recovery
 

@@ -7,7 +7,7 @@ npm ci
 npm ci --prefix web
 ```
 
-Node.js 22 is the CI baseline. Install `tmux` for real-daemon and CLI/TUI coverage. Linux CI also installs `poppler-utils`, `ripgrep`, and `bubblewrap`; these cover real PDF extraction, the `Grep` tool, and confined execution.
+Node.js 22.12 is the declared minimum and CI runs the current 22.x release. Install `tmux` for real-daemon and CLI/TUI coverage. Linux CI also installs `poppler-utils`, `ripgrep`, and `bubblewrap`; these cover real PDF extraction, the `Grep` tool, and confined execution.
 
 ## Daemon and contract tests
 

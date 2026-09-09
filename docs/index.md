@@ -38,6 +38,7 @@ Elowen is a self-hosted AI agent with one daemon, durable SQLite state, a Web UI
 | [Web UI](WEB.md) | Next.js routes, BFF authentication, data flow, plugin pages, and UI boundaries. |
 | [UX](UX.md) | Current web interaction, accessibility, responsive, overlay, and autosave contracts. |
 | [Brand](brand/README.md) | Contributor-facing brand asset usage and visual constraints. |
+| [Feature studies](features/README.md) | Dated research notes comparing one domain against another agent, recording why a design decision was taken. |
 
 ## System in one view
 
@@ -55,11 +56,12 @@ The daemon is the authority for authentication, account ownership, Project acces
 
 - **Conversations and goals** are durable brain sessions in SQLite. A persistent goal reuses the ordinary account, Project, plugin, tool, and permission boundaries.
 - **Delegation and workflows** are provided by the `subagent` plugin. Children and workflow nodes inherit or narrow authority; they cannot widen it.
-- **Projects** register filesystem roots and expose read-only Git state in core. Worktrees, explicit-path commits, branch publication, pull requests, reviews, checks, and merges belong to enabled Sandbox/GitHub integrations.
-- **Sandbox** is account-scoped. It provides persistent HOME, Git worktrees, process leases, and guarded cleanup; non-operator confinement is enabled by default where supported.
+- **Projects** register filesystem roots and expose read-only Git state in core. Worktrees, explicit-path commits, branch publication, pull requests, reviews, checks, and merges belong to enabled Sandbox/GitHub integrations. A Project declares its execution target: the host filesystem, or a managed environment that runs in its own persistent container.
+- **Sandbox** is account-scoped. It provides persistent HOME, Git worktrees, process leases, managed project environments, and guarded cleanup; non-operator confinement is enabled by default where supported.
 - **Permissions** combine account/plugin grants, tool allow/deny state, ordered per-call `allow`/`ask`/`deny` rules, Project policy, and execution-time identity checks.
 - **Plugins** own vertical slices and are loaded from manifests. Their tools, routes, services, browser pages, settings, secrets, and lifecycle are not silently recreated by core.
 - **Memory** is account-owned and durable by default, with optional administrator-configured shared Project pools. Recall, categorization, and embeddings are separate capabilities; the browser is only a projection of server state.
+- **Context management** keeps three mechanisms apart: compaction summarizes history at the cost of one provider request, cold clearing mechanically replaces old tool results and stale runtime framing once the provider cache has expired, and deferred tools stay out of the prompt until `ToolSearch` fetches them.
 
 ## Where to start in the code
 

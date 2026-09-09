@@ -9,8 +9,21 @@ This file is the full technical log. The notes users read in the app are the cur
 
 ## [Unreleased]
 
+## [0.28.40] - 2026-09-09
+
+Versions 0.28.26 through 0.28.39 were development versions and were never published, so everything below
+arrives together.
+
 ### Added
 
+- Added project-owned persistent environments. A managed Project now runs in its own rootless Podman
+  container that survives across turns, so a build, a dev server or a checked-out branch is still there on
+  the next question instead of being rebuilt from nothing. The file, shell, git, artifact, browser, editor,
+  LSP, MCP, codebase and Sites surfaces reach into it through the Sandbox control rather than the host
+  filesystem, a managed turn works at `/workspace`, and the project image ships ripgrep and LibreOffice so
+  content search and office previews run inside the guest instead of failing there. An admin chooses the
+  execution kind when creating the project; plugins that consume an environment declare `requiresCore`
+  0.28.35, the first core that provides the control.
 - Added a host-owned image seam. `ctx.images` renders and edits images for a plugin through either an
   API-key provider's OpenAI-compatible Images API or a connected ChatGPT account's own image backend, so
   the account's OAuth token — refreshed by the same runtime every model request uses — never enters plugin
@@ -18,21 +31,71 @@ This file is the full technical log. The notes users read in the app are the cur
   `requiresCore` 0.28.36, the first core that provides it. A `provider` settings field may now accept
   several provider types, and the picker offers a connected OAuth account, which carries no API key of its
   own and was therefore invisible there before.
-
-- Added project-owned persistent environments: a managed Project now runs in its own rootless Podman
-  container that survives across turns, with the file, shell, browser, editor, LSP, MCP and codebase
-  surfaces reaching it through the Sandbox control instead of the host filesystem. Plugins that consume
-  an environment declare `requiresCore` 0.28.35, which is the first core that provides the control.
-
-- Added a bundled release-notes page. Elowen now ships its own changelog as Markdown inside the
-  `changelog` plugin, so an update carries the new notes to every instance, and each account sees an
-  unread count on the navigation entry until it opens the page.
-- Plugins can put a count on their own entry in the main navigation with `ctx.registerNavBadge`, resolved
-  server-side in the `/plugins/ui` listing the menu is already built from.
-
+- Added a bundled release-notes page. Elowen ships its own changelog as Markdown inside the `changelog`
+  plugin, so an update carries the new notes to every instance, each account sees an unread count on the
+  navigation entry until it opens the page, and an entry is served in the reader's own language when a
+  translation shipped with it. Plugins can put a count on their own navigation entry with
+  `ctx.registerNavBadge`, resolved server-side in the `/plugins/ui` listing the menu is already built from.
+- Added semantic ranking to `ToolSearch`. A keyword query is now also scored against a vector index of
+  deferred tool names and descriptions, and matching skills come back beside the tools with the reminder
+  that `SkillLoad` is what activates one, so a search for a capability finds it under a name the caller did
+  not guess. The index uses the instance's configured embedding model, holds a search budget, and opens a
+  short circuit breaker after a failure so ranking degrades to the keyword answer instead of stalling a
+  turn.
+- Added in-session compaction. The summary that compacts a long conversation is now produced inside the
+  session's own warm prefix instead of a separate cold request, which is where the cache reads were being
+  thrown away.
+- Added cold-context trimming. At the start of a turn whose cache has expired, historical runtime framing,
+  cold tool results and historical images are collapsed to short markers, and an oversized or over-budget
+  tool result is spilled to a file at delivery with a placeholder that tells the model to read it back. The
+  reader's own words and the most recent turn are never trimmed, and the delivery bounds are tunable under
+  Elowen AI → Limits. Plugins get the same store through `ctx.persistToolOutput`.
+- Added forking a delegation. `Delegate` with `fork: true` starts the child on the parent's exact request
+  prefix — same system prompt, same tool schemas, the whole transcript — so on the same provider and model
+  it reads the parent's prompt cache instead of paying for the context again, and the daemon logs whether
+  the cache was actually shared. A fork that cannot fit the inherited context into the child's window is
+  refused rather than silently truncated, and it replaces the old summarized context hand-over.
+- Added conversation trees. One switcher now serves the personal list and the admin register, sub-agents
+  appear as branches under the conversation that spawned them, scheduled jobs hang off it as their own
+  branch, and every row carries live activity and unread state. A scheduled job may run in a dedicated
+  conversation that either keeps its history across runs or is emptied for each one, and a job's cron room
+  belongs to the account it runs as.
+- The command palette became a site-wide search. `⌘K` (`Ctrl+K`) opens it anywhere and it now finds pages,
+  Settings and Account sections, plugins and actions; when the literal match is thin it re-ranks the
+  results by meaning, and when nothing matches at all it offers to ask a model rather than showing an empty
+  list.
+- Added a Model roles view. Settings → Models answers "which model does what" above the catalog — the
+  default chat model, the utility model behind conversation titles and memory distillation, the daily
+  digest model and the embedding provider, model and dimensions — and Account → Models carries the same
+  shape for a person's own primary model, thinking level, vision fallback and compact model, with the
+  per-project pins listed and clearable beside them.
+- Added platform session control. `/project` opens a project chooser on Discord, Microsoft Teams, Telegram
+  and WhatsApp (or takes a slug or id directly) and the chosen project is persisted on the conversation, so
+  it survives a restart; `/cd` moves the CLI's own working directory; `/context` continues one of the
+  sender's conversations in the channel. Plugins can register a surface-rendered picker command of their
+  own, which is how `/sandbox` offers a workspace chooser in the CLI and a drawer on the web.
+- Added a reasoning level per delegation and per workflow node, a name for each delegation, and the child's
+  own status note on the rail, so a fan-out of sub-agents is legible while it runs. A workflow node now
+  receives the handovers of its direct dependencies only.
+- Added shared project memory pools. An admin turns sharing on for a project and either names the sharers
+  or leaves the list empty to mean every member; shared memories keep their author for attribution and stay
+  re-categorizable only inside their own pool.
+- Added plugin WebSocket routes. A plugin declares them in its manifest and serves them at
+  `/ws/plugins/<plugin>/…` on the daemon port, authenticated by a one-shot ticket rather than a long-lived
+  credential.
 - Added a core-owned published-sites environment readiness and provisioning control. It reports a detailed
   fixed dependency checklist and lets an authenticated Sites admin install only the audited rootless Podman
-  support allowlist without exposing a general command surface or restarting Elowen services.
+  support allowlist without exposing a general command surface or restarting Elowen services. Project
+  previews are served on membership-checked isolated origins.
+- Added GPT-6 Astra to the OpenAI OAuth catalog, a per-model maximum output token pin, a published model
+  vision flag and per-project model pins on the wire.
+- Added chat diffs rendered the way the CLI renders them, with syntax-coloured rows, a full-row tint and a
+  line-number gutter that stays out of a copied selection.
+- Added foldable settings groups that remember the fold per reader, plugin settings sections that can
+  belong to the plugin's own detail page instead of the menu, and a `layout` field so a plugin page can
+  declare itself a workbench rather than sit in the shared reading column.
+- Added rotating dashboard recap variants, generated as a batch in one digest run, with the variant count
+  an admin setting.
 - Plugin UI API 16 publishes the shared `ProjectIcon` component so browser plugins render project images
   and the default folder glyph through the host's canonical cached path.
 - Plugin UI API 15: an inline chat artifact also receives `pendingInput` while the app is waiting on an
@@ -40,27 +103,119 @@ This file is the full technical log. The notes users read in the app are the cur
   view and focuses it. An artifact whose surface covers the dock covers that card with it, so it can now
   say a prompt is waiting and hand the reader back to it. Deliberately contentless: the question, its
   options, the answer shape and the elicitation id never cross into a bundle.
-
-### Added
-
 - Plugin UI API 14: an inline chat artifact now receives `narration`, the assistant prose the transcript is
   rendering right now, so an artifact that expands over the dock can still show what is being said. It is a
   projection of the host's own visible text — newest assistant turn, latest text segment, whitespace-collapsed
   and capped at 240 characters — and carries no tool payloads, hidden reasoning, system content or history.
+- Plugins can stream a response body instead of buffering it, contribute several rows from one readiness
+  check, and read a conversation's last assistant reply on behalf of its owner.
 
 ### Changed
 
+- A restart now pauses and resumes instead of draining. `SIGTERM` checkpoints the queue and exits rather
+  than waiting for a turn to finish, and the interrupted turn is continued silently on the next boot from
+  its checkpointed tail: no restart notice in the transcript, no duplicated answer, and no re-prompt. The
+  model learns about the restart only inside the synthetic result of the call that was cut off, which tells
+  it to verify before repeating. A second signal still exits immediately, and attached clients resync once
+  boot recovery has finished.
+- The built-in tools were aligned with the Claude Code reference contract, in wording and in behaviour:
+  `Read`, `Edit`, `Write`, `Glob`, `Grep`, `Search`, `Bash`, `WebFetch`, `WebSearch`, `AskUserQuestion`,
+  `ExitPlanMode`, `ToolSearch` and the MCP bridge. `Bash` defaults to a two-minute timeout with ten minutes
+  as the ceiling and moves an over-budget foreground run to the background at thirty seconds instead of
+  killing it; reading any part of a file now authorizes an edit to it; `Grep` gained case, type, offset and
+  column controls and a deterministic result order; a repeated identical `Read` answers with an unchanged
+  stub; a preapproved documentation page is fetched without the inference step; and the MCP bridge returns
+  structured resource results, downsamples bridged images and marks a description it had to cut.
+- The approval prompt now says when a shell command is destructive, naming what it may discard, overwrite
+  or erase, and an over-cap foreground run keeps its middle rather than only its ends.
+- The Studio navigation column was rebuilt on the shadcn Sidebar primitive. It collapses to a rail with
+  tooltips, its rows can be dragged into the order the reader wants, and Release notes and Account sit in
+  the instance group under Settings.
+- The dashboard was reworked around a conversational hero with a personalized greeting, a standing
+  question and quick actions, with the activity feed, team pulse and metrics as disclosure panels below it.
+- The registers adopted the reference density: an optional selection column with a select-all header, a
+  rows-per-page choice on every register that owns one, a neutral kebab row menu, a resting ring on the
+  primary control and the reference switch geometry.
+- The chat composer puts the work-mode switch beside send, pulses the stop control while a turn runs, folds
+  the model picker and new-chat action into a `⋯` menu on a phone, and keeps a workable todo card above the
+  dock.
+- Model labels are shorter, uniquely keyed and grouped by provider in every picker, the model switcher
+  moved into the statusline, and a provider's native tool search is switched from its own row.
+- The prompts adopted the reference advisor contract and dropped the guidance that tool schemas and runtime
+  blocks already carry.
 - The ChatGPT account's image models are no longer registered as chat models. They answer on the account's
   image endpoint and the Responses API rejects them, so those picker entries could only ever fail on first
   use. `gpt-image-2.5-sunburst`, `gpt-image-2.5-flare`, `gpt-image-2` and `gpt-image-1.5` are now the image
   catalog the seam validates a requested model against.
+- The MCP server registry is bundled with the application instead of shipping as a registry plugin, a
+  server can be enabled or disabled from its own row, and a project-bound server declaration stays inside
+  its project.
+
+### Fixed
+
+- Boot recovery no longer loses work across a second restart: a claimed workflow resumes on the delegation
+  claim, a resumed node is continued like any delegated child rather than re-prompted, a parent paused on a
+  delegation cannot stay parked forever, and a recovered result is delivered into the platform room that
+  was waiting for it. `/stop` between a pause and its resume is a durable cancel, and a stop by the reader
+  wins over recovery.
+- A delegated call now settles only once the child's own delegations are done, running sub-agents are read
+  off the durable lifecycle, sub-agent display state is keyed by call rather than by child session, and a
+  steered continuation is shown as a steer in both the CLI transcript and the agents table.
+- Fork correctness: a fork inherits a compacted parent transcript, is refused when its inherited context
+  cannot be built, compares provider and model before claiming a shared cache, spends its opening
+  breakpoint only on a successful request, and can read the spill files its inherited placeholders name.
+- Anthropic hosted-search turns recover instead of stranding, a dropped hosted search no longer splits
+  signed thinking across a boundary, and replayed references a request cannot carry are dropped.
+- Tool-result handling keeps image blocks when a result is cleared, holds the group budget when a batch
+  finalizes in parallel, converges legacy rows to the transcript's own truth, and never hands back a spill
+  path the turn cannot read.
+- The dashboard no longer scans every message of the account to render its conversation list, so `/dash`
+  paints promptly instead of waiting on a full token rollup, and the personal listing counts only the
+  reader's own rows.
+- Settings and plugin configuration: a value is validated only when it changed, a number outside its
+  manifest range shows the range instead of a failed save, a contributed section owns its save state and
+  sits where its answer is wanted, plugin sections start open like every remembered group, and one shared
+  trailing band lines up every switch, status and action.
+- Web layout and skin repairs across the sidebar rail flyout, the OLED palette and its overlays, register
+  row menus, segmented controls, chat markdown tables, the file picker, the telemetry rail, mobile chat
+  actions, the conversation switcher on a phone, and a clipped question chip.
+- `/project` fails closed when no policy resolver is wired, resolves only projects the caller is assigned
+  to, labels its notice with the project slug, and keeps the case of a typed slug.
+- Cross-process provider request capture takes the write lock, recovers orphaned attempts, and survives a
+  pause restart and a split-turn compaction.
 
 ### Removed
 
+- Removed the idle rollover on platform channels and in owner chat, so a conversation is never moved out
+  from under the person using it.
+- Removed the step-boundary drain; the pause is now the only shutdown path.
 - The CLI no longer paints inline artifact media in the terminal, so the live view is a web-only surface.
   The transcript still shows each artifact as its textual fallback row under the tool call it is anchored
   to. Removed with the thumbnail: the Kitty/iTerm2 image renderer, the artifact media SSE client, the
   viewport's image-row exceptions, and the `ELOWEN_CLI_IMAGES` opt-in.
+- Retired the Memory settings section and every model row it duplicated, now that Model roles answers the
+  same question in one place. Removed with it: the Azure hosted-search verify badge, the telemetry rail's
+  orbital command field, and the unconsumed `maxSessions` launch default.
+- Migration v20 drops three retired tables.
+
+### Security
+
+- Managed project API requests are authorized by project membership rather than by the scope of the turn
+  that happens to be running.
+- Operator sandbox terminals are confined inside their workspace, and a connected GitHub account's
+  credentials are confined to approved sandbox shells rather than exposed to any shell the agent can reach.
+- A WebSocket upgrade compares its `Origin` on hostname rather than `host:port`, and a rejected upgrade
+  flushes its refusal status before the connection is closed.
+- A pinned child cannot change its own sandbox binding, execution leases expire instead of trusting a live
+  daemon pid, and container ownership is verified once per execution release.
+
+### Compatibility
+
+- `elowen@0.28.40` ships shared-helper API 4 through `elowen-plugin-shared@0.3.0` and Plugin UI API 16
+  through `elowen-plugin-ui-kit@0.10.0`. `requiresSharedApi` is an exact match, so a plugin declaring 3 must
+  be rebuilt against 4. Plugins that consume a project environment declare `requiresCore` 0.28.35; the image
+  plugins declare `requiresCore` 0.28.36. The minimum supported Node.js version stays 22.12.0. Registry
+  plugin versions remain on their independent release stream and are not implied by the core release.
 
 ## [0.28.25] - 2026-09-02
 

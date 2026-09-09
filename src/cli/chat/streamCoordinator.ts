@@ -43,12 +43,20 @@ export interface StreamCoordinatorPort {
  *  counting them made a conversation whose only workflow was already detached take the "moving work to the
  *  background" path and then report that it had finished or moved — when the honest answer is that there
  *  was nothing in the foreground to move. */
+/** Command work Ctrl+B can move to the background: an in-flight `Bash` call, or a blocking `ProcessOutput`
+ *  read parked on a background process. Both hold the turn open and both are released by the same
+ *  `/brain/commands/background` call, so the hint, the key guard and the dispatch all ask this one
+ *  question. */
+export const releasableCommand = (
+  proc: { running: boolean; completionMode?: string; blockedRead?: boolean },
+): boolean => proc.running && (proc.completionMode === 'foreground' || proc.blockedRead === true);
+
 export function foregroundWork(
   stream: StreamCoordinatorPort,
   processes: ChatState['processes'],
 ): { subagents: number; commands: number; workflows: number; total: number } {
   const subagents = stream.subagentStates().filter((agent) => agent.status === 'running' && agent.background !== true).length;
-  const commands = processes.filter((proc) => proc.running && proc.completionMode === 'foreground').length;
+  const commands = processes.filter((proc) => releasableCommand(proc)).length;
   const workflows = stream.workflowStates().filter((workflow) => workflow.status === 'running' && workflow.background !== true).length;
   return { subagents, commands, workflows, total: subagents + commands + workflows };
 }
