@@ -10,7 +10,7 @@ The default machine provisioner is `elowen install`:
 - **macOS:** run it as the current user, without `sudo`. It creates per-user LaunchAgents and binds to localhost.
 - **Windows:** run Elowen inside WSL2. Native Windows is not supported because the runtime uses Linux tooling such as tmux and systemd.
 
-The Linux provisioner requires `apt`; the macOS provisioner requires Homebrew when it must install tmux. Node.js 22 or newer is required on every platform.
+The Linux provisioner requires `apt`; the macOS provisioner requires Homebrew when it must install tmux. Node.js 22.12 or newer is required on every platform.
 
 For a packaged installation with Node.js already installed:
 
@@ -69,7 +69,7 @@ The daemon binds to `127.0.0.1:4400` by default. Keep it private when possible: 
 
 Elowen's native production shape is two supervised host processes, normally systemd on Linux, with SQLite and plugin data on a local persistent disk and a reverse proxy in front of the Web UI. The repository does not ship a production `Dockerfile` or `compose.yaml`; `scripts/install-smoke/Dockerfile` is a CI test image. Docker is therefore a bring-your-own packaging option, not the installer-managed deployment path. Build an image from this checkout (or from a published package) and run the daemon and standalone web server as separate processes, preferably in separate containers or under a process supervisor.
 
-The image must contain Node.js 22 or newer, `tmux`, `git`, `ca-certificates`, and `bubblewrap`. A minimal source-build sequence is:
+The image must contain Node.js 22.12 or newer, `tmux`, `git`, `ca-certificates`, and `bubblewrap`. A minimal source-build sequence is:
 
 ```dockerfile
 FROM node:22-bookworm-slim
