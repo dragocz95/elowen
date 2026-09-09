@@ -7,13 +7,19 @@
   },
   "realGuestSuites": [
     "tests/plugins/containerRuntime.podman.test.ts",
-    "../elowen-plugins-environments/tests/lspManagedGuest.podman.test.ts",
-    "tests/plugins/managedToolCallers.podman.test.ts",
-    "../elowen-plugins-environments/tests/browserManagedGuest.podman.test.ts",
-    "../elowen-plugins-environments/tests/editorManagedGuest.podman.test.ts",
-    "../elowen-plugins-environments/tests/codebaseManagedGuest.podman.test.ts",
-    "../elowen-plugins-environments/tests/cronManagedGuest.podman.test.ts"
+    "tests/plugins/managedToolCallers.podman.test.ts"
   ],
+  "registryRealGuestSuites": {
+    "repository": "github.com/dragocz95/elowen-plugins",
+    "note": "Consumer-side guest acceptance for plugins that live in the registry. Their files are not part of this repository, so this repository cannot assert that they exist: a checkout of this repo alone (CI, or any worktree) has no sibling registry beside it. The registry runs them itself and guards their presence in tests/registryGuestSuites.test.mjs, which is where a deletion has to be noticed. Paths are relative to that repository root.",
+    "suites": [
+      "tests/lspManagedGuest.podman.test.ts",
+      "tests/browserManagedGuest.podman.test.ts",
+      "tests/editorManagedGuest.podman.test.ts",
+      "tests/codebaseManagedGuest.podman.test.ts",
+      "tests/cronManagedGuest.podman.test.ts"
+    ]
+  },
   "rows": [
     {
       "area": "lifecycle",
