@@ -164,7 +164,16 @@ export class StreamCoordinator implements StreamCoordinatorPort {
           void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:title'); });
           return;
         }
-        if (event.type === 'compacted') { if (!fromSnapshot) refetchHistory(); return; }
+        // Compaction rewrites the durable history AND the context size behind the statusline, whose
+        // number would otherwise stay at the pre-compaction reading until the next reply. Same status
+        // refetch the web dock does on this event, so both surfaces show the post-compaction estimate.
+        if (event.type === 'compacted') {
+          if (!fromSnapshot) {
+            refetchHistory();
+            void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:compacted'); });
+          }
+          return;
+        }
         // Boot recovery finished under this attached stream: whatever this client was shown in the boot
         // window (a workflow the read model could not yet vouch for, a sub-agent's claim) is refetched
         // exactly as on a reconnect — status for the header and rail, history for the transcript.
