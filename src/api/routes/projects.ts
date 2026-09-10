@@ -21,7 +21,9 @@ const INDICATOR_TONES = new Set(['muted', 'accent', 'success', 'warning', 'dange
 /** The one project API projection. Stored metadata stays untouched; current filesystem state is attached
  * asynchronously at the response boundary for every endpoint that returns a project. */
 async function toProjectView(project: StoredProject): Promise<ProjectView> {
-  return project.executionKind === 'managed' ? { ...project } : { ...project, pathExists: await projectPathExists(project.path) };
+  return project.executionKind === 'managed'
+    ? { ...project, guestRoot: managedGuestRoot(project.slug, project.id) }
+    : { ...project, pathExists: await projectPathExists(project.path) };
 }
 
 /** Enqueue the start that belongs to a just-created managed project and hand back the operation to

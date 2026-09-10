@@ -365,6 +365,10 @@ export interface ProjectView {
   memoryShared?: boolean;
   pathExists?: boolean;
   executionKind?: 'host' | 'managed';
+  /** Managed only: the directory the project is mounted at inside its own environment, and therefore the
+   *  only location its paths are ever relative to. Served by the daemon so that no client re-derives the
+   *  mount rule from the slug — normalisation makes the two differ. */
+  guestRoot?: string;
   creatorUserId?: number | null;
   lifecycle?: 'active' | 'deleting';
   /** Only on the POST answer for a managed project, and only when the start that creation implies was

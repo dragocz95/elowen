@@ -220,7 +220,9 @@ describe('ProjectsView', () => {
     const copied: string[] = [];
     Object.assign(navigator, { clipboard: { writeText: async (text: string) => { copied.push(text); } } });
     server.use(http.get('*/api/projects', () => HttpResponse.json([
-      { id: 3, slug: 'analysis', path: '', notes: '', icon: '', executionKind: 'managed' },
+      // A managed project has no host path; the daemon serves the directory it is mounted at instead,
+      // which is the project's own name rather than a shared anonymous root.
+      { id: 3, slug: 'analysis', path: '', notes: '', icon: '', executionKind: 'managed', guestRoot: '/analysis' },
       { id: 4, slug: 'elowen', path: '/var/www/elowen', notes: '', icon: '' },
     ])));
     const { wrapper: Wrapper } = createWrapper();
@@ -229,12 +231,12 @@ describe('ProjectsView', () => {
     fireEvent.click(await screen.findByRole('button', { name: 'analysis: Actions' }));
     const managedActions = (await screen.findAllByRole('menuitem')).map((item) => item.textContent);
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy path' }));
-    await waitFor(() => expect(copied).toEqual(['/workspace']));
+    await waitFor(() => expect(copied).toEqual(['/analysis']));
 
     fireEvent.click(await screen.findByRole('button', { name: 'elowen: Actions' }));
     const hostActions = (await screen.findAllByRole('menuitem')).map((item) => item.textContent);
     fireEvent.click(await screen.findByRole('menuitem', { name: 'Copy path' }));
-    await waitFor(() => expect(copied).toEqual(['/workspace', '/var/www/elowen']));
+    await waitFor(() => expect(copied).toEqual(['/analysis', '/var/www/elowen']));
     // The same menu, item for item, in the same order.
     expect(managedActions).toEqual(hostActions);
   });
