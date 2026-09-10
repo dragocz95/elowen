@@ -476,6 +476,9 @@ export interface PluginUiListing {
   user?: { id: string; label: string; icon?: string }[];
   /** Contextual panels contributed to a selected Project. Optional for older daemons. */
   project?: { id: string; label: string; icon?: string }[];
+  /** The plugin's bundle contributes status and actions to the Project register's rows. Absent for every
+   *  plugin that does not, so the register loads no bundle it has no use for. */
+  projectRows?: boolean;
   /** `layout` picks the section's rendering: 'orbital' uses the constellation layout the core
    *  Settings sections use, anything else (or absent) the classic stacked rows.
    *

@@ -88,6 +88,9 @@ export function registerPluginUiRoutes(app: ElowenApp, ctx: RouteContext): void 
         // the bundle so the page opens at its declared width on the FIRST paint — the menu metadata is
         // already here before any plugin JS is fetched, and a width settled afterwards would reflow.
         ...(w.layout ? { layout: w.layout } : {}),
+        // Which bundles the Project register has to load before it can draw its rows. Metadata again,
+        // for the same reason: the register asks for a bundle only when the plugin says it contributes.
+        ...(w.projectRows ? { projectRows: true } : {}),
         ...(badge === undefined ? {} : { badge }),
         ...localized(w, lang, user?.is_admin === true, visibilityOf(
           registry?.uiVisibility.get(w.plugin), w.plugin, user?.id ?? null, user?.is_admin === true, (m) => ctx.log.warn(m),
