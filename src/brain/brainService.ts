@@ -1613,7 +1613,12 @@ export class BrainService {
     this.d.store.setProjectExecution(sessionId, userId, ref);
     if (live) {
       live.workDir = effective.workDir;
-      recordSessionEvent(this.d.store, sessionId, live, 'cwd', effective.workDir);
+      // A managed project's directory is `/workspace` inside its own container — an implementation
+      // detail that names nothing a person recognizes. The marker carries the project instead, the same
+      // label the channel project switch passes, and every surface renders the name it already knows.
+      const managed = effective.projectRef?.kind === 'managed' ? effective.projectRef : undefined;
+      const slug = managed ? this.d.projects?.list().find((p) => p.id === managed.projectId)?.slug : undefined;
+      recordSessionEvent(this.d.store, sessionId, live, 'cwd', slug ?? effective.workDir);
     }
     return { projectRef: ref, workDir: effective.workDir };
   }

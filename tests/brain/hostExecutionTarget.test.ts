@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -10,6 +10,10 @@ import { ProjectStore } from '../../src/store/projectStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 import { resolvePolicy } from '../../src/plugins/policy.js';
+import { BrainStore } from '../../src/store/brainStore.js';
+import { BrainService } from '../../src/brain/brainService.js';
+import { preparePersonalProject } from '../../src/brain/service/personalProject.js';
+import { inMemoryModelRuntime } from '../../src/brain/providers.js';
 
 const databases: Db[] = [];
 const roots: string[] = [];
@@ -87,5 +91,110 @@ describe('host execution targets', () => {
       admin: false, owner: true, projectIds: [7], contributionUserId: 3, permissionBoundary: null,
       projectRef: { kind: 'host' },
     })).toBeUndefined();
+  });
+});
+
+/** Minimal BrainService deps, in the shape brainServiceYolo.test.ts uses, plus the project registry and
+ *  the environment control a managed selection needs. */
+function serviceFixture() {
+  const db = openDb(':memory:'); databases.push(db);
+  const store = new BrainStore(db);
+  const projects = new ProjectStore(db);
+  const users = new UserStore(db);
+  const owner = users.create('owner', 'password');
+  users.setAdmin(owner.id, true);
+  const userProjects = new UserProjectStore(db);
+  const piSession = {
+    prompt: vi.fn(async () => {}), subscribe: () => () => {}, dispose: vi.fn(), abort: vi.fn(async () => {}),
+    messages: [], isStreaming: false, getContextUsage: () => undefined, agent: {}, systemPrompt: '',
+    getAllTools: () => [], getActiveToolNames: () => [], setActiveToolsByName: vi.fn(),
+    supportsThinking: () => false, getSteeringMessages: () => [], getFollowUpMessages: () => [],
+    setSteeringMode: vi.fn(),
+  };
+  const sandbox = {
+    prepareExecution: vi.fn(), environmentFor: vi.fn(), requestEnvironment: vi.fn(),
+    environmentOperation: vi.fn(), projectFiles: vi.fn(), revokeProjectAccess: vi.fn(),
+    environmentSnapshots: vi.fn(), environmentLogs: vi.fn(), managedWorktrees: vi.fn(),
+    projectPreviewBinding: vi.fn(),
+  };
+  const d = {
+    store, projects, userProjects,
+    runtime: undefined,
+    users: { ensureAdvisorToken: () => 'tok', get: () => ({ name: 'Filip', username: 'filip', is_admin: 1 }), isAdmin: () => true },
+    policy: (id: number) => resolvePolicy({ projects, userProjects }, id),
+    config: { providers: [{ id: 'relay', label: 'Relay', type: 'openai' as const, baseUrl: 'http://x/v1', models: ['m'], apiKey: 'k' }] },
+    prompts: { render: () => 'PERSONA' },
+    url: 'http://x',
+    createSession: vi.fn(async () => ({ session: piSession })),
+    resourceLoaderFactory: () => undefined,
+    plugins: {
+      peek: () => ({ control: (name: string) => (name === 'sandbox' ? sandbox : undefined), toolOwner: new Map(), userGrantable: new Map(), loadedNames: new Set() }),
+      get: async () => undefined,
+    },
+  };
+  return { d, store, projects, owner };
+}
+
+describe('the execution-change marker', () => {
+  // `/workspace` is the path inside the project's own container: it names nothing a reader recognizes,
+  // and truncated in a status line it reads as no name at all.
+  it('names the managed project rather than its container path', async () => {
+    const h = serviceFixture();
+    h.d.runtime = await inMemoryModelRuntime() as never;
+    const project = h.projects.createManaged({ slug: 'sales-dashboard', creatorUserId: h.owner.id });
+    const service = new BrainService(h.d as never);
+    const { sessionId } = await service.start(h.owner.id);
+    // A marker only lands on a conversation that has already spoken; without a turn there is nothing to
+    // annotate (see recordSessionEvent's empty-conversation guard).
+    h.store.appendMessage({ id: 'm1', sessionId, parentId: null, role: 'user', content: { role: 'user', content: 'hi' } });
+    const appended = vi.spyOn(h.store, 'appendSessionEvent');
+    expect(service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: project.id }, sessionId).workDir).toBe('/workspace');
+    expect(appended).toHaveBeenCalledWith(sessionId, 'cwd', 'sales-dashboard');
+  });
+});
+
+describe('a new conversation with no project chosen', () => {
+  const spawnOpts = (h: ReturnType<typeof setup>, userId: number) => ({
+    sessionId: `brain-${userId}-new`, ownerUserId: userId, selection: {},
+    policy: h.policy(userId), autoCompact: false,
+  });
+
+  // Before project environments an administrator's chat simply ran on the host. Binding them to a private
+  // managed project took away every file, tool and skill they had, which is what Chetty saw.
+  it('leaves an administrator on the host, unrestricted', () => {
+    const h = setup();
+    const prepared = preparePersonalProject(
+      { store: new BrainStore(h.db), projects: h.projects, policy: h.policy },
+      spawnOpts(h, h.admin.id) as never,
+    );
+    expect(prepared.projectRef).toBeUndefined();
+    expect(prepared.initialRef).toBeUndefined();
+    expect(prepared.policy.allowedProjectIds).toBe('all');
+    expect(h.users.get(h.admin.id)?.default_project_id).toBeNull();
+  });
+
+  it('opens a member in their assigned project, the lowest id when there are several', () => {
+    const h = setup();
+    const first = h.projects.create({ slug: 'first', path: h.root });
+    const second = h.projects.create({ slug: 'second', path: h.root });
+    h.userProjects.assign(h.member.id, second.id);
+    h.userProjects.assign(h.member.id, first.id);
+    const prepared = preparePersonalProject(
+      { store: new BrainStore(h.db), projects: h.projects, policy: h.policy },
+      spawnOpts(h, h.member.id) as never,
+    );
+    expect(prepared.projectRef).toEqual({ kind: 'host', projectId: first.id });
+    expect(h.users.get(h.member.id)?.default_project_id).toBeNull();
+  });
+
+  it('falls back to the private default project for a member with no assignment', () => {
+    const h = setup();
+    const prepared = preparePersonalProject(
+      { store: new BrainStore(h.db), projects: h.projects, policy: h.policy },
+      spawnOpts(h, h.member.id) as never,
+    );
+    const defaultId = h.users.get(h.member.id)?.default_project_id;
+    expect(defaultId).toBeTypeOf('number');
+    expect(prepared.projectRef).toEqual({ kind: 'managed', projectId: defaultId });
   });
 });
