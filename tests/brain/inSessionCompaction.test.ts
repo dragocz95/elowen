@@ -34,6 +34,8 @@ const SYSTEM_PROMPT = 'in-session compaction test persona';
 /** The two halves of PI's summarization prompt that must reach the model through the appended message. */
 const PI_INSTRUCTION = 'Create a structured context checkpoint summary';
 const PI_GUARD = 'Do NOT continue the conversation';
+/** The opening line of PI's turn-prefix prompt, which a split turn adds as a SECOND request. */
+const PI_TURN_PREFIX = 'This is the PREFIX of a turn that was too large to keep.';
 
 interface ProviderCall {
   model: Model<Api>;
@@ -48,6 +50,9 @@ interface FixtureOptions {
   /** Register a cancelling `session_before_compact` handler ahead of the summarizer, the way the factory
    *  registers the compaction circuit breaker ahead of it. */
   cancelBefore?: boolean;
+  /** Append a turn big enough that the cut point falls INSIDE it, which is what makes PI split the turn
+   *  and issue a second, turn-prefix summarization request. */
+  splitTurn?: boolean;
 }
 
 let apiSequence = 0;
@@ -105,6 +110,15 @@ function appendToolHistory(sm: SessionManager, model: Model<Api>, suffix = 'one'
   sm.appendMessage(assistantMessage(model, [{ type: 'text', text: `finished ${suffix}` }]));
   sm.appendMessage({ role: 'user', content: `keep recent ${suffix}`, timestamp: Date.now() });
   sm.appendMessage(assistantMessage(model, [{ type: 'text', text: `recent ${suffix}` }]));
+}
+
+/** A turn whose PREFIX is far larger than `keepRecentTokens`, so PI's cut point lands on the big
+ *  assistant message inside it rather than on a turn boundary: `isSplitTurn`, and a second summarization
+ *  request for the prefix of that turn. */
+function appendSplitTurn(sm: SessionManager, model: Model<Api>): void {
+  sm.appendMessage({ role: 'user', content: 'analyze the failing deploy log', timestamp: Date.now() });
+  sm.appendMessage(assistantMessage(model, [{ type: 'text', text: 'log analysis '.repeat(400) }]));
+  sm.appendMessage(assistantMessage(model, [{ type: 'text', text: 'done' }]));
 }
 
 /** The request classifier the fake provider uses, and the same one the assertions read: an in-session
@@ -186,6 +200,7 @@ async function fixture(o: FixtureOptions = {}): Promise<{
   const cwd = process.cwd();
   const sessionManager = SessionManager.inMemory(cwd);
   appendToolHistory(sessionManager, model, 'one');
+  if (o.splitTurn) appendSplitTurn(sessionManager, model);
   const resourceLoader = new DefaultResourceLoader({
     cwd, agentDir: cwd, settingsManager, systemPrompt: SYSTEM_PROMPT,
     noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
@@ -250,6 +265,34 @@ describe('In-session compaction', () => {
     expect(f.compactions).toEqual([{ fromExtension: true, reason: 'manual' }]);
     expect(result.summary).toContain('in-session summary');
     expect(result.details).toEqual({ readFiles: ['/read-one.ts'], modifiedFiles: ['/edit-one.ts'] });
+  });
+
+  it('summarizes a split turn\'s prefix on PI\'s own context instead of the whole conversation again', async () => {
+    const f = await fixture({ splitTurn: true });
+
+    const result = await f.session.compact();
+
+    // A split turn is TWO summarization requests: the history, then the prefix of the turn being split.
+    expect(f.calls).toHaveLength(2);
+    const [history, prefix] = f.calls as [ProviderCall, ProviderCall];
+    // The history question is the one that pays off on the session's own warm prefix.
+    expect(isInSessionSummary(history.context)).toBe(true);
+    // The prefix question is about the split turn ALONE, so it goes out as PI built it: PI's
+    // summarization system prompt and its one serialized message. Answering it with the live context
+    // would summarize the whole conversation a second time, under a heading that claims to describe
+    // one turn.
+    expect(isStandaloneSummary(prefix.context)).toBe(true);
+    expect(prefix.context.messages).toHaveLength(1);
+    const prefixText = JSON.stringify(prefix.context.messages);
+    expect(prefixText).toContain(PI_TURN_PREFIX);
+    expect(prefixText).toContain('analyze the failing deploy log');
+    expect(prefixText).not.toContain('inspect one');
+    expect(prefix.context.tools).toBeUndefined();
+    // PI's own one-off retention for a request that shares no prefix, and the auth this module resolves
+    // for every request it sends.
+    expect(prefix.options?.cacheRetention).toBe('none');
+    expect(prefix.options?.apiKey).toBe(history.options?.apiKey);
+    expect(result.summary).toContain('Turn Context (split turn)');
   });
 
   it('leaves the session history untouched and appends nothing that could carry a new cache breakpoint', async () => {

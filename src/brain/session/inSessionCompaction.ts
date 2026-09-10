@@ -53,6 +53,14 @@ const CONVERSATION_OPEN = '<conversation>\n';
 const CONVERSATION_CLOSE = '\n</conversation>\n\n';
 const PREVIOUS_SUMMARY_OPEN = '<previous-summary>\n';
 
+/** The opening line of PI's `TURN_PREFIX_SUMMARIZATION_PROMPT` (compaction.js). A compaction that splits
+ *  a turn asks TWO questions: the history up to the turn start, then the prefix of the turn itself. Only
+ *  the first one is a question about the live context. The prefix question is about a slice PI holds and
+ *  the session no longer sends on its own, so answering it from the live context would summarize the
+ *  whole conversation a second time and file the result under a heading that claims to describe one turn.
+ *  Recognising the prompt is what keeps that request PI's own. */
+const TURN_PREFIX_PROMPT_OPENING = 'This is the PREFIX of a turn that was too large to keep.';
+
 function textOf(content: string | readonly (TextContent | ImageContent)[]): string {
   if (typeof content === 'string') return content;
   return content.map((part) => (part.type === 'text' ? part.text : '')).join('');
@@ -171,8 +179,13 @@ function warmPrefixStream(session: AgentSession, usage: SummaryUsage): AgentSess
     const agent = session.agent;
     const instruction = summarizationInstruction(context);
     const signal = options?.signal;
-    const liveContext = await liveContextWith(agent, instruction, signal);
     const apiKey = agent.getApiKey ? await agent.getApiKey(model.provider) : undefined;
+    if (instruction.includes(TURN_PREFIX_PROMPT_OPENING)) {
+      // PI's context and PI's options, unchanged apart from the auth this module resolves for every
+      // request it sends: the prefix of one turn shares no cacheable prefix with the session anyway.
+      return guardSummaryResponse(await agent.streamFunction(model, context, { ...options, apiKey }), usage);
+    }
+    const liveContext = await liveContextWith(agent, instruction, signal);
     const inner = await agent.streamFunction(model, liveContext, {
       ...options,
       // PI pins "none" to avoid paying a cache write for a one-off request. This request is not one-off
