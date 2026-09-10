@@ -9,7 +9,6 @@ import { useToast } from '../../components/ui/Toast';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
-import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { managedProjectStrings } from '../projects/managedProjectStrings';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '../../components/ui/shadcn/dropdown-menu';
 import { useBrainChat } from './BrainChatProvider';
@@ -22,45 +21,47 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
   const { telemetry, activeSessionId } = useBrainChat();
   const projects = useProjects();
   const me = useMe();
-  const isAdmin = me.data?.user?.is_admin === true;
   const [open, setOpen] = useState(false);
   const [moving, setMoving] = useState(false);
   const [moveStatus, setMoveStatus] = useState<SaveStatus>('idle');
   const [retryTarget, setRetryTarget] = useState<ProjectExecutionRef | null>(null);
-  const [hostTarget, setHostTarget] = useState<ProjectExecutionRef | null>(null);
   const [confirmed, setConfirmed] = useState<{ session: string; target: ProjectExecutionRef } | null>(null);
   const sessionRef = useRef(activeSessionId);
   sessionRef.current = activeSessionId;
   const reported = telemetry.projectRef;
-  useEffect(() => { setConfirmed(null); setMoveStatus('idle'); setRetryTarget(null); setHostTarget(null); }, [activeSessionId, reported?.kind, reported?.projectId]);
+  useEffect(() => { setConfirmed(null); setMoveStatus('idle'); setRetryTarget(null); }, [activeSessionId, reported?.kind, reported?.projectId]);
   const target = confirmed?.session === activeSessionId ? confirmed.target : reported;
-  const items = (projects.data ?? []).filter((p) => p.lifecycle !== 'deleting' && (p.executionKind === 'managed' || isAdmin));
+  // A host project is a project: whoever the API offers it to may work in it, and the daemon confines
+  // the turn to that project's root exactly as it confines a managed one to its environment.
+  const items = (projects.data ?? []).filter((p) => p.lifecycle !== 'deleting');
   const current = target?.projectId ? projects.data?.find((p) => p.id === target.projectId) : undefined;
   // The picker names the project a conversation runs in, and nothing else. A host target with no project
   // behind it has no name to show, so it reads as an unselected target — the same neutral wording any
   // other nameless target gets. This is presentation: the conversation's execution state is untouched,
-  // and host authority still lives in the confirmation below and in the daemon.
+  // and the authority over an execution target lives in the daemon.
   const label = current?.slug ?? s.unknownTarget;
   const ready = Boolean(activeSessionId) && !projects.isLoading && !projects.isError && !me.isLoading && !me.isError;
 
   const move = async (next: ProjectExecutionRef) => {
     const session = activeSessionId;
-    if (!session || moving || (next.kind === 'host' && !isAdmin)) return;
+    if (!session || moving) return;
     setOpen(false); setRetryTarget(next); setMoveStatus('saving'); setMoving(true);
     try {
       const response = await elowenClient.brainSetExecution(next, session);
       if (sessionRef.current !== session) return;
-      setConfirmed({ session, target: response.projectRef }); setMoveStatus('idle'); setHostTarget(null);
+      setConfirmed({ session, target: response.projectRef }); setMoveStatus('idle');
     } catch (error) {
       const message = apiErrorMessage(error) || t.brainChat.projectPickerFailed;
       if (sessionRef.current === session) { setMoveStatus('error'); toast(message, 'error'); }
       throw new Error(message);
     } finally { setMoving(false); }
   };
+  // Host mode asks nothing. An execution target is a working decision, and the daemon is the authority
+  // on whether this account may enter the project — a dialog in front of it only stood between people
+  // and the projects they already work in.
   const select = (next: ProjectExecutionRef) => {
     setOpen(false);
-    if (next.kind === 'host') setHostTarget(next);
-    else void move(next).catch(() => {}); // The failed mutation remains visible with a retry action.
+    void move(next).catch(() => {}); // The failed mutation remains visible with a retry action.
   };
   return <div data-testid="chat-project-picker" className="relative shrink-0">
     <DropdownMenu open={open} onOpenChange={setOpen}>
@@ -72,11 +73,11 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
         </button>
       </DropdownMenuTrigger>
       <DropdownMenuContent aria-label={s.executionKind} align="end" className="max-h-80 w-64">
-        {/* Every entry is a registered project, named the way it is named everywhere else. Choosing a host
-            project still produces a `host` target, still asks for confirmation and still travels the same
-            authorized execution endpoint — the change here is presentation, not authority. Standalone
-            host mode is not offered as a destination of its own; host administration keeps its home in
-            Projects, the CLI and the API. */}
+        {/* Every entry is a registered project, named the way it is named everywhere else, and the list is
+            already the set this account may reach (GET /projects filters it). Choosing a host project
+            produces a `host` target and travels the same authorized execution endpoint a managed one does.
+            Standalone host mode is not offered as a destination of its own; host administration keeps its
+            home in Projects, the CLI and the API. */}
         <DropdownMenuRadioGroup value={target ? `${target.kind}:${target.projectId ?? ''}` : ''} onValueChange={(value) => {
           const project = items.find((p) => `${p.executionKind ?? 'host'}:${p.id}` === value);
           if (project) select({ kind: project.executionKind === 'managed' ? 'managed' : 'host', projectId: project.id });
@@ -88,7 +89,5 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
       </DropdownMenuContent>
     </DropdownMenu>
     <AutoSaveStatus status={moveStatus} onRetry={() => { if (retryTarget && !moving) select(retryTarget); }} />
-    <ConfirmDialog open={hostTarget !== null} title={s.hostConfirm} description={s.hostWarning} confirmLabel={s.hostConfirm} pending={moving}
-      onClose={() => setHostTarget(null)} onConfirm={async () => { if (hostTarget) await move(hostTarget); }} />
   </div>;
 }

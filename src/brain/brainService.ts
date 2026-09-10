@@ -1600,15 +1600,21 @@ export class BrainService {
   selectProjectExecution(userId: number, ref: ProjectExecutionRef, session?: string): { projectRef: ProjectExecutionRef; workDir: string } {
     const sessionId = session ? this.lifecycle.ownedUserSession(userId, session) : this.lifecycle.activeSessionId(userId);
     const live = this.sessions.get(sessionId);
-    if (!live) throw new Error('brain not started');
-    if (live.session.isStreaming || this.sessions.hasActiveChildren(sessionId) || processRegistry.runningJobCountForSession(sessionId) > 0) throw new Error('conversation still has active work');
+    if (live && (live.session.isStreaming || this.sessions.hasActiveChildren(sessionId) || processRegistry.runningJobCountForSession(sessionId) > 0)) throw new Error('conversation still has active work');
     const sandbox = this.d.plugins?.peek()?.control('sandbox');
     if (runWithContributionUser(userId, () => sandbox?.activeSessionWorkspace?.({ sessionId, projectIds: this.d.projects?.list().map((p) => p.id) ?? [] }))) throw new Error('release the restricted workspace before selecting a project environment');
-    const effective = effectiveTurnWorkDir({ policy: live.policy, baseWorkDir: live.workDir, accountUserId: userId, sessionId, projects: this.d.projects, sandbox, projectRef: ref, hostAuthorized: this.d.users.get(userId)?.is_admin === true });
+    // A conversation nobody has spoken in yet has no live record, and its target is still the person's to
+    // choose: the selection is durable state on the row, and the spawn that follows reads it. Only the
+    // live cwd and its marker need a running session.
+    const policy = live?.policy ?? this.d.policy?.(userId);
+    if (!policy) throw new Error('brain not started');
+    const effective = effectiveTurnWorkDir({ policy, baseWorkDir: live?.workDir ?? this.d.store.getSession(sessionId)?.work_dir ?? undefined, accountUserId: userId, sessionId, projects: this.d.projects, sandbox, projectRef: ref, hostAuthorized: this.d.users.get(userId)?.is_admin === true });
     if (!effective.workDir) throw new Error('execution target has no working directory');
     this.d.store.setProjectExecution(sessionId, userId, ref);
-    live.workDir = effective.workDir;
-    recordSessionEvent(this.d.store, sessionId, live, 'cwd', effective.workDir);
+    if (live) {
+      live.workDir = effective.workDir;
+      recordSessionEvent(this.d.store, sessionId, live, 'cwd', effective.workDir);
+    }
     return { projectRef: ref, workDir: effective.workDir };
   }
 
