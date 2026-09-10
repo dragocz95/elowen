@@ -35,11 +35,19 @@ function setup() {
       for (const line of buildLines) onOutput?.(line);
       return 'localhost/elowen-project-base:test';
     }),
-    inspect: vi.fn(async (spec: any) => containers.get(spec.name) ?? null),
-    create: vi.fn(async (spec: any) => { const row = { id: 'a'.repeat(64), state: 'created' }; containers.set(spec.name, row); return row; }),
+    // The real client verifies the container against the specification it is asked about, so one built
+    // for a different mount layout fails ownership instead of being adopted or removed.
+    inspect: vi.fn(async (spec: any) => {
+      const row = containers.get(spec.name);
+      if (!row) return null;
+      if (row.workdir !== spec.workdir) throw new Error('Container ownership or runtime specification mismatch');
+      return row;
+    }),
+    create: vi.fn(async (spec: any) => { const row = { id: 'a'.repeat(64), state: 'created', workdir: spec.workdir }; containers.set(spec.name, row); return row; }),
     start: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'running'; }),
     stop: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'stopped'; }),
     remove: vi.fn(async (spec: any) => { containers.delete(spec.name); }),
+    removeByName: vi.fn(async (spec: any) => { containers.delete(spec.name); }),
     // The real guest: every execution goes through `systemd-run`, so until the system bus is listening a
     // command does not run at all. This is the shape the container on the live host produced — the bus
     // socket absent while PID 1 was already up, and dbus refused with exactly this message.
@@ -209,16 +217,18 @@ describe('environment operation progress', () => {
   // The stale-container case: the failure names the repair, and the repair is an operation of its own
   // that rebuilds the container while the storage volumes — and so the project's files — stay put.
   it('fails a stale environment with the recreate wording and repairs it through the recreate action', async () => {
-    const { runtime, db, podman, published } = setup();
+    const { runtime, db, podman, published, containers } = setup();
     await runtime.requestEnvironment({ ...input, requestId: 'first', action: { kind: 'start' } });
     await runtime.reconcile();
 
     // Rewind the row to the pre-mount layout while its container survives, which is exactly the shape
-    // that reached the owner: a container this runtime can no longer verify.
+    // that reached the owner: a container built against `/workspace` that this runtime can no longer
+    // verify, because the specification that would prove ownership is the one that changed.
     const row = db.prepare("SELECT * FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
     const spec = JSON.parse(row.spec_json);
     delete spec.input.workspaceTarget;
     db.prepare("UPDATE p_sandbox_runtimes SET spec_json=?, state='stopped' WHERE kind='project' AND resource_id='7'").run(JSON.stringify(spec));
+    for (const container of containers.values()) container.workdir = '/workspace';
 
     const failing = await runtime.requestEnvironment({ ...input, requestId: 'stale', action: { kind: 'start' } });
     await runtime.reconcile();
@@ -234,9 +244,33 @@ describe('environment operation progress', () => {
     await runtime.reconcile();
     expect((await runtime.environmentOperation({ operationId: repair.id, accountUserId: 1 }))?.status).toBe('succeeded');
     expect((await runtime.environmentFor(input)).state).toBe('running');
-    expect(podman.remove).toHaveBeenCalledOnce();
+    // The verified removal cannot touch that container, so the repair removes it by name — which is the
+    // whole reason `recreate` exists — and builds a new one at the named mount.
+    expect(podman.removeByName).toHaveBeenCalledOnce();
+    expect(podman.create.mock.calls.at(-1)![0].workdir).toBe('/sales-dashboard');
     // The files live in the volumes, so a repair that removed one would be a data loss dressed as a fix.
     expect(podman.removeVolume).not.toHaveBeenCalled();
+  });
+
+  // A project whose container predates the named mount could not be deleted either: the deletion opens
+  // by stopping that container, the inspection refuses it, and the Project stayed in `deleting` forever.
+  it('deletes a project whose container predates the named project mount', async () => {
+    const { runtime, db, containers, podman } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'first', action: { kind: 'start' } });
+    await runtime.reconcile();
+
+    const row = db.prepare("SELECT * FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
+    const spec = JSON.parse(row.spec_json);
+    delete spec.input.workspaceTarget;
+    db.prepare("UPDATE p_sandbox_runtimes SET spec_json=? WHERE kind='project' AND resource_id='7'").run(JSON.stringify(spec));
+    for (const container of containers.values()) container.workdir = '/workspace';
+
+    const removal = await runtime.requestEnvironment({ ...input, requestId: 'remove', action: { kind: 'delete' } });
+    await runtime.reconcile();
+    const done = await runtime.environmentOperation({ operationId: removal.id, accountUserId: 1 });
+    expect([done?.status, done?.error]).toEqual(['succeeded', null]);
+    expect(podman.removeByName).toHaveBeenCalledOnce();
+    expect(containers.size).toBe(0);
   });
 
   it('refuses recreate for a Site, which has no such repair', async () => {

@@ -326,6 +326,17 @@ export class PodmanClient {
     await this.#run(['rm', row.id]);
     if (await this.#exists('container', spec.name)) throw new Error('Container removal was not verified');
   }
+  /** Remove a container by NAME, without the ownership proof `remove` demands. Its one caller is the
+   * repair for a container built before the project mount carried the project's name: the specification
+   * that would prove ownership is exactly the one that changed, so inspecting it can only refuse, and
+   * `recreate` and `delete` would have no way to end that state. The name stays inside this runtime's
+   * namespace, which `#assertScope` enforces, and the removal is still verified afterwards. */
+  async removeByName(spec) {
+    this.#assertScope(spec);
+    if (!await this.#exists('container', spec.name)) return;
+    await this.#run(['rm', '--force', spec.name]);
+    if (await this.#exists('container', spec.name)) throw new Error('Container removal was not verified');
+  }
   async pause(spec) {
     const row = await this.#owned(spec);
     if (row.state !== 'running') throw new Error('Container is not running');

@@ -593,6 +593,17 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     if (stopped && !['created', 'configured', 'stopped', 'exited'].includes(stopped.state)) throw error('stop_unverified', 'Container stop could not be verified');
     if (row.kind === 'site') await sites.afterStop(row.resource_id);
   }
+  /** End the pre-mount layout by removing the container that carries it. Such a container can be neither
+   *  inspected, stopped nor removed the verified way — the specification that would prove ownership is
+   *  the one that changed — so removing it by name is the only way out, and `recreate` and `delete` are
+   *  the two explicit operations that exist to take it. The storage volumes are untouched. */
+  async function removeLegacyContainer(row) {
+    if (!row.spec.legacyWorkspaceLayout) return;
+    await podman.removeByName(specFor(row.spec));
+    delete row.spec.legacyWorkspaceLayout;
+    delete row.spec.containerId;
+    store.save(row);
+  }
   async function ensureInitialContainer(row, op) {
     const spec = specFor(row.spec);
     // A container created before the project mount carried the project's name was built from a different
@@ -816,6 +827,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       row.state = 'starting'; store.save(row);
       if (!op.checkpoint.removed) {
         step(op, 'remove');
+        // The pre-mount container goes first, before anything inspects it: every verified path below
+        // would refuse it, which is what left this repair unable to perform the repair.
+        await removeLegacyContainer(row);
         const previous = specFor(row.spec);
         await cancelLeases(row);
         if (await podman.containerExists(previous)) {
@@ -913,6 +927,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     } else if (kind === 'delete') {
       if (row.kind === 'project') await assertNoPublishedSites(row.resource_id);
       step(op, 'stop');
+      await removeLegacyContainer(row);
       await stopRow(row);
       const spec = specFor(row.spec);
       const snapshots = store.snapshots(row.kind, row.resource_id);
