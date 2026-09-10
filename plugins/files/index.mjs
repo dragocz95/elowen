@@ -1490,10 +1490,17 @@ export function register(ctx) {
           let beforeBuf = null;
           let version = null;
           if (guest) {
-            if (await guest.stat(abs)) {
+            // One guest read answers both questions this needs: whether the file is there at all, and —
+            // if it is — its bytes and the version the compare-and-swap below writes against. Statting
+            // first only to read afterwards spent a container round trip establishing what the read
+            // reports anyway. A path that is not there comes back as a plain absence, which is the
+            // creation case; anything else is a real failure and still propagates.
+            try {
               const read = await guest.read(abs, MAX_EDIT_BYTES);
               beforeBuf = read.bytes;
               version = read.version;
+            } catch (error) {
+              if (error?.code !== 'not_found') throw error;
             }
           } else {
             try { beforeBuf = readFileSync(abs); } catch { /* new file */ }
@@ -1585,23 +1592,30 @@ export function register(ctx) {
           // The same missing-path answer Read, Glob and Grep give, and the reference's own for this tool:
           // a raw ENOENT from the stat below names neither the directory the path was resolved against nor
           // the neighbour the caller probably meant.
-          // One guest stat answers both existence and size; it used to take two, and each one is a
-          // container round trip.
-          const entry = guest ? await guest.stat(abs) : null;
-          if (guest && !entry) throw new Error(`File does not exist: ${abs}`);
+          // One guest read answers existence, size and content together. The stat that used to precede it
+          // could only report what the read reports, and cost a container round trip to do it; the size
+          // refusal keeps its teeth because the read is bounded by the same limit and refuses past it
+          // rather than slurping a gigabyte into a single string.
+          let snapshot = null;
+          if (guest) {
+            try { snapshot = await guest.read(abs, MAX_EDIT_BYTES); }
+            catch (error) {
+              if (/exceeds the \d+ byte read limit/.test(String(error?.message))) {
+                return ok('Edit', 'Error: File is too large to edit. Maximum editable file size is 1 GB.',
+                  { ok: false, ...pathMeta(abs) });
+              }
+              throw error;
+            }
+          }
           if (!guest && !existsSync(abs)) {
             return ok('Edit', `Error: ${pathNotFoundMessage(
               'File does not exist.', abs, ctx.defaultCwd(), (value) => ctx.displayPath(value),
             )}`, { ok: false, ...pathMeta(abs) });
           }
-          // Checked on the stat, before the slurp: reading a gigabyte-plus file into a single string is the
-          // out-of-memory failure this refusal exists to prevent, so it cannot come after the read.
-          const size = guest ? entry.size : statSync(abs).size;
-          if (size > MAX_EDIT_BYTES) {
-            return ok('Edit', `Error: File is too large to edit (${formatSize(size)}). Maximum editable file size is 1 GB.`,
+          if (!guest && statSync(abs).size > MAX_EDIT_BYTES) {
+            return ok('Edit', `Error: File is too large to edit (${formatSize(statSync(abs).size)}). Maximum editable file size is 1 GB.`,
               { ok: false, ...pathMeta(abs) });
           }
-          const snapshot = guest ? await guest.read(abs, MAX_EDIT_BYTES) : null;
           const beforeBuf = snapshot ? snapshot.bytes : readFileSync(abs);
           // `true`: an anchored edit may proceed through a post-write reformat of our OWN content — its
           // old_string still has to match what is on disk now. A blind overwrite (Write) gets no such pass.

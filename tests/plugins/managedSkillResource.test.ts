@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, it, vi } from 'vitest';
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { isAbsolute, join, resolve as resolvePath, sep } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
@@ -156,10 +156,11 @@ describe('managed Read of a skill support file', () => {
     expect(edited.details?.ok).toBe(false);
     expect(edited.content[0].text).toMatch(/File has not been read yet|File does not exist/);
 
-    const written = await state.run('Write', { file_path: target, content: 'clobbered' });
-    expect(written.details?.ok).toBe(false);
-    // Whatever the mutation did, it did not reach the host file.
-    expect(statSync(target).size).toBe('the support file text\n'.length);
+    await state.run('Write', { file_path: target, content: 'clobbered' });
+    // The invariant is about the HOST file. A managed Write names a path inside the CONTAINER's own
+    // filesystem — something the session could equally do through a shell — and whether the guest accepts
+    // that is not what this guards. What must never happen is the write reaching the skill root here.
+    expect(readFileSync(target, 'utf-8')).toBe('the support file text\n');
     // The first barrier, and the reason it cannot be reasoned around: only Read consults the control at
     // all, so a mutation has no way to name a host file — it only ever addresses the guest. One call for
     // one Read, and none for the two mutations behind it.
@@ -188,9 +189,8 @@ describe('managed Read of a skill support file', () => {
 
     const edited = await state.run('Edit', { file_path: target, old_string: 'the support file', new_string: 'clobbered' });
     expect(edited.details?.ok).toBe(false);
-    const written = await state.run('Write', { file_path: target, content: 'clobbered' });
-    expect(written.details?.ok).toBe(false);
-    expect(statSync(target).size).toBe('the support file text\n'.length);
+    await state.run('Write', { file_path: target, content: 'clobbered' });
+    expect(readFileSync(target, 'utf-8')).toBe('the support file text\n');
   });
 
   // A relative path belongs to the guest working directory. Re-pointing one at a skill root would let an

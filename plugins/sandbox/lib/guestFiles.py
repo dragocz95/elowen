@@ -54,11 +54,18 @@ def version(name, follow=False):
     return digest.hexdigest()
 
 
-def entry(name):
+def entry(name, with_version=True):
+    # The version hashes the whole file, which is what makes an entry authoritative enough to write
+    # against and dead weight for a caller that only wants names and modification times. When it is
+    # omitted the key is ABSENT rather than null, so nothing can mistake a skipped hash for a computed
+    # one and write against it.
     info = os.lstat(name)
     kind = 'file' if stat.S_ISREG(info.st_mode) else 'directory' if stat.S_ISDIR(info.st_mode) else 'symlink' if stat.S_ISLNK(info.st_mode) else 'other'
-    return {'path': name, 'kind': kind, 'size': info.st_size,
-            'modifiedAt': datetime.datetime.fromtimestamp(info.st_mtime, datetime.timezone.utc).isoformat(), 'version': version(name)}
+    record = {'path': name, 'kind': kind, 'size': info.st_size,
+              'modifiedAt': datetime.datetime.fromtimestamp(info.st_mtime, datetime.timezone.utc).isoformat()}
+    if with_version:
+        record['version'] = version(name)
+    return record
 
 
 def expected(name, value, follow=False):
@@ -295,6 +302,13 @@ def run(op):
         return {'kind': kind, 'entry': entry(target) if os.path.lexists(target) else None}
     if kind == 'list':
         limit = bounded(op.get('limit'), 1, 1000)
+        # `version` hashes a file's entire contents, so a plain listing of a source directory read and
+        # hashed every file in it to answer a question about names. `metadata` True asks for the cheap
+        # answer — path, kind, size, modification time — and is the only shape a caller may use when it
+        # is not going to write against what it saw.
+        metadata = op.get('metadata', False)
+        if type(metadata) is not bool:
+            fail('invalid_operation', 'metadata must be boolean')
         cursor = op.get('cursor')
         if cursor is not None and (not isinstance(cursor, str) or not cursor or len(cursor) > 4096):
             fail('invalid_cursor', 'Invalid list cursor')
@@ -308,7 +322,7 @@ def run(op):
                     selected.pop()
         truncated = len(selected) > limit
         page = selected[:limit]
-        return {'kind': kind, 'entries': [entry(os.path.join(name, item)) for item in page],
+        return {'kind': kind, 'entries': [entry(os.path.join(name, item), not metadata) for item in page],
                 'truncated': truncated, 'nextCursor': page[-1] if truncated else None}
     if kind == 'read':
         cap = bounded(op.get('maxBytes'), 1, MAX_BYTES)
@@ -335,6 +349,11 @@ def run(op):
             fail('file_too_large', 'Write exceeds the guest transport limit')
         expected(target, op.get('expectedVersion'), True)
         parent = os.path.dirname(target)
+        # A DISTINCT answer for the one recoverable reason a write cannot start, so the host can try the
+        # write first and build the tree only when this is what came back. Walking the ancestry ahead of
+        # every write cost a guest round trip per write to learn what is almost always already true.
+        if not os.path.isdir(parent):
+            fail('parent_missing', 'Parent directory does not exist: ' + parent)
         mode = stat.S_IMODE(os.stat(target).st_mode) if os.path.exists(target) else 0o600
         fd, temporary = tempfile.mkstemp(prefix='.elowen-write-', dir=parent)
         try:
