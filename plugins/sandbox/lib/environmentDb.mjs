@@ -96,6 +96,12 @@ export function createEnvironmentStore(db, identity) {
       return getOperation(id);
     },
     operations: () => db.prepare("SELECT * FROM p_sandbox_runtime_operations WHERE status IN ('pending','running') ORDER BY created_at,id").all().map(operation),
+    /** The newest operations of one resource, newest first. Bounded because the row set only grows and
+     *  no surface reading it has a use for the whole history. */
+    recentOperations(kind, id, limit) {
+      return db.prepare('SELECT * FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=? ORDER BY rowid DESC LIMIT ?')
+        .all(kind, String(id), limit).map(operation);
+    },
     saveOperation(op) {
       db.prepare('UPDATE p_sandbox_runtime_operations SET status=?,checkpoint_json=?,owner_pid=?,owner_identity=?,error=?,snapshot_id=?,steps_json=?,step_index=?,percent=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
         .run(op.status, JSON.stringify(op.checkpoint), op.owner_pid ?? null, op.owner_identity ?? null, op.error ?? null, op.snapshot_id ?? null,

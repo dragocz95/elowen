@@ -18,6 +18,9 @@ import { PROJECT_BASE_IMAGE_TAG } from './containerBaseImage.mjs';
 const FILE_HELPER = readFileSync(new URL('./guestFiles.py', import.meta.url), 'utf8');
 const PREVIEW_HELPER = readFileSync(new URL('./previewProxy.py', import.meta.url), 'utf8');
 const DEFAULT_LIMITS = { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240 };
+/** How many past operations the project overview carries. The environment screen shows the current one
+ *  and the recent outcomes behind it; the rest is history no browser needs to hold. */
+const OPERATION_HISTORY = 20;
 /** What each lifecycle operation is made of, in order, with the relative cost of each part. The list is
  *  DECLARED before the work starts, so a surface watching an operation can say "step 2 of 5" from the
  *  first frame instead of discovering the shape as it goes. The weights are rough durations rather than
@@ -964,6 +967,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       checkpoint(op, { storageRemoved: true });
       step(op, 'records');
       store.transaction(() => {
+        // The deletion itself stays: the surface that asked for it still reads its outcome. Everything
+        // that happened to an environment that no longer exists goes with it.
+        db.prepare('DELETE FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=? AND id<>?').run(row.kind, row.resource_id, op.id);
         db.prepare('DELETE FROM p_sandbox_runtime_snapshots WHERE kind=? AND resource_id=?').run(row.kind, row.resource_id);
         db.prepare('DELETE FROM p_sandbox_execution_leases WHERE resource_kind=? AND resource_id=?').run(row.kind, row.resource_id);
         db.prepare('DELETE FROM p_sandbox_file_uploads WHERE resource_kind=? AND resource_id=?').run(row.kind, row.resource_id);
@@ -1110,8 +1116,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     async projectOverview(input) {
       const environment = await control.environmentFor(input);
       const id = projectId(input.project);
-      const operations = db.prepare("SELECT id FROM p_sandbox_runtime_operations WHERE kind='project' AND resource_id=? ORDER BY rowid DESC").all(String(id))
-        .map((item) => operationView(store.getOperation(item.id)));
+      const operations = store.recentOperations('project', id, OPERATION_HISTORY).map(operationView);
       return { environment, snapshots: await snapshots('project', id, input.accountUserId), operations };
     },
     requestEnvironment: (input) => request('project', projectId(input.project), input),

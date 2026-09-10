@@ -273,6 +273,28 @@ describe('environment operation progress', () => {
     expect(containers.size).toBe(0);
   });
 
+  // The operation rows only ever grew: the environment screen read the whole history into the browser,
+  // and nothing removed it when the project it described was deleted.
+  it('bounds the operation history it hands the browser and clears it with the project', async () => {
+    const { runtime, db } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'up', action: { kind: 'start' } });
+    await runtime.reconcile();
+    for (let n = 0; n < 25; n += 1) {
+      db.prepare("INSERT INTO p_sandbox_runtime_operations(id,kind,resource_id,user_id,request_key,generation,action_json,status) VALUES(?,'project','7',1,?,1,'{\"kind\":\"start\"}','succeeded')")
+        .run(`env_history-${n}`, `history-${n}`);
+    }
+
+    const overview = await runtime.projectOverview({ ...input });
+    expect(overview.operations).toHaveLength(20);
+    expect(overview.operations[0]!.id).toBe('env_history-24');
+
+    const removal = await runtime.requestEnvironment({ ...input, requestId: 'remove', action: { kind: 'delete' } });
+    await runtime.reconcile();
+    expect((await runtime.environmentOperation({ operationId: removal.id, accountUserId: 1 }))?.status).toBe('succeeded');
+    // Only the deletion itself survives, because the surface that reports the outcome still reads it.
+    expect(db.prepare("SELECT id FROM p_sandbox_runtime_operations WHERE kind='project'").all()).toEqual([{ id: removal.id }]);
+  });
+
   it('refuses recreate for a Site, which has no such repair', async () => {
     const { runtime } = setup();
     await expect(runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, action: { kind: 'recreate' } }))
