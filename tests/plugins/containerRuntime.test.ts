@@ -13,7 +13,7 @@ function fixture() {
   roots.push(root);
   const paths = { sandboxDataDir: join(root, 'sandbox'), sitesDataDir: join(root, 'sites'), siteSourcesDir: join(root, 'sources'), siteBrokerDir: join(root, 'brokers') };
   for (const path of Object.values(paths)) mkdirSync(path, { recursive: true });
-  const spec = createContainerSpec({ resource: { kind: 'project', id: 7 }, generation: 2, image: 'localhost/elowen-project-base:test' }, paths);
+  const spec = createContainerSpec({ resource: { kind: 'project', id: 7 }, workspaceTarget: '/demo', generation: 2, image: 'localhost/elowen-project-base:test' }, paths);
   return { root, paths, spec };
 }
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -54,7 +54,7 @@ function fake(spec: any) {
 
 it('mounts a new local-bind restore volume inside the same rootless namespace as import', async () => {
   const { spec, paths } = fixture();
-  const target = createContainerSpec({ resource: spec.resource, generation: 3, image: spec.image }, paths);
+  const target = createContainerSpec({ resource: spec.resource, workspaceTarget: '/demo', generation: 3, image: spec.image }, paths);
   mkdirSync(join(spec.storageRoot, 'snapshots/import-test'), { recursive: true });
   writeFileSync(join(spec.storageRoot, 'snapshots/import-test/workspace.tar'), 'opaque archive');
   const state = fake(target);
@@ -81,7 +81,8 @@ describe('trusted container specifications', () => {
     const { spec, root } = fixture();
     expect(spec.name).toBe('elowen-project-7-g2');
     expect(spec.volumes.map((v: any) => v.component)).toEqual(['workspace', 'home', 'data']);
-    expect(spec.mounts.map((m: any) => m.target)).toEqual(['/workspace', '/root', '/data']);
+    expect(spec.mounts.map((m: any) => m.target)).toEqual(['/demo', '/root', '/data']);
+    expect(spec.workdir).toBe('/demo');
     expect(spec.volumes[0].path).toBe(join(root, 'sandbox/projects/7/storage/2/workspace'));
     expect(spec.limits).toEqual({ cpus: 1, memoryMb: 1024, pidsLimit: 512 });
     expect(Object.isFrozen(spec.mounts[0])).toBe(true);
@@ -92,15 +93,15 @@ describe('trusted container specifications', () => {
     expect(spec.mounts).toContainEqual({ type: 'bind', source: join(paths.siteSourcesDir, 'abc-123'), target: '/workspace', readOnly: true });
     expect(spec.mounts).toContainEqual({ type: 'bind', source: join(paths.sitesDataDir, 'abc-123/environment/git-stub'), target: '/workspace/.git', readOnly: true });
     expect(spec.volumes.map((v: any) => v.component)).toEqual(['data']);
-    expect(() => createContainerSpec({ resource: { kind: 'project', id: 1 }, generation: 1, image: 'test', mounts: [] }, paths)).toThrow(/unknown/i);
+    expect(() => createContainerSpec({ resource: { kind: 'project', id: 1 }, workspaceTarget: '/demo', generation: 1, image: 'test', mounts: [] }, paths)).toThrow(/unknown/i);
   });
   it.each([{ resource: { kind: 'project', id: '../2' } }, { generation: 0 }, { image: '--privileged' }, { limits: { cpus: 0 } }, { network: 'host' }])('rejects invalid spec input %j', (override) => {
     const { paths } = fixture();
-    expect(() => createContainerSpec({ resource: { kind: 'project', id: 1 }, generation: 1, image: 'localhost/test:v1', ...override }, paths)).toThrow();
+    expect(() => createContainerSpec({ resource: { kind: 'project', id: 1 }, workspaceTarget: '/demo', generation: 1, image: 'localhost/test:v1', ...override }, paths)).toThrow();
   });
   it('binds the specification hash to generation, image, limits and paths', () => {
     const { spec, paths } = fixture();
-    const other = createContainerSpec({ resource: spec.resource, generation: 3, image: spec.image }, paths);
+    const other = createContainerSpec({ resource: spec.resource, workspaceTarget: '/demo', generation: 3, image: spec.image }, paths);
     expect(other.labels['io.elowen.spec']).not.toBe(spec.labels['io.elowen.spec']);
     expect(spec.labels['io.elowen.runtime']).toBe('sandbox');
     expect(spec.labels['io.elowen.resource']).toBe('project:7');
@@ -194,7 +195,7 @@ describe('clean and confined Podman client', () => {
   });
   it('pins every test store, runroot, runtime, temporary path and namespace', async () => {
     const { root, paths } = fixture();
-    const spec = createContainerSpec({ resource: { kind: 'project', id: 7 }, generation: 2, image: 'localhost/test:v1' }, { ...paths, namespace: 'test-a' });
+    const spec = createContainerSpec({ resource: { kind: 'project', id: 7 }, workspaceTarget: '/demo', generation: 2, image: 'localhost/test:v1' }, { ...paths, namespace: 'test-a' });
     const executor = { run: vi.fn(async () => ({ code: 1, stdout: '', stderr: '' })) };
     const options = isolatedPodmanOptions(join(root, 'podman'), 'test-a');
     const client = new PodmanClient({ ...options, executor });
@@ -205,7 +206,7 @@ describe('clean and confined Podman client', () => {
     expect(launch.env.XDG_RUNTIME_DIR).toBe(join(root, 'podman/runtime'));
     expect(launch.env.TMPDIR).toBe(join(root, 'podman/tmp'));
     expect(args).not.toContain('--namespace');
-    const foreign = createContainerSpec({ resource: spec.resource, generation: 2, image: spec.image }, paths);
+    const foreign = createContainerSpec({ resource: spec.resource, workspaceTarget: '/demo', generation: 2, image: spec.image }, paths);
     await expect(client.inspect(foreign)).rejects.toThrow(/namespace/);
     expect(executor.run).toHaveBeenCalledOnce();
     expect(() => isolatedPodmanOptions(join(root, 'path-that-is-too-long-for-a-runroot-socket'), 'test')).toThrow(/50 bytes/);
@@ -499,7 +500,7 @@ describe('project container storage and crash-consistent snapshots', () => {
       exportVolume: vi.fn(async (spec: any, component: string, id: string) => writeFileSync(join(spec.storageRoot, 'snapshots', id, `${component}.tar`), component)) };
     const storage = new ContainerStorage(client);
     await storage.snapshot(spec, 'restore-1');
-    const target = createContainerSpec({ resource: spec.resource, generation: 3, image: imageId }, paths);
+    const target = createContainerSpec({ resource: spec.resource, workspaceTarget: '/demo', generation: 3, image: imageId }, paths);
     const manifest = await storage.restoreVolumes(spec, 'restore-1', target);
     expect(manifest.completeProject).toBe(true);
     expect(client.importSnapshotVolume.mock.calls.map((call: any[]) => call[3])).toEqual(['workspace', 'home', 'data']);

@@ -32,7 +32,7 @@ export interface ManagedGuestOptions {
 export function managedGuestFs(initial: Record<string, Buffer | string> = {}, options: ManagedGuestOptions = {}) {
   const data = new Map<string, Buffer>();
   for (const [path, bytes] of Object.entries(initial)) data.set(path, Buffer.isBuffer(bytes) ? bytes : Buffer.from(bytes));
-  const directories = new Set<string>(['/workspace']);
+  const directories = new Set<string>(['/data']);
   const version = (bytes: Buffer) => createHash('sha256').update(bytes).digest('hex');
   const statOf = (path: string): GuestFileStat | null => {
     const bytes = data.get(path);

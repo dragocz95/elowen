@@ -1,6 +1,6 @@
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { projectExecutionRefSchema, type ProjectExecutionRef } from '../../shared/projectExecution.js';
+import { managedGuestRoot, projectExecutionRefSchema, type ProjectExecutionRef } from '../../shared/projectExecution.js';
 import { ENVIRONMENT_CONTROL_METHODS } from '../../plugins/environmentTypes.js';
 import type { KnownControls, SandboxWorkspace } from '../../plugins/api.js';
 import type { Policy } from '../../plugins/policy.js';
@@ -51,7 +51,7 @@ export function turnWorkDir(policy: Policy, clientCwd: string | undefined, proje
   return clientDir(policy, clientCwd) ?? policy.allowedPaths()[0] ?? projectPath?.();
 }
 
-interface ProjectView { id: number; path: string; executionKind?: 'host' | 'managed'; lifecycle?: 'active' | 'deleting' }
+interface ProjectView { id: number; path: string; slug?: string; executionKind?: 'host' | 'managed'; lifecycle?: 'active' | 'deleting' }
 
 export interface EffectiveTurnWorkDir {
   /** Registered Project/default directory before Sandbox selection. */
@@ -88,7 +88,10 @@ export function effectiveTurnWorkDir(input: {
     if (ref.kind === 'managed' && project?.executionKind === 'managed' && project.lifecycle === 'active') {
       if (!input.sandbox || typeof input.sandbox.prepareExecution !== 'function' || ENVIRONMENT_CONTROL_METHODS.some((method) => typeof input.sandbox?.[method] !== 'function')) throw new Error('project environment provider unavailable');
       if (input.accountUserId === null || !input.policy.canAccessProject?.(ref.projectId)) throw new Error('managed project access denied');
-      return { baseWorkDir: '/workspace', workDir: '/workspace', workspace: null, projectRef: ref };
+      // The project is mounted inside its own container under its own name, so this is both the guest
+      // root and the only directory the turn ever sees.
+      const root = managedGuestRoot(project.slug, ref.projectId);
+      return { baseWorkDir: root, workDir: root, workspace: null, projectRef: ref };
     }
     if (ref.kind !== 'managed') {
       // A host project the caller is assigned to is theirs to work in: `allowedPaths()` already carries

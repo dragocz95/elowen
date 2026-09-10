@@ -9,7 +9,10 @@ export { realPathWithin } from './pathUtils.js';
 /** The repo roots the current session may operate in. Empty for an admin (all-access) or outside a
  *  prompt turn. A tool uses this to default a working directory. */
 export function allowedRoots(): string[] {
-  if (currentProjectRef()?.kind === 'managed') return ['/workspace'];
+  // A managed project is mounted in its own container under its own name (`/kolin`), which is exactly
+  // the turn's work dir. Without one there is no root to name, and an empty list denies rather than
+  // inventing a directory the guest may not even have.
+  if (currentProjectRef()?.kind === 'managed') { const root = currentWorkDir(); return root ? [root] : []; }
   return currentPolicy()?.allowedPaths() ?? [];
 }
 
@@ -18,7 +21,7 @@ export function allowedRoots(): string[] {
  *  daemon's own cwd (admin all-access carries no roots). The bound path lives on the per-run turn
  *  scope, so it re-asserts itself at the start of every run regardless of where the agent moved. */
 export function defaultCwd(): string {
-  if (currentProjectRef()?.kind === 'managed') return currentWorkDir() ?? '/workspace';
+  if (currentProjectRef()?.kind === 'managed') return currentWorkDir() ?? '/';
   return currentPathView()?.root ?? currentWorkDir() ?? allowedRoots()[0] ?? process.cwd();
 }
 

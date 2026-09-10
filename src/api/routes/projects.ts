@@ -3,6 +3,7 @@ import { createDir, CreateDirError, listDirs, isProjectImage, isProjectImageExte
 import { posix } from 'node:path';
 import { RealGitReader } from '../../git/gitReader.js';
 import { runManagedProjectCommand } from '../../integrations/managedProjectExecution.js';
+import { managedGuestRoot } from '../../shared/projectExecution.js';
 import { parseBody } from '../validation.js';
 import { createDirectorySchema, createProjectSchema, deleteProjectSchema, updateProjectSchema, memoryMembersSchema } from '../schemas/projects.js';
 import type { ElowenApp, RouteContext } from '../context.js';
@@ -212,8 +213,9 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (typeof b.icon === 'string') {
       if (b.icon !== '') {
         if (cur.executionKind === 'managed') {
-          const path = posix.resolve('/workspace', b.icon);
-          if (!isProjectImageExtension(b.icon) || b.icon.includes('\0') || posix.isAbsolute(b.icon) || !path.startsWith('/workspace/')) {
+          const root = managedGuestRoot(cur.slug, id);
+          const path = posix.resolve(root, b.icon);
+          if (!isProjectImageExtension(b.icon) || b.icon.includes('\0') || posix.isAbsolute(b.icon) || !path.startsWith(`${root}/`)) {
             return c.json({ error: 'invalid icon path' }, 400);
           }
           const actor = c.get('user');
@@ -223,15 +225,15 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
           try {
             const resolved = await runManagedProjectCommand(sandbox, { kind: 'managed', projectId: id }, actor.id,
               { type: 'argv', file: '/usr/bin/realpath', args: ['--zero', '--canonicalize-existing', '--', path] },
-              { maxBuffer: 8192, signal: c.req.raw.signal });
+              { cwd: root, maxBuffer: 8192, signal: c.req.raw.signal });
             const parts = resolved.stdout.split('\0');
-            if (parts.length !== 2 || parts[1] !== '' || !parts[0]?.startsWith('/workspace/')) {
+            if (parts.length !== 2 || parts[1] !== '' || !parts[0]?.startsWith(`${root}/`)) {
               return c.json({ error: 'invalid icon path' }, 400);
             }
             const result = await sandbox.projectFiles({ project: { kind: 'managed', projectId: id }, accountUserId: actor.id,
               operation: { kind: 'stat', path: parts[0] } });
             if (result.kind !== 'stat') throw new Error('guest icon validation returned an invalid response');
-            if (!result.entry || result.entry.kind !== 'file' || !posix.resolve(result.entry.path).startsWith('/workspace/')) {
+            if (!result.entry || result.entry.kind !== 'file' || !posix.resolve(result.entry.path).startsWith(`${root}/`)) {
               return c.json({ error: 'invalid icon path' }, 400);
             }
           } catch (error) {
@@ -327,11 +329,12 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
         });
       if (!environment) return c.json({ error: 'project environment Git inspection unavailable' }, 503);
       if (environment.state !== 'running') return c.json({ error: 'project environment is not running', state: environment.state }, 409);
+      const projectRoot = managedGuestRoot(p.slug, p.id);
       try {
         const reader = new RealGitReader(async (file, args, options) =>
           runManagedProjectCommand(sandbox, { kind: 'managed', projectId: p.id }, actor.id,
-            { type: 'argv', file, args: ['-c', 'core.fsmonitor=false', ...args] }, { ...options, signal: c.req.raw.signal }), true);
-        return c.json(await reader.read('/workspace'));
+            { type: 'argv', file, args: ['-c', 'core.fsmonitor=false', ...args] }, { ...options, cwd: projectRoot, signal: c.req.raw.signal }), true);
+        return c.json(await reader.read(projectRoot));
       } catch (error) {
         ctx.log.warn(`managed project Git inspection failed: ${error instanceof Error ? error.message : String(error)}`);
         return c.json({ error: 'project environment Git inspection unavailable' }, 503);

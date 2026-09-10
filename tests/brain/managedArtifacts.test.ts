@@ -18,8 +18,8 @@ describe('readGuestFileBounded', () => {
   it('chunks a file larger than one read op across versioned reads', async () => {
     const fs = managedGuestFs();
     const bytes = Buffer.from('a'.repeat(GUEST_READ_CHUNK_BYTES * 2 + 123));
-    await writeGuestFile(access(fs), '/workspace/.elowen/test/big.bin', bytes, null);
-    const read = await readGuestFileBounded(access(fs), '/workspace/.elowen/test/big.bin', 512 * 1024 * 1024);
+    await writeGuestFile(access(fs), '/data/.elowen/test/big.bin', bytes, null);
+    const read = await readGuestFileBounded(access(fs), '/data/.elowen/test/big.bin', 512 * 1024 * 1024);
     expect(Buffer.isBuffer(read)).toBe(true);
     expect((read as Buffer).length).toBe(bytes.length);
     expect((read as Buffer).equals(bytes)).toBe(true);
@@ -79,33 +79,33 @@ describe('readGuestFileBounded', () => {
 
   it('surfaces a provider error verbatim instead of half-answering', async () => {
     const fs = managedGuestFs({}, { fail: new Error('environment_error: container paused') });
-    expect(await readGuestFileBounded(access(fs), '/workspace/.elowen/test/a.txt', 1000)).toContain('container paused');
+    expect(await readGuestFileBounded(access(fs), '/data/.elowen/test/a.txt', 1000)).toContain('container paused');
   });
 });
 
 describe('writeGuestFile', () => {
   it('creates missing parent directories and reports the written entry', async () => {
     const fs = managedGuestFs();
-    const entry = await writeGuestFile(access(fs), '/workspace/.elowen/plans/slug.md', Buffer.from('# plan'));
+    const entry = await writeGuestFile(access(fs), '/data/.elowen/plans/slug.md', Buffer.from('# plan'));
     expect(typeof entry).toBe('object');
     expect((entry as { kind: string }).kind).toBe('file');
-    expect(fs.file('/workspace/.elowen/plans/slug.md')?.toString('utf8')).toBe('# plan');
+    expect(fs.file('/data/.elowen/plans/slug.md')?.toString('utf8')).toBe('# plan');
   });
 
   it('enforces the create-once CAS: a second null-version write conflicts', async () => {
-    const fs = managedGuestFs({ '/workspace/.elowen/test/a.txt': 'one' });
-    const result = await writeGuestFile(access(fs), '/workspace/.elowen/test/a.txt', Buffer.from('two'));
+    const fs = managedGuestFs({ '/data/.elowen/test/a.txt': 'one' });
+    const result = await writeGuestFile(access(fs), '/data/.elowen/test/a.txt', Buffer.from('two'));
     expect(typeof result).toBe('string');
     expect(result as string).toContain('version_conflict');
-    expect(fs.file('/workspace/.elowen/test/a.txt')?.toString('utf8')).toBe('one');
+    expect(fs.file('/data/.elowen/test/a.txt')?.toString('utf8')).toBe('one');
   });
 
   it('overwrites through an explicit expectedVersion', async () => {
-    const fs = managedGuestFs({ '/workspace/.elowen/test/a.txt': 'one' });
-    const entry = await statGuestFile(access(fs), '/workspace/.elowen/test/a.txt');
-    const result = await writeGuestFile(access(fs), '/workspace/.elowen/test/a.txt', Buffer.from('two'), (entry as { version: string }).version);
+    const fs = managedGuestFs({ '/data/.elowen/test/a.txt': 'one' });
+    const entry = await statGuestFile(access(fs), '/data/.elowen/test/a.txt');
+    const result = await writeGuestFile(access(fs), '/data/.elowen/test/a.txt', Buffer.from('two'), (entry as { version: string }).version);
     expect(typeof result).toBe('object');
-    expect(fs.file('/workspace/.elowen/test/a.txt')?.toString('utf8')).toBe('two');
+    expect(fs.file('/data/.elowen/test/a.txt')?.toString('utf8')).toBe('two');
   });
 
   it('confines central writes to the hidden artifact prefix', async () => {
@@ -118,23 +118,23 @@ describe('writeGuestFile', () => {
 
   it('refuses a write past the 512 KiB guest op limit instead of truncating', async () => {
     const fs = managedGuestFs();
-    const result = await writeGuestFile(access(fs), '/workspace/.elowen/test/big.bin', Buffer.alloc(GUEST_WRITE_OP_BYTES + 1));
+    const result = await writeGuestFile(access(fs), '/data/.elowen/test/big.bin', Buffer.alloc(GUEST_WRITE_OP_BYTES + 1));
     expect(result as string).toContain('KiB guest write limit');
-    expect(fs.exists('/workspace/.elowen/test/big.bin')).toBe(false);
+    expect(fs.exists('/data/.elowen/test/big.bin')).toBe(false);
   });
 
   it('propagates a provider refusal', async () => {
     const fs = managedGuestFs({}, { fail: new Error('down') });
-    expect(await writeGuestFile(access(fs), '/workspace/.elowen/test/a.txt', Buffer.from('x'))).toContain('down');
+    expect(await writeGuestFile(access(fs), '/data/.elowen/test/a.txt', Buffer.from('x'))).toContain('down');
   });
 });
 
 describe('statGuestFile', () => {
   it('answers null for a missing path and a stable version otherwise', async () => {
-    const fs = managedGuestFs({ '/workspace/.elowen/test/a.txt': 'x' });
+    const fs = managedGuestFs({ '/data/.elowen/test/a.txt': 'x' });
     expect(await statGuestFile(access(fs), '/workspace/absent.txt')).toBeNull();
-    const first = await statGuestFile(access(fs), '/workspace/.elowen/test/a.txt');
-    const second = await statGuestFile(access(fs), '/workspace/.elowen/test/a.txt');
+    const first = await statGuestFile(access(fs), '/data/.elowen/test/a.txt');
+    const second = await statGuestFile(access(fs), '/data/.elowen/test/a.txt');
     expect((first as { version: string }).version).toBe((second as { version: string }).version);
     expect((first as { version: string }).version).toBe(createHash('sha256').update('x').digest('hex'));
   });

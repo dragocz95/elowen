@@ -4,7 +4,11 @@ import { fileURLToPath } from 'node:url';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { loadPlugins } from '../../src/plugins/loader.js';
-import { runWithIdentity, type TurnIdentity } from '../../src/plugins/policyContext.js';
+import { runWithIdentity, runWithPolicy, type TurnIdentity } from '../../src/plugins/policyContext.js';
+import type { Policy } from '../../src/plugins/policy.js';
+
+const hostPolicy = { allowedProjectIds: 'all' as const, allowedPaths: () => [] } as unknown as Policy;
+const managedPolicy = { allowedProjectIds: new Set([4]), allowedPaths: () => [], canAccessProject: () => true } as unknown as Policy;
 
 const log = { info() {}, warn() {}, error() {} };
 const repoRoot = resolve(dirname(fileURLToPath(import.meta.url)), '../..');
@@ -19,7 +23,7 @@ describe('runtime-context plugin', () => {
     // runtime-context config), NOT the per-plugin config — so drive it the way production does, or the
     // assertion silently rides on the host's own zone (green on a Prague dev box, red on a UTC CI runner).
     const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['runtime-context'], dataRoot: freshDataRoot(), logger: log, timezone: () => 'Europe/Prague' });
-    expect(reg.turnContexts).toHaveLength(2); // the clock, plus who/where (below)
+    expect(reg.turnContexts).toHaveLength(3); // the clock, who/where, and where it executes (below)
     expect(reg.turnContexts[0]!.placement).toBe('before-user');
     const out = reg.turnContexts[0]!.render();
     expect(out).toMatch(/Current date & time:/);
@@ -86,6 +90,31 @@ describe('runtime-context plugin', () => {
 
     it('renders nothing at all outside a turn, rather than a half-empty sentence', async () => {
       expect(await render()).toBe('');
+    });
+  });
+
+  // The agent has to KNOW it is inside a project container: nothing else in the prompt says the host
+  // filesystem is unreachable, and one that assumes otherwise reaches for host paths that do not exist.
+  describe('execution target block', () => {
+    const provider = async () => {
+      const reg = await loadPlugins({ dirs: [pluginsDir], enabled: ['runtime-context'], dataRoot: freshDataRoot(), logger: log, timezone: () => 'Europe/Prague' });
+      return reg.turnContexts[2]!;
+    };
+
+    it('sits after the user message, where a per-turn fact belongs', async () => {
+      expect((await provider()).placement).toBe('after-user');
+    });
+
+    it('says nothing when the turn runs on the host', async () => {
+      const p = await provider();
+      expect(runWithPolicy(hostPolicy, () => p.render())).toBe('');
+    });
+
+    it('names the project, its mount point and the missing host filesystem — identically on every turn', async () => {
+      const p = await provider();
+      const line = () => runWithPolicy(managedPolicy, () => p.render(), { projectRef: { kind: 'managed', projectId: 4 }, workDir: '/kolin' }) as string;
+      expect(line()).toBe('Execution: isolated environment of project "kolin" (container; project files at /kolin, host filesystem not reachable)');
+      expect(line()).toBe(line()); // nothing in it varies with time, so the wording is stable
     });
   });
 });

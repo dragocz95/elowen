@@ -48,5 +48,19 @@ export function register(ctx) {
     return `You are speaking with ${account}, on ${safe(id.platform) || 'an unknown platform'}, in ${where}.`;
   });
 
+  // WHERE the turn actually executes. A managed project runs in its own container with the project
+  // mounted under its own name and no host filesystem at all, and nothing else in the prompt says so —
+  // an agent that assumes it is on the host reaches for host paths that simply are not there. Placed
+  // after the user message like the rest of the volatile block, and deliberately free of anything that
+  // varies with time, so the line reads identically on every turn of the same conversation.
+  ctx.registerTurnContext(() => {
+    if (ctx.currentAccess().projectRef?.kind !== 'managed') return ''; // host execution needs no note
+    const root = ctx.workDir();
+    // The managed work dir IS the project root, so the mount answers "which project" without a catalog.
+    if (typeof root !== 'string' || !/^\/[a-z0-9][a-z0-9-]*$/.test(root)) return '';
+    const name = root.slice(1);
+    return `Execution: isolated environment of project "${name}" (container; project files at ${root}, host filesystem not reachable)`;
+  }, { placement: 'after-user' });
+
   ctx.logger.info(`runtime-context active (${ctx.timezone()})`);
 }

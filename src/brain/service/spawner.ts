@@ -1,5 +1,6 @@
 import { resolvesContributionsPerTurn, contributionOwnerForSession, isChannelSession, isSubagentSession } from '../sessionId.js';
 import { DEFAULT_BRAND } from '../../shared/brand.js';
+import { managedGuestRoot } from '../../shared/projectExecution.js';
 import type { PluginRegistry } from '../../plugins/registry.js';
 import { projectScopedTools } from '../../plugins/registry.js';
 import { PluginHookBus } from '../../plugins/hookBus.js';
@@ -338,7 +339,9 @@ export class LiveSessionSpawner {
     const restoredWorkDir = opts.pathView?.root || opts.clientCwd
       ? undefined
       : this.d.store.getSession(sessionId)?.work_dir || undefined;
-    const cwd = managed ? '/workspace' : opts.pathView?.root
+    const cwd = managed
+      ? managedGuestRoot(this.d.projects?.get(execution.projectRef!.projectId!)?.slug, execution.projectRef!.projectId!)
+      : opts.pathView?.root
       ?? turnWorkDir(opts.policy, opts.clientCwd ?? restoredWorkDir, this.d.projectPath) ?? this.d.cwd ?? process.cwd();
     // SIZE GUARD, before anything is built. A fork inherits the whole parent conversation, and the child
     // may be running a different model: a 480k-token owner chat forked onto a 200k-window model produced a

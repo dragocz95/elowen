@@ -10,6 +10,7 @@ import { managedShellFrame, synchronousShellFrame } from './managedBootstrap.mjs
 import { createEnvironmentStore } from './environmentDb.mjs';
 import { ownerProvablyDead, processIdentity, withRepoLease } from './db.mjs';
 import { createContainerSpec, createBoundSiteSpec, withContainerLimits, resourceToken, bindContainerIdentity } from './containerSpec.mjs';
+import { managedGuestRoot } from './containerPaths.mjs';
 import { PodmanClient } from './podman.mjs';
 import { ContainerStorage } from './containerStorage.mjs';
 import { PROJECT_BASE_IMAGE_TAG } from './containerBaseImage.mjs';
@@ -162,6 +163,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       workspaceReadOnly: registration.workspaceReadOnly, limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } },
       binding: { namespace, sitesDataDir: registration.sitesDataDir, sourcePath: registration.sourcePath, brokerDir: registration.brokerDir } };
   }
+  /** Where this project is mounted inside its own container — persisted with the row, so renaming the
+   *  project later cannot silently change a running container's identity. */
+  const rootOf = (row) => row.spec.input.workspaceTarget;
   function specFor(record) {
     const input = { ...record.input, limits: record.creationLimits ?? record.input.limits };
     const base = input.resource.kind === 'site' ? createBoundSiteSpec(input, record.binding) : createContainerSpec(input, record.paths);
@@ -176,9 +180,18 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       const binding = (value) => Object.fromEntries(Object.entries(value).filter(([key]) => !['limits', 'initialIntent', 'snapshotRetention', 'staging'].includes(key)).sort(([a], [b]) => a.localeCompare(b)));
       if (!same(binding(authority), binding(row.spec.registration))) throw error('site_binding_changed', 'The trusted Site binding changed; an explicit handover is required');
     }
+    if (row && kind === 'project' && !row.spec.input.workspaceTarget) {
+      // A row created before project mounts carried a name was built against `/workspace`. Fill in the
+      // mount point it will use from now on and remember that its existing container predates it: the
+      // spec identity changed, so that container must never be adopted.
+      row.spec.input.workspaceTarget = managedGuestRoot(authority.slug, Number(id));
+      row.spec.legacyWorkspaceLayout = true;
+      store.save(row);
+      ctx.logger.warn(`project ${id} environment predates the named project mount; its container must be recreated at ${row.spec.input.workspaceTarget}`);
+    }
     if (!row) {
       const effective = configuredDefaults(ctx.config);
-      const spec = { input: { resource: { kind: 'project', id: Number(id) }, generation: 1, image: PROJECT_BASE_IMAGE_TAG, previewBroker: true, limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } }, paths: { sandboxDataDir: dataDir, namespace } };
+      const spec = { input: { resource: { kind: 'project', id: Number(id) }, generation: 1, image: PROJECT_BASE_IMAGE_TAG, previewBroker: true, workspaceTarget: managedGuestRoot(authority.slug, Number(id)), limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } }, paths: { sandboxDataDir: dataDir, namespace } };
       row = store.insert(kind, id, Number(id), spec, effective);
     }
     return row;
@@ -412,7 +425,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     if (input.workspace || ctx.currentAccess().workspaceRef) throw error('workspace_pinned', 'A legacy narrow workspace cannot widen into a managed Project', 403);
     const row = await ready('project', id, userId, false);
     const program = command(input.command);
-    const cwd = guestPath(input.cwd ?? '/workspace');
+    const cwd = guestPath(input.cwd ?? rootOf(row));
     const leased = await mint(row, userId, input.leaseKind);
     let handle = leaseHandle(row, leased);
     try {
@@ -493,6 +506,19 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   }
   async function ensureInitialContainer(row, op) {
     const spec = specFor(row.spec);
+    // A container created before the project mount carried the project's name was built from a different
+    // specification, so it fails ownership by construction and must never be adopted. Its storage volumes
+    // are untouched and remount under the new name, so recreating it preserves the project's files — but
+    // removing a container this runtime can no longer verify is an operator decision, not an automatic one.
+    if (row.spec.legacyWorkspaceLayout) {
+      if (await podman.containerExists(spec)) {
+        ctx.logger.warn(`project ${row.resource_id} still has the pre-mount container ${spec.name}; remove it to recreate the environment at ${rootOf(row)}`);
+        throw error('legacy_workspace_layout', `This environment predates the named project mount. Remove its old container (${spec.name}) and start it again; its files are kept in the storage volumes.`, 409);
+      }
+      delete row.spec.legacyWorkspaceLayout;
+      delete row.spec.containerId;
+      store.save(row);
+    }
     let current = await podman.inspect(spec);
     if (row.spec.containerId) {
       if (!current) throw error('persistent_container_missing', 'The persistent root filesystem is missing; restore a snapshot explicitly');
@@ -521,8 +547,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     if (current.state === 'paused') await podman.unpause(spec);
     else if (current.state !== 'running') await podman.start(spec);
     if ((await podman.inspect(spec))?.state !== 'running') throw error('start_unverified', 'Container start could not be verified');
+    const root = rootOf(row);
     if (row.kind === 'project' && !op.checkpoint.initialized) {
-      const result = await podman.exec(spec, randomUUID().replaceAll('-', ''), ['/bin/bash', '-s'], { input: 'set -eu\nif [ ! -e /workspace/.git ]; then\n git init -b main /workspace\n git -C /workspace -c user.name=Elowen -c user.email=environment@localhost -c core.hooksPath=/dev/null commit --allow-empty -m "Initialize managed project"\nfi\nmkdir -p /worktrees\n', timeoutMs: 30000, persistent: true });
+      const result = await podman.exec(spec, randomUUID().replaceAll('-', ''), ['/bin/bash', '-s'], { input: `set -eu\nif [ ! -e ${root}/.git ]; then\n git init -b main ${root}\n git -C ${root} -c user.name=Elowen -c user.email=environment@localhost -c core.hooksPath=/dev/null commit --allow-empty -m "Initialize managed project"\nfi\nmkdir -p /worktrees\n`, timeoutMs: 30000, persistent: true });
       if (result.code !== 0) throw error('initialization_failed', result.stderr || 'Project initialization failed');
       checkpoint(op, { initialized: true });
     }
@@ -860,7 +887,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const id = projectId(input.project);
     account(input.accountUserId, input.action?.kind !== 'list');
     const row = await ready('project', id, input.accountUserId);
-    return await manageWorktrees({ db, runGuest, row, userId: input.accountUserId, action: input.action });
+    return await manageWorktrees({ db, runGuest, row, userId: input.accountUserId, action: input.action, root: rootOf(row) });
   }
 
   async function projectPreviewBinding(input) {
