@@ -25,7 +25,7 @@ interface ContextToolSchema {
 export interface ContextSnapshot {
   model: string;
   contextWindow: number;
-  /** The provider's authoritative context count for the last request; null when nothing was sent yet. */
+  /** The provider's authoritative context count for the last request; null when it reported none. */
   reportedTokens: number | null;
   systemPrompt: string;
   /** ACTIVE tools only — a deferred tool's schema is withheld from the prompt and costs nothing. */
@@ -225,7 +225,11 @@ export function contextSnapshotOf(session: AgentSession, model: string): Context
   return {
     model,
     contextWindow,
-    reportedTokens: usage?.tokens ?? null,
+    // The PROVIDER's own count and nothing else: the modal renders this as "Reported by provider", while
+    // the resident owner answers with a local estimate whenever the provider declines to count (a fresh
+    // compaction, an Anthropic hosted-search session). That estimate is already published beside it as
+    // `estimatedTokens`; repeating it here would give our arithmetic an authority it has not got.
+    reportedTokens: providerContextUsage(session)?.tokens ?? null,
     ...residentInputs(session),
     // PI compacts once the context exceeds `contextWindow − reserveTokens`, so that difference IS the
     // threshold. Reported only when compaction is enabled and the window is known.

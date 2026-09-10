@@ -34,16 +34,12 @@ export function buildExitPlanModeTool(deps: { sandbox?: SandboxResolver } = {}) 
       '**Important:** Do NOT use AskUserQuestion to ask "Is this plan okay?" or "Should I proceed?" - that\'s exactly what THIS tool does. ExitPlanMode inherently requests user approval of your plan.',
       '## Examples\n1. Initial task: "Search for and understand the implementation of vim mode in the codebase" - Do not use the exit plan mode tool because you are not planning the implementation steps of a task.\n2. Initial task: "Help me implement yank mode for vim" - Use the exit plan mode tool after you have finished planning the implementation steps of the task.\n3. Initial task: "Add a new feature to handle user authentication" - If unsure about auth method (OAuth, JWT, etc.), use AskUserQuestion first, then use exit plan mode tool after clarifying the approach.',
       'A successful call structurally ends the current planning turn before another model step starts.',
-      'The optional allowedPrompts field is deprecated and accepted only for transcript compatibility. Elowen ignores it and never derives permission or authority from it.',
     ].join('\n\n'),
-    parameters: Type.Object({
-      allowedPrompts: Type.Optional(Type.Array(Type.Object({
-        tool: Type.Literal('Bash', { description: 'The tool this prompt applies to' }),
-        prompt: Type.String({ description: 'Semantic description of the action, e.g. "run tests", "install dependencies"' }),
-      }, { additionalProperties: false }), {
-        description: 'Deprecated: no longer used. Accepted for transcript compatibility and ignored; never changes Elowen permissions.',
-      })),
-    }, { additionalProperties: false }),
+    // No arguments: the plan is read from the file. The reference's `allowedPrompts` was declared for
+    // transcript compatibility, read by nothing and re-sent with every request — and PI validates
+    // arguments only for a LIVE call (prepareToolCall), never for the historical tool calls a replayed
+    // transcript carries, so an old session's recorded call is unaffected by its removal.
+    parameters: Type.Object({}, { additionalProperties: false }),
     execute: async () => {
       // Mode first. Outside plan mode there is nothing to exit, and reading a stale plan file would let a
       // build turn resurrect an old plan as though it were fresh.

@@ -398,13 +398,14 @@ describe('live recall — budget and switches', () => {
     expect(calls).toBe(2);
   });
 
-  it('stops searching after three passes that inject nothing, however the query keeps drifting', async () => {
+  it('spends exactly the configured passes when every search injects nothing', async () => {
     // A model retrying a failing tool rewrites its output slightly every attempt, so the query changes
     // just enough to slip past the unchanged-query guard while the store keeps returning the same
-    // already-injected memories. Without the fruitless cap the turn spends its whole pass budget on it.
+    // already-injected memories. The configured pass count is the ONE ceiling on that: an operator who
+    // sets 5 gets 5 searches, not a stricter number chosen in the code.
     let calls = 0;
     const { fire } = harness({
-      passes: 10,
+      passes: 5,
       alreadyInContext: new Set([1, 2]),
       retrieve: async () => { calls += 1; return [mem(1, 'Already delivered'), mem(2, 'Also delivered')]; },
     });
@@ -420,17 +421,15 @@ describe('live recall — budget and switches', () => {
       await fire(work);
     }
 
-    expect(calls).toBe(3);
+    expect(calls).toBe(5);
   });
 
-  it('does not count failed retrievals as fruitless: a provider outage must not silence recall', async () => {
-    // Three provider timeouts each settle as an error. Under error-as-fruitless counting the third one
-    // fired "no more searching this turn" and the rest of the turn ran with recall silenced — the store
-    // was never asked a fourth time. An error is not an empty answer: the slot frees without injecting
-    // and without spending a fruitless pass, so the next search may still land a memory.
+  it('keeps searching through failed retrievals: a provider outage must not silence recall', async () => {
+    // Three provider timeouts each settle as an error. The slot has to free with nothing injected and
+    // the turn has to go on searching, or an outage at the start of a turn would silence recall for the
+    // rest of it and the store would never be asked a fourth time.
     let calls = 0;
-    const lines: string[] = [];
-    const logSpy = vi.spyOn(console, 'log').mockImplementation((line) => { lines.push(String(line)); });
+    const logSpy = vi.spyOn(console, 'log').mockImplementation(() => undefined);
     try {
       const { fire } = harness({
         passes: 10,
@@ -451,13 +450,12 @@ describe('live recall — budget and switches', () => {
         ];
         await fire(work); // issues the step's search
         await flush(); // let the rejection settle the slot
-        out = await fire(work); // consumes the failure: no injection, no fruitless increment
+        out = await fire(work); // consumes the failure: the slot frees with nothing injected
       }
 
-      // The fourth search was still issued and its memory injected; the fruitless gate never fired.
+      // The fourth search was still issued and its memory injected.
       expect(calls).toBe(4);
       expect(textOf(out[out.length - 1] as Msg)).toContain('Fourth search fact');
-      expect(lines.join('\n')).not.toContain('no more searching this turn');
     } finally {
       logSpy.mockRestore();
     }

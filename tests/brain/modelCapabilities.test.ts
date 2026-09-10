@@ -218,3 +218,15 @@ describe('the provider argument is the registry id, never the config entry id', 
     expect(catalogModelCost(REGISTRY_ID, 'z-ai/glm-5.2')).toEqual(catalogModelCost('elowen-zai', 'glm-5.2'));
   });
 });
+
+describe('catalog coverage for endpoints the setup offers', () => {
+  // A relay in no catalog is judged by name alone. Gemini 3.6 to 3.8 exist and reason, but the pattern
+  // stopped at 3.5, so those ids fell through to the conservative "does not reason" answer.
+  it('recognises every Gemini 3 generation, not only the ones that existed when the pattern was written', () => {
+    for (const id of ['gemini-3-pro', 'gemini-3.5-pro', 'gemini-3.6-flash', 'gemini-3.8-pro']) {
+      expect(descriptorCapabilities('ai-relay', id).reasoning).toBe(true);
+    }
+    expect(inferredModelCapabilities('ai-relay', 'gemini-3.7-pro').levels).toEqual(['low', 'medium', 'high']);
+  });
+
+});

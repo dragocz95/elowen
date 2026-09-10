@@ -328,3 +328,46 @@ describe('MemoryAdd project-scoped defaulting', () => {
     expect(categories.list(1)).toHaveLength(0);
   });
 });
+
+/** Both numbers the model may pass reach SQL or the retention model directly: `limit` becomes the
+ *  store's LIMIT, where SQLite reads a negative as "unlimited" and rejects a fractional one outright,
+ *  and `importance` selects a half-life, where a rank outside 1..5 has no entry at all and leaves the
+ *  memory unevictable for good. */
+describe('memory tool argument bounds', () => {
+  it('declares the accepted range in the schema of every tool that takes one', () => {
+    const { byName } = toolset();
+    const params = (name: string) => byName(name).parameters as {
+      properties?: Record<string, { minimum?: number; maximum?: number }>;
+    };
+
+    expect(params('MemorySearch').properties?.limit).toMatchObject({ minimum: 1, maximum: 50 });
+    expect(params('MemoryListRecent').properties?.limit).toMatchObject({ minimum: 1, maximum: 50 });
+    expect(params('MemoryAdd').properties?.importance).toMatchObject({ minimum: 1, maximum: 5 });
+    expect(params('MemoryUpdate').properties?.importance).toMatchObject({ minimum: 1, maximum: 5 });
+  });
+
+  it('clamps a limit that would dump the whole store into the context', async () => {
+    const { store, categories, byName } = toolset();
+    const category = categories.create(1, { name: 'Facts' });
+    for (const body of ['first fact', 'second fact', 'third fact']) {
+      const row = store.add(1, { body, source: 'user' }, 'user:1', 'seed');
+      store.setCategory(1, row.id, category.id, 'user:1', 'seed');
+    }
+    const scope = { projectId: null, categoryIds: new Set([category.id]), sharedCategoryIds: new Set<number>() };
+
+    // SQLite reads LIMIT -1 as "no limit", so this returned every memory the scope can reach.
+    const listed = txt(await run(OWNER, () => byName('MemoryListRecent').execute('c1', { limit: -1 }), scope));
+    expect(listed.split('\n')).toHaveLength(1);
+  });
+
+  it('clamps importance to the ranks retention actually knows', async () => {
+    const { store, byName } = toolset();
+
+    await run(OWNER, () => byName('MemoryAdd').execute('c1', { body: 'A pinned-forever fact.', importance: 99 }));
+    const added = store.list(1)[0]!;
+    expect(added.importance).toBe(5);
+
+    await run(OWNER, () => byName('MemoryUpdate').execute('c2', { id: added.id, importance: 0 }));
+    expect(store.list(1)[0]?.importance).toBe(1);
+  });
+});

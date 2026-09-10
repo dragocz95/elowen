@@ -6,11 +6,8 @@ import { assertPathAllowed, isAllAccess } from '../../plugins/pathGuard.js';
 import { currentSessionId, currentTurnToken, currentIdentity } from '../../plugins/policyContext.js';
 import { chatFilesDir, storeFileByContent, type StoredChatFile } from '../chatFiles.js';
 import {
-  guestAbsolutePath,
   isManagedProjectTurn,
-  managedArtifactTurn,
-  resolveFor,
-  readGuestFileBounded,
+  readManagedGuestArtifact,
   type SandboxResolver,
 } from '../managedArtifacts.js';
 
@@ -42,7 +39,7 @@ export function buildShareFileTool(deps: ShareFileDeps) {
   return defineTool({
     name: 'ShareFile',
     label: 'Share file',
-    description: 'Give the user a file to download from the web conversation — a document, archive, generated report, HTML file, source bundle, or another artifact they should KEEP. Use ShareImage instead when an image is something the user should SEE directly in the conversation; use ShareFile when the deliverable should be saved to their device. Pass an absolute `path` and optionally one short `caption`. The path must stay inside the caller’s accessible repositories — and on an unrestricted (all-access) session, sharing by path additionally requires an account that administers this instance — and the file must be at most 25 MB. At most 4 files may be shared per turn. The bytes are copied into conversation storage and served only as an authenticated download; the original filename is preserved. This affordance is implemented by the web chat (including a sub-agent’s own panel); on another chat platform use its platform-specific file-upload tool instead.',
+    description: 'Give the user a file to download from the web conversation — a document, archive, generated report, HTML file, source bundle, or another artifact they should KEEP. Use ShareImage instead when an image is something the user should SEE directly in the conversation; use ShareFile when the deliverable should be saved to their device. Pass an absolute `path` and optionally one short `caption`. Inside a managed project the path is an absolute path in the project environment; otherwise it must stay inside the caller’s accessible repositories — and on an unrestricted (all-access) session, sharing by path additionally requires an account that administers this instance. The file must be at most 25 MB. At most 4 files may be shared per turn. The bytes are copied into conversation storage and served only as an authenticated download; the original filename is preserved. This affordance is implemented by the web chat (including a sub-agent’s own panel); on another chat platform use its platform-specific file-upload tool instead.',
     parameters: Type.Object({
       path: Type.String({ description: 'Absolute path to the file the user should download.' }),
       caption: Type.Optional(Type.String({ description: 'One short line explaining what the file is.' })),
@@ -68,36 +65,25 @@ export function buildShareFileTool(deps: ShareFileDeps) {
 
   /** The managed-project branch: the path is a GUEST path, the bytes come from the Sandbox projectFiles
    *  provider (bounded, version-checked), and none of the host fs machinery in `fromDisk` is touched.
-   *  Returns null when the path cannot be a managed guest path (relative, or outside the guest workspace
-   *  root), so the legacy host branch answers. The two never mix: in a managed turn `assertPathAllowed`
-   *  refuses every host path, and a guest path has no host existence at all.
+   *  Returns null only for a NON-managed turn, so the legacy host branch answers that one; inside a
+   *  managed turn every outcome is a managed answer. The two never mix: in a managed turn
+   *  `assertPathAllowed` refuses every host path, and a guest path has no host existence at all.
    *
    *  Authorization is the PROVIDER's (per-operation account/project check); the managed guest is a whole
-   *  filesystem the model may share from anywhere in. A managed turn NEVER reaches the host branch or
-   *  the path guard: a relative path is refused as an invalid absolute guest path, and an unreachable
-   *  provider is a refusal — never a host read. */
+   *  filesystem the model may share from anywhere in, so confinement is not the boundary here — the path
+   *  is only checked for shape. A relative path is refused as an invalid absolute guest path and an
+   *  unreachable provider is a refusal, never a host read. */
   async function managed(rawPath: string, toolDeps: ShareFileDeps): Promise<StoredChatFile | string | null> {
-    // The ambient execution target decides the BRANCH — explicitly, never by matching a refusal
-    // string. Only a NON-managed turn answers from the host branch; on a managed turn the context
-    // (legacy workspace scope, missing linked account, session) and then the path are validated here,
-    // and every failure is a managed refusal — the host path guard is never consulted, whatever the
-    // input looks like.
+    // The ambient execution target decides the BRANCH — explicitly, never by matching a refusal string.
+    // Only a NON-managed turn answers from the host branch; the shared guest read below validates the
+    // context (legacy workspace scope, missing linked account, session) and then the path, and every
+    // failure is a managed refusal — the host path guard is never consulted, whatever the input looks like.
     if (!isManagedProjectTurn()) return null;
-    const turn = managedArtifactTurn();
-    if (typeof turn === 'string') return `ShareFile: ${turn}.`;
-    const guestPath = guestAbsolutePath(rawPath);
-    if (!guestPath) return 'ShareFile: an absolute guest path is required.';
-
-    const resolved = await resolveFor(toolDeps.sandbox, turn);
-    if (typeof resolved === 'string') return `ShareFile: ${resolved}.`;
-    const bytes = await readGuestFileBounded(
-      { sandbox: resolved.sandbox, projectRef: resolved.turn.projectRef, accountUserId: resolved.turn.accountUserId },
-      guestPath,
-      MAX_BYTES,
-    );
-    if (typeof bytes === 'string') return `ShareFile: ${bytes}`;
-    const stored = storeFileByContent(chatFilesDir(toolDeps.imagesDir!), bytes, basename(guestPath));
-    return stored ?? `ShareFile: could not store ${basename(guestPath)}.`;
+    const artifact = await readManagedGuestArtifact(toolDeps.sandbox, rawPath, MAX_BYTES);
+    if (typeof artifact === 'string') return `ShareFile: ${artifact}`;
+    const name = basename(artifact.path);
+    const stored = storeFileByContent(chatFilesDir(toolDeps.imagesDir!), artifact.bytes, name);
+    return stored ?? `ShareFile: could not store ${name}.`;
   }
 }
 

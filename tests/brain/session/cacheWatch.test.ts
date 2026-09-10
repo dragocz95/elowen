@@ -393,6 +393,26 @@ describe('installCacheWatch — warning context', () => {
     expect(warnings()[0]?.message).not.toContain('system prompt changed');
     expect(warnings()[0]?.message).toContain('tracked payload prefix unchanged');
   });
+
+  // The in-session summarization request goes out through `before_provider_request` like any other, so
+  // it leaves a snapshot of its own. A compaction that failed or was aborted never produced a response
+  // to consume it, and the next chat message_end would take the summary's payload as the request it is
+  // comparing against — reporting a system prompt change that only ever existed inside that summary.
+  it('drops the summarization snapshot of a compaction that did not complete', () => {
+    const monitor = createCachePayloadMonitor();
+    const capture = payloadCapture(monitor);
+    const { fire } = harness({ ttlMs: TTL, monitor });
+    capture(providerPayload());
+    fire(assistantUsage(100_000, T0));
+    capture(providerPayload({ system: 'summarization system' }));
+    fire({ type: 'compaction_end', aborted: true });
+    capture(providerPayload());
+    fire(assistantUsage(20_000, T0 + 10_000));
+
+    expect(warnings()).toHaveLength(1);
+    expect(warnings()[0]?.message).not.toContain('system prompt changed');
+    expect(warnings()[0]?.message).toContain('tracked payload prefix unchanged');
+  });
 });
 
 describe('installCacheWatch — openai-responses flavor (ChatGPT backend)', () => {

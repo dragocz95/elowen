@@ -267,11 +267,12 @@ function attachImage(rt: ChatState, attachmentChips: ChatApplicationResources['a
  *  (`!` local shell, sub-agent steering, prompt commands, `@` mention expansion, image attachments). */
 /** The local notice for a `/compact` result. A REAL compaction (`compacted:true`) is announced entirely
  *  by the daemon's BrainEvent stream (the `notice` + `compacted` events), so the command shows nothing of
- *  its own. A benign no-op (`compacted:false` — nothing to compact yet) emits NO stream event, so its
- *  message must be surfaced here or the command would look like it did nothing. Returns null when the
- *  stream owns the feedback. */
+ *  its own. A benign no-op (`compacted:false`) emits NO stream event, so the daemon's own message is
+ *  surfaced here or the command would look like it did nothing. The wording belongs to the daemon
+ *  (`runCompaction`): a local fallback used to tell an already-compacted session it had nothing to
+ *  compact yet. Returns null when the stream owns the feedback. */
 export function compactNotice(result: { compacted: boolean; message?: string }): string | null {
-  return result.compacted ? null : (result.message ?? 'Nothing to compact yet.');
+  return result.compacted ? null : (result.message ?? null);
 }
 
 export function wireSubmit(

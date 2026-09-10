@@ -4,6 +4,7 @@ import { currentIdentity, currentMemoryRecallScope } from '../../plugins/policyC
 import type { MemoryStore, MemoryRow, MemoryPatch } from '../../store/memoryStore.js';
 import type { MemoryService } from '../memoryService.js';
 import type { MemoryCategoryStore, MemoryCategoryRow } from '../../store/memoryCategoryStore.js';
+import { PIN_IMPORTANCE } from '../memoryVitality.js';
 import { ICON_ALLOWLIST } from '../../store/memoryCategoryStore.js';
 import type { MemoryCategorizer } from '../memoryCategorizer.js';
 
@@ -50,6 +51,21 @@ function renderMemory(m: MemoryRow): string {
   return `#${m.id} [${m.kind} imp:${m.importance}] ${m.body}`;
 }
 
+/** The largest batch either read tool will hand back. `limit` reaches the store's LIMIT unchanged, where
+ *  SQLite reads a negative as "no limit" — `MemoryListRecent({limit:-1})` emptied the whole recallable
+ *  store into the context — and refuses a fractional one with a datatype mismatch. Bounded in the schema
+ *  so the model is told, and clamped here as well, the way ToolSearch bounds `max_results`. */
+const MAX_MEMORY_LIMIT = 50;
+
+const boundedLimit = (limit: number | undefined, fallback: number): number =>
+  Math.max(1, Math.min(MAX_MEMORY_LIMIT, Math.floor(limit ?? fallback)));
+
+/** Retention reads `importance` as a rank, not a number: each of 1..5 names a half-life, 5 is the pin,
+ *  and anything outside the table has no half-life at all — which reads as "never decays" and makes the
+ *  memory unevictable for good (memoryVitality.ts). A stored 99 was therefore a permanent pin. */
+const boundedImportance = (importance: number): number =>
+  Math.max(1, Math.min(PIN_IMPORTANCE, Math.round(importance)));
+
 function memorySearch(d: MemoryToolDeps) {
   return defineTool({
     name: 'MemorySearch', label: 'Search memory',
@@ -67,12 +83,15 @@ function memorySearch(d: MemoryToolDeps) {
       + 'outright for an unlinked sender or a task worker.',
     parameters: Type.Object({
       query: Type.String({ description: 'What to look up' }),
-      limit: Type.Optional(Type.Number({ description: 'Max memories to return (default 6)' })),
+      limit: Type.Optional(Type.Number({
+        minimum: 1, maximum: MAX_MEMORY_LIMIT,
+        description: `Max memories to return, 1..${MAX_MEMORY_LIMIT} (default 6)`,
+      })),
     }),
     execute: async (_id, p: { query: string; limit?: number }) => {
       const userId = actingUserId();
       if (userId === null) return text(LOCKED);
-      const { memories } = await d.service.retrieve(userId, p.query, { maxCount: p.limit });
+      const { memories } = await d.service.retrieve(userId, p.query, { maxCount: boundedLimit(p.limit, 6) });
       if (memories.length === 0) return text('No matching memories.');
       // The model asked for these and receives them in full, so the whole set counts as recalled.
       d.service.markRecalled(userId, memories.map((memory) => memory.id));
@@ -100,7 +119,10 @@ function memoryAdd(d: MemoryToolDeps) {
     parameters: Type.Object({
       body: Type.String({ description: 'The fact, self-contained — it will be read without this conversation for context. Empty text is rejected.' }),
       kind: Type.Optional(Type.String({ description: "What sort of fact this is: e.g. 'fact', 'preference', 'decision', 'feedback' (default 'fact')" })),
-      importance: Type.Optional(Type.Number({ description: 'How strongly this should be recalled, 1..5 (default 3)' })),
+      importance: Type.Optional(Type.Number({
+        minimum: 1, maximum: PIN_IMPORTANCE,
+        description: 'How strongly this should be recalled, 1..5 (default 3); 5 is a pin that never expires',
+      })),
     }),
     execute: async (_id, p: { body: string; kind?: string; importance?: number }) => {
       const userId = actingUserId();
@@ -122,7 +144,7 @@ function memoryAdd(d: MemoryToolDeps) {
       const near = await d.service.findSimilar(userId, body, { sharedCategoryIds: scope?.sharedCategoryIds });
       const row = d.store.add(
         userId,
-        { body, kind: p.kind, importance: p.importance, source: 'user' },
+        { body, kind: p.kind, importance: p.importance === undefined ? undefined : boundedImportance(p.importance), source: 'user' },
         `user:${userId}`, 'added via MemoryAdd tool',
       );
       // Categorization used to hang off the post-turn curator alone, so a memory the agent stored through
@@ -217,7 +239,10 @@ function memoryUpdate(d: MemoryToolDeps) {
       id: Type.Number({ description: 'The memory id to update, as shown by MemorySearch or MemoryListRecent' }),
       body: Type.Optional(Type.String({ description: 'Replacement text for the fact, self-contained. Omit to keep the current wording.' })),
       kind: Type.Optional(Type.String({ description: "Replacement label, e.g. 'fact', 'preference', 'decision', 'feedback'. Omit to keep it." })),
-      importance: Type.Optional(Type.Number({ description: 'New recall weight, 1..5. Omit to keep the current one.' })),
+      importance: Type.Optional(Type.Number({
+        minimum: 1, maximum: PIN_IMPORTANCE,
+        description: 'New recall weight, 1..5 (5 is a pin that never expires). Omit to keep the current one.',
+      })),
     }),
     execute: async (_id, p: { id: number; body?: string; kind?: string; importance?: number }) => {
       const userId = actingUserId();
@@ -225,7 +250,7 @@ function memoryUpdate(d: MemoryToolDeps) {
       const patch: MemoryPatch = {};
       if (p.body !== undefined) patch.body = p.body;
       if (p.kind !== undefined) patch.kind = p.kind;
-      if (p.importance !== undefined) patch.importance = p.importance;
+      if (p.importance !== undefined) patch.importance = boundedImportance(p.importance);
       const row = d.store.update(userId, p.id, patch, `user:${userId}`, 'updated via MemoryUpdate tool');
       if (!row) return text(`No memory #${p.id} found.`);
       return text(`Updated memory #${row.id}.`);
@@ -292,11 +317,16 @@ function memoryListRecent(d: MemoryToolDeps) {
       + 'exist; an empty result is not proof that nothing is stored. Rows are rendered as `#id [kind '
       + 'imp:N] body`, `limit` caps how many are returned (default 10), and the tool is refused for an '
       + 'unlinked platform sender or a task worker because memory is per-user and private.',
-    parameters: Type.Object({ limit: Type.Optional(Type.Number({ description: 'Max memories to list, newest first (default 10)' })) }),
+    parameters: Type.Object({
+      limit: Type.Optional(Type.Number({
+        minimum: 1, maximum: MAX_MEMORY_LIMIT,
+        description: `Max memories to list, newest first, 1..${MAX_MEMORY_LIMIT} (default 10)`,
+      })),
+    }),
     execute: async (_id, p: { limit?: number }) => {
       const userId = actingUserId();
       if (userId === null) return text(LOCKED);
-      const rows = d.service.listRecent(userId, p.limit ?? 10);
+      const rows = d.service.listRecent(userId, boundedLimit(p.limit, 10));
       // The listing is category-scoped by design, so "empty" means "nothing RECALLABLE here" — the
       // description says so explicitly. Answering "nothing is stored" contradicted that contract and
       // reported a freshly stored, still-uncategorized memory as absent.

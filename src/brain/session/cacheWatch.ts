@@ -454,13 +454,17 @@ export function installCacheWatch(
   const now = options.now ?? Date.now;
   let previous: { cacheRead: number; at: number; snapshot?: CachePayloadSnapshot } | null = null;
   session.subscribe((event) => {
-    if (event.type === 'compaction_end' && !event.aborted && event.result) {
-      // Post-compaction history is genuinely smaller; the next request's lower cacheRead is by design.
-      previous = null;
-      // A snapshot taken by a request BEFORE the compaction describes a payload that no longer exists;
-      // leaving it queued would pair it with the first response after the compaction and attribute the
-      // next drop to that stale request.
+    if (event.type === 'compaction_end') {
+      // Every compaction leaves behind snapshots no response will consume: the requests made before it
+      // describe a payload that may no longer exist, and the summarization request itself now goes out
+      // through the payload extensions without a chat response of its own. Succeeded, failed or aborted,
+      // pairing either with the next chat response attributes that response's drop to a request it never
+      // followed.
       options.monitor?.clearPending();
+      // The baseline moves only for a compaction that actually replaced the history: the smaller context
+      // is then by design. A failed or aborted one left the conversation as it was, so its baseline is
+      // still the right comparison.
+      if (!event.aborted && event.result) previous = null;
       return;
     }
     if (event.type !== 'message_end') return;

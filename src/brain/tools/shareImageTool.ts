@@ -7,11 +7,8 @@ import { currentSessionId, currentTurnToken, currentIdentity } from '../../plugi
 import { sniffImageMime, storeImageByContent, type StoredChatImage } from '../chatImages.js';
 import type { BrainStore } from '../../store/brainStore.js';
 import {
-  guestAbsolutePath,
   isManagedProjectTurn,
-  managedArtifactTurn,
-  resolveFor,
-  readGuestFileBounded,
+  readManagedGuestArtifact,
   type SandboxResolver,
 } from '../managedArtifacts.js';
 
@@ -55,7 +52,7 @@ export function buildShareImageTool(deps: ShareImageDeps) {
   return defineTool({
     name: 'ShareImage',
     label: 'Share image',
-    description: 'Show the user an image in the conversation — a screenshot you just took, a chart you rendered, a photo or an image file from the repo. Use it when what you are describing is easier to SEE than to read: a layout that looks wrong, a rendered page, a photo the user asked about; do not use it to echo back an image the user themselves sent, and do not attach one to every step of a debugging session. Pass `path` for a file on disk, or `latest: true` for the image the most recent tool call returned to you (a screenshot taken without a file path exists only in that result). Exactly one of the two, and `caption` is one short line saying what they are looking at. A shared `path` must stay inside your accessible repositories — and on an unrestricted (all-access) session, sharing by path additionally requires an account that administers this instance — and it must really be a png, jpeg, gif or webp (sniffed from the bytes, not the extension) under 10 MB — anything else comes back as a refusal, not a share. At most 4 images per turn; after that describe the rest in words. The image appears in THIS conversation — the web chat and any connected platform — so from a sub-agent it reaches the panel for that sub-agent, not the parent conversation. It does not go back into your own context, which already has it, so do not describe it back in full afterwards.',
+    description: 'Show the user an image in the conversation — a screenshot you just took, a chart you rendered, a photo or an image file from the repo. Use it when what you are describing is easier to SEE than to read: a layout that looks wrong, a rendered page, a photo the user asked about; do not use it to echo back an image the user themselves sent, and do not attach one to every step of a debugging session. Pass `path` for a file on disk, or `latest: true` for the image the most recent tool call returned to you (a screenshot taken without a file path exists only in that result). Exactly one of the two, and `caption` is one short line saying what they are looking at. Inside a managed project a shared `path` is an absolute path in the project environment; otherwise it must stay inside your accessible repositories — and on an unrestricted (all-access) session, sharing by path additionally requires an account that administers this instance. It must really be a png, jpeg, gif or webp (sniffed from the bytes, not the extension) under 10 MB — anything else comes back as a refusal, not a share. At most 4 images per turn; after that describe the rest in words. The image appears in THIS conversation — the web chat and any connected platform — so from a sub-agent it reaches the panel for that sub-agent, not the parent conversation. It does not go back into your own context, which already has it, so do not describe it back in full afterwards.',
     parameters: Type.Object({
       path: Type.Optional(Type.String({ description: 'Absolute path to an image file (png, jpeg, gif or webp).' })),
       latest: Type.Optional(Type.Boolean({ description: 'Share the image the most recent tool call returned instead of a file on disk.' })),
@@ -92,34 +89,25 @@ export function buildShareImageTool(deps: ShareImageDeps) {
 
   /** The managed-project branch: the path is a GUEST path, the bytes come from the Sandbox projectFiles
    *  provider (bounded, version-checked) and are sniffed exactly like host bytes before anything is
-   *  served from the app origin. Returns null when the path cannot be a managed guest path (relative, or
-   *  outside the guest workspace root), so the legacy host branch answers. The two never mix: in a
+   *  served from the app origin. Returns null only for a NON-managed turn, so the legacy host branch
+   *  answers that one; inside a managed turn every outcome is a managed answer. The two never mix: in a
    *  managed turn `assertPathAllowed` refuses every host path, and a guest path has no host existence.
    *
    *  Authorization is the PROVIDER's (per-operation account/project check) and the type boundary stays
-   *  `sniffImageMime` on the bytes. A managed turn NEVER reaches the host branch or the path guard: a
-   *  relative path is refused as an invalid absolute guest path; a failing provider is a refusal. */
+   *  `sniffImageMime` on the bytes. The managed guest is a whole filesystem the model may share from
+   *  anywhere in, so the path is checked for shape only: a relative one is refused as an invalid absolute
+   *  guest path, and a failing provider is a refusal rather than a host read. */
   async function managed(rawPath: string, toolDeps: ShareImageDeps): Promise<StoredChatImage | string | null> {
-    // Same branch decision as ShareFile's managed route: explicit projectRef first, then the managed
-    // context and the path; the host path guard is never consulted on a managed turn.
+    // Same branch decision as ShareFile's managed route, and the same shared guest read behind it; the
+    // host path guard is never consulted on a managed turn.
     if (!isManagedProjectTurn()) return null;
-    const turn = managedArtifactTurn();
-    if (typeof turn === 'string') return `ShareImage: ${turn}.`;
-    const guestPath = guestAbsolutePath(rawPath);
-    if (!guestPath) return 'ShareImage: an absolute guest path is required.';
-
-    const resolved = await resolveFor(toolDeps.sandbox, turn);
-    if (typeof resolved === 'string') return `ShareImage: ${resolved}.`;
-    const bytes = await readGuestFileBounded(
-      { sandbox: resolved.sandbox, projectRef: resolved.turn.projectRef, accountUserId: resolved.turn.accountUserId },
-      guestPath,
-      MAX_BYTES,
-    );
-    if (typeof bytes === 'string') return `ShareImage: ${bytes}`;
-    const mimeType = sniffImageMime(bytes);
-    if (!mimeType) return `ShareImage: ${basename(guestPath)} is not a png, jpeg, gif or webp image.`;
-    const stored = storeImageByContent(toolDeps.imagesDir!, bytes.toString('base64'), mimeType);
-    return stored ?? `ShareImage: could not store ${basename(guestPath)}.`;
+    const artifact = await readManagedGuestArtifact(toolDeps.sandbox, rawPath, MAX_BYTES);
+    if (typeof artifact === 'string') return `ShareImage: ${artifact}`;
+    const name = basename(artifact.path);
+    const mimeType = sniffImageMime(artifact.bytes);
+    if (!mimeType) return `ShareImage: ${name} is not a png, jpeg, gif or webp image.`;
+    const stored = storeImageByContent(toolDeps.imagesDir!, artifact.bytes.toString('base64'), mimeType);
+    return stored ?? `ShareImage: could not store ${name}.`;
   }
 }
 
