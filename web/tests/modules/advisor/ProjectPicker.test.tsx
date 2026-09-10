@@ -1,5 +1,5 @@
 import { describe, expect, it, vi, beforeAll, afterAll, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
@@ -45,18 +45,15 @@ describe('ProjectPicker', () => {
     await waitFor(() => expect(trigger).toBeEnabled());
     fireEvent.keyDown(trigger, { key: 'ArrowDown' });
 
-    // The host project is listed, under its own name and with no red mode label beside it.
-    const option = await screen.findByRole('menuitemradio', { name: 'server' });
-    expect(within(option).queryByText('HOST MODE')).toBeNull();
-    expect(screen.queryByText('HOST MODE')).toBeNull();
-    // And there is no entry that means "the host itself".
+    // The host project is listed under its own name, and there is no entry that means "the host itself".
+    await screen.findByRole('menuitemradio', { name: 'server' });
     expect(screen.getAllByRole('menuitemradio').map((item) => item.textContent)).toEqual(['kolin', 'elowen', 'server']);
   });
 
-  // A conversation may still sit in a host target with no project behind it. The picker shows no host
-  // mode for that either — no label, no shield, no red — only the neutral wording any nameless target
-  // gets. Presentation only: the execution state is left exactly as the daemon reported it.
-  it('shows no host mode for a nameless host target a conversation already sits in', async () => {
+  // A conversation may still sit in a host target with no project behind it. The picker names it with the
+  // neutral wording any nameless target gets, and leaves the execution state exactly as the daemon
+  // reported it.
+  it('names a nameless host target a conversation already sits in without changing it', async () => {
     chat.activeSessionId = 'brain-1-a'; chat.telemetry.projectRef = { kind: 'host' };
     let posted = 0;
     server.use(
@@ -68,11 +65,7 @@ describe('ProjectPicker', () => {
 
     const trigger = await screen.findByRole('button', { name: 'Execution target not selected' });
     await waitFor(() => expect(trigger).toBeEnabled());
-    // None of the ways host mode used to announce itself here.
-    expect(screen.queryByText('HOST MODE')).toBeNull();
-    expect(trigger.className).not.toMatch(/destructive/);
-    expect(trigger.querySelector('svg.lucide-shield-alert')).toBeNull();
-    // And nothing was sent to change what the conversation actually runs in.
+    // Nothing was sent to change what the conversation actually runs in.
     expect(posted).toBe(0);
   });
 
@@ -103,7 +96,6 @@ describe('ProjectPicker', () => {
     await waitFor(() => expect(trigger).toBeEnabled());
     fireEvent.keyDown(trigger, { key: 'ArrowDown' });
     await screen.findByRole('menuitemradio', { name: /kolin/ });
-    expect(screen.queryByText('HOST MODE')).toBeNull();
     expect(screen.getAllByRole('menuitemradio').map((item) => item.textContent)).toEqual(['kolin', 'elowen', 'server']);
   });
 

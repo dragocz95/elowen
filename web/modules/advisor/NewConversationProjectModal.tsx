@@ -12,7 +12,7 @@ import { ProjectIcon } from '../../components/ui/ProjectIcon';
 import { OperationProgressDialog } from '../../components/ui/OperationProgressDialog';
 import { useEnvironmentOperationWindow } from '../../lib/useEnvironmentOperation';
 import { recreatable, requestEnvironmentAction } from '../../lib/environmentActions';
-import type { Project, ProjectExecutionRef } from '../../lib/types';
+import { executionRefKey, executionRefOf, type Project, type ProjectExecutionRef } from '../../lib/types';
 import { useBrainChat } from './BrainChatProvider';
 
 /** One offered destination: a project this account may reach, or — for an administrator — the host
@@ -26,22 +26,13 @@ interface Destination {
 
 const HOST_KEY = 'host:';
 
-function destinationKey(ref: ProjectExecutionRef): string {
-  return `${ref.kind}:${ref.projectId ?? ''}`;
-}
-
 /** The projects offered to a fresh conversation, in the order they are listed, with the administrator's
  *  nameless host last. `GET /projects` is already authorization-filtered, so nothing here decides who may
  *  reach what; a project on its way out is simply not a place to start working. */
 function newConversationDestinations(projects: readonly Project[], isAdmin: boolean): Destination[] {
   const items: Destination[] = projects
     .filter((p) => p.lifecycle !== 'deleting')
-    .map((p) => {
-      const ref: ProjectExecutionRef = p.executionKind === 'managed'
-        ? { kind: 'managed', projectId: p.id }
-        : { kind: 'host', projectId: p.id };
-      return { key: destinationKey(ref), ref, project: p };
-    });
+    .map((p) => ({ key: executionRefKey(executionRefOf(p)), ref: executionRefOf(p), project: p }));
   // An administrator with no project chosen keeps the whole host, which is what their conversations did
   // before project environments existed. Everyone else always lands in a project.
   if (isAdmin) items.push({ key: HOST_KEY, ref: { kind: 'host' } });
@@ -76,7 +67,7 @@ function NewConversationProjectDialog({ onClose }: { onClose: () => void }) {
   // What the daemon says this conversation already runs in. It is the preselection, so confirming the
   // dialog without reading it changes nothing.
   const reported = telemetry.projectRef;
-  const reportedKey = (reported && destinations.find((d) => d.key === destinationKey(reported))?.key) ?? null;
+  const reportedKey = (reported && destinations.find((d) => d.key === executionRefKey(reported))?.key) ?? null;
   const chosen = focused && destinations.some((d) => d.key === focused) ? focused : reportedKey;
   // Where the hand rests before anything is chosen. A status that has not landed yet leaves the dialog
   // with no target to preselect, and the first card is then simply the one arrows and Tab start from —

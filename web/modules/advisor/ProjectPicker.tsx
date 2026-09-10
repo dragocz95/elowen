@@ -4,7 +4,7 @@ import { ChevronDown } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
 import { useProjects } from '../../lib/queries';
 import { apiErrorMessage, elowenClient } from '../../lib/elowenClient';
-import type { ProjectExecutionRef } from '../../lib/types';
+import { executionRefKey, executionRefOf, type ProjectExecutionRef } from '../../lib/types';
 import { useToast } from '../../components/ui/Toast';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import type { SaveStatus } from '../../lib/useAutoSaveStatus';
@@ -96,11 +96,11 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
             produces a `host` target and travels the same authorized execution endpoint a managed one does.
             Standalone host mode is not offered as a destination of its own; host administration keeps its
             home in Projects, the CLI and the API. */}
-        <DropdownMenuRadioGroup value={target ? `${target.kind}:${target.projectId ?? ''}` : ''} onValueChange={(value) => {
-          const project = items.find((p) => `${p.executionKind ?? 'host'}:${p.id}` === value);
-          if (project) select({ kind: project.executionKind === 'managed' ? 'managed' : 'host', projectId: project.id });
+        <DropdownMenuRadioGroup value={target ? executionRefKey(target) : ''} onValueChange={(value) => {
+          const project = items.find((p) => executionRefKey(executionRefOf(p)) === value);
+          if (project) select(executionRefOf(project));
         }}>
-          {items.map((p) => <DropdownMenuRadioItem key={p.id} value={`${p.executionKind ?? 'host'}:${p.id}`} className="gap-2 text-xs">
+          {items.map((p) => <DropdownMenuRadioItem key={p.id} value={executionRefKey(executionRefOf(p))} className="gap-2 text-xs">
             <ProjectIcon project={p} size={14} /><span className="min-w-0 flex-1 truncate">{p.slug}</span>
           </DropdownMenuRadioItem>)}
         </DropdownMenuRadioGroup>
