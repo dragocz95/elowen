@@ -1069,6 +1069,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       const inventory = await podman.containerInventory(namespace);
       for (const row of store.all()) {
         if (!['project', 'site'].includes(row.kind) || row.desired_state !== 'running' || store.active(row.kind, row.resource_id)) continue;
+        // A pre-mount container is an operator decision (recreate or delete), never an automatic one.
+        if (row.spec.legacyWorkspaceLayout) continue;
         if (row.kind === 'project' && (!rootOf(row) || releasingAdoptions.has(Number(row.resource_id)))) continue;
         const spec = specFor(row.spec);
         if (inventory.get(spec.name) === 'running') continue;

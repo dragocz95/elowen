@@ -198,6 +198,20 @@ describe('durable managed environment lifecycle', () => {
     expect(podman.start).toHaveBeenCalledOnce();
   });
 
+  it('never inspects or recovers an environment that still carries the pre-mount layout', async () => {
+    const { runtime, containers, podman, db } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    containers.values().next().value.state = 'created';
+    const row = db.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
+    db.prepare("UPDATE p_sandbox_runtimes SET spec_json=? WHERE kind='project' AND resource_id='7'").run(JSON.stringify({ ...JSON.parse(row.spec_json), legacyWorkspaceLayout: true }));
+    podman.inspect.mockClear(); podman.start.mockClear();
+
+    await runtime.reconcile();
+
+    expect(podman.inspect).not.toHaveBeenCalled();
+    expect(podman.start).not.toHaveBeenCalled();
+  });
+
   it('recreates a missing desired running container from its existing volumes', async () => {
     const { runtime, containers, podman } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
