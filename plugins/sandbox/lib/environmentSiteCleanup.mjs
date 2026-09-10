@@ -39,7 +39,10 @@ export function createSiteCleanupService({ podman, store, namespace, resolveClea
         const record = siteRecord(resolved, 1);
         if (!record.binding.legacy) {
           const found = await podman.discoverLegacySite(record.input, { namespace, sitesDataDir: resolved.sitesDataDir, sourcePath: resolved.sourcePath, brokerDir: resolved.brokerDir });
-          if (found) record.binding.legacy = { containerId: found.containerId, imageId: found.imageId, volumeMountpoint: found.volumeMountpoint };
+          if (found) {
+            record.binding.legacy = { containerId: found.containerId, imageId: found.imageId, volumeMountpoint: found.volumeMountpoint,
+              ...(found.gitStubPath ? { gitStubPath: found.gitStubPath } : {}), ...(found.limits ? { limits: found.limits } : {}) };
+          }
         }
         row = store.insert('site', input.siteId, resolved.projectId, record, normalizeLimits(resolved.limits));
       }

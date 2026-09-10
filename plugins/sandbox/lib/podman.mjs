@@ -120,6 +120,23 @@ export class SpawnExecutor {
 function labelsMatch(actual, expected) {
   return actual && Object.entries(expected).every(([key, value]) => actual[key] === value);
 }
+/** What an existing Site container IS, read from the engine at handover: the Git-stub bind source it
+ * actually carries and the cgroup limits it actually runs under. Both are pinned into the legacy
+ * binding so adoption compares the container against itself instead of against a layout or a
+ * configuration that changed after it was created. Anything unreadable stays underived, which leaves
+ * the strict derived expectation in place. */
+function legacyShape(container) {
+  const shape = {};
+  const stub = (container.Mounts ?? []).find((mount) => mount.Destination === '/workspace/.git');
+  if (stub?.Type === 'bind' && typeof stub.Source === 'string') shape.gitStubPath = stub.Source;
+  const host = container.HostConfig ?? {};
+  const cpus = host.NanoCpus > 0 ? host.NanoCpus / 1e9 : host.CpuPeriod > 0 ? host.CpuQuota / host.CpuPeriod : 0;
+  const memoryMb = host.Memory / (1024 * 1024);
+  if (cpus > 0 && Number.isSafeInteger(memoryMb) && memoryMb > 0 && Number.isSafeInteger(host.PidsLimit) && host.PidsLimit > 0) {
+    shape.limits = { cpus, memoryMb, pidsLimit: host.PidsLimit };
+  }
+  return shape;
+}
 function legacyLabelsMatch(labels, siteId) {
   return labels?.['io.elowen.site'] === siteId
     && Object.keys(labels).every((key) => !key.startsWith('io.elowen.') || key === 'io.elowen.site');
@@ -488,7 +505,7 @@ export class PodmanClient {
     if (!await this.#exists('container', name)) return null;
     const container = oneJson(await this.#run(['inspect', name]));
     const volume = oneJson(await this.#run(['volume', 'inspect', `${name}-data`]));
-    const pins = { containerId: container.Id, imageId: container.Image, volumeMountpoint: volume.Mountpoint };
+    const pins = { containerId: container.Id, imageId: container.Image, volumeMountpoint: volume.Mountpoint, ...legacyShape(container) };
     const spec = createLegacySiteSpec(input, { ...binding, ...pins });
     const verified = await this.#owned(spec);
     return { ...pins, state: verified.state === 'running' ? 'running' : verified.state === 'paused' ? 'paused' : 'stopped' };

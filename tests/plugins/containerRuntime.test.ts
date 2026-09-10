@@ -159,6 +159,52 @@ describe('explicit legacy Site handover binding', () => {
     if (field === 'gitWritable') row.Mounts[1]!.RW = true;
     await expect(client.inspectBinding(spec)).rejects.toThrow(/mismatch/);
   });
+  it('adopts a container the previous Sites runtime created with its own storage root and limits', async () => {
+    // Recorded shape of a production Site container created before Sites moved its environment files:
+    // the Git stub lives under `<sitesDataDir>/sites/<id>/environment` and the cgroup limits are the ones
+    // that runtime created, not the ones the current Sites configuration asks for.
+    const { root, paths } = fixture();
+    const gitStubPath = join(paths.sitesDataDir, 'sites/site-1/environment/git-stub');
+    const binding = { sitesDataDir: paths.sitesDataDir, sourcePath: join(root, 'original-project/source'), brokerDir: join(paths.siteBrokerDir, 'site-1'),
+      containerId: 'a'.repeat(64), imageId: 'd'.repeat(64), volumeMountpoint: join(root, 'legacy-podman/volumes/elowen-site-site-1-data/_data'),
+      gitStubPath, limits: { cpus: 0.25, memoryMb: 256, pidsLimit: 128 } };
+    const spec = createLegacySiteSpec({ resource: { kind: 'site', id: 'site-1' }, generation: 1, image: 'localhost/elowen-site-static:c92e85249c89a118',
+      workspaceReadOnly: true, limits: { cpus: 1.25, memoryMb: 512, pidsLimit: 1000 } }, binding);
+    expect(spec.mounts[1]).toEqual({ type: 'bind', source: gitStubPath, target: '/workspace/.git', readOnly: true });
+    expect(spec.limits).toEqual({ cpus: 0.25, memoryMb: 256, pidsLimit: 128 });
+    for (const mount of spec.mounts.filter((mount: any) => mount.type === 'bind')) {
+      if (mount.target === '/workspace/.git') { mkdirSync(dirname(mount.source), { recursive: true }); writeFileSync(mount.source, ''); }
+      else mkdirSync(mount.source, { recursive: true });
+    }
+    mkdirSync(binding.volumeMountpoint, { recursive: true });
+    const state = fake(spec);
+    Object.assign(state.row, { Image: binding.imageId });
+    Object.assign(state.row.HostConfig, { IpcMode: 'shareable', NetworkMode: 'slirp4netns' });
+    const recordedVolume = JSON.parse(readFileSync(new URL('./fixtures/podman-4.9.3-legacy-volume.json', import.meta.url), 'utf8'));
+    state.volumes.set(spec.volumes[0].name, { ...recordedVolume, Name: spec.volumes[0].name, Labels: { 'io.elowen.site': 'site-1' }, Mountpoint: binding.volumeMountpoint });
+    await expect(state.client.inspectBinding(spec)).resolves.toEqual({ id: binding.containerId, state: 'running' });
+  });
+  it('pins the observed Git stub and limits when it discovers a legacy Site container', async () => {
+    const { root, paths } = fixture();
+    const gitStubPath = join(paths.sitesDataDir, 'sites/site-1/environment/git-stub');
+    const binding = { namespace: 'elowen', sitesDataDir: paths.sitesDataDir, sourcePath: join(root, 'original-project/source'), brokerDir: join(paths.siteBrokerDir, 'site-1') };
+    const mountpoint = join(root, 'legacy-podman/volumes/elowen-site-site-1-data/_data');
+    const probe = createLegacySiteSpec({ resource: { kind: 'site', id: 'site-1' }, generation: 1, image: 'localhost/site:v1', workspaceReadOnly: true },
+      { ...binding, containerId: 'a'.repeat(64), imageId: 'd'.repeat(64), volumeMountpoint: mountpoint, gitStubPath, limits: { cpus: 0.25, memoryMb: 256, pidsLimit: 128 } });
+    for (const mount of probe.mounts.filter((mount: any) => mount.type === 'bind')) {
+      if (mount.target === '/workspace/.git') { mkdirSync(dirname(mount.source), { recursive: true }); writeFileSync(mount.source, ''); }
+      else mkdirSync(mount.source, { recursive: true });
+    }
+    mkdirSync(mountpoint, { recursive: true });
+    const state = fake(probe);
+    Object.assign(state.row, { Image: 'd'.repeat(64) });
+    Object.assign(state.row.HostConfig, { IpcMode: 'shareable', NetworkMode: 'slirp4netns' });
+    const recordedVolume = JSON.parse(readFileSync(new URL('./fixtures/podman-4.9.3-legacy-volume.json', import.meta.url), 'utf8'));
+    state.volumes.set(probe.volumes[0].name, { ...recordedVolume, Name: probe.volumes[0].name, Labels: { 'io.elowen.site': 'site-1' }, Mountpoint: mountpoint });
+    const discovered = await state.client.discoverLegacySite({ resource: { kind: 'site', id: 'site-1' }, generation: 1, image: 'localhost/site:v1',
+      workspaceReadOnly: true, limits: { cpus: 1.25, memoryMb: 512, pidsLimit: 1000 } }, binding);
+    expect(discovered).toMatchObject({ containerId: 'a'.repeat(64), gitStubPath, limits: { cpus: 0.25, memoryMb: 256, pidsLimit: 128 }, state: 'running' });
+  });
   it('never recreates an adopted legacy container or its missing volume', async () => {
     const { spec, client, volumes, executor } = legacyFixture();
     await expect(client.create(spec)).rejects.toThrow(/legacy|recreat/i);

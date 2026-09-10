@@ -160,7 +160,14 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const effective = limits(registration.limits);
     return { registration, input: { resource: { kind: 'site', id: registration.siteId }, generation, image: registration.image, network: registration.network,
       workspaceReadOnly: registration.workspaceReadOnly, limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } },
-      binding: { namespace, sitesDataDir: registration.sitesDataDir, sourcePath: registration.sourcePath, brokerDir: registration.brokerDir, ...(registration.legacy ? { legacy: registration.legacy } : {}) } };
+      binding: { namespace, sitesDataDir: registration.sitesDataDir, sourcePath: registration.sourcePath, brokerDir: registration.brokerDir, ...(registration.legacy ? { legacy: legacyPins(registration.legacy) } : {}) } };
+  }
+  /** Only the pinned engine observations reach the spec. A registration carries `diskSoftMb` with its
+   *  limits, which the closed legacy binding does not accept. */
+  function legacyPins(legacy) {
+    return { containerId: legacy.containerId, imageId: legacy.imageId, volumeMountpoint: legacy.volumeMountpoint,
+      ...(legacy.gitStubPath ? { gitStubPath: legacy.gitStubPath } : {}),
+      ...(legacy.limits ? { limits: { cpus: legacy.limits.cpus, memoryMb: legacy.limits.memoryMb, pidsLimit: legacy.limits.pidsLimit } } : {}) };
   }
   function specFor(record) {
     const input = { ...record.input, limits: record.creationLimits ?? record.input.limits };
