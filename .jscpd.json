@@ -1,0 +1,21 @@
+{
+  "reporters": ["console"],
+  "absolute": false,
+  "gitignore": true,
+  "minTokens": 70,
+  "minLines": 10,
+  "format": ["typescript", "tsx", "javascript", "jsx"],
+  "ignore": [
+    "**/node_modules/**",
+    "**/dist/**",
+    "**/web-dist/**",
+    "**/.next/**",
+    "**/coverage/**",
+    "**/*.d.ts",
+    "**/*.min.js",
+    "web/public/**",
+    "plugins/*/web/**",
+    "src/brain/modelCapabilityData.ts",
+    "web/components/ui/shadcn/**"
+  ]
+}

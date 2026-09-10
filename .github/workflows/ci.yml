@@ -38,6 +38,13 @@ jobs:
       - run: npm run depcruise
       # cs/en dictionary parity + plugin i18n coverage (also runs as part of every build via prebuild).
       - run: npm run languages-check
+      # Duplicate-block report. Non-blocking on purpose: a clone is a question ("is this one rule written
+      # twice?"), not a verdict — several of the pairs it finds are the deliberate daemon/browser mirrors
+      # that exist because a Next bundle cannot import NodeNext daemon source. It still fails loudly on a
+      # crash: `continue-on-error` tolerates findings, and jscpd exits non-zero only on a real error since
+      # no threshold is configured.
+      - run: npm run dupes
+        continue-on-error: true
 
   sandbox-confinement:
     name: Sandbox confinement
