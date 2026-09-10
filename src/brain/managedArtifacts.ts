@@ -245,6 +245,33 @@ export async function readGuestFileBounded(
   return Buffer.concat(parts);
 }
 
+/** One bounded read of a MODEL-supplied guest path: the ambient managed turn, the live provider, the
+ *  path shape and the bounded read, in that order. ShareFile, ShareImage and the plugin seam all go
+ *  this way, so the tenancy rule and the path rule cannot drift apart between them; each refusal is a
+ *  finished sentence the caller prefixes with its own tool name. */
+export interface ManagedGuestArtifact {
+  /** The normalized guest path the bytes came from — the callers name the file from it. */
+  path: string;
+  bytes: Buffer;
+}
+
+export async function readManagedGuestArtifact(
+  resolver: SandboxResolver | undefined,
+  rawPath: unknown,
+  maxBytes: number,
+): Promise<ManagedGuestArtifact | string> {
+  const resolved = await resolveManagedArtifactTurn(resolver);
+  if (typeof resolved === 'string') return `${resolved}.`;
+  const path = guestAbsolutePath(rawPath);
+  if (!path) return 'an absolute guest path is required.';
+  const bytes = await readGuestFileBounded(
+    { sandbox: resolved.sandbox, projectRef: resolved.turn.projectRef, accountUserId: resolved.turn.accountUserId },
+    path,
+    maxBytes,
+  );
+  return typeof bytes === 'string' ? bytes : { path, bytes };
+}
+
 /** Create the missing parent directories of one guest path, the way the files plugin's managed Write
  *  does. Single-level `mkdir` ops, tolerating a parent that appears concurrently (`already_exists`). */
 async function ensureGuestParents(guest: GuestAccess, path: string): Promise<true | string> {

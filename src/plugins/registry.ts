@@ -20,7 +20,7 @@ import { currentIdentity, currentContributionUserId, currentAccountUserId, curre
 import { persistToolOutputSpill } from '../brain/session/toolResultClearing.js';
 import { sessionToolResultSpillDir } from '../shared/paths.js';
 import { bindingRef, resolveDelegatedWorkspace } from '../brain/workspaceScope.js';
-import { GUEST_WRITE_OP_BYTES, guestAbsolutePath, readGuestFileBounded, resolveManagedArtifactTurn } from '../brain/managedArtifacts.js';
+import { GUEST_WRITE_OP_BYTES, readManagedGuestArtifact } from '../brain/managedArtifacts.js';
 import { processRegistry } from '../brain/processRegistry.js';
 import { subagentSessionId } from '../brain/sessionId.js';
 import type { AskAnswer } from '../brain/events.js';
@@ -1554,17 +1554,11 @@ export class PluginRegistry {
           scoped.warn(`readManagedProjectFile denied: plugin '${name}' is not an approved managed-project file reader`);
           throw new Error(`plugin "${name}" may not read managed project files`);
         }
-        const resolved = await resolveManagedArtifactTurn(() => resolveControl?.('sandbox'));
-        if (typeof resolved === 'string') throw new Error(resolved);
-        const guestPath = guestAbsolutePath(path);
-        if (!guestPath) throw new Error('an absolute guest path is required');
-        const bytes = await readGuestFileBounded(
-          { sandbox: resolved.sandbox, projectRef: resolved.turn.projectRef, accountUserId: resolved.turn.accountUserId },
-          guestPath,
-          GUEST_WRITE_OP_BYTES,
-        );
-        if (typeof bytes === 'string') throw new Error(bytes);
-        return bytes.toString('utf8');
+        const artifact = await readManagedGuestArtifact(() => resolveControl?.('sandbox'), path, GUEST_WRITE_OP_BYTES);
+        // The seam's contract is exceptions, so the shared refusal becomes one here; the read itself is
+        // the same one the share tools make.
+        if (typeof artifact === 'string') throw new Error(artifact);
+        return artifact.bytes.toString('utf8');
       },
       currentSessionId,
       currentDeliveryTarget,
