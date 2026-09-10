@@ -22,6 +22,7 @@ import { renderAgentPrompt } from './agents/agentPrompt.js';
 import { buildReadOnlyBoundary, resolveReadOnlyOrigin } from './agents/readOnlyBoundary.js';
 import { bindingRef, resolveDelegatedWorkspace } from './workspaceScope.js';
 import type { SwitchableProject } from './service/workDir.js';
+import type { ProjectExecutionRef } from '../shared/projectExecution.js';
 
 export interface PlatformOrchestratorDeps {
   /** The daemon-wide plugin registry resolver (undefined when plugins aren't wired). */
@@ -58,7 +59,7 @@ export interface PlatformOrchestratorDeps {
   restart?: () => ((byUserId: number) => Promise<void>) | undefined;
   /** BOUND send into a user's OWN stored owner-chat conversation. Direct platform origins are handled
    *  here in the orchestrator through ChannelSessionService and the platform outbound adapter instead. */
-  originSend?: (userId: number, sessionId: string | undefined, text: string, automation: TurnAutomation, onEvent?: (e: { type: string; sessionId?: string }) => void, dedicated?: { title: string }) => Promise<string | null>;
+  originSend?: (userId: number, sessionId: string | undefined, text: string, automation: TurnAutomation, onEvent?: (e: { type: string; sessionId?: string }) => void, dedicated?: { title: string }, projectRef?: ProjectExecutionRef) => Promise<string | null>;
   /** The caller's OWN conversations eligible to bind into a channel (the /context picker), resolved from
    *  the platform sender id to their linked Elowen account. Null when that sender is not linked to any
    *  account (they have no bindable sessions). Paginated for the surface pickers. */
@@ -150,7 +151,7 @@ export class PlatformOrchestrator {
           // Owner-chat origins use the bound owner path. A named session may fall through only when it is
           // gone/foreign; an account-bound job without a session never falls into an operator-owned channel.
           if (src.origin && this.d.originSend) {
-            const reply = await this.d.originSend(src.origin.userId, src.origin.sessionId, text, 'scheduled', onEvent, src.origin.dedicated);
+            const reply = await this.d.originSend(src.origin.userId, src.origin.sessionId, text, 'scheduled', onEvent, src.origin.dedicated, src.access.projectRef);
             if (reply !== null) return reply;
             if (src.origin.sessionId === undefined) return undefined;
           }
@@ -510,6 +511,10 @@ export class PlatformOrchestrator {
             // plugin fired it. (An origin-bound wake-up replays into its owner conversation via the bound
             // send path instead, so it keeps that conversation's own prompt.)
             scheduled: src.access.scheduled === true,
+            // A scheduled job filed against a project runs THERE, including in its own cron room. Limited
+            // to the host-authenticated scheduled relay: an ordinary room's execution target is the
+            // conversation's own, chosen through /project, never a field an adapter puts on a message.
+            ...(scheduledAutomation && src.access.projectRef ? { projectRef: src.access.projectRef } : {}),
             model: src.access.model,
             thinkingLevel: src.access.thinkingLevel,
             toolPolicy,

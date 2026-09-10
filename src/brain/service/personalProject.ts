@@ -12,7 +12,11 @@ export function preparePersonalProject(
   }
   if (opts.parentSessionId || opts.delegatedAccess || opts.fork || opts.pathView
     || opts.scheduled || (opts.channel && !opts.direct) || opts.clientCwd) {
-    return { policy: opts.policy, projectRef: opts.delegatedAccess?.projectRef };
+    // A delegated child inherits its parent's boundary; a scheduled job carries the project it was filed
+    // against, so the conversation it opens executes there instead of falling back to the host. Both are
+    // explicit targets, so they are persisted on the new row rather than re-derived on every run.
+    const ref = opts.delegatedAccess?.projectRef ?? opts.projectRef;
+    return { policy: opts.policy, projectRef: ref, ...(opts.delegatedAccess ? {} : ref ? { initialRef: ref } : {}) };
   }
   // BrainDeps also supports embedded brains without a project catalog. Only the project-enabled daemon
   // can select a managed default; an existing managed ref above never falls back through this seam.

@@ -13,6 +13,7 @@ import {
   normalizeDelegatedExecutionScope,
   type DelegatedExecutionScope,
 } from './delegatedScope.js';
+import type { ProjectExecutionRef } from '../shared/projectExecution.js';
 import type { AskQuestion, BrainEvent, BrainUsage, CompactResult, SubagentCompletion, SubagentUpdate, WorkflowCompletion, WorkflowUpdate } from './events.js';
 import { recordWorkflowFinishMarker, drainSessionNotices, workDirReorientation } from './service/sessionEvents.js';
 import { recordSubagentProgress } from './subagentRuns.js';
@@ -371,6 +372,10 @@ export interface ChannelSendOpts {
    *  bundled cronjob today): the session uses the focused `scheduled` system prompt instead of the
    *  coding-agent base. Set by the orchestrator from the source's generic `access.scheduled` flag. */
   scheduled?: boolean;
+  /** The execution target a scheduled job was filed against, used only when this send CREATES the room's
+   *  session: the job's turns then run in that project's environment instead of the daemon host. An
+   *  existing room keeps its own persisted target. */
+  projectRef?: ProjectExecutionRef;
   model?: { provider?: string; model?: string };
   thinkingLevel?: string;
   /** Durable parent for delegated sessions; never accepted from ordinary external adapters. */
@@ -945,6 +950,7 @@ export class ChannelSessionService {
           } : {}),
           trustedChannel: opts.trusted, // admin-role sender → trusted-channel (all projects + full plugin toolset), still no Elowen*
           scheduled: opts.scheduled, // timer-driven turn → focused `scheduled` system prompt instead of the coding base
+          ...(opts.projectRef ? { projectRef: opts.projectRef } : {}),
           thinkingLevel: opts.thinkingLevel,
           autoCompact: true, // channels are long-lived and unattended — keep their context bounded
           // …at the WRITER'S personal settings, not the room opener's. A room is owned by whoever opened
