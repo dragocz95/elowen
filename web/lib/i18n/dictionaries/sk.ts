@@ -1285,8 +1285,6 @@ export const sk = {
       toolDeferralEnabledHint: "Hlavný vypínač k prahu vyššie. Vypnuté = žiadny nástroj sa z promptu nikdy nevynechá, bez ohľadu na prah. V predvolenom stave zapnuté.",
       subagentRunnerEnabled: "Spúšťať sub-agentov v samostatných procesoch",
       subagentRunnerEnabledHint: "Delegované ťahy pobežia vo vlastných procesoch, takže systém môže rozdeliť prácu medzi jadrá a rozhranie zostane svižné. Vypnuté ich spúšťa vnútri démona. Zmena platí hneď, bez reštartu.",
-      remoteCompactionEnabled: "Zhusťovať konverzácie ChatGPT u poskytovateľa",
-      remoteCompactionEnabledHint: "Staršiu časť dlhej konverzácie ChatGPT zhustí poskytovateľ do nečitateľného bloku namiesto textového zhrnutia. Zachová tým presné hodnoty, výstupy nástrojov a rozhodnutia. Ak zlyhá, použije sa bežné textové zhrnutie. Platí len pre modely prihlásené účtom ChatGPT a hneď bez reštartu.",
       clamped: "Uložené ako {value} — zadaná hodnota bola mimo povolený rozsah.",
       secondUnit: "s",
       dayUnit: { one: "deň", few: "dni", many: "dní" },

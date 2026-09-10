@@ -177,11 +177,10 @@ The Runtime editor includes:
 - toast duration, default **4.5 seconds**;
 - deferred tool loading, enabled by default with a threshold of **10** tools; per-source and per-tool overrides are available;
 - the forked sub-agent runner, enabled by default with an automatically sized pool; set a non-negative pool maximum only to override automatic sizing;
-- provider-side remote compaction, enabled by default for eligible OpenAI Codex sessions;
 - provider request capture, enabled by default for admin diagnostics; disabling it stops new captures but keeps existing records;
 - memory retention, enabled by default with a **14-day** grace period and importance-based half-lives.
 
-The sub-agent runner and remote-compaction switches are operational rollbacks. Runtime changes are persisted automatically and take effect through the relevant runtime path. Plugin reloads may be applied immediately or deferred until active work drains.
+The sub-agent runner switch is an operational rollback. Runtime changes are persisted automatically and take effect through the relevant runtime path. Plugin reloads may be applied immediately or deferred until active work drains.
 
 ## Memory configuration
 

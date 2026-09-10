@@ -28,12 +28,6 @@ import { assessColdCompaction, type AssessColdCompaction } from './coldStartComp
 import { installToolResultDeliverySpill } from './toolResultClearing.js';
 import { createCachePayloadMonitor, installCacheWatch, type CachePayloadMonitor, type CacheWatchFlavor } from './cacheWatch.js';
 import { installCacheBreakpoints } from './cacheBreakpoints.js';
-import {
-  createRemoteCompactionV2,
-  installCompactionMarkerSanitizer,
-  type RemoteCompactionV2,
-} from './remoteCompactionV2.js';
-import { bearerFromAuth } from '../providerUsage.js';
 import { seedActivatedFromHistory, type ToolSearchHandle } from '../toolSearch/toolSearchTool.js';
 import { installOpenAIHostedToolSearch } from './openAiHostedToolSearch.js';
 import { installAnthropicHostedToolSearch } from './anthropicHostedToolSearch.js';
@@ -153,10 +147,6 @@ export interface SessionSpec {
   /** PI's built-in auto-compaction: on/off. When on, PI summarizes the context on its own once it fills
    *  past `autoCompactAtPct` — no separate trigger in our turn loop. */
   autoCompact: boolean;
-  /** The operator's remote-compaction switch, read live so it applies without a respawn. Only ever
-   *  consulted for a ChatGPT-account session; every other provider is unaffected either way. A caller
-   *  that omits it (task workers) keeps the text-summary path. */
-  remoteCompactionEnabled?: () => boolean;
   /** Runtime kill switch for exact provider request capture. Read for every new attempt. */
   providerRequestCaptureEnabled?: () => boolean;
   /** Context-window fill percentage (30–95) at which PI auto-compacts. Translated to PI's absolute
@@ -224,12 +214,6 @@ export interface BrainResourceLoaderOptions {
   /** Summarize on the live conversation's own warm prefix. Present only when the summary would run on the
    *  session's model anyway — a distinct compaction model has no cache here to reuse. */
   inSessionCompactionExtension?: InSessionCompaction['extension'];
-  /** Provider-side opaque compaction; present only for a ChatGPT-account session. */
-  remoteCompactionExtension?: RemoteCompactionV2['extension'];
-  /** Whether THIS session can restore a stored compaction blob. Always supplied: the sanitizer it
-   *  installs is what keeps a blob minted before a model switch from reaching a foreign provider as
-   *  text, so it is exactly the sessions that answer `false` that need it. */
-  remoteCompactionUsable: () => boolean;
   /** Recall memories again mid-turn, searching from the work rather than the opening message. */
   liveRecall?: LiveRecallOptions;
   /** Live `/skill:name` expansion; avoids PI's stale session-start skills snapshot. */
@@ -543,46 +527,38 @@ function defaultResourceLoaderFactory(o: BrainResourceLoaderOptions): ResourceLo
         agentsFiles: base.agentsFiles.filter((file) => realPathWithin(file.path, [o.contextRoot!]) !== null),
       }),
     } : {}),
-    // No longer conditional: the marker sanitizer below has to run on every session, so there is always
-    // at least one inline extension to load.
-    ...{
-      extensionFactories: [
-        ...(o.displayCwd ? [logicalPromptCwd(o.displayCwd, o.contextRoot)] : []),
-        ...(o.codexReasoningFix ? [codexReasoningSummary] : []),
-        ...(o.remoteCompactionExtension ? [o.remoteCompactionExtension] : []),
-        // Unconditional: a session that CANNOT use a stored blob is the one that would otherwise send it
-        // as raw text, so the guard belongs on every provider, not just the one that mints blobs.
-        ((usable) => (pi: ExtensionAPI): void => { installCompactionMarkerSanitizer(pi, usable); })(o.remoteCompactionUsable),
-        ...(o.kimiHeaderProbe ? [kimiHeaderProbe] : []),
-        ...(o.compactionModelRouteExtension ? [o.compactionModelRouteExtension] : []),
-        ...(o.compactionCircuitBreakerExtension ? [o.compactionCircuitBreakerExtension] : []),
-        // AFTER the circuit breaker, and that order is load-bearing. ExtensionRunner.emit walks handlers
-        // in registration order and returns early only once one answers `cancel`, so a summarizer placed
-        // ahead of the breaker would issue its request first and have the result thrown away — turning
-        // the breaker's "stop paying for a compaction that cannot succeed" into one full-context request
-        // per turn, forever.
-        ...(o.inSessionCompactionExtension ? [o.inSessionCompactionExtension] : []),
-        ...(o.requestProfile ? [providerRequestProfile(o.requestProfile)] : []),
-        // Hosted tools and recall add provider-visible content before path sanitization. The Anthropic raw
-        // replay then runs AFTER every transform that could touch assistant text: signed thinking is verbatim
-        // provider-owned data and must never be scrubbed or normalized after restoration.
-        ...(o.hostedToolSearch?.provider === 'openai'
-          ? [((modelId) => (pi: ExtensionAPI): void => { installOpenAIHostedToolSearch(pi, modelId); })(o.hostedToolSearch.modelId)]
-          : []),
-        ...(o.hostedToolSearch?.provider === 'anthropic'
-          ? [((modelId) => (pi: ExtensionAPI): void => { installAnthropicHostedToolSearch(pi, modelId); })(o.hostedToolSearch.modelId)]
-          : []),
-        ...(o.skillCommandExtension ? [o.skillCommandExtension] : []),
-        ...(o.liveRecall ? [((recall) => (pi: ExtensionAPI): void => { installLiveRecall(pi, recall); })(o.liveRecall)] : []),
-        ...(o.sanitizePaths ? [providerPathScrubber(o.sanitizePaths)] : []),
-        // Before observability and cache breakpoints so both see/hash the exact final request. Restoring raw
-        // assistant content after the scrubber does not leak a new path: it replays bytes this provider itself
-        // returned, which Anthropic requires for the adjacent signed-thinking blocks to remain valid.
-        ...(o.anthropicHostedReplayExtension ? [o.anthropicHostedReplayExtension] : []),
-        ...(o.cacheMonitor ? [o.cacheMonitor.extension] : []),
-        ...(o.cacheBreakpoints ? [installCacheBreakpoints] : []),
-      ],
-    },
+    extensionFactories: [
+      ...(o.displayCwd ? [logicalPromptCwd(o.displayCwd, o.contextRoot)] : []),
+      ...(o.codexReasoningFix ? [codexReasoningSummary] : []),
+      ...(o.kimiHeaderProbe ? [kimiHeaderProbe] : []),
+      ...(o.compactionModelRouteExtension ? [o.compactionModelRouteExtension] : []),
+      ...(o.compactionCircuitBreakerExtension ? [o.compactionCircuitBreakerExtension] : []),
+      // AFTER the circuit breaker, and that order is load-bearing. ExtensionRunner.emit walks handlers
+      // in registration order and returns early only once one answers `cancel`, so a summarizer placed
+      // ahead of the breaker would issue its request first and have the result thrown away — turning
+      // the breaker's "stop paying for a compaction that cannot succeed" into one full-context request
+      // per turn, forever.
+      ...(o.inSessionCompactionExtension ? [o.inSessionCompactionExtension] : []),
+      ...(o.requestProfile ? [providerRequestProfile(o.requestProfile)] : []),
+      // Hosted tools and recall add provider-visible content before path sanitization. The Anthropic raw
+      // replay then runs AFTER every transform that could touch assistant text: signed thinking is verbatim
+      // provider-owned data and must never be scrubbed or normalized after restoration.
+      ...(o.hostedToolSearch?.provider === 'openai'
+        ? [((modelId) => (pi: ExtensionAPI): void => { installOpenAIHostedToolSearch(pi, modelId); })(o.hostedToolSearch.modelId)]
+        : []),
+      ...(o.hostedToolSearch?.provider === 'anthropic'
+        ? [((modelId) => (pi: ExtensionAPI): void => { installAnthropicHostedToolSearch(pi, modelId); })(o.hostedToolSearch.modelId)]
+        : []),
+      ...(o.skillCommandExtension ? [o.skillCommandExtension] : []),
+      ...(o.liveRecall ? [((recall) => (pi: ExtensionAPI): void => { installLiveRecall(pi, recall); })(o.liveRecall)] : []),
+      ...(o.sanitizePaths ? [providerPathScrubber(o.sanitizePaths)] : []),
+      // Before observability and cache breakpoints so both see/hash the exact final request. Restoring raw
+      // assistant content after the scrubber does not leak a new path: it replays bytes this provider itself
+      // returned, which Anthropic requires for the adjacent signed-thinking blocks to remain valid.
+      ...(o.anthropicHostedReplayExtension ? [o.anthropicHostedReplayExtension] : []),
+      ...(o.cacheMonitor ? [o.cacheMonitor.extension] : []),
+      ...(o.cacheBreakpoints ? [installCacheBreakpoints] : []),
+    ],
   });
 }
 
@@ -685,12 +661,6 @@ export class BrainSessionFactory {
       : spec.model.api === 'openai-codex-responses' || spec.model.api === 'openai-responses'
         ? 'openai-responses' : undefined;
     const cacheMonitor = cacheFlavor ? createCachePayloadMonitor() : undefined;
-    // Provider-side compaction exists only on the ChatGPT backend. `usable` is read live — the operator
-    // switch, not the spawn-time snapshot — so turning the feature off mid-conversation immediately stops
-    // new blobs AND makes the sanitizer strip the ones already stored, instead of leaving them to be sent
-    // as text by a build that no longer swaps them.
-    const remoteCompactionUsable = (): boolean =>
-      spec.model.provider === 'openai-codex' && spec.remoteCompactionEnabled?.() === true;
     const requestRecorder = new ProviderRequestRecorder({
       store: this.d.store.providerRequests,
       sessionId: spec.sessionId,
@@ -710,23 +680,6 @@ export class BrainSessionFactory {
     const captureRuntime = recordedRuntime && spec.fastMode
       ? wrapFastModeRuntime(recordedRuntime, spec.fastMode.enabled, spec.fastMode.routeFor)
       : recordedRuntime;
-    const remoteCompaction: RemoteCompactionV2 | undefined = spec.model.provider === 'openai-codex'
-      ? createRemoteCompactionV2({
-        enabled: remoteCompactionUsable,
-        model: spec.model,
-        systemPrompt: () => [spec.systemPrompt, ...spec.appendSystemPrompt].join('\n\n'),
-        // The same resolve-and-refresh path a normal turn takes, so a token that expired mid-conversation
-        // is renewed here rather than turning into a silent compaction failure.
-        token: async () => bearerFromAuth((await spec.runtime.getAuth(spec.model))?.auth),
-        fast: () => spec.fastMode?.enabled() === true && spec.fastMode.routeFor(spec.model) !== undefined,
-        capture: {
-          start: (model, payload) => requestRecorder.startRemoteCompaction(model, payload),
-          response: (requestId, status) => requestRecorder.markRemoteCompactionResponse(requestId, status),
-          finish: (requestId, result) => requestRecorder.finishRemoteCompaction(requestId, result),
-        },
-        onStaleBlobRetry: () => requestRecorder.armVerifiedRetry(),
-      })
-      : undefined;
     const resourceLoader = (this.d.resourceLoaderFactory ?? defaultResourceLoaderFactory)({
       cwd: spec.cwd, systemPrompt: spec.systemPrompt, appendSystemPrompt: spec.appendSystemPrompt,
       skills: spec.skills, prompts: spec.promptTemplates, contextFiles: spec.contextFiles,
@@ -738,8 +691,6 @@ export class BrainSessionFactory {
       compactionModelRouteExtension: compactionModelRoute?.extension,
       inSessionCompactionExtension: inSessionCompaction?.extension,
       compactionCircuitBreakerExtension: compactionBreaker.extension,
-      remoteCompactionExtension: remoteCompaction?.extension,
-      remoteCompactionUsable,
       requestProfile: spec.requestProfile, settingsManager,
       ...(spec.skillCommandExtension ? { skillCommandExtension: spec.skillCommandExtension } : {}),
       ...(spec.liveRecall ? { liveRecall: spec.liveRecall } : {}),
@@ -791,9 +742,6 @@ export class BrainSessionFactory {
     // Wraps nothing: the hook only needs the live session to read its context and reach `streamFunction`,
     // so it deliberately joins AFTER the wrappers its own request has to pass through.
     inSessionCompaction?.install(session);
-    // Outermost: a stale-blob retry re-issues through both the compaction route and replay wrapper, so the
-    // retry remains the exact same routed request rather than bypassing either provider-specific seam.
-    remoteCompaction?.install(session);
     session.subscribe(requestRecorder.observe);
     // PI's steering queue defaults to "one-at-a-time", so N messages sent during a running turn cost N
     // model rounds and the agent answers each without seeing the ones behind it. "all" hands the whole

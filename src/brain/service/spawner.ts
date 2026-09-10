@@ -730,9 +730,6 @@ export class LiveSessionSpawner {
       thinkingLevel: opts.thinkingLevel, requestProfile,
       fastMode: { enabled: fastEnabled, routeFor: fastRouteFor },
       autoCompact: opts.autoCompact, autoCompactAtPct,
-      // Read per call rather than from the `runtime` snapshot above: the operator can turn provider-side
-      // compaction off while a long conversation is running, and the next request must already follow it.
-      remoteCompactionEnabled: () => this.d.runtimeConfig?.().remoteCompactionEnabled === true,
       providerRequestCaptureEnabled: () => this.d.runtimeConfig?.().providerRequestCaptureEnabled !== false,
       pendingCompactionMessages,
       // Recall again mid-turn. `enabled` and the budget are read per pass, so both the user's toggle and

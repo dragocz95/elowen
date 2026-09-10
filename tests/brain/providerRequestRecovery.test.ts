@@ -9,6 +9,26 @@ import { setLogSink, type LogLevel } from '../../src/shared/logger.js';
 const model = { provider: 'p', api: 'a', id: 'm' } as Model<Api>;
 afterEach(() => { vi.restoreAllMocks(); setLogSink(undefined); });
 
+const answer: AssistantMessage = {
+  role: 'assistant', content: [{ type: 'text', text: 'done' }], api: model.api, provider: model.provider,
+  model: model.id, stopReason: 'stop', timestamp: Date.now(),
+  usage: { input: 1, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
+    cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
+};
+
+/** A stub runtime whose single stream call reports the payload and a 200, then answers. */
+const streamSimple: ModelRuntime['streamSimple'] = (_model, _context, options) => {
+  const out = createAssistantMessageEventStream();
+  void (async () => {
+    try {
+      await options?.onPayload?.({}, model);
+      await options?.onResponse?.({ status: 200, headers: {} }, model);
+      out.push({ type: 'done', reason: 'stop', message: answer });
+    } finally { out.end(); }
+  })();
+  return out;
+};
+
 function fixture() {
   const db = openDb(':memory:');
   const brain = new BrainStore(db);
@@ -19,31 +39,37 @@ function fixture() {
   return { db, store, recorder };
 }
 
+/** One provider round through the wrapped runtime, bracketed the way a real turn is. */
+async function turn(recorder: ProviderRequestRecorder, runtimeFactory: () => ModelRuntime): Promise<void> {
+  recorder.observe({ type: 'agent_start' });
+  const events = [];
+  for await (const event of runtimeFactory().streamSimple(model, { messages: [] }, {})) events.push(event);
+  recorder.observe({ type: 'message_end', message: answer });
+  expect(events).toHaveLength(1);
+}
+
 describe('provider capture recovery after failed closure', () => {
-  it.each(['same recorder', 'rehydrated recorder'])('heals an orphan on the next turn using %s', (mode) => {
+  it.each(['same recorder', 'rehydrated recorder'])('heals an orphan on the next turn using %s', async (mode) => {
     const { db, store, recorder } = fixture();
     try {
       const first = recorder();
-      const id = first.startRemoteCompaction(model, { input: 'first' })!;
       const sibling = store.start({ sessionId: 's2', turnId: '1', kind: 'chat', configuredProvider: 'p', wireProvider: 'p', api: 'a', model: 'm', payload: {} });
       const failure = vi.spyOn(store, 'finish').mockImplementation(() => {
         throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY_SNAPSHOT' });
       });
-      expect(() => first.finishRemoteCompaction(id, { response: 'done' })).not.toThrow();
-      expect(store.row(id)?.status).toBe('pending');
+      await turn(first, () => first.wrapRuntime({ streamSimple } as ModelRuntime));
+      expect(store.rows('s1').map((row) => row.status)).toEqual(['pending']);
       failure.mockRestore();
       const logs: { level: LogLevel; message: string }[] = [];
       setLogSink({ push: (entry) => { if (entry.scope === 'provider-request-recorder') logs.push(entry); } });
       const next = mode === 'same recorder' ? first : recorder();
-      next.observe({ type: 'agent_start' });
-      const nextId = next.startRemoteCompaction(model, { input: 'second' });
-      expect(nextId).toBeTypeOf('string');
-      expect(nextId).not.toBe(id);
-      next.finishRemoteCompaction(nextId!, { response: 'ok' });
-      expect(store.row(id)).toMatchObject({ status: 'interrupted', error_code: 'capture_failed' });
-      expect(store.row(nextId!)).toMatchObject({ status: 'succeeded', seq: 2, retry_of: null });
+      await turn(next, () => next.wrapRuntime({ streamSimple } as ModelRuntime));
+      const healed = store.rows('s1');
+      expect(healed.map((row) => row.status)).toEqual(['interrupted', 'succeeded']);
+      expect(healed[0]).toMatchObject({ status: 'interrupted', error_code: 'capture_failed' });
+      expect(healed[1]).toMatchObject({ status: 'succeeded', seq: 2, retry_of: null });
       expect(store.row(sibling.requestId)?.status).toBe('pending');
-      expect(logs.some((entry) => entry.level === 'warn' && entry.message.includes(id))).toBe(true);
+      expect(logs.some((entry) => entry.level === 'warn' && entry.message.includes(String(healed[0]!.request_id)))).toBe(true);
       expect(logs.some((entry) => entry.level === 'error')).toBe(false);
       expect(db.prepare("SELECT request_count, error_count FROM brain_request_session_summary WHERE session_id = 's1'").get())
         .toEqual({ request_count: 2, error_count: 1 });
@@ -55,13 +81,7 @@ describe('provider capture recovery after failed closure', () => {
     try {
       const live = recorder();
       const payload = { messages: [{ role: 'user', content: 'hello' }] };
-      const answer: AssistantMessage = {
-        role: 'assistant', content: [{ type: 'text', text: 'done' }], api: model.api, provider: model.provider,
-        model: model.id, stopReason: 'stop', timestamp: Date.now(),
-        usage: { input: 1, output: 1, reasoning: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 2,
-          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
-      };
-      const streamSimple: ModelRuntime['streamSimple'] = (_model, _context, options) => {
+      const streamSimpleWithPayload: ModelRuntime['streamSimple'] = (_model, _context, options) => {
         const out = createAssistantMessageEventStream();
         void (async () => {
           try {
@@ -72,8 +92,8 @@ describe('provider capture recovery after failed closure', () => {
         })();
         return out;
       };
-      const runtime = live.wrapRuntime({ streamSimple } as ModelRuntime);
-      const turn = async () => {
+      const runtime = live.wrapRuntime({ streamSimple: streamSimpleWithPayload } as ModelRuntime);
+      const runTurn = async () => {
         live.observe({ type: 'agent_start' });
         const events = [];
         for await (const event of runtime.streamSimple(model, { messages: [] }, {})) events.push(event);
@@ -83,15 +103,15 @@ describe('provider capture recovery after failed closure', () => {
       const failure = vi.spyOn(store, 'finish').mockImplementation(() => {
         throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
       });
-      await turn();
+      await runTurn();
       expect(store.rows('s1').map((row) => row.status)).toEqual(['pending']);
       failure.mockRestore();
-      await turn();
+      await runTurn();
       expect(store.rows('s1').map((row) => row.status)).toEqual(['interrupted', 'succeeded']);
     } finally { db.close(); }
   });
 
-  it('keeps capture errors nonfatal and includes the SQLite code in diagnostics', () => {
+  it('keeps capture errors nonfatal and includes the SQLite code in diagnostics', async () => {
     const { db, store, recorder } = fixture();
     try {
       const logs: string[] = [];
@@ -99,7 +119,8 @@ describe('provider capture recovery after failed closure', () => {
       vi.spyOn(store, 'start').mockImplementation(() => {
         throw Object.assign(new Error('database is locked'), { code: 'SQLITE_BUSY' });
       });
-      expect(recorder().startRemoteCompaction(model, {})).toBeUndefined();
+      const live = recorder();
+      await turn(live, () => live.wrapRuntime({ streamSimple } as ModelRuntime));
       expect(logs.some((line) => line.includes('SQLITE_BUSY'))).toBe(true);
     } finally { db.close(); }
   });

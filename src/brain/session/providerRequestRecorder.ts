@@ -63,7 +63,7 @@ export class ProviderRequestRecorder {
   readonly observe: (event: AgentSessionEvent) => void;
 
   private activeRequestId: string | null = null;
-  private activeKind: 'chat' | 'compaction' | 'remote_compaction' = 'chat';
+  private activeKind: 'chat' | 'compaction' = 'chat';
   private lastFailedRequestId: string | null = null;
   private retryOf: string | undefined;
   private turn = 0;
@@ -172,72 +172,6 @@ export class ProviderRequestRecorder {
         this.breakCapture(`lifecycle capture failed: ${captureError(error)}`);
       }
     };
-  }
-
-  /** Arm retry_of only when a wrapper has verified that it is immediately reissuing the failed request. */
-  armVerifiedRetry(): void {
-    if (this.lastFailedRequestId) this.retryOf = this.lastFailedRequestId;
-  }
-
-  /** The provider-owned compaction endpoint bypasses ModelRuntime entirely (direct fetch in our wrapper),
-   * so it reports through this explicit seam. The body is still the exact JSON passed to fetch; transport
-   * headers and credentials never enter it. */
-  startRemoteCompaction(model: Model<Api>, payload: unknown): string | undefined {
-    if (this.captureBroken || !this.options.enabled()) return undefined;
-    if (this.activeRequestId) {
-      this.breakCapture(`provider request correlation invariant: remote compaction started before ${this.activeRequestId} terminated`);
-      return undefined;
-    }
-    try {
-      this.reconcileOrphanedAttempt();
-      const started = this.options.store.start({
-        sessionId: this.options.sessionId,
-        turnId: `compaction:${this.compaction}`,
-        kind: 'remote_compaction',
-        configuredProvider: this.options.configuredProvider,
-        wireProvider: model.provider,
-        api: model.api,
-        model: model.id,
-        payload,
-        startedAt: this.now(),
-      });
-      this.activeRequestId = started.requestId;
-      this.activeKind = 'remote_compaction';
-      return started.requestId;
-    } catch (error) {
-      this.breakCapture(`remote compaction capture failed: ${captureError(error)}`);
-      return undefined;
-    }
-  }
-
-  markRemoteCompactionResponse(requestId: string, status: number): void {
-    if (this.activeRequestId !== requestId || this.activeKind !== 'remote_compaction') {
-      this.breakCapture(`provider request correlation invariant: remote response mismatched ${requestId}`);
-      return;
-    }
-    try { this.options.store.markResponse(requestId, status, this.now()); }
-    catch (error) { this.breakCapture(`remote response capture failed: ${captureError(error)}`); }
-  }
-
-  finishRemoteCompaction(requestId: string, result: { response?: unknown; errorCode?: string; errorMessage?: string }): void {
-    if (this.activeRequestId !== requestId || this.activeKind !== 'remote_compaction') {
-      this.breakCapture(`provider request correlation invariant: remote terminal mismatched ${requestId}`);
-      return;
-    }
-    try {
-      this.options.store.finish({
-        requestId,
-        status: result.errorCode ? 'error' : 'succeeded',
-        response: result.response,
-        errorCode: result.errorCode,
-        errorMessage: result.errorMessage,
-        finishedAt: this.now(),
-      });
-      this.activeRequestId = null;
-      this.lastFailedRequestId = result.errorCode ? requestId : null;
-    } catch (error) {
-      this.breakCapture(`remote terminal capture failed: ${captureError(error)}`);
-    }
   }
 
   /** A session-local proxy: every method remains bound to the real ModelRuntime, only streamSimple is

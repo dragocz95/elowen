@@ -761,11 +761,6 @@ export interface RuntimeConfig {
    *  `totalmem()` reports straight past), or where the operator simply wants Elowen below its fair share.
    *  `ELOWEN_SUBAGENT_POOL_MAX` overrides it, which is how a lying container is fixed without a DB write. */
   subagentRunnerPoolMax: number | null;
-  /** Compact a ChatGPT-account conversation through the provider's own opaque compaction instead of a
-   *  text summary written by a model. OFF by default: it rides an undocumented beta endpoint, and it
-   *  trades the readable summary the clients render today for a marker nobody can read. `false` is the
-   *  pre-feature path exactly, so it is also the operator's rollback with no redeploy. */
-  remoteCompactionEnabled: boolean;
   /** Persist exact post-transform model request bodies for admin diagnostics. */
   providerRequestCaptureEnabled: boolean;
 }
