@@ -281,17 +281,30 @@ export class PodmanClient {
     const networkMatches = host?.NetworkMode === spec.network
       || (spec.network === 'slirp4netns:allow_host_loopback=false' && host?.NetworkMode === 'slirp4netns');
     const cpus = host?.NanoCpus > 0 ? host.NanoCpus / 1e9 : host?.CpuPeriod > 0 ? host.CpuQuota / host.CpuPeriod : 0;
-    if (!/^[a-f0-9]{64}$/.test(row.Id) || (spec.expectedId && row.Id !== spec.expectedId) || row.Name?.replace(/^\//, '') !== spec.name
-      || !labelsMatch(row.Config?.Labels, spec.labels) || row.ImageName !== spec.image || !mountsMatch || !networkMatches
-      || host.Privileged !== false || host.ReadonlyRootfs !== false
-      || (host.CapAdd && host.CapAdd.length !== 0) || (host.Devices && host.Devices.length !== 0)
-      || (host.SecurityOpt && host.SecurityOpt.length !== 0)
-      || !['', 'private'].includes(host.PidMode) || host.IpcMode !== spec.ipcMode
-      || (host.PortBindings && Object.keys(host.PortBindings).length > 0)
-      || host.Memory !== spec.limits.memoryMb * 1024 * 1024 || host.MemorySwap !== host.Memory
-      || host.PidsLimit !== spec.limits.pidsLimit || !Number.isFinite(cpus) || Math.abs(cpus - spec.limits.cpus) > 0.000001) {
-      throw new Error('Container ownership or runtime specification mismatch');
-    }
+    // Podman keeps these creation values in HostConfig after a successful live update. They still prove
+    // which container was created; the requested runtime values are carried separately in `spec.limits`.
+    const creationLimits = spec.creationLimits ?? spec.limits;
+    const mismatches = [];
+    if (!/^[a-f0-9]{64}$/.test(row.Id)) mismatches.push('id');
+    if (spec.expectedId && row.Id !== spec.expectedId) mismatches.push('expectedId');
+    if (row.Name?.replace(/^\//, '') !== spec.name) mismatches.push('name');
+    if (!labelsMatch(row.Config?.Labels, spec.labels)) mismatches.push('labels');
+    if (row.ImageName !== spec.image) mismatches.push('image');
+    if (!mountsMatch) mismatches.push('mounts');
+    if (!networkMatches) mismatches.push('network');
+    if (host.Privileged !== false) mismatches.push('privileged');
+    if (host.ReadonlyRootfs !== false) mismatches.push('readOnlyRootfs');
+    if (host.CapAdd && host.CapAdd.length !== 0) mismatches.push('capabilities');
+    if (host.Devices && host.Devices.length !== 0) mismatches.push('devices');
+    if (host.SecurityOpt && host.SecurityOpt.length !== 0) mismatches.push('securityOptions');
+    if (!['', 'private'].includes(host.PidMode)) mismatches.push('pidMode');
+    if (host.IpcMode !== spec.ipcMode) mismatches.push('ipcMode');
+    if (host.PortBindings && Object.keys(host.PortBindings).length > 0) mismatches.push('ports');
+    if (host.Memory !== creationLimits.memoryMb * 1024 * 1024) mismatches.push('memory');
+    if (host.MemorySwap !== host.Memory) mismatches.push('memorySwap');
+    if (host.PidsLimit !== creationLimits.pidsLimit) mismatches.push('pidsLimit');
+    if (!Number.isFinite(cpus) || Math.abs(cpus - creationLimits.cpus) > 0.000001) mismatches.push('cpus');
+    if (mismatches.length) throw new Error(`Container ownership or runtime specification mismatch: ${mismatches.join(', ')}`);
     if (!['configured', 'created', 'running', 'paused', 'stopped', 'exited', 'stopping'].includes(row.State?.Status)) throw new Error('Invalid container state');
     return { id: row.Id, state: row.State.Status };
   }

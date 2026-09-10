@@ -6,7 +6,7 @@ import { randomBytes } from 'node:crypto';
 import { it } from 'vitest';
 import { request as httpRequest } from 'node:http';
 import { PodmanClient, SpawnExecutor, isolatedPodmanOptions } from '../../plugins/sandbox/lib/podman.mjs';
-import { createContainerSpec, executionUnit } from '../../plugins/sandbox/lib/containerSpec.mjs';
+import { createContainerSpec, executionUnit, withContainerLimits } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import { managedGuestRoot } from '../../plugins/sandbox/lib/containerPaths.mjs';
 import { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
 import { PROJECT_BASE_IMAGE_TAG } from '../../plugins/sandbox/lib/containerBaseImage.mjs';
@@ -47,7 +47,7 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
     verifiedLaunch = { ...options, input: undefined, signal: undefined };
     const command = args.slice(expectedPrefix.length);
     const result = await native.run(file, args, options);
-    if (command[0] === 'inspect' || (command[0] === 'volume' && command[1] === 'inspect') || command.includes('show') || command.includes('mask') || command.includes('stop')) observations.push({ command, ...result });
+    if (command[0] === 'inspect' || command[0] === 'update' || (command[0] === 'volume' && command[1] === 'inspect') || command.includes('show') || command.includes('mask') || command.includes('stop')) observations.push({ command, ...result });
     if (command[0] === 'info') observations.push({ command, code: result.code, stderr: result.stderr });
     return result;
   } };
@@ -133,10 +133,14 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
     stage = 'durable coordinator and guest file transport';
     const sql = openDb(':memory:');
     const db = makePluginDb(sql, 'sandbox', { canMigrate: true });
-    const project: any = { id: 7, slug: 'runtime-demo', executionKind: 'managed', lifecycle: 'active' };
+    const adoptedPath = mkdtempSync(join(scratch, 'adopted-'));
+    writeFileSync(join(adoptedPath, 'marker.txt'), 'adopted workspace');
+    const project: any = { id: 7, slug: 'runtime-demo', executionKind: 'managed', lifecycle: 'active', adoptedPath };
     // Where this project is really mounted. Writing the proofs to `/workspace` instead left them on the
     // container's own filesystem, so the snapshot and restore below proved nothing about the volume.
     const projectRoot = managedGuestRoot(project.slug, project.id);
+    const runtimeSpec = createContainerSpec({ resource: { kind: 'project', id: project.id }, workspaceTarget: projectRoot, generation: 1,
+      image: PROJECT_BASE_IMAGE_TAG, previewBroker: true }, { sandboxDataDir: join(scratch, 'sandbox'), namespace: paths.namespace });
     const ctx: any = { db: () => db, currentAccountUserId: () => null, currentAccess: () => ({ readOnly: false }), config: {}, host: { stores: () => ({
       usersRead: { list: () => [{ id: 1 }], mayUsePlugin: () => true, isAdmin: () => true },
       // Only project 7 exists for this actor: a denial case has to be able to actually be denied.
@@ -154,6 +158,16 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
     };
     try {
       await perform({ kind: 'start' });
+      assert.throws(() => lstatSync(adoptedPath));
+      const adopted = await execute(runtimeSpec, `cat ${projectRoot}/marker.txt`);
+      assert.ok(adopted);
+      assert.equal(adopted.stdout.trim(), 'adopted workspace');
+      stage = 'adopted project live limits';
+      const requestedLimits = { cpus: 2, memoryMb: 6144, pidsLimit: 4096 };
+      await perform({ kind: 'limits', limits: requestedLimits });
+      const raised = await execute(withContainerLimits(runtimeSpec, requestedLimits), 'cat /sys/fs/cgroup/cpu.max /sys/fs/cgroup/memory.max /sys/fs/cgroup/pids.max');
+      assert.ok(raised);
+      assert.equal(raised.stdout.trim(), '200000 100000\n6442450944\n4096');
       const files = (operation: any) => runtime.projectFiles({ ...actor, operation });
       const created = await files({ kind: 'write', path: `${projectRoot}/runtime-proof`, base64: Buffer.from('snapshot value').toString('base64'), expectedVersion: null });
       assert.equal(created.kind, 'write');

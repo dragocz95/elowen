@@ -55,14 +55,17 @@ export function createBoundSiteSpec(input, binding) {
   return buildSpec(input, { namespace: binding.namespace, sitesDataDir: binding.sitesDataDir, siteSourcesDir: dirname(binding.sourcePath), siteBrokerDir: dirname(binding.brokerDir) }, binding);
 }
 
-/** Keep creation ownership labels stable while validating the effective cgroup settings. */
+/** Keep creation ownership stable while carrying the effective cgroup settings. Podman 4.9 applies a
+ * live `update` but keeps the original values in inspect.HostConfig, so those values remain part of the
+ * container's creation identity while `limits` records what the runtime has applied. */
 export function withContainerLimits(spec, requested) {
   assertContainerSpec(spec);
   closed(requested, ['cpus', 'memoryMb', 'pidsLimit']);
   const limits = { cpus: requested.cpus, memoryMb: requested.memoryMb, pidsLimit: requested.pidsLimit };
   if (!Number.isFinite(limits.cpus) || limits.cpus <= 0 || limits.cpus > 1024 || !Number.isSafeInteger(limits.cpus * 1e6)) throw new Error('Invalid CPU limit');
   for (const key of ['memoryMb', 'pidsLimit']) if (!Number.isSafeInteger(limits[key]) || limits[key] < 1 || limits[key] > 2 ** 30) throw new Error(`Invalid ${key} limit`);
-  const next = { ...spec, limits, specHash: createHash('sha256').update(JSON.stringify({ creation: spec.labels['io.elowen.spec'] ?? spec.specHash, limits })).digest('hex') };
+  const next = { ...spec, creationLimits: spec.creationLimits ?? spec.limits, limits,
+    specHash: createHash('sha256').update(JSON.stringify({ creation: spec.labels['io.elowen.spec'] ?? spec.specHash, limits })).digest('hex') };
   freeze(next); trustedSpecs.add(next); return next;
 }
 

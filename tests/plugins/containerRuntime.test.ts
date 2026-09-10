@@ -144,6 +144,25 @@ describe('clean and confined Podman client', () => {
       env: cleanPodmanEnv(), input: 'test', timeoutMs: 1000, outputLimitBytes: 32,
     })).rejects.toThrow(/ENOENT/);
   });
+  it('updates an adopted running container while keeping its creation identity stable', async () => {
+    const { spec, root } = fixture();
+    const source = join(root, 'adopted-project');
+    mkdirSync(source);
+    writeFileSync(join(source, 'marker.txt'), 'adopted');
+    const { client, executor } = fake(spec);
+    await new ContainerStorage(client).adoptWorkspace(spec, source);
+    await client.start(spec);
+
+    const requested = { cpus: 2, memoryMb: 6144, pidsLimit: 4096 };
+    const updated = await client.update(spec, requested);
+
+    expect(updated.limits).toEqual(requested);
+    expect(updated.creationLimits).toEqual(spec.limits);
+    expect(executor.run.mock.calls.find(([, args]) => args[0] === 'update')?.[1]).toEqual([
+      'update', '--memory=6144m', '--memory-swap=6144m', '--cpus=2', '--pids-limit=4096', 'a'.repeat(64),
+    ]);
+  });
+
   it('creates with rootless limits, persistent mounts and no host networking or automatic removal', async () => {
     const { spec } = fixture();
     const { client, executor } = fake(spec);
@@ -231,7 +250,8 @@ describe('clean and confined Podman client', () => {
     if (field === 'capabilities') Object.assign(row.HostConfig, { CapAdd: ['SYS_ADMIN'] });
     if (field === 'privileged') row.HostConfig.Privileged = true;
     if (field === 'ports') row.HostConfig.PortBindings = { '80/tcp': [] };
-    await expect(client.start(spec)).rejects.toThrow(/mismatch/i);
+    const expectedField = field === 'missingQuota' ? 'cpus' : field;
+    await expect(client.start(spec)).rejects.toThrow(new RegExp(`mismatch: .*${expectedField}`, 'i'));
     expect(executor.run.mock.calls.some(([, args]) => args[0] === 'start')).toBe(false);
   });
   it('targets the inspected immutable ID rather than the replaceable name', async () => {
