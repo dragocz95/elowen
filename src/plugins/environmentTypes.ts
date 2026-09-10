@@ -119,10 +119,6 @@ export interface SiteEnvironmentRegistration {
   workspaceReadOnly: boolean;
   network: 'shared' | 'isolated';
   limits: EnvironmentLimits;
-  /** Engine observations pinned at handover. `gitStubPath` and `limits` describe the container as it
-   *  was created; without them the runtime derives both from the current layout and configuration and
-   *  refuses to adopt a container an earlier Sites version created. */
-  legacy?: { containerId: string; imageId: string; volumeMountpoint: string; gitStubPath?: string; limits?: { cpus: number; memoryMb: number; pidsLimit: number } };
   /** Copied from the Sites lifecycle checkpoint, not inferred from current container state. */
   initialIntent?: { desiredState: 'running' | 'stopped'; pendingAction: 'start' | 'stop' | 'restart' | null; restartSequence?: number };
   snapshotRetention?: number;
@@ -180,7 +176,7 @@ export interface SiteEnvironment extends Omit<ProjectEnvironment, 'projectId'> {
 export interface SiteEnvironmentOperation extends Omit<EnvironmentOperation, 'projectId' | 'action' | 'accountUserId'> { siteId: string; action: SiteEnvironmentAction; accountUserId: number | null }
 export const SITE_ENVIRONMENT_CONTROL_METHODS = [
   'discoverSiteSnapshotImage', 'siteImageStatus', 'provisionSiteImage', 'requestSiteCleanup',
-  'connectSitesRuntime', 'discoverSiteEnvironment', 'registerSiteEnvironment', 'siteEnvironmentFor', 'requestSiteEnvironment',
+  'connectSitesRuntime', 'registerSiteEnvironment', 'siteEnvironmentFor', 'requestSiteEnvironment',
   'siteEnvironmentOperation', 'siteEnvironmentExec', 'siteEnvironmentLogs', 'siteEnvironmentSnapshots',
 ] as const;
 export interface SiteEnvironmentControl {
@@ -190,8 +186,6 @@ export interface SiteEnvironmentControl {
   /** Idempotent host account-removal intent. Poll by repeating the same input; no synthetic actor. */
   requestSiteCleanup(input: { siteId: string; removedAccountUserId: number }): Promise<SiteEnvironmentOperation>;
   connectSitesRuntime(authority: SiteRuntimeAuthority): void;
-  /** Read-only discovery verifies the Sites-owned container, image, mounts and volume before returning pins. */
-  discoverSiteEnvironment(input: { siteId: string; accountUserId: number }): Promise<(NonNullable<SiteEnvironmentRegistration['legacy']> & { state: 'running' | 'stopped' | 'paused' }) | null>;
   registerSiteEnvironment(input: { siteId: string; accountUserId: number }): Promise<SiteEnvironment>;
   siteEnvironmentFor(input: { siteId: string; accountUserId: number }): Promise<SiteEnvironment>;
   requestSiteEnvironment(input: { siteId: string; accountUserId: number; action: SiteEnvironmentAction; expectedGeneration?: number; requestId?: string }): Promise<SiteEnvironmentOperation>;

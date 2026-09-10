@@ -1,8 +1,8 @@
 import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { bindContainerIdentity, createContainerSpec, createLegacySiteSpec, executionUnit, volumeLabels } from '../../plugins/sandbox/lib/containerSpec.mjs';
+import { bindContainerIdentity, createContainerSpec, executionUnit, volumeLabels } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import { cleanPodmanEnv, PodmanClient, SpawnExecutor, isolatedPodmanOptions } from '../../plugins/sandbox/lib/podman.mjs';
 import { PROJECT_CONTAINERFILE } from '../../plugins/sandbox/lib/containerBaseImage.mjs';
 import { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
@@ -104,121 +104,6 @@ describe('trusted container specifications', () => {
     expect(other.labels['io.elowen.spec']).not.toBe(spec.labels['io.elowen.spec']);
     expect(spec.labels['io.elowen.runtime']).toBe('sandbox');
     expect(spec.labels['io.elowen.resource']).toBe('project:7');
-  });
-});
-
-describe('explicit legacy Site handover binding', () => {
-  function legacyFixture() {
-    const { root, paths } = fixture();
-    const binding = { sitesDataDir: paths.sitesDataDir, sourcePath: join(root, 'original-project/source'), brokerDir: join(paths.siteBrokerDir, 'site-1'),
-      containerId: 'a'.repeat(64), imageId: 'd'.repeat(64), volumeMountpoint: join(root, 'legacy-podman/volumes/elowen-site-site-1-data/_data') };
-    const spec = createLegacySiteSpec({ resource: { kind: 'site', id: 'site-1' }, generation: 8, image: 'localhost/site:v1', workspaceReadOnly: true }, binding);
-    for (const mount of spec.mounts.filter((mount: any) => mount.type === 'bind')) {
-      if (mount.target === '/workspace/.git') { mkdirSync(dirname(mount.source), { recursive: true }); writeFileSync(mount.source, ''); }
-      else mkdirSync(mount.source, { recursive: true });
-    }
-    mkdirSync(binding.volumeMountpoint, { recursive: true });
-    const state = fake(spec);
-    Object.assign(state.row, { Image: binding.imageId });
-    // Recorded default-local volume shape; substitute only this fixture's identity and private path.
-    const recordedVolume = JSON.parse(readFileSync(new URL('./fixtures/podman-4.9.3-legacy-volume.json', import.meta.url), 'utf8'));
-    state.volumes.set(spec.volumes[0].name, { ...recordedVolume, Name: spec.volumes[0].name, Labels: { 'io.elowen.site': 'site-1' }, Mountpoint: binding.volumeMountpoint });
-    return { spec, binding, ...state };
-  }
-  it('preserves the original name, sourcePath, Git stub, broker and named volume', async () => {
-    const { spec, binding, client, executor } = legacyFixture();
-    expect(spec.name).toBe('elowen-site-site-1');
-    expect(spec.volumes[0].name).toBe('elowen-site-site-1-data');
-    expect(spec.mounts[0]).toEqual({ type: 'bind', source: binding.sourcePath, target: '/workspace', readOnly: true });
-    expect(spec.mounts[1].target).toBe('/workspace/.git');
-    expect(spec.mounts[1].readOnly).toBe(true);
-    expect(spec.mounts[2].source).toBe(binding.brokerDir);
-    expect(spec.labels).toEqual({ 'io.elowen.site': 'site-1' });
-    expect(spec.specHash).toMatch(/^[a-f0-9]{64}$/);
-    await expect(client.inspectBinding(spec)).resolves.toEqual({ id: binding.containerId, state: 'running' });
-    expect(executor.run.mock.calls.every(([, args]) => ['inspect', 'container', 'volume'].includes(args[0]!))).toBe(true);
-  });
-  it('accepts the recorded isolated IPC default only in an explicit legacy binding', async () => {
-    const { spec, client, row } = legacyFixture();
-    const recorded = JSON.parse(readFileSync(new URL('./fixtures/podman-4.9.3-container-defaults.json', import.meta.url), 'utf8'));
-    Object.assign(row.HostConfig, recorded.HostConfig);
-    await expect(client.inspectBinding(spec)).resolves.toMatchObject({ state: 'running' });
-    const project = fixture().spec;
-    const managed = fake(project);
-    Object.assign(managed.row.HostConfig, recorded.HostConfig);
-    await expect(managed.client.inspectBinding(project)).rejects.toThrow(/mismatch/);
-  });
-  it.each(['containerId', 'imageId', 'labels', 'volumeLabels', 'volumePath', 'source', 'gitWritable'])('rejects mismatched legacy %s', async (field) => {
-    const { spec, client, row, volumes } = legacyFixture();
-    if (field === 'containerId') row.Id = 'b'.repeat(64);
-    if (field === 'imageId') Object.assign(row, { Image: 'b'.repeat(64) });
-    if (field === 'labels') row.Config.Labels = { ...row.Config.Labels, 'io.elowen.runtime': 'foreign' };
-    if (field === 'volumeLabels') volumes.get(spec.volumes[0].name).Labels = { 'io.elowen.site': 'foreign' };
-    if (field === 'volumePath') volumes.get(spec.volumes[0].name).Mountpoint = '/foreign';
-    if (field === 'source') row.Mounts[0]!.Source = '/foreign';
-    if (field === 'gitWritable') row.Mounts[1]!.RW = true;
-    await expect(client.inspectBinding(spec)).rejects.toThrow(/mismatch/);
-  });
-  it('adopts a container the previous Sites runtime created with its own storage root and limits', async () => {
-    // Recorded shape of a production Site container created before Sites moved its environment files:
-    // the Git stub lives under `<sitesDataDir>/sites/<id>/environment` and the cgroup limits are the ones
-    // that runtime created, not the ones the current Sites configuration asks for.
-    const { root, paths } = fixture();
-    const gitStubPath = join(paths.sitesDataDir, 'sites/site-1/environment/git-stub');
-    const binding = { sitesDataDir: paths.sitesDataDir, sourcePath: join(root, 'original-project/source'), brokerDir: join(paths.siteBrokerDir, 'site-1'),
-      containerId: 'a'.repeat(64), imageId: 'd'.repeat(64), volumeMountpoint: join(root, 'legacy-podman/volumes/elowen-site-site-1-data/_data'),
-      gitStubPath, limits: { cpus: 0.25, memoryMb: 256, pidsLimit: 128 } };
-    const spec = createLegacySiteSpec({ resource: { kind: 'site', id: 'site-1' }, generation: 1, image: 'localhost/elowen-site-static:c92e85249c89a118',
-      workspaceReadOnly: true, limits: { cpus: 1.25, memoryMb: 512, pidsLimit: 1000 } }, binding);
-    expect(spec.mounts[1]).toEqual({ type: 'bind', source: gitStubPath, target: '/workspace/.git', readOnly: true });
-    expect(spec.limits).toEqual({ cpus: 0.25, memoryMb: 256, pidsLimit: 128 });
-    for (const mount of spec.mounts.filter((mount: any) => mount.type === 'bind')) {
-      if (mount.target === '/workspace/.git') { mkdirSync(dirname(mount.source), { recursive: true }); writeFileSync(mount.source, ''); }
-      else mkdirSync(mount.source, { recursive: true });
-    }
-    mkdirSync(binding.volumeMountpoint, { recursive: true });
-    const state = fake(spec);
-    Object.assign(state.row, { Image: binding.imageId });
-    Object.assign(state.row.HostConfig, { IpcMode: 'shareable', NetworkMode: 'slirp4netns' });
-    const recordedVolume = JSON.parse(readFileSync(new URL('./fixtures/podman-4.9.3-legacy-volume.json', import.meta.url), 'utf8'));
-    state.volumes.set(spec.volumes[0].name, { ...recordedVolume, Name: spec.volumes[0].name, Labels: { 'io.elowen.site': 'site-1' }, Mountpoint: binding.volumeMountpoint });
-    await expect(state.client.inspectBinding(spec)).resolves.toEqual({ id: binding.containerId, state: 'running' });
-  });
-  it('pins the observed Git stub and limits when it discovers a legacy Site container', async () => {
-    const { root, paths } = fixture();
-    const gitStubPath = join(paths.sitesDataDir, 'sites/site-1/environment/git-stub');
-    const binding = { namespace: 'elowen', sitesDataDir: paths.sitesDataDir, sourcePath: join(root, 'original-project/source'), brokerDir: join(paths.siteBrokerDir, 'site-1') };
-    const mountpoint = join(root, 'legacy-podman/volumes/elowen-site-site-1-data/_data');
-    const probe = createLegacySiteSpec({ resource: { kind: 'site', id: 'site-1' }, generation: 1, image: 'localhost/site:v1', workspaceReadOnly: true },
-      { ...binding, containerId: 'a'.repeat(64), imageId: 'd'.repeat(64), volumeMountpoint: mountpoint, gitStubPath, limits: { cpus: 0.25, memoryMb: 256, pidsLimit: 128 } });
-    for (const mount of probe.mounts.filter((mount: any) => mount.type === 'bind')) {
-      if (mount.target === '/workspace/.git') { mkdirSync(dirname(mount.source), { recursive: true }); writeFileSync(mount.source, ''); }
-      else mkdirSync(mount.source, { recursive: true });
-    }
-    mkdirSync(mountpoint, { recursive: true });
-    const state = fake(probe);
-    Object.assign(state.row, { Image: 'd'.repeat(64) });
-    Object.assign(state.row.HostConfig, { IpcMode: 'shareable', NetworkMode: 'slirp4netns' });
-    const recordedVolume = JSON.parse(readFileSync(new URL('./fixtures/podman-4.9.3-legacy-volume.json', import.meta.url), 'utf8'));
-    state.volumes.set(probe.volumes[0].name, { ...recordedVolume, Name: probe.volumes[0].name, Labels: { 'io.elowen.site': 'site-1' }, Mountpoint: mountpoint });
-    const discovered = await state.client.discoverLegacySite({ resource: { kind: 'site', id: 'site-1' }, generation: 1, image: 'localhost/site:v1',
-      workspaceReadOnly: true, limits: { cpus: 1.25, memoryMb: 512, pidsLimit: 1000 } }, binding);
-    expect(discovered).toMatchObject({ containerId: 'a'.repeat(64), gitStubPath, limits: { cpus: 0.25, memoryMb: 256, pidsLimit: 128 }, state: 'running' });
-  });
-  it('never recreates an adopted legacy container or its missing volume', async () => {
-    const { spec, client, volumes, executor } = legacyFixture();
-    await expect(client.create(spec)).rejects.toThrow(/legacy|recreat/i);
-    volumes.clear();
-    await expect(client.ensureVolume(spec, 'data')).rejects.toThrow(/missing/i);
-    expect(executor.run.mock.calls.some(([, args]) => args.includes('create'))).toBe(false);
-  });
-  it('rejects binding input with arbitrary names, mounts, invalid IDs or project identity', () => {
-    const { binding } = legacyFixture();
-    const input = { resource: { kind: 'site', id: 'site-1' }, generation: 1, image: 'localhost/site:v1' };
-    expect(() => createLegacySiteSpec(input, { ...binding, name: 'other-container' })).toThrow(/unknown/i);
-    expect(() => createLegacySiteSpec(input, { ...binding, mounts: [] })).toThrow(/unknown/i);
-    expect(() => createLegacySiteSpec(input, { ...binding, containerId: 'name' })).toThrow(/identity/i);
-    expect(() => createLegacySiteSpec({ ...input, resource: { kind: 'project', id: 1 } }, binding)).toThrow(/site/i);
   });
 });
 

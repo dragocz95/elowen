@@ -29,39 +29,14 @@ function freeze(value) {
 /** The host supplies roots, never a guest tool. Persist resource identity and regenerate this spec from
  * authorized host records; a deserialized or caller-authored mount list is not an execution capability. */
 export function createContainerSpec(input, paths) {
-  return buildSpec(input, paths, null);
-}
-
-/** Handover-only capability, built from the trusted Sites record and audited engine observations.
- * Names and mount targets are fixed by the legacy Sites contract, never supplied by a guest. Persist
- * containerId, imageId, volumeMountpoint, gitStubPath, limits and the resulting specHash with the
- * handover generation; the daemon must revalidate that record before dispatch. This does not relabel
- * or recreate anything.
- *
- * A container an earlier Sites runtime created is described by what it IS, not by what the current
- * configuration would ask for. Its Git-stub bind source and its cgroup limits are therefore pinned from
- * the discovery observation, exactly like the container, image and volume identities: Sites has since
- * moved that file from `<sitesDataDir>/sites/<id>/environment` to `<sitesDataDir>/<id>/environment`, and
- * a limit the running container never received cannot be a condition for adopting it. Ownership still
- * rests on the container name, the `io.elowen.site` label, the pinned identities and the mount set. */
-export function createLegacySiteSpec(input, binding) {
-  closed(binding, ['sitesDataDir', 'sourcePath', 'brokerDir', 'containerId', 'imageId', 'volumeMountpoint', 'namespace', 'gitStubPath', 'limits']);
-  if (input?.resource?.kind !== 'site') throw new Error('A legacy binding must identify a Site');
-  for (const key of ['sitesDataDir', 'sourcePath', 'brokerDir', 'volumeMountpoint']) hostPath(binding[key]);
-  if (binding.gitStubPath !== undefined) hostPath(binding.gitStubPath);
-  if (binding.limits !== undefined) closed(binding.limits, ['cpus', 'memoryMb', 'pidsLimit']);
-  if (!/^[a-f0-9]{64}$/.test(binding.containerId) || !/^(sha256:)?[a-f0-9]{64}$/.test(binding.imageId)) throw new Error('Invalid legacy container/image identity');
-  return buildSpec(input, {
-    namespace: binding.namespace, sitesDataDir: binding.sitesDataDir, siteSourcesDir: dirname(binding.sourcePath), siteBrokerDir: dirname(binding.brokerDir),
-  }, { ...binding });
+  return buildSpec(input, paths);
 }
 
 export function createBoundSiteSpec(input, binding) {
-  closed(binding, ['sitesDataDir', 'sourcePath', 'brokerDir', 'legacy', 'namespace']);
-  if (binding.legacy) return createLegacySiteSpec(input, { ...binding.legacy, namespace: binding.namespace, sitesDataDir: binding.sitesDataDir, sourcePath: binding.sourcePath, brokerDir: binding.brokerDir });
+  closed(binding, ['sitesDataDir', 'sourcePath', 'brokerDir', 'namespace']);
   if (input?.resource?.kind !== 'site') throw new Error('A Site binding is required');
   for (const key of ['sitesDataDir', 'sourcePath', 'brokerDir']) hostPath(binding[key]);
-  return buildSpec(input, { namespace: binding.namespace, sitesDataDir: binding.sitesDataDir, siteSourcesDir: dirname(binding.sourcePath), siteBrokerDir: dirname(binding.brokerDir) }, null, binding);
+  return buildSpec(input, { namespace: binding.namespace, sitesDataDir: binding.sitesDataDir, siteSourcesDir: dirname(binding.sourcePath), siteBrokerDir: dirname(binding.brokerDir) }, binding);
 }
 
 /** Keep creation ownership labels stable while validating the effective cgroup settings. */
@@ -75,7 +50,7 @@ export function withContainerLimits(spec, requested) {
   freeze(next); trustedSpecs.add(next); return next;
 }
 
-function buildSpec(input, paths, legacy, binding = null) {
+function buildSpec(input, paths, binding = null) {
   closed(input, ['resource', 'generation', 'image', 'limits', 'network', 'workspaceReadOnly', 'previewBroker']);
   if (input.previewBroker !== undefined && (input.resource?.kind !== 'project' || typeof input.previewBroker !== 'boolean')) throw new Error('Invalid preview broker policy');
   closed(input.resource, ['kind', 'id']);
@@ -89,9 +64,9 @@ function buildSpec(input, paths, legacy, binding = null) {
   if (network !== 'shared' && network !== 'isolated') throw new Error('Invalid container network');
   if (input.workspaceReadOnly !== undefined && (kind !== 'site' || typeof input.workspaceReadOnly !== 'boolean')) throw new Error('Invalid read-only workspace policy');
   closed(input.limits ?? {}, ['cpus', 'memoryMb', 'pidsLimit']);
-  // An adopted container keeps the limits it was created with until an explicit limits action updates
-  // them through `withContainerLimits`, which is the only path that also runs `podman update`.
-  const limits = { ...DEFAULT_CONTAINER_LIMITS, ...input.limits, ...(legacy?.limits ?? {}) };
+  // A container keeps the limits it was created with until an explicit limits action updates them
+  // through `withContainerLimits`, which is the only path that also runs `podman update`.
+  const limits = { ...DEFAULT_CONTAINER_LIMITS, ...input.limits };
   if (!Number.isFinite(limits.cpus) || limits.cpus <= 0 || limits.cpus > 1024 || !Number.isSafeInteger(limits.cpus * 1e6)) throw new Error('Invalid CPU limit');
   for (const key of ['memoryMb', 'pidsLimit']) {
     if (!Number.isSafeInteger(limits[key]) || limits[key] < 1 || limits[key] > 2 ** 30) throw new Error(`Invalid ${key} limit`);
@@ -99,32 +74,36 @@ function buildSpec(input, paths, legacy, binding = null) {
   const namespace = resourceToken(paths.namespace ?? 'elowen');
   const resource = { kind, id };
   const generation = input.generation;
-  const name = legacy ? `elowen-site-${id}` : `${namespace}-${kind}-${id}-g${generation}`;
+  const name = `${namespace}-${kind}-${id}-g${generation}`;
   const storageRoot = kind === 'project'
     ? join(hostPath(paths.sandboxDataDir), 'projects', String(id))
     : join(hostPath(paths.sitesDataDir), id, 'environment');
   const components = kind === 'project' ? ['workspace', 'home', 'data'] : ['data'];
   const volumes = components.map((component) => ({
-    component, name: `${name}-${component}`, path: legacy ? legacy.volumeMountpoint : join(storageRoot, 'storage', String(generation), component),
+    component, name: `${name}-${component}`, path: join(storageRoot, 'storage', String(generation), component),
   }));
   const mounts = kind === 'project'
     ? volumes.map((volume) => ({ type: 'volume', source: volume.name, target: { workspace: '/workspace', home: '/root', data: '/data' }[volume.component], readOnly: false }))
     : [
-      { type: 'bind', source: legacy ? legacy.sourcePath : binding?.sourcePath ?? join(hostPath(paths.siteSourcesDir), id), target: '/workspace', readOnly: input.workspaceReadOnly ?? false },
-      { type: 'bind', source: legacy?.gitStubPath ?? join(storageRoot, 'git-stub'), target: '/workspace/.git', readOnly: true },
-      { type: 'bind', source: legacy ? legacy.brokerDir : binding?.brokerDir ?? join(hostPath(paths.siteBrokerDir), id), target: '/run/elowen', readOnly: false },
+      { type: 'bind', source: binding?.sourcePath ?? join(hostPath(paths.siteSourcesDir), id), target: '/workspace', readOnly: input.workspaceReadOnly ?? false },
+      { type: 'bind', source: join(storageRoot, 'git-stub'), target: '/workspace/.git', readOnly: true },
+      { type: 'bind', source: binding?.brokerDir ?? join(hostPath(paths.siteBrokerDir), id), target: '/run/elowen', readOnly: false },
       { type: 'volume', source: volumes[0].name, target: '/data', readOnly: false },
     ];
   if (input.previewBroker) mounts.push({ type: 'bind', source: join(storageRoot, 'broker'), target: '/run/elowen', readOnly: false });
   const settings = {
-    resource, generation, namespace, name, image: input.image, limits, legacy,
-    ipcMode: legacy ? 'shareable' : 'private',
+    resource, generation, namespace, name, image: input.image, limits,
+    ipcMode: 'private',
     network: network === 'isolated' ? 'none' : 'slirp4netns:allow_host_loopback=false',
     storageRoot, volumes, mounts, envFile: kind === 'site' ? join(storageRoot, 'container.env') : null,
   };
-  const hash = createHash('sha256').update(JSON.stringify(settings)).digest('hex');
+  // The hash preimage keeps the `legacy: null` key every spec carried while Sites containers created by
+  // an earlier runtime could still be adopted. It is the identity in the `io.elowen.spec` label of every
+  // container created so far, so dropping it from the preimage would make each of them fail ownership.
+  const preimage = { resource, generation, namespace, name, image: input.image, limits, legacy: null, ...settings };
+  const hash = createHash('sha256').update(JSON.stringify(preimage)).digest('hex');
   /** @type {Record<string, string>} */
-  const labels = legacy ? { 'io.elowen.site': id } : {
+  const labels = {
     'io.elowen.runtime': 'sandbox', 'io.elowen.namespace': namespace,
     'io.elowen.resource': `${kind}:${id}`, 'io.elowen.generation': String(generation), 'io.elowen.spec': hash,
     ...(kind === 'site' ? { 'io.elowen.site': id } : {}),
@@ -150,7 +129,6 @@ export function assertContainerSpec(spec) {
 export function volumeLabels(spec, component) {
   assertContainerSpec(spec);
   if (!spec.volumes.some((volume) => volume.component === component)) throw new Error('Unknown storage component');
-  if (spec.legacy) return { 'io.elowen.site': spec.resource.id };
   return {
     'io.elowen.runtime': 'sandbox', 'io.elowen.namespace': spec.namespace,
     'io.elowen.resource': `${spec.resource.kind}:${spec.resource.id}`,

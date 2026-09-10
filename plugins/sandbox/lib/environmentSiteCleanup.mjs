@@ -13,8 +13,8 @@ function positive(value, label) {
  * with a NULL actor (no fabricated user), under one deterministic key per generation, fenced against
  * any active Site operation. This service never deletes or marks a shared core Project and never
  * performs container/volume deletion itself: the parent retains lifecycle and restore decisions. */
-export function createSiteCleanupService({ podman, store, namespace, resolveCleanup, userExists, siteRecord, normalizeLimits }) {
-  for (const [key, value] of Object.entries({ podman, store, namespace, resolveCleanup, userExists, siteRecord, normalizeLimits })) {
+export function createSiteCleanupService({ store, resolveCleanup, userExists, siteRecord, normalizeLimits }) {
+  for (const [key, value] of Object.entries({ store, resolveCleanup, userExists, siteRecord, normalizeLimits })) {
     if (!value) throw error('invalid_configuration', `A ${key} injection is required for the Sites cleanup service`);
   }
   const view = (op) => ({ id: op.id, requestId: op.request_key, siteId: op.resource_id, accountUserId: op.user_id, generation: op.generation, action: op.action, status: op.status, error: op.error ?? null, ...(op.snapshot_id ? { snapshotId: op.snapshot_id } : {}) });
@@ -30,22 +30,11 @@ export function createSiteCleanupService({ podman, store, namespace, resolveClea
   return {
     registration,
     /** Idempotent host lifecycle intent for an account that Sites proved removed and that still owns
-     * the authoritative retained Site record. When the Site runtime is unregistered, only verified
-     * legacy discovery/adoption metadata may establish the deletion intent. */
+     * the authoritative retained Site record. */
     async request(input) {
       const resolved = await registration(input.siteId, input.removedAccountUserId);
       let row = store.get('site', input.siteId);
-      if (!row) {
-        const record = siteRecord(resolved, 1);
-        if (!record.binding.legacy) {
-          const found = await podman.discoverLegacySite(record.input, { namespace, sitesDataDir: resolved.sitesDataDir, sourcePath: resolved.sourcePath, brokerDir: resolved.brokerDir });
-          if (found) {
-            record.binding.legacy = { containerId: found.containerId, imageId: found.imageId, volumeMountpoint: found.volumeMountpoint,
-              ...(found.gitStubPath ? { gitStubPath: found.gitStubPath } : {}), ...(found.limits ? { limits: found.limits } : {}) };
-          }
-        }
-        row = store.insert('site', input.siteId, resolved.projectId, record, normalizeLimits(resolved.limits));
-      }
+      if (!row) row = store.insert('site', input.siteId, resolved.projectId, siteRecord(resolved, 1), normalizeLimits(resolved.limits));
       const key = `account-removed:${input.removedAccountUserId}:${row.generation}`;
       return store.transaction(() => {
         const prior = store.prior('site', input.siteId, null, key);
