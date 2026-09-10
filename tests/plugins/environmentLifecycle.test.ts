@@ -223,22 +223,44 @@ describe('durable managed environment lifecycle', () => {
     expect(known.message).not.toContain('/data/.elowen-uploads');
     expect(known.message).not.toMatch(/Errno|errno/);
 
-    // A code nobody agreed on cannot be acted on either, so it becomes one internal answer — forwarding it
-    // would be the same disclosure by another route.
+    // A code nobody agreed on is the guest off contract, which is ours to answer for and not something the
+    // caller can fix by sending the request differently. It is internal, and it says nothing else.
     guestSays({ code: 'shutil_exploded', message: `${staging} while removing staging` });
     const unknown = await rejection(chunk);
-    expect(unknown).toMatchObject({ code: 'guest_upload_error', status: 409 });
+    expect(unknown).toMatchObject({ code: 'guest_upload_error', status: 500 });
     expect(unknown.message).toBe('The guest could not complete this upload');
 
     // A reply with no error at all must not become an empty or undefined code.
     guestSays(undefined);
-    expect(await rejection(chunk)).toMatchObject({ code: 'guest_upload_error', status: 409 });
+    expect(await rejection(chunk)).toMatchObject({ code: 'guest_upload_error', status: 500 });
 
-    // The permission-shaped code keeps its own status: a refusal is not a conflict.
+    // A table reached by property lookup answers for every key Object.prototype carries, so these used to
+    // find an "entry", skip the unknown branch entirely and come back with the guest's own code and no
+    // status at all. They are not codes; they must land exactly where any other unrecognised code lands.
+    for (const forged of ['constructor', 'toString', '__proto__', 'hasOwnProperty', 'valueOf']) {
+      guestSays({ code: forged, message: staging });
+      const smuggled = await rejection(chunk);
+      expect(smuggled).toMatchObject({ code: 'guest_upload_error', status: 500 });
+      expect(smuggled.message).toBe('The guest could not complete this upload');
+    }
+    // A non-string code cannot match either, however object-shaped it is.
+    guestSays({ code: { toString: () => 'not_directory' }, message: staging });
+    expect(await rejection(chunk)).toMatchObject({ code: 'guest_upload_error', status: 500 });
+
+    // The permission-shaped code keeps its own status: a refusal is understood and declined, not internal.
     guestSays({ code: 'upload_forbidden', message: staging });
     const refused = await rejection(chunk);
     expect(refused).toMatchObject({ code: 'upload_forbidden', status: 403 });
     expect(refused.message).not.toContain('.elowen-upload');
+
+    // A reply that is not a reply is the guest breaking the response contract — also internal, never a
+    // conflict, because nothing the caller sent explains it and repeating the request will not help.
+    podman.exec.mockImplementation(async () => ({ code: 0, stdout: 'not json at all', stderr: '', truncated: false }));
+    expect(await rejection(chunk)).toMatchObject({ code: 'guest_protocol', status: 500 });
+    podman.exec.mockImplementation(async () => ({ code: 0, stdout: JSON.stringify({ ok: true, result: { kind: 'write-commit' } }), stderr: '', truncated: false }));
+    expect(await rejection(chunk)).toMatchObject({ code: 'guest_protocol', status: 500 });
+    podman.exec.mockImplementation(async () => ({ code: 0, stdout: '{}', stderr: '', truncated: true }));
+    expect(await rejection(chunk)).toMatchObject({ code: 'guest_protocol', status: 500 });
 
     podman.exec.mockImplementation(real);
   });

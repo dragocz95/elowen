@@ -21,33 +21,36 @@ const GUEST_STDERR_BOUND = 2000;
  *  bounded, and the host command line never appears in either. */
 function guestCommandFailure(file, error, sanitize) {
   const clean = (text) => sanitize(String(text ?? '')).replace(/\s+$/, '').slice(0, GUEST_STDERR_BOUND);
-  // Not a completed process: an aborted run, a lease that could not be renewed, a validation refusal.
-  // These already carry their own meaning and never hold a host command line.
-  if (!error || typeof error !== 'object' || !('code' in error || 'stderr' in error)) {
+  // What a REAL child-process failure looks like, and nothing else. Node reports a non-zero exit as a
+  // numeric `code`, a launcher that never started as a `syscall`, and a killed process through `killed`
+  // and `signal` — while an aborted run and a revoked execution arrive as typed errors that also happen
+  // to carry `code` and `stderr`. Keying off those two alone rewrote a 403 revocation and a cancellation
+  // into a generic "command failed", throwing away both the reason and the status the caller answers
+  // with. A typed failure this module raised or was handed already means something; it passes through
+  // whole, and only its message is sanitised — which is all that ever happened to it.
+  const exitStatus = Number.isInteger(error?.code) ? error.code : null;
+  const launcherFailed = typeof error?.syscall === 'string';
+  const terminated = error?.killed === true || typeof error?.signal === 'string';
+  if (!error || typeof error !== 'object' || (exitStatus === null && !launcherFailed && !terminated)) {
     if (error instanceof Error) error.message = clean(error.message);
     return error;
   }
-  if (error.code === 'ENOENT' || error.code === 'EACCES') {
-    // The HOST launcher itself is missing or unusable. That is a transport fault, not a missing guest
-    // program, and it must not be reported as one — nor may it disclose where the launcher lives.
+  if (launcherFailed) {
+    // The HOST launcher itself never started. That is a transport fault, not a missing guest program, and
+    // it must not be reported as one — nor may it disclose where the launcher lives.
     return Object.assign(new Error('The managed execution transport is unavailable'), { code: 'guest_transport_unavailable' });
   }
-  const status = Number.isInteger(error.code) ? error.code : null;
   const stderr = clean(error.stderr);
-  if (status === COMMAND_NOT_FOUND) {
+  if (exitStatus === COMMAND_NOT_FOUND) {
     return Object.assign(new Error(`${file} is not available in this project environment`),
-      { code: 'guest_command_missing', command: file, guestStatus: status });
+      { code: 'guest_command_missing', command: file, guestStatus: exitStatus });
   }
-  if (status !== null) {
-    return Object.assign(new Error(`${file} failed in this project environment with status ${status}${stderr ? `: ${stderr}` : ''}`),
-      { code: 'guest_command_failed', command: file, guestStatus: status, stderr });
+  if (exitStatus !== null) {
+    return Object.assign(new Error(`${file} failed in this project environment with status ${exitStatus}${stderr ? `: ${stderr}` : ''}`),
+      { code: 'guest_command_failed', command: file, guestStatus: exitStatus, stderr });
   }
-  if (error.killed || error.signal) {
-    return Object.assign(new Error(`${file} was terminated in this project environment${error.signal ? ` by ${error.signal}` : ''}`),
-      { code: 'guest_command_terminated', command: file, signal: error.signal ?? null });
-  }
-  return Object.assign(new Error(`${file} could not be run in this project environment`),
-    { code: 'guest_command_failed', command: file, guestStatus: null, stderr });
+  return Object.assign(new Error(`${file} was terminated in this project environment${error.signal ? ` by ${error.signal}` : ''}`),
+    { code: 'guest_command_terminated', command: file, signal: error.signal ?? null });
 }
 
 /** This adapter only speaks the existing Sandbox project contract. Guest names never enter host fs. */

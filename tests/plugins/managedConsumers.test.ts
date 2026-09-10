@@ -516,6 +516,61 @@ describe('managed builtin consumer routing', () => {
     expect(text).not.toMatch(/E{2001}/);
   });
 
+  /** A launcher that hangs, so the run is still in flight when something else ends it. */
+  const hangingGuest = (provider: ReturnType<typeof memoryProvider>, lease: Record<string, unknown> = {}) => {
+    const launcher = fakeLauncher('#!/bin/sh\nsleep 10\n');
+    provider.prepareExecution.mockImplementation(async (input: any) => ({
+      mode: 'managed', projectRef: input.projectRef, cwd: '/tmp', displayCwd: '/workspace',
+      home: '/root', roots: ['/'], workspace: null,
+      launch: { type: 'argv', file: launcher.podman, args: launcher.args, env: {} },
+      lease: { id: 'typed', accountUserId: 1, workspaceId: null, homeGeneration: null, heartbeat() {}, release() {}, ...lease },
+      sanitizeOutput: (text: string) => text, cancel: vi.fn(async () => {}),
+    }) as never);
+    return launcher;
+  };
+
+  it('keeps a revoked execution a revocation rather than a failed command', async () => {
+    const provider = memoryProvider({});
+    // A revocation reaches this path through the heartbeat, and it is a typed failure with its own code and
+    // its own status. It also carries `code` and `stderr`-shaped fields, which is how it used to be mistaken
+    // for a process that exited: it came back as a generic command failure with no status at all, so a 403
+    // stopped being answerable as a 403.
+    const revoked = Object.assign(new Error('Execution was revoked for this project'),
+      { code: 'execution_revoked', status: 403 });
+    hangingGuest(provider, { heartbeat() { throw revoked; } });
+    const { ctx } = fixture(files, provider);
+    const guest = managedFiles(ctx as never) as unknown as { exec(file: string, args: string[]): Promise<unknown> };
+
+    vi.useFakeTimers();
+    try {
+      const raised = guest.exec('pdfinfo', ['/data/doc.pdf']).then(() => null, (error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(5000);   // the heartbeat interval
+      const error = await raised as Error & { code?: string; status?: number };
+      expect(error).toBe(revoked);               // the same object, not a replacement wearing its message
+      expect(error.code).toBe('execution_revoked');
+      expect(error.status).toBe(403);
+      expect(error.message).toContain('revoked');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('keeps a cancellation a cancellation', async () => {
+    const provider = memoryProvider({});
+    hangingGuest(provider);
+    const controller = new AbortController();
+    const { ctx } = fixture(files, provider);
+    const guest = managedFiles(ctx as never, controller.signal) as unknown as { exec(file: string, args: string[]): Promise<unknown> };
+
+    const raised = guest.exec('pdfinfo', ['/data/doc.pdf']).then(() => null, (error: unknown) => error);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    controller.abort();
+    const error = await raised as Error & { code?: string };
+    // An abort arrives from the child process, but it is not a report about the program — it is the answer
+    // to something the caller did, and callers distinguish it by name and code.
+    expect(error.name).toBe('AbortError');
+    expect(error.code).toBe('ABORT_ERR');
+    expect(error.code).not.toBe('guest_command_failed');
+  });
+
   it('forces managed admin Bash through prepareExecution before any host path lookup', async () => {
     const release = vi.fn();
     const prepareExecution = vi.fn(async (): Promise<SandboxPreparedExecution> => ({
