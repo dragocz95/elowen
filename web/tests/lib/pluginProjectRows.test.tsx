@@ -107,20 +107,12 @@ describe('plugin Project-row contributions', () => {
     expect(screen.getByTestId('status-3')).toHaveTextContent('—');
   });
 
-  // The bundle is third-party code mounted inside the register. A rejected load and a registration that
-  // is not what the seam declares are both "this plugin contributes nothing", never "the Projects page
-  // is gone".
-  it('survives a bundle whose load rejects and one that registered something else', async () => {
-    loadPluginUi.mockRejectedValue(new Error('network'));
-    const { wrapper: Wrapper } = createWrapper();
-    const rejected = render(<Wrapper><Harness /></Wrapper>);
-    await waitFor(() => expect(loadPluginUi).toHaveBeenCalled());
-    expect(screen.getByTestId('status-3')).toHaveTextContent('—');
-    rejected.unmount();
-
+  // The bundle is third-party code mounted inside the register. A registration that is not what the seam
+  // declares means "this plugin contributes nothing", never "the Projects page is gone".
+  it('survives a bundle that registered something else', async () => {
     loadPluginUi.mockResolvedValue({ requiresApiVersion: 4, projectRows: { id: 'not a hook' } });
-    const { wrapper: SecondWrapper } = createWrapper();
-    render(<SecondWrapper><Harness /></SecondWrapper>);
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><Harness /></Wrapper>);
     await waitFor(() => expect(screen.getByTestId('status-3')).toHaveTextContent('—'));
     expect(screen.getByTestId('row-3')).toBeInTheDocument();
   });

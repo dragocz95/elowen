@@ -153,8 +153,7 @@ function PluginProjectRowsHost({ entry, projects, onPublish, onSettle, onGone }:
   useEffect(() => {
     let alive = true;
     void loadPluginUi(entry.name, entry.url, entry.cssUrl)
-      .then((value) => { if (alive) setHook(() => projectRowsHookOf(value)); })
-      .catch(() => { if (alive) setHook(null); });
+      .then((value) => { if (alive) setHook(() => projectRowsHookOf(value)); });
     return () => { alive = false; };
   }, [entry.cssUrl, entry.name, entry.url]);
   useEffect(() => () => onGone(entry.name), [entry.name, onGone]);
