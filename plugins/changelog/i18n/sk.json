@@ -16,7 +16,15 @@
       "loading": "Načítavanie poznámok k vydaniu…",
       "loadFailed": "Poznámky k vydaniu sa nepodarilo načítať.",
       "expand": "Zobraziť vydanie {version}",
-      "collapse": "Skryť vydanie {version}"
+      "collapse": "Skryť vydanie {version}",
+      "readersCount": "Prečítali {read} z {total}",
+      "readersRead": "prečítal(a)",
+      "readersUnread": "zatiaľ neprečítal(a)",
+      "markUnread": "Označiť ako neprečítané pre všetkých",
+      "markUnreadTitle": "Označiť vydanie {version} ako neprečítané?",
+      "markUnreadDescription": "Každý, kto si vydanie {version} už prečítal, ho uvidí znova ako nové vrátane odznaku neprečítaných.",
+      "markUnreadConfirm": "Označiť ako neprečítané",
+      "markUnreadFailed": "Vydanie sa nepodarilo označiť ako neprečítané."
     }
   }
 }

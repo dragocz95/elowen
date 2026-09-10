@@ -44,5 +44,40 @@ export function initSeenStore(ctx) {
     forgetUser(userId) {
       db.prepare('DELETE FROM p_changelog_seen WHERE user_id = ?').run(userId);
     },
+    /** Every account on the instance with the marker it carries (null for one that never opened the
+     *  page). The admin view needs the people who have NOT read a release as much as the ones who have,
+     *  so the account list itself is the denominator and the join is the whole answer. */
+    everyone() {
+      return db.prepare(`
+        SELECT u.id AS id, u.username AS username, u.name AS name, u.avatar AS avatar,
+               s.last_seen_version AS last_seen_version
+        FROM users u LEFT JOIN p_changelog_seen s ON s.user_id = u.id
+        ORDER BY u.username
+      `).all().map((row) => ({
+        id: row.id,
+        username: row.username,
+        name: typeof row.name === 'string' ? row.name : '',
+        avatar: typeof row.avatar === 'string' ? row.avatar : '',
+        lastSeen: typeof row.last_seen_version === 'string' ? row.last_seen_version : null,
+      }));
+    },
+    /** Un-read a release for EVERY account: a marker that has reached `version` falls back to
+     *  `fallbackVersion`, the newest release older than it — null when there is none, and then the row
+     *  goes away entirely. A marker move rather than a second "unread" record, so the badge, the page and
+     *  the admin view keep reading the one marker. Returns how many accounts were affected. */
+    resetForAll(version, fallbackVersion) {
+      return db.transaction(() => {
+        const affected = this.everyone().filter((person) => person.lastSeen !== null
+          && compareVersions(version, person.lastSeen) >= 0);
+        for (const person of affected) {
+          if (fallbackVersion === null) db.prepare('DELETE FROM p_changelog_seen WHERE user_id = ?').run(person.id);
+          else {
+            db.prepare('UPDATE p_changelog_seen SET last_seen_version = ?, updated_at = CURRENT_TIMESTAMP WHERE user_id = ?')
+              .run(fallbackVersion, person.id);
+          }
+        }
+        return affected.length;
+      });
+    },
   };
 }

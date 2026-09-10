@@ -1,8 +1,9 @@
-/** The plugin's three routes over the release notes that shipped with this build: the notes themselves,
- *  their images, and the marker recording how far the reader has got. */
+/** The plugin's routes over the release notes that shipped with this build: the notes themselves, their
+ *  images, the marker recording how far the reader has got, and the two admin views over that same
+ *  marker — who has read which release, and putting a release back to unread for everybody. */
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { resolve, sep } from 'node:path';
-import { isNewerThanSeen, localizeEntry } from './entries.mjs';
+import { compareVersions, isNewerThanSeen, localizeEntry } from './entries.mjs';
 
 /** Image types an entry may reference. SVG is deliberately absent: it is a script-carrying document,
  *  and nothing in a release note needs one. */
@@ -69,6 +70,47 @@ export function registerRoutes(ctx, { entries, assetsDir, seen }) {
       // Read back rather than echo `newest`: markSeen only moves the marker forward, so on an instance
       // that was downgraded the stored value is the newer one and that is what the reader still has.
       return json({ lastSeenVersion: seen.lastSeen(req.auth.userId) });
+    },
+  });
+
+  // Who has read what. Admin-only: the per-account list is other people's reading, and a reader's own
+  // state is already in the listing above. The access level is enforced centrally by the dispatcher; the
+  // handler asserts it too, because this is the one route here that discloses somebody else's activity.
+  ctx.registerApiRoute({
+    path: 'readers',
+    method: 'GET',
+    access: 'admin',
+    handler: async (req) => {
+      if (!req.auth.admin) return json({ error: 'forbidden' }, 403);
+      const people = seen.everyone();
+      return json({
+        people: people.map(({ id, username, name, avatar }) => ({ id, username, name, avatar })),
+        entries: entries.map((entry) => ({
+          version: entry.version,
+          readerIds: people.filter((person) => !isNewerThanSeen(entry.version, person.lastSeen)).map((p) => p.id),
+        })),
+      });
+    },
+  });
+
+  // Put a release back to unread for EVERY account, so the badge shows again for people who already read
+  // it. The version comes from the path and must be one that shipped: an arbitrary string would move
+  // every marker to a release nobody can open.
+  ctx.registerApiRoute({
+    path: 'unread',
+    method: 'POST',
+    access: 'admin',
+    handler: async (req) => {
+      if (!req.auth.admin) return json({ error: 'forbidden' }, 403);
+      const version = req.path.trim();
+      if (!entries.some((e) => e.version === version)) return json({ error: 'not found' }, 404);
+      // The newest release OLDER than this one: the marker everybody who had read this far falls back to,
+      // which leaves whatever they read before it read.
+      const fallback = entries.reduce((best, e) => {
+        if (compareVersions(e.version, version) <= 0) return best;
+        return best === null || compareVersions(e.version, best) < 0 ? e.version : best;
+      }, null);
+      return json({ reset: seen.resetForAll(version, fallback) });
     },
   });
 

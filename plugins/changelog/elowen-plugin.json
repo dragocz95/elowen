@@ -14,7 +14,9 @@
     "apiRoutes": [
       "entries",
       "seen",
-      "asset"
+      "asset",
+      "readers",
+      "unread"
     ]
   },
   "web": {
@@ -41,7 +43,15 @@
       "loading": "Loading release notes…",
       "loadFailed": "Release notes could not be loaded.",
       "expand": "Show release {version}",
-      "collapse": "Hide release {version}"
+      "collapse": "Hide release {version}",
+      "readersCount": "{read} of {total} have read",
+      "readersRead": "has read",
+      "readersUnread": "has not read yet",
+      "markUnread": "Mark as unread for everyone",
+      "markUnreadTitle": "Mark release {version} as unread?",
+      "markUnreadDescription": "Everyone who has already read release {version} sees it as new again, including the unread badge.",
+      "markUnreadConfirm": "Mark as unread",
+      "markUnreadFailed": "The release could not be marked as unread."
     }
   }
 }
