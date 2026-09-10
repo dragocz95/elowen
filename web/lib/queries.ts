@@ -64,6 +64,10 @@ export const useConversationJobLinks = (scope: 'mine' | 'all' = 'mine', conversa
   return useQuery<ConversationLinksResponse>({
     queryKey: [...QUERY_KEYS.brainConversationLinks, scope, ids],
     queryFn: () => elowenClient.brainConversationLinks(scope, conversationIds),
+    // An EMPTY narrowing means no root is on screen, which is not the same as no narrowing at all: the
+    // request would carry no `ids`, and the daemon answers that with the sub-agent tree of the whole
+    // authorized listing. There is nothing to draw branches for, so nothing is asked.
+    enabled: ids !== '',
     staleTime: 30_000,
     refetchOnWindowFocus: true,
     // Turning a page must not blank the branches while the next read is in flight: the previous answer

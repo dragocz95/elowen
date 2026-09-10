@@ -5,7 +5,6 @@ import { useMe, useProjectMemberProfiles, useUsers } from '../../lib/queries';
 import { useAssignProject } from '../../lib/mutations';
 import { plural, useTranslation } from '../../lib/i18n';
 import type { Project, ProjectMemberView } from '../../lib/types';
-import { managedProjectStrings } from './managedProjectStrings';
 import { Avatar } from '../../components/ui/Avatar';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -24,26 +23,26 @@ const badgesOf = (member: { username: string; email?: string }) => [
   ...(member.email ? [{ text: member.email, tone: 'muted' as const }] : []),
 ];
 
-/** A managed project's People tab. It is the SAME access summary and picker a host project shows —
- *  the count line, the Manage button and the account modal all come from the shared components — because
- *  a project's membership does not become a different kind of thing when it runs in a container.
+/** A project's People tab: the access summary, the shared account picker, and nothing else — a project's
+ *  membership does not become a different kind of thing when it runs in a container.
  *
- *  What managed adds is the truth about consequences: membership here hands over every file and stored
- *  credential in the environment, so the picker carries that warning, and a single change still asks
- *  before it is made. What managed cannot do is widen the picker: `GET /users` is the instance directory
- *  and is admin-only, so a member with the sharing grant adds by account id instead of browsing everyone
- *  on the instance. */
-export function ManagedProjectMembers({ project }: { project: Project }) {
-  const { locale, t } = useTranslation();
-  const s = managedProjectStrings[locale];
+ *  Two facts about a MANAGED project are additions to that one panel rather than a second one. Membership
+ *  hands over every file and stored credential inside the environment, so the picker carries that warning
+ *  and a single invitation asks before it is made. And a member cannot widen the picker, because
+ *  `GET /users` is the instance directory and is admin-only: they manage the people already here and add
+ *  by account id instead of browsing everyone on the instance. */
+export function ProjectAccessPanel({ project }: { project: Project }) {
+  const { t } = useTranslation();
+  const s = t.projects;
   const me = useMe();
-  // The identity view of the membership: this tab is where a member sees WHO shares the environment,
-  // so it opts into the profile projection rather than the endpoint's default id list.
+  // The identity view of the membership: this tab is where a member sees WHO shares the project, so it
+  // opts into the profile projection rather than the endpoint's default id list.
   const members = useProjectMemberProfiles(project.id);
   const assign = useAssignProject();
   const actor = me.data?.user;
   const isAdmin = actor?.is_admin === true;
   const directory = useUsers(isAdmin);
+  const managed = project.executionKind === 'managed';
   const [inviteId, setInviteId] = useState('');
   const [open, setOpen] = useState(false);
   const [inviting, setInviting] = useState<string | null>(null);
@@ -55,11 +54,12 @@ export function ManagedProjectMembers({ project }: { project: Project }) {
 
   const rows = members.data ?? [];
   const memberIds = new Set(rows.map((member) => member.id));
-  const canInvite = isAdmin || actor?.can_share_projects === true;
+  // Adding by account id exists for the reader who has no directory to pick from.
+  const canInvite = managed && !isAdmin && actor?.can_share_projects === true;
   const busy = assign.isPending || project.lifecycle === 'deleting';
   const validInvite = /^\d+$/.test(inviteId) && Number.isSafeInteger(Number(inviteId)) && Number(inviteId) > 0 && !memberIds.has(Number(inviteId));
-  // Administrators reach every project without an assignment row, so the picker offers ordinary accounts
-  // exactly as the host panel does; an administrator who is also a member still shows in the summary.
+  // Administrators reach every project without an assignment row, so the picker offers ordinary accounts;
+  // an administrator who is also a member still shows in the summary.
   const assignable = (directory.data ?? []).filter((user) => !user.is_admin);
 
   // Whoever can see the directory manages membership through it. Whoever cannot sees the people already
@@ -96,18 +96,20 @@ export function ManagedProjectMembers({ project }: { project: Project }) {
 
   return (
     <div className="py-3">
-      <SelectionSummary
-        // The host wording counts members WITHIN the directory the reader can see, so an administrator
-        // who reaches the project without an assignment row is not counted against a total they are not
-        // part of. A member sees no directory, so there is no total to state and the count says so.
-        countText={isAdmin
-          ? t.projects.accessCount.replace('{n}', String(assignable.filter((user) => memberIds.has(user.id)).length)).replace('{total}', String(assignable.length))
-          : plural(s.accessCountMembers, rows.length).replace('{n}', String(rows.length))}
-        samples={rows.slice(0, 3).map((member) => ({ id: String(member.id), label: labelOf(member), icon: <Avatar user={member} size={16} /> }))}
-        moreCount={Math.max(0, rows.length - 3)}
-        onManage={() => setOpen(true)}
-        manageLabel={t.managePicker.manage}
-      />
+      {isAdmin && assignable.length === 0 ? <p className="text-xs text-muted-foreground">{t.projects.accessEmpty}</p> : (
+        <SelectionSummary
+          // The administrator's wording counts members WITHIN the directory they can see, so an
+          // administrator who reaches the project without an assignment row is not counted against a
+          // total they are not part of. A member sees no directory, so there is no total to state.
+          countText={isAdmin
+            ? t.projects.accessCount.replace('{n}', String(assignable.filter((user) => memberIds.has(user.id)).length)).replace('{total}', String(assignable.length))
+            : plural(s.accessCountMembers, rows.length).replace('{n}', String(rows.length))}
+          samples={rows.slice(0, 3).map((member) => ({ id: String(member.id), label: labelOf(member), icon: <Avatar user={member} size={16} /> }))}
+          moreCount={Math.max(0, rows.length - 3)}
+          onManage={() => setOpen(true)}
+          manageLabel={t.managePicker.manage}
+        />
+      )}
       {/* The directory is a secondary read: when it fails the summary is still correct, so the failure is
           reported beside it instead of replacing the whole tab. */}
       {isAdmin && directory.isError ? (
@@ -117,7 +119,7 @@ export function ManagedProjectMembers({ project }: { project: Project }) {
         </p>
       ) : null}
 
-      {canInvite && !isAdmin ? (
+      {canInvite ? (
         <form
           className="mt-3 flex flex-wrap items-end gap-2"
           onSubmit={(event) => { event.preventDefault(); if (validInvite && !busy) setInviting(inviteId); }}
@@ -130,11 +132,13 @@ export function ManagedProjectMembers({ project }: { project: Project }) {
           <Button type="submit" disabled={!validInvite || busy}>{s.invite}</Button>
         </form>
       ) : null}
-      {canInvite ? null : <p className="mt-2 text-xs text-muted-foreground">{s.inviteDenied}</p>}
+      {managed && !isAdmin && !canInvite ? <p className="mt-2 text-xs text-muted-foreground">{s.inviteDenied}</p> : null}
 
       <ManageSelectionModal
         title={t.projects.accessTitle}
-        subtitle={s.sharingWarning}
+        // A managed project's membership is stated in terms of what it hands over; a host project's in
+        // terms of who may use it.
+        subtitle={managed ? s.sharingWarning : t.projects.accessHint}
         open={open}
         onClose={() => setOpen(false)}
         items={items}

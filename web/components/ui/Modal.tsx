@@ -46,6 +46,10 @@ interface ModalProps {
    *  wide for `size="lg"`, so a dialog that already declared it needs a large frame keeps that room
    *  when it renders as a drawer instead. Ignored by the other presentations, which take `size`. */
   drawerWidth?: 'default' | 'wide';
+  /** Announces that the dialog's own work is still running (a progress window over a durable operation). */
+  'aria-busy'?: true;
+  /** Addresses the dialog surface itself from a test. */
+  'data-testid'?: string;
 }
 
 /** The app's dialog, on the shadcn `Dialog` in `./shadcn/dialog` and therefore on Radix.
@@ -66,7 +70,7 @@ interface ModalProps {
  *   - the backdrop press, which must stop at the backdrop it was aimed at so a nested dialog cannot also
  *     close its parent. Radix's own outside-press dismissal is turned off for that reason, rather than
  *     left running as a second way to close the same dialog. */
-export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description, headerActions, presentation = 'auto', intent = 'edit', scrim = 'default', drawerWidth, closeLabel, closeDisabled = false }: ModalProps) {
+export function Modal({ title, onClose, children, size = 'lg', icon: Icon, description, headerActions, presentation = 'auto', intent = 'edit', scrim = 'default', drawerWidth, closeLabel, closeDisabled = false, 'aria-busy': busy, 'data-testid': testId }: ModalProps) {
   const requestClose = () => { if (!closeDisabled) onClose(); };
   const wide = (drawerWidth ?? (size === 'lg' ? 'wide' : 'default')) === 'wide';
   const automatic = useOverlayPresentation(intent);
@@ -125,7 +129,9 @@ export function Modal({ title, onClose, children, size = 'lg', icon: Icon, descr
           width={wide ? 'wide' : 'default'}
           aria-labelledby={titleId}
           aria-describedby={description ? descriptionId : undefined}
+          aria-busy={busy}
           data-elowen-modal
+          data-testid={testId}
           // Radix would otherwise dismiss on any press outside the surface, which is a second owner of a
           // decision the backdrop above already makes — and one that does not know a nested dialog's
           // backdrop must not close its parent.

@@ -1,3 +1,5 @@
+import type { ProjectExecutionRef } from '../../src/shared/wireContract';
+
 export interface ElowenConfig {
   allowedExecs: string[];
   customModels: { label: string; exec: string }[];
@@ -1073,6 +1075,18 @@ export type Project = ProjectView;
 /** The sentinel owner of a project's SHARED memory category (mirrors the daemon's
  *  SHARED_CATEGORY_USER_ID — a memory_categories row with user_id = 0 is a shared pool). */
 export const SHARED_CATEGORY_USER_ID = 0;
+/** The execution target a project IS: a managed project runs in its environment, a host project in its
+ *  own directory. Both surfaces that offer projects as destinations — the chat's picker and the question
+ *  a fresh conversation is asked — read it from here, because a second copy is how the two would come to
+ *  disagree about what choosing a project means. */
+export function executionRefOf(project: Pick<ProjectView, 'id' | 'executionKind'>): ProjectExecutionRef {
+  return { kind: project.executionKind === 'managed' ? 'managed' : 'host', projectId: project.id };
+}
+/** A stable key for one execution target: what a radio group addresses, and how two targets are compared.
+ *  An administrator's nameless host has no project behind it, hence the empty tail. */
+export function executionRefKey(ref: ProjectExecutionRef): string {
+  return `${ref.kind}:${ref.projectId ?? ''}`;
+}
 export interface ProjectSummary {
   projectId: number;
   /** Present only for administrators; ordinary users never receive other accounts' assignments. */

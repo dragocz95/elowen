@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
-import { managedProjectStrings } from '../../../modules/projects/managedProjectStrings';
+import { dictionaries } from '../../../lib/i18n/dictionaries';
 import { en } from '../../../lib/i18n/dictionaries/en';
 import type { User } from '../../../lib/types';
 
@@ -13,7 +13,7 @@ vi.mock('../../../lib/mutations', () => ({
 
 import { ProjectPermissions } from '../../../modules/users/ProjectPermissions';
 
-const s = managedProjectStrings.en;
+const s = dictionaries.en.projects;
 
 const user = (over: Partial<User> = {}): User => ({
   id: 2, username: 'bob', name: '', email: '', avatar: '', created_at: '2026-01-02', is_admin: false,

@@ -20,7 +20,7 @@ import {
 } from '../../lib/conversationTree';
 import { ScheduledJobLink, scheduledJobName } from './ScheduledJobLink';
 import { TreeGuide } from './TreeGuide';
-import { subagentBranchRows, type SubagentBranchLabels } from './SubagentBranch';
+import { subagentBranchLabels, subagentBranchRows } from './SubagentBranch';
 import type { ConversationJobLink } from '../../lib/types';
 import { Avatar } from '../ui/Avatar';
 import { ModelIcon } from '../ui/ModelIcon';
@@ -154,20 +154,7 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
   const subagentsFailed = jobLinks.data?.subagentStatus === 'error';
   /** The sub-agent runs recorded under one conversation, or none. */
   const branchNodes = (sessionId: string) => subagents[sessionId] ?? [];
-  const subagentLabels: SubagentBranchLabels = {
-    expand: t.subagentBranch.expand,
-    workflow: t.subagentBranch.workflow,
-    unavailable: t.subagentBranch.unavailable,
-    truncated: t.subagentBranch.truncated,
-    status: {
-      pending: t.subagentBranch.statusPending,
-      running: t.subagentBranch.statusRunning,
-      blocked: t.subagentBranch.statusBlocked,
-      done: t.subagentBranch.statusDone,
-      error: t.subagentBranch.statusError,
-      interrupted: t.subagentBranch.statusInterrupted,
-    },
-  };
+  const subagentLabels = subagentBranchLabels(t.subagentBranch);
 
   // Manual expansion, keyed by session id and branch kind, kept for as long as the register is mounted —
   // a refetch must not fold a branch the reader opened. The search adds its own temporary expansion on
@@ -494,10 +481,8 @@ export function BrainSessionsPanel({ afterOpen }: { afterOpen?: () => void } = {
       nodes: branchNodes(target.id),
       labels: subagentLabels,
       rowDomId: (suffix) => agentRowDomId(target.id, suffix),
-      indent: 0,
       openKeys: openAgentNodes,
       onToggleNode: (key) => toggle(setOpenAgentNodes)(key),
-      forceOpen: false,
       onOpenSession: (sessionId) => { openBrainSession(sessionId, false); afterOpen?.(); },
     });
     return (

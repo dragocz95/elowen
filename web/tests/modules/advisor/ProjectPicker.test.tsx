@@ -1,10 +1,11 @@
 import { describe, expect, it, vi, beforeAll, afterAll, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
+import { emitPluginEvent } from '../../../lib/pluginEvents';
 import type { ProjectExecutionRef } from '../../../lib/types';
 
 const chat = { telemetry: { project: null as { cwd: string } | null, projectRef: null as ProjectExecutionRef | null }, activeSessionId: null as string | null };
@@ -44,11 +45,8 @@ describe('ProjectPicker', () => {
     await waitFor(() => expect(trigger).toBeEnabled());
     fireEvent.keyDown(trigger, { key: 'ArrowDown' });
 
-    // The host project is listed, under its own name and with no red mode label beside it.
-    const option = await screen.findByRole('menuitemradio', { name: 'server' });
-    expect(within(option).queryByText('HOST MODE')).toBeNull();
-    expect(screen.queryByText('HOST MODE')).toBeNull();
-    // And there is no entry that means "the host itself".
+    // The host project is listed under its own name, and there is no entry that means "the host itself".
+    await screen.findByRole('menuitemradio', { name: 'server' });
     expect(screen.getAllByRole('menuitemradio').map((item) => item.textContent)).toEqual(['kolin', 'elowen', 'server']);
   });
 
@@ -67,11 +65,7 @@ describe('ProjectPicker', () => {
 
     const trigger = await screen.findByRole('button', { name: 'No project' });
     await waitFor(() => expect(trigger).toBeEnabled());
-    // None of the ways host mode used to announce itself here.
-    expect(screen.queryByText('HOST MODE')).toBeNull();
-    expect(trigger.className).not.toMatch(/destructive/);
-    expect(trigger.querySelector('svg.lucide-shield-alert')).toBeNull();
-    // And nothing was sent to change what the conversation actually runs in.
+    // Nothing was sent to change what the conversation actually runs in.
     expect(posted).toBe(0);
   });
 
@@ -102,7 +96,6 @@ describe('ProjectPicker', () => {
     await waitFor(() => expect(trigger).toBeEnabled());
     fireEvent.keyDown(trigger, { key: 'ArrowDown' });
     await screen.findByRole('menuitemradio', { name: /kolin/ });
-    expect(screen.queryByText('HOST MODE')).toBeNull();
     expect(screen.getAllByRole('menuitemradio').map((item) => item.textContent)).toEqual(['kolin', 'elowen', 'server']);
   });
 
@@ -175,6 +168,42 @@ describe('ProjectPicker', () => {
       await selectElowen();
       expect(await screen.findByText('Done')).toBeInTheDocument();
       await waitFor(() => expect(screen.queryByTestId('operation-progress-dialog')).toBeNull(), { timeout: 4000 });
+    });
+
+    // Hiding the window leaves the operation running, so whoever hid it still has to be told how it
+    // ended: a success that nobody settles leaves the "Show progress" chip on screen for the rest of the
+    // conversation, and a failure that nobody reopens is silent.
+    it('settles an operation that ended while its window was hidden', async () => {
+      chat.activeSessionId = 'brain-1-a'; chat.telemetry.projectRef = { kind: 'managed', projectId: 1 };
+      server.use(...switching(operation()));
+      mount();
+      await selectElowen();
+      expect(await screen.findByText('Creating the container')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Hide' }));
+      expect(await screen.findByTestId('chat-environment-chip')).toBeInTheDocument();
+
+      act(() => emitPluginEvent({
+        type: 'plugin', plugin: 'sandbox', kind: 'environment-operation', projectId: 2,
+        data: { operation: operation({ status: 'succeeded', percent: 100, stepIndex: 4, stepLabel: 'initialize' }) },
+      }));
+      await waitFor(() => expect(screen.queryByTestId('chat-environment-chip')).toBeNull());
+      expect(screen.queryByTestId('operation-progress-dialog')).toBeNull();
+    });
+
+    it('brings a hidden window back when the environment failed to come up', async () => {
+      chat.activeSessionId = 'brain-1-a'; chat.telemetry.projectRef = { kind: 'managed', projectId: 1 };
+      server.use(...switching(operation()));
+      mount();
+      await selectElowen();
+      expect(await screen.findByText('Creating the container')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Hide' }));
+      expect(await screen.findByTestId('chat-environment-chip')).toBeInTheDocument();
+
+      act(() => emitPluginEvent({
+        type: 'plugin', plugin: 'sandbox', kind: 'environment-operation', projectId: 2,
+        data: { operation: operation({ status: 'failed', percent: null, error: 'image build failed' }) },
+      }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('image build failed');
     });
 
     // The stale environment the mount rename left behind. The failure names the repair and the window

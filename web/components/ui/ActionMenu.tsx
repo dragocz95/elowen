@@ -13,6 +13,10 @@ import {
  *  <ModelIcon/> for glyphs that aren't Lucide), never both — the two are mutually exclusive so the
  *  render can't silently prefer one over the other. */
 export type ActionMenuItem = {
+  /** What this entry IS, where the label is only what it reads as. Two contributors may well name an
+   *  action the same, and a menu keyed by wording then makes React reuse one entry's element for the
+   *  other's. Left out where a menu's labels are core's own and already distinct. */
+  id?: string;
   label: string;
   tone?: 'default' | 'danger';
   /** Present but not selectable — for an action a row genuinely offers and this row has nothing to do it
@@ -202,7 +206,7 @@ export function ActionMenu({ items, label, trigger, triggerClassName, className,
             const Icon = item.icon;
             return (
               <DropdownMenuItem
-                key={item.label}
+                key={item.id ?? item.label}
                 variant={item.tone === 'danger' ? 'destructive' : 'default'}
                 disabled={item.disabled}
                 onSelect={() => {

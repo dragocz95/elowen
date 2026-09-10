@@ -1,9 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { type CSSProperties, type ReactNode } from 'react';
 import type { LucideIcon } from 'lucide-react';
 import type { SpatialMascotState } from './SpatialMascot';
-import { horizontalOverflowState, NO_HORIZONTAL_OVERFLOW, type HorizontalOverflowState } from './horizontalScroll';
+import { useHorizontalOverflow } from './horizontalScroll';
 
 /** The ONE workspace hero. Every page shell — the registers (Memory, Projects, Users, every plugin
  *  register), the control decks (Settings, Account) and the single-surface pages (the editor) — opens
@@ -36,34 +36,7 @@ export interface WorkspaceHeroProps {
 }
 
 function WorkspaceHeroMetrics({ children }: { children: ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null);
-  const [overflow, setOverflow] = useState<HorizontalOverflowState>(NO_HORIZONTAL_OVERFLOW);
-  const measure = useCallback(() => {
-    const track = ref.current;
-    if (!track) return;
-    const next = horizontalOverflowState(track);
-    setOverflow((current) => (
-      current.overflow === next.overflow && current.left === next.left && current.right === next.right
-        ? current
-        : next
-    ));
-  }, []);
-
-  useEffect(() => {
-    const track = ref.current;
-    if (!track) return;
-    measure();
-    const resizeObserver = typeof ResizeObserver === 'undefined' ? null : new ResizeObserver(measure);
-    const mutationObserver = new MutationObserver(measure);
-    resizeObserver?.observe(track);
-    mutationObserver.observe(track, { characterData: true, childList: true, subtree: true });
-    track.addEventListener('scroll', measure, { passive: true });
-    return () => {
-      resizeObserver?.disconnect();
-      mutationObserver.disconnect();
-      track.removeEventListener('scroll', measure);
-    };
-  }, [measure]);
+  const { ref, edges: overflow } = useHorizontalOverflow<HTMLDivElement>();
 
   const edgeStyle = {
     '--workspace-metrics-fade-left': overflow.left ? 'var(--workspace-metrics-fade-size)' : '0px',

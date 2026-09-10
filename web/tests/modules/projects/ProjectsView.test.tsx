@@ -23,7 +23,13 @@ const server = setupServer(
     { id: 1, username: 'admin', name: 'Admin', is_admin: true, created_at: '', allowed_execs: [], disabled_tools: [], allowed_tools: [], granted_plugins: [], email: '', avatar: '', default_exec: '', advisor_exec: '', advisor_autostart: false },
     { id: 2, username: 'bob', name: 'Bob', is_admin: false, created_at: '', allowed_execs: [], disabled_tools: [], allowed_tools: [], granted_plugins: [], email: '', avatar: '', default_exec: '', advisor_exec: '', advisor_autostart: false },
   ])),
-  http.get('*/api/projects/1/users', () => HttpResponse.json([2])),
+  // The membership endpoint answers ids by default and identities on `?view=profiles`, which is what the
+  // People tab opts into; the shared-memory panel still reads the id list.
+  http.get('*/api/projects/1/users', ({ request }) => HttpResponse.json(
+    new URL(request.url).searchParams.get('view') === 'profiles'
+      ? [{ id: 2, username: 'bob', name: 'Bob', email: '', avatar: '' }]
+      : [2],
+  )),
   http.get('*/api/projects/1/memory-members', () => HttpResponse.json([])),
   http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin', is_admin: true } })),
 );

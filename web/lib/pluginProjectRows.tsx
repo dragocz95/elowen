@@ -19,6 +19,7 @@ import type { PluginUiListing, Project } from './types';
 import { PLUGIN_UI_API_VERSION, loadPluginUi } from './pluginUi';
 import { usePluginUi } from './queries';
 import { useTranslation } from './i18n';
+import { PluginErrorBoundary } from '../components/plugin/PluginUiGuards';
 
 export type PluginProjectRowTone = 'muted' | 'accent' | 'success' | 'warning' | 'danger';
 
@@ -54,10 +55,13 @@ interface PluginProjectRowContribution {
 
 type PluginProjectRowsHook = (input: { projects: Project[] }) => PluginProjectRowContribution;
 
-/** The bundle registration, plus the field this seam adds. Kept as an intersection — exactly how the
- *  project-panel seam extends the published kit registration — so the kit stays the contract for
- *  everything it already describes. */
-type ProjectRowsRegistration = { projectRows?: PluginProjectRowsHook };
+/** What a registration has to actually BE for this seam, which is a plugin's word rather than a type: the
+ *  field is read from a foreign bundle, so it is tested instead of asserted. Anything else contributes
+ *  nothing, exactly as a bundle that never registered a hook does. */
+function projectRowsHookOf(registration: unknown): PluginProjectRowsHook | null {
+  const hook = (registration as { projectRows?: unknown } | null | undefined)?.projectRows;
+  return typeof hook === 'function' ? hook as PluginProjectRowsHook : null;
+}
 
 export interface PluginProjectRows {
   statusFor(projectId: number): PluginProjectRowStatus | undefined;
@@ -131,7 +135,9 @@ export function usePluginProjectRows(projects: Project[]): PluginProjectRows {
 
 /** Loads one plugin's bundle and mounts its hook when the bundle actually registered one. A bundle that
  *  fails to load contributes nothing and says nothing: a register row must not grow an error strip
- *  because a plugin's JS is missing — the plugin's own surfaces already report that. */
+ *  because a plugin's JS is missing — the plugin's own surfaces already report that. A hook that RAN and
+ *  threw is a different thing, and is caught by the shared plugin boundary: the failure belongs to the
+ *  plugin's slot, and the register around it is core's and still has rows to draw. */
 function PluginProjectRowsHost({ entry, projects, onPublish, onSettle, onGone }: {
   entry: PluginUiListing;
   projects: Project[];
@@ -139,20 +145,24 @@ function PluginProjectRowsHost({ entry, projects, onPublish, onSettle, onGone }:
   onSettle: () => void;
   onGone: (plugin: string) => void;
 }) {
-  const [registration, setRegistration] = useState<ProjectRowsRegistration | null>(null);
+  const { t } = useTranslation();
+  const [hook, setHook] = useState<PluginProjectRowsHook | null>(null);
   useEffect(() => {
     let alive = true;
-    void loadPluginUi(entry.name, entry.url, entry.cssUrl).then((value) => {
-      if (alive) setRegistration((value ?? null) as ProjectRowsRegistration | null);
-    });
+    void loadPluginUi(entry.name, entry.url, entry.cssUrl)
+      .then((value) => { if (alive) setHook(() => projectRowsHookOf(value)); })
+      .catch(() => { if (alive) setHook(null); });
     return () => { alive = false; };
   }, [entry.cssUrl, entry.name, entry.url]);
   useEffect(() => () => onGone(entry.name), [entry.name, onGone]);
 
-  const hook = registration?.projectRows;
   if (!hook) return null;
   // Mounted only once a hook exists, so the number of hooks this subtree calls never changes under React.
-  return <PluginProjectRowsRunner plugin={entry.name} hook={hook} projects={projects} onPublish={onPublish} onSettle={onSettle} />;
+  return (
+    <PluginErrorBoundary notice={t.pluginUi.crashed}>
+      <PluginProjectRowsRunner plugin={entry.name} hook={hook} projects={projects} onPublish={onPublish} onSettle={onSettle} />
+    </PluginErrorBoundary>
+  );
 }
 
 function PluginProjectRowsRunner({ plugin, hook, projects, onPublish, onSettle }: {

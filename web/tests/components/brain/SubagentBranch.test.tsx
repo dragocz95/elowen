@@ -1,26 +1,17 @@
 import { describe, it, expect, vi } from 'vitest';
 import { render, screen } from '@testing-library/react';
 import { DataTable } from '../../../components/ui/DataTable';
-import { subagentBranchRows, type SubagentBranchLabels } from '../../../components/brain/SubagentBranch';
+import { subagentBranchLabels, subagentBranchRows } from '../../../components/brain/SubagentBranch';
+import { en } from '../../../lib/i18n/dictionaries/en';
 import type { ConversationSubagentNode } from '../../../lib/types';
 
 /** The row factory both registers splice into the drill-down table. What is pinned here is the ROW: the
  *  branch is no longer a collapsed group inside a conversation list, so the factory renders nodes and
- *  nothing else, and every node has to read as one line. */
-const labels: SubagentBranchLabels = {
-  expand: 'What {name} delegated',
-  workflow: 'Workflow',
-  unavailable: 'Transcript no longer available',
-  truncated: 'More rows than fit',
-  status: {
-    pending: 'Waiting',
-    running: 'Working',
-    blocked: 'Needs you',
-    done: 'Completed',
-    error: 'Failed',
-    interrupted: 'Interrupted',
-  },
-};
+ *  nothing else, and every node has to read as one line.
+ *
+ *  The labels go through the same mapping both registers use, over the real dictionary, so the strings
+ *  asserted below are the ones a reader is actually shown. */
+const labels = subagentBranchLabels(en.subagentBranch);
 
 const node = (over: Partial<ConversationSubagentNode> = {}): ConversationSubagentNode => ({
   kind: 'delegate',
@@ -40,10 +31,8 @@ function renderTree(nodes: ConversationSubagentNode[], openKeys: ReadonlySet<str
     nodes,
     labels,
     rowDomId: (suffix) => `tree-${suffix}`,
-    indent: 0,
     openKeys,
     onToggleNode,
-    forceOpen: false,
     onOpenSession,
   });
   const utils = render(<DataTable ariaLabel="Sub-agents" columns="minmax(0,1fr)">{rows}</DataTable>);
@@ -59,7 +48,6 @@ describe('subagentBranchRows', () => {
     renderTree([node()]);
 
     expect(screen.getByRole('button', { name: 'Audit auth' })).toBeInTheDocument();
-    expect(document.querySelector('[data-tree-row="subagents"]')).toBeNull();
     expect(screen.queryByRole('button', { name: /Sub-agent runs under/ })).toBeNull();
   });
 

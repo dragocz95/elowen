@@ -23,7 +23,7 @@ import { useConversationJobLinks } from '../../lib/queries';
 import { useMeasuredPageSize } from '../../lib/useMeasuredPageSize';
 import { ScheduledJobLink, scheduledJobName } from '../../components/brain/ScheduledJobLink';
 import { TreeGuide } from '../../components/brain/TreeGuide';
-import { subagentBranchRows, type SubagentBranchLabels } from '../../components/brain/SubagentBranch';
+import { subagentBranchLabels, subagentBranchRows } from '../../components/brain/SubagentBranch';
 import type { BrainSearchHit, BrainSessionInfo, ConversationJobLink } from '../../lib/types';
 import { useBrainChat } from './BrainChatProvider';
 import { brainModelLabel, brainModelQualifiedLabel } from '../../lib/modelProvider';
@@ -360,20 +360,7 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
   const jobsFailed = jobLinks.data?.status === 'error' || jobLinks.isError;
   const subagents = jobLinks.data?.subagents ?? EMPTY_BRANCHES;
   const subagentsFailed = jobLinks.data?.subagentStatus === 'error';
-  const subagentLabels: SubagentBranchLabels = {
-    expand: t.subagentBranch.expand,
-    workflow: t.subagentBranch.workflow,
-    unavailable: t.subagentBranch.unavailable,
-    truncated: t.subagentBranch.truncated,
-    status: {
-      pending: t.subagentBranch.statusPending,
-      running: t.subagentBranch.statusRunning,
-      blocked: t.subagentBranch.statusBlocked,
-      done: t.subagentBranch.statusDone,
-      error: t.subagentBranch.statusError,
-      interrupted: t.subagentBranch.statusInterrupted,
-    },
-  };
+  const subagentLabels = subagentBranchLabels(t.subagentBranch);
 
   const sessionList = useMemo(() => sessions.data ?? [], [sessions.data]);
   const sessionById = useMemo(() => new Map(sessionList.map((s) => [s.id, s])), [sessionList]);
@@ -626,10 +613,8 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
       nodes: subagents[target.id] ?? [],
       labels: subagentLabels,
       rowDomId: (suffix) => `${uid}-${encodeURIComponent(target.id)}-${suffix}`,
-      indent: 0,
       openKeys: openAgentNodes,
       onToggleNode: (key) => toggleIds(setOpenAgentNodes, key),
-      forceOpen: false,
       onOpenSession: (sessionId) => { dismiss(); openBrainSession(sessionId, false); },
     });
     return (

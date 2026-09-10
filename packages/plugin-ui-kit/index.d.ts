@@ -128,6 +128,49 @@ export interface ConfirmDialogProps {
   onClose: () => void;
 }
 
+/** The durable operation row a progress window renders, as the daemon publishes it. List projections
+ *  omit `logTail`; the single-operation read and the live `environment-operation` frame carry it. */
+export interface EnvironmentOperationView {
+  id: string;
+  projectId: number;
+  generation: number;
+  action: { kind: string };
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  error: string | null;
+  /** The declared step list, in order. Each entry is a stable id the host localizes. */
+  steps: string[];
+  stepIndex: number;
+  stepTotal: number;
+  stepLabel: string | null;
+  percent: number | null;
+  logTail?: string[];
+}
+
+/** Public props of `ElowenUiRuntime.components.OperationProgressDialog`: one installer-style window over
+ *  a durable environment operation, rendered as `Modal` content by the host.
+ *
+ *  Dismissing it while the work runs HIDES it — the operation outlives the tab that started it — so
+ *  `onClose` reports whether it was still running and the call site decides whether to keep following. */
+export interface OperationProgressDialogProps {
+  open: boolean;
+  /** What the person asked for, in their words. The dialog adds the step, never the intent. */
+  title: string;
+  operation: EnvironmentOperationView | null;
+  logTail?: string[];
+  /** A transport failure of the read that follows the operation, distinct from a failed operation. */
+  loadError?: string | null;
+  /** Run the same intent again. Omitted, the retry action is not offered. */
+  onRetry?: () => void;
+  /** The stale-environment repair. Offered only while `recreatable` holds. */
+  onRecreate?: () => void;
+  recreatable?: boolean;
+  onClose: (info: { running: boolean }) => void;
+  /** Fired once when a succeeded operation closes itself. */
+  onSettled?: () => void;
+  /** How long a success stays on screen before it closes itself. */
+  successDelayMs?: number;
+}
+
 /** Project metadata exposed to a contextual plugin panel. The Project remains core-owned; a panel uses
  *  this identity to address only its own project-scoped API data. */
 export interface PluginUiProject {

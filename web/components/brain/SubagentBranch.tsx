@@ -4,6 +4,7 @@ import { AlertCircle, CheckCircle2, ChevronRight, Circle, CircleDashed, PauseCir
 import { Spinner } from '../ui/states';
 import { DataTableCell, DataTableRow } from '../ui/DataTable';
 import { TreeGuide } from './TreeGuide';
+import type { LocaleDict } from '../../lib/i18n/types';
 import type { ConversationSubagentNode, ConversationSubagentStatus } from '../../lib/types';
 
 /** Every string the tree renders, handed in by the panel that owns the dictionary. Passing them keeps
@@ -22,6 +23,23 @@ export interface SubagentBranchLabels {
   /** One word per status, used as the glyph's accessible label. */
   status: Record<ConversationSubagentStatus, string>;
 }
+
+/** The dictionary section behind those labels. Both registers draw this tree and both used to spell the
+ *  mapping out themselves, which is one place too many for a list of statuses to fall out of step. */
+export const subagentBranchLabels = (t: LocaleDict['subagentBranch']): SubagentBranchLabels => ({
+  expand: t.expand,
+  workflow: t.workflow,
+  unavailable: t.unavailable,
+  truncated: t.truncated,
+  status: {
+    pending: t.statusPending,
+    running: t.statusRunning,
+    blocked: t.statusBlocked,
+    done: t.statusDone,
+    error: t.statusError,
+    interrupted: t.statusInterrupted,
+  },
+});
 
 /** How far one nesting level inside the tree shifts a row, and how deep the shift goes. Past the cap
  *  the rows are still nested — still only reachable through their parent's disclosure — but a deep chain
@@ -57,14 +75,9 @@ export interface SubagentBranchOptions {
   /** Builds a DOM id for one row of this tree. The panel owns the prefix, because a register can be
    *  mounted twice on one page and two rows may not share an id. */
   rowDomId: (suffix: string) => string;
-  /** Where the rows start, so a host that draws the tree beside other content can align it. */
-  indent: number;
   /** Which rows the reader has opened, by node key. */
   openKeys: ReadonlySet<string>;
   onToggleNode: (key: string) => void;
-  /** Show every level regardless of `openKeys` — for a host that has already decided the whole tree is
-   *  what the reader asked to see. */
-  forceOpen: boolean;
   /** Follow a row into its transcript. The caller decides what "open" means for its surface; both
    *  registers open a sub-agent READ-ONLY. */
   onOpenSession: (sessionId: string) => void;
@@ -79,16 +92,15 @@ export interface SubagentBranchOptions {
  *  node and a purged child only expand or say why they cannot be followed. There is deliberately no
  *  rename, delete or continue affordance: this is navigation into what already ran. */
 export function subagentBranchRows(opts: SubagentBranchOptions): ReactNode[] {
-  const { conversation, nodes, labels, rowDomId, indent, openKeys, onToggleNode, forceOpen, onOpenSession } = opts;
+  const { conversation, nodes, labels, rowDomId, openKeys, onToggleNode, onOpenSession } = opts;
   if (nodes.length === 0) return [];
 
   const nodeDomId = (key: string): string => rowDomId(`agent-${encodeURIComponent(key)}`);
-  const nodeOpen = (key: string): boolean => forceOpen || openKeys.has(key);
   const rows: ReactNode[] = [];
 
   const renderNode = (node: ConversationSubagentNode, depth: number, last: boolean): void => {
     const expandable = node.children.length > 0;
-    const expanded = expandable && nodeOpen(node.key);
+    const expanded = expandable && openKeys.has(node.key);
     const followable = !!node.childSessionId;
     const guides = Math.min(depth, MAX_BRANCH_INDENT);
     rows.push(
@@ -101,7 +113,7 @@ export function subagentBranchRows(opts: SubagentBranchOptions): ReactNode[] {
         <DataTableCell
           lines="auto"
           className="flex items-center gap-1.5 self-stretch"
-          style={{ gridColumn: '1 / -1', paddingInlineStart: indent }}
+          style={{ gridColumn: '1 / -1' }}
         >
           {/* The trunk of the branch this row hangs in, one segment per level, then its own connector. */}
           {Array.from({ length: guides + 1 }, (_unused, level) => (

@@ -91,17 +91,20 @@ describe('NewConversationProjectModal', () => {
     expect(cardOf(/kolin/)).toHaveAttribute('tabindex', '-1');
   });
 
-  // Nothing is reported for a conversation whose status has not landed yet; the first destination is
-  // then the one under the hand, so the dialog is never in a state where Enter means nothing.
-  it('falls back to the first destination when no target is reported', async () => {
+  // Nothing is reported for a conversation whose status has not landed yet. The first destination is then
+  // the one under the hand, so the dialog is never in a state where a keystroke means nothing — but it is
+  // not CHOSEN, because a checked card claims to be where this conversation already runs.
+  it('puts the hand on the first destination without claiming it is the target', async () => {
     mount();
-    await waitFor(() => expect(cardOf(/kolin/)).toHaveAttribute('aria-checked', 'true'));
+    const first = await screen.findByRole('radio', { name: /kolin/ });
+    expect(first).toHaveAttribute('tabindex', '0');
+    expect(cards().every((card) => card.getAttribute('aria-checked') === 'false')).toBe(true);
   });
 
   it('walks the cards with the arrow keys and wraps at both ends', async () => {
     mount();
     const list = await screen.findByTestId('new-conversation-projects');
-    await waitFor(() => expect(cardOf(/kolin/)).toHaveAttribute('aria-checked', 'true'));
+    await screen.findByRole('radio', { name: /kolin/ });
 
     fireEvent.keyDown(list, { key: 'ArrowRight' });
     expect(cardOf(/elowen/)).toHaveAttribute('aria-checked', 'true');
@@ -172,6 +175,43 @@ describe('NewConversationProjectModal', () => {
     expect(await screen.findByText(/conversation still has active work/)).toBeInTheDocument();
     expect(chat.closeProjectChoice).not.toHaveBeenCalled();
     expect(screen.getByRole('dialog')).toBeInTheDocument();
+  });
+
+  // A cold environment answers the switch with the operation that brings it up. Dropping it is exactly
+  // the silent spinner this surface exists to remove: the person lands in the composer with no signal
+  // that the project they picked is still being built.
+  it('follows the environment start the chosen project implies', async () => {
+    server.use(
+      http.post('*/api/brain/execution', () => HttpResponse.json({ projectRef: { kind: 'managed', projectId: 2 }, workDir: '/workspace', operationId: 'env_op_1' })),
+      http.get('*/api/plugins/sandbox/api/environments/operation', () => HttpResponse.json({
+        id: 'env_op_1', requestId: 'r', projectId: 2, accountUserId: 1, generation: 1,
+        action: { kind: 'start' }, status: 'running', error: null,
+        steps: ['image', 'storage', 'container', 'boot', 'initialize'], stepIndex: 2, stepTotal: 5,
+        stepLabel: 'container', percent: 40,
+      })),
+    );
+    mount();
+    fireEvent.click(await screen.findByRole('radio', { name: /elowen/ }));
+    expect(await screen.findByTestId('operation-progress-dialog')).toBeInTheDocument();
+    expect(await screen.findByText('Creating the container')).toBeInTheDocument();
+    expect(chat.closeProjectChoice).not.toHaveBeenCalled();
+  });
+
+  // A destination list that could not be read is not an empty one: "no project is available" sends the
+  // person looking for a project they already have.
+  it('says a failed project read out loud instead of reporting no projects', async () => {
+    server.use(http.get('*/api/projects', () => HttpResponse.json({ error: 'boom' }, { status: 500 })));
+    mount();
+    expect(await screen.findByRole('button', { name: 'Retry' })).toBeInTheDocument();
+    expect(screen.queryByText(/no project is available/i)).toBeNull();
+  });
+
+  // Without a conversation there is nothing to move, so the cards say so instead of accepting a click
+  // that silently does nothing.
+  it('offers no choice while no conversation is live', async () => {
+    chat.value.activeSessionId = null;
+    mount();
+    await waitFor(() => expect(cardOf(/kolin/)).toBeDisabled());
   });
 
   // A phone reads the destinations as a list down the screen and takes the whole viewport; anywhere with

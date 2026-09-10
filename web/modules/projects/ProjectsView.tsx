@@ -3,7 +3,6 @@ import { useDeferredValue, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ElowenApiError, apiErrorMessage, elowenClient } from '../../lib/elowenClient';
 import { SelectMenu } from '../../components/ui/SelectMenu';
-import { managedProjectStrings } from './managedProjectStrings';
 import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, MoreHorizontal, Code2, Copy, Pencil, Trash2, ImageIcon, Search, FileText } from 'lucide-react';
 import { useProjects, useProjectSummaries, useProjectGit, usePluginPresent, useMe } from '../../lib/queries';
 import { useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
@@ -34,7 +33,7 @@ import { copyText } from '../../lib/clipboard';
 import { Avatar } from '../../components/ui/Avatar';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
 import { OperationProgressDialog } from '../../components/ui/OperationProgressDialog';
-import { useEnvironmentOperation } from '../../lib/useEnvironmentOperation';
+import { useEnvironmentOperationWindow } from '../../lib/useEnvironmentOperation';
 import { requestEnvironmentAction } from '../../lib/environmentActions';
 import { usePluginProjectRows, type PluginProjectRowStatus, type PluginProjectRowTone } from '../../lib/pluginProjectRows';
 import type { ProjectSummary } from '../../lib/types';
@@ -140,16 +139,16 @@ export function ProjectsView() {
   const git = useProjectGit(selectedId);
 
   const { toast } = useToast();
-  const { t, locale } = useTranslation();
-  const s = managedProjectStrings[locale];
+  const { t } = useTranslation();
+  const s = t.projects;
   const createProject = useCreateProject();
   const updateProject = useUpdateProject();
   const removeProject = useRemoveProject();
   // Host removal detaches metadata; managed removal requests durable environment teardown.
   const [removing, setRemoving] = useState<Project | null>(null);
-  const [deleting, setDeleting] = useState<{ operationId: string; projectId: number } | null>(null);
+  const deletion = useEnvironmentOperationWindow();
   // The start a managed project's creation implies, followed in the same shared progress window.
-  const [starting, setStarting] = useState<{ operationId: string; projectId: number } | null>(null);
+  const creationStart = useEnvironmentOperationWindow();
   const removePendingRef = useRef(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
 
@@ -199,6 +198,7 @@ export function ProjectsView() {
     // the register that shows the project, and they belong to the row for the same reason removal does:
     // one place per decision. The items are the plugin's, in both menus, enabled by the state it reports.
     ...(pluginRowActions(p).length > 0 ? [pluginRowActions(p).map((action): ActionMenuItem => ({
+      id: `${action.plugin}:${action.id}`,
       label: action.label,
       icon: pluginLucideIcon(action.icon),
       ...(action.disabled ? { disabled: true } : {}),
@@ -230,7 +230,7 @@ export function ProjectsView() {
           toast(t.projects.created);
           // Creating a managed project starts its environment, so the window that follows that start
           // opens here rather than leaving the person to press start on a project they just made.
-          if (created.environmentOperationId) setStarting({ operationId: created.environmentOperationId, projectId: created.id });
+          if (created.environmentOperationId) creationStart.follow(created.environmentOperationId, created.id);
           // The picker reads through the optional editor's project-file routes, which serve a managed
           // project from its own guest filesystem, so the offer does not depend on where it runs.
           if (editorEnabled) setIconFor(created);
@@ -251,9 +251,6 @@ export function ProjectsView() {
     );
   }
 
-  const deletion = useEnvironmentOperation(deleting?.operationId ?? null, deleting?.projectId);
-  const creationStart = useEnvironmentOperation(starting?.operationId ?? null, starting?.projectId);
-
   async function handleRemove(): Promise<void> {
     const target = removing;
     if (!target || removePendingRef.current) return;
@@ -267,7 +264,7 @@ export function ProjectsView() {
       // A managed project's deletion is a durable operation, not a request that finished. Following it
       // is the difference between "deleting…" as a toast that never updates and a window that says which
       // of the six teardown steps is running and stops on the one that failed.
-      if ('operation' in result) setDeleting({ operationId: result.operation.id, projectId: id });
+      if ('operation' in result) deletion.follow(result.operation.id, id);
       else toast(t.projects.removed);
     } catch (e) {
       toast(apiErrorMessage(e), 'error');
@@ -610,37 +607,37 @@ export function ProjectsView() {
       />
 
       <OperationProgressDialog
-        open={deleting !== null}
+        open={deletion.open && deletion.pending !== null}
         title={t.operationProgress.actions.delete}
         operation={deletion.operation}
         logTail={deletion.logTail}
         loadError={deletion.loadError}
         onRetry={() => {
-          const id = deleting?.projectId;
+          const id = deletion.pending?.projectId;
           if (id === undefined) return;
           void requestEnvironmentAction(id, { kind: 'delete' })
-            .then((operation) => setDeleting({ operationId: operation.id, projectId: id }))
+            .then((operation) => deletion.follow(operation.id, id))
             .catch((error) => toast(apiErrorMessage(error), 'error'));
         }}
-        onSettled={() => { setSelectedId((current) => current === deleting?.projectId ? null : current); toast(t.projects.removed); }}
-        onClose={() => setDeleting(null)}
+        onSettled={() => { const id = deletion.pending?.projectId; setSelectedId((current) => current === id ? null : current); toast(t.projects.removed); }}
+        onClose={deletion.forget}
       />
 
       <OperationProgressDialog
-        open={starting !== null}
+        open={creationStart.open && creationStart.pending !== null}
         title={t.operationProgress.actions.start}
         operation={creationStart.operation}
         logTail={creationStart.logTail}
         loadError={creationStart.loadError}
         onRetry={() => {
-          const id = starting?.projectId;
+          const id = creationStart.pending?.projectId;
           if (id === undefined) return;
           void requestEnvironmentAction(id, { kind: 'start' })
-            .then((operation) => setStarting({ operationId: operation.id, projectId: id }))
+            .then((operation) => creationStart.follow(operation.id, id))
             .catch((error) => toast(apiErrorMessage(error), 'error'));
         }}
         onSettled={() => { void qc.invalidateQueries({ queryKey: ['projects'] }); }}
-        onClose={() => setStarting(null)}
+        onClose={creationStart.forget}
       />
 
       {/* The contributing bundles run here, and the dialogs their own actions raise render with them. */}

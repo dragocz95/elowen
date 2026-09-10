@@ -2,41 +2,41 @@
 import { useEffect, useRef, useState } from 'react';
 import { ChevronDown } from 'lucide-react';
 import { useTranslation } from '../../lib/i18n';
-import { useMe, useProjects } from '../../lib/queries';
+import { useProjects } from '../../lib/queries';
 import { apiErrorMessage, elowenClient } from '../../lib/elowenClient';
-import type { ProjectExecutionRef } from '../../lib/types';
+import { executionRefKey, executionRefOf, type ProjectExecutionRef } from '../../lib/types';
 import { useToast } from '../../components/ui/Toast';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
-import { managedProjectStrings } from '../projects/managedProjectStrings';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '../../components/ui/shadcn/dropdown-menu';
 import { OperationProgressDialog } from '../../components/ui/OperationProgressDialog';
-import { useEnvironmentOperation } from '../../lib/useEnvironmentOperation';
+import { useEnvironmentOperationWindow } from '../../lib/useEnvironmentOperation';
 import { recreatable, requestEnvironmentAction } from '../../lib/environmentActions';
 import { useBrainChat } from './BrainChatProvider';
 
 /** Selection comes from durable execution identity, never from cwd or conversation filing. */
 export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compact' }) {
-  const { t, locale } = useTranslation();
-  const s = managedProjectStrings[locale];
+  const { t } = useTranslation();
+  const s = t.projects;
   const { toast } = useToast();
   const { telemetry, activeSessionId } = useBrainChat();
   const projects = useProjects();
-  const me = useMe();
   const [open, setOpen] = useState(false);
   const [moving, setMoving] = useState(false);
   const [moveStatus, setMoveStatus] = useState<SaveStatus>('idle');
   const [retryTarget, setRetryTarget] = useState<ProjectExecutionRef | null>(null);
   const [confirmed, setConfirmed] = useState<{ session: string; target: ProjectExecutionRef } | null>(null);
-  // The environment the switch asked for, followed until it settles. The id outlives the dialog on
-  // purpose: hiding the window leaves the operation running and the chip below brings it back.
-  const [pending, setPending] = useState<{ operationId: string; projectId: number } | null>(null);
-  const [progressOpen, setProgressOpen] = useState(false);
+  // The environment the switch asked for, followed until it settles.
+  const environment = useEnvironmentOperationWindow();
+  const { forget } = environment;
   const sessionRef = useRef(activeSessionId);
   sessionRef.current = activeSessionId;
   const reported = telemetry.projectRef;
   useEffect(() => { setConfirmed(null); setMoveStatus('idle'); setRetryTarget(null); }, [activeSessionId, reported?.kind, reported?.projectId]);
+  // Another conversation's environment is not this one's business: what the picker follows belongs to the
+  // switch that started it, and only the reported target moves while that switch is still coming up.
+  useEffect(() => { forget(); }, [activeSessionId, forget]);
   const target = confirmed?.session === activeSessionId ? confirmed.target : reported;
   // A host project is a project: whoever the API offers it to may work in it, and the daemon confines
   // the turn to that project's root exactly as it confines a managed one to its environment.
@@ -46,13 +46,12 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
   // behind it has no name to show, and it is a target that WAS chosen: the label says there is no
   // project, the same thing the new-conversation modal offers, rather than claiming nothing is selected.
   const label = current?.slug ?? t.brainChat.projectPickerHost;
-  const ready = Boolean(activeSessionId) && !projects.isLoading && !projects.isError && !me.isLoading && !me.isError;
-  const progress = useEnvironmentOperation(pending?.operationId ?? null, pending?.projectId);
-  const operationRunning = progress.operation ? ['pending', 'running'].includes(progress.operation.status) : Boolean(pending);
+  const ready = Boolean(activeSessionId) && !projects.isLoading && !projects.isError;
   const dispatch = (action: 'start' | 'recreate') => {
-    if (!pending) return;
-    void requestEnvironmentAction(pending.projectId, { kind: action })
-      .then((operation) => setPending({ operationId: operation.id, projectId: pending.projectId }))
+    const projectId = environment.pending?.projectId;
+    if (projectId === undefined) return;
+    void requestEnvironmentAction(projectId, { kind: action })
+      .then((operation) => environment.follow(operation.id, projectId))
       .catch((error) => toast(apiErrorMessage(error) || t.brainChat.projectPickerFailed, 'error'));
   };
 
@@ -67,10 +66,7 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
       // The switch itself is already done — the daemon answered before the container work started. What
       // comes back is the operation that brings the environment up, and following it is what replaces
       // the spinner that used to sit on the save indicator until the container happened to appear.
-      if (response.operationId && next.projectId !== undefined) {
-        setPending({ operationId: response.operationId, projectId: next.projectId });
-        setProgressOpen(true);
-      }
+      if (response.operationId && next.projectId !== undefined) environment.follow(response.operationId, next.projectId);
     } catch (error) {
       const message = apiErrorMessage(error) || t.brainChat.projectPickerFailed;
       if (sessionRef.current === session) { setMoveStatus('error'); toast(message, 'error'); }
@@ -99,11 +95,11 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
             produces a `host` target and travels the same authorized execution endpoint a managed one does.
             Standalone host mode is not offered as a destination of its own; host administration keeps its
             home in Projects, the CLI and the API. */}
-        <DropdownMenuRadioGroup value={target ? `${target.kind}:${target.projectId ?? ''}` : ''} onValueChange={(value) => {
-          const project = items.find((p) => `${p.executionKind ?? 'host'}:${p.id}` === value);
-          if (project) select({ kind: project.executionKind === 'managed' ? 'managed' : 'host', projectId: project.id });
+        <DropdownMenuRadioGroup value={target ? executionRefKey(target) : ''} onValueChange={(value) => {
+          const project = items.find((p) => executionRefKey(executionRefOf(p)) === value);
+          if (project) select(executionRefOf(project));
         }}>
-          {items.map((p) => <DropdownMenuRadioItem key={p.id} value={`${p.executionKind ?? 'host'}:${p.id}`} className="gap-2 text-xs">
+          {items.map((p) => <DropdownMenuRadioItem key={p.id} value={executionRefKey(executionRefOf(p))} className="gap-2 text-xs">
             <ProjectIcon project={p} size={14} /><span className="min-w-0 flex-1 truncate">{p.slug}</span>
           </DropdownMenuRadioItem>)}
         </DropdownMenuRadioGroup>
@@ -111,23 +107,23 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
     </DropdownMenu>
     <AutoSaveStatus status={moveStatus} onRetry={() => { if (retryTarget && !moving) select(retryTarget); }} />
     {/* Hiding the window does not stop the environment coming up, so the chip is the way back into it. */}
-    {pending && !progressOpen ? (
-      <button type="button" data-testid="chat-environment-chip" onClick={() => setProgressOpen(true)}
+    {environment.pending && !environment.open ? (
+      <button type="button" data-testid="chat-environment-chip" onClick={environment.show}
         className="ml-1 rounded-md border border-border px-1.5 py-0.5 text-tiny text-muted-foreground hover:bg-accent">
         {t.operationProgress.reopen}
       </button>
     ) : null}
     <OperationProgressDialog
-      open={progressOpen && pending !== null}
-      title={t.operationProgress.actions[(progress.operation?.action.kind ?? 'start') as keyof typeof t.operationProgress.actions] ?? t.operationProgress.actions.start}
-      operation={progress.operation}
-      logTail={progress.logTail}
-      loadError={progress.loadError}
+      open={environment.open && environment.pending !== null}
+      title={t.operationProgress.actions[(environment.operation?.action.kind ?? 'start') as keyof typeof t.operationProgress.actions] ?? t.operationProgress.actions.start}
+      operation={environment.operation}
+      logTail={environment.logTail}
+      loadError={environment.loadError}
       onRetry={() => dispatch('start')}
       onRecreate={() => dispatch('recreate')}
-      recreatable={recreatable(progress.operation)}
-      onSettled={() => setPending(null)}
-      onClose={({ running }) => { setProgressOpen(false); if (!running && !operationRunning) setPending(null); }}
+      recreatable={recreatable(environment.operation)}
+      onSettled={environment.forget}
+      onClose={({ running }) => { if (running || environment.running) environment.hide(); else environment.forget(); }}
     />
   </div>;
 }
