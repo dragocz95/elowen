@@ -218,6 +218,26 @@ describe('durable managed environment lifecycle', () => {
     expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_runtime_operations WHERE request_key LIKE 'autostart:%'").get()).toEqual({ n: 0 });
   });
 
+  it('lets explicit stop and delete replace a pending automatic recovery', async () => {
+    for (const action of ['stop', 'delete'] as const) {
+      const { runtime, db } = setup();
+      await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+      db.prepare(`INSERT INTO p_sandbox_runtime_operations
+        (id,kind,resource_id,user_id,request_key,generation,action_json,status,checkpoint_json)
+        VALUES(?,?,?,?,?,?,?,'pending',?)`).run(`env_auto_${action}`, 'project', '7', 1, `autostart:1:1:${action}`, 1,
+          JSON.stringify({ kind: 'start' }), JSON.stringify({ autoRecovery: { attempt: 1, queuedAt: Date.now() } }));
+
+      const explicit = await runtime.requestEnvironment({ ...input, requestId: `explicit-${action}`, action: { kind: action } });
+
+      expect(explicit.status).toBe('pending');
+      expect(db.prepare('SELECT status,error FROM p_sandbox_runtime_operations WHERE id=?').get(`env_auto_${action}`)).toEqual({
+        status: 'failed', error: `Superseded by explicit ${action}`,
+      });
+      expect(db.prepare("SELECT request_key FROM p_sandbox_runtime_operations WHERE status='pending' AND kind='project' AND resource_id='7'").get())
+        .toEqual({ request_key: `explicit-${action}` });
+    }
+  });
+
   it('does not duplicate an active lifecycle operation during runtime recovery', async () => {
     const { runtime, fork, containers, db } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();

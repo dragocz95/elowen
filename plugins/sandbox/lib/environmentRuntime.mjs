@@ -315,7 +315,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       if (kind === 'project' && !stores().userProjects.canManage(input.accountUserId, Number(id))) throw error('project_forbidden', 'Project access was revoked', 403);
       const row = store.get(kind, id);
       if (!row) throw error('environment_missing', 'Environment metadata changed');
-      const active = store.active(kind, id);
+      let active = store.active(kind, id);
       const prior = input.requestId ? store.prior(kind, id, input.accountUserId, input.requestId) : null;
       if (prior && !same(prior.action, requested)) throw error('request_conflict', 'Idempotency key belongs to another action');
       if (prior && prior.status !== 'failed') return operationView(prior);
@@ -326,6 +326,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       if (prior) {
         if (!active) { prior.status = 'pending'; prior.error = null; store.saveOperation(prior); }
         return operationView(prior);
+      }
+      if (active?.status === 'pending' && active.checkpoint.autoRecovery && ['stop', 'delete'].includes(requested.kind)) {
+        active.status = 'failed'; active.error = `Superseded by explicit ${requested.kind}`; store.saveOperation(active); active = null;
       }
       if (active) {
         if (!input.requestId && active.user_id === input.accountUserId && same(active.action, requested)) return operationView(active);
