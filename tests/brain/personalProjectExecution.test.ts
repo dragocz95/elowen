@@ -37,8 +37,10 @@ function setup() {
   const store = new BrainStore(db);
   const projects = new ProjectStore(db);
   const users = new UserStore(db);
-  users.create('admin', 'password');
+  const admin = users.create('admin', 'password');
   const user = users.create('member', 'password');
+  // Managed projects are created through the one entry point, which asks for the creation grant.
+  users.setProjectPermissions(admin.id, user.id, { canCreateProjects: true });
   const userProjects = new UserProjectStore(db);
   const policy = (id: number) => resolvePolicy({ projects, userProjects }, id);
   const resourceLoader = vi.fn(() => undefined);
@@ -121,7 +123,7 @@ describe('new personal conversation execution defaults', () => {
 
   it('adds only the default membership without relaxing the caller policy', async () => {
     const h = setup();
-    const other = h.projects.createManaged({ slug: 'other', creatorUserId: h.user.id });
+    const other = h.projects.createForUser(h.user.id, { slug: 'other' });
     const restricted = { ...h.policy(h.user.id), canExecuteHost: () => false, allowedProjectIds: new Set<number>() };
     const live = await h.spawn('brain-narrow', undefined, { policy: restricted });
     expect(live.policy.allowedProjectIds).toEqual(new Set([h.users.get(h.user.id)?.default_project_id]));
@@ -146,7 +148,7 @@ describe('new personal conversation execution defaults', () => {
   // job filed against a managed project ran its turns outside the project it names.
   it('opens a scheduled conversation in the project the job was filed against', async () => {
     const h = setup();
-    const project = h.projects.createManaged({ slug: 'job-project', creatorUserId: h.user.id });
+    const project = h.projects.createForUser(h.user.id, { slug: 'job-project' });
     h.userProjects.assign(h.user.id, project.id);
     const live = await h.spawn(`brain-${h.user.id}-job-abc`, undefined, { scheduled: true, projectRef: { kind: 'managed', projectId: project.id } });
     expect(h.store.getProjectExecution(live.sessionId)).toEqual({ kind: 'managed', projectId: project.id });
@@ -188,12 +190,16 @@ describe('new personal conversation execution defaults', () => {
 
   it('keeps an existing selected managed project rather than replacing it with a default', async () => {
     const h = setup();
-    const project = h.projects.createManaged({ slug: 'chosen', creatorUserId: h.user.id });
+    const project = h.projects.createForUser(h.user.id, { slug: 'chosen' });
+    // Creating a project provisions the account's default alongside it, so the chosen one is deliberately
+    // NOT the default: the spawn must keep it and leave the default where it is.
+    const provisionedDefault = h.users.get(h.user.id)?.default_project_id;
+    expect(provisionedDefault).not.toBe(project.id);
     h.store.createSession({ id: 'brain-selected', userId: h.user.id, model: 'gpt-5', provider: 'test' });
     h.store.setProjectExecution('brain-selected', h.user.id, { kind: 'managed', projectId: project.id });
     const live = await h.spawn('brain-selected');
     expect(h.store.getProjectExecution(live.sessionId)).toEqual({ kind: 'managed', projectId: project.id });
-    expect(h.users.get(h.user.id)?.default_project_id).toBeNull();
+    expect(h.users.get(h.user.id)?.default_project_id).toBe(provisionedDefault);
     expect(live.workDir).toBe('/chosen');
     h.lifecycle.stampWorkDir('brain-selected', h.root, h.policy(h.user.id));
     expect(h.store.getSession('brain-selected')?.work_dir).toBe('');

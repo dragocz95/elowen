@@ -24,9 +24,18 @@ export class ProjectStore {
     if (!project) throw new Error('created project missing');
     return project;
   }
-  createManaged(p: { slug: string; creatorUserId: number; notes?: string }): Project {
+  /** The one place a managed project row is written, and therefore the one place its ceiling is enforced:
+   *  the limit is counted under the same write lock as the insert it bounds. The account's own default is
+   *  created through here too, so a limit an administrator lowered below the current count holds for it
+   *  as well. Administrators are unbounded. */
+  private createManaged(p: { slug: string; creatorUserId: number; notes?: string }): Project {
     return withWriteLock(this.db, () => {
-      if (!this.db.prepare('SELECT 1 FROM users WHERE id = ?').get(p.creatorUserId)) throw new Error('account not found');
+      const user = this.db.prepare('SELECT project_limit FROM users WHERE id = ?').get(p.creatorUserId) as { project_limit: number } | undefined;
+      if (!user) throw new Error('account not found');
+      if (!readIsAdmin(this.db, p.creatorUserId)) {
+        const { count } = this.db.prepare("SELECT COUNT(*) AS count FROM projects WHERE creator_user_id = ? AND execution_kind = 'managed'").get(p.creatorUserId) as { count: number };
+        if (count >= user.project_limit) throw new Error('project creation limit reached');
+      }
       const info = this.db.prepare("INSERT INTO projects (slug, path, notes, execution_kind, creator_user_id) VALUES (?, '', ?, 'managed', ?)")
         .run(p.slug, p.notes ?? '', p.creatorUserId);
       const id = Number(info.lastInsertRowid);
@@ -34,16 +43,15 @@ export class ProjectStore {
       return this.get(id)!;
     });
   }
-  /** The grant and limit are read under the same write lock as creation. */
+  /** The grant is read under the same write lock as creation; the limit belongs to {@link createManaged},
+   *  which bounds every managed row including the default this may have to provision first. */
   createForUser(userId: number, p: { slug: string; notes?: string }): Project {
     return withWriteLock(this.db, () => {
-      const user = this.db.prepare('SELECT can_create_projects, project_limit FROM users WHERE id = ?').get(userId) as { can_create_projects: number; project_limit: number } | undefined;
+      const user = this.db.prepare('SELECT can_create_projects FROM users WHERE id = ?').get(userId) as { can_create_projects: number } | undefined;
       if (!user) throw new Error('account not found');
       if (!readIsAdmin(this.db, userId)) {
         if (!user.can_create_projects) throw new Error('project creation is not permitted');
         this.ensureDefault(userId);
-        const { count } = this.db.prepare("SELECT COUNT(*) AS count FROM projects WHERE creator_user_id = ? AND execution_kind = 'managed'").get(userId) as { count: number };
-        if (count >= user.project_limit) throw new Error('project creation limit reached');
       }
       return this.createManaged({ ...p, creatorUserId: userId });
     });
@@ -51,12 +59,10 @@ export class ProjectStore {
   /** Metadata only. Existing accounts acquire a default lazily, without starting a container. */
   ensureDefault(userId: number): Project {
     return withWriteLock(this.db, () => {
-      const user = this.db.prepare('SELECT default_project_id, project_limit FROM users WHERE id = ?').get(userId) as { default_project_id: number | null; project_limit: number } | undefined;
+      const user = this.db.prepare('SELECT default_project_id FROM users WHERE id = ?').get(userId) as { default_project_id: number | null } | undefined;
       if (!user) throw new Error('account not found');
       const existing = user.default_project_id === null ? null : this.get(user.default_project_id);
       if (existing?.lifecycle === 'active' && this.db.prepare('SELECT 1 FROM user_projects WHERE user_id = ? AND project_id = ?').get(userId, existing.id)) return existing;
-      const { count } = this.db.prepare("SELECT COUNT(*) AS count FROM projects WHERE creator_user_id = ? AND execution_kind = 'managed'").get(userId) as { count: number };
-      if (!readIsAdmin(this.db, userId) && count >= user.project_limit) throw new Error('project creation limit reached');
       const project = this.createManaged({ slug: `personal-${userId}-${randomUUID().slice(0, 8)}`, creatorUserId: userId });
       this.db.prepare('UPDATE users SET default_project_id = ? WHERE id = ?').run(project.id, userId);
       return project;

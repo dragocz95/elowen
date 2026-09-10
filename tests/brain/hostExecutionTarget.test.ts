@@ -141,7 +141,7 @@ describe('the execution-change marker', () => {
   it('names the managed project rather than its container path', async () => {
     const h = serviceFixture();
     h.d.runtime = await inMemoryModelRuntime() as never;
-    const project = h.projects.createManaged({ slug: 'sales-dashboard', creatorUserId: h.owner.id });
+    const project = h.projects.createForUser(h.owner.id, { slug: 'sales-dashboard' });
     const service = new BrainService(h.d as never);
     const { sessionId } = await service.start(h.owner.id);
     // A marker only lands on a conversation that has already spoken; without a turn there is nothing to
@@ -160,7 +160,7 @@ describe('selecting a managed project does not wait for its container', () => {
   const managedFixture = async () => {
     const h = serviceFixture();
     h.d.runtime = await inMemoryModelRuntime() as never;
-    const project = h.projects.createManaged({ slug: 'sales-dashboard', creatorUserId: h.owner.id });
+    const project = h.projects.createForUser(h.owner.id, { slug: 'sales-dashboard' });
     const service = new BrainService(h.d as never);
     const { sessionId } = await service.start(h.owner.id);
     return { ...h, project, service, sessionId, sandbox: h.d.plugins.peek()!.control('sandbox') as never as Record<string, ReturnType<typeof vi.fn>> };

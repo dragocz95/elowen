@@ -21,11 +21,32 @@ afterEach(() => { for (const db of databases.splice(0)) db.close(); });
 
 describe('managed project foundation', () => {
   it('preserves host records and creates managed records without host paths', () => {
-    const { projects, member } = fixture();
+    const { projects, users, admin, member } = fixture();
+    users.setProjectPermissions(admin.id, member.id, { canCreateProjects: true });
     expect(projects.create({ slug: 'legacy', path: '/legacy' })).toMatchObject({ executionKind: 'host', lifecycle: 'active' });
-    const p = projects.createManaged({ slug: 'managed', creatorUserId: member.id });
+    const p = projects.createForUser(member.id, { slug: 'managed' });
     expect(p).toMatchObject({ executionKind: 'managed', path: '', creatorUserId: member.id, lifecycle: 'active' });
     expect(() => projects.update(p.id, { path: '/etc' })).toThrow(/managed/);
+  });
+
+  /** Grant and limit are asked once each, where they belong: the grant guards the REQUEST, the limit
+   *  guards every managed row that gets written — the account's lazily provisioned default included, so
+   *  a ceiling an administrator lowered below the current count holds for it too. */
+  it('bounds every managed creation by the account limit, the default included', () => {
+    const { projects, users, admin, member, peer } = fixture();
+    users.setProjectPermissions(admin.id, member.id, { canCreateProjects: true, projectLimit: 2 });
+    // The default is provisioned first and takes the first slot; the request takes the second.
+    expect(projects.createForUser(member.id, { slug: 'first' }).executionKind).toBe('managed');
+    expect(() => projects.createForUser(member.id, { slug: 'second' })).toThrow(/limit reached/);
+    // A member without the grant is refused before anything is counted or created.
+    expect(() => projects.createForUser(peer.id, { slug: 'nope' })).toThrow(/not permitted/);
+    expect(users.get(peer.id)?.default_project_id).toBeNull();
+    // The limit applies to the default on its own path too: a default marked for deletion is not reusable,
+    // and the replacement is refused rather than written past the ceiling.
+    users.setProjectPermissions(admin.id, peer.id, { projectLimit: 1 });
+    expect(projects.ensureDefault(peer.id).executionKind).toBe('managed');
+    projects.beginDeletion(users.get(peer.id)!.default_project_id!);
+    expect(() => projects.ensureDefault(peer.id)).toThrow(/limit reached/);
   });
   /** The upgrade an existing instance actually performs. Every project on disk predates the execution
    *  columns, and the one thing that must not happen is a project silently becoming managed: its path
