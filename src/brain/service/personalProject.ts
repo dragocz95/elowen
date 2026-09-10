@@ -11,10 +11,12 @@ export function preparePersonalProject(
     return { policy: opts.policy, projectRef: deps.store.getProjectExecution(opts.sessionId) };
   }
   if (opts.parentSessionId || opts.delegatedAccess || opts.fork || opts.pathView
-    || opts.scheduled || (opts.channel && !opts.direct) || opts.clientCwd) {
-    // A delegated child inherits its parent's boundary; a scheduled job carries the project it was filed
-    // against, so the conversation it opens executes there instead of falling back to the host. Both are
-    // explicit targets, so they are persisted on the new row rather than re-derived on every run.
+    || opts.scheduled || opts.projectRef || (opts.channel && !opts.direct) || opts.clientCwd) {
+    // A delegated child inherits its parent's boundary; a job carries the project it was filed against,
+    // so the conversation it opens executes there instead of falling back to the host. Both are explicit
+    // targets, so they are persisted on the new row rather than re-derived on every run. A NAMED ref is
+    // enough on its own: the owner-chat origin (originSend → ensureLive) creates the row without the
+    // `scheduled` flag, and requiring the flag dropped the job's project on exactly that path.
     const ref = opts.delegatedAccess?.projectRef ?? opts.projectRef;
     return { policy: opts.policy, projectRef: ref, ...(opts.delegatedAccess ? {} : ref ? { initialRef: ref } : {}) };
   }

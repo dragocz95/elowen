@@ -153,6 +153,21 @@ describe('new personal conversation execution defaults', () => {
     expect(live.workDir).toBe('/job-project');
   });
 
+  // The same job arriving through the owner-chat origin (`originSend` → `ensureLive`) carries the ref
+  // without the `scheduled` flag: the row it creates is an ordinary conversation, and the target has to
+  // survive on the strength of being named at all, or the run lands on the account default.
+  it('opens a conversation created by ensureLive in the project the caller named', async () => {
+    const h = setup();
+    // Two assignments, so the account default (the lowest id) is NOT the project the job names.
+    const other = h.projects.createManaged({ slug: 'other-project', creatorUserId: h.user.id });
+    const project = h.projects.createManaged({ slug: 'origin-project', creatorUserId: h.user.id });
+    h.userProjects.assign(h.user.id, other.id);
+    h.userProjects.assign(h.user.id, project.id);
+    await h.lifecycle.ensureLive(h.user.id, `brain-${h.user.id}`, { projectRef: { kind: 'managed', projectId: project.id } });
+    expect(h.store.getProjectExecution(`brain-${h.user.id}`)).toEqual({ kind: 'managed', projectId: project.id });
+    expect(h.sessions.get(`brain-${h.user.id}`)?.workDir).toBe('/origin-project');
+  });
+
   it('keeps a scheduled conversation that names no project on the unrestricted default', async () => {
     const h = setup();
     const live = await h.spawn(`brain-${h.user.id}-job-plain`, undefined, { scheduled: true });
