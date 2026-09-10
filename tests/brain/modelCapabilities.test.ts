@@ -30,6 +30,19 @@ describe('descriptorCapabilities — models.dev catalog', () => {
     expect(levels('openrouter', 'deepseek/deepseek-r1')).toEqual([]);
   });
 
+  it('maps the native DeepSeek API’s renamed ids onto their versioned catalog rows', () => {
+    // The endpoint publishes `deepseek-flash` / `deepseek-pro` and the API's ids cannot be renamed,
+    // while models.dev still publishes the versioned rows — the alias resolves them (was: no ladder,
+    // no price, so /think and usage reporting broke on these models).
+    expect(descriptorCapabilities('deepseek', 'deepseek-flash').reasoning).toBe(true);
+    expect(levels('deepseek', 'deepseek-flash')).toEqual(['low', 'high', 'max']);
+    expect(levels('deepseek', 'deepseek-pro')).toEqual(['high', 'max']);
+    const cost = catalogModelCost('deepseek', 'deepseek-flash');
+    expect(cost?.input).toBeGreaterThan(0);
+    expect(cost?.output).toBeGreaterThan(0);
+    expect(catalogModelVision('deepseek', 'deepseek-flash')).toBe(false);
+  });
+
   it('offers low/medium/high for Qwen thinking models — their effort IS settable, via thinking_budget', () => {
     // models.dev says "reasons, effort not settable" for the whole Qwen family because the wire knob is
     // DashScope's `thinking_budget` (or OpenRouter's `reasoning` object), never `reasoning_effort`.
