@@ -1066,10 +1066,13 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     if (!daemon || disposed || reconciling) return;
     reconciling = true;
     try {
+      const inventory = await podman.containerInventory(namespace);
       for (const row of store.all()) {
         if (!['project', 'site'].includes(row.kind) || row.desired_state !== 'running' || store.active(row.kind, row.resource_id)) continue;
         if (row.kind === 'project' && (!rootOf(row) || releasingAdoptions.has(Number(row.resource_id)))) continue;
-        const observed = await podman.inspect(specFor(row.spec));
+        const spec = specFor(row.spec);
+        if (inventory.get(spec.name) === 'running') continue;
+        const observed = await podman.inspect(spec);
         if (observed?.state === 'running') continue;
         await queueAutomaticRecovery(row, observed);
       }

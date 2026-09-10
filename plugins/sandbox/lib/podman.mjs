@@ -250,6 +250,24 @@ export class PodmanClient {
     return await this.#exists('container', spec.name);
   }
 
+  async containerInventory(namespace) {
+    resourceToken(namespace);
+    const result = await this.#run(['ps', '-a', '--filter', `label=io.elowen.namespace=${namespace}`, '--format', 'json']);
+    if (result.truncated) throw new Error('Podman container inventory exceeded its bound');
+    const rows = JSON.parse(result.stdout);
+    if (!Array.isArray(rows)) throw new Error('Invalid Podman container inventory response');
+    const inventory = new Map();
+    for (const row of rows) {
+      const name = Array.isArray(row?.Names) ? row.Names[0] : row?.Names;
+      const state = String(row?.State ?? '').toLowerCase();
+      if (typeof name !== 'string' || !name || !['configured', 'created', 'running', 'paused', 'stopped', 'exited', 'stopping'].includes(state)) {
+        throw new Error('Invalid Podman container inventory entry');
+      }
+      inventory.set(name, state);
+    }
+    return inventory;
+  }
+
   #volumeFor(spec, component) {
     this.#assertScope(spec);
     return volumeFor(spec, component);

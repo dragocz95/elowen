@@ -45,6 +45,7 @@ function setup(config: Record<string, unknown> = {}) {
     await Promise.all(servers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
   };
   const podman = { ensureProjectImage: vi.fn(async () => 'localhost/elowen-project-base:test'),
+    containerInventory: vi.fn(async () => new Map([...containers].map(([name, row]) => [name, row.state]))),
     inspect: vi.fn(async (spec: any) => containers.get(spec.name) ?? null), inspectBinding: vi.fn(async (spec: any) => containers.get(spec.name)),
     create: vi.fn(async (spec: any) => { const row = { id: 'a'.repeat(64), state: 'created' }; containers.set(spec.name, row); return row; }),
     start: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'running'; }),
@@ -150,6 +151,18 @@ describe('durable managed environment lifecycle', () => {
   it('keeps the built-in figure for a setting that is missing or unusable', async () => {
     const { runtime } = setup({ defaultCpus: 0, defaultMemoryMb: 4096, defaultPidsLimit: 'many' });
     expect((await runtime.environmentFor(input)).limits).toEqual({ cpus: 1, memoryMb: 4096, pidsLimit: 512 });
+  });
+
+  it('uses one container inventory and skips full inspection for healthy environments', async () => {
+    const { runtime, podman } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    podman.containerInventory.mockClear();
+    podman.inspect.mockClear();
+
+    await runtime.reconcile();
+
+    expect(podman.containerInventory).toHaveBeenCalledOnce();
+    expect(podman.inspect).not.toHaveBeenCalled();
   });
 
   it('recovers a desired running environment whose container was left created after a host reboot', async () => {
