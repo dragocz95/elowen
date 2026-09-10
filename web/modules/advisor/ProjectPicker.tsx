@@ -9,7 +9,6 @@ import { useToast } from '../../components/ui/Toast';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
-import { managedProjectStrings } from '../projects/managedProjectStrings';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '../../components/ui/shadcn/dropdown-menu';
 import { OperationProgressDialog } from '../../components/ui/OperationProgressDialog';
 import { useEnvironmentOperationWindow } from '../../lib/useEnvironmentOperation';
@@ -18,8 +17,8 @@ import { useBrainChat } from './BrainChatProvider';
 
 /** Selection comes from durable execution identity, never from cwd or conversation filing. */
 export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compact' }) {
-  const { t, locale } = useTranslation();
-  const s = managedProjectStrings[locale];
+  const { t } = useTranslation();
+  const s = t.projects;
   const { toast } = useToast();
   const { telemetry, activeSessionId } = useBrainChat();
   const projects = useProjects();

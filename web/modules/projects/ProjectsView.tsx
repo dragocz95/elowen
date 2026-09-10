@@ -3,7 +3,6 @@ import { useDeferredValue, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ElowenApiError, apiErrorMessage, elowenClient } from '../../lib/elowenClient';
 import { SelectMenu } from '../../components/ui/SelectMenu';
-import { managedProjectStrings } from './managedProjectStrings';
 import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, MoreHorizontal, Code2, Copy, Pencil, Trash2, ImageIcon, Search, FileText } from 'lucide-react';
 import { useProjects, useProjectSummaries, useProjectGit, usePluginPresent, useMe } from '../../lib/queries';
 import { useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
@@ -141,8 +140,8 @@ export function ProjectsView() {
   const git = useProjectGit(selectedId);
 
   const { toast } = useToast();
-  const { t, locale } = useTranslation();
-  const s = managedProjectStrings[locale];
+  const { t } = useTranslation();
+  const s = t.projects;
   const createProject = useCreateProject();
   const updateProject = useUpdateProject();
   const removeProject = useRemoveProject();

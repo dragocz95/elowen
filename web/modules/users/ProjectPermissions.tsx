@@ -5,7 +5,6 @@ import type { User, UserPatch } from '../../lib/types';
 import { useUpdateUser } from '../../lib/mutations';
 import { useTranslation } from '../../lib/i18n';
 import { useAutoSaveStatus } from '../../lib/useAutoSaveStatus';
-import { managedProjectStrings } from '../projects/managedProjectStrings';
 import { SettingsGroup, SettingsRow } from '../../components/ui/SettingsSurface';
 import { AutoSaveStatus } from '../../components/ui/AutoSaveStatus';
 import { Slider } from '../../components/ui/Slider';
@@ -41,8 +40,8 @@ function clampLimit(value: number): number {
  *  refetch land the previous admin's edit on the new one — and a refetch of the users list (which every
  *  save here invalidates) cannot overwrite an edit still inside the debounce. */
 export function ProjectPermissions({ user }: { user: User }) {
-  const { t, locale } = useTranslation();
-  const s = managedProjectStrings[locale];
+  const { t } = useTranslation();
+  const s = t.projects;
   const update = useUpdateUser();
   const { toast } = useToast();
   const [create, setCreate] = useState(user.can_create_projects === true);

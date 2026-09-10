@@ -5,7 +5,6 @@ import { useMe, useProjectMemberProfiles, useUsers } from '../../lib/queries';
 import { useAssignProject } from '../../lib/mutations';
 import { plural, useTranslation } from '../../lib/i18n';
 import type { Project, ProjectMemberView } from '../../lib/types';
-import { managedProjectStrings } from './managedProjectStrings';
 import { Avatar } from '../../components/ui/Avatar';
 import { Button } from '../../components/ui/Button';
 import { Input } from '../../components/ui/Input';
@@ -33,8 +32,8 @@ const badgesOf = (member: { username: string; email?: string }) => [
  *  `GET /users` is the instance directory and is admin-only: they manage the people already here and add
  *  by account id instead of browsing everyone on the instance. */
 export function ProjectAccessPanel({ project }: { project: Project }) {
-  const { locale, t } = useTranslation();
-  const s = managedProjectStrings[locale];
+  const { t } = useTranslation();
+  const s = t.projects;
   const me = useMe();
   // The identity view of the membership: this tab is where a member sees WHO shares the project, so it
   // opts into the profile projection rather than the endpoint's default id list.

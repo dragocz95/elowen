@@ -13,7 +13,6 @@ import { OperationProgressDialog } from '../../components/ui/OperationProgressDi
 import { useEnvironmentOperationWindow } from '../../lib/useEnvironmentOperation';
 import { recreatable, requestEnvironmentAction } from '../../lib/environmentActions';
 import type { Project, ProjectExecutionRef } from '../../lib/types';
-import { managedProjectStrings } from '../projects/managedProjectStrings';
 import { useBrainChat } from './BrainChatProvider';
 
 /** One offered destination: a project this account may reach, or — for an administrator — the host
@@ -61,8 +60,8 @@ export function NewConversationProjectModal() {
 }
 
 function NewConversationProjectDialog({ onClose }: { onClose: () => void }) {
-  const { t, locale } = useTranslation();
-  const s = managedProjectStrings[locale];
+  const { t } = useTranslation();
+  const s = t.projects;
   const { toast } = useToast();
   const { telemetry, activeSessionId } = useBrainChat();
   const projects = useProjects();

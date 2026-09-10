@@ -3,7 +3,6 @@ import { useMemo, useState } from 'react';
 import { ImageIcon } from 'lucide-react';
 import type { Project } from '../../lib/types';
 import { useProjectEnvironmentState, useProjectFiles } from '../../lib/queries';
-import { managedProjectStrings } from './managedProjectStrings';
 import { useSetProjectIcon } from '../../lib/mutations';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
@@ -22,8 +21,8 @@ const MAX_SHOWN = 300; // bound the grid (and the data-URL cache) on image-heavy
  *  Lists the project's images (the tree endpoint already skips .git/node_modules/dist), groups them by
  *  directory, and previews each. Selecting one persists its project-relative path as the icon. */
 export function ProjectIconPicker({ project, onClose }: { project: Project; onClose: () => void }) {
-  const { t, locale } = useTranslation();
-  const s = managedProjectStrings[locale];
+  const { t } = useTranslation();
+  const s = t.projects;
   const { toast } = useToast();
   // A managed project's images live in its environment, and the file route PROVISIONS a missing
   // environment just by being asked. Opening a picker is a look, not a decision to run a container, so
