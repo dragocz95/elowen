@@ -111,17 +111,6 @@
       "step": 32,
       "display": { "control": "slider", "unit": "processes" },
       "hint": "Maximum number of processes and threads inside the environment."
-    },
-    {
-      "key": "defaultDiskSoftMb",
-      "label": "Disk threshold",
-      "type": "number",
-      "default": 10240,
-      "min": 512,
-      "max": 1048576,
-      "step": 512,
-      "display": { "control": "input", "unit": "MiB" },
-      "hint": "Advisory only. Disk usage is reported against this figure; it is not an enforced quota."
     }
   ],
   "capabilities": {
@@ -268,10 +257,6 @@
       "cpuLimit": "Processor",
       "memoryLimit": "Memory",
       "processLimit": "Processes",
-      "diskSoftLimit": "Disk threshold",
-      "diskSoftHint": "The disk threshold is advisory, not an enforced quota.",
-      "limitsRange": "Enter a whole number between {min} and {max} {unit}.",
-      "diskUsage": "Disk usage",
       "snapshots": "Complete snapshots",
       "noSnapshots": "No complete snapshots are available.",
       "state_unprovisioned": "Not provisioned",

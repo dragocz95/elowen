@@ -141,7 +141,7 @@ export function registerSandboxRoutes(app: Hono): void {
       projectId: Number(c.req.param('id')), generation: 2, state: 'running', desiredState: 'running',
       lastError: null, limits: environmentLimits,
     },
-    snapshots: [], operations: [], diskBytes: 734_003_200,
+    snapshots: [], operations: [],
   }));
 
   // The resource change the rows auto-save. The real plugin answers with a pending operation and applies

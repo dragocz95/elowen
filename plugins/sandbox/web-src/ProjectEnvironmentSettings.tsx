@@ -8,32 +8,24 @@ export interface ProjectEnvironmentDetail {
   environment: ProjectEnvironment;
   snapshots: { id: string; generation: number; createdAt: string; consistency: 'crash-consistent'; note: string; completeProject: boolean }[];
   operations: (EnvironmentOperation & { requestId: string })[];
-  diskBytes?: number;
 }
 
 type Limits = ProjectEnvironment['limits'];
-type LimitKey = keyof Limits;
+type LimitKey = 'cpus' | 'memoryMb' | 'pidsLimit';
 
-/** One resource row. The bounds are the plugin's usable range inside what `environmentRuntime` will
- *  accept — it refuses a non-positive CPU figure, a CPU count above 1024 and any non-integer memory,
- *  process or disk value — so a control can never compose a request the runtime rejects. */
-const ROWS: { key: LimitKey; control: 'slider' | 'input'; min: number; max: number; step: number }[] = [
-  { key: 'cpus', control: 'slider', min: 0.1, max: 64, step: 0.1 },
-  { key: 'memoryMb', control: 'slider', min: 128, max: 65536, step: 128 },
-  { key: 'pidsLimit', control: 'slider', min: 32, max: 8192, step: 32 },
-  { key: 'diskSoftMb', control: 'input', min: 512, max: 1048576, step: 512 },
+/** One resource row per ceiling the container actually enforces. The bounds are the plugin's usable
+ *  range inside what `environmentRuntime` will accept — it refuses a non-positive CPU figure, a CPU
+ *  count above 1024 and any non-integer memory or process value — so a control can never compose a
+ *  request the runtime rejects. */
+const ROWS: { key: LimitKey; min: number; max: number; step: number }[] = [
+  { key: 'cpus', min: 0.1, max: 64, step: 0.1 },
+  { key: 'memoryMb', min: 128, max: 65536, step: 128 },
+  { key: 'pidsLimit', min: 32, max: 8192, step: 32 },
 ];
 const LIMIT_KEYS = ROWS.map((row) => row.key);
-const DISK_ROW = ROWS.find((row) => row.key === 'diskSoftMb')!;
 /** CPU carries one decimal; every other figure is a whole number the runtime validates as an integer. */
 const readout = (key: LimitKey, value: number) => key === 'cpus' ? String(Math.round(value * 10) / 10) : String(Math.round(value));
 const sameLimits = (a: Limits, b: Limits) => LIMIT_KEYS.every((key) => a[key] === b[key]);
-
-/** Whether a typed figure is one the runtime will actually take for this row: inside the row's range,
- *  and a whole number for everything except the CPU count. `Number('')` is 0 and `Number('abc')` is NaN,
- *  so both the blank box and a half-typed word are rejected here rather than becoming a request. */
-const acceptable = (row: typeof ROWS[number], value: number) =>
-  Number.isFinite(value) && value >= row.min && value <= row.max && (row.key === 'cpus' || Number.isInteger(value));
 
 export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   const { components: C, hooks, api } = runtime();
@@ -57,15 +49,9 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   const progress = hooks.useEnvironmentOperation(watched, project.id);
   const host = hooks.useTranslation();
   const [requestError, setRequestError] = useState('');
-  // Local edits only. `null` means "no unsaved change", so the 3-second refresh keeps owning the
-  // displayed figures and a slider cannot be dragged back by a poll landing mid-gesture.
+  // Local edits only. `null` means "no unsaved change", so a pushed refresh keeps owning the displayed
+  // figures and a slider cannot be dragged back by an update landing mid-gesture.
   const [draft, setDraft] = useState<Limits | null>(null);
-  // What is in the disk BOX, which is not the same thing as the disk figure. A person clearing the field
-  // to retype it passes through "" and "5" on the way to "51200"; those are an edit in progress, so they
-  // stay in the box and never reach the draft. `null` means the box simply shows the current figure.
-  const [diskText, setDiskText] = useState<string | null>(null);
-  // A saved draft hands the box back to the server's figure.
-  useEffect(() => { if (draft === null) setDiskText(null); }, [draft]);
   const accountId = me.data?.user?.id;
   useEffect(() => {
     if (!accountId || !query.data) return;
@@ -106,8 +92,6 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   const signature = editing ? LIMIT_KEYS.map((key) => editing[key]).join('|') : '';
   // Debounced so a drag becomes ONE container update rather than one per step, and so the request the
   // runtime finally sees is the figure the person stopped on.
-  // A blank or out-of-range box is not a value yet, so nothing is scheduled while one is on screen.
-  const diskEntryValid = diskText === null || (diskText.trim() !== '' && acceptable(DISK_ROW, Number(diskText)));
   const autoSave = hooks.useAutoSaveStatus([signature], async () => {
     const sent = draft;
     if (!sent) return;
@@ -117,12 +101,12 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
     // and the functional update is what reads the state as it is now rather than as this closure saw it.
     setDraft((current) => (current && sameLimits(current, sent) ? null : current));
     await refresh();
-  }, { ready: !!stored, savable: isAdmin && changed && diskEntryValid, delay: 900 });
+  }, { ready: !!stored, savable: isAdmin && changed, delay: 900 });
 
   if (query.isError || me.isError) return <C.ErrorState message={localizedError(query.error ?? me.error, s)} onRetry={() => { query.refetch(); me.refetch(); }} />;
   if (query.isLoading || me.isLoading || !query.data) return <C.LoadingState variant="list" />;
   if (!me.data?.user) return <C.ErrorState message={s.error_project_forbidden} />;
-  const { environment, snapshots, diskBytes } = query.data;
+  const { environment, snapshots } = query.data;
   const requestedState = requested && (operations.find((item) => item.id === requested.id) ?? requested);
   const operation = operations.find((item) => item.status === 'pending' || item.status === 'running')
     ?? (requestedState && ['pending', 'running'].includes(requestedState.status) ? requestedState : null)
@@ -131,8 +115,8 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   const busy = !accountId || me.isError || mutate.isPending || pending || ['deleting', 'deleted'].includes(environment.state) || project.lifecycle === 'deleting';
   const completeSnapshots = snapshots.filter((item) => item.completeProject);
   const values = draft ?? environment.limits;
-  const labels: Record<LimitKey, string> = { cpus: s.cpuLimit, memoryMb: s.memoryLimit, pidsLimit: s.processLimit, diskSoftMb: s.diskSoftLimit };
-  const units: Record<LimitKey, string> = { cpus: s.unitCpu, memoryMb: 'MiB', pidsLimit: s.unitProcesses, diskSoftMb: 'MiB' };
+  const labels: Record<LimitKey, string> = { cpus: s.cpuLimit, memoryMb: s.memoryLimit, pidsLimit: s.processLimit };
+  const units: Record<LimitKey, string> = { cpus: s.unitCpu, memoryMb: 'MiB', pidsLimit: s.unitProcesses };
   // The daemon names the stale-container case in the environment's own error, so the repair is offered
   // from what the runtime reported rather than inferred from a state word.
   const stale = /predates the named project mount/i.test(environment.lastError ?? '') || /predates the named project mount/i.test(progress.operation?.error ?? '');
@@ -158,49 +142,21 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
         <C.SettingsRow
           key={row.key}
           label={labels[row.key]}
-          description={row.key === 'diskSoftMb' ? s.diskSoftHint : undefined}
           trailingLayout="stack"
           status={<span className="font-mono text-xs text-foreground">{readout(row.key, values[row.key])} {units[row.key]}</span>}
           control={isAdmin
-            ? row.control === 'slider'
-              ? <C.Slider
-                value={values[row.key]}
-                min={row.min}
-                max={row.max}
-                step={row.step}
-                disabled={busy}
-                aria-label={labels[row.key]}
-                onChange={(next: number) => setDraft({ ...values, [row.key]: next })}
-              />
-              : <div className="flex flex-col gap-1">
-                <C.Input
-                  type="number"
-                  min={row.min}
-                  max={row.max}
-                  step={row.step}
-                  value={diskText ?? values[row.key]}
-                  disabled={busy}
-                  aria-label={labels[row.key]}
-                  aria-invalid={!diskEntryValid || undefined}
-                  onChange={(event: React.ChangeEvent<HTMLInputElement>) => {
-                    const raw = event.target.value;
-                    setDiskText(raw);
-                    const parsed = Number(raw);
-                    if (raw.trim() !== '' && acceptable(row, parsed)) setDraft({ ...values, [row.key]: parsed });
-                  }}
-                />
-                {diskEntryValid ? null : (
-                  <span role="alert" className="text-xs text-destructive">
-                    {s.limitsRange.replace('{min}', String(row.min)).replace('{max}', String(row.max)).replace('{unit}', units[row.key])}
-                  </span>
-                )}
-              </div>
+            ? <C.Slider
+              value={values[row.key]}
+              min={row.min}
+              max={row.max}
+              step={row.step}
+              disabled={busy}
+              aria-label={labels[row.key]}
+              onChange={(next: number) => setDraft({ ...values, [row.key]: next })}
+            />
             : undefined}
         />
       ))}
-      {diskBytes !== undefined
-        ? <C.SettingsRow label={s.diskUsage} status={<span className="font-mono text-xs text-foreground">{(diskBytes / 1024 / 1024).toFixed(1)} MiB</span>} />
-        : null}
     </C.SettingsGroup>
 
     {/* Start, stop, restart and snapshot are not here any more. They are the project's row actions in the

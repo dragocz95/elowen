@@ -17,6 +17,9 @@ import { PROJECT_BASE_IMAGE_TAG } from './containerBaseImage.mjs';
 
 const FILE_HELPER = readFileSync(new URL('./guestFiles.py', import.meta.url), 'utf8');
 const PREVIEW_HELPER = readFileSync(new URL('./previewProxy.py', import.meta.url), 'utf8');
+/** `diskSoftMb` is accepted and stored but never enforced: no container flag carries it. It stays in the
+ *  shape because the Sites plugin sends it with every registration and limits change, and it has no
+ *  control of its own here — a project's environment reports the ceilings the container really has. */
 const DEFAULT_LIMITS = { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240 };
 /** How many past operations the project overview carries. The environment screen shows the current one
  *  and the recent outcomes behind it; the rest is history no browser needs to hold. */
@@ -75,7 +78,7 @@ function limits(value) {
  *  leave a new environment without a ceiling. Read once per provisioning; the settings snapshot refreshes
  *  when the plugin reloads, and environments that already exist keep the limits they were created with. */
 function configuredDefaults(config) {
-  const keys = { cpus: 'defaultCpus', memoryMb: 'defaultMemoryMb', pidsLimit: 'defaultPidsLimit', diskSoftMb: 'defaultDiskSoftMb' };
+  const keys = { cpus: 'defaultCpus', memoryMb: 'defaultMemoryMb', pidsLimit: 'defaultPidsLimit' };
   const chosen = {};
   for (const [key, setting] of Object.entries(keys)) {
     const value = config?.[setting];
