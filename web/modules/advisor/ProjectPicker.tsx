@@ -43,10 +43,9 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
   const items = (projects.data ?? []).filter((p) => p.lifecycle !== 'deleting');
   const current = target?.projectId ? projects.data?.find((p) => p.id === target.projectId) : undefined;
   // The picker names the project a conversation runs in, and nothing else. A host target with no project
-  // behind it has no name to show, so it reads as an unselected target — the same neutral wording any
-  // other nameless target gets. This is presentation: the conversation's execution state is untouched,
-  // and the authority over an execution target lives in the daemon.
-  const label = current?.slug ?? s.unknownTarget;
+  // behind it has no name to show, and it is a target that WAS chosen: the label says there is no
+  // project, the same thing the new-conversation modal offers, rather than claiming nothing is selected.
+  const label = current?.slug ?? t.brainChat.projectPickerHost;
   const ready = Boolean(activeSessionId) && !projects.isLoading && !projects.isError && !me.isLoading && !me.isError;
   const progress = useEnvironmentOperation(pending?.operationId ?? null, pending?.projectId);
   const operationRunning = progress.operation ? ['pending', 'running'].includes(progress.operation.status) : Boolean(pending);

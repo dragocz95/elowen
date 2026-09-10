@@ -1707,6 +1707,7 @@ export const en = {
     modelPickerError: 'Failed to load models',
     modelPickerRetry: 'Retry',
     projectPickerFailed: 'The working directory could not be changed',
+    projectPickerHost: 'No project',
     newConversationProject: {
       title: 'Where should this conversation run?',
       description: 'Pick the project this conversation works in. You can change it later from the chat header.',
