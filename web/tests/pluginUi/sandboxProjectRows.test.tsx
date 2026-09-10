@@ -153,6 +153,22 @@ describe('sandbox contribution to the Project register rows', () => {
     expect(requests[0]?.requestId).toEqual(expect.any(String));
   });
 
+  // A refused action used to be swallowed into a toast while the confirmation stayed open explaining
+  // nothing. It is reported where it was raised, and the intent stays unacknowledged so a retry keeps
+  // the same identity.
+  it('shows a refused action inside the confirmation that raised it', async () => {
+    server.use(http.post('*/api/plugins/sandbox/api/projects/3/environment', () => HttpResponse.json({ error: 'environment_busy' }, { status: 409 })));
+    mount();
+    await screen.findAllByRole('img', { name: strings.state_running });
+    fireEvent.click(screen.getByRole('button', { name: 'analysis: Actions' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: strings.stopEnvironment }));
+
+    const dialog = within(await screen.findByRole('alertdialog'));
+    fireEvent.click(dialog.getByRole('button', { name: strings.stopEnvironment }));
+    expect(await dialog.findByText('environment_busy')).toBeInTheDocument();
+    expect(localStorage.getItem('elowen.environment-request:1:3')).not.toBeNull();
+  });
+
   it('asks before stopping a running environment, and sends nothing until it is confirmed', async () => {
     mount();
     await screen.findAllByRole('img', { name: strings.state_running });

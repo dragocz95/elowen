@@ -1,7 +1,7 @@
 import { useCallback, useRef, useState } from 'react';
-import { acknowledgeEnvironmentRequest, environmentRequest } from './environmentRequest';
-import type { EnvironmentAction, EnvironmentOperation, ProjectEnvironment } from '../../../src/plugins/environmentTypes';
-import { jsonBody, localizedError, runtime, type Project } from './runtime';
+import { requestEnvironmentAction } from './environmentRequest';
+import type { EnvironmentAction, ProjectEnvironment } from '../../../src/plugins/environmentTypes';
+import { runtime, type Project } from './runtime';
 
 /** What the project register shows and offers for a managed project.
  *
@@ -78,16 +78,15 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
   const accountRef = useRef<number | undefined>(accountId);
   accountRef.current = accountId;
 
+  // Throws the localized refusal rather than reporting it: the confirmation that raised the action is
+  // where the person is looking, and it renders what its `onConfirm` rejects with. A dispatch with no
+  // dialog behind it reports through `dispatchAndReport` below.
   const dispatch = useCallback(async (projectId: number, action: EnvironmentAction) => {
     const account = accountRef.current;
-    if (!account) { toast(s.error_project_forbidden, 'error'); return; }
-    const generation = generations.current.get(projectId) ?? 1;
+    if (!account) throw new Error(s.error_project_forbidden);
     setPending(projectId);
-    let request: { requestId: string; expectedGeneration: number } | null = null;
     try {
-      request = environmentRequest(account, projectId, JSON.stringify(action), generation);
-      const operation = await api(`/plugins/sandbox/api/projects/${projectId}/environment`, jsonBody({ action, ...request })) as EnvironmentOperation & { requestId: string };
-      acknowledgeEnvironmentRequest(account, projectId, [operation.requestId]);
+      const operation = await requestEnvironmentAction({ accountId: account, projectId, action, generation: generations.current.get(projectId) ?? 1, strings: s });
       setWatched({ projectId, operationId: operation.id, kind: action.kind });
       setProgressOpen(true);
       setConfirm(null);
@@ -95,16 +94,13 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
         qc.invalidateQueries({ queryKey: ['plugin', 'sandbox', 'environment-state', projectId] }),
         qc.invalidateQueries({ queryKey: ['plugin', 'sandbox', 'project-environment', projectId] }),
       ]);
-    } catch (error) {
-      // A definitive refusal never accepted the intent, so its idempotency key must not outlive it and
-      // block the next attempt. Unknown outcomes keep theirs, which is what makes a retry safe.
-      const status = error && typeof error === 'object' && 'status' in error ? Number(error.status) : 0;
-      if (request && [400, 401, 403, 404, 422].includes(status)) acknowledgeEnvironmentRequest(account, projectId, [request.requestId]);
-      toast(localizedError(error, s), 'error');
     } finally {
       setPending(null);
     }
-  }, [api, qc, s, toast]);
+  }, [qc, s]);
+  const dispatchAndReport = useCallback((projectId: number, action: EnvironmentAction) => {
+    void dispatch(projectId, action).catch((error: unknown) => toast(error instanceof Error ? error.message : String(error), 'error'));
+  }, [dispatch, toast]);
 
   const status: Record<number, { label: string; icon: string; tone: 'muted' | 'accent' | 'success' | 'warning' | 'danger'; busy?: boolean }> = {};
   const actions: Record<number, { id: string; label: string; icon: string; disabled?: boolean; onSelect: () => void }[]> = {};
@@ -129,7 +125,7 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
       disabled: busy || IN_FLIGHT.includes(state) || !action.states.includes(state),
       onSelect: () => {
         if (action.confirm) setConfirm({ projectId: project.id, action: { kind: action.kind } as EnvironmentAction });
-        else void dispatch(project.id, { kind: action.kind } as EnvironmentAction);
+        else dispatchAndReport(project.id, { kind: action.kind } as EnvironmentAction);
       },
     }));
   });
@@ -153,7 +149,7 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
         operation={progress.operation}
         logTail={progress.logTail}
         loadError={progress.loadError}
-        onRetry={() => { if (watched) void dispatch(watched.projectId, { kind: watched.kind } as EnvironmentAction); }}
+        onRetry={() => { if (watched) dispatchAndReport(watched.projectId, { kind: watched.kind } as EnvironmentAction); }}
         onSettled={() => {
           const projectId = watched?.projectId;
           setWatched(null);

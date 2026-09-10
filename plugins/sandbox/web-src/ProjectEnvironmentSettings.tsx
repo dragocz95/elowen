@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { environmentRequest, acknowledgeEnvironmentRequest } from './environmentRequest';
+import { acknowledgeEnvironmentRequest, requestEnvironmentAction } from './environmentRequest';
 import type { EnvironmentAction, EnvironmentOperation, ProjectEnvironment } from '../../../src/plugins/environmentTypes';
-import { jsonBody, localizedError, runtime, type Project } from './runtime';
+import { localizedError, runtime, type Project } from './runtime';
 
 /** The plugin owns this projection; core environment identity and operations remain the shared contract. */
 export interface ProjectEnvironmentDetail {
@@ -76,21 +76,10 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   }, [accountId, project.id, query.data, s]);
   const refresh = async () => { await Promise.all([qc.invalidateQueries({ queryKey }), qc.invalidateQueries({ queryKey: ['projects'] })]); };
   const dispatch = async (action: EnvironmentAction | { kind: 'limits'; limits: Limits }): Promise<EnvironmentOperation> => {
-    if (!accountId || !query.data) throw new Error('project_forbidden');
-    const request = environmentRequest(accountId, project.id, JSON.stringify(action), query.data.environment.generation);
-    try {
-      const operation = await api(endpoint, jsonBody({ action, ...request })) as EnvironmentOperation & { requestId: string };
-      setRequested(operation);
-      acknowledgeEnvironmentRequest(accountId, project.id, [operation.requestId]);
-      return operation;
-    } catch (error) {
-      // A definitive validation/access refusal cannot have accepted the intent. Unknown outcomes and
-      // conflict responses retain it so a refresh or retry can reconcile with the operation list.
-      if (error && typeof error === 'object' && 'status' in error && [400, 401, 403, 404, 422].includes(Number(error.status))) {
-        acknowledgeEnvironmentRequest(accountId, project.id, [request.requestId]);
-      }
-      throw error;
-    }
+    if (!accountId || !query.data) throw new Error(s.error_project_forbidden);
+    const operation = await requestEnvironmentAction({ accountId, projectId: project.id, action, generation: query.data.environment.generation, strings: s });
+    setRequested(operation);
+    return operation;
   };
   const mutate = hooks.useMutation<EnvironmentOperation, unknown, EnvironmentAction>({
     mutationFn: dispatch,
@@ -98,8 +87,12 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
     // dispatch and reports itself through the auto-save indicator it already has; a dialog on every
     // slider release would be a modal interrupting a gesture.
     onSuccess: async (operation: EnvironmentOperation) => { setConfirm(null); setWatched(operation.id); setProgressOpen(true); await refresh(); },
-    onError: (error: unknown) => toast(localizedError(error, s), 'error'),
   });
+  // A refusal is reported once, where the person is looking: the confirmation renders what its
+  // `onConfirm` rejects with, and an action started from a button with no dialog behind it toasts.
+  const report = (work: Promise<unknown>) => {
+    void work.catch((error: unknown) => toast(error instanceof Error ? error.message : String(error), 'error'));
+  };
 
   const stored = query.data?.environment.limits;
   const isAdmin = me.data?.user?.is_admin === true;
@@ -216,7 +209,7 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
         repair for a container the runtime can no longer verify, and restoring a complete snapshot.
         Deleting the project was never an environment control and lives in that same row menu. */}
     <div className="flex flex-wrap gap-2">
-      {stale ? <C.Button disabled={busy} onClick={() => mutate.mutate({ kind: 'recreate' })}>{s.recreateEnvironment}</C.Button> : null}
+      {stale ? <C.Button disabled={busy} onClick={() => report(mutate.mutateAsync({ kind: 'recreate' }))}>{s.recreateEnvironment}</C.Button> : null}
       {watched && !progressOpen ? (
         <C.Button variant="ghost" onClick={() => setProgressOpen(true)}>{host.t.operationProgress.actions[operationAction] ?? s.startEnvironment}</C.Button>
       ) : null}
@@ -224,15 +217,15 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
     <C.Field label={s.snapshots}>
       {completeSnapshots.length ? <div className="flex flex-wrap gap-2"><C.SelectMenu label={s.snapshots} value={snapshotId} onChange={setSnapshotId} options={completeSnapshots.map((item) => ({ value: item.id, label: `${item.createdAt}${item.note ? `: ${item.note}` : ''}` }))} /><C.Button disabled={busy || !completeSnapshots.some((item) => item.id === snapshotId)} onClick={() => setConfirm({ kind: 'restore', snapshotId })}>{s.restoreEnvironment}</C.Button></div> : <p className="text-xs text-muted-foreground">{s.noSnapshots}</p>}
     </C.Field>
-    <C.ConfirmDialog open={confirm !== null} title={actionLabel} description={confirmation} confirmLabel={actionLabel} pending={mutate.isPending} onClose={() => setConfirm(null)} onConfirm={async () => { if (confirm) { try { await mutate.mutateAsync(confirm); } catch (error) { throw new Error(localizedError(error, s)); } } }} />
+    <C.ConfirmDialog open={confirm !== null} title={actionLabel} description={confirmation} confirmLabel={actionLabel} pending={mutate.isPending} onClose={() => setConfirm(null)} onConfirm={async () => { if (confirm) await mutate.mutateAsync(confirm); }} />
     <C.OperationProgressDialog
       open={progressOpen && watched !== null}
       title={host.t.operationProgress.actions[operationAction] ?? s.startEnvironment}
       operation={progress.operation}
       logTail={progress.logTail}
       loadError={progress.loadError}
-      onRetry={() => { if (progress.operation) mutate.mutate(progress.operation.action as EnvironmentAction); }}
-      onRecreate={() => mutate.mutate({ kind: 'recreate' } as EnvironmentAction)}
+      onRetry={() => { if (progress.operation) report(mutate.mutateAsync(progress.operation.action as EnvironmentAction)); }}
+      onRecreate={() => report(mutate.mutateAsync({ kind: 'recreate' } as EnvironmentAction))}
       recreatable={stale}
       onSettled={() => { setWatched(null); void refresh(); }}
       onClose={({ running }: { running: boolean }) => { setProgressOpen(false); if (!running) setWatched(null); }}
