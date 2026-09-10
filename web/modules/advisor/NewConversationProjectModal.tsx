@@ -99,7 +99,7 @@ function NewConversationProjectDialog({ onClose }: { onClose: () => void }) {
   const dispatch = (action: 'start' | 'recreate') => {
     const projectId = environment.pending?.projectId;
     if (projectId === undefined) return;
-    void requestEnvironmentAction(projectId, { kind: action })
+    void requestEnvironmentAction(projectId, { kind: action }, environment.operation?.generation)
       .then((operation) => environment.follow(operation.id, projectId))
       .catch((error) => toast(apiErrorMessage(error) || t.brainChat.projectPickerFailed, 'error'));
   };

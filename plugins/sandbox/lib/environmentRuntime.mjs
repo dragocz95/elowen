@@ -7,7 +7,7 @@ import { createSiteImageService } from './environmentSiteImages.mjs';
 import { createSiteCleanupService } from './environmentSiteCleanup.mjs';
 import { createGuestFileTransport, validateUploadOperation, UPLOAD_KINDS } from './guestFileTransport.mjs';
 import { managedShellFrame, synchronousShellFrame } from './managedBootstrap.mjs';
-import { createEnvironmentStore, operationView, OPERATION_HISTORY } from './environmentDb.mjs';
+import { createEnvironmentStore, isRequestId, operationView, OPERATION_HISTORY } from './environmentDb.mjs';
 import { ownerProvablyDead, processIdentity, withRepoLease } from './db.mjs';
 import { createContainerSpec, createBoundSiteSpec, withContainerLimits, resourceToken, bindContainerIdentity } from './containerSpec.mjs';
 import { managedGuestRoot } from './containerPaths.mjs';
@@ -305,7 +305,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const requested = action(input.action, kind);
     await rowFor(kind, id, input.accountUserId, true);
     if (requested.kind === 'delete' && kind === 'project') await assertNoPublishedSites(id);
-    if (input.requestId !== undefined && (typeof input.requestId !== 'string' || !/^[a-zA-Z0-9_.:-]{1,160}$/.test(input.requestId))) throw error('invalid_request_id', 'Invalid idempotency key', 400);
+    if (input.requestId !== undefined && !isRequestId(input.requestId)) throw error('invalid_request_id', 'Invalid idempotency key', 400);
     return store.transaction(() => {
       account(input.accountUserId, true);
       if (kind === 'project' && !stores().userProjects.canManage(input.accountUserId, Number(id))) throw error('project_forbidden', 'Project access was revoked', 403);

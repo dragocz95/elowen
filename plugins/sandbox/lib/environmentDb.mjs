@@ -67,6 +67,12 @@ export const environmentProgressMigration = {
   },
 };
 
+/** The idempotency key a caller attaches to a lifecycle request, which is what one durable operation row
+ *  is identified by for one resource and account. The store that keys rows by it states the rule once:
+ *  the HTTP surface, the runtime and the Sites image service all validate the key a caller sent, and a
+ *  second copy of the pattern is how the two ends come to disagree about which keys exist. */
+export function isRequestId(value) { return typeof value === 'string' && /^[a-zA-Z0-9_.:-]{1,160}$/.test(value); }
+
 /** The one projection of an operation row onto the wire shape both the project and the Site surfaces
  *  read (`EnvironmentOperation`, `SiteEnvironmentOperation`). It lives beside the row mapper because a
  *  second copy of it is how the declared progress fields went missing from one of them. */
