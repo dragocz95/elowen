@@ -22,7 +22,7 @@
       "readersUnread": "zatím nepřečetl(a)",
       "markUnread": "Označit jako nepřečtené pro všechny",
       "markUnreadTitle": "Označit vydání {version} jako nepřečtené?",
-      "markUnreadDescription": "Každý, kdo si vydání {version} už přečetl, ho uvidí znovu jako nové včetně odznaku nepřečtených.",
+      "markUnreadDescription": "Každý, kdo si vydání {version} už přečetl, uvidí toto vydání i všechna novější znovu jako nová včetně odznaku nepřečtených.",
       "markUnreadConfirm": "Označit jako nepřečtené",
       "markUnreadFailed": "Vydání se nepodařilo označit jako nepřečtené."
     }
