@@ -169,7 +169,7 @@ export function poolSizing(inputs: MachineInputs, opts: SizingOpts = {}): PoolSi
   const knob = opts.operatorMax;
   const operatorCapped = typeof knob === 'number' && Number.isFinite(knob) && knob >= 0 && knob < machineCap;
   return {
-    cap: operatorCapped ? Math.floor(knob as number) : machineCap,
+    cap: operatorCapped ? Math.floor(knob) : machineCap,
     cpuCap,
     memCap,
     runnerRssBytes,

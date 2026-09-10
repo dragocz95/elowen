@@ -202,7 +202,6 @@ export class SubagentRunnerHost implements DelegatedTurnRunner {
           reject(new Error(msg.message));
           return;
         }
-        if (msg.type !== 'tapped') return;
         attached = true;
         resolve({ off, snapshot: msg.snapshot });
       };

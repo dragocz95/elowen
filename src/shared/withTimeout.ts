@@ -13,7 +13,7 @@ export function withTimeout<T>(work: Promise<T>, ms: number, message: string): P
   let timer: ReturnType<typeof setTimeout> | undefined;
   const expiry = new Promise<never>((_, reject) => {
     timer = setTimeout(() => reject(new Error(message)), ms);
-    timer.unref?.();
+    timer.unref();
   });
   return Promise.race([work, expiry]).finally(() => { if (timer) clearTimeout(timer); });
 }

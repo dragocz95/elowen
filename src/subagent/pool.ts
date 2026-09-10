@@ -43,7 +43,7 @@ import { SubagentRunnerHost, type RunnerHeartbeat, type SubagentRunnerHostDeps }
 import { FairQueue } from './fairQueue.js';
 import type { SpawnFailureCode, SubagentPoolStats } from './poolStats.js';
 import type { McpBridgeSnapshot } from '../plugins/mcpSnapshot.js';
-import { WORKFLOW_ADD_NODES_RPC, type HostRpcMethod } from './hostRpc.js';
+import type { HostRpcMethod } from './hostRpc.js';
 import {
   HEARTBEAT_INTERVAL_MS,
   MAX_TURNS_PER_RUNNER,
@@ -174,9 +174,17 @@ export class SubagentRunnerPool implements DelegatedTurnRunner {
    *  before it routes, so a disabled pool reports `in-process` rather than failing a turn per delegation. */
   usable(): boolean { return this.cap() > 0; }
 
-  /** Capability, not optimism: a daemon without the handler keeps WorkflowAddNodes denied in remote nodes. */
-  supportsHostRpc(method: HostRpcMethod): boolean {
-    return method === WORKFLOW_ADD_NODES_RPC && this.d.hostRpc !== undefined;
+  /** Capability, not optimism: a daemon without the handler keeps WorkflowAddNodes denied in remote nodes.
+   *  The method itself needs no test — every one in `HostRpcMethod` is served by the same handler. */
+  supportsHostRpc(_method: HostRpcMethod): boolean {
+    return this.d.hostRpc !== undefined;
+  }
+
+  /** Asked AFTER an await, where `stopped` may have flipped under us — the reason it is a method and not
+   *  an inline test: flow analysis keeps the pre-await narrowing of a field, so the inline form reads as
+   *  dead code while the reset it guards against is exactly what a mid-boot `stop()` does. */
+  private hasLiveRunner(): boolean {
+    return !this.stopped && this.runners.some((r) => !r.host.isDead);
   }
 
   private cap(): number {
@@ -207,7 +215,7 @@ export class SubagentRunnerPool implements DelegatedTurnRunner {
       // A reset landing mid-boot discards the runner we just waited for. Queueing then would park this
       // turn behind a pool that no longer has anything to drain it, so the honest answer is the same one
       // a failed boot gives — there is no runner to be had.
-      if (this.stopped || !this.runners.some((r) => !r.host.isDead)) {
+      if (!this.hasLiveRunner()) {
         throw new SubagentRunnerUnavailable('the sub-agent runner pool has no live runner for this turn');
       }
       // The runner DID come up and merely has no slot left for this particular turn. That is congestion,
@@ -395,7 +403,7 @@ export class SubagentRunnerPool implements DelegatedTurnRunner {
     if (this.maintenance || this.stopped) return;
     this.maintenance = setInterval(() => this.maintain(), MAINTENANCE_INTERVAL_MS);
     // A housekeeping timer must never hold the daemon open on shutdown.
-    this.maintenance.unref?.();
+    this.maintenance.unref();
   }
 
   private maintain(): void {

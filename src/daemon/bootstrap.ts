@@ -23,7 +23,7 @@ import { resolvePoolMax } from '../subagent/sizing.js';
 import type { RuntimeConfig } from '../shared/wireContract.js';
 import type { PluginRegistryProvider } from '../plugins/pluginsProvider.js';
 import type { PluginRegistry } from '../plugins/registry.js';
-import { WORKFLOW_ADD_NODES_RPC, type HostRpcHandler } from '../subagent/hostRpc.js';
+import type { HostRpcHandler } from '../subagent/hostRpc.js';
 import { createRestartDaemon, type ShutdownControl } from './shutdown.js';
 import { createMaintenanceLoops } from './maintenance.js';
 
@@ -32,7 +32,6 @@ const log = logger('daemon');
 /** Daemon endpoint for reverse workflow expansion, split out so the post-await liveness fence is testable. */
 export function createWorkflowHostRpc(resolvePlugins: () => Promise<PluginRegistry | undefined>): HostRpcHandler {
   return async (caller, request) => {
-    if (request.method !== WORKFLOW_ADD_NODES_RPC) throw new Error(`unsupported host RPC: ${request.method}`);
     const workflow = (await resolvePlugins())?.control('workflow');
     if (!workflow) throw new Error('the workflow engine is unavailable in the daemon');
     // Registry loading is asynchronous. A result/error/abort can retire the runner turn while it waits;
