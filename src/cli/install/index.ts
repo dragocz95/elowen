@@ -19,10 +19,10 @@ import { SITE_GATEWAY_DEPLOYMENT_PATH, SITE_GATEWAY_HELPER_PATH } from '../../sh
 import { must, aptInstall, step } from '../provision/exec.js';
 import { type Deployment, isIpAddress, publicUrl, localhostDeploy, ipDeploy, chooseDeployment, provisionProxy } from '../provision/deployment.js';
 import { beginInstaller } from '../ui/installer.js';
-import { waitHealthy } from '../launcher.js';
+import { waitHealthy, DAEMON_PORT as DEFAULT_DAEMON_PORT } from '../launcher.js';
 import { flagValue as flag, requireFlagValues } from '../flags.js';
 
-const DAEMON_PORT = Number((process.env.ELOWEN_PORT) ?? 4400);
+const DAEMON_PORT = Number((process.env.ELOWEN_PORT) ?? DEFAULT_DAEMON_PORT);
 const WEB_PORT = Number((process.env.ELOWEN_WEB_PORT) ?? 4500);
 const SITE_GATEWAY_HELPER_SOURCE = fileURLToPath(new URL('../../../scripts/elowen-site-gateway.mjs', import.meta.url));
 

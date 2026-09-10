@@ -1,4 +1,4 @@
-import { start as realStart, stop as realStop, status as realStatus, type RunState, type SvcStatus } from './launcher.js';
+import { start as realStart, stop as realStop, status as realStatus, DEFAULT_DAEMON_URL, type RunState, type SvcStatus } from './launcher.js';
 import { update as realUpdate, type UpdateResult } from './update.js';
 import { callElowenApi } from '../shared/apiClient.js';
 import { restartServices, type RestartTarget } from './systemd.js';
@@ -17,7 +17,7 @@ export async function runApiCommand(
   if (rawBody !== undefined) {
     try { body = JSON.parse(rawBody); } catch { deps.err('api: body must be valid JSON'); return 2; }
   }
-  const url = (env.ELOWEN_URL) ?? 'http://localhost:4400';
+  const url = (env.ELOWEN_URL) ?? DEFAULT_DAEMON_URL;
   const token = (env.ELOWEN_TOKEN) ?? '';
   // No timeout: `/brain/compact` and friends legitimately run for minutes and the operator wants the
   // real answer, not undici's 300 s abort. The MCP escape hatch asks for the same thing (src/mcp/tools.ts).
