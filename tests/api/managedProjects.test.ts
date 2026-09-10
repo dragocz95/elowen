@@ -1,4 +1,7 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { mkdtempSync, mkdirSync, rmSync, symlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { openDb, type Db } from '../../src/store/db.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { ProjectStore } from '../../src/store/projectStore.js';
@@ -9,18 +12,22 @@ import { FakeClock } from '../../src/shared/clock.js';
 import { createServer } from '../../src/api/server.js';
 
 const databases: Db[] = [];
+const roots: string[] = [];
 const request = (token: string, method = 'GET', body?: unknown) => ({ method, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-function setup(sandbox?: Record<string, (input: never) => unknown>) {
+function setup(sandbox?: Record<string, (input: never) => unknown>, homePath = '/host') {
   const db = openDb(':memory:'); databases.push(db);
   const users = new UserStore(db); const projects = new ProjectStore(db); const userProjects = new UserProjectStore(db);
-  const home = projects.create({ slug: 'host', path: '/host' });
+  const home = projects.create({ slug: 'host', path: homePath });
   const admin = users.create('admin', 'test-password'); const member = users.create('member', 'test-password'); const peer = users.create('peer', 'test-password');
   const token = users.issueToken(member.id); const peerToken = users.issueToken(peer.id);
   const plugins = sandbox ? { get: async () => ({ control: (name: string) => name === 'sandbox' ? sandbox : undefined }) } as never : undefined;
   const app = createServer({ bus: new EventBus(), engine: null as never, spawn: null as never, tmux: null as never, project: home, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db), users, projects, userProjects, plugins });
   return { users, projects, userProjects, admin, member, peer, home, token, peerToken, adminToken: users.issueToken(admin.id), app };
 }
-afterEach(() => { for (const db of databases.splice(0)) db.close(); });
+afterEach(() => {
+  for (const db of databases.splice(0)) db.close();
+  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+});
 
 describe('managed project API', () => {
   it('requires creation permission and never accepts a managed host path', async () => {
@@ -122,6 +129,18 @@ describe('managed project API', () => {
     const response = await app.request('/projects', request(token, 'POST', { slug: '', executionKind: 'nonsense' }));
     expect(response.status).toBe(403);
   });
+  it('refuses a host-path alias of the daemon home project', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'project-adopt-alias-')); roots.push(root);
+    const homePath = join(root, 'home');
+    mkdirSync(homePath);
+    const alias = join(root, 'alias');
+    symlinkSync(homePath, alias);
+    const { app, projects, adminToken } = setup(undefined, homePath);
+    const duplicate = projects.create({ slug: 'alias', path: alias });
+    expect((await app.request(`/projects/${duplicate.id}/adopt`, request(adminToken, 'POST'))).status).toBe(400);
+    expect(projects.get(duplicate.id)).toMatchObject({ executionKind: 'host', path: alias });
+  });
+
   /** Adopting is not metadata editing: it hands the project's directory to the sandbox and moves its
    *  execution off this host, so it is its own admin-only door, and the daemon's own checkout is refused
    *  before anything else is considered. */
@@ -141,11 +160,9 @@ describe('managed project API', () => {
     expect((await app.request(`/projects/${projects.create({ slug: 'shop', path: '/var/www/shop' }).id}/adopt`, request(adminToken, 'POST', { undo: 'yes' }))).status).toBe(400);
   });
 
-  /** The rollback is refused once the sandbox has taken the directory, because reversing the row then
-   *  would hand the project back pointing at a path that no longer holds anything. Before that the
-   *  environment is unprovisioned and the way back is open. */
-  it('releases an adoption only while the environment has not taken the directory', async () => {
-    // No provider loaded at all: without one the environment cannot be asked, so the rollback is refused.
+  /** Core changes the row only after sandbox has removed a provisioned environment and restored the
+   *  workspace. Without that owner loaded, the row stays managed because its files may already have moved. */
+  it('releases a provisioned adoption through the sandbox rollback owner', async () => {
     const bare = setup();
     const bareHost = bare.projects.create({ slug: 'kolin', path: '/var/www/kolin' });
     await bare.app.request(`/projects/${bareHost.id}/adopt`, request(bare.adminToken, 'POST'));
@@ -153,25 +170,28 @@ describe('managed project API', () => {
     expect(bare.projects.get(bareHost.id)?.executionKind).toBe('managed');
 
     const seen: Record<string, unknown>[] = [];
-    const state = { value: 'unprovisioned' };
-    const sandbox = { environmentFor: (input: Record<string, unknown>) => { seen.push(input); return { state: state.value }; } };
+    const sandbox = { releaseAdoptedWorkspace: (input: Record<string, unknown>) => { seen.push(input); } };
     const { app, projects, admin, adminToken } = setup(sandbox);
     const target = projects.create({ slug: 'kolin', path: '/var/www/kolin' });
     await app.request(`/projects/${target.id}/adopt`, request(adminToken, 'POST'));
-    state.value = 'running';
-    expect((await app.request(`/projects/${target.id}/adopt`, request(adminToken, 'POST', { undo: true }))).status).toBe(409);
-    expect(projects.get(target.id)?.executionKind).toBe('managed');
-    // Asked before the row is touched, as the acting account, about the project being released.
-    expect(seen).toEqual([{ project: { kind: 'managed', projectId: target.id }, accountUserId: admin.id }]);
-    state.value = 'unprovisioned';
     const released = await app.request(`/projects/${target.id}/adopt`, request(adminToken, 'POST', { undo: true }));
     expect(released.status).toBe(200);
     expect(await released.json()).toMatchObject({ executionKind: 'host', path: '/var/www/kolin' });
-    expect(seen).toHaveLength(2);
-    // And once released it is an ordinary host project again, so a second undo is refused rather than
-    // silently blanking a path the store never recorded.
+    expect(seen).toEqual([{ project: { kind: 'managed', projectId: target.id }, accountUserId: admin.id }]);
     expect((await app.request(`/projects/${target.id}/adopt`, request(adminToken, 'POST', { undo: true }))).status).toBe(409);
     expect(projects.get(target.id)?.path).toBe('/var/www/kolin');
+  });
+
+  it('keeps an adopted project managed when sandbox rollback is busy', async () => {
+    const busy = Object.assign(new Error('Environment reconciliation is already running'), { code: 'environment_busy', status: 409 });
+    const sandbox = { releaseAdoptedWorkspace: () => { throw busy; } };
+    const { app, projects, adminToken } = setup(sandbox);
+    const target = projects.create({ slug: 'kolin', path: '/var/www/kolin' });
+    await app.request(`/projects/${target.id}/adopt`, request(adminToken, 'POST'));
+    const response = await app.request(`/projects/${target.id}/adopt`, request(adminToken, 'POST', { undo: true }));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: busy.message, code: busy.code });
+    expect(projects.get(target.id)).toMatchObject({ executionKind: 'managed', adoptedPath: '/var/www/kolin' });
   });
 
   /** The membership row is BOTH the permission the account is judged by and the handle a retry needs, so

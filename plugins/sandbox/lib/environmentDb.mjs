@@ -123,9 +123,8 @@ export function createEnvironmentStore(db, identity) {
     db, get, getOperation,
     transaction: (fn) => db.transaction(fn),
     all: () => db.prepare('SELECT * FROM p_sandbox_runtimes').all().map(runtime),
-    /** Every publication forwarder this runtime keeps alive, with the port it forwards to. Reconciliation
-     *  reads them because they are the only record of a transport that no account lease owns. */
-    publications: () => db.prepare("SELECT * FROM p_sandbox_runtimes WHERE kind='publication' ORDER BY project_id,resource_id").all().map(publication),
+    /** Every publication forwarder one project keeps alive, with the port it forwards to. */
+    publications: (projectId) => db.prepare("SELECT * FROM p_sandbox_runtimes WHERE kind='publication' AND project_id=? ORDER BY resource_id").all(projectId).map(publication),
     savePublication(row, publicationId, port) {
       db.prepare(`INSERT INTO p_sandbox_runtimes(kind,resource_id,project_id,generation,state,desired_state,spec_json,limits_json)
         VALUES('publication',?,?,?,'running','running',?,'{}')

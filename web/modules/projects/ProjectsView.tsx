@@ -1,5 +1,5 @@
 'use client';
-import { useDeferredValue, useMemo, useRef, useState } from 'react';
+import { useDeferredValue, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ElowenApiError, apiErrorMessage, elowenClient } from '../../lib/elowenClient';
 import { SelectMenu } from '../../components/ui/SelectMenu';
@@ -119,6 +119,15 @@ export function ProjectsView() {
     onError: (error) => toast(apiErrorMessage(error), 'error'),
   });
   const [selectedId, setSelectedId] = useState<number | null>(null);
+  const openedUrlProject = useRef(false);
+  useEffect(() => {
+    if (openedUrlProject.current || !projects.data) return;
+    const value = new URLSearchParams(window.location.search).get('project');
+    if (value === null) { openedUrlProject.current = true; return; }
+    const id = Number(value);
+    if (Number.isSafeInteger(id) && projects.data.some((project) => project.id === id)) setSelectedId(id);
+    openedUrlProject.current = true;
+  }, [projects.data]);
   const [creating, setCreating] = useState(false);
   const [query, setQuery] = useState('');
   const deferredQuery = useDeferredValue(query);

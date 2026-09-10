@@ -67,6 +67,7 @@ function setup(config: Record<string, unknown> = {}) {
       forwarders.set(publicationId, server);
     }),
     stopPublication: vi.fn(async (spec: any, publicationId: string) => { forwarders.get(publicationId)?.close(); forwarders.delete(publicationId); }),
+    activePublications: vi.fn(async (_spec: any, publicationIds: string[]) => publicationIds.filter((publicationId) => forwarders.has(publicationId))),
     remove: vi.fn(async (spec: any) => { containers.delete(spec.name); }),
     exec: vi.fn(async () => ({ code: 0, stdout: '', stderr: '', truncated: false })),
     // A start waits for the guest system bus before anything runs through `systemd-run`.
@@ -76,12 +77,12 @@ function setup(config: Record<string, unknown> = {}) {
     removeVolume: vi.fn(), removeStorage: vi.fn(), inspectVolume: vi.fn(),
     containerExists: vi.fn(async (spec: any) => containers.has(spec.name)),
   };
-  const storage = { prepare: vi.fn(), snapshot: vi.fn(), readSnapshot: vi.fn(), restoreVolumes: vi.fn() };
+  const storage = { prepare: vi.fn(), adoptWorkspace: vi.fn(), snapshot: vi.fn(), readSnapshot: vi.fn(), restoreVolumes: vi.fn(), releaseWorkspace: vi.fn() };
   const dependencies = { ctx, db, dataDir: root, podman: podman as unknown as PodmanClient, storage: storage as unknown as ContainerStorage };
   const runtime = createEnvironmentRuntime({ ...dependencies, daemon: true });
   const fork = createEnvironmentRuntime({ ...dependencies, daemon: false });
   cleanup.push(() => { endForwarders(); runtime.dispose(); fork.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
-  return { runtime, fork, db, sql, ctx, podman, storage, members, users, project, stores, root, containers, warn, forwarders, publicationSocket, endForwarders };
+  return { runtime, fork, db, sql, ctx, podman, storage, members, users, project, stores, root, containers, warn, forwarders, publicationSocket, staleSocket, endForwarders };
 }
 const input = { project: { kind: 'managed', projectId: 7 }, accountUserId: 1 };
 
@@ -444,6 +445,24 @@ describe('project base image binding', () => {
   });
 });
 
+describe('adopted workspace rollback', () => {
+  it('removes the provisioned environment and moves its workspace back through storage', async () => {
+    const { runtime, podman, storage, project, sql, root } = setup();
+    project.adoptedPath = join(root, 'host-project');
+    await runtime.requestEnvironment({ ...input, requestId: 'adopted-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+
+    await runtime.releaseAdoptedWorkspace(input);
+
+    expect(podman.stop).toHaveBeenCalledOnce();
+    expect(podman.remove).toHaveBeenCalledOnce();
+    expect(podman.removeVolume).toHaveBeenCalledTimes(3);
+    expect(storage.releaseWorkspace).toHaveBeenCalledWith(expect.anything(), project.adoptedPath);
+    expect(podman.removeStorage).toHaveBeenCalledOnce();
+    expect(sql.prepare("SELECT * FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get()).toBeUndefined();
+  });
+});
+
 describe('durable project publications', () => {
   // The publication record shares the table the environments live in, so the migration that widens its
   // kind CHECK rebuilds a table that holds live rows. This is the upgrade a database in the field takes:
@@ -497,8 +516,19 @@ describe('durable project publications', () => {
     expect(records(sql)).toHaveLength(1);
   });
 
+  it('restores only publications that belong to the project being started', async () => {
+    const { runtime, podman, sql } = setup();
+    await starting(runtime);
+    sql.prepare("INSERT INTO p_sandbox_runtimes(kind,resource_id,project_id,state,desired_state,spec_json,limits_json) VALUES('publication','foreign',8,'running','running','{\"port\":9090}','{}')").run();
+    await runtime.requestEnvironment({ ...input, requestId: 'scoped-stop', action: { kind: 'stop' } });
+    await runtime.reconcile();
+    await runtime.requestEnvironment({ ...input, requestId: 'scoped-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    expect(podman.startPublication.mock.calls.map((call: any[]) => call[1])).not.toContain('foreign');
+  });
+
   it('restores a lost forwarder on reconciliation and keeps serving for an account that lost access', async () => {
-    const { runtime, podman, members, root, forwarders } = setup();
+    const { runtime, podman, members, root, forwarders, staleSocket } = setup();
     await starting(runtime);
     await runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
     const socketPath = join(root, 'projects/7/broker/pub-shop.sock');
@@ -508,10 +538,12 @@ describe('durable project publications', () => {
     await runtime.reconcile();
     expect(podman.startPublication).toHaveBeenCalledTimes(1);
 
-    // The forwarder is gone and its socket with it, exactly as a guest that died leaves things.
+    // The forwarder is gone, but an unclean exit can leave a socket inode behind with nobody listening.
     const dying = forwarders.get('shop')!;
     await new Promise<void>((resolve) => dying.close(() => resolve()));
     forwarders.delete('shop');
+    staleSocket(socketPath);
+    expect(lstatSync(socketPath).isSocket()).toBe(true);
     await runtime.reconcile();
     expect(podman.startPublication).toHaveBeenCalledTimes(2);
     expect(lstatSync(socketPath).isSocket()).toBe(true);
@@ -523,14 +555,16 @@ describe('durable project publications', () => {
     expect(podman.stopPublication).not.toHaveBeenCalled();
   });
 
-  it('refuses an unusable publication and takes the record, the forwarder and the socket away again', async () => {
-    const { runtime, podman, sql, containers } = setup();
+  it('refuses an unusable publication and releases it after its owner account is removed', async () => {
+    const { runtime, podman, sql, containers, users } = setup();
     await starting(runtime);
     await expect(runtime.projectPublicationBinding({ ...input, publicationId: 'Shop 1', port: 8080 })).rejects.toThrow(/token/i);
     await expect(runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 0 })).rejects.toThrow(/port/i);
     const binding = await runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
 
-    await runtime.projectPublicationRelease({ ...input, publicationId: 'shop' });
+    users.delete(1);
+    await expect(runtime.projectPublicationBinding({ project: input.project, publicationId: 'shop', port: 8080 })).resolves.toEqual(binding);
+    await runtime.projectPublicationRelease({ project: input.project, publicationId: 'shop' });
     expect(podman.stopPublication).toHaveBeenCalledWith(expect.anything(), 'shop');
     expect(records(sql)).toEqual([]);
     expect(() => lstatSync(binding.socketPath)).toThrow();
@@ -538,8 +572,9 @@ describe('durable project publications', () => {
 
     // Deleting the environment takes every publication of the project with it, so no dead record is left
     // behind for reconciliation to chase.
-    await runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
-    await runtime.requestEnvironment({ ...input, requestId: 'publication-delete', action: { kind: 'delete' } });
+    const remaining = { project: input.project, accountUserId: 2 };
+    await runtime.projectPublicationBinding({ ...remaining, publicationId: 'shop', port: 8080 });
+    await runtime.requestEnvironment({ ...remaining, requestId: 'publication-delete', action: { kind: 'delete' } });
     await runtime.reconcile();
     expect(records(sql)).toEqual([]);
     expect(containers.size).toBe(0);

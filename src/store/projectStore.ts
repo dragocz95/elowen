@@ -117,8 +117,8 @@ export class ProjectStore {
   /** The exact inverse of {@link adoptAsManaged}: the project is a host project again, at the directory it
    *  came from. Refused for a project that was never adopted, so this can never blank a path it does not
    *  own, and for one whose deletion is pending — the runtime teardown that owns that row would otherwise
-   *  finish on a project this had already handed back to the host. The caller refuses it once the sandbox
-   *  has taken the directory, which is a fact about the environment rather than about this row. */
+   *  finish on a project this had already handed back to the host. The caller restores sandbox storage
+   *  before this row is changed, which is a fact about the environment rather than about this store. */
   releaseAdopted(id: number): Project {
     return withWriteLock(this.db, () => {
       const current = this.get(id);

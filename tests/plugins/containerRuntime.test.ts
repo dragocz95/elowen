@@ -471,18 +471,27 @@ describe('adopted project workspace', () => {
     // The second start finds a workspace that already holds the project and moves nothing, so the
     // operation is idempotent on the one condition it can actually observe.
     expect(await storage.adoptWorkspace(spec, source)).toBe(false);
+    expect(await storage.releaseWorkspace(spec, source)).toBe(true);
+    expect(readFileSync(join(source, 'src/index.js'), 'utf8')).toBe('module.exports = 1');
+    expect(() => lstatSync(workspace)).toThrow();
   });
 
-  it('refuses an adopted directory that is not there, and ignores an empty one', async () => {
+  it('refuses an adopted directory that is missing or reached through a symlink, and ignores an empty one', async () => {
     const { spec, root } = fixture();
     const storage = new ContainerStorage({});
     const empty = join(root, 'empty-project');
     mkdirSync(empty);
     expect(await storage.adoptWorkspace(spec, empty)).toBe(false);
     await expect(storage.adoptWorkspace(spec, join(root, 'never-existed'))).rejects.toThrow(/missing/);
+    const real = join(root, 'real-project');
+    mkdirSync(real);
+    writeFileSync(join(real, 'file.txt'), 'content');
+    const alias = join(root, 'project-alias');
+    symlinkSync(real, alias);
+    await expect(storage.adoptWorkspace(spec, alias)).rejects.toThrow(/symlink/i);
   });
 
-  it.runIf(otherFilesystem !== null)('copies, verifies and leaves the original when the volume is elsewhere', async () => {
+  it.runIf(otherFilesystem !== null)('stages and verifies a cross-filesystem move before removing the original', async () => {
     const { spec } = fixture();
     const source = join(otherFilesystem!, 'host-project');
     mkdirSync(join(source, 'src'), { recursive: true });
@@ -492,8 +501,12 @@ describe('adopted project workspace', () => {
     const workspace = spec.volumes.find((volume: any) => volume.component === 'workspace')!.path;
     expect(readFileSync(join(workspace, 'src/index.js'), 'utf8')).toBe('module.exports = 1');
     expect(readlinkSync(join(workspace, 'link'))).toBe('src/index.js');
-    // Across filesystems the move is a copy, so the directory it came from is still there and untouched.
+    expect(() => lstatSync(source)).toThrow();
+    expect(() => lstatSync(`${workspace}.adopting`)).toThrow();
+    expect(await new ContainerStorage({}).releaseWorkspace(spec, source)).toBe(true);
     expect(readFileSync(join(source, 'src/index.js'), 'utf8')).toBe('module.exports = 1');
+    expect(() => lstatSync(workspace)).toThrow();
+    expect(() => lstatSync(`${source}.releasing`)).toThrow();
   });
 });
 
@@ -529,6 +542,8 @@ describe('durable publication transport', () => {
     expect(forwarded(executor)[0]).toEqual(['systemctl', 'stop', 'elowen-pub-shop.service']);
     // …and the unit is only believed once systemd reports it active.
     expect(forwarded(executor).at(-1)).toEqual(['systemctl', 'is-active', 'elowen-pub-shop.service']);
+    expect(await client.activePublications(spec, ['shop', 'blog'])).toEqual(['shop']);
+    expect(forwarded(executor).at(-1)).toEqual(['systemctl', 'is-active', 'elowen-pub-shop.service', 'elowen-pub-blog.service']);
   });
 
   it('refuses a forwarder that never became active and one that did not stop', async () => {

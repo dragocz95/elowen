@@ -7,11 +7,12 @@ import { ENVIRONMENT_CONTROL_METHODS } from '../../src/plugins/environmentTypes.
  *  the request that reaches for it. The runtime side of the same contract is exercised by
  *  `environmentLifecycle.test.ts`, which calls both methods. */
 describe('published transport contract', () => {
-  it('lists the two publication methods beside the preview binding they extend', () => {
+  it('lists publication transport and adopted-workspace rollback controls', () => {
     // `projectPreviewBinding` is the ephemeral one the publication binding is built beside, and it keeps
     // its own `release()` handle: the two are one pair of shorthands, not two mechanisms for one thing.
     expect(ENVIRONMENT_CONTROL_METHODS).toContain('projectPreviewBinding');
     expect(ENVIRONMENT_CONTROL_METHODS).toContain('projectPublicationBinding');
     expect(ENVIRONMENT_CONTROL_METHODS).toContain('projectPublicationRelease');
+    expect(ENVIRONMENT_CONTROL_METHODS).toContain('releaseAdoptedWorkspace');
   });
 });

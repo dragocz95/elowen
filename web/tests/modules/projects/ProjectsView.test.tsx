@@ -34,9 +34,21 @@ const server = setupServer(
   http.get('*/api/projects/1/memory-members', () => HttpResponse.json([])),
   http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'admin', is_admin: true } })),
 );
-beforeAll(() => server.listen()); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
+beforeAll(() => server.listen()); afterEach(() => { server.resetHandlers(); window.history.replaceState(null, '', '/projects'); }); afterAll(() => server.close());
 
 describe('ProjectsView', () => {
+  it('opens the project named by the projects URL', async () => {
+    server.use(http.get('*/api/projects', () => HttpResponse.json([
+      { id: 1, slug: 'elowen', path: '/var/www/elowen', notes: '', icon: '' },
+      { id: 3, slug: 'analysis', path: '', notes: 'URL target', icon: '', executionKind: 'managed' },
+    ])));
+    window.history.replaceState(null, '', '/projects?project=3');
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+    expect(await screen.findByRole('dialog', { name: 'analysis' })).toBeInTheDocument();
+    expect(screen.getByText('URL target')).toBeInTheDocument();
+  });
+
   it('opens the server-owned default project without requesting container provisioning', async () => {
     let opened = false;
     let environmentRequested = false;

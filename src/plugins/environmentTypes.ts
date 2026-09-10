@@ -101,7 +101,7 @@ export interface ProjectPublicationBinding {
 export const ENVIRONMENT_CONTROL_METHODS = [
   'environmentFor', 'requestEnvironment', 'environmentOperation', 'projectFiles', 'revokeProjectAccess',
   'environmentSnapshots', 'environmentLogs', 'managedWorktrees', 'projectPreviewBinding',
-  'projectPublicationBinding', 'projectPublicationRelease',
+  'projectPublicationBinding', 'projectPublicationRelease', 'releaseAdoptedWorkspace',
 ] as const;
 export interface ProjectEnvironmentControl {
   environmentFor(input: { project: ManagedProjectRef; accountUserId: number }): Promise<ProjectEnvironment>;
@@ -116,8 +116,9 @@ export interface ProjectEnvironmentControl {
   projectPreviewBinding(input: { project: ManagedProjectRef; accountUserId: number; port: number }): Promise<ProjectPreviewBinding>;
   /** Durable by design: the binding survives the caller, the account and a container restart, and is
    *  re-established by the runtime's own reconciliation rather than by anything holding a lease. */
-  projectPublicationBinding(input: { project: ManagedProjectRef; accountUserId: number; publicationId: string; port: number }): Promise<ProjectPublicationBinding>;
-  projectPublicationRelease(input: { project: ManagedProjectRef; accountUserId: number; publicationId: string }): Promise<void>;
+  projectPublicationBinding(input: { project: ManagedProjectRef; accountUserId?: number; publicationId: string; port: number }): Promise<ProjectPublicationBinding>;
+  projectPublicationRelease(input: { project: ManagedProjectRef; publicationId: string }): Promise<void>;
+  releaseAdoptedWorkspace(input: { project: ManagedProjectRef; accountUserId: number }): Promise<void>;
 }
 
 /** Only the loader-identified Sites plugin may resolve these methods. These bindings come from Sites'

@@ -762,6 +762,16 @@ export class PodmanClient {
     if (shown.stdout.trim() !== 'active') throw new Error('Preview service did not start');
   }
 
+  async activePublications(spec, publicationIds) {
+    if (!Array.isArray(publicationIds) || publicationIds.length === 0) return [];
+    const units = publicationIds.map(publicationUnit);
+    const row = await this.#owned(spec);
+    if (row.state !== 'running') return [];
+    const shown = await this.#run(['exec', row.id, 'systemctl', 'is-active', ...units], { allowFailure: true });
+    const states = shown.stdout.trimEnd().split('\n');
+    return publicationIds.filter((_id, index) => states[index] === 'active');
+  }
+
   /** Establish one publication's forwarder, which is NOT leased and lives until the container ends, so
    *  starting it is idempotent and a forwarder from a previous socket is retired rather than duplicated.
    *  A still-active unit refuses a second `systemd-run` under its own name, and the caller has just
