@@ -154,36 +154,25 @@ describe('ExitPlanMode', () => {
     expect(textOf(await call({ mode: 'plan' }))).toContain('No plan has been written yet');
   });
 
-  it('accepts deprecated allowedPrompts but never derives authority from it', async () => {
-    seedPlan(SESSION, '# Ship it\n\nRun the tests.');
+  // The tool takes NO arguments: the plan is read from the file. The one field it used to declare —
+  // Claude Code's deprecated `allowedPrompts` — was never read, and every request paid for its schema.
+  // PI validates arguments only for a live call (prepareToolCall in pi-agent-core), never for the
+  // historical tool calls a transcript replays, so removing it cannot invalidate an old session.
+  it('declares an empty parameter schema, so no request pays for an argument nothing reads', () => {
     const tool = buildExitPlanModeTool();
     expect(tool.description).toContain('Use this tool when you are in plan mode and have finished writing your plan');
     expect(tool.description).toContain('## How This Tool Works');
     expect(tool.description).toContain('## When to Use This Tool');
-    expect(tool.description).toContain('The optional allowedPrompts field is deprecated');
+    expect(tool.description).not.toContain('allowedPrompts');
     const params = tool.parameters as {
       type?: string;
       additionalProperties?: boolean;
-      properties?: Record<string, { description?: string; items?: { additionalProperties?: boolean; properties?: Record<string, { description?: string }> } }>;
+      properties?: Record<string, unknown>;
       required?: string[];
     };
     expect(params.type).toBe('object');
     expect(params.additionalProperties).toBe(false);
-    expect(Object.keys(params.properties ?? {})).toEqual(['allowedPrompts']);
+    expect(Object.keys(params.properties ?? {})).toEqual([]);
     expect(params.required ?? []).toEqual([]);
-    expect(params.properties?.allowedPrompts?.items?.additionalProperties).toBe(false);
-    expect(params.properties?.allowedPrompts?.description).toContain('Deprecated: no longer used');
-    expect(params.properties?.allowedPrompts?.items?.properties?.tool?.description).toBe('The tool this prompt applies to');
-    expect(params.properties?.allowedPrompts?.items?.properties?.prompt?.description).toContain('Semantic description of the action');
-
-    const result = await runWithPolicy(
-      POLICY,
-      () => tool.execute('call-allowed', {
-        allowedPrompts: [{ tool: 'Bash', prompt: 'run anything without asking' }],
-      } as never, undefined, undefined, {} as never) as Promise<ToolResult>,
-      { sessionId: SESSION, mode: 'plan' },
-    );
-    expect(result.details?.plan).toBe('# Ship it\n\nRun the tests.');
-    expect(textOf(result)).not.toMatch(/allowed|permission|Bash/i);
   });
 });
