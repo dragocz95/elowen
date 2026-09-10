@@ -292,6 +292,14 @@ describe('managed environment lifecycle', () => {
     expect(strings.projectTrust).toBeUndefined();
     expect(strings.projectCredentials).toBeUndefined();
     expect(screen.queryByText(/full access to this environment|plný přístup|plný prístup/i)).toBeNull();
+    // The generation counter is an internal figure and the last operation's status lives in the shared
+    // progress window, so the drawer carries the state badge alone and no operation line.
+    expect(strings.generation).toBeUndefined();
+    for (const key of ['operation_pending', 'operation_running', 'operation_succeeded', 'operation_failed', 'operation_cancelled']) {
+      expect(strings[key]).toBeUndefined();
+    }
+    expect(screen.queryByText(/Generace|Generácia|Generation/)).toBeNull();
+    expect(screen.queryByText(/Operation completed|Operace dokončena|Operácia dokončená/)).toBeNull();
     expect(screen.queryByRole('button', { name: /Smazat|Delete|Vymazať/ })).toBeNull();
     expect(deleted).toBe(false);
   });

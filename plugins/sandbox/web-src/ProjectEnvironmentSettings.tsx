@@ -149,10 +149,9 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   const confirmation = s.restoreWarning;
   const actionLabel = s.restoreEnvironment;
   return <section className="flex flex-col gap-4 border-b border-border py-4">
-    <div className="flex flex-wrap items-center gap-2"><C.Badge tone={environment.state === 'running' ? 'success' : environment.state === 'failed' ? 'danger' : 'muted'}>{s[`state_${environment.state}`]}</C.Badge><span className="text-xs text-muted-foreground">{s.generation}: {environment.generation}</span></div>
+    <C.Badge tone={environment.state === 'running' ? 'success' : environment.state === 'failed' ? 'danger' : 'muted'}>{s[`state_${environment.state}`]}</C.Badge>
     {requestError ? <p role="alert" className="text-sm text-destructive">{requestError}</p> : null}
     {environment.lastError ? <p role="alert" className="break-words text-sm text-destructive">{environment.lastError}</p> : null}
-    {operation ? <div role="status" className="text-xs"><span>{s[`operation_${operation.status}`]}</span>{operation.error ? <p className="break-words text-destructive">{operation.error}</p> : null}</div> : null}
 
     <C.SettingsGroup
       title={s.resources}

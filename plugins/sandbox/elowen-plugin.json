@@ -265,7 +265,6 @@
       "stopWarning": "Stop the project environment? Commands and project services will be interrupted. Files and installed packages are preserved.",
       "snapshotWarning": "A complete snapshot includes the root filesystem, files, Git worktrees, HOME and data while execution is paused. It is crash-consistent, not database-consistent. Application databases may require a separate export.",
       "restoreWarning": "Replace the environment with this snapshot? Changes since the snapshot will be lost and running work will be interrupted.",
-      "generation": "Generation",
       "resources": "Resources",
       "resourcesHint": "What this environment may use. A change is applied to the running container; no restart is required.",
       "limitsAdminOnly": "Administrators only",
@@ -288,12 +287,7 @@
       "state_deleting": "Deleting",
       "state_deleted": "Deleted",
       "error_request_unresolved": "A previous request has not been acknowledged. Retry that action or refresh its status before starting a different operation.",
-      "error_request_state_invalid": "The saved environment request is invalid. Verify the current operations before clearing browser data.",
-      "operation_pending": "Operation pending",
-      "operation_running": "Operation running",
-      "operation_succeeded": "Operation completed",
-      "operation_failed": "Operation failed",
-      "operation_cancelled": "Operation cancelled"
+      "error_request_state_invalid": "The saved environment request is invalid. Verify the current operations before clearing browser data."
     }
   }
 }

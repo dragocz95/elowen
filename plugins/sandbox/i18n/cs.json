@@ -143,7 +143,6 @@
       "stopWarning": "Zastavit prostředí projektu? Příkazy a služby projektu budou přerušeny. Soubory a nainstalované balíčky zůstanou zachovány.",
       "snapshotWarning": "Úplný snímek obsahuje kořenový systém souborů, soubory, pracovní stromy Gitu, HOME a data zachycená během pozastaveného spouštění. Zajišťuje konzistenci po pádu, nikoli databázovou konzistenci. Databáze aplikací mohou vyžadovat samostatný export.",
       "restoreWarning": "Nahradit prostředí tímto snímkem? Změny od vytvoření snímku budou ztraceny a běžící práce bude přerušena.",
-      "generation": "Generace",
       "resources": "Prostředky",
       "resourcesHint": "Co smí toto prostředí využívat. Změna se použije na běžící kontejner, restart není potřeba.",
       "limitsAdminOnly": "Pouze pro správce",
@@ -166,12 +165,7 @@
       "state_deleting": "Maže se",
       "state_deleted": "Smazáno",
       "error_request_unresolved": "Předchozí požadavek nebyl potvrzen. Než zahájíte jinou operaci, zopakujte danou akci nebo obnovte její stav.",
-      "error_request_state_invalid": "Uložený požadavek prostředí je neplatný. Před vymazáním dat prohlížeče ověřte aktuální operace.",
-      "operation_pending": "Operace čeká",
-      "operation_running": "Operace probíhá",
-      "operation_succeeded": "Operace dokončena",
-      "operation_failed": "Operace selhala",
-      "operation_cancelled": "Operace zrušena"
+      "error_request_state_invalid": "Uložený požadavek prostředí je neplatný. Před vymazáním dat prohlížeče ověřte aktuální operace."
     }
   }
 }
