@@ -7,6 +7,7 @@ import { it } from 'vitest';
 import { request as httpRequest } from 'node:http';
 import { PodmanClient, SpawnExecutor, isolatedPodmanOptions } from '../../plugins/sandbox/lib/podman.mjs';
 import { createContainerSpec, executionUnit } from '../../plugins/sandbox/lib/containerSpec.mjs';
+import { managedGuestRoot } from '../../plugins/sandbox/lib/containerPaths.mjs';
 import { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
 import { PROJECT_BASE_IMAGE_TAG } from '../../plugins/sandbox/lib/containerBaseImage.mjs';
 import { openDb } from '../../src/store/db.js';
@@ -80,7 +81,7 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
     await client.start(spec);
     assert.equal((await client.inspect(spec))?.state, 'running');
     stage = 'guest exec';
-    const result = await execute(spec, 'set -eu; git --version; printf rootfs > /rootfs-proof; printf home > /root/home-proof; printf workspace > /workspace/workspace-proof; printf data > /data/data-proof');
+    const result = await execute(spec, 'set -eu; git --version; printf rootfs > /rootfs-proof; printf home > /root/home-proof; printf workspace > /demo/workspace-proof; printf data > /data/data-proof');
     assert.ok(result);
     assert.equal(result.code, 0, result.stderr);
     assert.match(result.stdout, /git version/);
@@ -97,7 +98,7 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
     stage = 'stop/start persistence';
     await client.stop(spec);
     await client.start(spec);
-    const persisted = await execute(spec, 'set -eu; test "$(cat /rootfs-proof)" = rootfs; test "$(cat /root/home-proof)" = home; test "$(cat /workspace/workspace-proof)" = workspace; test "$(cat /data/data-proof)" = data');
+    const persisted = await execute(spec, 'set -eu; test "$(cat /rootfs-proof)" = rootfs; test "$(cat /root/home-proof)" = home; test "$(cat /demo/workspace-proof)" = workspace; test "$(cat /data/data-proof)" = data');
     assert.ok(persisted);
     assert.equal(persisted.code, 0, persisted.stderr);
     stage = 'guest cancellation';
@@ -132,7 +133,10 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
     stage = 'durable coordinator and guest file transport';
     const sql = openDb(':memory:');
     const db = makePluginDb(sql, 'sandbox', { canMigrate: true });
-    const project: any = { id: 7, executionKind: 'managed', lifecycle: 'active' };
+    const project: any = { id: 7, slug: 'runtime-demo', executionKind: 'managed', lifecycle: 'active' };
+    // Where this project is really mounted. Writing the proofs to `/workspace` instead left them on the
+    // container's own filesystem, so the snapshot and restore below proved nothing about the volume.
+    const projectRoot = managedGuestRoot(project.slug, project.id);
     const ctx: any = { db: () => db, currentAccountUserId: () => null, currentAccess: () => ({ readOnly: false }), config: {}, host: { stores: () => ({
       usersRead: { list: () => [{ id: 1 }], mayUsePlugin: () => true, isAdmin: () => true },
       // Only project 7 exists for this actor: a denial case has to be able to actually be denied.
@@ -151,53 +155,53 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
     try {
       await perform({ kind: 'start' });
       const files = (operation: any) => runtime.projectFiles({ ...actor, operation });
-      const created = await files({ kind: 'write', path: '/workspace/runtime-proof', base64: Buffer.from('snapshot value').toString('base64'), expectedVersion: null });
+      const created = await files({ kind: 'write', path: `${projectRoot}/runtime-proof`, base64: Buffer.from('snapshot value').toString('base64'), expectedVersion: null });
       assert.equal(created.kind, 'write');
-      await assert.rejects(files({ kind: 'write', path: '/workspace/runtime-proof', base64: '', expectedVersion: 'stale' }), /version/i);
-      const read = await files({ kind: 'read', path: '/workspace/runtime-proof', maxBytes: 1024 });
+      await assert.rejects(files({ kind: 'write', path: `${projectRoot}/runtime-proof`, base64: '', expectedVersion: 'stale' }), /version/i);
+      const read = await files({ kind: 'read', path: `${projectRoot}/runtime-proof`, maxBytes: 1024 });
       assert.equal(Buffer.from(read.base64, 'base64').toString(), 'snapshot value');
-      const prepared = await runtime.prepareExecution({ command: { type: 'shell', command: 'printf root > /rootfs-managed; printf home > /root/managed; printf data > /data/managed' }, projectRef: actor.project, cwd: '/workspace', leaseKind: 'terminal' }, 1);
+      const prepared = await runtime.prepareExecution({ command: { type: 'shell', command: 'printf root > /rootfs-managed; printf home > /root/managed; printf data > /data/managed' }, projectRef: actor.project, cwd: projectRoot, leaseKind: 'terminal' }, 1);
       assert.equal((await runPrepared(prepared)).code, 0);
 
       stage = 'guest file tool operations';
       // What the file tools sit on: a directory listing, a content search, a stat, a rename and a
       // removal, each answered by the guest rather than by a host view of the volume.
-      await files({ kind: 'mkdir', path: '/workspace/tools' });
-      await files({ kind: 'write', path: '/workspace/tools/needle.txt', base64: Buffer.from('alpha NEEDLE omega\n').toString('base64'), expectedVersion: null });
-      const listed = await files({ kind: 'list', path: '/workspace/tools', limit: 50 });
+      await files({ kind: 'mkdir', path: `${projectRoot}/tools` });
+      await files({ kind: 'write', path: `${projectRoot}/tools/needle.txt`, base64: Buffer.from('alpha NEEDLE omega\n').toString('base64'), expectedVersion: null });
+      const listed = await files({ kind: 'list', path: `${projectRoot}/tools`, limit: 50 });
       assert.equal(listed.kind, 'list');
       assert.ok(listed.entries.some((entry: any) => entry.path.endsWith('needle.txt')), 'the listing must show the file just written');
-      const found = await files({ kind: 'search', path: '/workspace', pattern: 'NEEDLE', limit: 20 });
+      const found = await files({ kind: 'search', path: projectRoot, pattern: 'NEEDLE', limit: 20 });
       assert.equal(found.kind, 'search');
       assert.ok(found.matches.length >= 1, 'the guest search must find the written content');
-      const statted = await files({ kind: 'stat', path: '/workspace/tools/needle.txt' });
+      const statted = await files({ kind: 'stat', path: `${projectRoot}/tools/needle.txt` });
       assert.equal(statted.kind, 'stat');
       assert.equal(statted.entry.size, 19);
-      await files({ kind: 'rename', path: '/workspace/tools/needle.txt', destination: '/workspace/tools/renamed.txt', expectedVersion: statted.entry.version });
+      await files({ kind: 'rename', path: `${projectRoot}/tools/needle.txt`, destination: `${projectRoot}/tools/renamed.txt`, expectedVersion: statted.entry.version });
       // A stat answers "gone" with a null entry rather than an error, so absence is asserted that way.
-      assert.equal((await files({ kind: 'stat', path: '/workspace/tools/needle.txt' })).entry, null);
-      const renamed = await files({ kind: 'stat', path: '/workspace/tools/renamed.txt' });
-      await files({ kind: 'remove', path: '/workspace/tools/renamed.txt', expectedVersion: renamed.entry.version });
-      assert.equal((await files({ kind: 'stat', path: '/workspace/tools/renamed.txt' })).entry, null);
+      assert.equal((await files({ kind: 'stat', path: `${projectRoot}/tools/needle.txt` })).entry, null);
+      const renamed = await files({ kind: 'stat', path: `${projectRoot}/tools/renamed.txt` });
+      await files({ kind: 'remove', path: `${projectRoot}/tools/renamed.txt`, expectedVersion: renamed.entry.version });
+      assert.equal((await files({ kind: 'stat', path: `${projectRoot}/tools/renamed.txt` })).entry, null);
 
       stage = 'guest access denial';
       // Another project's identity must not reach this environment, and a stale generation must not
       // either — both are refusals the environment owes its caller, not conveniences.
       await assert.rejects(
-        runtime.projectFiles({ project: { kind: 'managed', projectId: 9 }, accountUserId: 1, operation: { kind: 'read', path: '/workspace/runtime-proof', maxBytes: 64 } }),
+        runtime.projectFiles({ project: { kind: 'managed', projectId: 9 }, accountUserId: 1, operation: { kind: 'read', path: `${projectRoot}/runtime-proof`, maxBytes: 64 } }),
         /forbidden|denied|not found|unavailable/i,
       );
       await assert.rejects(
-        runtime.projectFiles({ ...actor, expectedGeneration: 99, operation: { kind: 'read', path: '/workspace/runtime-proof', maxBytes: 64 } }),
+        runtime.projectFiles({ ...actor, expectedGeneration: 99, operation: { kind: 'read', path: `${projectRoot}/runtime-proof`, maxBytes: 64 } }),
         /generation/i,
       );
-      // The container is the boundary, so a guest path is not refused for being outside /workspace.
+      // The container is the boundary, so a guest path is not refused for being outside the project mount.
       // What must be refused is a path the protocol cannot express safely.
       await assert.rejects(files({ kind: 'read', path: 'relative/path', maxBytes: 64 }), /path|invalid|absolute/i);
       stage = 'managed worktrees and gateway preview';
       const worktrees = await runtime.managedWorktrees({ ...actor, action: { kind: 'create', label: 'retained', baseRef: 'main' } });
       assert.equal(worktrees.length, 1);
-      const server = await runtime.prepareExecution({ command: { type: 'shell', command: 'systemd-run --unit=preview-target --service-type=exec /usr/bin/python3 -m http.server 8081 --bind 127.0.0.1 --directory /workspace' }, projectRef: actor.project, cwd: '/workspace', leaseKind: 'terminal' }, 1);
+      const server = await runtime.prepareExecution({ command: { type: 'shell', command: `systemd-run --unit=preview-target --service-type=exec /usr/bin/python3 -m http.server 8081 --bind 127.0.0.1 --directory ${projectRoot}` }, projectRef: actor.project, cwd: projectRoot, leaseKind: 'terminal' }, 1);
       await runPrepared(server);
       const preview = await runtime.projectPreviewBinding({ ...actor, port: 8081 });
       try {
@@ -211,26 +215,26 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
       stage = 'full project snapshot and fresh-generation restore';
       const saved = await perform({ kind: 'snapshot' });
       await runtime.managedWorktrees({ ...actor, action: { kind: 'create', label: 'after-snapshot', baseRef: 'main' } });
-      await files({ kind: 'write', path: '/workspace/runtime-proof', base64: Buffer.from('changed').toString('base64'), expectedVersion: read.version });
+      await files({ kind: 'write', path: `${projectRoot}/runtime-proof`, base64: Buffer.from('changed').toString('base64'), expectedVersion: read.version });
       await perform({ kind: 'restore', snapshotId: saved.snapshotId });
       assert.equal((await runtime.environmentFor(actor)).generation, 2);
-      const restored = await files({ kind: 'read', path: '/workspace/runtime-proof', maxBytes: 1024 });
+      const restored = await files({ kind: 'read', path: `${projectRoot}/runtime-proof`, maxBytes: 1024 });
       assert.equal(Buffer.from(restored.base64, 'base64').toString(), 'snapshot value');
       await perform({ kind: 'stop' }); await perform({ kind: 'start' });
-      const verify = await runtime.prepareExecution({ command: { type: 'shell', command: 'set -eu; test "$(cat /rootfs-managed)" = root; test "$(cat /root/managed)" = home; test "$(cat /data/managed)" = data' }, projectRef: actor.project, cwd: '/workspace', leaseKind: 'terminal' }, 1);
+      const verify = await runtime.prepareExecution({ command: { type: 'shell', command: 'set -eu; test "$(cat /rootfs-managed)" = root; test "$(cat /root/managed)" = home; test "$(cat /data/managed)" = data' }, projectRef: actor.project, cwd: projectRoot, leaseKind: 'terminal' }, 1);
       assert.equal((await runPrepared(verify)).code, 0);
       const retained = await runtime.managedWorktrees({ ...actor, action: { kind: 'list' } });
       assert.equal(retained.length, 1, 'Organizational worktree metadata must follow the restored snapshot');
       await runtime.managedWorktrees({ ...actor, action: { kind: 'remove', workspaceId: retained[0].id } });
       stage = 'managed source publication';
-      const seed = await runtime.prepareExecution({ command: { type: 'shell', command: 'mkdir /workspace/publication; printf executable > /workspace/publication/program.sh; chmod 755 /workspace/publication/program.sh; ln -s program.sh /workspace/publication/relative-link' }, projectRef: actor.project, cwd: '/workspace', leaseKind: 'terminal' }, 1);
+      const seed = await runtime.prepareExecution({ command: { type: 'shell', command: `mkdir ${projectRoot}/publication; printf executable > ${projectRoot}/publication/program.sh; chmod 755 ${projectRoot}/publication/program.sh; ln -s program.sh ${projectRoot}/publication/relative-link` }, projectRef: actor.project, cwd: projectRoot, leaseKind: 'terminal' }, 1);
       await runPrepared(seed);
       const destination = join(scratch, 'published-copy');
       const registration = { siteId: 'copy-site', projectId: 7, image: PROJECT_BASE_IMAGE_TAG, sourcePath: destination,
         sitesDataDir: join(scratch, 'sites'), brokerDir: join(scratch, 'broker'), workspaceReadOnly: true, network: 'isolated',
         limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240 }, staging: true };
       runtime.connectSitesRuntime({ resolve: async () => registration, beforeStart: async () => {}, afterStop: async () => {}, projectDependents: async () => [],
-        resolveArtifact: async () => ({ kind: 'project-source', project: actor.project, guestPath: '/workspace/publication', destinationPath: destination }) });
+        resolveArtifact: async () => ({ kind: 'project-source', project: actor.project, guestPath: `${projectRoot}/publication`, destinationPath: destination }) });
       await runtime.registerSiteEnvironment({ siteId: registration.siteId, accountUserId: 1 });
       const siteAction = async (action: any) => {
         const op = await runtime.requestSiteEnvironment({ siteId: registration.siteId, accountUserId: 1, action }); await runtime.reconcile();
