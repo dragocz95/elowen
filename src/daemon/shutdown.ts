@@ -16,8 +16,10 @@ const PAUSE_NOTIFY_MS = 1_500;
 /** The synchronous checkpoint's guard (see pause below): well above any single SQLite busy_timeout round. */
 const PAUSE_CHECKPOINT_GUARD_MS = 5_000;
 /** Backstop over the un-parkable wait (20 s inside BrainService) plus the courtesies. */
-const PAUSE_UNPARKABLE_GUARD_MS = 26_000;
+const PAUSE_UNPARKABLE_GUARD_MS = 24_000;
 const PAUSE_PLUGIN_SHUTDOWN_MS = 3_000;
+/** Lets an aborted credential refresh release its file lock without delaying the durable checkpoint. */
+const PAUSE_PRE_CLEANUP_MS = 1_500;
 
 /** Race a best-effort wait against a bound; the pause never blocks on a chat API or a plugin teardown. */
 async function bounded(work: Promise<unknown> | undefined, ms: number): Promise<void> {
@@ -73,7 +75,11 @@ export interface ShutdownControl {
 export function installGracefulShutdown(
   brain: PausableBrain | undefined,
   log: { info: (m: string) => void; error: (m: string, e?: unknown) => void },
-  opts?: { exit?: (code: number) => never; notify?: boolean },
+  opts?: {
+    beforePause?: () => void | Promise<void>;
+    exit?: (code: number) => never;
+    notify?: boolean;
+  },
 ): ShutdownControl {
   const exit = opts?.exit ?? ((code: number) => process.exit(code));
   let pausing = false;
@@ -96,6 +102,9 @@ export function installGracefulShutdown(
     }
     pausing = true;
     exitCode = code;
+    let prePause: Promise<void> | undefined;
+    try { prePause = Promise.resolve(opts?.beforePause?.()); }
+    catch (error) { log.error('pre-pause cleanup failed — exiting anyway', error); }
     void (async () => {
       const started = Date.now();
       // The exit guard is armed BEFORE the checkpoint. Honest limit: the checkpoint is synchronous SQLite
@@ -110,6 +119,8 @@ export function installGracefulShutdown(
       let at: PauseSummary = { turns: 0, children: 0, parked: [], queued: 0, unparkable: [] };
       try { at = brain?.pauseForRestart?.() ?? at; }
       catch (error) { log.error('pause checkpoint failed — exiting anyway', error); }
+      try { await bounded(prePause, PAUSE_PRE_CLEANUP_MS); }
+      catch (error) { log.error('pre-pause cleanup failed — exiting anyway', error); }
       clearTimeout(guard);
       log.info(`${cause} — pausing (${at.turns} turn(s), ${at.children} sub-agent(s)): parked ${at.parked.length} turn(s), checkpointed ${at.queued} queued message(s), ${at.unparkable.length} turn(s) without a resume`);
       if (at.parked.length > 0) log.info(`parked for boot resume: ${at.parked.join(', ')}`);

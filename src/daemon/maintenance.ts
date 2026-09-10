@@ -1,5 +1,8 @@
+import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import type { BrainService } from '../brain/brainService.js';
 import { sweepChatImages } from '../brain/chatImages.js';
+import { startOAuthCredentialRefreshLoop } from '../brain/oauthRefresh.js';
+import type { BrainCredentialAccess } from '../brain/providerUsage.js';
 import { chatFilesDir, sweepChatFiles } from '../brain/chatFiles.js';
 import { isEvictable, vitality, type MemoryRetentionConfig } from '../brain/memoryVitality.js';
 import { createBootRecovery } from '../brain/recovery/index.js';
@@ -61,6 +64,8 @@ export function runProviderRequestRetentionSweep(
 
 interface MaintenanceDeps {
   brain: BrainService | undefined;
+  brainAuth: Pick<BrainCredentialAccess, 'get'>;
+  brainRuntime: Pick<ModelRuntime, 'getAuth'>;
   brainStore: BrainStore;
   chatImagesDir: string | undefined;
   config: ConfigStore;
@@ -117,9 +122,20 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
         onProviderResumed: (id) => { if (id === 'workflows') deps.brain?.publishResync('boot-recovered'); },
       }).catch((e) => deps.log.error('boot recovery failed', e)))
       .catch((e) => deps.log.error('startPlatforms failed', e));
+    // Anthropic's refresh token can expire while its eight-hour access token is still usable. PI refreshes
+    // only while resolving auth for a request, so an idle daemon can otherwise miss the rotation window.
+    const stopOAuthCredentialRefresh = startOAuthCredentialRefreshLoop({
+      runtime: deps.brainRuntime,
+      credentials: deps.brainAuth,
+      clock,
+      log: deps.log,
+    });
     // Registered only once the platforms are coming up, so a stop can actually announce itself. Skipped
     // under the in-memory test DB, where installing process-wide signal handlers would leak across tests.
-    if (deps.dbPath !== ':memory:') deps.onShutdownInstalled(installGracefulShutdown(deps.brain, deps.log));
+    // Abort the refresh before checkpointing, then briefly await its lock cleanup before process exit.
+    if (deps.dbPath !== ':memory:') {
+      deps.onShutdownInstalled(installGracefulShutdown(deps.brain, deps.log, { beforePause: stopOAuthCredentialRefresh }));
+    }
     // Purge expired auth tokens hourly so the table can't grow unbounded over a long-running daemon.
     const purgeTokens = () => deps.users.purgeExpiredTokens(deps.config.get().security.tokenTtlDays);
     purgeTokens();
@@ -238,6 +254,6 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
     const stopEmbedQueue = clock.setInterval(() => {
       void deps.embedQueue.drain().catch((e) => deps.log.error('embed queue drain failed', e));
     }, 30_000);
-    return () => { stopTokenPurge(); stopEventPurge(); stopProviderRequestRetention(); stopOriginRetention(); stopSessionPurge(); stopMemoryRetentionSweep(); stopChatImageSweep(); stopIdleSessionReap(); stopEmbedQueue(); };
+    return () => { void stopOAuthCredentialRefresh(); stopTokenPurge(); stopEventPurge(); stopProviderRequestRetention(); stopOriginRetention(); stopSessionPurge(); stopMemoryRetentionSweep(); stopChatImageSweep(); stopIdleSessionReap(); stopEmbedQueue(); };
   };
 }

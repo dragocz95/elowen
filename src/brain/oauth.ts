@@ -21,8 +21,8 @@ interface Flow extends OAuthFlowState { resolveInput?: (value: string) => void }
 
 /** Drives pi-ai OAuth logins (Anthropic / GitHub Copilot / OpenAI Codex) from the web UI: `start`
  *  kicks the provider's login in the background and the UI polls `get` + posts `submitInput` when the
- *  flow asks for a pasted code. Credentials land in the runtime's persistent store (auto-refresh handled
- *  by pi). One flow at a time per provider is plenty for an admin action. */
+ *  flow asks for a pasted code. Credentials land in the runtime's persistent store; PI refreshes on use
+ *  and the daemon proactively rotates Anthropic while idle. One flow at a time per provider is plenty. */
 export class BrainOAuthManager {
   private flows = new Map<string, Flow>();
   constructor(private runtime: ModelRuntime, private creds: BrainCredentialAccess) {}

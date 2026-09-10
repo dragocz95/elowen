@@ -12,7 +12,7 @@
  *  This store therefore holds NO snapshot at all: every read() and list() parses the file anew, so a
  *  credential written by any process is what every other process serves on its very next access. The
  *  file is small and reads are rare (one per model request), so freshness costs nothing measurable.
- *  Reads are async (the write side is sync but runs only on login and the hourly refresh) — a slow
+ *  Reads are async (the write side is sync but runs only on login and periodic refresh) — a slow
  *  filesystem must stall the request that needs the credential, not the whole event loop.
  *
  *  Writes keep pi's contract (see pi-ai's CredentialStore doc: "mutual exclusion per provider id,
@@ -117,7 +117,7 @@ export class FileCredentialStore implements CredentialStore {
   private readonly timing: LockTiming;
   /** In-process write serialization. One chain for the whole file (not per provider) because every
    *  write rewrites the whole document anyway — two providers' writes would still contend on the file
-   *  lock, and write traffic (login, hourly refresh) is far too small to care. */
+   *  lock, and write traffic (login, periodic refresh) is far too small to care. */
   private writeChain: Promise<unknown> = Promise.resolve();
   /** The directory checks in hardenDir() hold for the process lifetime — run them once, not per write. */
   private dirHardened = false;

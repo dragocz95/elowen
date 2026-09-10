@@ -28,12 +28,13 @@ const silentLog = { info: () => { /* quiet */ }, error: () => { /* quiet */ } };
 async function run(
   brain: BrainService | undefined,
   trigger: 'SIGTERM' | 'SIGINT' | 'restart' = 'SIGTERM',
-  opts: { notify?: boolean; order?: string[] } = {},
+  opts: { beforePause?: () => void | Promise<void>; notify?: boolean; order?: string[] } = {},
 ): Promise<{ exited: number[]; elapsedMs: number }> {
   const exited: number[] = [];
   const startedAt = Date.now();
   await new Promise<void>((resolve) => {
     const control = installGracefulShutdown(brain, silentLog, {
+      beforePause: opts.beforePause,
       notify: opts.notify ?? false,
       exit: ((code: number) => { exited.push(code); opts.order?.push('exit'); resolve(); }) as never,
     });
@@ -63,6 +64,20 @@ describe('the shutdown is a PAUSE: checkpoint, then exit within seconds', () => 
     await run(brain, 'SIGTERM', { order });
     // The brain latches admission inside pauseForRestart itself; the handler never calls beginDrain.
     expect(order).toEqual(['checkpoint', 'stop-services', 'exit']);
+  });
+
+  it('starts pre-pause cleanup before checkpointing and waits for it before exit', async () => {
+    const order: string[] = [];
+    const { brain } = scriptedBrain({ order });
+    await run(brain, 'SIGTERM', {
+      beforePause: async () => {
+        order.push('pre-pause');
+        await Promise.resolve();
+        order.push('pre-pause-done');
+      },
+      order,
+    });
+    expect(order).toEqual(['pre-pause', 'checkpoint', 'pre-pause-done', 'exit']);
   });
 
   it('gives the turns nothing can resume exactly one bounded wait, between the checkpoint and the exit', async () => {
