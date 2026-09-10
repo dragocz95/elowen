@@ -5,6 +5,7 @@ import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
+import { emitPluginEvent } from '../../../lib/pluginEvents';
 import type { ProjectExecutionRef } from '../../../lib/types';
 
 const chat = { telemetry: { project: null as { cwd: string } | null, projectRef: null as ProjectExecutionRef | null }, activeSessionId: null as string | null };
@@ -175,6 +176,42 @@ describe('ProjectPicker', () => {
       await selectElowen();
       expect(await screen.findByText('Done')).toBeInTheDocument();
       await waitFor(() => expect(screen.queryByTestId('operation-progress-dialog')).toBeNull(), { timeout: 4000 });
+    });
+
+    // Hiding the window leaves the operation running, so whoever hid it still has to be told how it
+    // ended: a success that nobody settles leaves the "Show progress" chip on screen for the rest of the
+    // conversation, and a failure that nobody reopens is silent.
+    it('settles an operation that ended while its window was hidden', async () => {
+      chat.activeSessionId = 'brain-1-a'; chat.telemetry.projectRef = { kind: 'managed', projectId: 1 };
+      server.use(...switching(operation()));
+      mount();
+      await selectElowen();
+      expect(await screen.findByText('Creating the container')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Hide' }));
+      expect(await screen.findByTestId('chat-environment-chip')).toBeInTheDocument();
+
+      act(() => emitPluginEvent({
+        type: 'plugin', plugin: 'sandbox', kind: 'environment-operation', projectId: 2,
+        data: { operation: operation({ status: 'succeeded', percent: 100, stepIndex: 4, stepLabel: 'initialize' }) },
+      }));
+      await waitFor(() => expect(screen.queryByTestId('chat-environment-chip')).toBeNull());
+      expect(screen.queryByTestId('operation-progress-dialog')).toBeNull();
+    });
+
+    it('brings a hidden window back when the environment failed to come up', async () => {
+      chat.activeSessionId = 'brain-1-a'; chat.telemetry.projectRef = { kind: 'managed', projectId: 1 };
+      server.use(...switching(operation()));
+      mount();
+      await selectElowen();
+      expect(await screen.findByText('Creating the container')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Hide' }));
+      expect(await screen.findByTestId('chat-environment-chip')).toBeInTheDocument();
+
+      act(() => emitPluginEvent({
+        type: 'plugin', plugin: 'sandbox', kind: 'environment-operation', projectId: 2,
+        data: { operation: operation({ status: 'failed', percent: null, error: 'image build failed' }) },
+      }));
+      expect(await screen.findByRole('alert')).toHaveTextContent('image build failed');
     });
 
     // The stale environment the mount rename left behind. The failure names the repair and the window
