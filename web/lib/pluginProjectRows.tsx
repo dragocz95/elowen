@@ -64,6 +64,9 @@ function projectRowsHookOf(registration: unknown): PluginProjectRowsHook | null 
 }
 
 export interface PluginProjectRows {
+  /** The ONE state this row is in, as the register draws it: a row is one project doing one thing, and its
+   *  status track holds a single glyph. The first contributing bundle that has something to say about this
+   *  project says it — actions merge across bundles, states deliberately do not. */
   statusFor(projectId: number): PluginProjectRowStatus | undefined;
   actionsFor(projectId: number): (PluginProjectRowAction & { plugin: string })[];
   /** Mount this inside the register: the contributing bundles run here, and their overlays render here. */
