@@ -15,7 +15,7 @@ import { getBrainClientId, buildBinding, type BrainBinding } from '../../lib/bra
 import { subscribeRevive } from '../../lib/useRevive';
 import { resolveStreamSilence } from '../../lib/streamWatchdog';
 import { Spinner } from '../../components/ui/states';
-import { brainModelLabel } from '../../lib/modelProvider';
+import { brainModelLabel, chatModelCatalog } from '../../lib/modelProvider';
 import { isBackgroundProcessCardId } from '../../lib/processScope';
 import { todoCard } from '../../lib/todoCard';
 import {
@@ -1074,7 +1074,8 @@ function useBrainChatController(): BrainChatValue {
   const loadModels = async (): Promise<void> => {
     setModelsError(false);
     setModelsLoading(true);
-    try { setModels(await elowenClient.brainModels()); }
+    // The catalog carries the account's image models too; a conversation can never run on one.
+    try { setModels(chatModelCatalog(await elowenClient.brainModels())); }
     catch { setModels(null); setModelsError(true); }
     finally { setModelsLoading(false); }
   };

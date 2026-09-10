@@ -14,6 +14,7 @@ import { useToast } from '../../components/ui/Toast';
 import { interpolate, useTranslation } from '../../lib/i18n';
 import { useBrand } from '../../lib/brand';
 import { useConfig, useEmbeddingSettings, useCategorizationSettings, useBrainModels, useMyCliSettings } from '../../lib/queries';
+import { chatModelCatalog } from '../../lib/modelProvider';
 import { useSaveEmbeddingSettings, useSaveCategorizationSettings, useUpdateConfig } from '../../lib/mutations';
 import { useAutoSaveStatus, type SaveStatus } from '../../lib/useAutoSaveStatus';
 import { combineSaveFeedback } from '../../lib/saveFeedback';
@@ -100,9 +101,10 @@ export function ModelRolesSection({ onSaveState, onOpenSection }: {
   // OAuth accounts (Claude/ChatGPT) expose no embeddings endpoint, so they can never be an embedding
   // model — drop them from the embedding catalog. The utility and digest roles are chat completions, so
   // both keep the whole catalog.
-  const embeddingModels = useMemo(() => (brainModels ?? []).filter((m) => m.source !== 'oauth'), [brainModels]);
+  const embeddingModels = useMemo(() => chatModelCatalog(brainModels ?? []).filter((m) => m.source !== 'oauth'), [brainModels]);
   const embCatalog = useProviderCatalog(embeddingModels, embProvider);
-  const catalog = useMemo(() => brainModels ?? [], [brainModels]);
+  // Both roles are chat completions, so neither may offer the account's image models.
+  const catalog = useMemo(() => chatModelCatalog(brainModels ?? []), [brainModels]);
 
   // baseUrl is intentionally omitted from the UI — the referenced provider already carries the API
   // endpoint. We send '' so any previously stored override is cleared and the provider endpoint wins.

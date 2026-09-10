@@ -124,6 +124,30 @@ describe('parseManifest', () => {
       configSchema: [{ key: 'bad', label: 'Bad', type: 'string', browse: 'directory' }],
     })).toThrow('/configSchema/0/browse is only valid for tokenList fields');
   });
+
+  // `modelKind` turns a model field into the image-model picker. It must survive parsing intact (the
+  // editor reads it), and a value the schema does not know must still be refused rather than rendered.
+  it('carries modelKind through a model field', () => {
+    const m = parseManifest({
+      ...good,
+      configSchema: [{ key: 'model', label: 'Model', type: 'model', modelKind: 'image' }],
+    });
+    expect(m.configSchema?.[0]?.modelKind).toBe('image');
+    expect(() => parseManifest({
+      ...good,
+      configSchema: [{ key: 'model', label: 'Model', type: 'model', modelKind: 'audio' }],
+    })).toThrow();
+  });
+
+  // The same manifest must still LOAD on a core that predates the attribute: it is an unknown key on a
+  // known field type, so the field keeps rendering as the ordinary model picker instead of vanishing.
+  it('ignores an unknown config-field attribute rather than dropping the field', () => {
+    const m = parseManifest({
+      ...good,
+      configSchema: [{ key: 'model', label: 'Model', type: 'model', someFutureAttribute: 'x' }],
+    });
+    expect(m.configSchema?.[0]?.type).toBe('model');
+  });
   it('enforces timezone and token-list default types and canonical token items', () => {
     const accepted = parseManifest({
       ...good,

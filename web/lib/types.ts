@@ -110,6 +110,10 @@ export interface BrainModelOption {
    *  catalogued" — a picker filtering on vision must KEEP such a model (fail-open); only an explicit
    *  `false` is a catalogued text-only model. */
   vision?: boolean;
+  /** `'image'` marks a model served by the provider's IMAGE endpoint. It is enabled through the same
+   *  per-account allowlist as the chat models and pickable by an image plugin, but the chat APIs reject
+   *  it: no chat picker and no model ROLE may offer it. Absent = an ordinary chat model. */
+  kind?: 'image';
 }
 /** One brain conversation in the session picker (web chat + CLI). `automation` says WHAT ran the turn
  *  this projection describes — 'scheduled' for a cron job or a wake-up, null for a turn a person asked
@@ -582,6 +586,9 @@ export interface PluginConfigField {
   /** For `provider` fields: restrict the picker to configured providers of this type (e.g. `openai`), or
    *  to any of several types (the image plugins take an API-key endpoint or the ChatGPT account). */
   providerType?: string | string[];
+  /** For `model` fields: offer the account's IMAGE models instead of its chat models, narrowed to the
+   *  provider chosen in this schema's `provider` field. Stores the bare model id; empty = provider default. */
+  modelKind?: 'image';
   /** Choices for `enum`/`multiSelect` fields. */
   options?: { value: string; label: string }[];
   /** Syntax mode for `code` fields (e.g. `js`, `python`). */

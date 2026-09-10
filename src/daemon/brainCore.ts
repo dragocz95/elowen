@@ -610,7 +610,9 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         const owner = users.list().find((u) => u.is_admin);
         const globalExecs = config.get().allowedExecs;
         return listBrainModels(c).then((models) =>
-          models.filter((m) => isModelVisibleForUser(owner, globalExecs, elowenExec(m.provider, m.model), configuredBrainProviders(config, brainCreds))));
+          // This is a CHAT picker, so the account's image models never belong in it.
+          models.filter((m) => m.kind !== 'image'
+            && isModelVisibleForUser(owner, globalExecs, elowenExec(m.provider, m.model), configuredBrainProviders(config, brainCreds))));
       },
       resolveProvider,
       // The SHARED embedder + live Settings→Memory config mapper, exposed to plugins as ctx.embeddings

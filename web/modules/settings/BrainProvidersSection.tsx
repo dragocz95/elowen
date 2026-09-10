@@ -144,10 +144,19 @@ function OAuthConnectDialog({ flow: initial, onDone }: { flow: OAuthFlowState; o
  *  that removed a model from its catalog / API). Without the second group a stale selection can never be
  *  un-checked here — it stays active and keeps showing in the Models section with no way to turn it off. The
  *  orphans go under an "unavailable" header so the user sees why they're there and that un-checking clears them. */
-export function modelPickerItems(available: string[], selected: string[], unavailableLabel: string): ManageSelectionItem[] {
+export function modelPickerItems(available: string[], selected: string[], unavailableLabel: string, image?: { models: string[]; badge: string }): ManageSelectionItem[] {
   const orphans = selected.filter((m) => !available.includes(m));
+  const isImage = new Set(image?.models ?? []);
   return [
-    ...available.map((m) => ({ id: m, label: m, group: '', icon: <ModelIcon name={m} size={14} /> })),
+    ...available.map((m) => ({
+      id: m,
+      label: m,
+      group: '',
+      icon: <ModelIcon name={m} size={14} />,
+      // An image model ticks on and off in this very list, like any other model of the account, but only
+      // an image plugin can pick one afterwards — the badge is what says so.
+      ...(isImage.has(m) ? { badges: [{ text: image!.badge, tone: 'muted' as const }] } : {}),
+    })),
     ...orphans.map((m) => ({ id: m, label: m, group: 'unavailable', groupLabel: unavailableLabel, icon: <ModelIcon name={m} size={14} /> })),
   ];
 }
@@ -160,17 +169,19 @@ function OAuthModelsModal({ type, initial, onSave, onClose }: {
   type: BrainProviderType; initial: string[]; onSave: (models: string[]) => void; onClose: () => void;
 }) {
   const { t } = useTranslation();
-  const [catalog, setCatalog] = useState<string[] | null>(null);
+  const [catalog, setCatalog] = useState<{ models: string[]; imageModels: string[] } | null>(null);
   useEffect(() => {
     setCatalog(null);
-    void elowenClient.brainOauthCatalog(type).then((r) => setCatalog(r.models)).catch(() => setCatalog([]));
+    void elowenClient.brainOauthCatalog(type)
+      .then((r) => setCatalog({ models: r.models, imageModels: r.imageModels ?? [] }))
+      .catch(() => setCatalog({ models: [], imageModels: [] }));
   }, [type]);
 
   const title = t.brain.pickModelsTitle.replace('{provider}', t.brain.types[type]);
   if (catalog === null) {
     return <Modal title={title} onClose={onClose} size="md"><ModalBody><LoadingState /></ModalBody></Modal>;
   }
-  const items = modelPickerItems(catalog, initial, t.brain.modelsUnavailable);
+  const items = modelPickerItems(catalog.models, initial, t.brain.modelsUnavailable, { models: catalog.imageModels, badge: t.brain.imageModelBadge });
   return (
     <ManageSelectionModal
       title={title}

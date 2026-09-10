@@ -11,6 +11,7 @@ vi.mock('../../../lib/mutations', () => ({ useSavePluginConfig: () => ({ mutateA
 vi.mock('../../../lib/queries', () => ({
   useBrainModels: () => ({ data: catalog.models }),
   useConfig: () => ({ data: undefined }),
+  useBrainOauthStatus: () => ({ data: {} }),
   useNotificationDestinations: () => ({ data: [] }),
   usePlugins: () => ({ data: [] }),
   usePluginTools: () => ({ data: [] }),
@@ -173,5 +174,48 @@ describe('PluginConfigEditor model fields', () => {
 
     fireEvent.click(screen.getByRole('button', { name: 'Chat model' }));
     expect(await screen.findByRole('button', { name: 'claude-opus' })).toBeInTheDocument();
+  });
+
+  // An image model is enabled in the account's own model list and rejected by every chat API, so a plain
+  // `model` field must not offer it — and a `modelKind: 'image'` field must offer nothing else, narrowed
+  // to the provider the same schema already asks for.
+  it('offers only the chosen provider image models to a modelKind field, and none of them to a chat field', async () => {
+    catalog.models = [
+      ...models,
+      { provider: 'chatgpt', providerLabel: 'ChatGPT account', model: 'gpt-image-2', exec: 'elowen:chatgpt/gpt-image-2', source: 'oauth', contextWindow: 8192, contextWindowSet: false, kind: 'image' },
+      { provider: 'openai', providerLabel: 'OpenAI', model: 'gpt-image-1', exec: 'elowen:openai/gpt-image-1', source: 'api-key', contextWindow: 8192, contextWindowSet: false, kind: 'image' },
+    ];
+    const schema: PluginConfigField[] = [
+      { key: 'provider', label: 'Provider', type: 'provider', providerType: ['openai', 'oauth-openai-codex'] },
+      { key: 'model', label: 'Image model', type: 'model', modelKind: 'image' },
+      { key: 'chat', label: 'Chat model', type: 'model' },
+    ];
+    function Fixture() {
+      const draft = usePluginConfigDraft('image-gen', { configSchema: schema, config: { provider: 'chatgpt', model: '' } }, { save: vi.fn<Save>() });
+      return (
+        <PluginConfigEditor
+          name="image-gen"
+          detail={{ name: 'image-gen', configSchema: schema, secretsSet: [] }}
+          fieldLabel={(item) => item.label}
+          fieldHint={(item) => item.hint}
+          fieldOptions={(item) => item.options ?? []}
+          riskText={(risk) => risk}
+          draft={draft}
+          mode="all"
+        />
+      );
+    }
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><Fixture /></Wrapper>);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Image model' }));
+    expect(await screen.findByRole('button', { name: 'gpt-image-2' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'gpt-image-1' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'claude-opus' })).toBeNull();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Chat model' }));
+    expect(await screen.findByRole('button', { name: 'claude-opus' })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'gpt-image-2' })).toBeNull();
   });
 });

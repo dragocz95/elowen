@@ -136,16 +136,44 @@ describe('listBrainModels', () => {
     ]));
   });
 
-  // The account's image models answer on `codex/images/*`, not on the Responses API this catalog
-  // describes, so registering them here only ever produced picker entries that fail on first use. They
-  // belong to the image catalog the GenerateImage/EditImage seam validates against instead.
-  it('keeps the account image models out of the chat catalog', async () => {
+  // The account's image models answer on `codex/images/*`, not on the Responses API. They are still
+  // models of the account and enable through the same allowlist, so they belong in this list — marked
+  // `kind: 'image'`, which is what keeps every chat picker and model role from offering them.
+  it('lists the account image models as image models, apart from the chat ones', async () => {
     const f = vi.fn() as unknown as typeof fetch;
     const cfg: BrainRuntimeConfig = {
       providers: [{ id: 'openai', label: 'OpenAI account', type: 'oauth-openai-codex', baseUrl: '', models: [], apiKey: null }],
     };
-    const ids = (await listBrainModels(cfg, f)).map((model) => model.model);
-    for (const image of OPENAI_CODEX_IMAGE_MODELS) expect(ids).not.toContain(image);
+    const models = await listBrainModels(cfg, f);
+    for (const image of OPENAI_CODEX_IMAGE_MODELS) {
+      expect(models.find((m) => m.model === image)?.kind).toBe('image');
+    }
+    expect(models.find((m) => m.model === 'gpt-5.5')?.kind).toBeUndefined();
+  });
+
+  // The allowlist is ONE list: a ticked image model reaches the image plugins, an unticked one reaches
+  // nothing — the same mechanism, and the same file, as for a chat model.
+  it('honours the account selection for image models too', async () => {
+    const f = vi.fn() as unknown as typeof fetch;
+    const cfg: BrainRuntimeConfig = {
+      providers: [{ id: 'openai', label: 'OpenAI account', type: 'oauth-openai-codex', baseUrl: '', models: ['gpt-5.5', 'gpt-image-2'], apiKey: null }],
+    };
+    const models = await listBrainModels(cfg, f);
+    expect(models.map((m) => m.model)).toEqual(['gpt-5.5', 'gpt-image-2']);
+    expect(models.find((m) => m.model === 'gpt-image-2')?.kind).toBe('image');
+    expect(models.find((m) => m.model === 'gpt-5.5')?.kind).toBeUndefined();
+  });
+
+  // An API-key OpenAI endpoint gets no catalog of its own: its own /models answer already names the
+  // image models, and they carry the same mark so the same picker can offer them.
+  it('marks an API-key provider image model from its own catalog', async () => {
+    const f = vi.fn(async () => new Response(JSON.stringify({ data: [{ id: 'gpt-image-1' }, { id: 'gpt-5.5' }] }), { status: 200 })) as unknown as typeof fetch;
+    const cfg: BrainRuntimeConfig = {
+      providers: [{ id: 'official', label: 'OpenAI', type: 'openai', baseUrl: 'https://api.openai.com/v1', models: [], apiKey: 'secret' }],
+    };
+    const models = await listBrainModels(cfg, f);
+    expect(models.find((m) => m.model === 'gpt-image-1')?.kind).toBe('image');
+    expect(models.find((m) => m.model === 'gpt-5.5')?.kind).toBeUndefined();
   });
 
   // An OAuth account's stored list is the operator's ALLOWLIST — the settings picker says so in as many

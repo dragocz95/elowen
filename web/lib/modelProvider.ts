@@ -12,6 +12,14 @@ export const SOURCE_BADGE: Record<BrainModelOption['source'], string> = {
   relay: 'Relay',
 };
 
+/** The catalog a CHAT surface may offer. `/brain/models` reports the whole account allowlist, image
+ *  models included, because that allowlist is the ONE place an operator enables a model. Everything that
+ *  ends in a chat completion — the conversation picker, the model roles, a plugin's plain `model` field —
+ *  must drop them here, since the chat APIs reject an image model outright. */
+export function chatModelCatalog<T extends Pick<BrainModelOption, 'kind'>>(models: readonly T[]): T[] {
+  return models.filter((m) => m.kind !== 'image');
+}
+
 /** Explicit `<prefix>:<model>` spec prefixes, in match order, mapped to their provider. Mirrors the
  *  daemon's PROGRAM_PREFIXES (src/shared/execs.ts) so the UI parses execs the same way spawn does. */
 const PROVIDER_PREFIXES: readonly [string, ProviderId][] = [
