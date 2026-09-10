@@ -27,15 +27,23 @@ const PLUGINS = join(process.cwd(), 'plugins');
  *  The scanner is additionally exercised against a fixture bundle at the bottom of this file, so a
  *  regex that stopped seeing computed reads fails there rather than passing as a clean list here. */
 const COMPUTED_READS: { file: string; keys: string[] }[] = [
-  // The environment panel labels its live state and the status of the pending lifecycle operation by
-  // building the key from the value, so the scan cannot resolve which keys those are. Declared here:
-  // every state in ProjectEnvironment['state'] and every EnvironmentOperation['status'].
+  // The environment panel labels its live state by building the key from the value, so the scan cannot
+  // resolve which keys those are. Declared here: every state in ProjectEnvironment['state'].
   {
     file: 'sandbox/web-src/ProjectEnvironmentSettings.tsx',
     keys: [
       'state_unprovisioned', 'state_starting', 'state_running', 'state_stopped', 'state_failed',
       'state_deleting', 'state_deleted',
-      'operation_pending', 'operation_running', 'operation_succeeded', 'operation_failed', 'operation_cancelled',
+    ],
+  },
+  // The project register row labels the same states and picks each menu item's label from the action
+  // table, so both reads are computed. Declared here: every state, and every ACTIONS label.
+  {
+    file: 'sandbox/web-src/projectRows.tsx',
+    keys: [
+      'state_unprovisioned', 'state_starting', 'state_running', 'state_stopped', 'state_failed',
+      'state_deleting', 'state_deleted',
+      'startEnvironment', 'stopEnvironment', 'restartEnvironment', 'snapshotEnvironment',
     ],
   },
 ];
