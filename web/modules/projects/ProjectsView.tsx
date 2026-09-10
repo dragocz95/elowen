@@ -121,6 +121,8 @@ export function ProjectsView() {
   // Host removal detaches metadata; managed removal requests durable environment teardown.
   const [removing, setRemoving] = useState<Project | null>(null);
   const [deleting, setDeleting] = useState<{ operationId: string; projectId: number } | null>(null);
+  // The start a managed project's creation implies, followed in the same shared progress window.
+  const [starting, setStarting] = useState<{ operationId: string; projectId: number } | null>(null);
   const removePendingRef = useRef(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
 
@@ -185,6 +187,9 @@ export function ProjectsView() {
           setPath('');
           setNotes('');
           toast(t.projects.created);
+          // Creating a managed project starts its environment, so the window that follows that start
+          // opens here rather than leaving the person to press start on a project they just made.
+          if (created.environmentOperationId) setStarting({ operationId: created.environmentOperationId, projectId: created.id });
           // The picker reads through the optional editor's project-file routes, which serve a managed
           // project from its own guest filesystem, so the offer does not depend on where it runs.
           if (editorEnabled) setIconFor(created);
@@ -206,6 +211,7 @@ export function ProjectsView() {
   }
 
   const deletion = useEnvironmentOperation(deleting?.operationId ?? null, deleting?.projectId);
+  const creationStart = useEnvironmentOperation(starting?.operationId ?? null, starting?.projectId);
 
   async function handleRemove(): Promise<void> {
     const target = removing;
@@ -562,6 +568,23 @@ export function ProjectsView() {
         }}
         onSettled={() => { setSelectedId((current) => current === deleting?.projectId ? null : current); toast(t.projects.removed); }}
         onClose={() => setDeleting(null)}
+      />
+
+      <OperationProgressDialog
+        open={starting !== null}
+        title={t.operationProgress.actions.start}
+        operation={creationStart.operation}
+        logTail={creationStart.logTail}
+        loadError={creationStart.loadError}
+        onRetry={() => {
+          const id = starting?.projectId;
+          if (id === undefined) return;
+          void requestEnvironmentAction(id, { kind: 'start' })
+            .then((operation) => setStarting({ operationId: operation.id, projectId: id }))
+            .catch((error) => toast(apiErrorMessage(error), 'error'));
+        }}
+        onSettled={() => { void qc.invalidateQueries({ queryKey: ['projects'] }); }}
+        onClose={() => setStarting(null)}
       />
 
       {ctxMenu && <ContextMenu state={ctxMenu} onClose={() => setCtxMenu(null)} />}
