@@ -229,4 +229,22 @@ describe('catalog coverage for endpoints the setup offers', () => {
     expect(inferredModelCapabilities('ai-relay', 'gemini-3.7-pro').levels).toEqual(['low', 'medium', 'high']);
   });
 
+  // The refresh script emits a row per endpoint the setup offers and CATALOG_ALIAS translates our key to
+  // the published one; the two have to agree. The Together and Fireworks aliases pointed at catalog names
+  // the generated table did not carry at all, so every model on those endpoints was answered by name
+  // alone: unpriced, and non-reasoning whenever no other endpoint publishes the same model name.
+  it('resolves Together and Fireworks from their own catalog rows, not by model name', () => {
+    const priced = (provider: string, model: string) => catalogModelCost(`elowen-${provider}`, model);
+
+    // Together's own row carries the rate; the name-only answer is unpriced, because the endpoints that
+    // publish `gpt-oss-120b` do not agree on one.
+    expect(priced('together', 'openai/gpt-oss-120b')).toEqual({ input: 0.15, output: 0.6, cacheRead: 0, cacheWrite: 0 });
+    // `glm-5p2` is Fireworks' own spelling of GLM-5.2, a name no other endpoint publishes: without its
+    // row the id fell through to the conservative non-reasoning answer.
+    expect(levels('fireworks', 'accounts/fireworks/models/glm-5p2')).toEqual(['high', 'max']);
+    expect(priced('fireworks', 'accounts/fireworks/models/glm-5p2'))
+      .toEqual({ input: 1.4, output: 4.4, cacheRead: 0.14, cacheWrite: 0 });
+    // And its row for Kimi K3 accepts one effort more than the endpoints publishing that name agree on.
+    expect(levels('fireworks', 'accounts/fireworks/models/kimi-k3')).toEqual(['low', 'medium', 'high', 'max']);
+  });
 });

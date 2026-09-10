@@ -58,7 +58,9 @@ const PREVIOUS_SUMMARY_OPEN = '<previous-summary>\n';
  *  the first one is a question about the live context. The prefix question is about a slice PI holds and
  *  the session no longer sends on its own, so answering it from the live context would summarize the
  *  whole conversation a second time and file the result under a heading that claims to describe one turn.
- *  Recognising the prompt is what keeps that request PI's own. */
+ *  Recognising the prompt is what keeps that request PI's own, and it is anchored at the START of the
+ *  instruction: PI's prefix question carries the prompt as the whole instruction, while the history
+ *  question puts `<previous-summary>` there first — model-written text that may quote this sentence. */
 const TURN_PREFIX_PROMPT_OPENING = 'This is the PREFIX of a turn that was too large to keep.';
 
 function textOf(content: string | readonly (TextContent | ImageContent)[]): string {
@@ -67,16 +69,13 @@ function textOf(content: string | readonly (TextContent | ImageContent)[]): stri
 }
 
 /**
- * PI's summarization instruction, with the re-serialized conversation stripped off the front.
- *
- * PI's own summarization SYSTEM prompt ("Do NOT continue the conversation…") is folded in ahead of it,
- * because the system prompt of this request is the session's own and cannot be replaced without losing
- * the cached prefix that is the entire point. It is the same text PI relies on to keep the model from
- * carrying on with the work, moved to the only slot still available.
+ * PI's instruction, exactly as it was appended after the `<conversation>` block — the text the caller
+ * identifies the request by. The conversation itself comes first and is dropped, because the live request
+ * carries it as real messages.
  *
  * Throws when the prompt does not have the shape this reads, which the caller turns into a fallback.
  */
-export function summarizationInstruction(context: Context): string {
+function appendedInstruction(context: Context): string {
   const [message, ...rest] = context.messages;
   if (rest.length > 0 || message === undefined || message.role !== 'user') {
     throw new Error('summarization context was not a single user message');
@@ -94,6 +93,21 @@ export function summarizationInstruction(context: Context): string {
   }
   const instruction = text.slice(close + CONVERSATION_CLOSE.length);
   if (instruction.trim().length === 0) throw new Error('summarization prompt carried no instruction');
+  return instruction;
+}
+
+/**
+ * PI's summarization instruction, with the re-serialized conversation stripped off the front.
+ *
+ * PI's own summarization SYSTEM prompt ("Do NOT continue the conversation…") is folded in ahead of it,
+ * because the system prompt of this request is the session's own and cannot be replaced without losing
+ * the cached prefix that is the entire point. It is the same text PI relies on to keep the model from
+ * carrying on with the work, moved to the only slot still available.
+ *
+ * Throws when the prompt does not have the shape this reads, which the caller turns into a fallback.
+ */
+export function summarizationInstruction(context: Context): string {
+  const instruction = appendedInstruction(context);
   const system = context.systemPrompt?.trim();
   return system ? `${system}\n\n${instruction}` : instruction;
 }
@@ -177,15 +191,17 @@ function guardSummaryResponse(inner: AssistantMessageEventStream, usage: Summary
 function warmPrefixStream(session: AgentSession, usage: SummaryUsage): AgentSession['agent']['streamFunction'] {
   return async (model: Model<Api>, context: Context, options) => {
     const agent = session.agent;
-    const instruction = summarizationInstruction(context);
+    // Classified on PI's own text, not on the instruction this module sends: the system prompt is folded
+    // in ahead of it below, and the previous summary PI puts before it is model-written prose.
+    const appended = appendedInstruction(context);
     const signal = options?.signal;
     const apiKey = agent.getApiKey ? await agent.getApiKey(model.provider) : undefined;
-    if (instruction.includes(TURN_PREFIX_PROMPT_OPENING)) {
+    if (appended.startsWith(TURN_PREFIX_PROMPT_OPENING)) {
       // PI's context and PI's options, unchanged apart from the auth this module resolves for every
       // request it sends: the prefix of one turn shares no cacheable prefix with the session anyway.
       return guardSummaryResponse(await agent.streamFunction(model, context, { ...options, apiKey }), usage);
     }
-    const liveContext = await liveContextWith(agent, instruction, signal);
+    const liveContext = await liveContextWith(agent, summarizationInstruction(context), signal);
     const inner = await agent.streamFunction(model, liveContext, {
       ...options,
       // PI pins "none" to avoid paying a cache write for a one-off request. This request is not one-off

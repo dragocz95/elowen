@@ -62,9 +62,13 @@ const boundedLimit = (limit: number | undefined, fallback: number): number =>
 
 /** Retention reads `importance` as a rank, not a number: each of 1..5 names a half-life, 5 is the pin,
  *  and anything outside the table has no half-life at all — which reads as "never decays" and makes the
- *  memory unevictable for good (memoryVitality.ts). A stored 99 was therefore a permanent pin. */
+ *  memory unevictable for good (memoryVitality.ts). A stored 99 was therefore a permanent pin.
+ *
+ *  Rounded DOWN, never up: a fractional rank can only come from a caller the schema already refuses, and
+ *  the one direction that must not happen is the one that strengthens retention, where 4.5 would become
+ *  the pin 5 and outlive every memory the caller meant to place below it. */
 const boundedImportance = (importance: number): number =>
-  Math.max(1, Math.min(PIN_IMPORTANCE, Math.round(importance)));
+  Math.max(1, Math.min(PIN_IMPORTANCE, Math.floor(importance)));
 
 function memorySearch(d: MemoryToolDeps) {
   return defineTool({
@@ -83,7 +87,7 @@ function memorySearch(d: MemoryToolDeps) {
       + 'outright for an unlinked sender or a task worker.',
     parameters: Type.Object({
       query: Type.String({ description: 'What to look up' }),
-      limit: Type.Optional(Type.Number({
+      limit: Type.Optional(Type.Integer({
         minimum: 1, maximum: MAX_MEMORY_LIMIT,
         description: `Max memories to return, 1..${MAX_MEMORY_LIMIT} (default 6)`,
       })),
@@ -119,7 +123,7 @@ function memoryAdd(d: MemoryToolDeps) {
     parameters: Type.Object({
       body: Type.String({ description: 'The fact, self-contained — it will be read without this conversation for context. Empty text is rejected.' }),
       kind: Type.Optional(Type.String({ description: "What sort of fact this is: e.g. 'fact', 'preference', 'decision', 'feedback' (default 'fact')" })),
-      importance: Type.Optional(Type.Number({
+      importance: Type.Optional(Type.Integer({
         minimum: 1, maximum: PIN_IMPORTANCE,
         description: 'How strongly this should be recalled, 1..5 (default 3); 5 is a pin that never expires',
       })),
@@ -239,7 +243,7 @@ function memoryUpdate(d: MemoryToolDeps) {
       id: Type.Number({ description: 'The memory id to update, as shown by MemorySearch or MemoryListRecent' }),
       body: Type.Optional(Type.String({ description: 'Replacement text for the fact, self-contained. Omit to keep the current wording.' })),
       kind: Type.Optional(Type.String({ description: "Replacement label, e.g. 'fact', 'preference', 'decision', 'feedback'. Omit to keep it." })),
-      importance: Type.Optional(Type.Number({
+      importance: Type.Optional(Type.Integer({
         minimum: 1, maximum: PIN_IMPORTANCE,
         description: 'New recall weight, 1..5 (5 is a pin that never expires). Omit to keep the current one.',
       })),
@@ -318,7 +322,7 @@ function memoryListRecent(d: MemoryToolDeps) {
       + 'imp:N] body`, `limit` caps how many are returned (default 10), and the tool is refused for an '
       + 'unlinked platform sender or a task worker because memory is per-user and private.',
     parameters: Type.Object({
-      limit: Type.Optional(Type.Number({
+      limit: Type.Optional(Type.Integer({
         minimum: 1, maximum: MAX_MEMORY_LIMIT,
         description: `Max memories to list, newest first, 1..${MAX_MEMORY_LIMIT} (default 10)`,
       })),
