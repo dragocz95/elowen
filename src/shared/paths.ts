@@ -77,14 +77,15 @@ export function sessionToolResultSpillDir(env: NodeJS.ProcessEnv, sessionId: str
   return toolResultSpillDir(env, spillNamespaceResolver?.(sessionId) || sessionId);
 }
 
-/** Fork child session id → the spill namespace of the session it was forked FROM, or undefined for
- *  anything that is not a durable fork child (buildBrainCore wires it to BrainStore.forkParentSpillNamespace).
+/** Session id → the spill namespace of the session its transcript was copied FROM, or undefined for
+ *  anything that is neither a durable fork child nor a branch (buildBrainCore wires it to
+ *  BrainStore.forkParentSpillNamespace).
  *
- *  A fork seeds the child with its parent's transcript byte for byte, so the child inherits placeholders
- *  naming files in the PARENT's spill directory — the one thing the per-session allowance cannot cover.
+ *  Both shapes seed the new session with the source transcript byte for byte, so it inherits placeholders
+ *  naming files in the SOURCE's spill directory — the one thing the per-session allowance cannot cover.
  *  The direction is fixed by the resolver itself: it answers "which conversation was this one forked
- *  from", a question a parent can never ask about its child. Undefined (an un-wired process, a test) means
- *  no allowance at all. */
+ *  from", a question a source can never ask about what was taken from it. Undefined (an un-wired process,
+ *  a test) means no allowance at all. */
 let forkParentSpillNamespaceResolver: ((sessionId: string) => string | undefined) | undefined;
 export function setForkParentSpillNamespaceResolver(resolve: ((sessionId: string) => string | undefined) | undefined): void {
   forkParentSpillNamespaceResolver = resolve;

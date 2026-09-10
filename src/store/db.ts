@@ -3,6 +3,7 @@ import { readFileSync, mkdirSync, existsSync, readdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { dataDir, fsSafeSegment } from '../shared/paths.js';
+import { parseDbTs } from '../shared/time.js';
 import type { Db } from './dbTypes.js';
 import { renameDocsTool, renameRegistryTool, renameTool, repairImageTool } from './toolRenames.js';
 import { execRefSpec, parseExecRef, PROGRAM_PREFIXES } from '../shared/execs.js';
@@ -1191,14 +1192,6 @@ function v1AlreadyCleared(message: Record<string, unknown>): boolean {
   return (mode === 'time' || mode === 'preview') && typeof bytes === 'number' && typeof path === 'string';
 }
 
-/** A row's SQLite UTC 'YYYY-MM-DD HH:MM:SS' as epoch ms; 0 when missing or unparsable, which makes the
- *  heuristic below match only timestamp-less occurrences — the conservative reading. */
-function v1SqliteUtcMs(value: string | undefined): number {
-  if (!value) return 0;
-  const ms = Date.parse(value.includes('T') || value.includes('Z') ? value : `${value.replace(' ', 'T')}Z`);
-  return Number.isFinite(ms) ? ms : 0;
-}
-
 /** v19 — retire the last two things only the runtime latch could do.
  *
  *  Clearing now writes the placeholder and a structural marker into the transcript row at the moment it
@@ -1287,7 +1280,9 @@ function convergeLegacyClearedToolResults(db: Db): void {
       for (const latch of rows) {
         if (latch.occurred_at !== 0) continue;
         if (!existsSync(latch.path)) continue;
-        const writtenAt = v1SqliteUtcMs(latch.created_at);
+        // 0 for a missing or unparsable stamp, which makes the heuristic match only timestamp-less
+        // occurrences — the conservative reading.
+        const writtenAt = parseDbTs(latch.created_at);
         const candidates = parsed.filter((row) => row.toolCallId === latch.tool_call_id
           && !claimed.has(row.id)
           && row.occurredAt <= writtenAt + V1_LEGACY_ROW_SLACK_MS);

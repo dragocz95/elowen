@@ -7,7 +7,7 @@ import { extractText } from '../brain/messageView.js';
 import { dbTsToIso } from '../shared/time.js';
 import { planFilePath, toolResultSpillDir } from '../shared/paths.js';
 import { logger } from '../shared/logger.js';
-import { CHANNEL_PREFIX, SUBAGENT_PREFIX, CRON_PREFIX, isArchivedChannelSession } from '../brain/sessionId.js';
+import { CHANNEL_PREFIX, EPHEMERAL_RUN_PREFIXES, isArchivedChannelSession } from '../brain/sessionId.js';
 import {
   boundedConversationActivityDetail,
   conversationActivityAutomation,
@@ -44,6 +44,15 @@ import type { BrainDebugLegacyTranscriptPage } from '../shared/wireContract.js';
 // importer (consumed structurally), so they are not re-exported.
 export { syntheticRestartResultId } from './brainDelegationStore.js';
 export type { BrainWorkflowRun, RecoverableRun, RecoverableWorkflow } from './brainDelegationStore.js';
+
+/** A session's stored execution target could not be read. Thrown instead of the raw parse failure so the
+ *  conversation holding the bad row is named where the turn fails and in the log line that follows. */
+export class ProjectExecutionRefError extends Error {
+  constructor(readonly sessionId: string, cause: unknown) {
+    super(`session ${sessionId} has an unreadable execution target`, { cause });
+    this.name = 'ProjectExecutionRefError';
+  }
+}
 
 /** One message of a pause checkpoint's queue — see brain_paused_queue. */
 export interface PausedQueueItem {
@@ -188,6 +197,10 @@ export interface BrainSessionEvent {
 /** Radius of context kept around a search match in its snippet. */
 const SNIPPET_RADIUS = 60;
 
+/** {@link isEphemeralRunSession} as SQL over `brain_sessions s`, so retention spells the rule the same way
+ *  the runtime does and a new one-shot run family is one edit in sessionId.ts. */
+const EPHEMERAL_RUN_SQL = EPHEMERAL_RUN_PREFIXES.map((prefix) => `s.id LIKE '${prefix}%'`).join('\n           OR ');
+
 /** THE predicate for "this row is an empty shell, not a conversation" — shared by the two unspoken
  *  listings so the personal rail and the admin register can never disagree about what they hide.
  *
@@ -330,10 +343,10 @@ export class BrainStore {
         provider: source.provider, work_dir: source.work_dir, forked_from_session_id: sourceId, execution_ref: source.execution_ref,
         // A branched conversation gets its OWN namespace: sharing one would let either session's deletion
         // sweep the other's files. The copied transcript does carry the source's cleared-result
-        // placeholders, which name the SOURCE's spill dir — the branch reads its own history fine, but a
-        // Read of such a path is refused, and the model has to ask the source conversation instead. The
-        // one-directional allowance for delegated fork children (forkParentSpillNamespace) does not cover
-        // this: a branch is a peer, not a child, and it outlives the conversation it was taken from.
+        // placeholders, which name the SOURCE's spill dir, so the branch reads them back through the same
+        // one-directional allowance a delegated fork child uses (forkParentSpillNamespace resolves
+        // forked_from_session_id too). Read-only and never the reverse; a source deleted before the branch
+        // takes its files with it, and such a Read then fails as the missing file it is.
         spill_ns: mintSpillNamespace(newId),
       });
       this.db.prepare(
@@ -349,14 +362,23 @@ export class BrainStore {
     return this.db.prepare('SELECT * FROM brain_sessions WHERE id = ?').get(id) as BrainSessionRow | undefined;
   }
 
+  /** The session's execution target. Stored JSON that does not parse FAILS THE TURN rather than degrading
+   *  to the host, unlike {@link spawnOriginFor}: a ref decides where commands run, and answering "host"
+   *  for an unreadable managed target would run the turn on the daemon's own filesystem. What the raw
+   *  `SyntaxError` or `ZodError` could not say is which conversation holds the bad row, so callers and
+   *  logs get {@link ProjectExecutionRefError} with the session id instead. */
   getProjectExecution(sessionId: string): ProjectExecutionRef | undefined {
     const row = this.getSession(sessionId);
     if (!row) return undefined;
-    if (row.execution_ref !== null) return projectExecutionRefSchema.parse(JSON.parse(row.execution_ref));
-    if (!row.delegated_access) return undefined;
-    const scope = normalizeDelegatedExecutionScope(JSON.parse(row.delegated_access));
-    if (!scope) throw new Error('invalid delegated execution scope');
-    return scope.projectRef;
+    if (row.execution_ref === null && !row.delegated_access) return undefined;
+    try {
+      if (row.execution_ref !== null) return projectExecutionRefSchema.parse(JSON.parse(row.execution_ref));
+      const scope = normalizeDelegatedExecutionScope(JSON.parse(row.delegated_access!));
+      if (!scope) throw new Error('delegated execution scope did not normalize');
+      return scope.projectRef;
+    } catch (cause) {
+      throw new ProjectExecutionRefError(sessionId, cause);
+    }
   }
 
   /** The caller authorizes the target before persisting. Delegated scope cannot be retargeted. */
@@ -818,7 +840,8 @@ export class BrainStore {
    *  candidates for the retention janitor. The DB-derivable exclusions live HERE so they are applied
    *  atomically and can never drift from the delete: a non-user session (channel/task shell), a delegated
    *  child (`parent_session_id` set — deleting one out from under its parent tree is wrong), and an
-   *  unspoken empty shell that is not an ephemeral run are all filtered out. The live-state exclusions
+   *  unspoken empty shell that is not an ephemeral run and a child whose own delegation is still owed a
+   *  turn are all filtered out. The live-state exclusions
    *  (running, active, running children) cannot be seen from SQLite and are the caller's to apply before
    *  deleting. `days` is clamped
    *  to a positive integer — it is interpolated into a SQLite date modifier, so it must never be a string. */
@@ -833,8 +856,7 @@ export class BrainStore {
          -- is a spent shell either way, and a sub-agent or cron run that died before writing its first
          -- message left a row nothing else will ever collect, so those are judged on row age alone.
          AND (
-           s.id LIKE '${SUBAGENT_PREFIX}%'
-           OR s.id LIKE '${CRON_PREFIX}%'
+           ${EPHEMERAL_RUN_SQL}
            OR EXISTS (SELECT 1 FROM brain_messages m WHERE m.session_id = s.id)
          )
          AND (
@@ -844,15 +866,23 @@ export class BrainStore {
            -- One-shot runs (see isEphemeralRunSession): judged on their OWN age, parent or not. A
            -- finished delegation is finished whether or not the conversation that started it lives on,
            -- and these are what actually accumulate. A real platform channel stays excluded.
-           OR s.id LIKE '${SUBAGENT_PREFIX}%'
-           OR s.id LIKE '${CRON_PREFIX}%'
-           -- Archived channel transcripts: a channel that sat quiet past the idle cutoff is rolled over
-           -- (its prompt cache has expired), the old transcript is re-keyed under a unique -arch- id and
-           -- the deterministic channel id is freed for a fresh session. mayDeliverToSession refuses the
+           OR ${EPHEMERAL_RUN_SQL}
+           -- Archived channel transcripts: a /context bind moves another conversation into the channel
+           -- slot, so whatever occupied it is re-keyed under a unique -arch- id and the deterministic
+           -- channel id is freed for the incoming session. mayDeliverToSession refuses the
            -- archive outright, so nothing will ever be added to it again. Matched loosely here and
            -- narrowed by the exact predicate below — a channel NAME could contain "-arch-" and must not
            -- be mistaken for an archive while it is still live.
            OR s.id LIKE '%-arch-%'
+         )
+         -- A delegation still owed a turn holds its CHILD back too. The janitor's durable guard
+         -- (hasUnfinishedSubagentRuns) asks whether a candidate is a PARENT, which a leaf child never is,
+         -- so a child older than the horizon would be judged on its own age and take the run row, the
+         -- transcript and the spill directory with it while a human DelegateContinue is still expected.
+         AND NOT EXISTS (
+           SELECT 1 FROM brain_subagent_runs r
+            WHERE r.child_session_id = s.id
+              AND r.lifecycle IN ('running', 'recovering', 'recovery_required')
          )`
     ).all(userId) as { id: string }[];
     return rows
@@ -1222,21 +1252,24 @@ export class BrainStore {
     return row?.spill_ns || sessionId;
   }
 
-  /** The spill namespace of the conversation a FORK child was spawned from, or undefined for every session
-   *  that is not one — which is what makes the allowance it feeds one-directional.
+  /** The spill namespace of the conversation this one inherited its transcript from — a delegated FORK
+   *  child from its parent, a branch from the session it was forked off — or undefined for every session
+   *  that is neither, which is what makes the allowance it feeds one-directional.
    *
-   *  A fork seeds the child with the parent's transcript verbatim, cleared tool results included, so the
-   *  child inherits placeholders naming files under the PARENT's namespace and needs to read them back.
-   *  Only a fork: an ordinary delegated child composes its own history and inherits no placeholder. The
-   *  fork flag is read from the durable delegated scope rather than from the live turn, so a runner
-   *  process and a respawn answer exactly as the spawning turn did.
+   *  Both seed the new session with the source transcript verbatim, cleared tool results included, so it
+   *  inherits placeholders naming files under the SOURCE's namespace and needs to read them back. An
+   *  ordinary delegated child composes its own history and inherits no placeholder. The fork flag is read
+   *  from the durable delegated scope rather than from the live turn, so a runner process and a respawn
+   *  answer exactly as the spawning turn did.
    *
    *  The same '' fallback {@link spillNamespace} applies, for a parent row minted before the backfill. */
   forkParentSpillNamespace(sessionId: string): string | undefined {
     const row = this.db.prepare(
       `SELECT p.id AS id, p.spill_ns AS spill_ns
-         FROM brain_sessions c JOIN brain_sessions p ON p.id = c.parent_session_id
-        WHERE c.id = ? AND json_valid(c.delegated_access) AND json_extract(c.delegated_access, '$.fork') = 1`
+         FROM brain_sessions c JOIN brain_sessions p ON p.id = COALESCE(c.forked_from_session_id, c.parent_session_id)
+        WHERE c.id = ?
+          AND (c.forked_from_session_id IS NOT NULL
+               OR (json_valid(c.delegated_access) AND json_extract(c.delegated_access, '$.fork') = 1))`
     ).get(sessionId) as { id: string; spill_ns: string } | undefined;
     return row ? row.spill_ns || row.id : undefined;
   }

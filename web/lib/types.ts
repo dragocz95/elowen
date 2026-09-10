@@ -798,8 +798,6 @@ export interface ConversationLinksResponse {
   subagentStatus?: 'available' | 'unavailable' | 'error';
   /** Sub-agent branches keyed by conversation id. Only conversations that HAVE a branch appear. */
   subagents?: Record<string, ConversationSubagentNode[]>;
-  /** Some bound cut the tree somewhere in this response. */
-  subagentsTruncated?: boolean;
 }
 
 /** What a sub-agent tree row says about its work. Mirrors SubagentNodeStatus in

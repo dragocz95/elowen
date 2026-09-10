@@ -148,11 +148,6 @@ export class UsageOriginStore {
     return { origin: pinned?.origin ?? INTERNAL_ORIGIN, userId: pinned?.userId ?? null };
   }
 
-  /** The pin currently held for a conversation, without consuming it. For inspection and tests. */
-  pinnedOrigin(sessionId: string): ClientOrigin | null {
-    return this.turnOrigins.get(sessionId)?.origin ?? null;
-  }
-
   /** The pin currently held for a conversation WITH the account that set it, without consuming it.
    *  Read by the delegation seam: a child spawned during this turn inherits both halves, so its own spend
    *  lands on the person and address that ordered the parent turn instead of the `internal` bucket (see

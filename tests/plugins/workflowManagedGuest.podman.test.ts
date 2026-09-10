@@ -175,7 +175,7 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs a managed-project workflo
     expect(registry.control('sandbox')).toBe(sandboxControl);
 
     enter('managed project and environment start');
-    const project = core.projects.createManaged({ slug: GUEST_PROJECT_SLUG, creatorUserId: ACTOR });
+    const project = core.projects.createForUser(ACTOR, { slug: GUEST_PROJECT_SLUG });
     projectId = project.id;
     const projectRef = { kind: 'managed' as const, projectId };
     expect(project.executionKind).toBe('managed');

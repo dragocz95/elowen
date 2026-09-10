@@ -4,7 +4,7 @@ import { rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { type Db } from '../../src/store/db.js';
 import { openDb } from '../../src/store/db.js';
-import { BrainStore, SESSION_EVENT_KINDS, syntheticRestartResultId } from '../../src/store/brainStore.js';
+import { BrainStore, ProjectExecutionRefError, SESSION_EVENT_KINDS, syntheticRestartResultId } from '../../src/store/brainStore.js';
 import { rollupDroppedUsage } from '../../src/store/brainUsageStore.js';
 import { planSlug } from '../../src/shared/planSlug.js';
 
@@ -755,6 +755,15 @@ describe('BrainStore', () => {
     expect(store.getSession('a')?.title).toBe('Manual title');
   });
 
+  /** The ref decides WHERE a turn runs, so an unreadable one fails the turn instead of degrading to the
+   *  host. The raw parse failure never said which conversation held the bad row. */
+  it('getProjectExecution names the session when its stored execution target does not parse', () => {
+    store.createSession({ id: 'broken', userId: 7, model: 'm' });
+    db.prepare("UPDATE brain_sessions SET execution_ref = '{oops' WHERE id = 'broken'").run();
+    expect(() => store.getProjectExecution('broken')).toThrow(ProjectExecutionRefError);
+    expect(() => store.getProjectExecution('broken')).toThrow(/broken/);
+  });
+
   it('sessions start cwd-less; setWorkDir binds them to a directory', () => {
     store.createSession({ id: 'a', userId: 1, model: 'm' });
     expect(store.getSession('a')?.work_dir).toBe('');
@@ -799,8 +808,8 @@ describe('BrainStore', () => {
     aged('brain-ch-discord-123#0');       // live channel → must survive
     aged('brain-ch-msteams-a:xyz');       // live channel → must survive
     aged('convo');
-    // An idle channel is rolled over: the old transcript is re-keyed under a unique -arch- id and
-    // mayDeliverToSession refuses it forever, so it is collectable.
+    // A /context bind archives whatever occupied the channel slot: that transcript is re-keyed under a
+    // unique -arch- id and mayDeliverToSession refuses it forever, so it is collectable.
     aged('brain-ch-discord-123#0-arch-mt6abc12');
     // ...but a LIVE channel whose own name contains "-arch-" is not an archive. The SQL matches
     // loosely, so without the exact predicate this row would be deleted while people still talk in it.
@@ -817,6 +826,28 @@ describe('BrainStore', () => {
       'brain-ch-subagent-sub-dlg-2',
       'convo',
     ]);
+  });
+
+  /** An ephemeral run is judged on its OWN age, so a delegated child older than the horizon is a candidate
+   *  even while the run it belongs to is still owed a turn. The janitor's guard asks whether a candidate is
+   *  a PARENT, which a leaf child never is, so without the child-side exclusion a parked `recovery_required`
+   *  delegation loses its transcript and its spill directory before the human DelegateContinue arrives. */
+  it('staleConversationIds keeps a delegated child whose own run still owes a turn', () => {
+    const spoke = (id: string) => store.appendMessage({ id: `${id}-m`, sessionId: id, parentId: null, role: 'user', content: { text: 'hi' } });
+    const age = (id: string) => db.prepare("UPDATE brain_sessions SET updated_at = datetime('now', '-90 days') WHERE id = ?").run(id);
+    const agedChild = (id: string, parentSessionId: string) => {
+      store.createSession({ id, userId: 7, model: 'm', parentSessionId });
+      spoke(id); age(id);
+    };
+
+    store.createSession({ id: 'root', userId: 7, model: 'm' }); spoke('root'); age('root');
+    agedChild('brain-ch-subagent-sub-parked', 'root');
+    agedChild('brain-ch-subagent-sub-finished', 'root');
+    store.upsertSubagentRun('root', { id: 'call-parked', sessionId: 'brain-ch-subagent-sub-parked', status: 'running', task: 'wait', tools: 1, seconds: 1 });
+    store.upsertSubagentRun('root', { id: 'call-finished', sessionId: 'brain-ch-subagent-sub-finished', status: 'done', task: 'done', tools: 1, seconds: 1 });
+    db.prepare("UPDATE brain_subagent_runs SET lifecycle = 'recovery_required' WHERE tool_call_id = 'call-parked'").run();
+
+    expect(store.staleConversationIds(7, 30).sort()).toEqual(['brain-ch-subagent-sub-finished', 'root']);
   });
 
   /** A run that died before writing its first message leaves a row NOTHING collects: dropIfUnspoken only
@@ -1779,7 +1810,7 @@ describe('BrainStore', () => {
       expect(store.getCards('s2')).toHaveLength(1);
     });
 
-    it('carries the cards along when a conversation is re-keyed (channel rollover)', () => {
+    it('carries the cards along when a conversation is re-keyed by a /context bind', () => {
       store.createSession({ id: 'old', userId: 7, model: 'm' });
       store.upsertCard('old', card('todos', 'Ship it'));
       store.reassignSession('old', 'archived');
@@ -2117,7 +2148,7 @@ describe('BrainStore', () => {
       expect(store.getWorkflowRuns('root')).toEqual([]);
     });
 
-    it('carries the workflow along when a conversation is re-keyed (channel rollover)', () => {
+    it('carries the workflow along when a conversation is re-keyed by a /context bind', () => {
       store.createSession({ id: 'old', userId: 7, model: 'm' });
       store.upsertWorkflowRun('old', wf({ nodes: [] }));
       store.reassignSession('old', 'archived');
@@ -2148,7 +2179,7 @@ describe('BrainStore', () => {
       expect(store.getSessionEvents('s2')).toHaveLength(1);
     });
 
-    it('carries the markers along when a conversation is re-keyed (channel rollover)', () => {
+    it('carries the markers along when a conversation is re-keyed by a /context bind', () => {
       store.createSession({ id: 'old', userId: 7, model: 'm' });
       const event = store.appendSessionEvent('old', 'reasoning', 'high');
       store.reassignSession('old', 'archived');
@@ -2254,6 +2285,16 @@ describe('BrainStore', () => {
           delegatedAccess: { ...access, fork: true },
         });
         expect(store.forkParentSpillNamespace('old-fork')).toBe('old-boss');
+      });
+
+      /** A branch copies the source transcript verbatim, placeholders included, and those name the
+       *  SOURCE's files. Same inheritance, same one-directional read allowance as a delegated fork
+       *  child — the source never gains a claim on the branch. */
+      it('resolves to the source of a branched conversation', () => {
+        store.createSession({ id: 'origin', userId: 7, model: 'm' });
+        const branch = store.forkSession('origin', 'branch');
+        expect(store.forkParentSpillNamespace(branch.id)).toBe(store.spillNamespace('origin'));
+        expect(store.forkParentSpillNamespace('origin')).toBeUndefined();
       });
     });
   });

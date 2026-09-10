@@ -135,12 +135,13 @@ export function isSessionPlanPath(sessionId: string, candidate: string): boolean
  *  session can ever reach another session's spills. Writes there can't corrupt clearing either —
  *  an EEXIST survivor is latched only when its bytes match the output being spilled.
  *
- *  …with ONE exception, and only for `intent: 'read'`: a FORK child may read its parent's spill dir. A
- *  fork seeds the child with the parent's transcript byte for byte — that identity is the whole point,
- *  since rewriting a single placeholder would re-cache the conversation — so the child inherits
- *  placeholders naming files it does not own, and "read it with the Read tool" is otherwise a promise it
- *  cannot keep. Read-only and one-directional: the child may look at what it inherited, never write into
- *  a conversation that is not its own, and the parent gains nothing over the child. Callers that omit the
+ *  …with ONE exception, and only for `intent: 'read'`: a session may read the spill dir of the
+ *  conversation its transcript was copied from — a fork child its parent's, a branch its source's. The
+ *  copy is byte for byte, and that identity is the whole point, since rewriting a single placeholder
+ *  would re-cache the conversation, so it inherits placeholders naming files it does not own and "read
+ *  it with the Read tool" is otherwise a promise it cannot keep. Read-only and one-directional: it may
+ *  look at what it inherited, never write into a conversation that is not its own, and the source gains
+ *  nothing over the copy. Callers that omit the
  *  intent are treated as writers, so a new call site cannot widen this by forgetting about it. */
 export function assertPathAllowed(path: string, opts: { intent?: 'read' | 'write' } = {}): string {
   if (currentProjectRef()?.kind === 'managed') throw new Error('managed project paths require the guest filesystem provider');

@@ -543,7 +543,7 @@ describe('BrainSessionsPanel — the page fills the dialog', () => {
  *  ancestry nesting it has always had. */
 describe('BrainSessionsPanel — sub-agent tree', () => {
   const branch = (subagents: Record<string, unknown[]>, over: Record<string, unknown> = {}) => {
-    jobLinks = { status: 'available', links: [], subagentStatus: 'available', subagents, subagentsTruncated: false, ...over };
+    jobLinks = { status: 'available', links: [], subagentStatus: 'available', subagents, ...over };
   };
   const withNested = () => {
     managedOverride = [

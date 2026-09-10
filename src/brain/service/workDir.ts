@@ -1,7 +1,6 @@
 import { existsSync, realpathSync, statSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { managedGuestRoot, projectExecutionRefSchema, type ProjectExecutionRef } from '../../shared/projectExecution.js';
-import { ENVIRONMENT_CONTROL_METHODS } from '../../plugins/environmentTypes.js';
 import type { KnownControls, SandboxWorkspace } from '../../plugins/api.js';
 import type { Policy } from '../../plugins/policy.js';
 import { realPathWithin } from '../../plugins/pathGuard.js';
@@ -100,7 +99,9 @@ export function effectiveTurnWorkDir(input: {
     // environment is gone. The host is where such a conversation actually lives, so it resolves there.
     const managed = liveManagedProject(input.projects, ref);
     if (ref.kind === 'managed' && managed) {
-      if (!input.sandbox || typeof input.sandbox.prepareExecution !== 'function' || ENVIRONMENT_CONTROL_METHODS.some((method) => typeof input.sandbox?.[method] !== 'function')) throw new Error('project environment provider unavailable');
+      // `control('sandbox')` is either absent or complete — the registry refuses to resolve a control
+      // missing any method its key promises — so presence is the whole check.
+      if (!input.sandbox) throw new Error('project environment provider unavailable');
       if (input.accountUserId === null || !input.policy.canAccessProject?.(ref.projectId)) throw new Error('managed project access denied');
       // The project is mounted inside its own container under its own name, so this is both the guest
       // root and the only directory the turn ever sees.

@@ -49,7 +49,7 @@
       "readersUnread": "has not read yet",
       "markUnread": "Mark as unread for everyone",
       "markUnreadTitle": "Mark release {version} as unread?",
-      "markUnreadDescription": "Everyone who has already read release {version} sees it as new again, including the unread badge.",
+      "markUnreadDescription": "Everyone who has already read release {version} sees it, and every later release, as new again, including the unread badge.",
       "markUnreadConfirm": "Mark as unread",
       "markUnreadFailed": "The release could not be marked as unread."
     }

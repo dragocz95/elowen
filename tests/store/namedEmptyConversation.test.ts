@@ -48,7 +48,7 @@ describe('BrainStore empty-shell rules for explicitly named conversations', () =
 });
 
 /** The immutable association identity: a saved organizational link is resolved by the session row's
- *  `spill_ns`, which is minted once and travels with the row through a channel rollover's re-key. */
+ *  `spill_ns`, which is minted once and travels with the row through the re-key a /context bind performs. */
 describe('BrainStore.sessionBySpillNamespace', () => {
   let db: Db;
   let store: BrainStore;

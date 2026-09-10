@@ -47,7 +47,7 @@ describe('UsageOriginStore attribution', () => {
     store.recordRequest('brain-1', 7, ip('203.0.113.7'), AT);
     store.settleTurn('brain-1');
     store.recordRequest('brain-1', 7, ip('198.51.100.44'), AT + 1000);
-    expect(store.pinnedOrigin('brain-1')).toEqual(ip('198.51.100.44'));
+    expect(store.pinnedFor('brain-1')?.origin).toEqual(ip('198.51.100.44'));
   });
 
   it('settles a turn nobody requested as internal, never as the last human address', () => {
