@@ -157,6 +157,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   let sites;
   let disposed = false;
   let reconciling = false;
+  const releasingAdoptions = new Set();
   const previews = new Set();
   const stores = () => ctx.host.stores();
   const account = (id, writable = false) => {
@@ -302,6 +303,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   async function request(kind, id, input) {
     assertLive();
     account(input.accountUserId, true);
+    if (kind === 'project' && releasingAdoptions.has(Number(id))) throw error('environment_busy', 'An adopted workspace is being released');
     const requested = action(input.action, kind);
     await rowFor(kind, id, input.accountUserId, true);
     if (requested.kind === 'delete' && kind === 'project') await assertNoPublishedSites(id);
@@ -391,7 +393,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     await authorize(row.kind, row.resource_id, userId);
     return store.transaction(() => {
       const current = store.get(row.kind, row.resource_id);
-      if (!current || current.generation !== row.generation || current.state !== 'running' || store.active(row.kind, row.resource_id)) throw error('environment_busy', 'Environment changed before execution could be leased');
+      if ((row.kind === 'project' && releasingAdoptions.has(Number(row.resource_id))) || !current || current.generation !== row.generation || current.state !== 'running' || store.active(row.kind, row.resource_id)) throw error('environment_busy', 'Environment changed before execution could be leased');
       const other = store.leases(row.kind, row.resource_id).filter((lease) => lease.kind !== 'preview');
       if (other.some((lease) => lease.kind === 'worktrees') || (kind === 'worktrees' && other.length)) throw error('environment_busy', 'Managed worktree mutation requires an idle execution boundary');
       return store.mintLease(current, userId, kind);
@@ -1014,6 +1016,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     try {
       for (const op of store.operations()) {
         if (disposed) break;
+        if (op.kind === 'project' && releasingAdoptions.has(Number(op.resource_id))) continue;
         if (op.status === 'running' && !ownerProvablyDead({ outer_pid: op.owner_pid, runner_identity: op.owner_identity })) continue;
         let claimed = false;
         try {
@@ -1049,6 +1052,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         }
       }
       for (const row of store.all()) {
+        if (row.kind === 'project' && releasingAdoptions.has(Number(row.resource_id))) continue;
         if (store.active(row.kind, row.resource_id)) continue;
         for (const leased of store.leases(row.kind, row.resource_id)) {
           let allowed = true;
@@ -1060,17 +1064,20 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           }
         }
       }
-      // A publication's forwarder lives INSIDE the container and no lease owns it, so a container that
-      // came back without it — or a socket file that outlived its forwarder — is what this finds. The
-      // socket is the cheap test: it is on the host side of the bind mount, so a cycle that has nothing
-      // to do costs one lstat per publication and no guest round trip.
-      for (const publication of store.publications()) {
+      // Publication records are scoped through their project row. A socket path alone is not liveness:
+      // the file survives an unclean forwarder exit, so the guest unit must still report active.
+      for (const row of store.all().filter((entry) => entry.kind === 'project' && entry.state === 'running')) {
         if (disposed) break;
-        const row = store.get('project', publication.projectId);
-        if (!row || row.state !== 'running' || store.active('project', row.resource_id)) continue;
-        if (publicationPresent(join(specFor(row.spec).storageRoot, 'broker', publicationSocketName(publication.publicationId)))) continue;
-        try { await establishPublication(row, publication.publicationId, publication.port); }
-        catch (cause) { store.log('project', publication.projectId, `publication ${publication.publicationId} forwarder could not be established: ${cause.message}`); }
+        if (releasingAdoptions.has(Number(row.resource_id)) || store.active('project', row.resource_id)) continue;
+        const publications = store.publications(Number(row.resource_id));
+        const spec = specFor(row.spec);
+        const present = publications.filter((publication) => forwarderSocketPresent(join(spec.storageRoot, 'broker', publicationSocketName(publication.publicationId))));
+        const active = new Set(present.length ? await podman.activePublications(spec, present.map((publication) => publication.publicationId)) : []);
+        for (const publication of publications) {
+          if (active.has(publication.publicationId)) continue;
+          try { await establishPublication(row, publication.publicationId, publication.port); }
+          catch (cause) { store.log('project', publication.projectId, `publication ${publication.publicationId} forwarder could not be established: ${cause.message}`); }
+        }
       }
     } finally { reconciling = false; }
   }
@@ -1097,39 +1104,41 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     return await manageWorktrees({ db, runGuest, row, userId: input.accountUserId, action: input.action, root: rootOf(row) });
   }
 
-  function publicationPresent(path) {
+  function forwarderSocketPresent(path) {
     try { return lstatSync(path).isSocket(); }
     catch (cause) { if (cause.code === 'ENOENT') return false; throw cause; }
   }
   /** Remove a socket this runtime put there: only ever inside the project's own broker directory, which
    *  the daemon owns (0700), and only a socket — anything else at that path is not ours to delete. */
-  function removePublicationSocket(path) {
+  function removeForwarderSocket(path, kind) {
     let stat;
     try { stat = lstatSync(path); }
     catch (cause) { if (cause.code === 'ENOENT') return; throw cause; }
-    if (!stat.isSocket()) throw error('publication_socket_changed', 'Publication socket ownership changed');
+    if (!stat.isSocket()) throw error(`${kind}_socket_changed`, `${kind === 'preview' ? 'Preview' : 'Publication'} socket ownership changed`);
     unlinkSync(path);
   }
 
-  /** One publication's transport: a persistent unit in the guest running the same forwarder a preview
-   *  uses, on a socket named after the publication under the project's own storage root. Nothing leases
-   *  it — a container that restarts loses it while its socket file stays behind, which is why the socket
-   *  is removed before the forwarder is established rather than read as evidence that one is running. */
-  async function establishPublication(row, publicationId, port) {
+  /** Preview and publication use one socket-forwarder transport. Their lifecycle remains with each caller:
+   *  previews retain a lease and release handle, while publications retain a durable database record. */
+  async function startForwarder(row, name, port, kind, start) {
     const spec = specFor(row.spec);
-    const name = publicationSocketName(publicationId);
     const socketPath = join(spec.storageRoot, 'broker', name);
-    if (Buffer.byteLength(socketPath) > 107) throw error('publication_path_limit', 'Publication socket path exceeds the operating-system limit');
-    removePublicationSocket(socketPath);
-    await podman.startPublication(spec, publicationId, ['/usr/bin/python3', '-c', PREVIEW_HELPER, String(port), `/run/elowen/${name}`]);
+    if (Buffer.byteLength(socketPath) > 107) throw error(`${kind}_path_limit`, `${kind === 'preview' ? 'Preview' : 'Publication'} socket path exceeds the operating-system limit`);
+    removeForwarderSocket(socketPath, kind);
+    await start(spec, ['/usr/bin/python3', '-c', PREVIEW_HELPER, String(port), `/run/elowen/${name}`]);
     const deadline = Date.now() + 10000;
     for (;;) {
-      try { if (lstatSync(socketPath).isSocket()) break; throw error('publication_socket_changed', 'Publication transport is not a socket'); }
+      try { if (lstatSync(socketPath).isSocket()) break; throw error(`${kind}_socket_changed`, `${kind === 'preview' ? 'Preview' : 'Publication'} transport is not a socket`); }
       catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
-      if (Date.now() >= deadline) throw error('publication_timeout', 'Publication transport did not become ready');
+      if (Date.now() >= deadline) throw error(`${kind}_timeout`, `${kind === 'preview' ? 'Preview' : 'Publication'} transport did not become ready`);
       await wait(50);
     }
     return socketPath;
+  }
+
+  async function establishPublication(row, publicationId, port) {
+    const name = publicationSocketName(publicationId);
+    return await startForwarder(row, name, port, 'publication', (spec, argv) => podman.startPublication(spec, publicationId, argv));
   }
 
   /** Every publication of one project, established again after the container that carried them ended.
@@ -1158,20 +1167,69 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     return { generation: row.generation, socketPath };
   }
 
-  /** The only thing that takes a publication away again: the record first, so reconciliation stops
-   *  restoring it, then the forwarder and the socket it left. A container that is not running has no
-   *  forwarder to stop and the socket is still this runtime's file to remove. */
+  /** The only thing that takes a publication away again: stop its forwarder when the container is running,
+   *  remove the socket it left, then retire the durable record. */
   async function projectPublicationRelease(input) {
-    account(input.accountUserId, true);
+    assertLive();
     const id = projectId(input.project);
     const publicationId = resourceToken(String(input.publicationId ?? ''));
     const row = store.get('project', id);
     if (row) {
       const spec = specFor(row.spec);
       if ((await podman.inspect(spec))?.state === 'running') await podman.stopPublication(spec, publicationId);
-      removePublicationSocket(join(spec.storageRoot, 'broker', publicationSocketName(publicationId)));
+      removeForwarderSocket(join(spec.storageRoot, 'broker', publicationSocketName(publicationId)), 'publication');
     }
     store.removePublication(id, publicationId);
+  }
+
+  async function releaseAdoptedWorkspace(input) {
+    account(input.accountUserId, true);
+    const id = projectId(input.project);
+    if (reconciling || releasingAdoptions.has(id)) throw error('environment_busy', 'Environment reconciliation is already running');
+    releasingAdoptions.add(id);
+    try {
+      const project = await authorize('project', id, input.accountUserId, true);
+      if (!project.adoptedPath) throw error('project_not_adopted', 'Project was not adopted', 409);
+      await assertNoPublishedSites(id);
+      const row = store.get('project', id);
+      if (!row) return;
+      if (store.active('project', id)) throw error('environment_busy', 'An environment lifecycle operation is already pending');
+      if (store.publications(id).length) throw error('published_sites_exist', 'Transfer or delete this Project\'s published Sites before releasing the Project');
+      const snapshots = store.snapshots('project', id);
+      const recipes = new Map([[specFor(row.spec).name, row.spec]]);
+      for (const saved of snapshots) { const recipe = JSON.parse(saved.spec_json); recipes.set(specFor(recipe).name, recipe); }
+      for (const entry of db.prepare('SELECT checkpoint_json FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=?').all('project', String(id))) {
+        const checkpoint = JSON.parse(entry.checkpoint_json);
+        for (const key of ['oldSpec', 'newSpec']) if (checkpoint[key]) recipes.set(specFor(checkpoint[key]).name, checkpoint[key]);
+      }
+      for (const recipe of recipes.values()) {
+        const owned = specFor(recipe);
+        if (await podman.inspect(owned)) {
+          await stopRow({ ...row, spec: recipe, generation: recipe.input.generation });
+          await podman.remove(owned);
+        }
+      }
+      const spec = specFor(row.spec);
+      await storage.releaseWorkspace(spec, project.adoptedPath);
+      for (const saved of snapshots) {
+        const owned = specFor(JSON.parse(saved.spec_json));
+        await podman.removeSnapshotImage(owned, JSON.parse(saved.manifest_json).snapshotId);
+      }
+      for (const recipe of recipes.values()) {
+        const owned = specFor(recipe);
+        for (const volume of owned.volumes) await podman.removeVolume(owned, volume.component);
+      }
+      await podman.removeStorage(spec);
+      store.transaction(() => {
+        db.prepare('DELETE FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=?').run('project', String(id));
+        db.prepare('DELETE FROM p_sandbox_runtime_snapshots WHERE kind=? AND resource_id=?').run('project', String(id));
+        db.prepare('DELETE FROM p_sandbox_execution_leases WHERE resource_kind=? AND resource_id=?').run('project', String(id));
+        db.prepare('DELETE FROM p_sandbox_file_uploads WHERE resource_kind=? AND resource_id=?').run('project', String(id));
+        db.prepare('DELETE FROM p_sandbox_managed_worktrees WHERE project_id=?').run(id);
+        db.prepare('DELETE FROM p_sandbox_runtime_logs WHERE kind=? AND resource_id=?').run('project', String(id));
+        db.prepare('DELETE FROM p_sandbox_runtimes WHERE kind=? AND resource_id=?').run('project', String(id));
+      });
+    } finally { releasingAdoptions.delete(id); }
   }
 
   async function projectPreviewBinding(input) {
@@ -1191,23 +1249,14 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       releasing = (async () => {
         clearInterval(timer);
         await handle.release();
-        try { if (!lstatSync(socketPath).isSocket()) throw error('preview_socket_changed', 'Preview socket ownership changed'); unlinkSync(socketPath); }
-        catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
+        removeForwarderSocket(socketPath, 'preview');
         previews.delete(release);
       })().catch((cause) => { releasing = null; throw cause; });
       return releasing;
     };
     previews.add(release);
     try {
-      if (Buffer.byteLength(socketPath) > 107) throw error('preview_path_limit', 'Preview socket path exceeds the operating-system limit');
-      await podman.startPreview(spec, leased.execution_id, ['/usr/bin/python3', '-c', PREVIEW_HELPER, String(input.port), `/run/elowen/${name}`]);
-      const deadline = Date.now() + 10000;
-      for (;;) {
-        try { if (lstatSync(socketPath).isSocket()) break; throw error('preview_socket_changed', 'Preview transport is not a socket'); }
-        catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
-        if (Date.now() >= deadline) throw error('preview_timeout', 'Preview transport did not become ready');
-        await wait(50);
-      }
+      await startForwarder(row, name, input.port, 'preview', (owned, argv) => podman.startPreview(owned, leased.execution_id, argv));
       await handle.heartbeat();
       timer = setInterval(() => { handle.heartbeat().catch(() => release().catch((cause) => store.log(row.kind, row.resource_id, `Preview cleanup failed: ${cause.message}`))); }, 5000);
       timer.unref?.();
@@ -1220,7 +1269,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     siteImageStatus(input) { assertLive(); return siteImages.status(input); },
     provisionSiteImage(input) { assertLive(); return siteImages.request(input); },
     requestSiteCleanup(input) { assertLive(); return siteCleanup.request(input); },
-    projectPreviewBinding, projectPublicationBinding, projectPublicationRelease,
+    projectPreviewBinding, projectPublicationBinding, projectPublicationRelease, releaseAdoptedWorkspace,
     async environmentFor(input) {
       const id = projectId(input.project);
       await authorize('project', id, input.accountUserId, true);

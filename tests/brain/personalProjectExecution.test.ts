@@ -80,6 +80,7 @@ const readyControl = () => ({
   projectPreviewBinding: async () => { throw new Error('projectPreviewBinding is not expected in this fixture'); },
   projectPublicationBinding: async () => { throw new Error('projectPublicationBinding is not expected in this fixture'); },
   projectPublicationRelease: async () => { throw new Error('projectPublicationRelease is not expected in this fixture'); },
+  releaseAdoptedWorkspace: async () => { throw new Error('releaseAdoptedWorkspace is not expected in this fixture'); },
 } as unknown as SandboxControl);
 
 describe('new personal conversation execution defaults', () => {

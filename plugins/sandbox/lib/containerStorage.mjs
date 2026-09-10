@@ -1,24 +1,31 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { closeSync, copyFileSync, constants, cpSync, fsyncSync, lstatSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statfsSync, unlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { closeSync, copyFileSync, constants, cpSync, fsyncSync, lstatSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, rmdirSync, statfsSync, unlinkSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { assertContainerSpec, hostPath, resourceToken, snapshotReference } from './containerSpec.mjs';
 import { checkedHostPath } from './containerPaths.mjs';
 
-/** Every entry below one root, described well enough that two trees can be compared: relative path,
- *  kind, size or symlink target. Used to verify a copy that crossed a filesystem boundary. */
-function inventoryOf(root) {
+/** Every entry below one root, including file content rather than only its size. This is the proof that
+ *  a cross-filesystem copy may replace the source tree. */
+async function inventoryOf(root) {
   const entries = [];
-  const walk = (directory, prefix) => {
+  const walk = async (directory, prefix) => {
     for (const name of readdirSync(directory).sort()) {
       const path = join(directory, name);
       const stat = lstatSync(path);
       const relative = prefix ? `${prefix}/${name}` : name;
-      entries.push(stat.isDirectory() ? `${relative}/` : stat.isSymbolicLink() ? `${relative} -> ${readlinkSync(path)}` : `${relative} ${stat.size}`);
-      if (stat.isDirectory()) walk(path, relative);
+      if (stat.isDirectory()) {
+        entries.push(`${relative}/`);
+        await walk(path, relative);
+      } else if (stat.isSymbolicLink()) entries.push(`${relative} -> ${readlinkSync(path)}`);
+      else if (stat.isFile()) {
+        const hash = createHash('sha256');
+        for await (const chunk of createReadStream(path)) hash.update(chunk);
+        entries.push(`${relative} ${stat.size} ${hash.digest('hex')}`);
+      } else throw new Error(`Unsupported file type in project workspace: ${relative}`);
     }
   };
-  walk(root, '');
+  await walk(root, '');
   return entries;
 }
 /** What the same tree would occupy somewhere else, counting a symlink as the name it carries. */
@@ -42,6 +49,15 @@ function syncPath(path) {
 function writeDurable(path, content) {
   const fd = openSync(path, 'wx', 0o600);
   try { writeFileSync(fd, JSON.stringify(content)); fsyncSync(fd); } finally { closeSync(fd); }
+}
+function syncTree(root) {
+  for (const name of readdirSync(root)) {
+    const path = join(root, name);
+    const stat = lstatSync(path);
+    if (stat.isDirectory()) syncTree(path);
+    else if (!stat.isSymbolicLink()) syncPath(path);
+  }
+  syncPath(root);
 }
 function absent(path) {
   try { lstatSync(path); }
@@ -97,35 +113,114 @@ export class ContainerStorage {
     if (spec.resource.kind !== 'project') throw new Error('Only a project owns a workspace volume');
     const source = hostPath(sourcePath);
     const target = checkedHostPath(spec.volumes.find((volume) => volume.component === 'workspace').path, { create: true });
-    if (readdirSync(target).length) return false;
+    if (readdirSync(target).length) {
+      try { checkedHostPath(source); }
+      catch (cause) { if (cause.code === 'ENOENT') return false; throw cause; }
+      const expected = await inventoryOf(source);
+      const copied = await inventoryOf(target);
+      if (JSON.stringify(copied) !== JSON.stringify(expected)) throw new Error('The adopted project source differs from the workspace volume');
+      rmSync(source, { recursive: true });
+      syncPath(dirname(source));
+      return false;
+    }
     let entries;
-    try { entries = readdirSync(source); }
+    try { checkedHostPath(source); entries = readdirSync(source); }
     catch (cause) {
       if (cause.code === 'ENOENT') throw new Error(`The adopted project directory ${source} is missing`);
       throw cause;
     }
     if (!entries.length) return false;
+    rmdirSync(target);
     try {
-      // Replacing an EMPTY directory is what makes this one rename of the whole tree rather than one per
-      // entry: either the workspace is the project's directory or it is still the empty volume.
       renameSync(source, target);
+      syncPath(dirname(target));
+      syncPath(dirname(source));
       return true;
-    } catch (cause) { if (cause.code !== 'EXDEV') throw cause; }
-    const required = bytesIn(source);
-    const filesystem = statfsSync(target);
-    const free = filesystem.bavail * filesystem.bsize;
-    if (free < required) throw new Error(`The project workspace volume needs ${required} bytes of free space and has ${free}`);
-    const expected = inventoryOf(source);
-    try {
-      for (const name of entries) cpSync(join(source, name), join(target, name), { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
-      const copied = inventoryOf(target);
-      if (copied.length !== expected.length || copied.some((line, index) => line !== expected[index])) throw new Error('The adopted directory changed while it was being copied');
     } catch (cause) {
-      rmSync(target, { recursive: true, force: true });
+      if (cause.code !== 'EXDEV') {
+        checkedHostPath(target, { create: true });
+        throw cause;
+      }
+    }
+    const required = bytesIn(source);
+    const filesystem = statfsSync(dirname(target));
+    const free = filesystem.bavail * filesystem.bsize;
+    if (free < required) {
+      checkedHostPath(target, { create: true });
+      throw new Error(`The project workspace volume needs ${required} bytes of free space and has ${free}`);
+    }
+    const staging = `${target}.adopting`;
+    try {
+      try { checkedHostPath(staging); rmSync(staging, { recursive: true }); }
+      catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
+      checkedHostPath(staging, { create: true });
+      const expected = await inventoryOf(source);
+      for (const name of entries) cpSync(join(source, name), join(staging, name), { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+      const copied = await inventoryOf(staging);
+      const current = await inventoryOf(source);
+      if (JSON.stringify(copied) !== JSON.stringify(expected) || JSON.stringify(current) !== JSON.stringify(expected)) throw new Error('The adopted directory changed while it was being copied');
+      syncTree(staging);
+      renameSync(staging, target);
+      syncPath(dirname(target));
+      rmSync(source, { recursive: true });
+      syncPath(dirname(source));
+      return true;
+    } catch (cause) {
+      try { checkedHostPath(staging); rmSync(staging, { recursive: true }); }
+      catch (cleanup) { if (cleanup.code !== 'ENOENT') throw new AggregateError([cause, cleanup], `${cause.message}; adoption staging cleanup failed: ${cleanup.message}`); }
       checkedHostPath(target, { create: true });
       throw cause;
     }
-    return true;
+  }
+
+  /** Move the current workspace back to the host path recorded by core after the environment owner has
+   *  removed every container that could still write to it. */
+  async releaseWorkspace(spec, targetPath) {
+    assertContainerSpec(spec);
+    if (spec.resource.kind !== 'project') throw new Error('Only a project owns a workspace volume');
+    const source = spec.volumes.find((volume) => volume.component === 'workspace').path;
+    const target = hostPath(targetPath);
+    checkedHostPath(dirname(target));
+    try {
+      checkedHostPath(target);
+      try { checkedHostPath(source); }
+      catch (cause) { if (cause.code === 'ENOENT') return false; throw cause; }
+      if (readdirSync(target).length) throw new Error('The adopted project path is no longer empty');
+      rmdirSync(target);
+    } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
+    checkedHostPath(source);
+    try {
+      renameSync(source, target);
+      syncPath(dirname(target));
+      syncPath(dirname(source));
+      return true;
+    } catch (cause) { if (cause.code !== 'EXDEV') throw cause; }
+    const required = bytesIn(source);
+    const filesystem = statfsSync(dirname(target));
+    const free = filesystem.bavail * filesystem.bsize;
+    if (free < required) throw new Error(`The original project path needs ${required} bytes of free space and has ${free}`);
+    const staging = `${target}.releasing`;
+    try {
+      try { checkedHostPath(staging); rmSync(staging, { recursive: true }); }
+      catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
+      checkedHostPath(staging, { create: true });
+      const entries = readdirSync(source);
+      const expected = await inventoryOf(source);
+      for (const name of entries) cpSync(join(source, name), join(staging, name), { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+      const copied = await inventoryOf(staging);
+      const current = await inventoryOf(source);
+      if (JSON.stringify(copied) !== JSON.stringify(expected) || JSON.stringify(current) !== JSON.stringify(expected)) throw new Error('The project workspace changed while it was being released');
+      syncTree(staging);
+      renameSync(staging, target);
+      syncPath(dirname(target));
+      rmSync(source, { recursive: true });
+      syncPath(dirname(source));
+      return true;
+    } catch (cause) {
+      try { checkedHostPath(staging); rmSync(staging, { recursive: true }); }
+      catch (cleanup) { if (cleanup.code !== 'ENOENT') throw new AggregateError([cause, cleanup], `${cause.message}; release staging cleanup failed: ${cleanup.message}`); }
+      throw cause;
+    }
   }
 
   async snapshot(spec, snapshotId, { includeData = true } = {}) {

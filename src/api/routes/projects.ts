@@ -1,3 +1,4 @@
+import { realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { createDir, CreateDirError, listDirs, isProjectImage, isProjectImageExtension, projectPathExists } from '../../integrations/projectFiles.js';
 import { posix } from 'node:path';
@@ -301,7 +302,7 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
   });
   // Adopting is not metadata editing: it changes where the project's directory lives and hands the
   // project's execution to the sandbox, so it has its own admin-only door rather than a PATCH field.
-  // `{ undo: true }` is the way back and is refused once the environment has taken the directory.
+  // `{ undo: true }` asks the sandbox to restore the workspace before core hands the project back.
   app.post('/projects/:id/adopt', async (c) => {
     if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
     if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
@@ -312,17 +313,22 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     const raw = (await c.req.text()).trim();
     const { undo } = raw ? adoptProjectSchema.parse(JSON.parse(raw)) : {};
     try {
-      if (!undo) return c.json(await toProjectView(d.projects.adoptAsManaged(id)));
       const project = d.projects.get(id);
-      // The sandbox moves the directory into the project's workspace volume on the first start of the
-      // environment, and after that a rollback would hand the project back pointing at a path that no
-      // longer holds it. So the environment is asked before the row is reversed.
+      if (!undo) {
+        if (project?.executionKind === 'host') {
+          try {
+            if (realpathSync(project.path) === realpathSync(d.project.path)) return c.json({ error: 'cannot adopt the home project' }, 400);
+          } catch (error) {
+            if (!(error && typeof error === 'object' && 'code' in error && error.code === 'ENOENT')) throw error;
+          }
+        }
+        return c.json(await toProjectView(d.projects.adoptAsManaged(id)));
+      }
       if (project && project.adoptedPath !== null) {
         const actor = c.get('user');
         const sandbox = actor ? (await d.plugins?.get().catch(() => undefined))?.control('sandbox') : undefined;
         if (!sandbox) return c.json({ error: 'project environment provider unavailable' }, 503);
-        const environment = await sandbox.environmentFor({ project: { kind: 'managed', projectId: id }, accountUserId: actor.id });
-        if (environment.state !== 'unprovisioned') return c.json({ error: 'the project environment has taken the adopted directory' }, 409);
+        await sandbox.releaseAdoptedWorkspace({ project: { kind: 'managed', projectId: id }, accountUserId: actor.id });
       }
       return c.json(await toProjectView(d.projects.releaseAdopted(id)));
     } catch (error) {
@@ -330,6 +336,8 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
       if (message === 'project not found') return c.json({ error: message }, 404);
       if ([PROJECT_ALREADY_MANAGED, PROJECT_NOT_ADOPTED, 'project deletion is pending'].includes(message)) return c.json({ error: message }, 409);
       if (message === 'slug is reserved by the project environment') return c.json({ error: message }, 400);
+      const refusal = environmentRefusal(error);
+      if (refusal) return c.json(refusal, 409);
       throw error;
     }
   });

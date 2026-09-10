@@ -3817,6 +3817,7 @@ describe('BrainService', () => {
       // test of the fallback path.
       projectPublicationBinding: async () => { throw new Error('projectPublicationBinding is not expected in this fixture'); },
       projectPublicationRelease: async () => { throw new Error('projectPublicationRelease is not expected in this fixture'); },
+      releaseAdoptedWorkspace: async () => { throw new Error('releaseAdoptedWorkspace is not expected in this fixture'); },
     } satisfies KnownControls['sandbox'] as never);
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     let scopedCwd: string | undefined;
