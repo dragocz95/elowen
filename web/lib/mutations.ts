@@ -455,6 +455,19 @@ export function useUpdateProject() {
   const qc = useQueryClient();
   return useMutation({ mutationFn: (v: { id: number; path?: string; notes?: string; memoryShared?: boolean }) => elowenClient.updateProject(v.id, { path: v.path, notes: v.notes, memoryShared: v.memoryShared }), onSuccess: async () => { await Promise.all([qc.invalidateQueries({ queryKey: ['projects'] }), qc.invalidateQueries({ queryKey: ['project-summaries'] })]); } });
 }
+export function useAdoptProject() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (v: { id: number; undo?: boolean }) => elowenClient.adoptProject(v.id, v.undo === true),
+    onSuccess: async (_project, v) => {
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: ['projects'] }),
+        qc.invalidateQueries({ queryKey: ['project-summaries'] }),
+        qc.invalidateQueries({ queryKey: ['project-environment-state', v.id] }),
+      ]);
+    },
+  });
+}
 
 /** Create a child under the open directory. `listingPath` is the actual query key that produced the
  * canonical parent, which can differ when the picker started at the server's default home directory. */

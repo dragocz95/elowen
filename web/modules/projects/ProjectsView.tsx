@@ -4,8 +4,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ElowenApiError, apiErrorMessage, elowenClient } from '../../lib/elowenClient';
 import { SelectMenu } from '../../components/ui/SelectMenu';
 import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, MoreHorizontal, Code2, Copy, Pencil, Trash2, ImageIcon, Search, FileText } from 'lucide-react';
-import { useProjects, useProjectSummaries, useProjectGit, usePluginPresent, useMe } from '../../lib/queries';
-import { useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
+import { useProjects, useProjectSummaries, useProjectGit, useProjectEnvironmentState, usePluginPresent, useMe } from '../../lib/queries';
+import { useAdoptProject, useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
 import type { Project } from '../../lib/types';
 import { useToast } from '../../components/ui/Toast';
 import { Badge } from '../../components/ui/Badge';
@@ -141,18 +141,21 @@ export function ProjectsView() {
   };
   const openEditor = (commit: string | null) => openProjectEditor(selectedId, commit);
   const openWorking = () => openProjectEditor(selectedId, null, true);
-  // Opening a project reads its repository, whichever way that project runs. A managed one used to hide
-  // this behind an "Inspect repository" button because the read could provision a cold environment and
-  // block on it; the daemon now answers a non-running environment from its own records instead, so there
-  // is nothing left for a person to authorise by clicking.
-  const git = useProjectGit(selectedId);
+  const selectedProject = projects.data?.find((project) => project.id === selectedId) ?? null;
+  // A managed repository is available only while its environment is running. Reading the environment's
+  // state first keeps restore, teardown and recovery invalidations from repeatedly asking Git for a guest
+  // that cannot answer yet. Host projects continue to read directly.
+  const environment = useProjectEnvironmentState(selectedProject?.executionKind === 'managed' ? selectedId : null);
+  const git = useProjectGit(selectedId, selectedProject?.executionKind !== 'managed' || environment.data?.environment.state === 'running');
 
   const { toast } = useToast();
   const { t } = useTranslation();
   const s = t.projects;
   const createProject = useCreateProject();
   const updateProject = useUpdateProject();
+  const adoptProject = useAdoptProject();
   const removeProject = useRemoveProject();
+  const [adoption, setAdoption] = useState<{ project: Project; undo: boolean } | null>(null);
   // Host removal detaches metadata; managed removal requests durable environment teardown.
   const [removing, setRemoving] = useState<Project | null>(null);
   // What a finished teardown leaves behind, whether or not its window was on screen when it finished: the
@@ -267,6 +270,14 @@ export function ProjectsView() {
     );
   }
 
+  async function handleAdoption(): Promise<void> {
+    const target = adoption;
+    if (!target) return;
+    await adoptProject.mutateAsync({ id: target.project.id, undo: target.undo });
+    setAdoption(null);
+    toast(target.undo ? s.adoptionUndone : s.adopted);
+  }
+
   async function handleRemove(): Promise<void> {
     const target = removing;
     if (!target || removePendingRef.current) return;
@@ -308,7 +319,6 @@ export function ProjectsView() {
     };
   }, [projects.data]);
 
-  const selectedProject = projects.data?.find((project) => project.id === selectedId) ?? null;
   const summariesByProject = useMemo(() => new Map((projectSummaries.data ?? []).map((item) => [item.projectId, item])), [projectSummaries.data]);
 
   const navigateProject = (project: Project, direction: 'next' | 'previous' | 'home' | 'end') => {
@@ -459,6 +469,10 @@ export function ProjectsView() {
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border/70 py-3">
                       {editorEnabled ? <button type="button" onClick={() => openEditor(null)} className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-foreground"><Code2 size={13} aria-hidden />{t.projects.openEditor}</button> : null}
                       {canManage(selectedProject) ? <button type="button" onClick={() => openEdit(selectedProject)} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"><Pencil size={13} aria-hidden />{t.projects.editProject}</button> : null}
+                      {isAdmin && selectedProject.executionKind !== 'managed' ? <Button variant="ghost" onClick={() => setAdoption({ project: selectedProject, undo: false })}>{s.adoptProject}</Button> : null}
+                      {isAdmin && selectedProject.executionKind === 'managed' && selectedProject.adoptedPath && environment.data?.environment.state === 'unprovisioned'
+                        ? <Button variant="ghost" onClick={() => setAdoption({ project: selectedProject, undo: true })}>{s.undoAdoption}</Button>
+                        : null}
                     </div>
 
                     <ProjectDetailTabs project={selectedProject} isAdmin={isAdmin} overview={<>
@@ -612,6 +626,17 @@ export function ProjectsView() {
       )}
 
       {editorEnabled && iconFor && <ProjectIconPicker project={iconFor} onClose={() => setIconFor(null)} />}
+
+      <ConfirmDialog
+        open={adoption !== null}
+        title={adoption?.undo ? s.undoAdoption : s.adoptProject}
+        description={adoption?.undo ? s.undoAdoptionConfirm : s.adoptConfirm}
+        confirmLabel={adoption?.undo ? s.undoAdoption : s.adoptProject}
+        confirmVariant="accent"
+        pending={adoptProject.isPending}
+        onConfirm={handleAdoption}
+        onClose={() => { if (!adoptProject.isPending) setAdoption(null); }}
+      />
 
       <ConfirmDialog
         open={removing !== null}

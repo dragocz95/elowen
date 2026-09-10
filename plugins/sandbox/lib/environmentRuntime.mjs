@@ -9,7 +9,7 @@ import { createGuestFileTransport, validateUploadOperation, UPLOAD_KINDS } from 
 import { managedShellFrame, synchronousShellFrame } from './managedBootstrap.mjs';
 import { createEnvironmentStore, isRequestId, operationView, OPERATION_HISTORY } from './environmentDb.mjs';
 import { ownerProvablyDead, processIdentity, withRepoLease } from './db.mjs';
-import { createContainerSpec, createBoundSiteSpec, withContainerLimits, resourceToken, bindContainerIdentity } from './containerSpec.mjs';
+import { createContainerSpec, createBoundSiteSpec, withContainerLimits, resourceToken, bindContainerIdentity, publicationRuntimeToken } from './containerSpec.mjs';
 import { managedGuestRoot } from './containerPaths.mjs';
 import { PodmanClient } from './podman.mjs';
 import { ContainerStorage } from './containerStorage.mjs';
@@ -56,7 +56,7 @@ const MUTATING_FILE_KINDS = new Set(['write', 'remove', 'mkdir', 'rename', ...UP
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 /** A publication's socket is named after the publication alone — not after an execution — because it is
  *  established again after a container restart and the same one has to be found. */
-const publicationSocketName = (publicationId) => `pub-${publicationId}.sock`;
+export const publicationSocketName = (publicationId) => `pub-${publicationRuntimeToken(publicationId)}.sock`;
 const error = (code, message, status = 409) => Object.assign(new Error(message), { code, status });
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 function positive(value, label) {
@@ -157,10 +157,13 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   let sites;
   let disposed = false;
   const AUTO_RECOVERY_DELAYS_MS = [0, 30_000, 120_000, 600_000];
-  const AUTO_RECOVERY_RESET_MS = 600_000;
+  // Longer than every retry delay, so a container that dies when attempt four becomes eligible cannot be
+  // mistaken for one that completed a genuinely stable run.
+  const AUTO_RECOVERY_STABILITY_MS = 15 * 60_000;
   let reconciling = false;
   const releasingAdoptions = new Set();
   const previews = new Set();
+  const publicationEstablishments = new Map();
   const stores = () => ctx.host.stores();
   const account = (id, writable = false) => {
     assertLive();
@@ -618,7 +621,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     store.save(row);
   }
   async function ensureInitialContainer(row, op) {
-    const spec = specFor(row.spec);
+    let spec = specFor(row.spec);
     // A container created before the project mount carried the project's name was built from a different
     // specification, so it fails ownership by construction and must never be adopted. Its storage volumes
     // are untouched and remount under the new name, so recreating it preserves the project's files — but
@@ -631,13 +634,19 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       delete row.spec.legacyWorkspaceLayout;
       delete row.spec.containerId;
       store.save(row);
+      spec = specFor(row.spec);
     }
     let current = await podman.inspect(spec);
     if (row.spec.containerId) {
       if (current) return current;
       if (!op.checkpoint.autoRecovery) throw error('persistent_container_missing', 'The persistent root filesystem is missing; restore a snapshot explicitly');
       delete row.spec.containerId;
+      // The missing container ended the old creation identity. A replacement is created with the limits
+      // currently effective for the environment, then future live updates preserve those as its baseline.
+      row.spec.creationLimits = { ...row.spec.input.limits };
       store.save(row);
+      spec = specFor(row.spec);
+      current = await podman.inspect(spec);
     }
     if (current && !op.checkpoint.creating) throw error('container_unclaimed', 'A container exists without this creation checkpoint');
     if (!op.checkpoint.creating) checkpoint(op, { creating: true });
@@ -1032,9 +1041,15 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   async function queueAutomaticRecovery(row, observed) {
     if (row.desired_state !== 'running' || row.state === 'deleted' || row.spec.legacyWorkspaceLayout || (row.kind === 'project' && !rootOf(row))) return;
     const history = store.recentOperations(row.kind, row.resource_id, OPERATION_HISTORY);
-    const previous = history.find((op) => op.checkpoint.autoRecovery)?.checkpoint.autoRecovery;
+    const previousIndex = history.findIndex((op) => op.checkpoint.autoRecovery);
+    // A successful explicit start is the operator taking ownership of recovery again. Automatic attempts
+    // before it no longer count against the next failure; without this, a manual repair after exhaustion
+    // returned straight to the terminal failed state on the next container death.
+    const manuallyRestarted = previousIndex > 0 && history.slice(0, previousIndex)
+      .some((op) => op.action.kind === 'start' && op.status === 'succeeded' && !op.checkpoint.autoRecovery);
+    const previous = manuallyRestarted || previousIndex < 0 ? undefined : history[previousIndex].checkpoint.autoRecovery;
     const now = Date.now();
-    const stable = previous?.completedAt && now - previous.completedAt >= AUTO_RECOVERY_RESET_MS;
+    const stable = previous?.completedAt && now - previous.completedAt >= AUTO_RECOVERY_STABILITY_MS;
     const attempt = stable ? 1 : Number(previous?.attempt ?? 0) + 1;
     if (attempt > AUTO_RECOVERY_DELAYS_MS.length) {
       if (row.state === 'failed' && row.error?.startsWith(`Automatic recovery failed after ${AUTO_RECOVERY_DELAYS_MS.length} attempts`)) return;
@@ -1216,8 +1231,13 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   }
 
   async function establishPublication(row, publicationId, port) {
-    const name = publicationSocketName(publicationId);
-    return await startForwarder(row, name, port, 'publication', (spec, argv) => podman.startPublication(spec, publicationId, argv));
+    const active = publicationEstablishments.get(publicationId);
+    if (active) return await active;
+    const establishing = startForwarder(row, publicationSocketName(publicationId), port, 'publication',
+      (spec, argv) => podman.startPublication(spec, publicationId, argv));
+    publicationEstablishments.set(publicationId, establishing);
+    try { return await establishing; }
+    finally { if (publicationEstablishments.get(publicationId) === establishing) publicationEstablishments.delete(publicationId); }
   }
 
   /** Every publication of one project, established again after the container that carried them ended.

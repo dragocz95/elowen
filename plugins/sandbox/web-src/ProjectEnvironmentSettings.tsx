@@ -93,6 +93,12 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   };
 
   const stored = query.data?.environment.limits;
+  useEffect(() => {
+    if (!stored) return;
+    // A successful mutation only means the lifecycle request was accepted. Keep showing the submitted
+    // figures until the refreshed environment proves that those exact limits became authoritative.
+    setDraft((current) => (current && sameLimits(current, stored) ? null : current));
+  }, [stored]);
   const isAdmin = me.data?.user?.is_admin === true;
   const operations = query.data?.operations ?? [];
   const running = operations.some((item) => item.status === 'pending' || item.status === 'running');
@@ -108,10 +114,6 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
     const sent = draft;
     if (!sent) return;
     await dispatch({ kind: 'limits', limits: sent });
-    // Clear ONLY the snapshot that actually went out. An edit made while the request was in flight is
-    // newer than the answer coming back and must survive it — the hook then saves that one in its turn,
-    // and the functional update is what reads the state as it is now rather than as this closure saw it.
-    setDraft((current) => (current && sameLimits(current, sent) ? null : current));
     await refresh();
   }, { ready: !!stored, savable: isAdmin && changed, delay: 900 });
 

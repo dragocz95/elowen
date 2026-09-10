@@ -70,6 +70,15 @@ describe('root-owned published-sites gateway helper', () => {
     expect(() => renderActiveConfig(deployment, 'short', ['alpha'])).toThrow(/token/);
   });
 
+  it('answers an unknown published hostname with the same concealed 404 body', () => {
+    const config = renderActiveConfig(deployment, TOKEN, ['alpha']);
+    const body = '<!doctype html><meta charset="utf-8"><title>Not found</title><p>This address does not lead anywhere.</p>';
+    expect(config).toContain('server_name "~^[a-z0-9][a-z0-9-]{1,63}\\.sites\\.agent\\.chetty\\.ai$";');
+    expect(config).toContain(`return 404 '${body}';`);
+    expect(config).toContain('add_header Cache-Control "no-store" always;');
+    expect(config).toContain('ssl_certificate /var/lib/elowen/site-acme/config/live/alpha.sites.agent.chetty.ai/fullchain.pem;');
+  });
+
   // Shipped broken and cost a production outage that looked like a DNS problem: the wildcard regex
   // carries the slug length bound, so it contains `{`, and nginx reads an unquoted `{` as the start of a
   // block. `nginx -t` rejected the whole file with `directive "server_name" is not terminated by ";"`,

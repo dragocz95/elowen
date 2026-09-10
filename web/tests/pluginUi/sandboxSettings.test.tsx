@@ -50,8 +50,9 @@ afterEach(() => { server.resetHandlers(); localStorage.clear(); });
 afterAll(() => server.close());
 
 function mount(node: ReactNode) {
-  const { wrapper: Wrapper } = createWrapper();
+  const { client, wrapper: Wrapper } = createWrapper();
   render(<Wrapper><ToastProvider>{node}</ToastProvider></Wrapper>);
+  return client;
 }
 
 describe('sandbox Project workspaces', () => {
@@ -158,6 +159,29 @@ describe('managed environment lifecycle', () => {
       () => expect(submitted).toEqual({ action: { kind: 'limits', limits: { ...environment.limits, memoryMb: 1152 } }, expectedGeneration: 2, requestId: expect.any(String) }),
       { timeout: 4000 },
     );
+  });
+
+  it('keeps the sent slider value until the refreshed environment reports it', async () => {
+    let current = detail;
+    let reads = 0;
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: true } })),
+      http.get('*/api/plugins/sandbox/api/projects/1/environment', () => { reads += 1; return HttpResponse.json(current); }),
+      http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => {
+        const body = await request.json() as { requestId: string; action: { kind: 'limits'; limits: typeof environment.limits } };
+        return HttpResponse.json({ id: 'op-limits', requestId: body.requestId, projectId: 1, generation: 2, accountUserId: 1, action: body.action, status: 'succeeded', error: null });
+      }),
+    );
+    const client = mount(<ProjectEnvironmentSettings project={project} />);
+    const memory = await screen.findByRole('slider', { name: strings.memoryLimit });
+    fireEvent.keyDown(memory, { key: 'ArrowRight' });
+
+    await waitFor(() => expect(reads).toBeGreaterThanOrEqual(2), { timeout: 4000 });
+    expect(screen.getByText('1152 MiB')).toBeInTheDocument();
+
+    current = { ...detail, environment: { ...environment, limits: { ...environment.limits, memoryMb: 1152 } } };
+    await client.invalidateQueries({ queryKey: ['plugin', 'sandbox', 'project-environment', project.id] });
+    expect(await screen.findByText('1152 MiB')).toBeInTheDocument();
   });
 
   /** An administrator, and every limits write recorded and HELD open until it is released by hand, so a

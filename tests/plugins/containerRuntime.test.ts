@@ -559,11 +559,12 @@ describe('durable publication transport', () => {
     // caller's stdin.
     expect(run.join(' ')).not.toMatch(/--wait|--pipe|RuntimeMaxSec/);
     // A forwarder left over under the same name refuses a second systemd-run, so it is retired first…
-    expect(forwarded(executor)[0]).toEqual(['systemctl', 'stop', 'elowen-pub-shop.service']);
+    expect(forwarded(executor)[0]).toEqual(['systemctl', 'stop', publicationUnit('shop')]);
     // …and the unit is only believed once systemd reports it active.
-    expect(forwarded(executor).at(-1)).toEqual(['systemctl', 'is-active', 'elowen-pub-shop.service']);
+    expect(forwarded(executor).at(-1)).toEqual(['systemctl', 'is-active', publicationUnit('shop')]);
     expect(await client.activePublications(spec, ['shop', 'blog'])).toEqual(['shop']);
-    expect(forwarded(executor).at(-1)).toEqual(['systemctl', 'is-active', 'elowen-pub-shop.service', 'elowen-pub-blog.service']);
+    expect(forwarded(executor).at(-1)).toEqual(['systemctl', 'is-active', publicationUnit('shop'), publicationUnit('blog')]);
+    expect(Buffer.byteLength(publicationUnit('6cd4e63e-5c4b-4f74-8b91-d61cd8da4d90'))).toBeLessThan(64);
   });
 
   it('refuses a forwarder that never became active and one that did not stop', async () => {

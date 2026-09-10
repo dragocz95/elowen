@@ -58,6 +58,7 @@ export function deploymentFrom(raw) {
 }
 
 const MANAGED_HEADER = '# Managed by Elowen. Do not edit: the root-owned site gateway helper rewrites this file.';
+const NOT_FOUND_BODY = '<!doctype html><meta charset="utf-8"><title>Not found</title><p>This address does not lead anywhere.</p>';
 
 /** Quoted, and it has to be: the slug length bound makes this regex contain `{`, which nginx reads as the
  *  start of a block unless the value is a quoted string. Unquoted, the whole gateway config is rejected by
@@ -135,6 +136,30 @@ function siteBlock(deployment, slug, gatewayToken) {
   ];
 }
 
+/** Exact site names win before this regex. Any other valid hostname under the published-sites base ends
+ *  here with the same concealed document the Sites handler returns for an unknown or forbidden site. The
+ *  first issued certificate only completes TLS for that unknown SNI name; it grants no route to that site. */
+function unknownSiteBlock(deployment, certificateSlug) {
+  const certs = certPathsFor(deployment, certificateSlug);
+  return [
+    'server {',
+    '    listen 443 ssl;',
+    '    listen [::]:443 ssl;',
+    `    server_name ${wildcardServerName(deployment)};`,
+    `    ssl_certificate ${certs.fullchain};`,
+    `    ssl_certificate_key ${certs.privkey};`,
+    '    default_type text/html;',
+    '    charset utf-8;',
+    '    add_header Cache-Control "no-store" always;',
+    '    add_header X-Content-Type-Options "nosniff" always;',
+    '    add_header Referrer-Policy "no-referrer" always;',
+    '    add_header Content-Security-Policy "default-src \'self\'; script-src \'self\' \'unsafe-inline\'; style-src \'self\' \'unsafe-inline\' https:; img-src \'self\' data: blob: https:; font-src \'self\' data: https:; media-src \'self\' blob: https:; connect-src \'self\' https: wss:; object-src \'none\'; base-uri \'self\'; frame-ancestors \'none\'" always;',
+    '    add_header X-Robots-Tag "noindex, nofollow" always;',
+    `    return 404 '${NOT_FOUND_BODY}';`,
+    '}',
+  ];
+}
+
 /** The tombstone left behind at uninstall. It answers on port 80 only: without a certificate there is
  *  nothing honest to say on 443, and borrowing some other site's certificate to say it would be worse
  *  than the TLS error a stale DNS record deserves. */
@@ -176,6 +201,7 @@ export function renderActiveConfig(deployment, gatewayToken, slugs) {
     blocks.push(`server_names_hash_bucket_size ${serverNamesHashBucketSize(lineages)};`, '');
   }
   blocks.push(...challengeBlock(deployment));
+  if (ordered.length > 0) blocks.push('', ...unknownSiteBlock(deployment, ordered[0]));
   for (const slug of ordered) blocks.push('', ...siteBlock(deployment, slug, gatewayToken));
   return `${blocks.join('\n')}\n`;
 }

@@ -10,7 +10,7 @@ import { PROJECT_BASE_IMAGE_TAG, PROJECT_CONTAINERFILE } from '../../plugins/san
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { initSandboxDb } from '../../plugins/sandbox/lib/db.mjs';
 import { environmentPublicationMigration } from '../../plugins/sandbox/lib/environmentDb.mjs';
-import { createEnvironmentRuntime } from '../../plugins/sandbox/lib/environmentRuntime.mjs';
+import { createEnvironmentRuntime, publicationSocketName } from '../../plugins/sandbox/lib/environmentRuntime.mjs';
 import type { PodmanClient } from '../../plugins/sandbox/lib/podman.mjs';
 import type { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
 
@@ -34,7 +34,7 @@ function setup(config: Record<string, unknown> = {}) {
   // host side of the same path, so the runtime's readiness probe and its socket-file checks are exercised
   // against the operating system rather than against a stub that always agrees.
   const forwarders = new Map<string, Server>();
-  const publicationSocket = (spec: any, publicationId: string) => join(spec.storageRoot, 'broker', `pub-${publicationId}.sock`);
+  const publicationSocket = (spec: any, publicationId: string) => join(spec.storageRoot, 'broker', publicationSocketName(publicationId));
   /** What a container that died actually leaves behind: a socket FILE on the host side of the bind mount
    *  with nothing listening on it. Binding it again is refused until it is removed, which is the whole
    *  reason the runtime may not read presence as liveness. */
@@ -47,7 +47,10 @@ function setup(config: Record<string, unknown> = {}) {
   const podman = { ensureProjectImage: vi.fn(async () => 'localhost/elowen-project-base:test'),
     containerInventory: vi.fn(async () => new Map([...containers].map(([name, row]) => [name, row.state]))),
     inspect: vi.fn(async (spec: any) => containers.get(spec.name) ?? null), inspectBinding: vi.fn(async (spec: any) => containers.get(spec.name)),
-    create: vi.fn(async (spec: any) => { const row = { id: 'a'.repeat(64), state: 'created' }; containers.set(spec.name, row); return row; }),
+    create: vi.fn(async (spec: any) => {
+      if (spec.expectedId) throw new Error('An immutable container binding cannot be recreated');
+      const row = { id: 'a'.repeat(64), state: 'created' }; containers.set(spec.name, row); return row;
+    }),
     start: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'running'; }),
     stop: vi.fn(async (spec: any) => {
       containers.get(spec.name).state = 'stopped';
@@ -69,6 +72,7 @@ function setup(config: Record<string, unknown> = {}) {
     }),
     stopPublication: vi.fn(async (spec: any, publicationId: string) => { forwarders.get(publicationId)?.close(); forwarders.delete(publicationId); }),
     activePublications: vi.fn(async (_spec: any, publicationIds: string[]) => publicationIds.filter((publicationId) => forwarders.has(publicationId))),
+    update: vi.fn(async () => {}),
     remove: vi.fn(async (spec: any) => { containers.delete(spec.name); }),
     exec: vi.fn(async () => ({ code: 0, stdout: '', stderr: '', truncated: false })),
     // A start waits for the guest system bus before anything runs through `systemd-run`.
@@ -212,16 +216,59 @@ describe('durable managed environment lifecycle', () => {
     expect(podman.start).not.toHaveBeenCalled();
   });
 
-  it('recreates a missing desired running container from its existing volumes', async () => {
-    const { runtime, containers, podman } = setup();
+  it('recreates a missing limited container from its volumes and restores publications', async () => {
+    const { runtime, containers, podman, root, endForwarders, staleSocket } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    const changed = { cpus: 2, memoryMb: 2048, pidsLimit: 1024 };
+    await runtime.requestEnvironment({ ...input, accountUserId: 3, action: { kind: 'limits', limits: changed } }); await runtime.reconcile();
+    const publication = await runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
+    const marker = join(root, 'projects/7/storage/1/data/preserved');
+    mkdirSync(dirname(marker), { recursive: true });
+    writeFileSync(marker, 'still here');
+
     containers.clear();
+    await endForwarders();
+    staleSocket(publication.socketPath);
     podman.create.mockClear();
+    podman.startPublication.mockClear();
 
     await runtime.reconcile();
 
     expect(podman.create).toHaveBeenCalledOnce();
+    const recreated = podman.create.mock.calls[0]![0];
+    expect(recreated.expectedId).toBeUndefined();
+    expect(recreated.limits).toEqual(changed);
+    expect(recreated.creationLimits ?? recreated.limits).toEqual(changed);
+    expect(readFileSync(marker, 'utf8')).toBe('still here');
+    expect(podman.startPublication).toHaveBeenCalledWith(expect.anything(), 'shop', expect.anything());
     expect((await runtime.environmentFor(input)).state).toBe('running');
+  });
+
+  it('reaches recovery attempts one through four after short successful restarts and manual start resets them', async () => {
+    vi.useFakeTimers();
+    cleanup.push(() => vi.useRealTimers());
+    const { runtime, containers, podman, db } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    podman.start.mockClear();
+    const stopAgain = () => { containers.values().next().value.state = 'created'; };
+
+    stopAgain(); await runtime.reconcile();
+    stopAgain(); await vi.advanceTimersByTimeAsync(30_000); await runtime.reconcile();
+    stopAgain(); await vi.advanceTimersByTimeAsync(120_000); await runtime.reconcile();
+    stopAgain(); await vi.advanceTimersByTimeAsync(600_000); await runtime.reconcile();
+
+    expect(db.prepare("SELECT json_extract(checkpoint_json,'$.autoRecovery.attempt') AS attempt FROM p_sandbox_runtime_operations WHERE request_key LIKE 'autostart:%' ORDER BY rowid").all())
+      .toEqual([{ attempt: 1 }, { attempt: 2 }, { attempt: 3 }, { attempt: 4 }]);
+    expect(podman.start).toHaveBeenCalledTimes(4);
+
+    stopAgain(); await runtime.reconcile();
+    expect((await runtime.environmentFor(input))).toMatchObject({ state: 'failed', lastError: expect.stringMatching(/automatic recovery failed after 4 attempts/i) });
+
+    await runtime.requestEnvironment({ ...input, requestId: 'manual-recovery', action: { kind: 'start' } }); await runtime.reconcile();
+    expect((await runtime.environmentFor(input)).state).toBe('running');
+    stopAgain(); await runtime.reconcile();
+    expect(db.prepare("SELECT json_extract(checkpoint_json,'$.autoRecovery.attempt') AS attempt FROM p_sandbox_runtime_operations WHERE request_key LIKE 'autostart:%' ORDER BY rowid DESC LIMIT 1").get())
+      .toEqual({ attempt: 1 });
   });
 
   it('backs off repeated automatic recovery failures and eventually marks the environment failed', async () => {
@@ -255,14 +302,14 @@ describe('durable managed environment lifecycle', () => {
     });
   });
 
-  it('resets automatic recovery attempts after ten minutes of stable running', async () => {
+  it('resets automatic recovery attempts after the stability window', async () => {
     vi.useFakeTimers();
     cleanup.push(() => vi.useRealTimers());
     const { runtime, containers, podman, db } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
     containers.values().next().value.state = 'created';
     await runtime.reconcile();
-    await vi.advanceTimersByTimeAsync(600_000);
+    await vi.advanceTimersByTimeAsync(900_000);
     containers.values().next().value.state = 'created';
     podman.start.mockClear();
 
@@ -677,10 +724,10 @@ describe('durable project publications', () => {
   const records = (sql: any) => sql.prepare("SELECT kind,resource_id,project_id FROM p_sandbox_runtimes WHERE kind='publication'").all();
 
   it('records a publication by project and publication and puts it back after a container restart', async () => {
-    const { runtime, podman, sql, root } = setup();
+    const { runtime, podman, sql, publicationSocket } = setup();
     await starting(runtime);
     const binding = await runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
-    const socketPath = join(root, 'projects/7/broker/pub-shop.sock');
+    const socketPath = publicationSocket(podman.create.mock.calls[0]![0], 'shop');
     expect(binding).toEqual({ generation: 1, socketPath });
     expect(lstatSync(socketPath).isSocket()).toBe(true);
     // Keyed by the project and the publication: no account is named in the record, and none can be.
@@ -709,11 +756,52 @@ describe('durable project publications', () => {
     expect(podman.startPublication.mock.calls.map((call: any[]) => call[1])).not.toContain('foreign');
   });
 
+  it('keeps UUID publication transports within host limits and matches liveness by publication id', async () => {
+    const publicationId = '6cd4e63e-5c4b-4f74-8b91-d61cd8da4d90';
+    const realisticStorageRoot = '/var/www/.config/elowen/plugins-data/sandbox/projects/123456789/storage';
+    expect(Buffer.byteLength(join(realisticStorageRoot, 'broker', publicationSocketName(publicationId)))).toBeLessThanOrEqual(107);
+
+    const { runtime, podman } = setup();
+    await starting(runtime);
+    const binding = await runtime.projectPublicationBinding({ ...input, publicationId, port: 8080 });
+    expect(Buffer.byteLength(binding.socketPath)).toBeLessThanOrEqual(107);
+    podman.activePublications.mockClear();
+
+    await runtime.reconcile();
+
+    expect(podman.activePublications).toHaveBeenCalledWith(expect.anything(), [publicationId]);
+  });
+
+  it('shares one in-flight publication establishment between a request and reconciliation', async () => {
+    const { runtime, podman } = setup();
+    await starting(runtime);
+    const startPublication = podman.startPublication.getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let first = true;
+    podman.startPublication.mockImplementation(async (spec: any, publicationId: string, argv: string[]) => {
+      if (first) { first = false; await gate; }
+      return await (startPublication as any)(spec, publicationId, argv);
+    });
+
+    const binding = runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
+    await vi.waitFor(() => expect(podman.startPublication).toHaveBeenCalledTimes(1));
+    const reconciling = runtime.reconcile();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const callsWhileBlocked = podman.startPublication.mock.calls.length;
+    release();
+    const results = await Promise.allSettled([binding, reconciling]);
+
+    expect(callsWhileBlocked).toBe(1);
+    expect(results.every((result) => result.status === 'fulfilled')).toBe(true);
+    expect(podman.startPublication).toHaveBeenCalledTimes(1);
+  });
+
   it('restores a lost forwarder on reconciliation and keeps serving for an account that lost access', async () => {
-    const { runtime, podman, members, root, forwarders, staleSocket } = setup();
+    const { runtime, podman, members, forwarders, staleSocket, publicationSocket } = setup();
     await starting(runtime);
     await runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
-    const socketPath = join(root, 'projects/7/broker/pub-shop.sock');
+    const socketPath = publicationSocket(podman.create.mock.calls[0]![0], 'shop');
     expect(podman.startPublication).toHaveBeenCalledTimes(1);
 
     // A cycle with nothing to do costs no guest round trip: the socket file is the whole test.

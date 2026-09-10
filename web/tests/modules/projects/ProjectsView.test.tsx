@@ -16,6 +16,7 @@ const server = setupServer(
   }])),
   http.get('*/api/projects/1/git', () => HttpResponse.json({ isRepo: true, status: { branch: 'master', ahead: 0, behind: 0, dirty: 3, clean: false }, branches: [{ name: 'master', current: true }], commits: [{ hash: 'deadbee', subject: 'feat: x', author: 'me', relative: '2 hours ago' }] })),
   http.get('*/api/projects/3/git', () => HttpResponse.json({ error: 'managed project Git inspection requires the environment provider' }, { status: 503 })),
+  http.get('*/api/plugins/sandbox/api/projects/3/environment', () => HttpResponse.json({ environment: { state: 'running' } })),
   http.get('*/api/projects/1/files', () => HttpResponse.json([])),
   http.get('*/api/projects/1/commit/deadbee', () => HttpResponse.json({ diff: '', files: [] })),
   http.get('*/api/projects/1/changed', () => HttpResponse.json({ changed: [] })),
@@ -71,6 +72,37 @@ describe('ProjectsView', () => {
     expect(await screen.findByRole('dialog', { name: 'private-default' })).toBeInTheDocument();
     expect(opened).toBe(true);
     expect(environmentRequested).toBe(false);
+  });
+
+  it('lets an administrator convert a host project and undo it before first start', async () => {
+    let project: Record<string, unknown> = { id: 1, slug: 'elowen', path: '/srv/elowen', adoptedPath: null, notes: '', icon: '', executionKind: 'host' };
+    const bodies: unknown[] = [];
+    server.use(
+      http.get('*/api/projects', () => HttpResponse.json([project])),
+      http.get('*/api/plugins/sandbox/api/projects/1/environment', () => HttpResponse.json({ environment: { state: 'unprovisioned' } })),
+      http.post('*/api/projects/1/adopt', async ({ request }) => {
+        const body = await request.json();
+        bodies.push(body);
+        project = body && typeof body === 'object' && 'undo' in body
+          ? { id: 1, slug: 'elowen', path: '/srv/elowen', adoptedPath: null, notes: '', icon: '', executionKind: 'host' }
+          : { id: 1, slug: 'elowen', path: '', adoptedPath: '/srv/elowen', notes: '', icon: '', executionKind: 'managed', guestRoot: '/elowen' };
+        return HttpResponse.json(project);
+      }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open project elowen' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Convert to managed environment' }));
+    let dialog = within(await screen.findByRole('alertdialog'));
+    expect(dialog.getByText(/workspace moves into the project volume/i)).toBeInTheDocument();
+    fireEvent.click(dialog.getByRole('button', { name: 'Convert to managed environment' }));
+    await waitFor(() => expect(bodies).toEqual([{}]));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo managed conversion' }));
+    dialog = within(await screen.findByRole('alertdialog'));
+    fireEvent.click(dialog.getByRole('button', { name: 'Undo managed conversion' }));
+    await waitFor(() => expect(bodies).toEqual([{}, { undo: true }]));
   });
 
   it('lets a granted member create a private managed project without a host path', async () => {
@@ -149,6 +181,27 @@ describe('ProjectsView', () => {
     expect(await screen.findByText('Research notes')).toBeInTheDocument();
     expect(await screen.findByText('main')).toBeInTheDocument();
     expect(asked).toBe(1);
+  });
+
+  it('does not query managed git while an environment restore is in progress', async () => {
+    let environmentReads = 0;
+    let gitReads = 0;
+    server.use(
+      http.get('*/api/projects', () => HttpResponse.json([{ id: 3, slug: 'analysis', path: '', notes: '', icon: '', executionKind: 'managed' }])),
+      http.get('*/api/plugins/sandbox/api/projects/3/environment', () => { environmentReads += 1; return HttpResponse.json({ environment: { state: 'starting' } }); }),
+      http.get('*/api/projects/3/git', () => { gitReads += 1; return HttpResponse.json({ error: 'environment restoring' }, { status: 503 }); }),
+    );
+    const { client, wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open project analysis' }));
+    expect(await screen.findByRole('dialog', { name: 'analysis' })).toBeInTheDocument();
+    await waitFor(() => expect(environmentReads).toBe(1));
+
+    await act(async () => {
+      for (let index = 0; index < 3; index += 1) await client.invalidateQueries({ queryKey: ['project-git', 3] });
+    });
+
+    expect(gitReads).toBe(0);
   });
 
   // A project without a repository is an ordinary project, not an invitation to create one.
