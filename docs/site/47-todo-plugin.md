@@ -8,7 +8,7 @@ group: Plugin reference
 
 # Task List
 
-The registry plugin `todo`, version 0.14.3, gives the agent a session task list: it plans multi-step work in one call, tracks it task by task, and shows progress live while the work runs. Every conversation has its own list, kept per signed-in account, so one conversation's checklist never appears in another.
+The registry plugin `todo`, version 0.14.6, gives the agent a session task list: it plans multi-step work in one call, tracks it task by task, and shows progress live while the work runs. Every conversation has its own list, kept per signed-in account, so one conversation's checklist never appears in another.
 
 ## Where it appears
 
@@ -39,7 +39,7 @@ Before each turn, the agent also receives the current list as part of its workin
 
 ## Plans, dependencies, and ids
 
-A plan is created in one call. The `tasks` array carries every task in the order it should appear, and prerequisites are declared inline: `blockedBy` names ids that already exist, and `blockedByIndex` names positions within the same call, so a task can depend on a sibling that has no id yet. Ids are handed out in input order and returned with the result. After creation, everything is updated by id. `TaskUpdate` and `TaskGet` take a single `taskId`, and ids are never guessed, only taken from a `TaskCreate` result or from `TaskList`. Self-dependencies and dependency cycles are rejected, as is any batch that names a missing prerequisite: the whole batch is refused together, and a rejected batch leaves the list exactly as it was.
+A plan is created in one call. The `tasks` array carries every task in the order it should appear, and prerequisites are declared in `blockedBy`. An existing task uses its id as a string, such as `"3"`. A sibling in the same call uses its 1-based position with a `$` prefix, so `blockedBy: ["$1"]` waits for the first task in that array. The same field can mix both forms. Ids are handed out in input order and returned with the result. After creation, everything is updated by id. `TaskUpdate` and `TaskGet` take a single `taskId`, and ids are never guessed, only taken from a `TaskCreate` result or from `TaskList`. Self-dependencies and dependency cycles are rejected, as is any batch that names a missing prerequisite: the whole batch is refused together, and the error names the affected task and bad reference.
 
 When no task is running yet, the first unblocked pending task starts automatically, and finishing a task names the next unblocked one so the model can chain straight onto it.
 
