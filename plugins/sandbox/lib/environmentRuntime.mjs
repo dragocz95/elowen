@@ -170,6 +170,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   const releasingAdoptions = new Set();
   const previews = new Set();
   const publicationEstablishments = new Map();
+  const publicationRecoveryStates = new Map();
   const stores = () => ctx.host.stores();
   const account = (id, writable = false) => {
     assertLive();
@@ -1083,11 +1084,36 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     });
   }
 
+  function publicationRecoveryState(row) {
+    if (row.error?.startsWith(`Automatic recovery failed after ${AUTO_RECOVERY_DELAYS_MS.length} attempts`)) {
+      return { key: 'terminal', detail: `automatic recovery failed after ${AUTO_RECOVERY_DELAYS_MS.length} attempts` };
+    }
+    const latest = store.recentOperations(row.kind, row.resource_id, OPERATION_HISTORY)
+      .find((op) => op.checkpoint.autoRecovery);
+    const recovery = latest?.checkpoint.autoRecovery;
+    if (!latest || !recovery) return null;
+    const attempt = Number(recovery.attempt ?? 0);
+    if (latest.status === 'pending' || latest.status === 'running') {
+      return { key: `attempt:${attempt}:${latest.status}`, detail: `automatic recovery attempt ${attempt}/${AUTO_RECOVERY_DELAYS_MS.length} is ${latest.status}` };
+    }
+    if (attempt >= AUTO_RECOVERY_DELAYS_MS.length) {
+      return { key: 'terminal', detail: `automatic recovery failed after ${AUTO_RECOVERY_DELAYS_MS.length} attempts` };
+    }
+    const previousAt = Number(recovery.failedAt ?? recovery.completedAt ?? recovery.queuedAt ?? 0);
+    const nextAttempt = attempt + 1;
+    const retryAt = previousAt + AUTO_RECOVERY_DELAYS_MS[nextAttempt - 1];
+    if (previousAt && Date.now() < retryAt) {
+      return { key: `backoff:${nextAttempt}`, detail: `automatic recovery attempt ${nextAttempt}/${AUTO_RECOVERY_DELAYS_MS.length} is waiting for backoff` };
+    }
+    return null;
+  }
+
   async function reconcile() {
     if (!daemon || disposed || reconciling) return;
     reconciling = true;
     try {
       const inventory = await podman.containerInventory(namespace);
+      const runningContainers = new Set([...inventory.entries()].filter(([, state]) => state === 'running').map(([name]) => name));
       for (const row of store.all()) {
         if (!['project', 'site'].includes(row.kind) || row.desired_state !== 'running' || store.active(row.kind, row.resource_id)) continue;
         // A pre-mount container is an operator decision (recreate or delete), never an automatic one.
@@ -1099,7 +1125,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         // recovery candidate, and it must not stop the sweep for every other environment either.
         try {
           const observed = await podman.inspect(spec);
-          if (observed?.state === 'running') continue;
+          if (observed?.state === 'running') { runningContainers.add(spec.name); continue; }
           await queueAutomaticRecovery(row, observed);
         } catch (cause) {
           store.log(row.kind, row.resource_id, `Automatic recovery skipped: ${cause.message}`);
@@ -1170,7 +1196,21 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         if (disposed) break;
         if (releasingAdoptions.has(Number(row.resource_id)) || store.active('project', row.resource_id)) continue;
         const publications = store.publications(Number(row.resource_id));
+        if (!publications.length) continue;
         const spec = specFor(row.spec);
+        const recoveryState = runningContainers.has(spec.name) ? null : publicationRecoveryState(row);
+        const previousRecoveryState = publicationRecoveryStates.get(row.resource_id);
+        if (recoveryState) {
+          if (previousRecoveryState !== recoveryState.key) {
+            store.log('project', row.resource_id, `Publication reconciliation skipped: ${recoveryState.detail}`);
+            publicationRecoveryStates.set(row.resource_id, recoveryState.key);
+          }
+          continue;
+        }
+        if (previousRecoveryState) {
+          store.log('project', row.resource_id, 'Publication reconciliation resumed after automatic recovery');
+          publicationRecoveryStates.delete(row.resource_id);
+        }
         const present = publications.filter((publication) => forwarderSocketPresent(join(spec.storageRoot, 'broker', publicationSocketName(publication.publicationId))));
         const active = new Set(present.length ? await podman.activePublications(spec, present.map((publication) => publication.publicationId)) : []);
         for (const publication of publications) {

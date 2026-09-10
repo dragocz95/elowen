@@ -1,6 +1,6 @@
 /** Pure renderers for the two systemd unit files `elowen install` writes. Kept string-only and
  *  side-effect-free so they're unit-tested without touching /etc; the wizard writes + enables them. */
-import { SITE_GATEWAY_HELPER_PATH } from '../../shared/siteGateway.js';
+import { SITE_GATEWAY_HELPER_INSTALL_ARGS, SITE_GATEWAY_HELPER_PATH } from '../../shared/siteGateway.js';
 import { SERVICES } from '../systemd.js';
 
 export interface UnitParams {
@@ -138,6 +138,7 @@ export function elowenSudoers(user: string, reinstallCmd: string): string {
   return `# Managed by elowen install — lets the ${user} service user restart its own units and self-update in place (auto-update + manual update).
 ${user} ALL=(root) NOPASSWD: /usr/bin/systemctl restart --no-block ${units}, /usr/bin/systemctl restart --no-block ${SERVICES[0]}, /usr/bin/systemctl restart --no-block ${SERVICES[1]}, /usr/bin/systemctl is-active ${units}
 ${user} ALL=(root) NOPASSWD: ${reinstallCmd}
+${user} ALL=(root) NOPASSWD: /usr/bin/install ${SITE_GATEWAY_HELPER_INSTALL_ARGS.join(' ')}
 ${user} ALL=(root) NOPASSWD: ${SITE_GATEWAY_HELPER_PATH} ""
 `;
 }

@@ -15,7 +15,12 @@ import { selfPrefix, reinstallNpmArgs } from '../update.js';
 import { runOnboarding } from '../setup/wizard.js';
 import { ELOWEN_CLI_VERSION } from '../version.js';
 import { INSTALL_INFO_PATH, buildInstallInfo, serializeInstallInfo, type InstallArtifacts, type InstallUnit } from '../installInfo.js';
-import { SITE_GATEWAY_DEPLOYMENT_PATH, SITE_GATEWAY_HELPER_PATH } from '../../shared/siteGateway.js';
+import {
+  SITE_GATEWAY_DEPLOYMENT_PATH,
+  SITE_GATEWAY_HELPER_INSTALL_ARGS,
+  SITE_GATEWAY_HELPER_INSTALL_SOURCE,
+  SITE_GATEWAY_HELPER_PATH,
+} from '../../shared/siteGateway.js';
 import { must, aptInstall, step } from '../provision/exec.js';
 import { type Deployment, isIpAddress, publicUrl, localhostDeploy, ipDeploy, chooseDeployment, provisionProxy } from '../provision/deployment.js';
 import { beginInstaller } from '../ui/installer.js';
@@ -195,14 +200,13 @@ async function provisionSystemd(r: Runner, user: string, home: string, deploy: D
 async function provisionSiteGatewayHelper(r: Runner, deploy: Deployment): Promise<boolean> {
   if (deploy.mode !== 'domain' || !deploy.domain) return false;
   const source = await readFile(SITE_GATEWAY_HELPER_SOURCE, 'utf8');
-  const helperTmp = '/tmp/elowen-site-gateway';
   const deploymentTmp = '/tmp/elowen-site-gateway.json';
-  await r.writeFile(helperTmp, source);
+  await r.writeFile(SITE_GATEWAY_HELPER_INSTALL_SOURCE, source);
   await r.writeFile(deploymentTmp, `${JSON.stringify({ appHost: deploy.domain.toLowerCase(), daemonPort: DAEMON_PORT }, null, 2)}\n`);
   await must(r, 'mkdir', ['-p', dirname(SITE_GATEWAY_HELPER_PATH), dirname(SITE_GATEWAY_DEPLOYMENT_PATH)]);
-  await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', '0755', helperTmp, SITE_GATEWAY_HELPER_PATH]);
+  await must(r, 'install', [...SITE_GATEWAY_HELPER_INSTALL_ARGS]);
   await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', '0644', deploymentTmp, SITE_GATEWAY_DEPLOYMENT_PATH]);
-  await r.exec('rm', ['-f', helperTmp, deploymentTmp]);
+  await r.exec('rm', ['-f', SITE_GATEWAY_HELPER_INSTALL_SOURCE, deploymentTmp]);
   return true;
 }
 

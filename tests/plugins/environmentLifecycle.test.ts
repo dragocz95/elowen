@@ -759,6 +759,40 @@ describe('durable project publications', () => {
     expect(records(sql)).toHaveLength(1);
   });
 
+  it('logs publication recovery transitions once instead of retrying every reconciliation tick', async () => {
+    vi.useFakeTimers();
+    cleanup.push(() => vi.useRealTimers());
+    const { runtime, podman, containers, db, endForwarders, staleSocket } = setup();
+    await starting(runtime);
+    const binding = await runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
+    await endForwarders();
+    staleSocket(binding.socketPath);
+    containers.values().next().value.state = 'created';
+
+    // The first automatic restart succeeds. If the container dies again before the 30 second backoff has
+    // elapsed, the durable row still says running while recovery deliberately waits.
+    await runtime.reconcile();
+    await endForwarders();
+    staleSocket(binding.socketPath);
+    containers.values().next().value.state = 'created';
+    podman.startPublication.mockClear();
+    await runtime.reconcile();
+    for (let tick = 0; tick < 5; tick += 1) await runtime.reconcile();
+
+    const messages = () => db.prepare("SELECT message FROM p_sandbox_runtime_logs WHERE kind='project' AND resource_id='7' ORDER BY id").all()
+      .map((entry: any) => entry.message as string);
+    expect(messages().filter((message: string) => message.includes('Publication reconciliation skipped'))).toHaveLength(1);
+    expect(messages().filter((message: string) => message.includes('forwarder could not be established'))).toHaveLength(0);
+    expect(podman.startPublication).not.toHaveBeenCalled();
+
+    containers.values().next().value.state = 'running';
+    await runtime.reconcile();
+    await runtime.reconcile();
+
+    expect(messages().filter((message: string) => message.includes('Publication reconciliation resumed'))).toHaveLength(1);
+    expect(podman.startPublication).toHaveBeenCalledOnce();
+  });
+
   it('restores only publications that belong to the project being started', async () => {
     const { runtime, podman, sql } = setup();
     await starting(runtime);

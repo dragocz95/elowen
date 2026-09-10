@@ -1,4 +1,8 @@
 export const SITE_GATEWAY_HELPER_PATH = '/usr/local/libexec/elowen-site-gateway';
+export const SITE_GATEWAY_HELPER_INSTALL_SOURCE = '/tmp/elowen-site-gateway';
+export const SITE_GATEWAY_HELPER_INSTALL_ARGS = [
+  '-o', 'root', '-g', 'root', '-m', '0755', SITE_GATEWAY_HELPER_INSTALL_SOURCE, SITE_GATEWAY_HELPER_PATH,
+] as const;
 export const SITE_GATEWAY_DEPLOYMENT_PATH = '/etc/elowen/site-gateway.json';
 export const SITE_GATEWAY_SUDOERS_PATH = '/etc/sudoers.d/elowen-site-gateway';
 export const SITE_RUNTIME_SOCKET_ROOT = '/var/lib/elowen/site-runtime-sockets';
