@@ -156,6 +156,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   });
   let sites;
   let disposed = false;
+  const AUTO_RECOVERY_DELAYS_MS = [0, 30_000, 120_000, 600_000];
+  const AUTO_RECOVERY_RESET_MS = 600_000;
   let reconciling = false;
   const releasingAdoptions = new Set();
   const previews = new Set();
@@ -629,8 +631,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     }
     let current = await podman.inspect(spec);
     if (row.spec.containerId) {
-      if (!current) throw error('persistent_container_missing', 'The persistent root filesystem is missing; restore a snapshot explicitly');
-      return current;
+      if (current) return current;
+      if (!op.checkpoint.autoRecovery) throw error('persistent_container_missing', 'The persistent root filesystem is missing; restore a snapshot explicitly');
+      delete row.spec.containerId;
+      store.save(row);
     }
     if (current && !op.checkpoint.creating) throw error('container_unclaimed', 'A container exists without this creation checkpoint');
     if (!op.checkpoint.creating) checkpoint(op, { creating: true });
@@ -1010,10 +1014,62 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     }
   }
 
+  async function recoveryActor(row) {
+    const candidates = [...new Set([
+      ...store.recentOperations(row.kind, row.resource_id, OPERATION_HISTORY).map((op) => op.user_id),
+      ...stores().usersRead.list().map((user) => user.id),
+    ].filter((id) => id !== null && id !== undefined))];
+    for (const userId of candidates) {
+      try { await authorize(row.kind, row.resource_id, userId, true, true); return userId; }
+      catch { /* Try another currently authorized account. */ }
+    }
+    return null;
+  }
+
+  async function queueAutomaticRecovery(row, observed) {
+    if (row.desired_state !== 'running' || row.state === 'deleted' || row.spec.legacyWorkspaceLayout || (row.kind === 'project' && !rootOf(row))) return;
+    const history = store.recentOperations(row.kind, row.resource_id, OPERATION_HISTORY);
+    const previous = history.find((op) => op.checkpoint.autoRecovery)?.checkpoint.autoRecovery;
+    const now = Date.now();
+    const stable = previous?.completedAt && now - previous.completedAt >= AUTO_RECOVERY_RESET_MS;
+    const attempt = stable ? 1 : Number(previous?.attempt ?? 0) + 1;
+    if (attempt > AUTO_RECOVERY_DELAYS_MS.length) {
+      if (row.state === 'failed' && row.error?.startsWith(`Automatic recovery failed after ${AUTO_RECOVERY_DELAYS_MS.length} attempts`)) return;
+      const message = `Automatic recovery failed after ${AUTO_RECOVERY_DELAYS_MS.length} attempts; the container is still not running`;
+      if (row.state !== 'failed' || row.error !== message) {
+        row.state = 'failed'; row.error = message; store.save(row); store.log(row.kind, row.resource_id, message);
+      }
+      return;
+    }
+    const previousAt = Number(previous?.failedAt ?? previous?.completedAt ?? previous?.queuedAt ?? 0);
+    if (!stable && previousAt && now < previousAt + AUTO_RECOVERY_DELAYS_MS[attempt - 1]) return;
+    const userId = await recoveryActor(row);
+    if (userId === null) {
+      store.log(row.kind, row.resource_id, 'Automatic recovery could not find an account that still manages this environment');
+      return;
+    }
+    const reason = observed ? `container not running after host reboot (${observed.state})` : 'container missing after host reboot';
+    store.transaction(() => {
+      const current = store.get(row.kind, row.resource_id);
+      if (!current || current.desired_state !== 'running' || current.state === 'deleted' || store.active(row.kind, row.resource_id)) return;
+      const op = store.enqueue(current, userId, { kind: 'start' }, `autostart:${current.generation}:${attempt}:${now}`);
+      op.checkpoint.autoRecovery = { attempt, queuedAt: now, reason };
+      declareSteps(op); store.saveOperation(op);
+      store.log(current.kind, current.resource_id, `start queued automatically: ${reason} (attempt ${attempt}/${AUTO_RECOVERY_DELAYS_MS.length})`);
+    });
+  }
+
   async function reconcile() {
     if (!daemon || disposed || reconciling) return;
     reconciling = true;
     try {
+      for (const row of store.all()) {
+        if (!['project', 'site'].includes(row.kind) || row.desired_state !== 'running' || store.active(row.kind, row.resource_id)) continue;
+        if (row.kind === 'project' && (!rootOf(row) || releasingAdoptions.has(Number(row.resource_id)))) continue;
+        const observed = await podman.inspect(specFor(row.spec));
+        if (observed?.state === 'running') continue;
+        await queueAutomaticRecovery(row, observed);
+      }
       for (const op of store.operations()) {
         if (disposed) break;
         if (op.kind === 'project' && releasingAdoptions.has(Number(op.resource_id))) continue;
@@ -1040,14 +1096,21 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           if (row.generation !== expected) throw error('generation_changed', 'Queued environment generation changed');
           store.log(row.kind, row.resource_id, `${op.action.kind} started (${op.id})`);
           await perform(row, op);
+          if (op.checkpoint.autoRecovery) op.checkpoint.autoRecovery.completedAt = Date.now();
           op.status = 'succeeded'; op.error = null; op.step_index = Math.max(0, (op.steps ?? []).length - 1); op.percent = 100; store.saveOperation(op);
           store.log(row.kind, row.resource_id, `${op.action.kind} completed (${op.id})`);
           publishOperation(op);
         } catch (cause) {
           if (!claimed) throw cause;
+          if (op.checkpoint.autoRecovery) op.checkpoint.autoRecovery.failedAt = Date.now();
           op.status = 'failed'; op.error = sanitize(cause.message ?? cause).slice(0, 2000); store.saveOperation(op);
           const row = store.get(op.kind, op.resource_id);
-          if (row) { row.error = op.error; if (row.desired_state === 'deleted') row.state = 'deleting'; else if (row.state !== 'running' && row.state !== 'stopped') row.state = 'failed'; store.save(row); store.log(row.kind, row.resource_id, op.error); }
+          if (row) {
+            const exhausted = op.checkpoint.autoRecovery?.attempt >= AUTO_RECOVERY_DELAYS_MS.length;
+            row.error = exhausted ? `Automatic recovery failed after ${AUTO_RECOVERY_DELAYS_MS.length} attempts: ${op.error}` : op.error;
+            if (row.desired_state === 'deleted') row.state = 'deleting'; else if (row.state !== 'running' && row.state !== 'stopped') row.state = 'failed';
+            store.save(row); store.log(row.kind, row.resource_id, row.error);
+          }
           publishOperation(op);
         }
       }

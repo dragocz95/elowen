@@ -152,6 +152,84 @@ describe('durable managed environment lifecycle', () => {
     expect((await runtime.environmentFor(input)).limits).toEqual({ cpus: 1, memoryMb: 4096, pidsLimit: 512 });
   });
 
+  it('recovers a desired running environment whose container was left created after a host reboot', async () => {
+    const { runtime, containers, podman, db } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    containers.values().next().value.state = 'created';
+    podman.start.mockClear();
+
+    await runtime.reconcile();
+
+    expect(podman.start).toHaveBeenCalledOnce();
+    expect((await runtime.environmentFor(input)).state).toBe('running');
+    expect(db.prepare("SELECT message FROM p_sandbox_runtime_logs WHERE kind='project' AND resource_id='7' ORDER BY id").all()
+      .map((entry: any) => entry.message).join('\n')).toMatch(/container not running after host reboot/);
+  });
+
+  it('recreates a missing desired running container from its existing volumes', async () => {
+    const { runtime, containers, podman } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    containers.clear();
+    podman.create.mockClear();
+
+    await runtime.reconcile();
+
+    expect(podman.create).toHaveBeenCalledOnce();
+    expect((await runtime.environmentFor(input)).state).toBe('running');
+  });
+
+  it('backs off repeated automatic recovery failures and eventually marks the environment failed', async () => {
+    vi.useFakeTimers();
+    cleanup.push(() => vi.useRealTimers());
+    const { runtime, containers, podman, db } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    containers.values().next().value.state = 'created';
+    podman.start.mockRejectedValue(new Error('container exited during boot'));
+    podman.start.mockClear();
+
+    await runtime.reconcile();
+    await runtime.reconcile();
+    expect(podman.start).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(30_000); await runtime.reconcile();
+    expect(podman.start).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(120_000); await runtime.reconcile();
+    expect(podman.start).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(600_000); await runtime.reconcile();
+    expect(podman.start).toHaveBeenCalledTimes(4);
+    await vi.advanceTimersByTimeAsync(3_600_000); await runtime.reconcile();
+    expect(podman.start).toHaveBeenCalledTimes(4);
+    expect(db.prepare("SELECT state,error FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get()).toMatchObject({
+      state: 'failed', error: expect.stringMatching(/automatic recovery failed after 4 attempts/i),
+    });
+  });
+
+  it('leaves explicit stopped and deleted intents untouched during runtime recovery', async () => {
+    const { runtime, containers, podman, db } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    containers.values().next().value.state = 'created';
+    podman.start.mockClear();
+
+    db.prepare("UPDATE p_sandbox_runtimes SET desired_state='stopped',state='stopped' WHERE kind='project' AND resource_id='7'").run();
+    await runtime.reconcile();
+    db.prepare("UPDATE p_sandbox_runtimes SET desired_state='deleted',state='deleting' WHERE kind='project' AND resource_id='7'").run();
+    await runtime.reconcile();
+
+    expect(podman.start).not.toHaveBeenCalled();
+    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_runtime_operations WHERE request_key LIKE 'autostart:%'").get()).toEqual({ n: 0 });
+  });
+
+  it('does not duplicate an active lifecycle operation during runtime recovery', async () => {
+    const { runtime, fork, containers, db } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    containers.values().next().value.state = 'created';
+    await fork.requestEnvironment({ ...input, requestId: 'manual-restart', action: { kind: 'restart' } });
+
+    await runtime.reconcile();
+
+    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_runtime_operations WHERE request_key LIKE 'autostart:%'").get()).toEqual({ n: 0 });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_runtime_operations WHERE request_key='manual-restart'").get()).toEqual({ n: 1 });
+  });
+
   it('only the daemon executes a fork-recorded idempotent start', async () => {
     const { runtime, fork, podman } = setup();
     const op = await fork.requestEnvironment({ ...input, requestId: 'start-one', action: { kind: 'start' } });
