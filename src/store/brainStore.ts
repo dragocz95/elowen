@@ -45,6 +45,15 @@ import type { BrainDebugLegacyTranscriptPage } from '../shared/wireContract.js';
 export { syntheticRestartResultId } from './brainDelegationStore.js';
 export type { BrainWorkflowRun, RecoverableRun, RecoverableWorkflow } from './brainDelegationStore.js';
 
+/** A session's stored execution target could not be read. Thrown instead of the raw parse failure so the
+ *  conversation holding the bad row is named where the turn fails and in the log line that follows. */
+export class ProjectExecutionRefError extends Error {
+  constructor(readonly sessionId: string, cause: unknown) {
+    super(`session ${sessionId} has an unreadable execution target`, { cause });
+    this.name = 'ProjectExecutionRefError';
+  }
+}
+
 /** One message of a pause checkpoint's queue — see brain_paused_queue. */
 export interface PausedQueueItem {
   text: string;
@@ -349,14 +358,23 @@ export class BrainStore {
     return this.db.prepare('SELECT * FROM brain_sessions WHERE id = ?').get(id) as BrainSessionRow | undefined;
   }
 
+  /** The session's execution target. Stored JSON that does not parse FAILS THE TURN rather than degrading
+   *  to the host, unlike {@link spawnOriginFor}: a ref decides where commands run, and answering "host"
+   *  for an unreadable managed target would run the turn on the daemon's own filesystem. What the raw
+   *  `SyntaxError` or `ZodError` could not say is which conversation holds the bad row, so callers and
+   *  logs get {@link ProjectExecutionRefError} with the session id instead. */
   getProjectExecution(sessionId: string): ProjectExecutionRef | undefined {
     const row = this.getSession(sessionId);
     if (!row) return undefined;
-    if (row.execution_ref !== null) return projectExecutionRefSchema.parse(JSON.parse(row.execution_ref));
-    if (!row.delegated_access) return undefined;
-    const scope = normalizeDelegatedExecutionScope(JSON.parse(row.delegated_access));
-    if (!scope) throw new Error('invalid delegated execution scope');
-    return scope.projectRef;
+    if (row.execution_ref === null && !row.delegated_access) return undefined;
+    try {
+      if (row.execution_ref !== null) return projectExecutionRefSchema.parse(JSON.parse(row.execution_ref));
+      const scope = normalizeDelegatedExecutionScope(JSON.parse(row.delegated_access!));
+      if (!scope) throw new Error('delegated execution scope did not normalize');
+      return scope.projectRef;
+    } catch (cause) {
+      throw new ProjectExecutionRefError(sessionId, cause);
+    }
   }
 
   /** The caller authorizes the target before persisting. Delegated scope cannot be retargeted. */

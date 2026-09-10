@@ -4,7 +4,7 @@ import { rmSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { type Db } from '../../src/store/db.js';
 import { openDb } from '../../src/store/db.js';
-import { BrainStore, SESSION_EVENT_KINDS, syntheticRestartResultId } from '../../src/store/brainStore.js';
+import { BrainStore, ProjectExecutionRefError, SESSION_EVENT_KINDS, syntheticRestartResultId } from '../../src/store/brainStore.js';
 import { rollupDroppedUsage } from '../../src/store/brainUsageStore.js';
 import { planSlug } from '../../src/shared/planSlug.js';
 
@@ -753,6 +753,15 @@ describe('BrainStore', () => {
     store.renameSession('a', 'Manual title');
     expect(store.setTitleIfCurrent('a', 'Generated title', 'Late generated title')).toBe(false);
     expect(store.getSession('a')?.title).toBe('Manual title');
+  });
+
+  /** The ref decides WHERE a turn runs, so an unreadable one fails the turn instead of degrading to the
+   *  host. The raw parse failure never said which conversation held the bad row. */
+  it('getProjectExecution names the session when its stored execution target does not parse', () => {
+    store.createSession({ id: 'broken', userId: 7, model: 'm' });
+    db.prepare("UPDATE brain_sessions SET execution_ref = '{oops' WHERE id = 'broken'").run();
+    expect(() => store.getProjectExecution('broken')).toThrow(ProjectExecutionRefError);
+    expect(() => store.getProjectExecution('broken')).toThrow(/broken/);
   });
 
   it('sessions start cwd-less; setWorkDir binds them to a directory', () => {
