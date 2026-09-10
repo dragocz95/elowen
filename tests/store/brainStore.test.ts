@@ -2255,10 +2255,10 @@ describe('BrainStore', () => {
       expect(store.spillNamespace('copy').startsWith('copy-')).toBe(true);
     });
 
-    /** The derivation behind the one namespace a session may read without owning it. A fork child is
+    /** The derivation behind the namespaces a session may read without owning them. A fork child is
      *  seeded with its parent's transcript verbatim, so it inherits placeholders naming the parent's
      *  files — and nothing else may claim that. */
-    describe('the namespace a fork child inherited its placeholders from', () => {
+    describe('the namespaces a fork child inherited its placeholders from', () => {
       const access = { admin: true, projectIds: [], owner: true, permissionBoundary: null };
 
       it('resolves to the parent, and only for a durable fork child', () => {
@@ -2268,13 +2268,13 @@ describe('BrainStore', () => {
           delegatedAccess: { ...access, fork: true },
         });
         store.createSession({ id: 'worker', userId: 7, model: 'm', parentSessionId: 'boss', delegatedAccess: access });
-        expect(store.forkParentSpillNamespace('forked')).toBe(store.spillNamespace('boss'));
+        expect(store.inheritedSpillNamespaces('forked')).toEqual([store.spillNamespace('boss')]);
         // A plain delegated child composes its own history and inherits no placeholder…
-        expect(store.forkParentSpillNamespace('worker')).toBeUndefined();
+        expect(store.inheritedSpillNamespaces('worker')).toEqual([]);
         // …the parent never gains the reverse claim on its child…
-        expect(store.forkParentSpillNamespace('boss')).toBeUndefined();
+        expect(store.inheritedSpillNamespaces('boss')).toEqual([]);
         // …and an unknown session answers nothing rather than something.
-        expect(store.forkParentSpillNamespace('nobody')).toBeUndefined();
+        expect(store.inheritedSpillNamespaces('nobody')).toEqual([]);
       });
 
       it('falls back to the parent id for a row minted before the namespace column', () => {
@@ -2284,7 +2284,7 @@ describe('BrainStore', () => {
           id: 'old-fork', userId: 7, model: 'm', parentSessionId: 'old-boss',
           delegatedAccess: { ...access, fork: true },
         });
-        expect(store.forkParentSpillNamespace('old-fork')).toBe('old-boss');
+        expect(store.inheritedSpillNamespaces('old-fork')).toEqual(['old-boss']);
       });
 
       /** A branch copies the source transcript verbatim, placeholders included, and those name the
@@ -2293,8 +2293,26 @@ describe('BrainStore', () => {
       it('resolves to the source of a branched conversation', () => {
         store.createSession({ id: 'origin', userId: 7, model: 'm' });
         const branch = store.forkSession('origin', 'branch');
-        expect(store.forkParentSpillNamespace(branch.id)).toBe(store.spillNamespace('origin'));
-        expect(store.forkParentSpillNamespace('origin')).toBeUndefined();
+        expect(store.inheritedSpillNamespaces(branch.id)).toEqual([store.spillNamespace('origin')]);
+        expect(store.inheritedSpillNamespaces('origin')).toEqual([]);
+      });
+
+      /** A copy of a copy keeps the older placeholders as well: branch C's transcript is B's, which is
+       *  A's, so C must read A's files too — and the chain ends at the first ancestor that did not
+       *  inherit anything, which is what keeps the allowance one-directional. */
+      it('walks the whole chain a copy of a copy carries', () => {
+        store.createSession({ id: 'root', userId: 7, model: 'm' });
+        const middle = store.forkSession('root', 'middle');
+        const tip = store.forkSession(middle.id, 'tip');
+        expect(store.inheritedSpillNamespaces(tip.id)).toEqual([store.spillNamespace('middle'), store.spillNamespace('root')]);
+        expect(store.inheritedSpillNamespaces(middle.id)).toEqual([store.spillNamespace('root')]);
+        // A plain delegated child composes its own history, so a fork of IT stops at that child.
+        store.createSession({ id: 'composed', userId: 7, model: 'm', parentSessionId: tip.id, delegatedAccess: access });
+        store.createSession({
+          id: 'grandchild', userId: 7, model: 'm', parentSessionId: 'composed',
+          delegatedAccess: { ...access, fork: true },
+        });
+        expect(store.inheritedSpillNamespaces('grandchild')).toEqual([store.spillNamespace('composed')]);
       });
     });
   });
