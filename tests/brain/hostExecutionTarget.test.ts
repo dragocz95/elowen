@@ -116,7 +116,7 @@ function serviceFixture() {
     prepareExecution: vi.fn(), environmentFor: vi.fn(), requestEnvironment: vi.fn(),
     environmentOperation: vi.fn(), projectFiles: vi.fn(), revokeProjectAccess: vi.fn(),
     environmentSnapshots: vi.fn(), environmentLogs: vi.fn(), managedWorktrees: vi.fn(),
-    projectPreviewBinding: vi.fn(),
+    projectPreviewBinding: vi.fn(), projectPublicationBinding: vi.fn(), projectPublicationRelease: vi.fn(),
   };
   const d = {
     store, projects, userProjects,

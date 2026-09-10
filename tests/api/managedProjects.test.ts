@@ -18,7 +18,7 @@ function setup(sandbox?: Record<string, (input: never) => unknown>) {
   const token = users.issueToken(member.id); const peerToken = users.issueToken(peer.id);
   const plugins = sandbox ? { get: async () => ({ control: (name: string) => name === 'sandbox' ? sandbox : undefined }) } as never : undefined;
   const app = createServer({ bus: new EventBus(), engine: null as never, spawn: null as never, tmux: null as never, project: home, fallback: { program: 'claude-code', model: 'sonnet' }, clock: new FakeClock(0), config: new ConfigStore(db), users, projects, userProjects, plugins });
-  return { users, projects, userProjects, admin, member, peer, token, peerToken, app };
+  return { users, projects, userProjects, admin, member, peer, home, token, peerToken, adminToken: users.issueToken(admin.id), app };
 }
 afterEach(() => { for (const db of databases.splice(0)) db.close(); });
 
@@ -122,6 +122,58 @@ describe('managed project API', () => {
     const response = await app.request('/projects', request(token, 'POST', { slug: '', executionKind: 'nonsense' }));
     expect(response.status).toBe(403);
   });
+  /** Adopting is not metadata editing: it hands the project's directory to the sandbox and moves its
+   *  execution off this host, so it is its own admin-only door, and the daemon's own checkout is refused
+   *  before anything else is considered. */
+  it('adopts a host project as managed, admin-only, and refuses what cannot be adopted', async () => {
+    const { app, projects, home, member, token, adminToken } = setup();
+    const host = projects.create({ slug: 'kolin', path: '/var/www/kolin' });
+    expect((await app.request(`/projects/${host.id}/adopt`, request(token, 'POST'))).status).toBe(403);
+    expect((await app.request(`/projects/${home.id}/adopt`, request(adminToken, 'POST'))).status).toBe(400);
+    expect((await app.request('/projects/9999/adopt', request(adminToken, 'POST'))).status).toBe(404);
+    const adopted = await app.request(`/projects/${host.id}/adopt`, request(adminToken, 'POST'));
+    expect(adopted.status).toBe(200);
+    expect(await adopted.json()).toMatchObject({ executionKind: 'managed', path: '', adoptedPath: '/var/www/kolin', guestRoot: '/kolin' });
+    // Adopting twice, and a slug that could never be mounted, are both refusals of the project itself.
+    expect((await app.request(`/projects/${host.id}/adopt`, request(adminToken, 'POST'))).status).toBe(409);
+    expect((await app.request(`/projects/${projects.ensureDefault(member.id).id}/adopt`, request(adminToken, 'POST'))).status).toBe(409);
+    expect((await app.request(`/projects/${projects.create({ slug: 'workspace', path: '/data/ws' }).id}/adopt`, request(adminToken, 'POST'))).status).toBe(400);
+    expect((await app.request(`/projects/${projects.create({ slug: 'shop', path: '/var/www/shop' }).id}/adopt`, request(adminToken, 'POST', { undo: 'yes' }))).status).toBe(400);
+  });
+
+  /** The rollback is refused once the sandbox has taken the directory, because reversing the row then
+   *  would hand the project back pointing at a path that no longer holds anything. Before that the
+   *  environment is unprovisioned and the way back is open. */
+  it('releases an adoption only while the environment has not taken the directory', async () => {
+    // No provider loaded at all: without one the environment cannot be asked, so the rollback is refused.
+    const bare = setup();
+    const bareHost = bare.projects.create({ slug: 'kolin', path: '/var/www/kolin' });
+    await bare.app.request(`/projects/${bareHost.id}/adopt`, request(bare.adminToken, 'POST'));
+    expect((await bare.app.request(`/projects/${bareHost.id}/adopt`, request(bare.adminToken, 'POST', { undo: true }))).status).toBe(503);
+    expect(bare.projects.get(bareHost.id)?.executionKind).toBe('managed');
+
+    const seen: Record<string, unknown>[] = [];
+    const state = { value: 'unprovisioned' };
+    const sandbox = { environmentFor: (input: Record<string, unknown>) => { seen.push(input); return { state: state.value }; } };
+    const { app, projects, admin, adminToken } = setup(sandbox);
+    const target = projects.create({ slug: 'kolin', path: '/var/www/kolin' });
+    await app.request(`/projects/${target.id}/adopt`, request(adminToken, 'POST'));
+    state.value = 'running';
+    expect((await app.request(`/projects/${target.id}/adopt`, request(adminToken, 'POST', { undo: true }))).status).toBe(409);
+    expect(projects.get(target.id)?.executionKind).toBe('managed');
+    // Asked before the row is touched, as the acting account, about the project being released.
+    expect(seen).toEqual([{ project: { kind: 'managed', projectId: target.id }, accountUserId: admin.id }]);
+    state.value = 'unprovisioned';
+    const released = await app.request(`/projects/${target.id}/adopt`, request(adminToken, 'POST', { undo: true }));
+    expect(released.status).toBe(200);
+    expect(await released.json()).toMatchObject({ executionKind: 'host', path: '/var/www/kolin' });
+    expect(seen).toHaveLength(2);
+    // And once released it is an ordinary host project again, so a second undo is refused rather than
+    // silently blanking a path the store never recorded.
+    expect((await app.request(`/projects/${target.id}/adopt`, request(adminToken, 'POST', { undo: true }))).status).toBe(409);
+    expect(projects.get(target.id)?.path).toBe('/var/www/kolin');
+  });
+
   /** The membership row is BOTH the permission the account is judged by and the handle a retry needs, so
    *  the runtime teardown runs before it goes away: deleting it first left a failed revocation with the
    *  guest still able to reach the environment and nothing left to revoke it against. The refusal names the

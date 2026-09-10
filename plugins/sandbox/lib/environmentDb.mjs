@@ -67,6 +67,28 @@ export const environmentProgressMigration = {
   },
 };
 
+/** A publication's forwarder is durable state, and its record lives in the SAME runtime table as the
+ *  environments — with its own kind, keyed by project and publication rather than by the account that
+ *  asked for it, because a published Site has to keep answering for a visitor nobody signed in. The
+ *  table is rebuilt only to widen its kind CHECK: the rows are live environment records, copied across
+ *  exactly as the lease rebuild above copies its own. */
+export const environmentPublicationMigration = {
+  version: 6,
+  up(m) {
+    m.exec(`
+      ALTER TABLE p_sandbox_runtimes RENAME TO p_sandbox_runtimes_v5;
+      CREATE TABLE p_sandbox_runtimes (
+        kind TEXT NOT NULL CHECK(kind IN ('project','site','publication')), resource_id TEXT NOT NULL, project_id INTEGER NOT NULL,
+        generation INTEGER NOT NULL DEFAULT 1, state TEXT NOT NULL DEFAULT 'unprovisioned', desired_state TEXT NOT NULL DEFAULT 'running',
+        spec_json TEXT NOT NULL, limits_json TEXT NOT NULL, error TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(kind,resource_id)
+      );
+      INSERT INTO p_sandbox_runtimes SELECT * FROM p_sandbox_runtimes_v5;
+      DROP TABLE p_sandbox_runtimes_v5;
+    `);
+  },
+};
+
 /** The idempotency key a caller attaches to a lifecycle request, which is what one durable operation row
  *  is identified by for one resource and account. The store that keys rows by it states the rule once:
  *  the HTTP surface, the runtime and the Sites image service all validate the key a caller sent, and a
@@ -90,6 +112,7 @@ export const operationView = (op) => ({ id: op.id, requestId: op.request_key, [o
 export const OPERATION_HISTORY = 20;
 
 const runtime = (row) => row ? { ...row, generation: Number(row.generation), spec: JSON.parse(row.spec_json), limits: JSON.parse(row.limits_json) } : null;
+const publication = (row) => ({ publicationId: row.resource_id, projectId: Number(row.project_id), generation: Number(row.generation), port: JSON.parse(row.spec_json).port });
 const operation = (row) => row ? { ...row, action: JSON.parse(row.action_json), checkpoint: JSON.parse(row.checkpoint_json),
   steps: JSON.parse(row.steps_json ?? '[]'), step_index: Number(row.step_index ?? 0),
   percent: row.percent === null || row.percent === undefined ? null : Number(row.percent) } : null;
@@ -100,6 +123,22 @@ export function createEnvironmentStore(db, identity) {
     db, get, getOperation,
     transaction: (fn) => db.transaction(fn),
     all: () => db.prepare('SELECT * FROM p_sandbox_runtimes').all().map(runtime),
+    /** Every publication forwarder this runtime keeps alive, with the port it forwards to. Reconciliation
+     *  reads them because they are the only record of a transport that no account lease owns. */
+    publications: () => db.prepare("SELECT * FROM p_sandbox_runtimes WHERE kind='publication' ORDER BY project_id,resource_id").all().map(publication),
+    savePublication(row, publicationId, port) {
+      db.prepare(`INSERT INTO p_sandbox_runtimes(kind,resource_id,project_id,generation,state,desired_state,spec_json,limits_json)
+        VALUES('publication',?,?,?,'running','running',?,'{}')
+        ON CONFLICT(kind,resource_id) DO UPDATE SET project_id=excluded.project_id,generation=excluded.generation,
+          spec_json=excluded.spec_json,updated_at=CURRENT_TIMESTAMP`)
+        .run(publicationId, Number(row.resource_id), row.generation, JSON.stringify({ port }));
+    },
+    removePublication(projectId, publicationId) {
+      db.prepare("DELETE FROM p_sandbox_runtimes WHERE kind='publication' AND project_id=? AND resource_id=?").run(projectId, publicationId);
+    },
+    removeProjectPublications(projectId) {
+      db.prepare("DELETE FROM p_sandbox_runtimes WHERE kind='publication' AND project_id=?").run(projectId);
+    },
     insert(kind, id, projectId, spec, limits) {
       db.prepare('INSERT OR IGNORE INTO p_sandbox_runtimes(kind,resource_id,project_id,spec_json,limits_json) VALUES (?,?,?,?,?)')
         .run(kind, String(id), projectId, JSON.stringify(spec), JSON.stringify(limits));

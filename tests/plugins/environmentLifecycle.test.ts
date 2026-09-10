@@ -1,6 +1,7 @@
-import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
-import { spawnSync } from 'node:child_process';
-import { join } from 'node:path';
+import { lstatSync, mkdirSync, mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { createServer, type Server } from 'node:net';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -8,6 +9,7 @@ import { openDb } from '../../src/store/db.js';
 import { PROJECT_BASE_IMAGE_TAG, PROJECT_CONTAINERFILE } from '../../plugins/sandbox/lib/containerBaseImage.mjs';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { initSandboxDb } from '../../plugins/sandbox/lib/db.mjs';
+import { environmentPublicationMigration } from '../../plugins/sandbox/lib/environmentDb.mjs';
 import { createEnvironmentRuntime } from '../../plugins/sandbox/lib/environmentRuntime.mjs';
 import type { PodmanClient } from '../../plugins/sandbox/lib/podman.mjs';
 import type { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
@@ -28,11 +30,43 @@ function setup(config: Record<string, unknown> = {}) {
   const ctx: any = { db: () => db, host: { stores: () => stores }, currentAccountUserId: () => null, currentAccess: () => ({ readOnly: false }), config, logger: { info: vi.fn(), warn, error: vi.fn() } };
   initSandboxDb(ctx);
   const containers = new Map<string, any>();
+  // A publication's forwarder is a real listening unix socket in the guest; here it is a real one on the
+  // host side of the same path, so the runtime's readiness probe and its socket-file checks are exercised
+  // against the operating system rather than against a stub that always agrees.
+  const forwarders = new Map<string, Server>();
+  const publicationSocket = (spec: any, publicationId: string) => join(spec.storageRoot, 'broker', `pub-${publicationId}.sock`);
+  /** What a container that died actually leaves behind: a socket FILE on the host side of the bind mount
+   *  with nothing listening on it. Binding it again is refused until it is removed, which is the whole
+   *  reason the runtime may not read presence as liveness. */
+  const staleSocket = (path: string) => execFileSync('/usr/bin/python3', ['-c', 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])', path]);
+  const endForwarders = async () => {
+    const servers = [...forwarders.values()];
+    forwarders.clear();
+    await Promise.all(servers.map((server) => new Promise<void>((resolve) => server.close(() => resolve()))));
+  };
   const podman = { ensureProjectImage: vi.fn(async () => 'localhost/elowen-project-base:test'),
     inspect: vi.fn(async (spec: any) => containers.get(spec.name) ?? null), inspectBinding: vi.fn(async (spec: any) => containers.get(spec.name)),
     create: vi.fn(async (spec: any) => { const row = { id: 'a'.repeat(64), state: 'created' }; containers.set(spec.name, row); return row; }),
     start: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'running'; }),
-    stop: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'stopped'; }),
+    stop: vi.fn(async (spec: any) => {
+      containers.get(spec.name).state = 'stopped';
+      // The guest forwarder dies with the container and its socket file does not. Closing the listener
+      // first is what makes the file left behind a socket with NOTHING bound to it, which is the state
+      // this test needs: binding it again is refused until somebody removes it.
+      const paths = [...forwarders.keys()].map((publicationId) => publicationSocket(spec, publicationId));
+      await endForwarders();
+      for (const path of paths) staleSocket(path);
+    }),
+    startPublication: vi.fn(async (spec: any, publicationId: string) => {
+      const path = publicationSocket(spec, publicationId);
+      // The broker directory is created by the storage preparation this harness stubs out; the real guest
+      // binds it as /run/elowen, so the socket really is written there.
+      mkdirSync(dirname(path), { recursive: true });
+      const server = createServer(() => {});
+      await new Promise<void>((resolve, reject) => { server.once('error', reject); server.listen(path, resolve); });
+      forwarders.set(publicationId, server);
+    }),
+    stopPublication: vi.fn(async (spec: any, publicationId: string) => { forwarders.get(publicationId)?.close(); forwarders.delete(publicationId); }),
     remove: vi.fn(async (spec: any) => { containers.delete(spec.name); }),
     exec: vi.fn(async () => ({ code: 0, stdout: '', stderr: '', truncated: false })),
     // A start waits for the guest system bus before anything runs through `systemd-run`.
@@ -46,8 +80,8 @@ function setup(config: Record<string, unknown> = {}) {
   const dependencies = { ctx, db, dataDir: root, podman: podman as unknown as PodmanClient, storage: storage as unknown as ContainerStorage };
   const runtime = createEnvironmentRuntime({ ...dependencies, daemon: true });
   const fork = createEnvironmentRuntime({ ...dependencies, daemon: false });
-  cleanup.push(() => { runtime.dispose(); fork.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
-  return { runtime, fork, db, sql, ctx, podman, storage, members, users, project, stores, root, containers, warn };
+  cleanup.push(() => { endForwarders(); runtime.dispose(); fork.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
+  return { runtime, fork, db, sql, ctx, podman, storage, members, users, project, stores, root, containers, warn, forwarders, publicationSocket, endForwarders };
 }
 const input = { project: { kind: 'managed', projectId: 7 }, accountUserId: 1 };
 
@@ -407,5 +441,107 @@ describe('project base image binding', () => {
     // And the stored specification still names the old image afterwards — nothing rewrote it in passing.
     const after = JSON.parse((sql.prepare('SELECT spec_json FROM p_sandbox_runtimes').get() as any).spec_json);
     expect(after.input.image).toBe(stale);
+  });
+});
+
+describe('durable project publications', () => {
+  // The publication record shares the table the environments live in, so the migration that widens its
+  // kind CHECK rebuilds a table that holds live rows. This is the upgrade a database in the field takes:
+  // the v5 table as the previous migration left it, a row in it, then the step that adds the kind.
+  it('adds the publication kind without losing the environments already recorded', () => {
+    const sql = openDb(':memory:');
+    try {
+      sql.exec(`CREATE TABLE p_sandbox_runtimes (
+        kind TEXT NOT NULL CHECK(kind IN ('project','site')), resource_id TEXT NOT NULL, project_id INTEGER NOT NULL,
+        generation INTEGER NOT NULL DEFAULT 1, state TEXT NOT NULL DEFAULT 'unprovisioned', desired_state TEXT NOT NULL DEFAULT 'running',
+        spec_json TEXT NOT NULL, limits_json TEXT NOT NULL, error TEXT, updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY(kind,resource_id))`);
+      sql.prepare("INSERT INTO p_sandbox_runtimes(kind,resource_id,project_id,generation,state,spec_json,limits_json,error) VALUES('project','7',7,3,'running','{\"input\":{\"generation\":3}}','{\"cpus\":1,\"memoryMb\":1024,\"pidsLimit\":512}',NULL)").run();
+      environmentPublicationMigration.up({ exec: (statement: string) => sql.exec(statement) });
+      expect(sql.prepare('SELECT * FROM p_sandbox_runtimes').all()).toMatchObject([
+        { kind: 'project', resource_id: '7', project_id: 7, generation: 3, state: 'running', desired_state: 'running',
+          spec_json: '{"input":{"generation":3}}', limits_json: '{"cpus":1,"memoryMb":1024,"pidsLimit":512}', error: null },
+      ]);
+      // The widened CHECK accepts the publication record and still refuses a kind nobody defined.
+      sql.prepare("INSERT INTO p_sandbox_runtimes(kind,resource_id,project_id,spec_json,limits_json) VALUES('publication','shop',7,'{\"port\":8080}','{}')").run();
+      expect(() => sql.prepare("INSERT INTO p_sandbox_runtimes(kind,resource_id,project_id,spec_json,limits_json) VALUES('nonsense','x',7,'{}','{}')").run())
+        .toThrow(/CHECK/);
+    } finally { sql.close(); }
+  });
+
+  const starting = async (runtime: any) => {
+    await runtime.requestEnvironment({ ...input, requestId: 'publication-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+  };
+  const records = (sql: any) => sql.prepare("SELECT kind,resource_id,project_id FROM p_sandbox_runtimes WHERE kind='publication'").all();
+
+  it('records a publication by project and publication and puts it back after a container restart', async () => {
+    const { runtime, podman, sql, root } = setup();
+    await starting(runtime);
+    const binding = await runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
+    const socketPath = join(root, 'projects/7/broker/pub-shop.sock');
+    expect(binding).toEqual({ generation: 1, socketPath });
+    expect(lstatSync(socketPath).isSocket()).toBe(true);
+    // Keyed by the project and the publication: no account is named in the record, and none can be.
+    expect(records(sql)).toEqual([{ kind: 'publication', resource_id: 'shop', project_id: 7 }]);
+    expect(sql.prepare('PRAGMA table_info(p_sandbox_runtimes)').all().map((column: any) => column.name)).not.toContain('user_id');
+
+    // A restart of the environment takes the guest forwarder with it. The record is what puts it back.
+    await runtime.requestEnvironment({ ...input, requestId: 'publication-stop', action: { kind: 'stop' } });
+    await runtime.reconcile();
+    await runtime.requestEnvironment({ ...input, requestId: 'publication-restart', action: { kind: 'start' } });
+    await runtime.reconcile();
+    expect(podman.startPublication).toHaveBeenCalledTimes(2);
+    expect(lstatSync(socketPath).isSocket()).toBe(true);
+    // The same publication, established again: one forwarder, one record.
+    expect(records(sql)).toHaveLength(1);
+  });
+
+  it('restores a lost forwarder on reconciliation and keeps serving for an account that lost access', async () => {
+    const { runtime, podman, members, root, forwarders } = setup();
+    await starting(runtime);
+    await runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
+    const socketPath = join(root, 'projects/7/broker/pub-shop.sock');
+    expect(podman.startPublication).toHaveBeenCalledTimes(1);
+
+    // A cycle with nothing to do costs no guest round trip: the socket file is the whole test.
+    await runtime.reconcile();
+    expect(podman.startPublication).toHaveBeenCalledTimes(1);
+
+    // The forwarder is gone and its socket with it, exactly as a guest that died leaves things.
+    const dying = forwarders.get('shop')!;
+    await new Promise<void>((resolve) => dying.close(() => resolve()));
+    forwarders.delete('shop');
+    await runtime.reconcile();
+    expect(podman.startPublication).toHaveBeenCalledTimes(2);
+    expect(lstatSync(socketPath).isSocket()).toBe(true);
+
+    // Nobody's account owns it: the visitor it answers is not a member of anything.
+    members.delete(1);
+    await runtime.reconcile();
+    expect(lstatSync(socketPath).isSocket()).toBe(true);
+    expect(podman.stopPublication).not.toHaveBeenCalled();
+  });
+
+  it('refuses an unusable publication and takes the record, the forwarder and the socket away again', async () => {
+    const { runtime, podman, sql, containers } = setup();
+    await starting(runtime);
+    await expect(runtime.projectPublicationBinding({ ...input, publicationId: 'Shop 1', port: 8080 })).rejects.toThrow(/token/i);
+    await expect(runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 0 })).rejects.toThrow(/port/i);
+    const binding = await runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
+
+    await runtime.projectPublicationRelease({ ...input, publicationId: 'shop' });
+    expect(podman.stopPublication).toHaveBeenCalledWith(expect.anything(), 'shop');
+    expect(records(sql)).toEqual([]);
+    expect(() => lstatSync(binding.socketPath)).toThrow();
+    expect(podman.startPublication.mock.calls.at(-1)![1]).toBe('shop');
+
+    // Deleting the environment takes every publication of the project with it, so no dead record is left
+    // behind for reconciliation to chase.
+    await runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
+    await runtime.requestEnvironment({ ...input, requestId: 'publication-delete', action: { kind: 'delete' } });
+    await runtime.reconcile();
+    expect(records(sql)).toEqual([]);
+    expect(containers.size).toBe(0);
   });
 });

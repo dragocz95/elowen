@@ -90,9 +90,18 @@ export interface ProjectPreviewBinding {
   release(): Promise<void>;
 }
 
+/** A published transport, as opposed to {@link ProjectPreviewBinding}: it is durable and account
+ *  independent, so it has no `release()` — `projectPublicationRelease` is the one thing that ends it. */
+export interface ProjectPublicationBinding {
+  generation: number;
+  /** Trusted gateway transport only. This is not a public URL and never bypasses account authorization. */
+  socketPath: string;
+}
+
 export const ENVIRONMENT_CONTROL_METHODS = [
   'environmentFor', 'requestEnvironment', 'environmentOperation', 'projectFiles', 'revokeProjectAccess',
   'environmentSnapshots', 'environmentLogs', 'managedWorktrees', 'projectPreviewBinding',
+  'projectPublicationBinding', 'projectPublicationRelease',
 ] as const;
 export interface ProjectEnvironmentControl {
   environmentFor(input: { project: ManagedProjectRef; accountUserId: number }): Promise<ProjectEnvironment>;
@@ -105,6 +114,10 @@ export interface ProjectEnvironmentControl {
   environmentLogs(input: { project: ManagedProjectRef; accountUserId: number; lines?: number }): Promise<{ lifecycle: string; journal: string }>;
   managedWorktrees(input: { project: ManagedProjectRef; accountUserId: number; action: ManagedWorktreeAction }): Promise<ManagedWorktree[]>;
   projectPreviewBinding(input: { project: ManagedProjectRef; accountUserId: number; port: number }): Promise<ProjectPreviewBinding>;
+  /** Durable by design: the binding survives the caller, the account and a container restart, and is
+   *  re-established by the runtime's own reconciliation rather than by anything holding a lease. */
+  projectPublicationBinding(input: { project: ManagedProjectRef; accountUserId: number; publicationId: string; port: number }): Promise<ProjectPublicationBinding>;
+  projectPublicationRelease(input: { project: ManagedProjectRef; accountUserId: number; publicationId: string }): Promise<void>;
 }
 
 /** Only the loader-identified Sites plugin may resolve these methods. These bindings come from Sites'

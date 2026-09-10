@@ -54,6 +54,9 @@ export function buildFraction(line) {
  *  into a data race nobody can see in a diff. */
 const MUTATING_FILE_KINDS = new Set(['write', 'remove', 'mkdir', 'rename', ...UPLOAD_KINDS]);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+/** A publication's socket is named after the publication alone — not after an execution — because it is
+ *  established again after a container restart and the same one has to be found. */
+const publicationSocketName = (publicationId) => `pub-${publicationId}.sock`;
 const error = (code, message, status = 409) => Object.assign(new Error(message), { code, status });
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 function positive(value, label) {
@@ -638,6 +641,17 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     return current;
   }
 
+  /** The one moment a HOST project's directory becomes the project's own workspace volume. Core's
+   *  `adoptAsManaged` records where that directory came from and leaves it where it is; the first start
+   *  of the environment is where it moves, once, before any container exists — and `adopted_path` stays
+   *  on the project row as the way back. */
+  async function adoptHostWorkspace(row) {
+    if (row.kind !== 'project') return;
+    const adopted = stores().projects.get(Number(row.resource_id))?.adoptedPath;
+    if (!adopted) return;
+    await storage.adoptWorkspace(specFor(row.spec), adopted);
+  }
+
   async function startRow(row, op) {
     step(op, 'image');
     if (row.kind === 'project' && row.spec.input.image === PROJECT_BASE_IMAGE_TAG && !op.checkpoint.imageReady) {
@@ -651,7 +665,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       store.save(row); checkpoint(op, { imageReady: true });
     }
     step(op, 'storage');
-    if (!row.spec.containerId) await storage.prepare(specFor(row.spec));
+    if (!row.spec.containerId) {
+      await storage.prepare(specFor(row.spec));
+      await adoptHostWorkspace(row);
+    }
     step(op, 'container');
     const current = await ensureInitialContainer(row, op);
     const spec = specFor(row.spec);
@@ -675,6 +692,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       if (result.code !== 0) throw error('initialization_failed', result.stderr || 'Project initialization failed');
       checkpoint(op, { initialized: true });
     }
+    // The container is up and its system bus answers, so the forwarders it lost with the previous one
+    // can be established again. The socket files outlive the container, hence `establishPublication`
+    // removing them rather than trusting what is there.
+    if (row.kind === 'project') await establishPublications(row);
     row.state = 'running'; row.error = null; store.save(row);
   }
 
@@ -977,7 +998,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         // A project's runtime row goes with the project: core has just removed the rows that made the
         // environment reachable, so a tombstone would only be one dead row per deleted project. A Site
         // keeps its own: a re-published Site resumes from the generation that row records.
-        if (row.kind === 'project') db.prepare('DELETE FROM p_sandbox_runtimes WHERE kind=? AND resource_id=?').run(row.kind, row.resource_id);
+        if (row.kind === 'project') {
+          store.removeProjectPublications(row.project_id);
+          db.prepare('DELETE FROM p_sandbox_runtimes WHERE kind=? AND resource_id=?').run(row.kind, row.resource_id);
+        }
         else { row.state = 'deleted'; row.error = null; store.save(row); }
         op.status = 'succeeded'; op.error = null; store.saveOperation(op);
       });
@@ -1036,6 +1060,18 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           }
         }
       }
+      // A publication's forwarder lives INSIDE the container and no lease owns it, so a container that
+      // came back without it — or a socket file that outlived its forwarder — is what this finds. The
+      // socket is the cheap test: it is on the host side of the bind mount, so a cycle that has nothing
+      // to do costs one lstat per publication and no guest round trip.
+      for (const publication of store.publications()) {
+        if (disposed) break;
+        const row = store.get('project', publication.projectId);
+        if (!row || row.state !== 'running' || store.active('project', row.resource_id)) continue;
+        if (publicationPresent(join(specFor(row.spec).storageRoot, 'broker', publicationSocketName(publication.publicationId)))) continue;
+        try { await establishPublication(row, publication.publicationId, publication.port); }
+        catch (cause) { store.log('project', publication.projectId, `publication ${publication.publicationId} forwarder could not be established: ${cause.message}`); }
+      }
     } finally { reconciling = false; }
   }
 
@@ -1059,6 +1095,83 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     account(input.accountUserId, input.action?.kind !== 'list');
     const row = await ready('project', id, input.accountUserId);
     return await manageWorktrees({ db, runGuest, row, userId: input.accountUserId, action: input.action, root: rootOf(row) });
+  }
+
+  function publicationPresent(path) {
+    try { return lstatSync(path).isSocket(); }
+    catch (cause) { if (cause.code === 'ENOENT') return false; throw cause; }
+  }
+  /** Remove a socket this runtime put there: only ever inside the project's own broker directory, which
+   *  the daemon owns (0700), and only a socket — anything else at that path is not ours to delete. */
+  function removePublicationSocket(path) {
+    let stat;
+    try { stat = lstatSync(path); }
+    catch (cause) { if (cause.code === 'ENOENT') return; throw cause; }
+    if (!stat.isSocket()) throw error('publication_socket_changed', 'Publication socket ownership changed');
+    unlinkSync(path);
+  }
+
+  /** One publication's transport: a persistent unit in the guest running the same forwarder a preview
+   *  uses, on a socket named after the publication under the project's own storage root. Nothing leases
+   *  it — a container that restarts loses it while its socket file stays behind, which is why the socket
+   *  is removed before the forwarder is established rather than read as evidence that one is running. */
+  async function establishPublication(row, publicationId, port) {
+    const spec = specFor(row.spec);
+    const name = publicationSocketName(publicationId);
+    const socketPath = join(spec.storageRoot, 'broker', name);
+    if (Buffer.byteLength(socketPath) > 107) throw error('publication_path_limit', 'Publication socket path exceeds the operating-system limit');
+    removePublicationSocket(socketPath);
+    await podman.startPublication(spec, publicationId, ['/usr/bin/python3', '-c', PREVIEW_HELPER, String(port), `/run/elowen/${name}`]);
+    const deadline = Date.now() + 10000;
+    for (;;) {
+      try { if (lstatSync(socketPath).isSocket()) break; throw error('publication_socket_changed', 'Publication transport is not a socket'); }
+      catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
+      if (Date.now() >= deadline) throw error('publication_timeout', 'Publication transport did not become ready');
+      await wait(50);
+    }
+    return socketPath;
+  }
+
+  /** Every publication of one project, established again after the container that carried them ended.
+   *  A transport that cannot be established must not fail the environment start — the container is up and
+   *  everything else about the project is usable — so it is named and reconciliation retries it. */
+  async function establishPublications(row) {
+    for (const publication of store.publications(Number(row.resource_id))) {
+      try { await establishPublication(row, publication.publicationId, publication.port); }
+      catch (cause) { store.log(row.kind, row.resource_id, `publication ${publication.publicationId} forwarder could not be established: ${cause.message}`); }
+    }
+  }
+
+  /** A published transport is DURABLE and account-independent: its record is keyed by the project and the
+   *  publication, and no execution lease is taken, because the visitor it answers is nobody's account. */
+  async function projectPublicationBinding(input) {
+    account(input.accountUserId, true);
+    const id = projectId(input.project);
+    const publicationId = resourceToken(String(input.publicationId ?? ''));
+    if (!Number.isSafeInteger(input.port) || input.port < 1 || input.port > 65535) throw error('invalid_port', 'Invalid guest publication port', 400);
+    const row = await ready('project', id, input.accountUserId);
+    // The record first: it is the whole of the durability claim, and a transport that cannot be
+    // established on this attempt is then reconciliation's to establish rather than something the
+    // caller has to remember to ask for again.
+    store.savePublication(row, publicationId, input.port);
+    const socketPath = await establishPublication(row, publicationId, input.port);
+    return { generation: row.generation, socketPath };
+  }
+
+  /** The only thing that takes a publication away again: the record first, so reconciliation stops
+   *  restoring it, then the forwarder and the socket it left. A container that is not running has no
+   *  forwarder to stop and the socket is still this runtime's file to remove. */
+  async function projectPublicationRelease(input) {
+    account(input.accountUserId, true);
+    const id = projectId(input.project);
+    const publicationId = resourceToken(String(input.publicationId ?? ''));
+    const row = store.get('project', id);
+    if (row) {
+      const spec = specFor(row.spec);
+      if ((await podman.inspect(spec))?.state === 'running') await podman.stopPublication(spec, publicationId);
+      removePublicationSocket(join(spec.storageRoot, 'broker', publicationSocketName(publicationId)));
+    }
+    store.removePublication(id, publicationId);
   }
 
   async function projectPreviewBinding(input) {
@@ -1107,7 +1220,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     siteImageStatus(input) { assertLive(); return siteImages.status(input); },
     provisionSiteImage(input) { assertLive(); return siteImages.request(input); },
     requestSiteCleanup(input) { assertLive(); return siteCleanup.request(input); },
-    projectPreviewBinding,
+    projectPreviewBinding, projectPublicationBinding, projectPublicationRelease,
     async environmentFor(input) {
       const id = projectId(input.project);
       await authorize('project', id, input.accountUserId, true);
