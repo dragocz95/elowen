@@ -7,6 +7,7 @@ import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
 import { EffectsProvider } from '../../../lib/useEffects';
 import { en } from '../../../lib/i18n/dictionaries/en';
+import { useTranslation } from '../../../lib/i18n';
 import { formatCost, formatTokens } from '../../../lib/format';
 import { consumePendingBrainComposer } from '../../../lib/brainDock';
 import type { DashRecap } from '../../../lib/types';
@@ -75,6 +76,12 @@ afterEach(() => {
   dashRecap = { enabled: true, continue: [], yesterday: null, digest: { status: 'unavailable' } };
 });
 afterAll(() => server.close());
+
+/** The real language switch: the same context setter the header's picker calls. */
+function LocaleSwitch() {
+  const { setLocale } = useTranslation();
+  return <button type="button" onClick={() => setLocale('cs')}>switch locale</button>;
+}
 
 function mount(recapSeed: DashRecap | null = null) {
   const { wrapper: Wrapper } = createWrapper();
@@ -145,6 +152,34 @@ describe('DashboardView — first paint', () => {
     expect(strip).toHaveAttribute('data-overflow-right', 'false');
     // Touch scrolling is what the fade is a cue FOR — it must survive the change.
     expect(strip.className).toContain('overflow-x-auto');
+  });
+
+  // A language change rewrites every label in the strip without touching a single figure: no scroll, no
+  // resize, nothing the component renders from data changes at all. The track still gets wider or
+  // narrower, so the fade has to follow the new text.
+  it('remeasures the strip when the interface language changes', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(
+      <Wrapper><EffectsProvider><ToastProvider>
+        <LocaleSwitch />
+        <DashboardView recapSeed={null} />
+      </ToastProvider></EffectsProvider></Wrapper>,
+    );
+    const strip = screen.getByRole('list', { name: en.dashboard.stripLabel });
+    // jsdom lays nothing out, so the track is exactly as wide as the test says when the width is READ.
+    let scrollWidth = 300;
+    Object.defineProperties(strip, {
+      clientWidth: { configurable: true, get: () => 358 },
+      scrollWidth: { configurable: true, get: () => scrollWidth },
+      scrollLeft: { configurable: true, writable: true, value: 0 },
+    });
+    await waitFor(() => expect(strip.textContent).toContain(formatTokens(1500)));
+    expect(strip).toHaveAttribute('data-overflow-right', 'false');
+
+    // The Czech labels are longer, so the same four figures stop fitting the moment they are translated.
+    scrollWidth = 520;
+    fireEvent.click(screen.getByRole('button', { name: 'switch locale' }));
+    await waitFor(() => expect(strip).toHaveAttribute('data-overflow-right', 'true'));
   });
 
   it('keeps the working count unknown until the pulse request resolves', () => {

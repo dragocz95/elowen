@@ -34,6 +34,14 @@ function useProviderCatalog(brainModels: BrainModelOption[] | undefined, provide
   }, [brainModels, providerId]);
 }
 
+/** The catalog an EMBEDDING route may offer. A connected Claude/ChatGPT account (`source: 'oauth'`)
+ *  exposes no embeddings endpoint, so offering one there can only ever produce a runtime failure. The core
+ *  embedding role below and the plugin editor's `embeddingModel` field are the two surfaces that ask, and
+ *  they must ask the same question. */
+export function embeddingModelCatalog(models: readonly BrainModelOption[]): BrainModelOption[] {
+  return chatModelCatalog(models).filter((m) => m.source !== 'oauth');
+}
+
 /** Settings → Models → **Model roles**: every instance-level answer to "which model does what", in the
  *  order someone actually asks it. The chat default the runtime resolves (read-only, because it is
  *  DERIVED from provider order rather than stored), the utility model that titles conversations and
@@ -98,12 +106,10 @@ export function ModelRolesSection({ onSaveState, onOpenSection }: {
     }
   }, [config, digestSeeded]);
 
-  // OAuth accounts (Claude/ChatGPT) expose no embeddings endpoint, so they can never be an embedding
-  // model — drop them from the embedding catalog. The utility and digest roles are chat completions, so
-  // both keep the whole catalog.
-  const embeddingModels = useMemo(() => chatModelCatalog(brainModels ?? []).filter((m) => m.source !== 'oauth'), [brainModels]);
+  const embeddingModels = useMemo(() => embeddingModelCatalog(brainModels ?? []), [brainModels]);
   const embCatalog = useProviderCatalog(embeddingModels, embProvider);
-  // Both roles are chat completions, so neither may offer the account's image models.
+  // The utility and digest roles both end in a chat completion, so neither may offer the account's image
+  // models — but an OAuth account answers a chat completion perfectly well and stays.
   const catalog = useMemo(() => chatModelCatalog(brainModels ?? []), [brainModels]);
 
   // baseUrl is intentionally omitted from the UI — the referenced provider already carries the API

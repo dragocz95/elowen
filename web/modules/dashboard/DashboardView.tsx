@@ -1,8 +1,8 @@
 'use client';
 import Link from 'next/link';
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { Button } from '../../components/ui/Button';
-import { NO_HORIZONTAL_OVERFLOW, horizontalOverflowState, type HorizontalOverflowState } from '../../components/ui/horizontalScroll';
+import { useHorizontalOverflow } from '../../components/ui/horizontalScroll';
 import { MotionReveal } from '../../components/ui/Motion';
 import { HomeComposer } from './HomeComposer';
 import { ActivityTile } from './ActivityTile';
@@ -57,33 +57,10 @@ export function DashboardView({ recapSeed = null }: { recapSeed?: DashRecap | nu
   const panelRef = useRef<HTMLDivElement>(null);
 
   // On a phone the four figures run past the screen and the strip's scrollbar is hidden, so the edge is
-  // the only thing that can report a cut-off figure. Measured, like every other swipeable one-line track
-  // in the app, so a strip that fits carries no permanent decoration.
-  const stripRef = useRef<HTMLDivElement>(null);
-  const [stripEdges, setStripEdges] = useState<HorizontalOverflowState>(NO_HORIZONTAL_OVERFLOW);
-  const measureStrip = useCallback(() => {
-    const track = stripRef.current;
-    if (!track) return;
-    const next = horizontalOverflowState(track);
-    setStripEdges((current) => (
-      current.overflow === next.overflow && current.left === next.left && current.right === next.right ? current : next
-    ));
-  }, []);
-
-  useEffect(() => {
-    const track = stripRef.current;
-    if (!track) return;
-    measureStrip();
-    const resizeObserver = new ResizeObserver(measureStrip);
-    resizeObserver.observe(track);
-    track.addEventListener('scroll', measureStrip, { passive: true });
-    return () => {
-      resizeObserver.disconnect();
-      track.removeEventListener('scroll', measureStrip);
-    };
-  }, [measureStrip]);
-  // The figures arrive after the first paint, so the track's width changes with them.
-  useEffect(measureStrip, [measureStrip, totals, presence.activeCount, spendToday]);
+  // the only thing that can report a cut-off figure. Measured by the shared hook, like every other
+  // swipeable one-line track in the app, so a strip that fits carries no permanent decoration — and the
+  // figures arriving after the first paint move the edge just as a resize does.
+  const { ref: stripRef, edges: stripEdges } = useHorizontalOverflow<HTMLDivElement>();
 
   // Move focus to the revealed panel's heading, exactly as the disclosure pattern asks: the button that
   // was pressed keeps aria-expanded, the reader lands on what expanded.

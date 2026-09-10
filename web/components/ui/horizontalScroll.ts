@@ -1,3 +1,5 @@
+import { useCallback, useEffect, useRef, useState, type RefObject } from 'react';
+
 const EDGE_EPSILON = 1;
 
 export interface HorizontalOverflowState {
@@ -18,6 +20,51 @@ export function horizontalOverflowState(track: HTMLElement): HorizontalOverflowS
     left: overflow && track.scrollLeft > EDGE_EPSILON,
     right: overflow && track.scrollLeft < maxScrollLeft - EDGE_EPSILON,
   };
+}
+
+/** Keep a swipeable one-line track's edge state measured for as long as it is mounted: attach the returned
+ *  ref to the track and publish `edges` as its fade state.
+ *
+ *  Everything that can change the answer is watched here once, so no caller has to remember all three: the
+ *  box resizing, the track scrolling, and the CONTENT changing — a language change rewrites every label
+ *  without touching a figure, and left the fade stating the old geometry until the mutations were observed
+ *  too. Every observer is torn down with the component. */
+export function useHorizontalOverflow<T extends HTMLElement>(): {
+  ref: RefObject<T | null>;
+  edges: HorizontalOverflowState;
+} {
+  const ref = useRef<T>(null);
+  const [edges, setEdges] = useState<HorizontalOverflowState>(NO_HORIZONTAL_OVERFLOW);
+
+  const measure = useCallback(() => {
+    const track = ref.current;
+    if (!track) return;
+    const next = horizontalOverflowState(track);
+    setEdges((current) => (
+      current.overflow === next.overflow && current.left === next.left && current.right === next.right
+        ? current
+        : next
+    ));
+  }, []);
+
+  useEffect(() => {
+    const track = ref.current;
+    if (!track) return;
+
+    measure();
+    const resizeObserver = new ResizeObserver(measure);
+    const mutationObserver = new MutationObserver(measure);
+    resizeObserver.observe(track);
+    mutationObserver.observe(track, { characterData: true, childList: true, subtree: true });
+    track.addEventListener('scroll', measure, { passive: true });
+    return () => {
+      resizeObserver.disconnect();
+      mutationObserver.disconnect();
+      track.removeEventListener('scroll', measure);
+    };
+  }, [measure]);
+
+  return { ref, edges };
 }
 
 function wheelUnit(track: HTMLElement, deltaMode: number): number {

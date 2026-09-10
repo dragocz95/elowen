@@ -132,8 +132,8 @@ describe('PluginConfigEditor role policy deletion', () => {
 
 /** A connected Claude/ChatGPT account exposes no embeddings endpoint, so an `embeddingModel` field that
  *  offers one can only ever produce a runtime failure. The core embedding role has always filtered them
- *  out; the plugin editor did not. Every OTHER model field keeps the whole catalog, because a chat
- *  completion works on an OAuth account perfectly well. */
+ *  out; the plugin editor did not. Every OTHER model field keeps the OAuth accounts, because a chat
+ *  completion works on one perfectly well. */
 describe('PluginConfigEditor model fields', () => {
   const models = [
     { provider: 'anthropic', providerLabel: 'Anthropic', model: 'claude-opus', exec: 'elowen:anthropic/claude-opus', source: 'oauth', contextWindow: 200000, contextWindowSet: false },

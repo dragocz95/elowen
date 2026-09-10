@@ -26,6 +26,7 @@ import { interpolate, useTranslation } from '../../lib/i18n';
 import { useBrand } from '../../lib/brand';
 import { useConfig, useBrainModels, useBrainOauthStatus, useNotificationDestinations, usePlugins, usePluginTools, useProjects } from '../../lib/queries';
 import { chatModelCatalog } from '../../lib/modelProvider';
+import { embeddingModelCatalog } from './ModelRolesSection';
 import type { BrainModelOption, PluginConfigField, PluginDetail, RolePolicy, McpServerSpec } from '../../lib/types';
 import { RISK_TONE, CONNECTION_KEYS } from './pluginDetail.shared';
 import { numberOutOfBounds, type PluginConfigCommitResult, type PluginConfigDraft } from '../../lib/usePluginConfigDraft';
@@ -674,12 +675,10 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
 }) {
   const { t, locale } = useTranslation();
   const { data: brainModels } = useBrainModels();
-  // A connected Claude/ChatGPT account exposes no embeddings endpoint, so offering one for an
-  // `embeddingModel` field can only ever produce a runtime failure. Same filter the core embedding role
-  // uses; every other model field keeps the whole catalog, because a chat completion works there.
-  const embeddingCapableModels = useMemo(() => chatModelCatalog(brainModels ?? []).filter((m) => m.source !== 'oauth'), [brainModels]);
+  // The exact catalog the core embedding role offers, from the module that owns that decision.
+  const embeddingCapableModels = useMemo(() => embeddingModelCatalog(brainModels ?? []), [brainModels]);
   // Everything that ends in a chat completion sees the chat half of the catalog; a `modelKind` field
-  // takes the other half (see the `model` case).
+  // takes the other half (see the `model` case). An OAuth account stays in both.
   const chatModels = useMemo(() => chatModelCatalog(brainModels ?? []), [brainModels]);
   const imageModels = useMemo(() => (brainModels ?? []).filter((m) => m.kind === 'image'), [brainModels]);
   // The provider a `modelKind` picker narrows to is the one this same schema already asks for, so the

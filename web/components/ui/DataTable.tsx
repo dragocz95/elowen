@@ -363,8 +363,10 @@ export function DataTableCell({ children, header = false, priority = 'always', l
  *  Decoration only: it paints the chevron and stays out of the accessibility tree, because the control it
  *  advertises is the row's own open button, which `DataTableRow` renders in a cell of its own.
  *
- *  @public No caller yet: it ships with the row contract above (`onOpen` + `openLabel`) and the registers
- *  that render it are migrated in phase C of the redesign. `.data-table-chevron` in
+ *  Every interactive register renders it as the last cell of its row — Memory, Projects, Users, the
+ *  advisor's agents table and the markdown asset editor — and `lib/pluginUi` publishes it to plugin
+ *  registers (the MCP servers and sandbox workspaces pages) so theirs open the same way. It goes with the
+ *  row contract above (`onOpen` + `openLabel`); `.data-table-chevron` in
  *  app/styles/components/data-table.css is its half of the same pair. */
 export function DataTableChevronCell({ className = '' }: { className?: string }) {
   return (
