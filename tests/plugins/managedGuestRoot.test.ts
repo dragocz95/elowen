@@ -1,14 +1,15 @@
 import { describe, it, expect } from 'vitest';
-import { createBoundSiteSpec, createContainerSpec } from '../../plugins/sandbox/lib/containerSpec.mjs';
+import { createBoundSiteSpec, createContainerSpec, guestMountTarget, RESERVED_GUEST_ROOTS as pluginReserved } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import { managedGuestRoot as pluginRoot } from '../../plugins/sandbox/lib/containerPaths.mjs';
-import { managedGuestRoot as coreRoot } from '../../src/shared/projectExecution.js';
+import { createProjectSchema } from '../../src/api/schemas/projects.js';
+import { isReservedProjectSlug, managedGuestRoot as coreRoot, RESERVED_GUEST_ROOTS } from '../../src/shared/projectExecution.js';
 
 const SAMPLES: [string | undefined, number, string][] = [
   ['kolin', 3, '/kolin'],
   ['Sales-Dashboard', 4, '/sales-dashboard'],
   ['personal-2-21be2b6e', 9, '/personal-2-21be2b6e'],
   ['a b/c', 5, '/a-b-c'],
-  ['../etc', 6, '/etc'],
+  ['../docs', 6, '/docs'],
   ['-', 7, '/project-7'],
   ['', 8, '/project-8'],
   [undefined, 12, '/project-12'],
@@ -24,7 +25,22 @@ describe('managed project mount point', () => {
   });
 
   it('always produces one valid top-level directory', () => {
-    for (const [slug, id] of SAMPLES) expect(coreRoot(slug, id)).toMatch(/^\/[a-z0-9][a-z0-9-]{0,63}$/);
+    for (const [slug, id] of SAMPLES) expect(() => guestMountTarget(coreRoot(slug, id))).not.toThrow();
+  });
+
+  // A slug that lands on a base-image directory produced a project that could be created and never
+  // started: every start threw `Invalid project mount target`, and the slug is not patchable. The two
+  // lists therefore have to agree, and creation is where the collision is refused.
+  it('refuses a slug that would mount over a directory of the base image', () => {
+    expect([...pluginReserved].sort()).toEqual([...RESERVED_GUEST_ROOTS].sort());
+    for (const name of RESERVED_GUEST_ROOTS) {
+      expect(isReservedProjectSlug(name)).toBe(true);
+      expect(() => guestMountTarget(`/${name}`)).toThrow(/mount target/);
+      expect(createProjectSchema.safeParse({ slug: name, executionKind: 'managed' }).success).toBe(false);
+    }
+    // Normalisation is part of the rule: `../etc` is stripped to the reserved `etc`.
+    expect(isReservedProjectSlug('../etc')).toBe(true);
+    expect(createProjectSchema.safeParse({ slug: 'kolin', executionKind: 'managed' }).success).toBe(true);
   });
 
   const paths = { sandboxDataDir: '/srv/sandbox', namespace: 'elowen' };

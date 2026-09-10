@@ -18,8 +18,10 @@ export function hostPath(value) {
 
 /** Reserved single-segment guest directories a project mount may never take over. The mount point is
  * host-derived (the project's own slug), so this guards against a slug that happens to name part of the
- * base image, not against a hostile caller. */
-const RESERVED_GUEST_ROOTS = new Set(['bin', 'boot', 'data', 'dev', 'etc', 'home', 'lib', 'lib32', 'lib64', 'libx32', 'media', 'mnt', 'opt', 'proc', 'root', 'run', 'sbin', 'srv', 'sys', 'tmp', 'usr', 'var', 'workspace', 'worktrees']);
+ * base image, not against a hostile caller. Mirrors core's `RESERVED_GUEST_ROOTS`
+ * (src/shared/projectExecution.ts), which refuses such a slug at project creation;
+ * `tests/plugins/managedGuestRoot.test.ts` holds the two lists in step. */
+export const RESERVED_GUEST_ROOTS = new Set(['bin', 'boot', 'data', 'dev', 'etc', 'home', 'lib', 'lib32', 'lib64', 'libx32', 'media', 'mnt', 'opt', 'proc', 'root', 'run', 'sbin', 'srv', 'sys', 'tmp', 'usr', 'var', 'workspace', 'worktrees']);
 
 /** The guest directory a managed project is mounted at: one top-level directory named after the
  * project, so every path the agent sees starts with the project's own name. */
