@@ -14,7 +14,7 @@ The registry plugin `browser`, version 0.3.8, requires Elowen 0.28.35 or newer. 
 
 A browser session is one tab session inside one Chrome process. Each account owns a persistent profile and its own Chrome process, so cookies, sign-ins, and site data survive between sessions and no two accounts share a browser. Closing a session never erases the profile; clearing stored browser data is a separate, confirmed action on the account's Browser page.
 
-The plugin has two modes. By default the account gets its private browser, which requires a linked Elowen account in a private conversation and works the same way in a chat that executes in a managed project: Chrome runs on the host under the account, the live view card appears in the chat, and the session is listed on the account's Browser page. Asking for `useProjectProfile` on `BrowserOpen` opens the selected managed project's browser instead, which runs inside that project's environment with the profile, cookies, and downloads shared as project data among project members.
+The plugin has two modes. By default the account gets its private browser, which requires a linked Elowen account in a private conversation and works the same way in a chat that executes in a managed project: Chrome runs on the host under the account, the live view card appears in the chat, and the session is listed on the account's Browser page. `BrowserOpenProject` opens the selected managed project's browser instead, which runs inside that project's environment with the profile, cookies, and downloads shared as project data among project members.
 
 Project browsers differ in one more respect: interactive takeover belongs to the person behind the account, so a project session is driven entirely through the browser tools and offers no control hand-off.
 
@@ -58,7 +58,7 @@ Interactive steps have their own bounds. A wait for text resolves within a timeo
 
 | Tool | What it does |
 | --- | --- |
-| `BrowserOpen` | Opens the account's browser, or with `useProjectProfile` the selected managed project's shared browser, and returns the first page snapshot. |
+| `BrowserOpen` | Opens the account's browser and returns the first page snapshot. `BrowserOpenProject` opens the selected managed project's shared browser instead. |
 | `BrowserSnapshot` | Reads a bounded accessibility snapshot of the current page, with a screenshot only when explicitly requested. |
 | `BrowserNavigate` | Loads an absolute http or https URL that the network policy allows and returns a fresh snapshot. |
 | `BrowserClick` | Clicks one element from the latest snapshot by its ref and returns a fresh snapshot. |
@@ -133,7 +133,7 @@ The proxy resolves each destination hostname itself, checks every resolved addre
 - A new session is refused when the account already holds its tab sessions, or when the instance is already running its full set of account browsers.
 - `BrowserSnapshot`, `BrowserTabs`, `BrowserScreenshot`, and `BrowserAudit` are the only tools treated as safe read-only probes during planning. `BrowserEvaluate` is deliberately excluded, because its expression can change the page as surely as a click.
 - Diagnostic replies are bounded at about 16 KB; an explicitly requested response body is the one larger exception, capped at 64 KB.
-- Unlinked senders, shared rooms, and delegated child agents cannot use the browser tools at all: the tools require a linked Elowen account in a private conversation, and a delegated child cannot borrow its parent's account. Project browsers require `useProjectProfile`, a managed project selection, and an acting account.
+- Unlinked senders, shared rooms, and delegated child agents cannot use the browser tools at all: the tools require a linked Elowen account in a private conversation, and a delegated child cannot borrow its parent's account. Project browsers require `BrowserOpenProject`, a managed project selection, and an acting account.
 - Another account's sessions, profiles, and live views are invisible to the browser tools and to the account page.
 - Every viewer connection carries a full framebuffer stream, so each added viewer costs bandwidth; the update coalescing field is the latency and bandwidth trade for the whole display.
 - A live view is one connection per viewer, fanned out per session, and only the account holding the takeover lease may send input.
