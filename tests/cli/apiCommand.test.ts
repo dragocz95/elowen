@@ -58,10 +58,11 @@ describe('runApiCommand', () => {
     expect(called).toBe(false);
   });
 
-  // Regression: `elowen api POST /brain/compact` died with `fetch failed` on undici's 300 s
-  // headersTimeout/bodyTimeout while the daemon was still working. The api verb is the operator
-  // escape hatch for arbitrarily long routes, so it asks for the no-timeout path — the same single
-  // option the MCP escape hatch asks for (tests/mcp/tools.test.ts asserts that side).
+  // `elowen api` is the operator escape hatch for routes that legitimately go minutes without a byte
+  // (`/brain/compact` and friends), so it asks for the no-timeout path — the same single `CallOpts`
+  // option the MCP escape hatch asks for (tests/mcp/tools.test.ts asserts that side). This pins the
+  // chosen policy, not a particular incident: the 300 s idle timer it lifts is undici's own default and
+  // no recorded request tripped it (see the note on `CallOpts.noTimeout`).
   it('asks for the no-timeout path so long routes are not aborted', async () => {
     let seen: CallOpts | undefined;
     await runApiCommand(['POST', '/brain/compact'], { ELOWEN_URL: 'http://d', ELOWEN_TOKEN: 't' } as NodeJS.ProcessEnv, {

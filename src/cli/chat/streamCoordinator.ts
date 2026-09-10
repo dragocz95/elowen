@@ -32,14 +32,14 @@ export interface StreamCoordinatorPort {
   stop(): void;
 }
 
-/** Command work Ctrl+B can move to the background: an in-flight `Bash` call, or a blocking `ProcessOutput`
- *  read parked on a background process. Both hold the turn open and both are released by the same
- *  `/brain/commands/background` call, so the hint, the key guard and the dispatch all ask this one
- *  question. */
 /** Shown on both paths that learn the stream now belongs to a different conversation: the `session`
  *  event, and a snapshot bound to another id. One string, so the two cannot word it differently. */
 const SESSION_MOVED_NOTICE = 'this conversation moved to a new session — continuing there';
 
+/** Command work Ctrl+B can move to the background: an in-flight `Bash` call, or a blocking `ProcessOutput`
+ *  read parked on a background process. Both hold the turn open and both are released by the same
+ *  `/brain/commands/background` call, so the hint, the key guard and the dispatch all ask this one
+ *  question. */
 export const releasableCommand = (
   proc: { running: boolean; completionMode?: string; blockedRead?: boolean },
 ): boolean => proc.running && (proc.completionMode === 'foreground' || proc.blockedRead === true);

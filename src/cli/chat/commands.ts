@@ -263,8 +263,6 @@ function attachImage(rt: ChatState, attachmentChips: ChatApplicationResources['a
   rt.notice = color.dim(`${img.name} attached (${Math.max(1, Math.round(img.bytes / 1024))} KB) — sends with your next message`);
 }
 
-/** Wire the editor's submit path: the slash-command dispatcher plus the regular send pipeline
- *  (`!` local shell, sub-agent steering, prompt commands, `@` mention expansion, image attachments). */
 /** The local notice for a `/compact` result. A REAL compaction (`compacted:true`) is announced entirely
  *  by the daemon's BrainEvent stream (the `notice` + `compacted` events), so the command shows nothing of
  *  its own. A benign no-op (`compacted:false`) emits NO stream event, so the daemon's own message is
@@ -275,6 +273,8 @@ export function compactNotice(result: { compacted: boolean; message?: string }):
   return result.compacted ? null : (result.message ?? null);
 }
 
+/** Wire the editor's submit path: the slash-command dispatcher plus the regular send pipeline
+ *  (`!` local shell, sub-agent steering, prompt commands, `@` mention expansion, image attachments). */
 export function wireSubmit(
   rt: ChatState,
   resources: Pick<ChatApplicationResources, 'client' | 'tui' | 'editor' | 'attachmentChips' | 'shellContext' | 'commandDefs' | 'lifetime' | 'localShellTimeoutMs' | 'promptHistoryDepth'>,
