@@ -6,8 +6,6 @@ import { dirname, join } from 'node:path';
 import { ELOWEN_CLI_VERSION } from './version.js';
 import { defaultLifecycleDeps, runLifecycle, runApiCommand } from './commands.js';
 import { callElowenApi } from '../shared/apiClient.js';
-import { menu } from './menu.js';
-import { interactiveLogin, launchChat } from './chat/launch.js';
 import { resolveToken } from './chat/token.js';
 import { urlHealthy, waitHealthy, DEFAULT_DAEMON_URL, type ReadinessOpts } from './launcher.js';
 import { runCmd, SERVICES } from './systemd.js';
@@ -159,6 +157,9 @@ export async function run(argv: string[], env: NodeJS.ProcessEnv): Promise<void>
   const [cmd] = argv;
   switch (cmd) {
     case 'chat': {
+      // Imported in the branch, not at the top: the chat TUI drags in the chat application and the
+      // nested undici copy it carries, which `elowen --version` and `elowen status` must not pay for.
+      const { launchChat } = await import('./chat/launch.js');
       const chatArgs = argv.slice(1);
       const session = flag(chatArgs, '--session');
       const resume = chatArgs.includes('--continue') || chatArgs.includes('-c');
@@ -169,10 +170,12 @@ export async function run(argv: string[], env: NodeJS.ProcessEnv): Promise<void>
       });
       break;
     }
-    case 'login':
+    case 'login': {
+      const { interactiveLogin } = await import('./chat/launch.js');
       await interactiveLogin(BASE, env);
       console.log('Signed in — token saved.');
       break;
+    }
     case 'api': {
       const code = await runApiCommand(argv.slice(1), env, { call: callElowenApi, out: (line) => console.log(line), err: (line) => console.error(line) });
       process.exit(code);
@@ -192,8 +195,9 @@ export async function main() {
   // non-TTY still falls through to the usage text below, so scripts keep deterministic behavior.
   if (argv.length === 0 && process.stdin.isTTY) argv.push('chat');
   // `elowen menu` — the interactive launcher (start/stop/status/update). It manages the daemon itself,
-  // so it runs BEFORE ensureDaemon like install/setup.
-  if (argv[0] === 'menu') { await menu(process.env, version); return; }
+  // so it runs BEFORE ensureDaemon like install/setup. Dynamic import for the same reason as the chat
+  // branch: the launcher reaches the chat TUI, and no other verb should load either.
+  if (argv[0] === 'menu') { const { menu } = await import('./menu.js'); await menu(process.env, version); return; }
   // Help / bare non-TTY invocation: print usage and stop. Must NOT fall through to ensureDaemon.
   if (argv.length === 0 || argv[0] === '--help' || argv[0] === '-h' || argv[0] === 'help') { console.log(helpText(version)); return; }
   if (argv[0] === '--version' || argv[0] === '-v') { console.log(version); return; }
