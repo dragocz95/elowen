@@ -11,6 +11,7 @@ import type { ToolSearchHandle } from '../toolSearch/toolSearchTool.js';
 import type { AssessColdCompaction } from './coldStartCompaction.js';
 import type { StoredChatImage } from '../chatImages.js';
 import type { WorkspacePathView } from '../../plugins/pathView.js';
+import type { ProjectExecutionRef } from '../../shared/projectExecution.js';
 
 /** A queued mid-turn message's image attachments, in PI's ImageContent shape. */
 export type QueuedImage = { type: 'image'; data: string; mimeType: string };
@@ -304,6 +305,10 @@ export interface SpawnOpts {
    *  `scheduled` system prompt (identity + channel-only delivery + outcome reporting) instead of the
    *  coding-agent `elowen` base + platform overlay — a timer-driven report is not an interactive session. */
   scheduled?: boolean;
+  /** The execution target a NEW automation-created conversation is opened in — a scheduled job carries
+   *  the project it was filed against, and the conversation it reports in has to run there. Only read
+   *  when the session row is being created; an existing conversation keeps its own persisted ref. */
+  projectRef?: ProjectExecutionRef;
   /** Reasoning effort for extended-thinking models (empty/undefined = the model default). */
   thinkingLevel?: string;
   /** Durable parent conversation for delegated sessions (usage attribution + history navigation). */

@@ -504,7 +504,7 @@ export class BrainService {
       // Owner-chat origin work only. Direct platform origins are deliberately intercepted by
       // PlatformOrchestrator and run through ChannelSessionService + the outbound adapter; routing a
       // `brain-ch-*` row through send() would create an owner-chat live session with owner capabilities.
-      originSend: async (userId, sessionId, text, automation, onEvent, dedicated) => {
+      originSend: async (userId, sessionId, text, automation, onEvent, dedicated, projectRef) => {
         // No session named → the account's own default conversation. A scheduled job somebody owns has
         // no originating conversation, but its result belongs to that person, not to a channel session
         // anchored on the instance admin. An account that has never chatted has no row yet, so this
@@ -524,7 +524,10 @@ export class BrainService {
         // `send` only accepts a conversation that already has a row; spawning it here is what creates
         // the row under this account, the same way opening a fresh conversation does.
         if (mayCreate) {
-          await this.lifecycle.ensureLive(userId, target);
+          // A job filed against a project executes there, including the conversation it opens for its own
+          // reports: without the ref this brand-new row took the account's default target (the host for an
+          // administrator) and the run's files and shell landed outside the project the job names.
+          await this.lifecycle.ensureLive(userId, target, projectRef ? { projectRef } : {});
           // Named after the job before its first turn: a titled row is skipped by the titler, and a first
           // turn that fails and is retried finds the name already there. Same clamp as a manual rename.
           if (dedicated) this.d.store.renameSession(target, collapseWhitespace(dedicated.title).slice(0, 120) || target);

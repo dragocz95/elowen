@@ -141,6 +141,25 @@ describe('new personal conversation execution defaults', () => {
     expect(h.users.get(h.user.id)?.default_project_id).toBeNull();
   });
 
+  // A recurring job reports in a conversation of its own, created on its first run. Without the job's
+  // execution target that brand-new row took the account default — the host for an administrator — so a
+  // job filed against a managed project ran its turns outside the project it names.
+  it('opens a scheduled conversation in the project the job was filed against', async () => {
+    const h = setup();
+    const project = h.projects.createManaged({ slug: 'job-project', creatorUserId: h.user.id });
+    h.userProjects.assign(h.user.id, project.id);
+    const live = await h.spawn(`brain-${h.user.id}-job-abc`, undefined, { scheduled: true, projectRef: { kind: 'managed', projectId: project.id } });
+    expect(h.store.getProjectExecution(live.sessionId)).toEqual({ kind: 'managed', projectId: project.id });
+    expect(live.workDir).toBe('/job-project');
+  });
+
+  it('keeps a scheduled conversation that names no project on the unrestricted default', async () => {
+    const h = setup();
+    const live = await h.spawn(`brain-${h.user.id}-job-plain`, undefined, { scheduled: true });
+    expect(h.store.getProjectExecution(live.sessionId)).toBeUndefined();
+    expect(h.projects.list()).toHaveLength(0);
+  });
+
   it('refuses new personal creation when trusted metadata is not wired', () => {
     const h = setup();
     expect(() => preparePersonalProject({ store: h.store, projects: h.projects }, { sessionId: 'missing', ownerUserId: h.user.id, selection: {}, policy: h.policy(h.user.id), autoCompact: false })).toThrow('personal project metadata unavailable');

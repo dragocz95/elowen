@@ -14,6 +14,7 @@ import type { InlineArtifactRegistry } from '../inlineArtifacts.js';
 import type { ClientAttachments } from './attachments.js';
 import type { GoalLoopService } from './goalLoop.js';
 import { clientDir, gitProjectRoot } from './workDir.js';
+import type { ProjectExecutionRef } from '../../shared/projectExecution.js';
 import { recordSessionEvent } from './sessionEvents.js';
 import { sessionHasWorkInFlight } from './sessionQuiescence.js';
 import { hasActiveNativeCompactionCheck } from '../session/compactionCheckCoordinator.js';
@@ -277,7 +278,7 @@ export class ConversationLifecycle {
    *  detach) the session row's stored work_dir is restored instead — the conversation's durable home —
    *  and equally never stamped. Serialized per conversation: two concurrent spawns would leak one PI
    *  session. */
-  async ensureLive(userId: number, sessionId: string, o: { provider?: string; model?: string; clientCwd?: string; spawnCwd?: string; explicitResume?: boolean; thinkingLevel?: string | null; reapplyModelPreference?: boolean } = {}): Promise<void> {
+  async ensureLive(userId: number, sessionId: string, o: { provider?: string; model?: string; clientCwd?: string; spawnCwd?: string; explicitResume?: boolean; thinkingLevel?: string | null; reapplyModelPreference?: boolean; projectRef?: ProjectExecutionRef } = {}): Promise<void> {
     // A HEALTHY live conversation needs no spawn, so it must not queue on the session lock to find that
     // out: a running turn holds that lock for its full duration (turnRunner), which would leave a
     // relaunched CLI unable to resume into its own in-flight work until the turn ended or was aborted.
@@ -379,6 +380,9 @@ export class ConversationLifecycle {
         thinkingLevel: o.thinkingLevel === null ? undefined : (o.thinkingLevel ?? userCfg?.thinkingLevel),
         autoCompact: !!userCfg?.autoCompact,
         clientCwd: resolvedCwd,
+        // Only a brand-new automation conversation carries one; preparePersonalProject ignores it once
+        // the row exists, so a resumed conversation keeps its own persisted execution target.
+        ...(o.projectRef ? { projectRef: o.projectRef } : {}),
       });
       if (o.explicitResume) live.interactedAt = Date.now();
       this.d.sessions.set(sessionId, live);
