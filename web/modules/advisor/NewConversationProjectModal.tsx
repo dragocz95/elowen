@@ -7,7 +7,11 @@ import { useMobileViewport } from '../../lib/useMobile';
 import { apiErrorMessage, elowenClient } from '../../lib/elowenClient';
 import { useToast } from '../../components/ui/Toast';
 import { Modal, ModalBody } from '../../components/ui/Modal';
+import { ErrorState } from '../../components/ui/states';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
+import { OperationProgressDialog } from '../../components/ui/OperationProgressDialog';
+import { useEnvironmentOperationWindow } from '../../lib/useEnvironmentOperation';
+import { recreatable, requestEnvironmentAction } from '../../lib/environmentActions';
 import type { Project, ProjectExecutionRef } from '../../lib/types';
 import { managedProjectStrings } from '../projects/managedProjectStrings';
 import { useBrainChat } from './BrainChatProvider';
@@ -73,10 +77,15 @@ function NewConversationProjectDialog({ onClose }: { onClose: () => void }) {
   // What the daemon says this conversation already runs in. It is the preselection, so confirming the
   // dialog without reading it changes nothing.
   const reported = telemetry.projectRef;
-  const preselected = (reported && destinations.find((d) => d.key === destinationKey(reported))?.key)
-    ?? destinations[0]?.key
-    ?? null;
-  const current = focused && destinations.some((d) => d.key === focused) ? focused : preselected;
+  const reportedKey = (reported && destinations.find((d) => d.key === destinationKey(reported))?.key) ?? null;
+  const chosen = focused && destinations.some((d) => d.key === focused) ? focused : reportedKey;
+  // Where the hand rests before anything is chosen. A status that has not landed yet leaves the dialog
+  // with no target to preselect, and the first card is then simply the one arrows and Tab start from —
+  // checking it would claim a conversation runs somewhere it does not.
+  const hand = chosen ?? destinations[0]?.key ?? null;
+  // The environment the chosen project may still have to start. The daemon answers the switch with it
+  // precisely when the environment is cold, which is the wait nobody else on this screen reports.
+  const environment = useEnvironmentOperationWindow();
 
   const choose = async (destination: Destination) => {
     const session = activeSessionId;
@@ -85,7 +94,11 @@ function NewConversationProjectDialog({ onClose }: { onClose: () => void }) {
     try {
       // The same authorized endpoint the chat's project picker uses; the daemon owns whether this
       // account may enter the target.
-      await elowenClient.brainSetExecution(destination.ref, session);
+      const response = await elowenClient.brainSetExecution(destination.ref, session);
+      if (response.operationId && destination.ref.projectId !== undefined) {
+        environment.follow(response.operationId, destination.ref.projectId);
+        return;
+      }
       onClose();
     } catch (error) {
       toast(apiErrorMessage(error) || t.brainChat.projectPickerFailed, 'error');
@@ -93,13 +106,41 @@ function NewConversationProjectDialog({ onClose }: { onClose: () => void }) {
     }
   };
 
+  const dispatch = (action: 'start' | 'recreate') => {
+    const projectId = environment.pending?.projectId;
+    if (projectId === undefined) return;
+    void requestEnvironmentAction(projectId, { kind: action })
+      .then((operation) => environment.follow(operation.id, projectId))
+      .catch((error) => toast(apiErrorMessage(error) || t.brainChat.projectPickerFailed, 'error'));
+  };
+
+  // The conversation is already switched by the time this shows: what is left is the environment coming
+  // up, so the choice gives way to the window that reports it. Dismissing either one lands in the
+  // composer, and the start carries on without the tab.
+  if (environment.pending) {
+    return (
+      <OperationProgressDialog
+        open
+        title={t.operationProgress.actions[(environment.operation?.action.kind ?? 'start') as keyof typeof t.operationProgress.actions] ?? t.operationProgress.actions.start}
+        operation={environment.operation}
+        logTail={environment.logTail}
+        loadError={environment.loadError}
+        onRetry={() => dispatch('start')}
+        onRecreate={() => dispatch('recreate')}
+        recreatable={recreatable(environment.operation)}
+        onSettled={onClose}
+        onClose={onClose}
+      />
+    );
+  }
+
   /** Arrows walk the cards and carry focus with them; Enter and Space are the button's own. Both axes
    *  move by one because the cards wrap: a row holds a different number of them at every width. */
   const onKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
     const keys = ['ArrowRight', 'ArrowDown', 'ArrowLeft', 'ArrowUp', 'Home', 'End'];
     if (!keys.includes(event.key) || destinations.length === 0) return;
     event.preventDefault();
-    const at = Math.max(0, destinations.findIndex((d) => d.key === current));
+    const at = Math.max(0, destinations.findIndex((d) => d.key === hand));
     const next = event.key === 'Home' ? 0
       : event.key === 'End' ? destinations.length - 1
         : event.key === 'ArrowRight' || event.key === 'ArrowDown'
@@ -121,7 +162,9 @@ function NewConversationProjectDialog({ onClose }: { onClose: () => void }) {
       closeDisabled={pending}
     >
       <ModalBody>
-        {destinations.length === 0 ? (
+        {projects.isError ? (
+          <ErrorState message={t.projects.loadError} onRetry={() => { void projects.refetch(); }} />
+        ) : destinations.length === 0 ? (
           <p className="text-xs italic text-muted-foreground">{t.brainChat.newConversationProject.empty}</p>
         ) : (
           <div
@@ -135,7 +178,7 @@ function NewConversationProjectDialog({ onClose }: { onClose: () => void }) {
             className="flex flex-col flex-wrap gap-2 sm:flex-row"
           >
             {destinations.map((destination) => {
-              const selected = destination.key === current;
+              const selected = destination.key === chosen;
               const project = destination.project;
               const name = project ? project.slug : t.brainChat.newConversationProject.hostOption;
               const hint = project
@@ -149,9 +192,9 @@ function NewConversationProjectDialog({ onClose }: { onClose: () => void }) {
                   aria-checked={selected}
                   data-destination={destination.key}
                   data-selected={selected || undefined}
-                  {...(selected ? { 'data-autofocus': '' } : {})}
-                  tabIndex={selected ? 0 : -1}
-                  disabled={pending}
+                  {...(destination.key === hand ? { 'data-autofocus': '' } : {})}
+                  tabIndex={destination.key === hand ? 0 : -1}
+                  disabled={pending || !activeSessionId}
                   onFocus={() => setFocused(destination.key)}
                   onClick={() => { void choose(destination); }}
                   className={`flex min-w-0 flex-1 items-center gap-3 rounded-full border px-4 py-3 text-left transition-colors disabled:opacity-40 sm:min-w-[13rem] sm:max-w-full ${selected ? 'border-primary bg-accent' : 'border-border hover:bg-accent'} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/70`}
