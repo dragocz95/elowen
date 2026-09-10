@@ -333,6 +333,11 @@ def run(op):
             target = os.path.realpath(name, strict=True) if follow else name
         except FileNotFoundError:
             return {'kind': kind, 'entry': None}
+        except NotADirectoryError:
+            # A file standing where a directory was expected is not a missing path, and NotADirectoryError
+            # is not a FileNotFoundError, so this used to fall through to the catch-all and answer with the
+            # code for "something went wrong" and the errno string — which spells out the full guest path.
+            fail('not_directory', 'Path resolves through something that is not a directory')
         return {'kind': kind, 'entry': entry(target) if os.path.lexists(target) else None}
     if kind == 'list':
         limit = bounded(op.get('limit'), 1, 1000)
