@@ -36,6 +36,10 @@ export interface StreamCoordinatorPort {
  *  read parked on a background process. Both hold the turn open and both are released by the same
  *  `/brain/commands/background` call, so the hint, the key guard and the dispatch all ask this one
  *  question. */
+/** Shown on both paths that learn the stream now belongs to a different conversation: the `session`
+ *  event, and a snapshot bound to another id. One string, so the two cannot word it differently. */
+const SESSION_MOVED_NOTICE = 'this conversation moved to a new session — continuing there';
+
 export const releasableCommand = (
   proc: { running: boolean; completionMode?: string; blockedRead?: boolean },
 ): boolean => proc.running && (proc.completionMode === 'foreground' || proc.blockedRead === true);
@@ -189,7 +193,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
           pendingSessionReset = event.sessionId;
           rt.artifacts.replace([]);
           rt.setGoal(null);
-          rt.notice = color.dim('this conversation moved to a new session — continuing there');
+          rt.notice = color.dim(SESSION_MOVED_NOTICE);
           void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:session-rebind'); });
           render('stream:session-binding');
         }
@@ -294,7 +298,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
             invalidateAsyncState();
             rt.artifacts.replace([]);
             rt.setGoal(null);
-            rt.notice = color.dim('this conversation moved to a new session — continuing there');
+            rt.notice = color.dim(SESSION_MOVED_NOTICE);
             void refreshMeta().then(() => { if (current() && lease.isCurrent()) render('metadata:snapshot-session'); });
           }
           rt.transcript.replaceHistory(snapshot.history);
