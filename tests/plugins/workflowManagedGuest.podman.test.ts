@@ -17,6 +17,7 @@ import type { KnownControls, PluginControl } from '../../src/plugins/api.js';
 import type { BrainEvent } from '../../src/brain/events.js';
 import {
   startScriptedModel, contentText, MARKERS, NODE_ID, NODE_TASK, GUEST_MARKER, GUEST_MARKER_PATH, GUEST_NODES_PATH,
+  GUEST_PROJECT_SLUG,
 } from '../helpers/managedWorkflowModel.mjs';
 
 /** The workflow engine inside a MANAGED project, end to end, against a real guest.
@@ -174,7 +175,7 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs a managed-project workflo
     expect(registry.control('sandbox')).toBe(sandboxControl);
 
     enter('managed project and environment start');
-    const project = core.projects.createManaged({ slug: `wf-managed-${Date.now()}`, creatorUserId: ACTOR });
+    const project = core.projects.createManaged({ slug: GUEST_PROJECT_SLUG, creatorUserId: ACTOR });
     projectId = project.id;
     const projectRef = { kind: 'managed' as const, projectId };
     expect(project.executionKind).toBe('managed');
@@ -201,7 +202,7 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')('runs a managed-project workflo
     await brain.startPlatforms({ info() {}, error(message: string) { platformErrors.push(message); } }, ['subagent']);
     expect(platformErrors).toEqual([]);
     const { sessionId: session } = await brain.start(ACTOR, { fresh: true });
-    expect(brain.selectProjectExecution(ACTOR, projectRef, session).workDir).toBe('/workspace');
+    expect((await brain.selectProjectExecution(ACTOR, projectRef, session)).workDir).toBe(`/${GUEST_PROJECT_SLUG}`);
     expect(core.brainStore.getProjectExecution(session)).toEqual(projectRef);
     // Write is an "ask" tool. The session-scoped override the other real-turn suites use: ask rules
     // auto-approve for this one throwaway conversation, deny rules still deny, the persisted default is

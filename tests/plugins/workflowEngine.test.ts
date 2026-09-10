@@ -214,6 +214,9 @@ function harness(opts: {
     currentIdentity: () => ({ elowenUserId: 1, platform: 'cli', userId: '1' }),
     currentAccess: () => access.current,
     currentModel: () => model.current,
+    // The turn's working directory, exactly as the real context resolves it: a managed project's own
+    // mount, so guidance can name the directory the caller is actually standing in.
+    workDir: () => (access.current.projectRef?.kind === 'managed' ? '/managed-project' : workflowFilesDir),
     // Exactly what the real registry hands the subagent plugin: NO Sandbox control — it is restricted to the
     // plugins that own process launch (CONTROL_CONSUMERS in src/plugins/registry.ts) — and the host's own
     // workspace resolver instead. A harness that mocked the control is what let the engine ship a resolution
@@ -491,16 +494,19 @@ describe('workflow engine', () => {
     const hostPath = workflowFile([{ id: 'host', task: 'host-node' }]);
     const res = await start.execute('managed-missing', { nodesFile: hostPath });
 
-    // The remedy names the filesystem the caller is actually on. Pointing a managed caller at "an
-    // accessible repository" would send it looking for a host directory it cannot reach.
-    expect(res.content[0]?.text).toMatch(/^Error: cannot read workflow file .* Create or correct the file inside the managed project, for example under \/workspace, then call WorkflowStart again\.$/);
+    // The remedy names the filesystem the caller is actually on, and the directory it is standing in —
+    // pointing a managed caller at "an accessible repository", or at a fixed guest root no project is
+    // mounted at, sends it looking for a directory it cannot reach.
+    expect(res.content[0]?.text).toMatch(/^Error: cannot read workflow file .* Create or correct the file inside the managed project, for example under \/managed-project, then call WorkflowStart again\.$/);
     expect(res.content[0]?.text).not.toContain('accessible repository');
     expect(launched).toEqual([]);
     expect(pathGuardCalls).toEqual([]);
   });
 
   // The host-only guidance sent the acceptance run to a directory that does not exist in a managed
-  // project, and told it the directory "already exists" while it did.
+  // project, and told it the directory "already exists" while it did. The guest example stays RELATIVE:
+  // a managed project is mounted under its own name, so a fixed absolute example named a directory the
+  // guest path guard refuses.
   it('offers a guest path in its guidance and never only the host workflow directory', () => {
     const { tools } = harness();
     const start = tools.get('WorkflowStart');
@@ -508,7 +514,8 @@ describe('workflow engine', () => {
     const nodesFileDoc = (start.parameters?.properties?.nodesFile as { description?: string } | undefined)?.description ?? '';
     const guidance = `${start.description ?? ''} ${nodesFileDoc}`;
 
-    expect(guidance).toContain('/workspace/workflow.json');
+    expect(guidance).toContain('the relative path workflow.json');
+    expect(guidance).not.toContain('/workspace');
     expect(guidance).toMatch(/managed project/i);
     // The "(it already exists)" reassurance stays attached to the host directory it is true of.
     const alreadyExists = guidance.indexOf('it already exists');
