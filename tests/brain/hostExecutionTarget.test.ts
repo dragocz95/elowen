@@ -232,6 +232,37 @@ describe('selecting a managed project does not wait for its container', () => {
   });
 });
 
+describe('an execution selection the resolver does not accept', () => {
+  // `POST /brain/execution` accepts any well-formed ref, and the resolver answers a managed ref that
+  // names a host project by running the conversation on the host. Storing the caller's ref anyway left
+  // the row claiming a project the conversation would never execute in.
+  it('refuses a managed ref that names a host project instead of persisting it', async () => {
+    const h = serviceFixture();
+    h.d.runtime = await inMemoryModelRuntime() as never;
+    const root = mkdtempSync(join(tmpdir(), 'host-target-')); roots.push(root);
+    const host = h.projects.create({ slug: 'legacy', path: root });
+    const service = new BrainService(h.d as never);
+    const { sessionId } = await service.start(h.owner.id);
+    await expect(service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: host.id }, sessionId))
+      .rejects.toThrow(/not available/);
+    expect(h.store.getProjectExecution(sessionId)).toBeUndefined();
+  });
+
+  // Every other move persists the conversation's durable home; a host project switch set only the live
+  // cwd, so the next cold respawn restored the directory the conversation had left.
+  it('writes the durable home when the conversation moves into a host project', async () => {
+    const h = serviceFixture();
+    h.d.runtime = await inMemoryModelRuntime() as never;
+    const root = mkdtempSync(join(tmpdir(), 'host-target-')); roots.push(root);
+    const host = h.projects.create({ slug: 'legacy', path: root });
+    const service = new BrainService(h.d as never);
+    const { sessionId } = await service.start(h.owner.id);
+    const result = await service.selectProjectExecution(h.owner.id, { kind: 'host', projectId: host.id }, sessionId);
+    expect(result.workDir).toBe(root);
+    expect(h.store.getSession(sessionId)?.work_dir).toBe(root);
+  });
+});
+
 describe('a new conversation with no project chosen', () => {
   const spawnOpts = (h: ReturnType<typeof setup>, userId: number) => ({
     sessionId: `brain-${userId}-new`, ownerUserId: userId, selection: {},
