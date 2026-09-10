@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from 'react';
-import { requestEnvironmentAction } from './environmentRequest';
+import { dispatchEnvironmentAction } from './environmentRequest';
 import type { EnvironmentAction, ProjectEnvironment } from '../../../src/plugins/environmentTypes';
 import { runtime, type Project } from './runtime';
 
@@ -86,7 +86,7 @@ export function useProjectRowContribution({ projects }: { projects: Project[] })
     if (!account) throw new Error(s.error_project_forbidden);
     setPending(projectId);
     try {
-      const operation = await requestEnvironmentAction({ accountId: account, projectId, action, generation: generations.current.get(projectId) ?? 1, strings: s });
+      const operation = await dispatchEnvironmentAction({ accountId: account, projectId, action, generation: generations.current.get(projectId) ?? 1, strings: s });
       setWatched({ projectId, operationId: operation.id, kind: action.kind });
       setProgressOpen(true);
       setConfirm(null);

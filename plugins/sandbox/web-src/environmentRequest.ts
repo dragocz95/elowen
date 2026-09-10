@@ -46,7 +46,7 @@ const DEFINITIVE_REFUSALS = [400, 401, 403, 404, 422];
  * used to repeat this — request identity, POST, acknowledgement, refusal handling — and had already
  * drifted on what happens when it is refused. The error arrives localized because both call sites show
  * it: in the confirmation that raised the action, or in a toast when no dialog is on screen. */
-export async function requestEnvironmentAction(input: {
+export async function dispatchEnvironmentAction(input: {
   accountId: number;
   projectId: number;
   action: EnvironmentAction;
