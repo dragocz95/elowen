@@ -8,15 +8,13 @@ group: Plugin reference
 
 # Browser
 
-The registry plugin `browser`, version 0.3.8, requires Elowen 0.28.35 or newer. It gives an account a managed Chrome session the model drives through browser tools: open pages, navigate, click and fill by accessibility refs, capture screenshots, and inspect console, network, and performance. Every session is drawn on a private virtual display, so a person can watch the same page live and take over control. The plugin is optional and user-grantable, and its settings configure the runtime that personal sessions share.
+The registry plugin `browser`, version 0.3.11, requires Elowen 0.28.35 or newer. It gives an account a managed Chrome session the model drives through browser tools: open pages, navigate, click and fill by accessibility refs, capture screenshots, and inspect console, network, and performance. Every session is drawn on a private virtual display, so a person can watch the same page live and take over control. The plugin is optional and user-grantable, and its settings configure the runtime that personal sessions share.
 
 ## Browser sessions
 
 A browser session is one tab session inside one Chrome process. Each account owns a persistent profile and its own Chrome process, so cookies, sign-ins, and site data survive between sessions and no two accounts share a browser. Closing a session never erases the profile; clearing stored browser data is a separate, confirmed action on the account's Browser page.
 
-The plugin has two modes. By default the account gets its private browser, which requires a linked Elowen account in a private conversation and works the same way in a chat that executes in a managed project: Chrome runs on the host under the account, the live view card appears in the chat, and the session is listed on the account's Browser page. `BrowserOpenProject` opens the selected managed project's browser instead, which runs inside that project's environment with the profile, cookies, and downloads shared as project data among project members.
-
-Project browsers differ in one more respect: interactive takeover belongs to the person behind the account, so a project session is driven entirely through the browser tools and offers no control hand-off.
+The plugin has one mode: the linked account's own browser. It requires a linked Elowen account in a private conversation and behaves the same way in a chat that executes in a managed project. Chrome runs on the host under the account, the live view card appears in the chat, and the session is listed on the account's Browser page.
 
 ## Web interface
 
@@ -44,7 +42,7 @@ The runtime dependencies are shared with the daemon rather than installed beside
 
 Each account's Chrome is drawn on a private virtual display and served over VNC, so the live view shows real pixels and a person taking control sends real keyboard and mouse input. An account can watch its sessions and take control from the account's Browser page in the web interface, and a live card can appear in the chat conversation. The display size follows the configured width and a fixed aspect; the page itself is shorter than the display by the height of Chrome's tab strip and address bar, and the browser session reports its real viewport size at connect time.
 
-Control is exclusive and leased. A session is either under agent control or under user control, never both. When the model calls `BrowserRequestTakeover`, it pauses and waits until the person releases control, disconnects, or the lease expires. The person's viewer must heartbeat within the takeover lease to keep control, and a stale viewer cannot extend or release a lease that a newer claim holds. Each viewer connection receives the whole framebuffer; the VNC server does not scale it down for small windows. Interactive takeover is a personal-session feature only: project browsers are driven through the browser tools.
+Control is exclusive and leased. A session is either under agent control or under user control, never both. When the model calls `BrowserRequestTakeover`, it pauses and waits until the person releases control, disconnects, or the lease expires. The person's viewer must heartbeat within the takeover lease to keep control, and a stale viewer cannot extend or release a lease that a newer claim holds. Each viewer connection receives the whole framebuffer; the VNC server does not scale it down for small windows.
 
 ## Working with pages
 
@@ -58,7 +56,7 @@ Interactive steps have their own bounds. A wait for text resolves within a timeo
 
 | Tool | What it does |
 | --- | --- |
-| `BrowserOpen` | Opens the account's browser and returns the first page snapshot. `BrowserOpenProject` opens the selected managed project's shared browser instead. |
+| `BrowserOpen` | Opens the account's browser and returns the first page snapshot. |
 | `BrowserSnapshot` | Reads a bounded accessibility snapshot of the current page, with a screenshot only when explicitly requested. |
 | `BrowserNavigate` | Loads an absolute http or https URL that the network policy allows and returns a fresh snapshot. |
 | `BrowserClick` | Clicks one element from the latest snapshot by its ref and returns a fresh snapshot. |
@@ -133,7 +131,7 @@ The proxy resolves each destination hostname itself, checks every resolved addre
 - A new session is refused when the account already holds its tab sessions, or when the instance is already running its full set of account browsers.
 - `BrowserSnapshot`, `BrowserTabs`, `BrowserScreenshot`, and `BrowserAudit` are the only tools treated as safe read-only probes during planning. `BrowserEvaluate` is deliberately excluded, because its expression can change the page as surely as a click.
 - Diagnostic replies are bounded at about 16 KB; an explicitly requested response body is the one larger exception, capped at 64 KB.
-- Unlinked senders, shared rooms, and delegated child agents cannot use the browser tools at all: the tools require a linked Elowen account in a private conversation, and a delegated child cannot borrow its parent's account. Project browsers require `BrowserOpenProject`, a managed project selection, and an acting account.
+- Unlinked senders, shared rooms, and delegated child agents cannot use the browser tools at all: the tools require a linked Elowen account in a private conversation, and a delegated child cannot borrow its parent's account.
 - Another account's sessions, profiles, and live views are invisible to the browser tools and to the account page.
 - Every viewer connection carries a full framebuffer stream, so each added viewer costs bandwidth; the update coalescing field is the latency and bandwidth trade for the whole display.
 - A live view is one connection per viewer, fanned out per session, and only the account holding the takeover lease may send input.

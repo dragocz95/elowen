@@ -74,11 +74,13 @@ describe('managed environment acceptance matrix', () => {
 
   it('keeps the inventory whole and every capability named once', () => {
     // The floor is the count reached once every capability had been walked. Raise it when rows are
-    // added; lowering it is the edit this guard exists to make visible.
-    expect(matrix.rows.length).toBeGreaterThanOrEqual(43);
+    // added; lowering it is the edit this guard exists to make visible. It came down from 43 when the
+    // project browser was removed from the browser plugin: the two rows that went described a browser
+    // running inside a project environment, a capability the product no longer has.
+    expect(matrix.rows.length).toBeGreaterThanOrEqual(41);
     // The same floor under the real-guest rows themselves. Without it, the cheapest way past the binding
     // above is to downgrade a row to `unit` and write a sentence about it, which is the gap being hidden.
-    expect(matrix.rows.filter((row) => row.evidence === 'real-guest').length).toBeGreaterThanOrEqual(37);
+    expect(matrix.rows.filter((row) => row.evidence === 'real-guest').length).toBeGreaterThanOrEqual(35);
     const capabilities = matrix.rows.map((row) => `${row.area}:${row.capability}`);
     for (const row of matrix.rows) {
       expect(row.area, 'a row with no area').toBeTruthy();

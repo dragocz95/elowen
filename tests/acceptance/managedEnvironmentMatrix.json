@@ -14,7 +14,6 @@
     "note": "Consumer-side guest acceptance for plugins that live in the registry. Their files are not part of this repository, so this repository cannot assert that they exist: a checkout of this repo alone (CI, or any worktree) has no sibling registry beside it. The registry runs them itself and guards their presence in tests/registryGuestSuites.test.mjs, which is where a deletion has to be noticed. Paths are relative to that repository root.",
     "suites": [
       "tests/lspManagedGuest.podman.test.ts",
-      "tests/browserManagedGuest.podman.test.ts",
       "tests/editorManagedGuest.podman.test.ts",
       "tests/codebaseManagedGuest.podman.test.ts",
       "tests/cronManagedGuest.podman.test.ts"
@@ -203,15 +202,7 @@
       "evidence": "real-guest",
       "suite": "containerRuntime.podman",
       "negative": "unit",
-      "notes": "Engine level only: proves Chromium starts in the container. The browser TOOL surface is covered separately by browserManagedGuest.podman, which drives navigation, evaluate, click, screenshot and downloads; this row is not the gap it used to describe."
-    },
-    {
-      "area": "browser",
-      "capability": "navigate/evaluate/click/screenshot/persistence via the project browser",
-      "evidence": "real-guest",
-      "negative": "unit",
-      "suite": "browserManagedGuest.podman",
-      "notes": "Real guest Chromium over the CDP pipe on an execution lease. Downloads are no longer outstanding: they are covered by the 'in-page download handling in a guest' row in the same suite."
+      "notes": "Engine level only: proves Chromium starts in the container. The browser plugin no longer runs a browser inside a project environment, so there is no tool surface here to cover."
     },
     {
       "area": "editor",
@@ -315,14 +306,6 @@
       "suite": "containerRuntime.podman",
       "negative": "real-guest",
       "notes": "The container is the boundary, so a guest path is not refused merely for sitting outside /workspace."
-    },
-    {
-      "area": "browser",
-      "capability": "in-page download handling in a guest",
-      "evidence": "real-guest",
-      "negative": "unit",
-      "notes": "A click-triggered download settles in /data/browser/downloads and reads back byte-exact through the provider.",
-      "suite": "browserManagedGuest.podman"
     },
     {
       "area": "editor",
