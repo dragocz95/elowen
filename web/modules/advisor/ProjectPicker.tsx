@@ -121,7 +121,7 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
       loadError={environment.loadError}
       onRetry={() => dispatch('start')}
       onRecreate={() => dispatch('recreate')}
-      recreatable={recreatable(environment.operation)}
+      recreatable={recreatable(environment.operation?.error)}
       onSettled={environment.forget}
       onClose={({ running }) => { if (running || environment.running) environment.hide(); else environment.forget(); }}
     />

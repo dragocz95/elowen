@@ -129,6 +129,18 @@ describe('plugin UI runtime', () => {
     }));
     expect(window.ElowenUiRuntime?.utils.DEFAULT_RANGE).toEqual(expect.objectContaining({ preset: expect.any(String) }));
   });
+
+  it('publishes the reading of the stale-container failure a bundle offers its repair from', () => {
+    ensurePluginUiRuntime();
+    // The sandbox bundle reads this instead of carrying its own copy of the pattern, so the drawer and
+    // the core screens offer the recreate for the same error — and rewording the daemon's message moves
+    // both. A missing entry here throws where the bundle destructures it, which nothing else notices.
+    const recreatable = window.ElowenUiRuntime?.utils.recreatable;
+    expect(typeof recreatable).toBe('function');
+    expect((recreatable as (error: string | null | undefined) => boolean)('/data/container predates the named project mount; Recreate it')).toBe(true);
+    expect((recreatable as (error: string | null | undefined) => boolean)('Guest system bus did not become available')).toBe(false);
+    expect((recreatable as (error: string | null | undefined) => boolean)(null)).toBe(false);
+  });
 });
 
 // ---------------------------------------------------------------------------------------------------

@@ -117,7 +117,7 @@ function NewConversationProjectDialog({ onClose }: { onClose: () => void }) {
         loadError={environment.loadError}
         onRetry={() => dispatch('start')}
         onRecreate={() => dispatch('recreate')}
-        recreatable={recreatable(environment.operation)}
+        recreatable={recreatable(environment.operation?.error)}
         onSettled={onClose}
         onClose={onClose}
       />

@@ -26,13 +26,9 @@ const LIMIT_KEYS = ROWS.map((row) => row.key);
 /** CPU carries one decimal; every other figure is a whole number the runtime validates as an integer. */
 const readout = (key: LimitKey, value: number) => key === 'cpus' ? String(Math.round(value * 10) / 10) : String(Math.round(value));
 const sameLimits = (a: Limits, b: Limits) => LIMIT_KEYS.every((key) => a[key] === b[key]);
-/** The daemon names the stale-container case in the error it stores, so the repair is offered from what
- *  the runtime reported rather than inferred from a state word. One rule, read from two places: the
- *  environment's last error and the error of the operation being watched. */
-const STALE_CONTAINER = /predates the named project mount/i;
 
 export function ProjectEnvironmentSettings({ project }: { project: Project }) {
-  const { components: C, hooks, api } = runtime();
+  const { components: C, hooks, utils, api } = runtime();
   const s = hooks.usePluginStrings('sandbox');
   const { toast } = hooks.useToast();
   const qc = hooks.useQueryClient();
@@ -121,7 +117,10 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   const values = draft ?? environment.limits;
   const labels: Record<LimitKey, string> = { cpus: s.cpuLimit, memoryMb: s.memoryLimit, pidsLimit: s.processLimit };
   const units: Record<LimitKey, string> = { cpus: s.unitCpu, memoryMb: 'MiB', pidsLimit: s.unitProcesses };
-  const stale = STALE_CONTAINER.test(environment.lastError ?? '') || STALE_CONTAINER.test(progress.operation?.error ?? '');
+  // The daemon names the stale-container case in the error it stores, so the repair is offered from what
+  // the runtime reported rather than inferred from a state word: the environment's last error and the
+  // error of the operation being watched are read through the host's own rule for it.
+  const stale = utils.recreatable(environment.lastError) || utils.recreatable(progress.operation?.error);
   const operationAction = progress.operation?.action.kind ?? 'start';
   // Restoring a snapshot is the one destructive choice this drawer still asks for; stopping and
   // snapshotting are confirmed where they are now offered, in the project's row menu.

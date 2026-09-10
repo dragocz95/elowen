@@ -27,8 +27,13 @@ export async function requestEnvironmentAction(
   return body as unknown as EnvironmentOperation;
 }
 
-/** Whether a failed operation is the stale-container case the explicit recreate exists to repair. The
- *  daemon names it in the operation's own error, so no surface has to infer it from a state word. */
-export function recreatable(operation: { error: string | null } | null | undefined): boolean {
-  return /predates the named project mount/i.test(operation?.error ?? '');
+/** Whether a failure is the stale-container case the explicit recreate exists to repair. The daemon
+ *  names it in the error it stores, so no surface has to infer it from a state word.
+ *
+ *  The ONE reading of that message: core screens call it, and it is handed to plugin bundles through the
+ *  UI runtime's `utils` so a bundle offers the same repair for the same error. Two copies of the pattern
+ *  — one here and one in a bundle — meant rewording the daemon's message could offer the repair on one
+ *  screen and not another. */
+export function recreatable(error: string | null | undefined): boolean {
+  return /predates the named project mount/i.test(error ?? '');
 }
