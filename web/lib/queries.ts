@@ -209,8 +209,8 @@ export const useProjects = () =>
 export const useProjectSummaries = () =>
   useQuery({ queryKey: ['project-summaries'], queryFn: elowenClient.projectSummaries, staleTime: 30_000 });
 
-export const useProjectGit = (id: number | null) =>
-  useQuery({ queryKey: ['project-git', id], queryFn: () => elowenClient.projectGit(id as number), enabled: !!id });
+export const useProjectGit = (id: number | null, enabled = true) =>
+  useQuery({ queryKey: ['project-git', id], queryFn: () => elowenClient.projectGit(id as number), enabled: !!id && enabled });
 
 export const useProjectUsers = (id: number | null, enabled = true) =>
   useQuery({ queryKey: ['project-users', id], queryFn: () => elowenClient.projectUsers(id as number), enabled: !!id && enabled });

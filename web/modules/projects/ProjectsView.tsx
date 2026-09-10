@@ -4,7 +4,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { ElowenApiError, apiErrorMessage, elowenClient } from '../../lib/elowenClient';
 import { SelectMenu } from '../../components/ui/SelectMenu';
 import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, MoreHorizontal, Code2, Copy, Pencil, Trash2, ImageIcon, Search, FileText } from 'lucide-react';
-import { useProjects, useProjectSummaries, useProjectGit, usePluginPresent, useMe } from '../../lib/queries';
+import { useProjects, useProjectSummaries, useProjectGit, useProjectEnvironmentState, usePluginPresent, useMe } from '../../lib/queries';
 import { useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
 import type { Project } from '../../lib/types';
 import { useToast } from '../../components/ui/Toast';
@@ -141,11 +141,12 @@ export function ProjectsView() {
   };
   const openEditor = (commit: string | null) => openProjectEditor(selectedId, commit);
   const openWorking = () => openProjectEditor(selectedId, null, true);
-  // Opening a project reads its repository, whichever way that project runs. A managed one used to hide
-  // this behind an "Inspect repository" button because the read could provision a cold environment and
-  // block on it; the daemon now answers a non-running environment from its own records instead, so there
-  // is nothing left for a person to authorise by clicking.
-  const git = useProjectGit(selectedId);
+  const selectedProject = projects.data?.find((project) => project.id === selectedId) ?? null;
+  // A managed repository is available only while its environment is running. Reading the environment's
+  // state first keeps restore, teardown and recovery invalidations from repeatedly asking Git for a guest
+  // that cannot answer yet. Host projects continue to read directly.
+  const environment = useProjectEnvironmentState(selectedProject?.executionKind === 'managed' ? selectedId : null);
+  const git = useProjectGit(selectedId, selectedProject?.executionKind !== 'managed' || environment.data?.environment.state === 'running');
 
   const { toast } = useToast();
   const { t } = useTranslation();
@@ -308,7 +309,6 @@ export function ProjectsView() {
     };
   }, [projects.data]);
 
-  const selectedProject = projects.data?.find((project) => project.id === selectedId) ?? null;
   const summariesByProject = useMemo(() => new Map((projectSummaries.data ?? []).map((item) => [item.projectId, item])), [projectSummaries.data]);
 
   const navigateProject = (project: Project, direction: 'next' | 'previous' | 'home' | 'end') => {
