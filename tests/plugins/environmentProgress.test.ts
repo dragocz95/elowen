@@ -31,6 +31,7 @@ function setup() {
   let busReady = false;
   let busFails = false;
   const podman = {
+    containerInventory: vi.fn(async () => new Map([...containers].map(([name, row]) => [name, row.state]))),
     ensureProjectImage: vi.fn(async (_dir: string, onOutput?: (line: string) => void) => {
       for (const line of buildLines) onOutput?.(line);
       return 'localhost/elowen-project-base:test';
