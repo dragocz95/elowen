@@ -132,7 +132,7 @@ function hasSummaryText(content: AssistantMessage['content']): boolean {
  * response has to become a fallback instead, so it is turned into a stream error and reported precisely
  * enough to tell the two failure shapes apart in the log.
  */
-function guardSummaryResponse(inner: AssistantMessageEventStream): AssistantMessageEventStream {
+function guardSummaryResponse(inner: AssistantMessageEventStream, usage: SummaryUsage): AssistantMessageEventStream {
   const out = createAssistantMessageEventStream();
   void (async () => {
     for await (const event of inner) {
@@ -149,6 +149,11 @@ function guardSummaryResponse(inner: AssistantMessageEventStream): AssistantMess
           });
           continue;
         }
+        const messageUsage = event.message.usage;
+        usage.input += messageUsage.input;
+        usage.output += messageUsage.output;
+        usage.cacheRead += messageUsage.cacheRead;
+        usage.cacheWrite += messageUsage.cacheWrite;
       }
       out.push(event);
     }
@@ -161,7 +166,7 @@ function guardSummaryResponse(inner: AssistantMessageEventStream): AssistantMess
  *  issues the live-prefix request instead. Goes out through `agent.streamFunction`, so every wrapper a
  *  chat request passes — above all the Anthropic hosted-tool replay shim, which has to replay this
  *  session's server-owned blocks for the history to be accepted at all — applies here identically. */
-function warmPrefixStream(session: AgentSession): AgentSession['agent']['streamFunction'] {
+function warmPrefixStream(session: AgentSession, usage: SummaryUsage): AgentSession['agent']['streamFunction'] {
   return async (model: Model<Api>, context: Context, options) => {
     const agent = session.agent;
     const instruction = summarizationInstruction(context);
@@ -198,7 +203,7 @@ function warmPrefixStream(session: AgentSession): AgentSession['agent']['streamF
       thinkingBudgets: agent.thinkingBudgets,
       maxRetryDelayMs: agent.maxRetryDelayMs,
     });
-    return guardSummaryResponse(inner);
+    return guardSummaryResponse(inner, usage);
   };
 }
 
@@ -207,17 +212,28 @@ function warmPrefixStream(session: AgentSession): AgentSession['agent']['streamF
  *
  * Reusing a warm prefix requires the summary to run where that prefix was written. A distinct compaction
  * model — the user's choice or a provider default — has no cache entry of this conversation to read, so it
- * keeps PI's standalone request. The ChatGPT backend compacts through its own opaque blob path, which
- * owns the same hook and must not be raced for it.
+ * keeps PI's standalone request.
  */
 export function inSessionCompactionApplies(session: {
-  provider: string;
   compactionFallbackModel?: Model<Api>;
 }): boolean {
-  return session.compactionFallbackModel === undefined && session.provider !== 'openai-codex';
+  return session.compactionFallbackModel === undefined;
 }
 
-export function createInSessionCompaction(): InSessionCompaction {
+/** Token counts the summarization request(s) of one compaction charged, accumulated from the stream. */
+interface SummaryUsage {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+}
+
+export interface InSessionCompactionOptions {
+  /** The conversation id the daemon knows this session by, for the success audit line. */
+  sessionId?: string;
+}
+
+export function createInSessionCompaction(deps: InSessionCompactionOptions = {}): InSessionCompaction {
   let current: AgentSession | undefined;
 
   return {
@@ -226,6 +242,9 @@ export function createInSessionCompaction(): InSessionCompaction {
         const session = current;
         const model = session?.model;
         if (!session || !model) return undefined;
+        // A split-turn compaction issues two summarization requests inside one compaction; the audit line
+        // reports their total, which is what the conversation paid.
+        const usage: SummaryUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
         try {
           const result = await compact(
             event.preparation,
@@ -237,13 +256,15 @@ export function createInSessionCompaction(): InSessionCompaction {
             event.customInstructions,
             event.signal,
             session.thinkingLevel,
-            warmPrefixStream(session),
+            warmPrefixStream(session, usage),
             undefined,
             session.settingsManager.getRetrySettings(),
             undefined,
             session.agent.sessionId,
           );
           if (result.summary.trim().length === 0) throw new Error('the summary was empty');
+          log.info(`in-session compaction succeeded on ${deps.sessionId ?? session.agent.sessionId} with ${model.id}: `
+            + `input ${usage.input}, cacheRead ${usage.cacheRead}, cacheWrite ${usage.cacheWrite}, output ${usage.output} tokens`);
           return { compaction: result };
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);

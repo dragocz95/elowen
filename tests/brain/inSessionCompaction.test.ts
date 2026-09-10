@@ -75,9 +75,11 @@ function responseStream(
   content: AssistantMessage['content'],
   totalTokens: number,
   errorMessage?: string,
+  usageOverride?: AssistantMessage['usage'],
 ) {
   const stream = createAssistantMessageEventStream();
   const message = assistantMessage(model, errorMessage ? [] : content, errorMessage ? 'error' : 'stop', totalTokens, errorMessage);
+  if (usageOverride) message.usage = usageOverride;
   queueMicrotask(() => {
     stream.push({ type: 'start', partial: assistantMessage(model, [], 'stop', 0) });
     if (errorMessage) stream.push({ type: 'error', reason: 'error', error: message });
@@ -157,7 +159,11 @@ async function fixture(o: FixtureOptions = {}): Promise<{
       case 'error':
         return responseStream(model, [], 10, 'provider refused the summary request');
       default:
-        return responseStream(model, [{ type: 'text', text: 'in-session summary' }], 10);
+        // Distinct input/cache halves so the audit log's usage line can be asserted exactly.
+        return responseStream(model, [{ type: 'text', text: 'in-session summary' }], 10, undefined, {
+          input: 700, output: 42, cacheRead: 500, cacheWrite: 100, totalTokens: 742,
+          cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+        });
       }
     },
     models: [{
@@ -166,7 +172,7 @@ async function fixture(o: FixtureOptions = {}): Promise<{
     }],
   });
   const model = registry.find('elowen-warm', 'warm-model')!;
-  const inSession = createInSessionCompaction();
+  const inSession = createInSessionCompaction(o.recordRequests ? { sessionId: 's1' } : {});
   const compactions: { fromExtension: boolean; reason: string }[] = [];
   const observer = (pi: ExtensionAPI) => {
     pi.on('session_compact', (event) => {
@@ -289,6 +295,8 @@ describe('In-session compaction', () => {
       expect(f.compactions).toEqual([{ fromExtension: false, reason: 'manual' }]);
       expect(log.lines.filter((line) => line.startsWith('warn'))).toHaveLength(1);
       expect(log.lines[0]).toContain(warning);
+      // The audit line is a success record only: a fallthrough must not log one.
+      expect(log.lines.some((line) => line.startsWith('info'))).toBe(false);
     } finally {
       log.stop();
     }
@@ -308,6 +316,24 @@ describe('In-session compaction', () => {
     ]);
   });
 
+  it('logs one INFO line with the session, model and request usage after a successful in-session summary', async () => {
+    const log = captureWarnings();
+    try {
+      const f = await fixture({ recordRequests: true });
+
+      await f.session.compact();
+
+      expect(isInSessionSummary(f.calls[0]!.context)).toBe(true);
+      const info = log.lines.filter((line) => line.startsWith('info'));
+      expect(info).toHaveLength(1);
+      expect(info[0]).toContain('s1');
+      expect(info[0]).toContain('warm-model');
+      expect(info[0]).toContain('input 700, cacheRead 500, cacheWrite 100, output 42');
+    } finally {
+      log.stop();
+    }
+  });
+
   it('issues no request at all when an earlier handler cancels the compaction', async () => {
     const f = await fixture({ cancelBefore: true });
 
@@ -322,11 +348,9 @@ describe('In-session compaction', () => {
   it('leaves compaction to PI when the summary would not run on the session\'s own prefix', () => {
     const distinct = { id: 'cheap-model', provider: 'elowen-cheap' } as Model<Api>;
 
-    expect(inSessionCompactionApplies({ provider: 'anthropic' })).toBe(true);
+    expect(inSessionCompactionApplies({})).toBe(true);
     // A distinct compaction model has no cache entry of this conversation to read.
-    expect(inSessionCompactionApplies({ provider: 'anthropic', compactionFallbackModel: distinct })).toBe(false);
-    // The ChatGPT backend owns the same hook for its opaque compaction blob.
-    expect(inSessionCompactionApplies({ provider: 'openai-codex' })).toBe(false);
+    expect(inSessionCompactionApplies({ compactionFallbackModel: distinct })).toBe(false);
   });
 
   it('refuses a summarization prompt whose shape it does not recognise', () => {

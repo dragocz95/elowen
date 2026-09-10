@@ -627,10 +627,9 @@ export class BrainSessionFactory {
     const settingsManager = SettingsManager.inMemory(undefined, { projectTrusted: true });
     const compactionModelRoute = createCompactionModelRoute(spec.compactionFallbackModel);
     const inSessionCompaction: InSessionCompaction | undefined = inSessionCompactionApplies({
-      provider: spec.model.provider,
       ...(spec.compactionFallbackModel ? { compactionFallbackModel: spec.compactionFallbackModel } : {}),
     })
-      ? createInSessionCompaction()
+      ? createInSessionCompaction({ sessionId: spec.sessionId })
       : undefined;
     const anthropicHostedReplay = spec.hostedToolSearch === 'anthropic'
       ? createAnthropicHostedToolReplay(spec.model)
