@@ -1066,7 +1066,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       }
       // Publication records are scoped through their project row. A socket path alone is not liveness:
       // the file survives an unclean forwarder exit, so the guest unit must still report active.
-      for (const row of store.all().filter((entry) => entry.kind === 'project' && entry.state === 'running')) {
+      // A row from before the named project mount has no mount target until `rowFor` backfills it, and
+      // no publication could have been bound to it either, so it has nothing to restore.
+      for (const row of store.all().filter((entry) => entry.kind === 'project' && entry.state === 'running' && rootOf(entry))) {
         if (disposed) break;
         if (releasingAdoptions.has(Number(row.resource_id)) || store.active('project', row.resource_id)) continue;
         const publications = store.publications(Number(row.resource_id));

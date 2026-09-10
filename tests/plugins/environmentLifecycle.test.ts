@@ -119,6 +119,20 @@ describe('durable managed environment lifecycle', () => {
     expect((await runtime.environmentFor(input)).state).toBe('running');
   });
 
+  // Reconcile sweeps publications of every running project without going through `rowFor`, so a running
+  // row that predates the named mount must not bring the whole tick down before that backfill happens.
+  it('keeps reconciling when a running environment predates the named project mount', async () => {
+    const { runtime, db } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'named-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    const row = db.prepare("SELECT * FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
+    const spec = JSON.parse(row.spec_json);
+    delete spec.input.workspaceTarget;
+    db.prepare("UPDATE p_sandbox_runtimes SET spec_json=? WHERE kind='project' AND resource_id='7'").run(JSON.stringify(spec));
+
+    await expect(runtime.reconcile()).resolves.toBeUndefined();
+  });
+
   // A new project environment used to be pinned to the figures compiled into the plugin, with nowhere to
   // change them; the administrator's settings now decide what it is provisioned with.
   it('provisions a project environment with the administrator resource defaults', async () => {
