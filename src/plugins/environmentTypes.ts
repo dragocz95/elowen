@@ -119,7 +119,10 @@ export interface SiteEnvironmentRegistration {
   workspaceReadOnly: boolean;
   network: 'shared' | 'isolated';
   limits: EnvironmentLimits;
-  legacy?: { containerId: string; imageId: string; volumeMountpoint: string };
+  /** Engine observations pinned at handover. `gitStubPath` and `limits` describe the container as it
+   *  was created; without them the runtime derives both from the current layout and configuration and
+   *  refuses to adopt a container an earlier Sites version created. */
+  legacy?: { containerId: string; imageId: string; volumeMountpoint: string; gitStubPath?: string; limits?: { cpus: number; memoryMb: number; pidsLimit: number } };
   /** Copied from the Sites lifecycle checkpoint, not inferred from current container state. */
   initialIntent?: { desiredState: 'running' | 'stopped'; pendingAction: 'start' | 'stop' | 'restart' | null; restartSequence?: number };
   snapshotRetention?: number;

@@ -34,12 +34,22 @@ export function createContainerSpec(input, paths) {
 
 /** Handover-only capability, built from the trusted Sites record and audited engine observations.
  * Names and mount targets are fixed by the legacy Sites contract, never supplied by a guest. Persist
- * containerId, imageId, volumeMountpoint and the resulting specHash with the handover generation;
- * the daemon must revalidate that record before dispatch. This does not relabel or recreate anything. */
+ * containerId, imageId, volumeMountpoint, gitStubPath, limits and the resulting specHash with the
+ * handover generation; the daemon must revalidate that record before dispatch. This does not relabel
+ * or recreate anything.
+ *
+ * A container an earlier Sites runtime created is described by what it IS, not by what the current
+ * configuration would ask for. Its Git-stub bind source and its cgroup limits are therefore pinned from
+ * the discovery observation, exactly like the container, image and volume identities: Sites has since
+ * moved that file from `<sitesDataDir>/sites/<id>/environment` to `<sitesDataDir>/<id>/environment`, and
+ * a limit the running container never received cannot be a condition for adopting it. Ownership still
+ * rests on the container name, the `io.elowen.site` label, the pinned identities and the mount set. */
 export function createLegacySiteSpec(input, binding) {
-  closed(binding, ['sitesDataDir', 'sourcePath', 'brokerDir', 'containerId', 'imageId', 'volumeMountpoint', 'namespace']);
+  closed(binding, ['sitesDataDir', 'sourcePath', 'brokerDir', 'containerId', 'imageId', 'volumeMountpoint', 'namespace', 'gitStubPath', 'limits']);
   if (input?.resource?.kind !== 'site') throw new Error('A legacy binding must identify a Site');
   for (const key of ['sitesDataDir', 'sourcePath', 'brokerDir', 'volumeMountpoint']) hostPath(binding[key]);
+  if (binding.gitStubPath !== undefined) hostPath(binding.gitStubPath);
+  if (binding.limits !== undefined) closed(binding.limits, ['cpus', 'memoryMb', 'pidsLimit']);
   if (!/^[a-f0-9]{64}$/.test(binding.containerId) || !/^(sha256:)?[a-f0-9]{64}$/.test(binding.imageId)) throw new Error('Invalid legacy container/image identity');
   return buildSpec(input, {
     namespace: binding.namespace, sitesDataDir: binding.sitesDataDir, siteSourcesDir: dirname(binding.sourcePath), siteBrokerDir: dirname(binding.brokerDir),
@@ -79,7 +89,9 @@ function buildSpec(input, paths, legacy, binding = null) {
   if (network !== 'shared' && network !== 'isolated') throw new Error('Invalid container network');
   if (input.workspaceReadOnly !== undefined && (kind !== 'site' || typeof input.workspaceReadOnly !== 'boolean')) throw new Error('Invalid read-only workspace policy');
   closed(input.limits ?? {}, ['cpus', 'memoryMb', 'pidsLimit']);
-  const limits = { ...DEFAULT_CONTAINER_LIMITS, ...input.limits };
+  // An adopted container keeps the limits it was created with until an explicit limits action updates
+  // them through `withContainerLimits`, which is the only path that also runs `podman update`.
+  const limits = { ...DEFAULT_CONTAINER_LIMITS, ...input.limits, ...(legacy?.limits ?? {}) };
   if (!Number.isFinite(limits.cpus) || limits.cpus <= 0 || limits.cpus > 1024 || !Number.isSafeInteger(limits.cpus * 1e6)) throw new Error('Invalid CPU limit');
   for (const key of ['memoryMb', 'pidsLimit']) {
     if (!Number.isSafeInteger(limits[key]) || limits[key] < 1 || limits[key] > 2 ** 30) throw new Error(`Invalid ${key} limit`);
@@ -99,7 +111,7 @@ function buildSpec(input, paths, legacy, binding = null) {
     ? volumes.map((volume) => ({ type: 'volume', source: volume.name, target: { workspace: '/workspace', home: '/root', data: '/data' }[volume.component], readOnly: false }))
     : [
       { type: 'bind', source: legacy ? legacy.sourcePath : binding?.sourcePath ?? join(hostPath(paths.siteSourcesDir), id), target: '/workspace', readOnly: input.workspaceReadOnly ?? false },
-      { type: 'bind', source: join(storageRoot, 'git-stub'), target: '/workspace/.git', readOnly: true },
+      { type: 'bind', source: legacy?.gitStubPath ?? join(storageRoot, 'git-stub'), target: '/workspace/.git', readOnly: true },
       { type: 'bind', source: legacy ? legacy.brokerDir : binding?.brokerDir ?? join(hostPath(paths.siteBrokerDir), id), target: '/run/elowen', readOnly: false },
       { type: 'volume', source: volumes[0].name, target: '/data', readOnly: false },
     ];
