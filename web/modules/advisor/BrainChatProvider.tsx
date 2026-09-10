@@ -24,6 +24,7 @@ import {
   consumePendingBrainComposer,
   consumePendingBrainSession,
   mergeBrainComposerText,
+  openBrainComposer,
   type BrainOpenRequest,
 } from '../../lib/brainDock';
 import { uploadAttachment, type AttachRefusal, type Attachment } from './brainChatAttachments';
@@ -228,6 +229,12 @@ export interface BrainChatValue {
   removeAttachment: (index: number) => void;
   submit: () => Promise<void>;
   switchSession: (opts: { session?: string; fresh?: boolean }) => Promise<void>;
+  /** Create a fresh conversation and ask which project it runs in — every "new conversation" control in
+   *  the web UI goes through this, so the question is asked once and in one place. */
+  startNewConversation: () => Promise<void>;
+  /** Whether the project question for a just-created conversation is on screen. */
+  projectChoiceOpen: boolean;
+  closeProjectChoice: () => void;
   openReadOnly: (sessionId: string) => Promise<void>;
   exitReadOnly: () => void;
   deleteSession: (id: string, wasActive: boolean) => Promise<void>;
@@ -480,6 +487,8 @@ function useBrainChatController(): BrainChatValue {
   const [renameOpen, setRenameOpen] = useState(false);
   // The conversation switcher, opened from every surface and rendered once by the provider below.
   const [historyOpen, setHistoryOpen] = useState(false);
+  // Whether the fresh conversation just created is still waiting to be told which project it runs in.
+  const [projectChoiceOpen, setProjectChoiceOpen] = useState(false);
   // Lives on the controller (mounted once) rather than the surface, so the choice survives the dock's
   // Chat↔Terminál toggle and every route change, exactly like the transcript itself.
   const [thoughts, setThoughts] = usePersistentState<'show' | 'hide'>('elowen.chat.thoughts', 'show', THOUGHTS_VALUES);
@@ -888,6 +897,15 @@ function useBrainChatController(): BrainChatValue {
     await qc.invalidateQueries({ queryKey: ['brain-sessions'] });
   };
 
+  /** THE way a person starts a new conversation from the web UI. The conversation is created first, so
+   *  the daemon has already chosen its default target and the dialog that follows asks about a real
+   *  conversation rather than a hypothetical one. Dismissing the dialog keeps that default; either way the
+   *  composer is what the person lands in (see `closeProjectChoice`). */
+  const startNewConversation = async (): Promise<void> => {
+    await switchSession({ fresh: true });
+    setProjectChoiceOpen(true);
+  };
+
   const submit = async (): Promise<void> => {
     const input = draft.getSnapshot();
     const typed = input.trim();
@@ -1189,7 +1207,7 @@ function useBrainChatController(): BrainChatValue {
     if (cmd.name === 'model') { setInput(''); setModelOpen(true); void loadModels(); return; }
     setInput('');
     try {
-      if (cmd.name === 'new') { await switchSession({ fresh: true }); return; }
+      if (cmd.name === 'new') { await startNewConversation(); return; }
       if (cmd.name === 'help') { setHelpOpen(true); return; }
       if (cmd.name === 'stats') {
         setStatsOpen(true);
@@ -1376,6 +1394,11 @@ function useBrainChatController(): BrainChatValue {
     workMode, setWorkMode: runMode, planDecision, implementPlan, dismissPlan, planSubmitting,
     renameOpen, closeRename: () => setRenameOpen(false), renameSession,
     historyOpen, openHistory: () => setHistoryOpen(true), closeHistory: () => setHistoryOpen(false),
+    startNewConversation,
+    projectChoiceOpen,
+    // Whether a project was chosen or the dialog was simply dismissed, the fresh conversation is where the
+    // person is going: reveal the chat and focus its composer, the same request the launcher raises.
+    closeProjectChoice: () => { setProjectChoiceOpen(false); openBrainComposer(); },
     commands, runSlash: (cmd, argument) => void runSlash(cmd, argument),
     sessions,
   };

@@ -1659,6 +1659,13 @@ export const en = {
     modelPickerError: 'Failed to load models',
     modelPickerRetry: 'Retry',
     projectPickerFailed: 'The working directory could not be changed',
+    newConversationProject: {
+      title: 'Where should this conversation run?',
+      description: 'Pick the project this conversation works in. You can change it later from the chat header.',
+      hostOption: 'Continue without a project',
+      hostHint: 'Full host access',
+      empty: 'No project is available for this account.',
+    },
     modelActive: 'Active model',
     modelReasoning: 'Reasoning effort',
     askWaiting: 'The assistant is waiting for your choice',

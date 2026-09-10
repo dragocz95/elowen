@@ -22,6 +22,7 @@ type TestSession = {
 // delete stays on the controller. We stub both so the test asserts the exact wiring.
 const ctrl = vi.hoisted(() => {
   const switchSession = vi.fn(() => Promise.resolve());
+  const startNewConversation = vi.fn(() => Promise.resolve());
   const deleteSession = vi.fn(() => Promise.resolve());
   const data: TestSession[] = [
     { id: 's1', title: 'First', provider: 'chatgpt-account', model: 'openai/gpt-5.6-sol', updated_at: '2026-07-08T10:00:00.000Z', running: false, active: true, tokens: 1234 },
@@ -29,10 +30,12 @@ const ctrl = vi.hoisted(() => {
   ];
   return {
     switchSession,
+    startNewConversation,
     deleteSession,
     value: {
       sessions: { data },
       switchSession,
+      startNewConversation,
       deleteSession,
     },
   };
@@ -74,6 +77,7 @@ beforeEach(() => {
     { id: 's2', title: 'Second', model: 'sonnet', updated_at: '2026-07-07T10:00:00.000Z', running: false, active: false, tokens: 10 },
   ];
   ctrl.switchSession.mockClear();
+  ctrl.startNewConversation.mockClear();
   ctrl.deleteSession.mockClear();
   client.brainSearch.mockClear();
   client.brainRenameSession.mockClear();
@@ -166,13 +170,21 @@ describe('ConversationHistoryPanel', () => {
     expect(screen.getByRole('link', { name: linkName })).toHaveAttribute('href', '/dash');
   });
 
-  it('starts a new conversation via switchSession({ fresh: true }) and asks for the chat surface', async () => {
+  // The new-conversation control hands the whole act to the controller: it creates the conversation, asks
+  // which project it runs in, and only then reveals the chat. The switcher's own job is to get out of the
+  // way, so the project question is not raised behind the list it was started from.
+  it('hands a new conversation to the controller and dismisses the switcher', async () => {
     const composed = vi.fn();
     window.addEventListener(BRAIN_COMPOSE_EVENT, composed);
-    renderPanel();
+    const onNavigate = vi.fn();
+    renderPanel({ onNavigate });
     fireEvent.click(screen.getByRole('button', { name: /New chat|Nová konverzace/i }));
-    expect(ctrl.switchSession).toHaveBeenCalledWith({ fresh: true });
-    await waitFor(() => expect(composed).toHaveBeenCalled());
+    expect(ctrl.startNewConversation).toHaveBeenCalledTimes(1);
+    expect(ctrl.switchSession).not.toHaveBeenCalled();
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    // The composer is revealed once the project question is settled, which is the controller's half.
+    await Promise.resolve();
+    expect(composed).not.toHaveBeenCalled();
     window.removeEventListener(BRAIN_COMPOSE_EVENT, composed);
   });
 

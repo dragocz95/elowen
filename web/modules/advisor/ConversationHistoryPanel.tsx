@@ -8,7 +8,7 @@ import { useToast } from '../../components/ui/Toast';
 import { ActionMenu, type ActionMenuItem } from '../../components/ui/ActionMenu';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { elowenClient } from '../../lib/elowenClient';
-import { openBrainComposer, openBrainSession } from '../../lib/brainDock';
+import { openBrainSession } from '../../lib/brainDock';
 import { localDateTime, formatTokens } from '../../lib/format';
 import {
   buildConversationTree,
@@ -166,7 +166,7 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
   const { t, locale } = useTranslation();
   const { toast } = useToast();
   const qc = useQueryClient();
-  const { sessions, switchSession, deleteSession } = useBrainChat();
+  const { sessions, startNewConversation, deleteSession } = useBrainChat();
   const activityLabels: ActivityLabels = {
     idle: t.chat.activityIdle,
     working: t.chat.activityWorking,
@@ -235,11 +235,9 @@ export function ConversationHistoryPanel({ onNavigate, homeLink = false }: {
     setSearch('');
     dismiss();
     if (opts.session) { openBrainSession(opts.session, true); return; }
-    // A new conversation has no id to request. Switch first, then ask for the live conversation with an
-    // empty composer draft — the same event the launcher raises, which reveals the chat and focuses it.
-    void switchSession(opts)
-      .then(() => openBrainComposer())
-      .catch(() => toast(t.brainChat.searchOpenError, 'error'));
+    // A new conversation has no id to request. The controller creates it and asks which project it runs
+    // in; once that is settled it reveals the live conversation with an empty composer draft.
+    void startNewConversation().catch(() => toast(t.brainChat.searchOpenError, 'error'));
   };
 
   // A rename resolves exactly once. Enter and blur commit; Escape cancels. The guard stops the blur that
