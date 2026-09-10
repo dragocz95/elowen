@@ -38,13 +38,17 @@ export function isReservedProjectSlug(slug: string): boolean {
 /** Where a managed project is mounted inside its own container, and therefore the only directory its
  *  turns ever see. Derived from the project slug so the agent, the tool rows and the container all name
  *  the same thing (`/kolin`) instead of an anonymous `/workspace`. Each project has its own container,
- *  so the name only has to be a valid single top-level directory; an unusable slug falls back to the
- *  registry identity, which is unique by construction.
+ *  so the name only has to be a valid single top-level directory; an unusable slug — and a slug that
+ *  names a base-image directory, which the container refuses as a mount target — falls back to the
+ *  registry identity, which is unique by construction and never reserved.
+ *
+ *  Creation refuses a reserved slug, so the fallback covers only rows that predate that refusal: without
+ *  it such a project can be created and never started, and its slug is not patchable.
  *
  *  The sandbox plugin mirrors this function in `plugins/sandbox/lib/containerPaths.mjs` (a bundled
  *  plugin is plain `.mjs` and cannot import core at runtime); `tests/plugins/managedGuestRoot.test.ts`
  *  holds the two in step. */
 export function managedGuestRoot(slug: string | undefined, projectId: number): string {
   const name = guestMountName(slug);
-  return /^[a-z0-9][a-z0-9-]*$/.test(name) ? `/${name}` : `/project-${projectId}`;
+  return /^[a-z0-9][a-z0-9-]*$/.test(name) && !RESERVED_GUEST_ROOTS.has(name) ? `/${name}` : `/project-${projectId}`;
 }

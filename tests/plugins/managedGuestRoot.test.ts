@@ -13,6 +13,10 @@ const SAMPLES: [string | undefined, number, string][] = [
   ['-', 7, '/project-7'],
   ['', 8, '/project-8'],
   [undefined, 12, '/project-12'],
+  // A row from before creation refused a reserved slug can still hold one. The name is unusable as a
+  // mount target, so it takes the registry identity — otherwise the project exists and never starts.
+  ['etc', 13, '/project-13'],
+  ['Workspace', 14, '/project-14'],
 ];
 
 describe('managed project mount point', () => {
