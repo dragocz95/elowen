@@ -757,6 +757,7 @@ export const sk = {
     columnProject: 'Projekt',
     columnPath: 'Cesta',
     columnSummary: 'Súhrn',
+    columnStatus: 'Stav',
     membersCount: '{n} priradených používateľov',
     detailSections: 'Sekcie projektu',
     tabOverview: 'Prehľad',

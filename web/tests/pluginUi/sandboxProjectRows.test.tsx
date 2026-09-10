@@ -81,8 +81,14 @@ describe('sandbox contribution to the Project register rows', () => {
 
   it('reads each managed row state from the plugin and names it in the plugin words', async () => {
     mount();
-    expect((await screen.findAllByRole('img', { name: strings.state_running })).length).toBeGreaterThan(0);
-    expect((await screen.findAllByRole('img', { name: strings.state_stopped })).length).toBeGreaterThan(0);
+    const running = await screen.findAllByRole('img', { name: strings.state_running });
+    const stopped = await screen.findAllByRole('img', { name: strings.state_stopped });
+    expect(running.length).toBeGreaterThan(0);
+    expect(stopped.length).toBeGreaterThan(0);
+    // The plugin owns the choice of glyph per state: the run glyph for a running environment, the stop
+    // square for a cold one — real state glyphs rather than anonymous dots.
+    expect(running[0]).toHaveClass('lucide-play');
+    expect(stopped[0]).toHaveClass('lucide-square');
     // A host project has no environment, so the plugin says nothing about its row.
     const hostRow = screen.getByRole('button', { name: 'Open project elowen' }).closest('[role="row"]') as HTMLElement;
     expect(within(hostRow).queryByRole('img', { name: strings.state_running })).toBeNull();

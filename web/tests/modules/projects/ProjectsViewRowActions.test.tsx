@@ -1,5 +1,5 @@
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { ToastProvider } from '../../../components/ui/Toast';
@@ -40,8 +40,8 @@ const contribution = {
   requiresApiVersion: 4,
   projectRows: () => ({
     status: {
-      3: { label: 'Running', icon: 'CircleDot', tone: 'success' },
-      5: { label: 'Starting', icon: 'CircleDot', tone: 'accent', busy: true },
+      3: { label: 'Running', icon: 'Play', tone: 'success' },
+      5: { label: 'Starting', icon: 'Loader2', tone: 'accent', busy: true },
     },
     actions: {
       3: [
@@ -72,18 +72,22 @@ describe('Project register rows: environment state and lifecycle actions', () =>
   });
 
   // The register used to say only "Managed environment" — the same six words whether the container was
-  // running, cold or broken. The state is beside it now, as a glyph with the state as its accessible name.
+  // running, cold or broken. The state is at the row's far end now, as a glyph with the state as its
+  // accessible name.
   it('shows each managed row its own environment state, tone included', async () => {
     mount();
     const running = await screen.findAllByRole('img', { name: 'Running' });
-    expect(running.length).toBeGreaterThan(0);
+    expect(running).toHaveLength(1);
     expect(running[0]!.closest('[data-project-row-status]')).toHaveAttribute('data-project-row-status', 'success');
-    // An operation in flight is a spinner rather than a dot, and still says what it is.
+    // An operation in flight is a spinner rather than a glyph, and still says what it is.
     const starting = await screen.findAllByRole('status', { name: 'Starting' });
     expect(starting[0]!.closest('[data-project-row-status]')).toHaveAttribute('data-project-row-status', 'busy');
-    // The state sits with the path presentation, in both the wide column and the compact one.
-    const row = screen.getByRole('button', { name: 'Open project analysis' }).closest('[role="row"]')!;
-    expect(within(row as HTMLElement).getAllByRole('img', { name: 'Running' })).toHaveLength(2);
+    // One status per row, directly left of the row actions and on the same icon size the action menu's
+    // kebab draws, so the two read as one control band.
+    const menuCell = screen.getByRole('button', { name: 'analysis: Actions' }).closest('[role="cell"]') as HTMLElement;
+    expect(menuCell.previousElementSibling).toBe(running[0]!.closest('[role="cell"]'));
+    expect(running[0]).toHaveAttribute('width', '16');
+    expect(menuCell.querySelector('svg')).toHaveAttribute('width', '16');
     // A row nobody contributed a state for carries none rather than an unknown-state glyph.
     expect(screen.queryByRole('img', { name: 'Stopped' })).toBeNull();
   });

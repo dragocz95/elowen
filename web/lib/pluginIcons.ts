@@ -1,4 +1,4 @@
-import { Activity, BarChart3, Blocks, Bot, Box, Boxes, Calendar, Camera, ChartPie, Circle, CircleAlert, CircleDashed, CircleDot, CircleSlash, Clock, Cloud, Code2, Contact, Database, FileText, Flag, Folder, GitBranch, GitFork, Github, Globe, GraduationCap, KanbanSquare, LayoutDashboard, Lightbulb, ListChecks, MessagesSquare, Play, Puzzle, Rocket, RotateCcw, Server, Settings2, ShieldAlert, Sparkles, Square, SquareTerminal, Terminal, Wrench, Zap, type LucideIcon } from 'lucide-react';
+import { Activity, BarChart3, Blocks, Bot, Box, Boxes, Calendar, Camera, ChartPie, Circle, CircleAlert, CircleDashed, CircleDot, CircleSlash, Clock, Cloud, Code2, Contact, Database, FileText, Flag, Folder, GitBranch, GitFork, Github, Globe, GraduationCap, KanbanSquare, LayoutDashboard, Lightbulb, ListChecks, Loader2, MessagesSquare, Play, Puzzle, Rocket, RotateCcw, Server, Settings2, ShieldAlert, Sparkles, Square, SquareTerminal, Terminal, TriangleAlert, Wrench, Zap, type LucideIcon } from 'lucide-react';
 
 /** Curated lucide names a plugin manifest may reference for its nav/settings entries. A closed map, not
  *  a dynamic `lucide-react` lookup — importing the whole icon set for arbitrary names would defeat
@@ -19,10 +19,11 @@ const ICONS: Record<string, LucideIcon> = {
   Activity, BarChart3, Blocks, Bot, Box, Boxes, Calendar, ChartPie, Clock, Cloud, Code2, Contact, Database, FileText,
   Flag, Folder, GitBranch, GitFork, Github, Globe, GraduationCap, KanbanSquare, LayoutDashboard, Lightbulb, ListChecks,
   MessagesSquare, Puzzle, Rocket, Server, Settings2, ShieldAlert, Sparkles, SquareTerminal, Terminal, Wrench, Zap,
-  // Register-row vocabulary: the lifecycle STATES a plugin reports for a row (the dot, the dashed ring,
-  // the alert, the slash) and the ACTIONS it offers on it. Same closed map for the same reason — a name
-  // this file does not carry silently becomes a puzzle piece.
-  Circle, CircleAlert, CircleDashed, CircleDot, CircleSlash, Camera, Play, RotateCcw, Square,
+  // Register-row vocabulary: the lifecycle STATES a plugin reports for a row — the run glyph, the stop
+  // square, the in-flight spinner, the dashed "not created yet" ring, the alert and the slash — and the
+  // ACTIONS it offers on it. Same closed map for the same reason — a name this file does not carry
+  // silently becomes a puzzle piece.
+  Circle, CircleAlert, CircleDashed, CircleDot, CircleSlash, Camera, Loader2, Play, RotateCcw, Square, TriangleAlert,
 };
 
 /** The names a manifest may use. Exported for the contract test, which is the only reason a caller ever

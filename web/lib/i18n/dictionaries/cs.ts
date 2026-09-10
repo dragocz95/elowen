@@ -763,6 +763,7 @@ export const cs = {
     columnProject: 'Projekt',
     columnPath: 'Cesta',
     columnSummary: 'Souhrn',
+    columnStatus: 'Stav',
     membersCount: '{n} přiřazených uživatelů',
     detailSections: 'Sekce projektu',
     tabOverview: 'Přehled',
