@@ -53,27 +53,51 @@ function setup() {
   const sql = openDb(':memory:');
   const db = makePluginDb(sql, 'sandbox', { canMigrate: true });
   const project: any = { id: 7, executionKind: 'managed', lifecycle: 'active', path: '/not-a-host-path' };
+  let authorizeHook: (() => void) | null = null;
   const stores = {
     usersRead: { list: () => [{ id: 1 }], isAdmin: () => false, mayUsePlugin: () => true },
-    userProjects: { canAccess: () => true, canManage: () => true },
+    // `canAccess` is consulted by `authorize`, which runs INSIDE mint and after `ready` has returned its
+    // row. A test needing something to happen in exactly that window hangs it here.
+    userProjects: { canAccess: () => { authorizeHook?.(); return true; }, canManage: () => true },
     projects: { get: (id: number) => (id === 7 ? project : null), list: () => [project], beginDeletion: () => true, finishDeletion: vi.fn(() => true) },
   };
   const ctx: any = { db: () => db, host: { stores: () => stores }, currentAccountUserId: () => null, currentAccess: () => ({ readOnly: false }), config: {} };
   initSandboxDb(ctx);
 
+  const masked = new Set<string>();
   const containers = new Map<string, ReturnType<typeof parseCreate>>();
   const volumes = new Map<string, Record<string, unknown>>();
   const calls: Call[] = [];
   let state = 'created';
 
+  // A small filesystem of its own, so a write is observable by a later read and the compare-and-swap has
+  // something real to swap against. `hook` lets a test hold an operation open inside the guest, which is
+  // how overlap between concurrent operations is observed rather than assumed.
+  const files = new Map<string, string>([['/workspace/tiny.txt', 'hello']]);
+  const versionOf = (body: string) => `v${body.length}:${body.slice(0, 8)}`;
+  let hook: ((op: any) => Promise<void>) | null = null;
+
   // The guest helper answers the operation it was handed on stdin, so a test that asks for a read cannot
   // silently be served a stat.
   const guestReply = (input: string | undefined) => {
     const op = JSON.parse(String(input ?? '{}'));
-    const entry = { path: op.path, kind: 'file', size: 5, modifiedAt: '2026-01-01T00:00:00Z', version: 'v1' };
-    if (op.kind === 'stat') return { ok: true, result: { kind: 'stat', entry } };
+    const body = files.get(op.path);
+    const entry = { path: op.path, kind: 'file', size: body?.length ?? 0, modifiedAt: '2026-01-01T00:00:00Z', version: versionOf(body ?? '') };
+    if (op.kind === 'stat') return { ok: true, result: { kind: 'stat', entry: body === undefined ? null : entry } };
     if (op.kind === 'list') return { ok: true, result: { kind: 'list', entries: [entry], truncated: false, nextCursor: null } };
-    if (op.kind === 'read') return { ok: true, result: { kind: 'read', base64: Buffer.from('hello').toString('base64'), version: 'v1', totalBytes: 5 } };
+    if (op.kind === 'walk') return { ok: true, result: { kind: 'walk', root: op.path, rootKind: 'directory', entries: [...files.keys()].map(path => ({ path, kind: 'file', size: files.get(path)!.length, mtime: 1767225600000 })), truncated: false } };
+    if (op.kind === 'read') {
+      if (body === undefined) return { ok: false, error: { code: 'not_found', message: `No such file: ${op.path}` } };
+      return { ok: true, result: { kind: 'read', base64: Buffer.from(body).toString('base64'), version: versionOf(body), totalBytes: body.length } };
+    }
+    if (op.kind === 'write') {
+      const current = body === undefined ? null : versionOf(body);
+      if (current !== (op.expectedVersion ?? null)) return { ok: false, error: { code: 'version_conflict', message: 'File changed while writing' } };
+      // A rename over the target: a reader sees the whole old body or the whole new one, never a mixture.
+      const next = Buffer.from(op.base64, 'base64').toString();
+      files.set(op.path, next);
+      return { ok: true, result: { kind: 'write', entry: { ...entry, size: next.length, version: versionOf(next) } } };
+    }
     return { ok: false, error: { code: 'unsupported', message: `unexpected ${op.kind}` } };
   };
 
@@ -113,7 +137,7 @@ function setup() {
         const created = parseCreate(args);
         const name = args.at(-1)!;
         // `--opt` repeats, so the device comes from the raw pairs rather than the flag record.
-        const device = args.filter((value, index) => args[index - 1] === '--opt').find((value) => value.startsWith('device='))!;
+        const device = args.filter((_, index) => args[index - 1] === '--opt').find((value) => value.startsWith('device='))!;
         volumes.set(name, { Name: name, Labels: created.labels, Driver: 'local', Options: { type: 'none', o: 'bind', device: device.slice('device='.length) } });
         return reply(0);
       }
@@ -127,11 +151,25 @@ function setup() {
       if (args[0] === 'exec') {
         // The launcher: `exec --interactive <id> systemd-run … -- <argv>`.
         if (args[1] === '--interactive') {
-          if (args.includes('/usr/bin/python3')) return reply(0, JSON.stringify(guestReply(options?.input)));
+          if (args.includes('/usr/bin/python3')) {
+            // The hook runs INSIDE the guest execution, while the lease that operation holds is held.
+            if (hook) await hook(JSON.parse(String(options?.input ?? '{}')));
+            return reply(0, JSON.stringify(guestReply(options?.input)));
+          }
           return reply(0);
         }
-        // A launcher that settled normally leaves no unit behind; that is the cheap release path.
-        if (args.includes('show')) return reply(0, 'LoadState=not-found\nActiveState=inactive\nSubState=dead\nControlGroup=\n');
+        // Masking a unit changes what `show` says about it afterwards, and a cancellation VERIFIES that
+        // change before it calls the guest terminated. A fake that always answered "no such unit" would
+        // let a cancellation look impossible on a path that works.
+        const unit = args.at(-1)!;
+        if (args.includes('mask') && !args.includes('unmask')) masked.add(unit);
+        if (args.includes('unmask')) masked.delete(unit);
+        if (args.includes('show')) {
+          return masked.has(unit)
+            ? reply(0, 'LoadState=masked\nActiveState=inactive\nSubState=dead\nControlGroup=\n')
+            // A launcher that settled normally leaves no unit behind; that is the cheap release path.
+            : reply(0, 'LoadState=not-found\nActiveState=inactive\nSubState=dead\nControlGroup=\n');
+        }
         return reply(0);
       }
       return reply(0);
@@ -142,7 +180,9 @@ function setup() {
   const storage = new ContainerStorage(podman);
   const runtime = createEnvironmentRuntime({ ctx, db, dataDir: root, podman, storage, daemon: true });
   cleanup.push(() => { runtime.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
-  return { runtime, db, calls, executor, root };
+  return { runtime, db, calls, executor, root, files, versionOf,
+    setAuthorizeHook: (fn: (() => void) | null) => { authorizeHook = fn; },
+    setHook: (fn: ((op: any) => Promise<void>) | null) => { hook = fn; } };
 }
 
 const input = { project: { kind: 'managed', projectId: 7 }, accountUserId: 1 } as const;
@@ -214,5 +254,169 @@ describe('managed file operation Podman cost', () => {
     // One container inspection, and one batched volume inspection for all three project volumes.
     expect(state.calls.filter((call) => call.args[0] === 'inspect')).toHaveLength(1);
     expect(state.calls.filter((call) => call.args[0] === 'volume' && call.args[1] === 'inspect')).toHaveLength(1);
+  });
+});
+
+/** WHICH file operations wait for each other.
+ *
+ *  One exclusive repository lease used to wrap every file operation, so a batch of independent reads ran
+ *  strictly one at a time and queued behind whatever mutation was in front of them. Only the operations
+ *  that change the tree serialize now. Nothing that made a read safe came from that lease, and these
+ *  tests pin both halves of that claim: reads overlap, mutations do not, and everything a caller could
+ *  observe about correctness is unchanged. */
+describe('managed file operation concurrency', () => {
+  /** Runs `work` while recording how many guest operations were in flight at once. */
+  async function overlap(state: Awaited<ReturnType<typeof provisioned>>, work: () => Promise<unknown>) {
+    let inFlight = 0;
+    let peak = 0;
+    const seen: string[] = [];
+    state.setHook(async (op) => {
+      seen.push(op.kind);
+      inFlight += 1;
+      peak = Math.max(peak, inFlight);
+      // Long enough that a serialized pair cannot overlap by accident, short enough that these tests add
+      // little wall time to a suite that already runs everything else in parallel around them.
+      await new Promise((resolve) => setTimeout(resolve, 30));
+      inFlight -= 1;
+    });
+    try { return { result: await work(), peak, seen }; } finally { state.setHook(null); }
+  }
+
+  const read = (state: any, path = '/workspace/tiny.txt') =>
+    state.runtime.projectFiles({ ...input, operation: { kind: 'read', path, offset: 0, length: 64, maxBytes: 64 } });
+  const walk = (state: any) => state.runtime.projectFiles({ ...input, operation: { kind: 'walk', path: '/workspace', limit: 10001, skip: [] } });
+  const write = (state: any, body: string, expectedVersion: string | null) =>
+    state.runtime.projectFiles({ ...input, operation: { kind: 'write', path: '/workspace/tiny.txt', base64: Buffer.from(body).toString('base64'), expectedVersion } });
+
+  it('runs two reads and a walk at the same time', async () => {
+    const state = await provisioned();
+    const { peak, seen } = await overlap(state, () => Promise.all([read(state), read(state), walk(state)]));
+    expect(seen.sort()).toEqual(['read', 'read', 'walk']);
+    expect(peak).toBe(3);
+    expect(state.db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_execution_leases').get()).toEqual({ n: 0 });
+  });
+
+  it('still runs mutations one at a time', async () => {
+    const state = await provisioned();
+    // Each write swaps against the version the one before it produced, so they can only succeed in order.
+    const { peak } = await overlap(state, async () => {
+      await write(state, 'first', state.versionOf('hello'));
+      await write(state, 'second', state.versionOf('first'));
+    });
+    expect(peak).toBe(1);
+    expect(state.files.get('/workspace/tiny.txt')).toBe('second');
+
+    // Issued CONCURRENTLY. Both reach the guest, and the recorder shows they did not run there at the
+    // same moment — the conflict below would look identical if the loser had merely been rejected early,
+    // so exclusivity has to be measured rather than inferred from it.
+    const race = await overlap(state, () => Promise.allSettled([
+      write(state, 'a'.repeat(6), state.versionOf('second')),
+      write(state, 'b'.repeat(9), state.versionOf('second')),
+    ]));
+    expect(race.seen).toEqual(['write', 'write']);
+    expect(race.peak).toBe(1);
+
+    // Whichever landed first, the other is refused rather than silently overwriting it.
+    const settled = race.result as PromiseSettledResult<unknown>[];
+    expect(settled.filter((entry) => entry.status === 'fulfilled')).toHaveLength(1);
+    expect(String((settled.find((entry) => entry.status === 'rejected') as PromiseRejectedResult).reason)).toMatch(/version_conflict|changed/i);
+  });
+
+  it('never lets a read observe a partly written file', async () => {
+    const state = await provisioned();
+    const bodies = new Set<string>();
+    for (let round = 0; round < 8; round += 1) {
+      const before = state.files.get('/workspace/tiny.txt')!;
+      const after = `body-${round}-${'x'.repeat(round)}`;
+      const [, ...reads] = await Promise.allSettled([
+        write(state, after, state.versionOf(before)),
+        read(state), read(state), read(state),
+      ]);
+      for (const outcome of reads) {
+        if (outcome.status === 'rejected') { expect(String(outcome.reason)).toMatch(/conflict|changed/i); continue; }
+        bodies.add(Buffer.from((outcome.value as any).base64, 'base64').toString());
+      }
+    }
+    // Every body a read returned is a body some write actually produced — never a mixture of two.
+    for (const body of bodies) expect(body === 'hello' || /^body-\d+-x*$/.test(body)).toBe(true);
+    expect(state.db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_execution_leases').get()).toEqual({ n: 0 });
+  });
+
+  /** A promise a test can hold open and release when it chooses. */
+  function gate() {
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => { release = resolve; });
+    return { promise, release };
+  }
+
+  const files = (state: any) => state.db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_execution_leases WHERE kind='files'").get() as { n: number };
+
+  // Dropping the repository lease from reads must not weaken the durable one, which is what actually
+  // fences an environment being stopped, revoked or regenerated underneath a running operation. These
+  // two hold the reads open INSIDE the guest and act while they are there, because a test that waits for
+  // them to finish first proves nothing about what happens to work in flight.
+  it.each([
+    ['stopped', async (state: any) => { await state.runtime.requestEnvironment({ ...input, requestId: 'stop-open', action: { kind: 'stop' } }); }],
+    ['revoked', async (state: any) => { await state.runtime.revokeProjectAccess({ projectId: 7, accountUserId: 1 }); }],
+  ])('observes and cancels every read lease when the environment is %s while they are open', async (_label, act) => {
+    const state = await provisioned();
+    const held = gate();
+    const allIn = gate();
+    let entered = 0;
+    state.setHook(async () => {
+      if ((entered += 1) === 3) allIn.release();
+      await held.promise;
+    });
+
+    const running = Promise.allSettled([read(state), read(state), walk(state)]);
+    await allIn.promise;
+    // All three are genuinely suspended inside the guest right now, each holding a durable lease — which
+    // is the state a stop or a revocation has to be able to see and act on.
+    expect(files(state)).toEqual({ n: 3 });
+
+    await act(state);
+    held.release();
+    await running;
+    state.setHook(null);
+    await state.runtime.reconcile();
+    expect(state.db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_execution_leases').get()).toEqual({ n: 0 });
+  });
+
+  // The generation moves AFTER `ready` has resolved its row and before the lease is minted, which is the
+  // window a stale `expectedGeneration` never reaches — that one is refused earlier, by a check the
+  // caller supplied the answer to. What has to hold here is that minting itself refuses a row that has
+  // gone out of date under a read already on its way.
+  it('refuses to mint when the generation moves between ready and mint', async () => {
+    const state = await provisioned();
+    // `authorize` runs twice per operation: once inside `ready`, which resolves the row, and again inside
+    // `mint`. Bumping on the SECOND call lands the change in the gap between them, which is precisely the
+    // window under test — bumping on the first would simply hand `ready` the newer row.
+    let calls = 0;
+    let bumped = false;
+    state.setAuthorizeHook(() => {
+      if ((calls += 1) !== 2) return;
+      bumped = true;
+      state.db.prepare("UPDATE p_sandbox_runtimes SET generation=generation+1 WHERE kind='project' AND resource_id='7'").run();
+    });
+
+    await expect(read(state)).rejects.toThrow(/environment changed|busy/i);
+    state.setAuthorizeHook(null);
+    expect(bumped).toBe(true);
+    expect(state.db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_execution_leases').get()).toEqual({ n: 0 });
+  });
+
+  it('refuses a read whose caller names a generation that is already stale', async () => {
+    const state = await provisioned();
+    const before = (await state.runtime.environmentFor(input)).generation;
+    await expect(state.runtime.projectFiles({
+      ...input, expectedGeneration: before + 5, operation: { kind: 'read', path: '/workspace/tiny.txt', offset: 0, length: 64, maxBytes: 64 },
+    })).rejects.toThrow(/generation/i);
+    expect(state.db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_execution_leases').get()).toEqual({ n: 0 });
+  });
+
+  it('leaves no lease behind when a read fails inside the guest', async () => {
+    const state = await provisioned();
+    await expect(read(state, '/workspace/absent.txt')).rejects.toThrow(/No such file/);
+    expect(state.db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_execution_leases').get()).toEqual({ n: 0 });
   });
 });
