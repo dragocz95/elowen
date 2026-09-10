@@ -90,6 +90,40 @@ describe('OperationProgressDialog', () => {
     expect(onClose).toHaveBeenCalledWith({ running: false });
   });
 
+  // Every call site hands this dialog inline arrows, so a parent that re-renders while the success is on
+  // screen gives it fresh callback identities. The self-close must survive that: it is what tells the
+  // caller the operation is over.
+  it('closes itself after a success even when the parent re-renders during the window', async () => {
+    const onSettled = vi.fn();
+    const onClose = vi.fn();
+    const { wrapper: Wrapper } = createWrapper();
+    const settled = operation({ status: 'succeeded', percent: 100, stepIndex: 4, stepLabel: 'initialize' });
+    const view = (tick: number) => (
+      <Wrapper>
+        <OperationProgressDialog
+          open
+          title={`Starting the environment ${tick}`}
+          operation={settled}
+          onSettled={() => onSettled()}
+          onClose={(info) => onClose(info)}
+          successDelayMs={20}
+        />
+      </Wrapper>
+    );
+    const { rerender } = render(view(1));
+    rerender(view(2));
+    rerender(view(3));
+    await waitFor(() => expect(onSettled).toHaveBeenCalledOnce());
+    expect(onClose).toHaveBeenCalledWith({ running: false });
+  });
+
+  // A seed read that failed leaves no operation to render. Without it the dialog shows "Preparing" for
+  // as long as the window is open, which is the one thing the transport error already knows is wrong.
+  it('reports a failed read instead of a bar that never moves', () => {
+    mount({ operation: null, loadError: 'operation read failed (503)' });
+    expect(screen.getByRole('alert')).toHaveTextContent('operation read failed (503)');
+  });
+
   it('keeps the log tail behind an expandable control rather than in the way', () => {
     mount({ logTail: ['STEP 1/4: FROM debian', 'STEP 2/4: RUN apt-get update'] });
     const toggle = screen.getByRole('button', { name: 'Show log' });

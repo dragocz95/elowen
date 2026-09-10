@@ -1,13 +1,10 @@
 'use client';
 import { useEffect, useId, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { Loader2 } from 'lucide-react';
 import type { EnvironmentOperation } from '../../../src/shared/wireContract';
 import { useTranslation } from '../../lib/i18n';
 import { Button } from './Button';
-import { ModalBody, ModalFooter } from './Modal';
-import { focusOverlaySurface, useOverlayIsolation } from './overlayStack';
-import { Dialog, DialogContent, DialogHeader, DialogOverlay } from './shadcn/dialog';
+import { Modal, ModalBody, ModalFooter } from './Modal';
 import { Progress } from './shadcn/progress';
 
 export interface OperationProgressDialogProps {
@@ -34,7 +31,9 @@ export interface OperationProgressDialogProps {
 
 const RUNNING_STATUSES = new Set(['pending', 'running']);
 
-/** One installer-style progress window, for every environment lifecycle operation there is.
+/** One installer-style progress window, for every environment lifecycle operation there is. It is
+ *  `Modal` content: the overlay, the focus policy and the dismissal all stay with the one component that
+ *  owns them, and only the geometry (`sm`, centered) is declared here.
  *
  *  It is a VIEW: it renders the durable operation row the daemon pushes and owns no lifecycle state of
  *  its own. The row already declares its step list, its position in it and a percent that is a real
@@ -65,14 +64,8 @@ function OpenOperationProgressDialog({
 }: OperationProgressDialogProps) {
   const { t } = useTranslation();
   const s = t.operationProgress;
-  const titleId = useId();
   const logId = useId();
-  const dialogRef = useRef<HTMLDivElement>(null);
-  const overlayRef = useRef<HTMLDivElement>(null);
-  const [mounted, setMounted] = useState(false);
   const [showLog, setShowLog] = useState(false);
-  useEffect(() => setMounted(true), []);
-  const { restoreFocus } = useOverlayIsolation({ enabled: mounted, rootRef: overlayRef });
 
   const status = operation?.status ?? 'pending';
   const running = RUNNING_STATUSES.has(status);
@@ -82,89 +75,87 @@ function OpenOperationProgressDialog({
 
   // A success does not need acknowledging. It closes itself after a beat, so the common path costs no
   // click at all, and the caller is told once so it can settle whatever it was showing.
+  //
+  // The callbacks are read at fire time rather than watched. Every call site passes an inline arrow, so
+  // holding them in the dependency list armed the timer against a render and disarmed it on the next
+  // one: any parent re-render inside the window cancelled the close and the window then hung on `Done`.
   const settledRef = useRef(false);
+  const settle = useRef<() => void>(() => {});
+  settle.current = () => { onSettled?.(); onClose({ running: false }); };
   useEffect(() => {
     if (!succeeded || settledRef.current) return;
     settledRef.current = true;
-    const timer = setTimeout(() => { onSettled?.(); onClose({ running: false }); }, successDelayMs);
+    const timer = setTimeout(() => settle.current(), successDelayMs);
     return () => clearTimeout(timer);
-  }, [succeeded, successDelayMs, onSettled, onClose]);
+  }, [succeeded, successDelayMs]);
 
   const percent = operation?.percent ?? null;
   const indeterminate = percent === null;
   const stepTotal = operation?.stepTotal ?? 0;
   const stepLabel = operation?.stepLabel ?? null;
   const stepText = stepLabel ? (s.steps[stepLabel as keyof typeof s.steps] ?? stepLabel) : null;
+  // A read that never arrived is the one thing the operation row cannot report for itself: with nothing
+  // to render, "Preparing" would sit there for as long as the window stays open.
   const message = failed ? (operation?.error ?? loadError ?? s.failed)
     : succeeded ? s.succeeded
-      : stepText ?? s.preparing;
+      : loadError ?? stepText ?? s.preparing;
+  const problem = failed || (!succeeded && loadError !== null);
   const counter = stepTotal > 0 && running
     ? s.stepOf.replace('{current}', String((operation?.stepIndex ?? 0) + 1)).replace('{total}', String(stepTotal))
     : null;
 
-  if (!mounted) return null;
-  return createPortal(
-    <Dialog open onOpenChange={(next) => { if (!next) close(); }}>
-      <DialogOverlay ref={overlayRef} presentation="center">
-        <DialogContent
-          ref={dialogRef}
-          presentation="center"
-          size="sm"
-          aria-labelledby={titleId}
-          aria-busy={running || undefined}
-          data-elowen-modal
-          data-testid="operation-progress-dialog"
-          onInteractOutside={(event) => event.preventDefault()}
-          onOpenAutoFocus={(event) => { event.preventDefault(); if (dialogRef.current) focusOverlaySurface(dialogRef.current); }}
-          onCloseAutoFocus={(event) => { event.preventDefault(); restoreFocus(); }}
-        >
-          <DialogHeader title={title} titleId={titleId} closeLabel={t.common.close} onClose={close} />
-          <ModalBody gap={4}>
-            <div className="flex items-center gap-2 text-sm text-foreground">
-              {running ? <Loader2 size={14} className="shrink-0 animate-spin text-muted-foreground" aria-hidden /> : null}
-              <span role={failed ? 'alert' : 'status'} className="min-w-0 break-words">{message}</span>
-            </div>
-            <div className="flex flex-col gap-1.5">
-              <Progress
-                aria-label={s.progressLabel}
-                value={indeterminate ? null : percent}
-                indicatorValue={indeterminate ? 100 : percent}
-                indicatorClassName={indeterminate ? 'animate-pulse opacity-60' : failed ? 'bg-destructive' : undefined}
-              />
-              <div className="flex items-center justify-between text-tiny text-muted-foreground">
-                <span>{counter ?? ''}</span>
-                <span>{indeterminate ? s.indeterminate : `${Math.round(percent)} %`}</span>
-              </div>
-            </div>
-            {logTail.length ? (
-              <div className="flex flex-col gap-1.5">
-                <button
-                  type="button"
-                  aria-expanded={showLog}
-                  aria-controls={logId}
-                  onClick={() => setShowLog((current) => !current)}
-                  className="self-start text-xs text-muted-foreground underline-offset-2 hover:underline"
-                >
-                  {showLog ? s.hideLog : s.showLog}
-                </button>
-                {showLog ? (
-                  <pre
-                    id={logId}
-                    aria-label={s.logLabel}
-                    className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted p-2 font-mono text-tiny leading-relaxed text-muted-foreground"
-                  >{logTail.join('\n')}</pre>
-                ) : null}
-              </div>
+  return (
+    <Modal
+      title={title}
+      size="sm"
+      presentation="center"
+      aria-busy={running || undefined}
+      data-testid="operation-progress-dialog"
+      onClose={close}
+    >
+      <ModalBody gap={4}>
+        <div className="flex items-center gap-2 text-sm text-foreground">
+          {running ? <Loader2 size={14} className="shrink-0 animate-spin text-muted-foreground" aria-hidden /> : null}
+          <span role={problem ? 'alert' : 'status'} className="min-w-0 break-words">{message}</span>
+        </div>
+        <div className="flex flex-col gap-1.5">
+          <Progress
+            aria-label={s.progressLabel}
+            value={indeterminate ? null : percent}
+            indicatorValue={indeterminate ? 100 : percent}
+            indicatorClassName={indeterminate ? 'animate-pulse opacity-60' : failed ? 'bg-destructive' : undefined}
+          />
+          <div className="flex items-center justify-between text-tiny text-muted-foreground">
+            <span>{counter ?? ''}</span>
+            <span>{indeterminate ? s.indeterminate : `${Math.round(percent)} %`}</span>
+          </div>
+        </div>
+        {logTail.length ? (
+          <div className="flex flex-col gap-1.5">
+            <button
+              type="button"
+              aria-expanded={showLog}
+              aria-controls={logId}
+              onClick={() => setShowLog((current) => !current)}
+              className="self-start text-xs text-muted-foreground underline-offset-2 hover:underline"
+            >
+              {showLog ? s.hideLog : s.showLog}
+            </button>
+            {showLog ? (
+              <pre
+                id={logId}
+                aria-label={s.logLabel}
+                className="max-h-48 overflow-auto whitespace-pre-wrap rounded-md border border-border bg-muted p-2 font-mono text-tiny leading-relaxed text-muted-foreground"
+              >{logTail.join('\n')}</pre>
             ) : null}
-          </ModalBody>
-          <ModalFooter>
-            {failed && recreatable && onRecreate ? <Button variant="ghost" onClick={onRecreate}>{s.recreate}</Button> : null}
-            {failed && onRetry ? <Button onClick={onRetry}>{s.retry}</Button> : null}
-            <Button variant="ghost" onClick={close}>{running ? s.hide : t.common.close}</Button>
-          </ModalFooter>
-        </DialogContent>
-      </DialogOverlay>
-    </Dialog>,
-    document.body,
+          </div>
+        ) : null}
+      </ModalBody>
+      <ModalFooter>
+        {failed && recreatable && onRecreate ? <Button variant="ghost" onClick={onRecreate}>{s.recreate}</Button> : null}
+        {failed && onRetry ? <Button onClick={onRetry}>{s.retry}</Button> : null}
+        <Button variant="ghost" onClick={close}>{running ? s.hide : t.common.close}</Button>
+      </ModalFooter>
+    </Modal>
   );
 }
