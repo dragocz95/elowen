@@ -105,8 +105,6 @@ for (const lang of webLocales) {
 // here WITH the access site so the exemption stays verifiable.
 // ---------------------------------------------------------------------------
 const DYNAMIC_NAMESPACES = [
-  'activity',          // TaskContextLine: t.activity[activity]
-  'agent',             // AgentStatusDot: t.agent[state]
   'agents',            // AgentsTable: t.agents[a.status]
   'brain.limits',      // BrainLimitsModal: t.brain.limits[f.key] + t.brain.limits[`${f.key}Hint`]
   'brain.runtime',     // RuntimeLimitsModal: t.brain.runtime[f.key] + t.brain.runtime[`${f.key}Hint`]
@@ -117,24 +115,21 @@ const DYNAMIC_NAMESPACES = [
   'nav',               // useShellNavigation/TopBar: t.nav[world.id] / t.nav[module.id]
   'operationProgress.steps',   // OperationProgressDialog: t.operationProgress.steps[operation.stepLabel] — the daemon's declared step ids
   'operationProgress.actions', // ProjectPicker/ProjectEnvironmentSettings: t.operationProgress.actions[operation.action.kind]
-  'page',              // CommandPalette: t.page[m.id]
   'plugins',           // PluginsSection: t.plugins[CATEGORY_META[c].key]
-  'providers',         // settings/page + pickers: t.providers[p.id]
   'settings',          // settings/page deck sections: t.settings[id] per category
   'stats.contextCategory', // StatsModal: t.stats.contextCategory[category.id] — the context breakdown's categories
   'terminal.fonts',    // TerminalSection: t.terminal.fonts[id]
   'terminal.palette',  // TerminalSection: t.terminal.palette[key] — 21 palette slot labels
 ];
 
-// Keys the app itself no longer reads, kept because a plugin in the REGISTRY
-// (github.com/dragocz95/elowen-plugins) reads them through the runtime's useTranslation. That runtime
-// hands a bundle the core dictionary, so these are as live as any app key — the scan just cannot see
-// the consumer, which lives in another repository. Each entry names it, so removing one stays a
-// decision about that plugin.
-const REGISTRY_PLUGIN_KEYS = [
-  'managePicker.groupChannels', // cronjob JobsSettings: group label for the destination picker
-  'managePicker.groupThreads',  // cronjob JobsSettings: the same picker's thread group
-];
+// An exemption that names a namespace the dictionary no longer has protects nothing and hides the
+// next dead key behind a line nobody rechecks. Four of these had gone stale before this fired, so the
+// declaration itself is checked, exactly as the plugin string gate checks its computed reads.
+const namespaceExists = (path) =>
+  path.split('.').reduce((node, key) => (node && typeof node === 'object' ? node[key] : undefined), dictionaries.en) !== undefined;
+for (const ns of DYNAMIC_NAMESPACES) {
+  if (!namespaceExists(ns)) errors.push(`web: DYNAMIC_NAMESPACES exempts "${ns}", which no longer exists in the dictionary — delete the entry`);
+}
 
 function collectLeaves(dict, path = '', out = []) {
   for (const [key, value] of Object.entries(dict)) {
@@ -169,7 +164,6 @@ const sourceIdentifiers = new Set(sourceBlob.match(/[A-Za-z0-9_]+/g));
 
 for (const leaf of collectLeaves(dictionaries.en)) {
   if (DYNAMIC_NAMESPACES.some((ns) => leaf.path.startsWith(`${ns}.`))) continue;
-  if (REGISTRY_PLUGIN_KEYS.includes(leaf.path)) continue;
   if (!sourceIdentifiers.has(leaf.name)) {
     errors.push(`web: ${leaf.path} is never referenced by any web source (dead key — delete it from every locale, or add its namespace to DYNAMIC_NAMESPACES if it is accessed with a computed key)`);
   }
