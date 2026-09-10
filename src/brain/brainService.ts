@@ -40,7 +40,7 @@ import { GoalLoopService } from './service/goalLoop.js';
 import { LiveSessionSpawner } from './service/spawner.js';
 import { ConversationLifecycle } from './service/lifecycle.js';
 import { recordSessionEvent, recordWorkflowFinishMarker, scheduleReasoningMarker } from './service/sessionEvents.js';
-import { moveSessionWorkDir, switchableProjects, effectiveTurnWorkDir, type SwitchableProject } from './service/workDir.js';
+import { moveSessionWorkDir, switchableProjects, effectiveTurnWorkDir, liveManagedProject, turnWorkDir, type SwitchableProject } from './service/workDir.js';
 import { sameProjectExecution, type ProjectExecutionRef } from '../shared/projectExecution.js';
 import { runWithContributionUser } from '../plugins/policyContext.js';
 import { BrainTurnRunner, subagentResultReminder } from './service/turnRunner.js';
@@ -1612,7 +1612,13 @@ export class BrainService {
     // live cwd and its marker need a running session.
     const policy = live?.policy ?? this.d.policy?.(userId);
     if (!policy) throw new Error('brain not started');
-    const effective = effectiveTurnWorkDir({ policy, baseWorkDir: live?.workDir ?? this.d.store.getSession(sessionId)?.work_dir ?? undefined, accountUserId: userId, sessionId, projects: this.d.projects, sandbox, projectRef: ref, hostAuthorized: this.d.users.get(userId)?.is_admin === true });
+    // The base a target resolves against has to be a directory this machine actually has. A managed
+    // project's live cwd is a path inside its own container (`/sales-dashboard`), so inheriting it made a
+    // switch back to host execution resolve to that path — and persist it as the conversation's home —
+    // although nothing exists there. `turnWorkDir` applies the validation every turn already applies, and
+    // its fallback is the caller's own default host root.
+    const baseWorkDir = turnWorkDir(policy, live?.workDir ?? this.d.store.getSession(sessionId)?.work_dir ?? undefined, this.d.projectPath);
+    const effective = effectiveTurnWorkDir({ policy, baseWorkDir, accountUserId: userId, sessionId, projects: this.d.projects, sandbox, projectRef: ref, hostAuthorized: this.d.users.get(userId)?.is_admin === true });
     if (!effective.workDir) throw new Error('execution target has no working directory');
     // The resolver decides what a ref MEANS, and an explicit selection may not disagree with it. A
     // managed ref naming a host project — or one that no longer exists — resolves to neither, and
@@ -1682,11 +1688,13 @@ export class BrainService {
    *
    *  A managed project is the one conversation this cannot move: its directory lives inside the project's
    *  environment and is chosen by entering the project, so a client-reported cwd has nothing to say about
-   *  it. Refusing here keeps that the single way in. */
+   *  it. Refusing here keeps that the single way in. The gate asks whether the ref still names a LIVE
+   *  managed project, not merely a managed row: a ref whose project is gone already resolves every turn
+   *  on the host, and refusing there trapped such a conversation out of its own directory for good. */
   noteWorkDir(userId: number, dir: string, session?: string): { workDir: string } {
     const b = session ? this.sessions.get(this.lifecycle.ownedUserSession(userId, session)) : this.lifecycle.activeLive(userId);
     if (!b) throw new Error('brain not started');
-    if (this.d.store.getProjectExecution(b.sessionId)?.kind === 'managed') throw new Error('managed project directories must be selected through the environment');
+    if (liveManagedProject(this.d.projects, this.d.store.getProjectExecution(b.sessionId))) throw new Error('managed project directories must be selected through the environment');
     const sandbox = this.d.plugins?.peek()?.control('sandbox');
     return { workDir: moveSessionWorkDir({
       store: this.d.store,

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, realpathSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach } from 'vitest';
@@ -98,6 +98,7 @@ describe('host execution targets', () => {
  *  the environment control a managed selection needs. */
 function serviceFixture() {
   const db = openDb(':memory:'); databases.push(db);
+  const root = mkdtempSync(join(tmpdir(), 'host-target-')); roots.push(root);
   const store = new BrainStore(db);
   const projects = new ProjectStore(db);
   const users = new UserStore(db);
@@ -120,7 +121,9 @@ function serviceFixture() {
   const d = {
     store, projects, userProjects,
     runtime: undefined,
-    users: { ensureAdvisorToken: () => 'tok', get: () => ({ name: 'Filip', username: 'filip', is_admin: 1 }), isAdmin: () => true },
+    // The daemon's primary project root: what a host target with no directory of its own falls back to.
+    projectPath: () => root,
+    users: { ensureAdvisorToken: () => 'tok', get: () => ({ name: 'Filip', username: 'filip', is_admin: true }), isAdmin: () => true },
     policy: (id: number) => resolvePolicy({ projects, userProjects }, id),
     config: { providers: [{ id: 'relay', label: 'Relay', type: 'openai' as const, baseUrl: 'http://x/v1', models: ['m'], apiKey: 'k' }] },
     prompts: { render: () => 'PERSONA' },
@@ -132,7 +135,7 @@ function serviceFixture() {
       get: async () => undefined,
     },
   };
-  return { d, store, projects, owner };
+  return { d, store, projects, owner, root };
 }
 
 describe('the execution-change marker', () => {
@@ -260,6 +263,36 @@ describe('an execution selection the resolver does not accept', () => {
     const result = await service.selectProjectExecution(h.owner.id, { kind: 'host', projectId: host.id }, sessionId);
     expect(result.workDir).toBe(root);
     expect(h.store.getSession(sessionId)?.work_dir).toBe(root);
+  });
+
+  // The nameless host target has no directory of its own, so it took the live cwd as its base — and a
+  // managed project's live cwd is a path inside its own container. The switch therefore resolved to, and
+  // persisted, `/sales-dashboard`, a directory this machine does not have: the next turn and every cold
+  // respawn ran there.
+  it('leaves a managed project for a host directory that exists', async () => {
+    const h = serviceFixture();
+    h.d.runtime = await inMemoryModelRuntime() as never;
+    const project = h.projects.createForUser(h.owner.id, { slug: 'sales-dashboard' });
+    const service = new BrainService(h.d as never);
+    const { sessionId } = await service.start(h.owner.id);
+    expect((await service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: project.id }, sessionId)).workDir).toBe('/sales-dashboard');
+    const result = await service.selectProjectExecution(h.owner.id, { kind: 'host' }, sessionId);
+    expect(result.workDir).toBe(h.root);
+    expect(h.store.getSession(sessionId)?.work_dir).toBe(h.root);
+  });
+});
+
+// A stored managed ref can outlive its project. Every turn of that conversation then resolves on the
+// host (see `effectiveTurnWorkDir` and the Chetty shape in personalProjectExecution.test.ts), so the
+// gates that still read the ROW as managed refuse a conversation that is no longer in a container.
+describe('a managed ref whose project is gone', () => {
+  it('allows the conversation to move its directory again', async () => {
+    const h = serviceFixture();
+    h.d.runtime = await inMemoryModelRuntime() as never;
+    const service = new BrainService(h.d as never);
+    const { sessionId } = await service.start(h.owner.id);
+    h.store.setProjectExecution(sessionId, h.owner.id, { kind: 'managed', projectId: 4242 });
+    expect(service.noteWorkDir(h.owner.id, h.root, sessionId).workDir).toBe(realpathSync(h.root));
   });
 });
 
