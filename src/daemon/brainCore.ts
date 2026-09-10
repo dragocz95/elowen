@@ -536,7 +536,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
     const userId = currentContributionUserId();
     if (userId === null) return inference;
     const sessionId = currentSessionId();
-    const origin = sessionId ? usageOrigins.pinnedOrigin(sessionId) ?? INTERNAL_ORIGIN : INTERNAL_ORIGIN;
+    const origin = (sessionId ? usageOrigins.pinnedFor(sessionId)?.origin : undefined) ?? INTERNAL_ORIGIN;
     return withOriginUsage(inference, { origins: usageOrigins, userId, origin });
   };
   const memoryCategorizer = new MemoryCategorizer({

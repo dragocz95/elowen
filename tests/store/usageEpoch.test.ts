@@ -175,7 +175,7 @@ describe('per-user usage epochs', () => {
 
     origins.recordRequest('s1', 1, { value: '203.0.113.2', kind: 'ip', trusted: true }, AT);
     brain.resetUsage(1, () => origins.clearForUser(1));
-    expect(origins.pinnedOrigin('s1')).toMatchObject({ value: '203.0.113.2' });
+    expect(origins.pinnedFor('s1')?.origin).toMatchObject({ value: '203.0.113.2' });
     const settled = origins.settleTurn('s1');
     origins.addTurn(settled.userId!, settled.origin, { input: 5, output: 0, cacheRead: 0, cacheWrite: 0, total: 5, cost: null }, AT);
     expect(db.prepare('SELECT total FROM usage_by_origin WHERE user_id = 1').get()).toEqual({ total: 5 });

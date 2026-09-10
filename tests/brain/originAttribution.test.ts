@@ -137,7 +137,7 @@ describe('a room turn is billed to the colleague who wrote it', () => {
     admits = true;
     await inst.say('D3', 'morning');
 
-    expect(inst.usage.pinnedOrigin(inst.sessionId)).toBeNull();
+    expect(inst.usage.pinnedFor(inst.sessionId)).toBeNull();
     expect(inst.billed()).toEqual([[3, 'platform:discord', 1]]);
   });
 });

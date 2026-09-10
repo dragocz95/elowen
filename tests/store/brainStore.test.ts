@@ -808,8 +808,8 @@ describe('BrainStore', () => {
     aged('brain-ch-discord-123#0');       // live channel → must survive
     aged('brain-ch-msteams-a:xyz');       // live channel → must survive
     aged('convo');
-    // An idle channel is rolled over: the old transcript is re-keyed under a unique -arch- id and
-    // mayDeliverToSession refuses it forever, so it is collectable.
+    // A /context bind archives whatever occupied the channel slot: that transcript is re-keyed under a
+    // unique -arch- id and mayDeliverToSession refuses it forever, so it is collectable.
     aged('brain-ch-discord-123#0-arch-mt6abc12');
     // ...but a LIVE channel whose own name contains "-arch-" is not an archive. The SQL matches
     // loosely, so without the exact predicate this row would be deleted while people still talk in it.
@@ -1810,7 +1810,7 @@ describe('BrainStore', () => {
       expect(store.getCards('s2')).toHaveLength(1);
     });
 
-    it('carries the cards along when a conversation is re-keyed (channel rollover)', () => {
+    it('carries the cards along when a conversation is re-keyed by a /context bind', () => {
       store.createSession({ id: 'old', userId: 7, model: 'm' });
       store.upsertCard('old', card('todos', 'Ship it'));
       store.reassignSession('old', 'archived');
@@ -2148,7 +2148,7 @@ describe('BrainStore', () => {
       expect(store.getWorkflowRuns('root')).toEqual([]);
     });
 
-    it('carries the workflow along when a conversation is re-keyed (channel rollover)', () => {
+    it('carries the workflow along when a conversation is re-keyed by a /context bind', () => {
       store.createSession({ id: 'old', userId: 7, model: 'm' });
       store.upsertWorkflowRun('old', wf({ nodes: [] }));
       store.reassignSession('old', 'archived');
@@ -2179,7 +2179,7 @@ describe('BrainStore', () => {
       expect(store.getSessionEvents('s2')).toHaveLength(1);
     });
 
-    it('carries the markers along when a conversation is re-keyed (channel rollover)', () => {
+    it('carries the markers along when a conversation is re-keyed by a /context bind', () => {
       store.createSession({ id: 'old', userId: 7, model: 'm' });
       const event = store.appendSessionEvent('old', 'reasoning', 'high');
       store.reassignSession('old', 'archived');

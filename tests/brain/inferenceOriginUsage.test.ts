@@ -17,12 +17,12 @@ describe('secondary inference origin accounting', () => {
     }, {
       origins,
       userId: 4,
-      origin: origins.pinnedOrigin('brain-session')!,
+      origin: origins.pinnedFor('brain-session')!.origin,
       now: () => Date.UTC(2026, 8, 4, 10),
     });
 
     expect((await client.decide('prompt')).text).toBe('answer');
-    expect(origins.pinnedOrigin('brain-session')).toEqual(origin);
+    expect(origins.pinnedFor('brain-session')?.origin).toEqual(origin);
     expect(origins.topOrigins({ group: 'pair' })).toMatchObject([{
       userId: 4, origin: '203.0.113.9', turns: 1,
       input: 11, output: 7, cacheRead: 3, cacheWrite: 2, tokens: 23, cost: 0.035,

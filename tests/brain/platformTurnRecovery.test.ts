@@ -609,7 +609,7 @@ describe('resumePlatformTurn — the resumed turn is billed and reported like th
     // Actor and surface only — the feed is instance-wide, so nothing of the message may ride along.
     expect(activity).toEqual([{ actorUserId: 7, surface: 'discord', target: 'discord-ops' }]);
     // Consumed by the settling turn, so nothing is left pinned to this room.
-    expect(usage.pinnedOrigin(sessionId)).toBeNull();
+    expect(usage.pinnedFor(sessionId)).toBeNull();
   });
 
   it('leaves no pin behind when the resume spends nothing — refused before, or inside, the send', async () => {
@@ -620,7 +620,7 @@ describe('resumePlatformTurn — the resumed turn is billed and reported like th
     //     so nothing may be billed or announced at all.
     deps.users.get = vi.fn(() => undefined) as never;
     await expect(resumePlatformTurn(deps, park(envelopeFor()))).resolves.toBe('terminalized');
-    expect(usage.pinnedOrigin(sessionId)).toBeNull();
+    expect(usage.pinnedFor(sessionId)).toBeNull();
     expect(billed()).toEqual([]);
     expect(activity).toEqual([]);
 
@@ -632,7 +632,7 @@ describe('resumePlatformTurn — the resumed turn is billed and reported like th
     admits = false;
     await expect(resumePlatformTurn(deps, park(envelopeFor()))).resolves.toBe('failed');
 
-    expect(usage.pinnedOrigin(sessionId)).toBeNull();
+    expect(usage.pinnedFor(sessionId)).toBeNull();
     expect(billed()).toEqual([]);
     // The turn was opened this time — it was about to run — so the feed reports it exactly once.
     expect(activity).toEqual([{ actorUserId: 7, surface: 'discord', target: 'discord-ops' }]);
@@ -657,6 +657,6 @@ describe('resumePlatformTurn — the resumed turn is billed and reported like th
     expect(delivered).toEqual([{ text: 'resumed answer', target: 'destination:discord:ops' }]);
     expect(billed()).toEqual([[7, 'platform:discord', 1]]);
     expect(activity).toHaveLength(1);
-    expect(usage.pinnedOrigin(sessionId)).toBeNull();
+    expect(usage.pinnedFor(sessionId)).toBeNull();
   });
 });

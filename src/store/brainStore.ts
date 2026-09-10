@@ -867,9 +867,9 @@ export class BrainStore {
            -- finished delegation is finished whether or not the conversation that started it lives on,
            -- and these are what actually accumulate. A real platform channel stays excluded.
            OR ${EPHEMERAL_RUN_SQL}
-           -- Archived channel transcripts: a channel that sat quiet past the idle cutoff is rolled over
-           -- (its prompt cache has expired), the old transcript is re-keyed under a unique -arch- id and
-           -- the deterministic channel id is freed for a fresh session. mayDeliverToSession refuses the
+           -- Archived channel transcripts: a /context bind moves another conversation into the channel
+           -- slot, so whatever occupied it is re-keyed under a unique -arch- id and the deterministic
+           -- channel id is freed for the incoming session. mayDeliverToSession refuses the
            -- archive outright, so nothing will ever be added to it again. Matched loosely here and
            -- narrowed by the exact predicate below — a channel NAME could contain "-arch-" and must not
            -- be mistaken for an archive while it is still live.
