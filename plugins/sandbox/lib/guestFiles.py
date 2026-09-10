@@ -460,23 +460,28 @@ def run(op):
                 if visited > limit or visited > MAX_ENTRIES + 1 or time.monotonic() > deadline:
                     truncated = True
                     break
-                # `follow_symlinks=False` throughout: a link is never descended into and never reported,
-                # which is what keeps the traversal inside the root. It still counts as visited.
+                # `follow_symlinks=False` throughout, so a link is never DESCENDED into and the traversal
+                # cannot be walked out of its own root. It is still reported, because a tree view has
+                # always shown links and a consumer that wants to know where one points can follow it
+                # deliberately, one path at a time, rather than have this walk do it silently.
                 try:
-                    directory = item.is_dir(follow_symlinks=False)
-                    regular = item.is_file(follow_symlinks=False)
-                    if not directory and not regular:
+                    link = item.is_symlink()
+                    directory = not link and item.is_dir(follow_symlinks=False)
+                    regular = not link and item.is_file(follow_symlinks=False)
+                    if not link and not directory and not regular:
                         continue
                     # A skipped directory is omitted ENTIRELY, not merely left undescended: reporting it
                     # while refusing to walk it would present it to a consumer as an empty directory,
                     # which is a different and false statement about the tree.
                     if directory and item.name in skipped:
                         continue
+                    # The link's OWN size and time, never its target's: resolving the target is the
+                    # caller's decision, and a broken link must still describe itself.
                     facts = item.stat(follow_symlinks=False)
                 except OSError:
                     truncated = True
                     continue
-                record = {'path': item.path, 'kind': 'directory' if directory else 'file',
+                record = {'path': item.path, 'kind': 'symlink' if link else 'directory' if directory else 'file',
                           'size': facts.st_size, 'mtime': int(facts.st_mtime * 1000)}
                 # The ACTUAL encoded size, with the same escaping the reply is written with: a name of
                 # non-ASCII text inflates to six bytes per character once escaped, so a byte count taken

@@ -153,11 +153,16 @@ describe('guestFiles helper parity', () => {
       const reply = walk(dir);
       expect(reply.ok).toBe(true);
       if (!reply.ok) return;
+      // `src` itself is reported, the skipped directories are not descended into, and the two links are
+      // reported AS links without being followed.
+      expect(reply.result.entries.map((item: any) => [item.path, item.kind])).toEqual([
+        [join(dir, 'src'), 'directory'],
+        [join(dir, 'src', 'kept.ts'), 'file'],
+        [join(dir, 'src', 'link.ts'), 'symlink'],
+        [join(dir, 'src', 'linkdir'), 'symlink'],
+      ]);
+      // Nothing BEHIND a link appears: the traversal cannot be walked out of its own root.
       const paths = reply.result.entries.map((item: any) => item.path);
-      // `src` itself is reported; the skipped directories are not descended into and the two symlinks are
-      // neither followed nor emitted.
-      expect(paths).toEqual([join(dir, 'src'), join(dir, 'src', 'kept.ts')]);
-      // A link is neither reported as a file nor descended into, so nothing outside the tree appears.
       expect(paths.some((path: string) => path.includes('secret'))).toBe(false);
     });
 
@@ -251,7 +256,7 @@ describe('guestFiles helper parity', () => {
       expect(reply.result.truncated).toBe(true);
     });
 
-    it('counts a symlink against the requested limit even though it never reports one', () => {
+    it('reports symlinks and counts them against the requested limit', () => {
       const dir = join(root, 'walk-limit-links');
       mkdirSync(dir, { recursive: true });
       for (let index = 0; index < 6; index += 1) symlinkSync('/etc/hostname', join(dir, `l-${index}`));
@@ -260,10 +265,32 @@ describe('guestFiles helper parity', () => {
       const reply = runHelper({ kind: 'walk', path: dir, limit: 4, skip: [] });
       expect(reply.ok).toBe(true);
       if (!reply.ok) return;
-      // Four entries were examined and all four were links, so nothing is returned — and the answer says
-      // it is incomplete rather than describing an empty directory.
-      expect(reply.result.entries).toHaveLength(0);
+      // Four entries were examined and all four were links: they are reported, and the answer says it is
+      // incomplete because two more entries were never reached.
+      expect(reply.result.entries).toHaveLength(4);
+      expect(reply.result.entries.every((item: any) => item.kind === 'symlink')).toBe(true);
       expect(reply.result.truncated).toBe(true);
+    });
+
+    // The link's own facts, never its target's. Resolving a target is the consumer's decision, made one
+    // path at a time, and a link pointing nowhere must still be able to describe itself.
+    it('describes a link by its own metadata, including one that points nowhere', () => {
+      const dir = join(root, 'walk-broken-link');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'real.ts'), 'a much longer body than the link');
+      symlinkSync(join(dir, 'real.ts'), join(dir, 'a-live'));
+      symlinkSync(join(dir, 'gone.ts'), join(dir, 'b-broken'));
+
+      const reply = runHelper({ kind: 'walk', path: dir, limit: 10001, skip: [] });
+      expect(reply.ok).toBe(true);
+      if (!reply.ok) return;
+      const byName = Object.fromEntries(reply.result.entries.map((item: any) => [item.path.split('/').pop(), item]));
+      expect(byName['a-live'].kind).toBe('symlink');
+      expect(byName['b-broken'].kind).toBe('symlink');
+      // A link's size is the length of the path it holds, so it never matches the file it points at.
+      expect(byName['a-live'].size).toBe(join(dir, 'real.ts').length);
+      expect(byName['a-live'].size).not.toBe(byName['real.ts'].size);
+      expect(byName['b-broken'].mtime).toBeGreaterThan(0);
     });
 
     it('descends exactly as far as maxDepth allows', () => {

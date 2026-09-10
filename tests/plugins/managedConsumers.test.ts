@@ -281,6 +281,27 @@ describe('managed builtin consumer routing', () => {
     expect(operation).not.toHaveProperty('metadata');
   });
 
+  // The traversal reports directories and symlinks so a tree view can show them. A pattern match is about
+  // regular files, and that filtering happens on the host from the one answer already in hand.
+  it('matches only regular files even though the walk reports directories and links', async () => {
+    const provider = memoryProvider({ '/workspace/a.ts': 'x' });
+    const { run } = fixture(files, provider);
+    provider.projectFiles.mockResolvedValueOnce({
+      kind: 'walk', root: '/workspace', rootKind: 'directory', truncated: false,
+      entries: [
+        { path: '/workspace/a.ts', kind: 'file', size: 1, mtime: 1767225600000 },
+        { path: '/workspace/nested.ts', kind: 'directory', size: 0, mtime: 1767225600000 },
+        { path: '/workspace/link.ts', kind: 'symlink', size: 12, mtime: 1767225600000 },
+      ],
+    } as never);
+
+    const result = await run('Glob', { pattern: '/workspace/*.ts' });
+    expect(result.content[0].text).toContain('a.ts');
+    expect(result.content[0].text).not.toContain('nested.ts');
+    expect(result.content[0].text).not.toContain('link.ts');
+    expect(result.details).toMatchObject({ matches: 1 });
+  });
+
   it('stays one operation over a directory of more than a thousand siblings', async () => {
     const wide: Record<string, string> = {};
     for (let index = 0; index < 1500; index += 1) wide[`/workspace/f${String(index).padStart(5, '0')}.ts`] = 'x';

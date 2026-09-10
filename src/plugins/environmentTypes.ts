@@ -68,13 +68,15 @@ export type GuestFileResult =
    *  caller a stat of its own. `root` is the directory actually traversed, which is the requested path
    *  when it is a directory and its parent otherwise.
    *
-   *  Entries are regular files and directories, in a stable sorted order, so a truncated answer is a
-   *  prefix rather than an arbitrary subset. An empty directory appears as an entry of its own. Symlinks
-   *  are never followed, never descended into and never emitted, though they do count against `limit`.
-   *  `truncated` is the single honest signal that the traversal stopped early, whichever bound it hit;
-   *  a directory that could not be read at all fails the operation instead. */
+   *  Entries are files, directories and symlinks, in a stable sorted order, so a truncated answer is a
+   *  prefix rather than an arbitrary subset. An empty directory appears as an entry of its own. A symlink
+   *  is REPORTED but never followed and never descended into, and its `size` and `mtime` are the link's
+   *  own, never its target's — a consumer that needs the target resolves it deliberately, one path at a
+   *  time, and a broken link still describes itself. `truncated` is the single honest signal that the
+   *  traversal stopped early, whichever bound it hit; a directory that could not be read at all fails the
+   *  operation instead. */
   | { kind: 'walk'; root: string; rootKind: 'file' | 'directory' | 'symlink' | 'other' | null;
-      entries: { path: string; kind: 'file' | 'directory'; size: number; mtime: number }[]; truncated: boolean }
+      entries: { path: string; kind: 'file' | 'directory' | 'symlink'; size: number; mtime: number }[]; truncated: boolean }
   | { kind: 'search'; matches: { path: string; line: number; text: string }[]; truncated: boolean };
 export interface ManagedWorktree { id: string; projectId: number; createdBy: number; path: string; branch: string; baseRef: string; label: string }
 export type ManagedWorktreeAction = { kind: 'list' } | { kind: 'create'; label: string; baseRef: string } | { kind: 'remove'; workspaceId: string };
