@@ -68,7 +68,10 @@ describe('initialActiveToolNames (factory active/registry split)', () => {
     expect(composeFixture('disabled').map((entry) => entry.name)).toEqual([
       'MemoryBuiltin', 'ShareImage', 'PluginWrite', 'ExitPlanMode',
     ]);
-    expect(createHash('sha256').update(configuredOff).digest('hex')).toBe('9425748d7df13e23155ac81493b3c5b638c69c400f8c6047fb24a309ac8454b9');
+    // A snapshot of the composed bytes, so an unintended change to any built-in definition shows up
+    // here. It moves only with a deliberate schema change — last with ExitPlanMode dropping the
+    // deprecated `allowedPrompts` argument.
+    expect(createHash('sha256').update(configuredOff).digest('hex')).toBe('e18982aa05d30aac667c0d296d49582d3909c23252c0aa2922dea614a1d7f035');
   });
 
   it.each(['build', 'plan'] as const)('keeps every pre-existing immediate definition byte-identical in %s mode', (mode) => {
