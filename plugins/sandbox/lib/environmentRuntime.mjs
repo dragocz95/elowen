@@ -9,7 +9,7 @@ import { createGuestFileTransport, validateUploadOperation, UPLOAD_KINDS } from 
 import { managedShellFrame, synchronousShellFrame } from './managedBootstrap.mjs';
 import { createEnvironmentStore, isRequestId, operationView, OPERATION_HISTORY } from './environmentDb.mjs';
 import { ownerProvablyDead, processIdentity, withRepoLease } from './db.mjs';
-import { createContainerSpec, createBoundSiteSpec, withContainerLimits, resourceToken, bindContainerIdentity } from './containerSpec.mjs';
+import { createContainerSpec, createBoundSiteSpec, withContainerLimits, resourceToken, bindContainerIdentity, publicationRuntimeToken } from './containerSpec.mjs';
 import { managedGuestRoot } from './containerPaths.mjs';
 import { PodmanClient } from './podman.mjs';
 import { ContainerStorage } from './containerStorage.mjs';
@@ -56,7 +56,7 @@ const MUTATING_FILE_KINDS = new Set(['write', 'remove', 'mkdir', 'rename', ...UP
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 /** A publication's socket is named after the publication alone — not after an execution — because it is
  *  established again after a container restart and the same one has to be found. */
-const publicationSocketName = (publicationId) => `pub-${publicationId}.sock`;
+export const publicationSocketName = (publicationId) => `pub-${publicationRuntimeToken(publicationId)}.sock`;
 const error = (code, message, status = 409) => Object.assign(new Error(message), { code, status });
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
 function positive(value, label) {

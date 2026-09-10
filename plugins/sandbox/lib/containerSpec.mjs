@@ -170,12 +170,18 @@ export function executionUnit(spec, executionId) {
   return `elowen-exec-g${spec.generation}-${executionId}.service`;
 }
 
+/** The bounded runtime identity for a publication. The durable database row keeps the complete id; host
+ *  sockets and guest units use only this stable digest so UUIDs remain safe inside their tighter limits. */
+export function publicationRuntimeToken(publicationId) {
+  resourceToken(publicationId);
+  return createHash('sha256').update(publicationId).digest('hex').slice(0, 16);
+}
+
 /** The guest unit a PUBLICATION's forwarder runs as. It is not an execution unit: nothing leases it, it
  *  outlives the request that created it and is established again after a container restart, so its name
  *  is derived from the publication alone and the same forwarder is found again instead of duplicated. */
 export function publicationUnit(publicationId) {
-  resourceToken(publicationId);
-  return `elowen-pub-${publicationId}.service`;
+  return `elowen-pub-${publicationRuntimeToken(publicationId)}.service`;
 }
 
 export function snapshotReference(spec, snapshotId) {

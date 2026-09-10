@@ -10,7 +10,7 @@ import { PROJECT_BASE_IMAGE_TAG, PROJECT_CONTAINERFILE } from '../../plugins/san
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { initSandboxDb } from '../../plugins/sandbox/lib/db.mjs';
 import { environmentPublicationMigration } from '../../plugins/sandbox/lib/environmentDb.mjs';
-import { createEnvironmentRuntime } from '../../plugins/sandbox/lib/environmentRuntime.mjs';
+import { createEnvironmentRuntime, publicationSocketName } from '../../plugins/sandbox/lib/environmentRuntime.mjs';
 import type { PodmanClient } from '../../plugins/sandbox/lib/podman.mjs';
 import type { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
 
@@ -34,7 +34,7 @@ function setup(config: Record<string, unknown> = {}) {
   // host side of the same path, so the runtime's readiness probe and its socket-file checks are exercised
   // against the operating system rather than against a stub that always agrees.
   const forwarders = new Map<string, Server>();
-  const publicationSocket = (spec: any, publicationId: string) => join(spec.storageRoot, 'broker', `pub-${publicationId}.sock`);
+  const publicationSocket = (spec: any, publicationId: string) => join(spec.storageRoot, 'broker', publicationSocketName(publicationId));
   /** What a container that died actually leaves behind: a socket FILE on the host side of the bind mount
    *  with nothing listening on it. Binding it again is refused until it is removed, which is the whole
    *  reason the runtime may not read presence as liveness. */
@@ -677,10 +677,10 @@ describe('durable project publications', () => {
   const records = (sql: any) => sql.prepare("SELECT kind,resource_id,project_id FROM p_sandbox_runtimes WHERE kind='publication'").all();
 
   it('records a publication by project and publication and puts it back after a container restart', async () => {
-    const { runtime, podman, sql, root } = setup();
+    const { runtime, podman, sql, publicationSocket } = setup();
     await starting(runtime);
     const binding = await runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
-    const socketPath = join(root, 'projects/7/broker/pub-shop.sock');
+    const socketPath = publicationSocket(podman.create.mock.calls[0]![0], 'shop');
     expect(binding).toEqual({ generation: 1, socketPath });
     expect(lstatSync(socketPath).isSocket()).toBe(true);
     // Keyed by the project and the publication: no account is named in the record, and none can be.
@@ -709,11 +709,27 @@ describe('durable project publications', () => {
     expect(podman.startPublication.mock.calls.map((call: any[]) => call[1])).not.toContain('foreign');
   });
 
+  it('keeps UUID publication transports within host limits and matches liveness by publication id', async () => {
+    const publicationId = '6cd4e63e-5c4b-4f74-8b91-d61cd8da4d90';
+    const realisticStorageRoot = '/var/www/.config/elowen/plugins-data/sandbox/projects/123456789/storage';
+    expect(Buffer.byteLength(join(realisticStorageRoot, 'broker', publicationSocketName(publicationId)))).toBeLessThanOrEqual(107);
+
+    const { runtime, podman } = setup();
+    await starting(runtime);
+    const binding = await runtime.projectPublicationBinding({ ...input, publicationId, port: 8080 });
+    expect(Buffer.byteLength(binding.socketPath)).toBeLessThanOrEqual(107);
+    podman.activePublications.mockClear();
+
+    await runtime.reconcile();
+
+    expect(podman.activePublications).toHaveBeenCalledWith(expect.anything(), [publicationId]);
+  });
+
   it('restores a lost forwarder on reconciliation and keeps serving for an account that lost access', async () => {
-    const { runtime, podman, members, root, forwarders, staleSocket } = setup();
+    const { runtime, podman, members, forwarders, staleSocket, publicationSocket } = setup();
     await starting(runtime);
     await runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
-    const socketPath = join(root, 'projects/7/broker/pub-shop.sock');
+    const socketPath = publicationSocket(podman.create.mock.calls[0]![0], 'shop');
     expect(podman.startPublication).toHaveBeenCalledTimes(1);
 
     // A cycle with nothing to do costs no guest round trip: the socket file is the whole test.
