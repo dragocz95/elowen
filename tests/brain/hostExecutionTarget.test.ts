@@ -148,8 +148,62 @@ describe('the execution-change marker', () => {
     // annotate (see recordSessionEvent's empty-conversation guard).
     h.store.appendMessage({ id: 'm1', sessionId, parentId: null, role: 'user', content: { role: 'user', content: 'hi' } });
     const appended = vi.spyOn(h.store, 'appendSessionEvent');
-    expect(service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: project.id }, sessionId).workDir).toBe('/sales-dashboard');
+    expect((await service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: project.id }, sessionId)).workDir).toBe('/sales-dashboard');
     expect(appended).toHaveBeenCalledWith(sessionId, 'cwd', 'sales-dashboard');
+  });
+});
+
+// The owner watched "Ukládání" spin forever on a project switch: the answer waited on an environment that
+// was being built, and a daemon restart in that window took the request with it. The switch now RECORDS
+// the intent and hands back the operation to follow, so neither outcome is reachable.
+describe('selecting a managed project does not wait for its container', () => {
+  const managedFixture = async () => {
+    const h = serviceFixture();
+    h.d.runtime = await inMemoryModelRuntime() as never;
+    const project = h.projects.createManaged({ slug: 'sales-dashboard', creatorUserId: h.owner.id });
+    const service = new BrainService(h.d as never);
+    const { sessionId } = await service.start(h.owner.id);
+    return { ...h, project, service, sessionId, sandbox: h.d.plugins.peek()!.control('sandbox') as never as Record<string, ReturnType<typeof vi.fn>> };
+  };
+
+  it('returns the enqueued operation instead of blocking on the environment', async () => {
+    const h = await managedFixture();
+    h.sandbox.environmentFor.mockResolvedValue({ state: 'unprovisioned' });
+    // A pending operation is what "enqueued, not performed" looks like: the container work has not run.
+    h.sandbox.requestEnvironment.mockResolvedValue({ id: 'env_op_1', status: 'pending' });
+    const result = await h.service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: h.project.id }, h.sessionId);
+    expect(result.operationId).toBe('env_op_1');
+    expect(result.workDir).toBe('/sales-dashboard');
+    expect(h.sandbox.requestEnvironment).toHaveBeenCalledWith(expect.objectContaining({ action: { kind: 'start' } }));
+  });
+
+  it('uses one idempotency key per conversation and project, so a repeated switch rejoins its operation', async () => {
+    const h = await managedFixture();
+    h.sandbox.environmentFor.mockResolvedValue({ state: 'stopped' });
+    h.sandbox.requestEnvironment.mockResolvedValue({ id: 'env_op_1', status: 'pending' });
+    await h.service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: h.project.id }, h.sessionId);
+    await h.service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: h.project.id }, h.sessionId);
+    const keys = h.sandbox.requestEnvironment.mock.calls.map(([call]) => (call as { requestId: string }).requestId);
+    expect(new Set(keys).size).toBe(1);
+    expect(keys[0]).toContain(String(h.project.id));
+  });
+
+  it('asks for nothing when the environment is already running', async () => {
+    const h = await managedFixture();
+    h.sandbox.environmentFor.mockResolvedValue({ state: 'running' });
+    const result = await h.service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: h.project.id }, h.sessionId);
+    expect(result.operationId).toBeUndefined();
+    expect(h.sandbox.requestEnvironment).not.toHaveBeenCalled();
+  });
+
+  // The selection is durable before the environment is asked for anything, so a refusal there cannot
+  // undo a switch the person already made.
+  it('still completes the switch when the environment request is refused', async () => {
+    const h = await managedFixture();
+    h.sandbox.environmentFor.mockRejectedValue(new Error('environment busy'));
+    const result = await h.service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: h.project.id }, h.sessionId);
+    expect(result.operationId).toBeUndefined();
+    expect(result.projectRef).toEqual({ kind: 'managed', projectId: h.project.id });
   });
 });
 

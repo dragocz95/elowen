@@ -136,6 +136,9 @@
       "git",
       "project-files",
       "controls"
+    ],
+    "mutates": [
+      "events"
     ]
   },
   "web": {
@@ -255,6 +258,8 @@
       "projectCredentials": "Personal integration credentials stay outside the environment. Credentials and exported results stored here are shared project data.",
       "startEnvironment": "Start environment",
       "stopEnvironment": "Stop environment",
+      "restartEnvironment": "Restart environment",
+      "recreateEnvironment": "Recreate environment",
       "snapshotEnvironment": "Create snapshot",
       "restoreEnvironment": "Restore snapshot",
       "operationRequested": "Operation requested. Completion is reported by the environment.",

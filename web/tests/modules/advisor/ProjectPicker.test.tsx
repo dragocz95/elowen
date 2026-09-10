@@ -130,4 +130,71 @@ describe('ProjectPicker', () => {
     expect(screen.queryByRole('alertdialog')).toBeNull();
     expect(await screen.findByRole('button', { name: /server/ })).toBeInTheDocument();
   });
+
+  // The switch answers before the container exists, so what the picker shows next is the operation that
+  // brings it up. This is the whole point of the change: a spinner on the save indicator said nothing,
+  // and on a cold environment it said nothing for minutes.
+  describe('the environment a switch has to start', () => {
+    const selectElowen = async () => {
+      const trigger = await screen.findByRole('button', { name: /kolin/ });
+      await waitFor(() => expect(trigger).toBeEnabled());
+      trigger.focus(); fireEvent.keyDown(trigger, { key: 'ArrowDown' });
+      fireEvent.click(await screen.findByRole('menuitemradio', { name: /elowen/ }));
+    };
+    const operation = (over: Record<string, unknown> = {}) => ({
+      id: 'env_op_1', requestId: 'r', projectId: 2, accountUserId: 1, generation: 1,
+      action: { kind: 'start' }, status: 'running', error: null,
+      steps: ['image', 'storage', 'container', 'boot', 'initialize'], stepIndex: 2, stepTotal: 5,
+      stepLabel: 'container', percent: 40, logTail: ['STEP 1/4: FROM debian'], ...over,
+    });
+    const switching = (op: Record<string, unknown>) => [
+      http.post('*/api/brain/execution', () => HttpResponse.json({ projectRef: { kind: 'managed', projectId: 2 }, workDir: '/elowen', operationId: 'env_op_1' })),
+      http.get('*/api/plugins/sandbox/api/environments/operation', () => HttpResponse.json(op)),
+    ];
+
+    it('shows the progress window with the current step and percent', async () => {
+      chat.activeSessionId = 'brain-1-a'; chat.telemetry.projectRef = { kind: 'managed', projectId: 1 };
+      server.use(...switching(operation()));
+      mount();
+      await selectElowen();
+
+      // The window opens indeterminate — there is nothing to report until the first frame lands — and
+      // then carries the real figure the daemon declared.
+      expect(await screen.findByText('Creating the container')).toBeInTheDocument();
+      const bar = screen.getByRole('progressbar');
+      expect(bar).toHaveAttribute('aria-valuenow', '40');
+      expect(bar).toHaveAttribute('aria-valuemin', '0');
+      expect(bar).toHaveAttribute('aria-valuemax', '100');
+      expect(screen.getByText('Step 3 of 5')).toBeInTheDocument();
+    });
+
+    it('settles on success and stops showing the window', async () => {
+      chat.activeSessionId = 'brain-1-a'; chat.telemetry.projectRef = { kind: 'managed', projectId: 1 };
+      server.use(...switching(operation({ status: 'succeeded', percent: 100, stepIndex: 4, stepLabel: 'initialize' })));
+      mount();
+      await selectElowen();
+      expect(await screen.findByText('Done')).toBeInTheDocument();
+      await waitFor(() => expect(screen.queryByTestId('operation-progress-dialog')).toBeNull(), { timeout: 4000 });
+    });
+
+    // The stale environment the mount rename left behind. The failure names the repair and the window
+    // offers it, so nobody has to remove a container by hand to get their project back.
+    it('offers the recreate repair when the environment predates the project mount', async () => {
+      chat.activeSessionId = 'brain-1-a'; chat.telemetry.projectRef = { kind: 'managed', projectId: 1 };
+      let requested: unknown;
+      server.use(
+        ...switching(operation({ status: 'failed', percent: null, error: 'This environment predates the named project mount. Recreate it to build a new container (elowen).' })),
+        http.post('*/api/plugins/sandbox/api/projects/2/environment', async ({ request }) => {
+          requested = await request.json();
+          return HttpResponse.json({ ...operation({ id: 'env_op_2', action: { kind: 'recreate' } }) });
+        }),
+      );
+      mount();
+      await selectElowen();
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(/predates the named project mount/);
+      fireEvent.click(screen.getByRole('button', { name: 'Recreate environment' }));
+      await waitFor(() => expect(requested).toEqual({ action: { kind: 'recreate' } }));
+    });
+  });
 });

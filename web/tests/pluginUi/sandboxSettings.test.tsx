@@ -61,12 +61,17 @@ describe('sandbox Project workspaces', () => {
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: false } })),
       http.get('*/api/plugins/sandbox/api/projects/1/environment', () => HttpResponse.json({ environment, snapshots: [], operations: [] })),
-      http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => { submitted = await request.json(); return HttpResponse.json({ id: 'op-1', requestId: (submitted as { requestId: string }).requestId, projectId: 1, generation: 2, accountUserId: 1, action: { kind: 'start' }, status: 'pending', error: null }); }),
+      http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => { submitted = await request.json(); return HttpResponse.json({ id: 'op-1', requestId: (submitted as { requestId: string }).requestId, projectId: 1, generation: 2, accountUserId: 1, action: { kind: 'start' }, status: 'pending', error: null, steps: ['image', 'storage', 'container', 'boot', 'initialize'], stepIndex: 0, stepTotal: 5, stepLabel: 'image', percent: 0 }); }),
+      http.get('*/api/plugins/sandbox/api/environments/operation', () => HttpResponse.json({ id: 'op-1', requestId: 'r', projectId: 1, generation: 2, accountUserId: 1, action: { kind: 'start' }, status: 'running', error: null, steps: ['image', 'storage', 'container', 'boot', 'initialize'], stepIndex: 2, stepTotal: 5, stepLabel: 'container', percent: 40, logTail: [] })),
     );
     mount(<WorkspacesSettings surface="project" project={{ ...overview.projects[0]!, executionKind: 'managed' }} />);
     fireEvent.click(await screen.findByRole('button', { name: 'Start environment' }));
     await waitFor(() => expect(submitted).toEqual({ action: { kind: 'start' }, expectedGeneration: 2, requestId: expect.any(String) }));
-    expect(await screen.findByText('Operation requested. Completion is reported by the environment.')).toBeInTheDocument();
+    // The request is no longer reported as a toast that never updates: the shared progress window shows
+    // which step of the start is running and how far along it is.
+    expect(await screen.findByTestId('operation-progress-dialog')).toBeInTheDocument();
+    expect(await screen.findByText('Creating the container')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '40');
     expect(screen.queryByText('Environment started.')).toBeNull();
     expect(screen.queryByText('Account HOME')).toBeNull();
   });

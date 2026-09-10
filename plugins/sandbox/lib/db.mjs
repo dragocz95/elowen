@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { environmentMigration } from './environmentDb.mjs';
+import { environmentMigration, environmentProgressMigration } from './environmentDb.mjs';
 import { guestFileMigration } from './guestFileTransport.mjs';
 
 const EXECUTION_LEASE_MS = 20_000;
@@ -101,7 +101,7 @@ export function initSandboxDb(ctx) {
           ON p_sandbox_execution_leases(workspace_id, expires_at);
       `);
     },
-  }, environmentMigration, guestFileMigration]);
+  }, environmentMigration, guestFileMigration, environmentProgressMigration]);
   return db;
 }
 

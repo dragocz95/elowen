@@ -115,6 +115,8 @@ const DYNAMIC_NAMESPACES = [
   'brain.types',       // BrainSection: t.brain.types[type] — daemon-driven provider type set
   'brainChat.approvalWarnings', // AskQuestionCard: t.brainChat.approvalWarnings[wording.warning] — DestructiveWarningId from the wire
   'nav',               // useShellNavigation/TopBar: t.nav[world.id] / t.nav[module.id]
+  'operationProgress.steps',   // OperationProgressDialog: t.operationProgress.steps[operation.stepLabel] — the daemon's declared step ids
+  'operationProgress.actions', // ProjectPicker/ProjectEnvironmentSettings: t.operationProgress.actions[operation.action.kind]
   'page',              // CommandPalette: t.page[m.id]
   'plugins',           // PluginsSection: t.plugins[CATEGORY_META[c].key]
   'providers',         // settings/page + pickers: t.providers[p.id]

@@ -52,8 +52,25 @@ export const environmentMigration = {
   },
 };
 
+/** The declared step list and the position inside it. A lifecycle operation already survived a daemon
+ *  restart through `checkpoint_json`; what it could not say was WHERE it was, so every surface watching
+ *  one had to poll a status word. These three columns are that missing statement, on the same durable
+ *  row and written by the same `saveOperation`, so a reader that sees the operation sees its progress. */
+export const environmentProgressMigration = {
+  version: 5,
+  up(m) {
+    m.exec(`
+      ALTER TABLE p_sandbox_runtime_operations ADD COLUMN steps_json TEXT NOT NULL DEFAULT '[]';
+      ALTER TABLE p_sandbox_runtime_operations ADD COLUMN step_index INTEGER NOT NULL DEFAULT 0;
+      ALTER TABLE p_sandbox_runtime_operations ADD COLUMN percent REAL;
+    `);
+  },
+};
+
 const runtime = (row) => row ? { ...row, generation: Number(row.generation), spec: JSON.parse(row.spec_json), limits: JSON.parse(row.limits_json) } : null;
-const operation = (row) => row ? { ...row, action: JSON.parse(row.action_json), checkpoint: JSON.parse(row.checkpoint_json) } : null;
+const operation = (row) => row ? { ...row, action: JSON.parse(row.action_json), checkpoint: JSON.parse(row.checkpoint_json),
+  steps: JSON.parse(row.steps_json ?? '[]'), step_index: Number(row.step_index ?? 0),
+  percent: row.percent === null || row.percent === undefined ? null : Number(row.percent) } : null;
 export function createEnvironmentStore(db, identity) {
   const get = (kind, id) => runtime(db.prepare('SELECT * FROM p_sandbox_runtimes WHERE kind=? AND resource_id=?').get(kind, String(id)));
   const getOperation = (id) => operation(db.prepare('SELECT * FROM p_sandbox_runtime_operations WHERE id=?').get(id));
@@ -80,13 +97,20 @@ export function createEnvironmentStore(db, identity) {
     },
     operations: () => db.prepare("SELECT * FROM p_sandbox_runtime_operations WHERE status IN ('pending','running') ORDER BY created_at,id").all().map(operation),
     saveOperation(op) {
-      db.prepare('UPDATE p_sandbox_runtime_operations SET status=?,checkpoint_json=?,owner_pid=?,owner_identity=?,error=?,snapshot_id=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
-        .run(op.status, JSON.stringify(op.checkpoint), op.owner_pid ?? null, op.owner_identity ?? null, op.error ?? null, op.snapshot_id ?? null, op.id);
+      db.prepare('UPDATE p_sandbox_runtime_operations SET status=?,checkpoint_json=?,owner_pid=?,owner_identity=?,error=?,snapshot_id=?,steps_json=?,step_index=?,percent=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
+        .run(op.status, JSON.stringify(op.checkpoint), op.owner_pid ?? null, op.owner_identity ?? null, op.error ?? null, op.snapshot_id ?? null,
+          JSON.stringify(op.steps ?? []), Number(op.step_index ?? 0), op.percent === null || op.percent === undefined ? null : Number(op.percent), op.id);
     },
     log(kind, id, message) {
       db.prepare('INSERT INTO p_sandbox_runtime_logs(kind,resource_id,message) VALUES(?,?,?)').run(kind, String(id), String(message).slice(0, 2000));
       db.prepare('DELETE FROM p_sandbox_runtime_logs WHERE kind=? AND resource_id=? AND id NOT IN (SELECT id FROM p_sandbox_runtime_logs WHERE kind=? AND resource_id=? ORDER BY id DESC LIMIT 200)')
         .run(kind, String(id), kind, String(id));
+    },
+    /** The tail of the same ring buffer, newest last, as discrete lines. The progress dialog shows this
+     *  while an operation runs; `logs` keeps returning the whole buffer as one blob for the log view. */
+    logTail(kind, id, limit = 40) {
+      return db.prepare('SELECT message FROM p_sandbox_runtime_logs WHERE kind=? AND resource_id=? ORDER BY id DESC LIMIT ?')
+        .all(kind, String(id), Math.max(1, Math.min(200, limit))).map((entry) => entry.message).reverse();
     },
     logs(kind, id) { return db.prepare('SELECT created_at,message FROM p_sandbox_runtime_logs WHERE kind=? AND resource_id=? ORDER BY id').all(kind, String(id)).map((entry) => `${entry.created_at} ${entry.message}`).join('\n'); },
     snapshots(kind, id) { return db.prepare('SELECT * FROM p_sandbox_runtime_snapshots WHERE kind=? AND resource_id=? ORDER BY julianday(created_at) DESC,id').all(kind, String(id)); },

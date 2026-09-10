@@ -49,6 +49,29 @@ interface RuntimeHooks {
     save: () => unknown | Promise<unknown>,
     options?: { ready?: boolean; savable?: boolean; delay?: number },
   ): { status: SaveStatus; retry: () => Promise<void>; flush: () => Promise<SaveStatus> };
+  /** The host's own dictionary. The progress window's wording belongs to the host component that draws
+   *  it, so the bundle reads the same strings rather than shipping a second copy of them. */
+  useTranslation(): { t: HostDictionary };
+  /** Follow one durable environment operation: one seed read, then the daemon's pushed frames. */
+  useEnvironmentOperation(operationId: string | null, projectId?: number): {
+    operation: EnvironmentOperationView | null;
+    logTail: string[];
+    loading: boolean;
+    loadError: string | null;
+  };
+}
+/** Only the part of the host dictionary this bundle reads. */
+interface HostDictionary { operationProgress: { actions: Record<string, string> } }
+export interface EnvironmentOperationView {
+  id: string;
+  action: { kind: string };
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  error: string | null;
+  steps: string[];
+  stepIndex: number;
+  stepTotal: number;
+  stepLabel: string | null;
+  percent: number | null;
 }
 interface RuntimeComponents {
   Button: AnyComponent; Input: AnyComponent; Badge: AnyComponent; Field: AnyComponent;
@@ -56,7 +79,7 @@ interface RuntimeComponents {
   LoadingState: AnyComponent; ErrorState: AnyComponent; EmptyState: AnyComponent;
   SpatialWorkspaceLayout: AnyComponent; WorkspaceMetric: AnyComponent; WorkspaceDetailRail: AnyComponent;
   DataTable: AnyComponent; DataTableRow: AnyComponent; DataTableCell: AnyComponent; DataTableChevronCell: AnyComponent;
-  PatchView: AnyComponent; ConfirmDialog: AnyComponent; PluginSection: AnyComponent;
+  PatchView: AnyComponent; ConfirmDialog: AnyComponent; OperationProgressDialog: AnyComponent; PluginSection: AnyComponent;
   SettingsDocument: AnyComponent; SettingsGroup: AnyComponent; SettingsRow: AnyComponent;
   Slider: AnyComponent; AutoSaveStatus: AnyComponent; HelpTip: AnyComponent;
   // The host's own preview-plus-manage row, so the account drawer reads the same as its neighbours.

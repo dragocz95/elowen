@@ -42,11 +42,20 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   const qc = hooks.useQueryClient();
   const endpoint = `/plugins/sandbox/api/projects/${project.id}/environment`;
   const queryKey = ['plugin', 'sandbox', 'project-environment', project.id];
-  const query = hooks.useQuery<ProjectEnvironmentDetail>({ queryKey, queryFn: () => api(endpoint), refetchInterval: (query: { state: { status: string } }) => query.state.status === 'error' ? false : 3000 });
+  // No refetch interval. The daemon publishes every step of a lifecycle operation on the event bus and
+  // the host invalidates this query from it, so the three-second poll that used to keep this screen
+  // roughly current is now a request per tick that learns nothing the push has not already delivered.
+  const query = hooks.useQuery<ProjectEnvironmentDetail>({ queryKey, queryFn: () => api(endpoint) });
   const me = hooks.useQuery<{ user: { id: number; is_admin: boolean } | null }>({ queryKey: ['me'], queryFn: () => api('/auth/me') });
   const [confirm, setConfirm] = useState<EnvironmentAction | null>(null);
   const [snapshotId, setSnapshotId] = useState('');
   const [requested, setRequested] = useState<EnvironmentOperation | null>(null);
+  // The operation the person just started, followed in the shared progress window. Hiding the window
+  // leaves it running; the chip beside the controls brings it back.
+  const [watched, setWatched] = useState<string | null>(null);
+  const [progressOpen, setProgressOpen] = useState(false);
+  const progress = hooks.useEnvironmentOperation(watched, project.id);
+  const host = hooks.useTranslation();
   const [requestError, setRequestError] = useState('');
   // Local edits only. `null` means "no unsaved change", so the 3-second refresh keeps owning the
   // displayed figures and a slider cannot be dragged back by a poll landing mid-gesture.
@@ -85,7 +94,10 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   };
   const mutate = hooks.useMutation<EnvironmentOperation, unknown, EnvironmentAction>({
     mutationFn: dispatch,
-    onSuccess: async () => { setConfirm(null); await refresh(); toast(s.operationRequested); },
+    // Only an explicitly chosen action raises the window. The debounced limits save travels the same
+    // dispatch and reports itself through the auto-save indicator it already has; a dialog on every
+    // slider release would be a modal interrupting a gesture.
+    onSuccess: async (operation: EnvironmentOperation) => { setConfirm(null); setWatched(operation.id); setProgressOpen(true); await refresh(); },
     onError: (error: unknown) => toast(localizedError(error, s), 'error'),
   });
 
@@ -128,6 +140,10 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   const values = draft ?? environment.limits;
   const labels: Record<LimitKey, string> = { cpus: s.cpuLimit, memoryMb: s.memoryLimit, pidsLimit: s.processLimit, diskSoftMb: s.diskSoftLimit };
   const units: Record<LimitKey, string> = { cpus: s.unitCpu, memoryMb: 'MiB', pidsLimit: s.unitProcesses, diskSoftMb: 'MiB' };
+  // The daemon names the stale-container case in the environment's own error, so the repair is offered
+  // from what the runtime reported rather than inferred from a state word.
+  const stale = /predates the named project mount/i.test(environment.lastError ?? '') || /predates the named project mount/i.test(progress.operation?.error ?? '');
+  const operationAction = progress.operation?.action.kind ?? 'start';
   const confirmation = confirm?.kind === 'restore' ? s.restoreWarning : confirm?.kind === 'snapshot' ? s.snapshotWarning : s.stopWarning;
   const actionLabel = confirm?.kind === 'restore' ? s.restoreEnvironment : confirm?.kind === 'snapshot' ? s.snapshotEnvironment : s.stopEnvironment;
   return <section className="flex flex-col gap-4 border-b border-border py-4">
@@ -198,7 +214,14 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
     <div className="flex flex-wrap gap-2">
       <C.Button disabled={busy || environment.state === 'running' || environment.state === 'starting'} onClick={() => mutate.mutate({ kind: 'start' })}>{s.startEnvironment}</C.Button>
       <C.Button disabled={busy || environment.state !== 'running'} onClick={() => setConfirm({ kind: 'stop' })}>{s.stopEnvironment}</C.Button>
+      <C.Button disabled={busy || environment.state === 'unprovisioned'} onClick={() => mutate.mutate({ kind: 'restart' })}>{s.restartEnvironment}</C.Button>
       <C.Button disabled={busy || !['running', 'stopped'].includes(environment.state)} onClick={() => setConfirm({ kind: 'snapshot' })}>{s.snapshotEnvironment}</C.Button>
+      {/* The repair for a container this runtime can no longer verify. Offered only when the environment
+          actually says so, because rebuilding a healthy container is a cost with no benefit. */}
+      {stale ? <C.Button disabled={busy} onClick={() => mutate.mutate({ kind: 'recreate' })}>{s.recreateEnvironment}</C.Button> : null}
+      {watched && !progressOpen ? (
+        <C.Button variant="ghost" onClick={() => setProgressOpen(true)}>{host.t.operationProgress.actions[operationAction] ?? s.startEnvironment}</C.Button>
+      ) : null}
     </div>
     {/* Deleting the project is not an environment control. It lives in the project's own action menu,
         beside every other project's removal, so the decision is offered in one place whichever way the
@@ -207,5 +230,17 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
       {completeSnapshots.length ? <div className="flex flex-wrap gap-2"><C.SelectMenu label={s.snapshots} value={snapshotId} onChange={setSnapshotId} options={completeSnapshots.map((item) => ({ value: item.id, label: `${item.createdAt}${item.note ? `: ${item.note}` : ''}` }))} /><C.Button disabled={busy || !completeSnapshots.some((item) => item.id === snapshotId)} onClick={() => setConfirm({ kind: 'restore', snapshotId })}>{s.restoreEnvironment}</C.Button></div> : <p className="text-xs text-muted-foreground">{s.noSnapshots}</p>}
     </C.Field>
     <C.ConfirmDialog open={confirm !== null} title={actionLabel} description={confirmation} confirmLabel={actionLabel} pending={mutate.isPending} onClose={() => setConfirm(null)} onConfirm={async () => { if (confirm) { try { await mutate.mutateAsync(confirm); } catch (error) { throw new Error(localizedError(error, s)); } } }} />
+    <C.OperationProgressDialog
+      open={progressOpen && watched !== null}
+      title={host.t.operationProgress.actions[operationAction] ?? s.startEnvironment}
+      operation={progress.operation}
+      logTail={progress.logTail}
+      loadError={progress.loadError}
+      onRetry={() => { if (progress.operation) mutate.mutate(progress.operation.action as EnvironmentAction); }}
+      onRecreate={() => mutate.mutate({ kind: 'recreate' } as EnvironmentAction)}
+      recreatable={stale}
+      onSettled={() => { setWatched(null); void refresh(); }}
+      onClose={({ running }: { running: boolean }) => { setProgressOpen(false); if (!running) setWatched(null); }}
+    />
   </section>;
 }
