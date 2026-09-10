@@ -344,7 +344,7 @@ export class BrainStore {
         // A branched conversation gets its OWN namespace: sharing one would let either session's deletion
         // sweep the other's files. The copied transcript does carry the source's cleared-result
         // placeholders, which name the SOURCE's spill dir, so the branch reads them back through the same
-        // one-directional allowance a delegated fork child uses (forkParentSpillNamespace resolves
+        // one-directional allowance a delegated fork child uses (inheritedSpillNamespaces resolves
         // forked_from_session_id too). Read-only and never the reverse; a source deleted before the branch
         // takes its files with it, and such a Read then fails as the missing file it is.
         spill_ns: mintSpillNamespace(newId),
@@ -1252,26 +1252,34 @@ export class BrainStore {
     return row?.spill_ns || sessionId;
   }
 
-  /** The spill namespace of the conversation this one inherited its transcript from — a delegated FORK
-   *  child from its parent, a branch from the session it was forked off — or undefined for every session
-   *  that is neither, which is what makes the allowance it feeds one-directional.
+  /** The spill namespaces this conversation's transcript was inherited from — the WHOLE chain, nearest
+   *  source first: a delegated FORK child from its parent, a branch from the session it was forked off, and
+   *  then whatever THAT one inherited, because a copy of a copy carries the older placeholders too.
    *
-   *  Both seed the new session with the source transcript verbatim, cleared tool results included, so it
-   *  inherits placeholders naming files under the SOURCE's namespace and needs to read them back. An
-   *  ordinary delegated child composes its own history and inherits no placeholder. The fork flag is read
-   *  from the durable delegated scope rather than from the live turn, so a runner process and a respawn
-   *  answer exactly as the spawning turn did.
+   *  Every hop seeds the new session with the source transcript verbatim, cleared tool results included, so
+   *  it inherits placeholders naming files under each ancestor's namespace and needs to read them back. An
+   *  ordinary delegated child composes its own history and inherits nothing, which ends the chain there and
+   *  is what keeps the allowance it feeds one-directional. The fork flag is read from the durable delegated
+   *  scope rather than from the live turn, so a runner process and a respawn answer exactly as the spawning
+   *  turn did.
    *
-   *  The same '' fallback {@link spillNamespace} applies, for a parent row minted before the backfill. */
-  forkParentSpillNamespace(sessionId: string): string | undefined {
-    const row = this.db.prepare(
-      `SELECT p.id AS id, p.spill_ns AS spill_ns
-         FROM brain_sessions c JOIN brain_sessions p ON p.id = COALESCE(c.forked_from_session_id, c.parent_session_id)
-        WHERE c.id = ?
-          AND (c.forked_from_session_id IS NOT NULL
-               OR (json_valid(c.delegated_access) AND json_extract(c.delegated_access, '$.fork') = 1))`
-    ).get(sessionId) as { id: string; spill_ns: string } | undefined;
-    return row ? row.spill_ns || row.id : undefined;
+   *  The same '' fallback {@link spillNamespace} applies, per hop, for a row minted before the backfill. */
+  inheritedSpillNamespaces(sessionId: string): string[] {
+    const rows = this.db.prepare(
+      `WITH RECURSIVE chain(depth, id, spill_ns, src, inherited) AS (
+         SELECT 0, id, spill_ns, COALESCE(forked_from_session_id, parent_session_id),
+                (forked_from_session_id IS NOT NULL
+                 OR (json_valid(delegated_access) AND json_extract(delegated_access, '$.fork') = 1))
+           FROM brain_sessions WHERE id = ?
+         UNION ALL
+         SELECT chain.depth + 1, p.id, p.spill_ns, COALESCE(p.forked_from_session_id, p.parent_session_id),
+                (p.forked_from_session_id IS NOT NULL
+                 OR (json_valid(p.delegated_access) AND json_extract(p.delegated_access, '$.fork') = 1))
+           FROM brain_sessions p JOIN chain ON p.id = chain.src
+          WHERE chain.inherited = 1)
+       SELECT id, spill_ns FROM chain WHERE depth > 0 ORDER BY depth`
+    ).all(sessionId) as { id: string; spill_ns: string }[];
+    return rows.map((row) => row.spill_ns || row.id);
   }
 
   /** The session carrying this immutable namespace — the INVERSE of {@link spillNamespace}, and the one

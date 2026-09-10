@@ -142,7 +142,7 @@ describe('project membership', () => {
     expect(dialog.getByText(/may use this Project/)).toBeInTheDocument();
   });
 
-  it('refreshes membership after revocation succeeds but runtime cleanup fails', async () => {
+  it('refreshes membership after a failed save whose response never arrived', async () => {
     let revoked = false;
     server.use(
       http.get('*/api/projects/7/users', ({ request }) => {
@@ -151,7 +151,9 @@ describe('project membership', () => {
           : [member(2, 'me', 'Me', 'me@example.test'), member(3, 'dana', 'Dana Nováková', 'dana@example.test')];
         return HttpResponse.json(new URL(request.url).searchParams.get('view') === 'profiles' ? rows : rows.map((row) => row.id));
       }),
-      http.delete('*/api/users/3/projects/7', () => { revoked = true; return HttpResponse.json({ error: 'membership revoked; runtime cleanup unavailable' }, { status: 503 }); }),
+      // A transport failure, not an HTTP refusal: the daemon may well have applied the revocation before
+      // the response was lost, which is why the summary has to ask again instead of trusting the error.
+      http.delete('*/api/users/3/projects/7', () => { revoked = true; return HttpResponse.error(); }),
     );
     mount();
     fireEvent.click(await screen.findByRole('button', { name: 'Manage' }));
@@ -160,7 +162,7 @@ describe('project membership', () => {
     fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }));
     // The shared picker reports a failed save in its own words and stays open, exactly as it does for a
     // host project. What matters here is that the summary behind it tells the truth afterwards: the
-    // revocation DID land on the daemon even though the runtime cleanup that followed it did not.
+    // revocation DID land on the daemon even though the caller never heard about it.
     expect(await dialog.findByRole('alert')).toBeInTheDocument();
     fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.getByText('1 user has access')).toBeInTheDocument());

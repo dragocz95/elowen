@@ -140,22 +140,26 @@ describe('own tool-result spill dir', () => {
   // A fork child inherits its parent's transcript VERBATIM, placeholders included, and those placeholders
   // name files under the parent's spill directory. Without this the child is handed a path it is refused,
   // and the placeholder's "read it with the Read tool" is a promise only the parent can keep.
-  it('lets a FORK child read its parent\'s spill dir, and only for reading', async () => {
+  it('lets a FORK child read the spill dirs it inherited, and only for reading', async () => {
     const { mkdtempSync } = await import('node:fs');
     const { join } = await import('node:path');
     const { tmpdir } = await import('node:os');
-    const { setForkParentSpillNamespaceResolver } = await import('../../src/shared/paths.js');
+    const { setInheritedSpillNamespaceResolver } = await import('../../src/shared/paths.js');
     const home = mkdtempSync(join(tmpdir(), 'elowen-spill-guard-'));
     dirs.push(home);
     vi.stubEnv('HOME', home);
-    setForkParentSpillNamespaceResolver((sessionId) => (sessionId === 'fork-child' ? 'sess-parent' : undefined));
+    // A copy of a copy carries the OLDER placeholders too, so both ancestors' dirs are inherited.
+    setInheritedSpillNamespaceResolver((sessionId) => (sessionId === 'fork-child' ? ['sess-parent', 'sess-grandparent'] : []));
     try {
       const inherited = join(home, '.config/elowen/tool-results/sess-parent/out.txt');
+      const older = join(home, '.config/elowen/tool-results/sess-grandparent/out.txt');
       runWithPolicy(userPolicy(['/repo/a']), () => {
         expect(assertPathAllowed(inherited, { intent: 'read' })).toBe(inherited);
+        expect(assertPathAllowed(older, { intent: 'read' })).toBe(older);
         // One direction only: the allowance is for reading back what the child inherited, never for
         // writing into a conversation that is not its own.
         expect(() => assertPathAllowed(inherited)).toThrow(/not allowed/);
+        expect(() => assertPathAllowed(older)).toThrow(/not allowed/);
       }, { sessionId: 'fork-child' });
       // A plain delegated sibling inherits no transcript, so it inherits no allowance either — and the
       // parent never gains one on its child.
@@ -167,7 +171,7 @@ describe('own tool-result spill dir', () => {
           .toThrow(/not allowed/);
       }, { sessionId: 'sess-parent' });
     } finally {
-      setForkParentSpillNamespaceResolver(undefined);
+      setInheritedSpillNamespaceResolver(undefined);
       vi.unstubAllEnvs();
     }
   });

@@ -696,27 +696,33 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       const userId = Number(c.req.param('id')); const projectId = Number(c.req.param('pid'));
       if (!Number.isSafeInteger(userId) || !Number.isSafeInteger(projectId)) return c.json({ error: 'invalid membership' }, 400);
       const project = d.projects?.get(projectId);
-      if (project) {
-        try { up.removeMember(actor.id, userId, projectId); }
-        catch (error) {
-          if (error instanceof ProjectMembershipError) return c.json({ error: error.message }, 403);
-          throw error;
-        }
-      } else {
+      if (!project) {
         if (denyNonAdmin(c)) return c.json({ error: 'forbidden' }, 403);
         up.unassign(userId, projectId);
+        return c.json({ ok: true });
       }
-      if (project?.executionKind === 'managed') {
+      if (project.executionKind === 'managed') {
+        // Authorization comes FIRST, because the teardown below acts on another account's running work. A
+        // core route reaches a plugin control without an identity scope, so the provider's own membership
+        // check cannot be the gate here; for a managed project the removal rule is `canAccess`, asked of the
+        // store that owns it rather than restated.
+        if (!up.canAccess(actor.id, projectId)) return c.json({ error: 'project access denied' }, 403);
+        // …and the teardown runs BEFORE the membership row goes away. That row is both the permission the
+        // account is judged by and the handle a retry needs: deleting it first is how a failed revocation
+        // left the guest able to reach the environment with nothing left to revoke it against. A refusal
+        // therefore names the half that did NOT happen.
         const sandbox = (await d.plugins?.get())?.control('sandbox');
-        if (!sandbox) return c.json({ error: 'membership revoked; runtime cleanup unavailable' }, 503);
-        // The membership row is already gone, so a failed cleanup is not "nothing happened": name which
-        // half succeeded, exactly as the missing-provider branch above does, instead of an internal error
-        // the caller can only read as a total failure.
+        if (!sandbox) return c.json({ error: 'runtime cleanup unavailable; membership kept' }, 503);
         try { await sandbox.revokeProjectAccess({ projectId, accountUserId: userId }); }
         catch (error) {
           log.warn(`project access revocation failed for account ${userId} on project ${projectId}: ${error instanceof Error ? error.message : String(error)}`);
-          return c.json({ error: 'membership revoked; runtime cleanup failed' }, 503);
+          return c.json({ error: 'runtime cleanup failed; membership kept' }, 503);
         }
+      }
+      try { up.removeMember(actor.id, userId, projectId); }
+      catch (error) {
+        if (error instanceof ProjectMembershipError) return c.json({ error: error.message }, 403);
+        throw error;
       }
       return c.json({ ok: true });
     });

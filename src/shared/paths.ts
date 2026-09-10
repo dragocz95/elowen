@@ -77,26 +77,26 @@ export function sessionToolResultSpillDir(env: NodeJS.ProcessEnv, sessionId: str
   return toolResultSpillDir(env, spillNamespaceResolver?.(sessionId) || sessionId);
 }
 
-/** Session id → the spill namespace of the session its transcript was copied FROM, or undefined for
- *  anything that is neither a durable fork child nor a branch (buildBrainCore wires it to
- *  BrainStore.forkParentSpillNamespace).
+/** Session id → the spill namespaces of the conversations its transcript was copied FROM, nearest first,
+ *  or an empty list for a session that inherited nothing (buildBrainCore wires it to
+ *  BrainStore.inheritedSpillNamespaces).
  *
- *  Both shapes seed the new session with the source transcript byte for byte, so it inherits placeholders
- *  naming files in the SOURCE's spill directory — the one thing the per-session allowance cannot cover.
- *  The direction is fixed by the resolver itself: it answers "which conversation was this one forked
- *  from", a question a source can never ask about what was taken from it. Undefined (an un-wired process,
- *  a test) means no allowance at all. */
-let forkParentSpillNamespaceResolver: ((sessionId: string) => string | undefined) | undefined;
-export function setForkParentSpillNamespaceResolver(resolve: ((sessionId: string) => string | undefined) | undefined): void {
-  forkParentSpillNamespaceResolver = resolve;
+ *  Every fork or branch seeds the new session with the source transcript byte for byte, so it inherits
+ *  placeholders naming files in the SOURCE's spill directory — the one thing the per-session allowance
+ *  cannot cover. A chain of copies keeps the older placeholders, so this is a list and not one hop. The
+ *  direction is fixed by the resolver itself: it answers "which conversations was this one forked from", a
+ *  question a source can never ask about what was taken from it. Empty (an un-wired process, a test) means
+ *  no allowance at all. */
+let inheritedSpillNamespaceResolver: ((sessionId: string) => string[]) | undefined;
+export function setInheritedSpillNamespaceResolver(resolve: ((sessionId: string) => string[]) | undefined): void {
+  inheritedSpillNamespaceResolver = resolve;
 }
 
-/** The spill directory a fork child INHERITED placeholders into, or undefined when this session is not a
- *  fork child. Never falls back to the session's own directory: an absent answer must stay absent, or the
- *  guard would widen itself on every un-wired process. */
-export function forkParentToolResultSpillDir(env: NodeJS.ProcessEnv, sessionId: string): string | undefined {
-  const namespace = forkParentSpillNamespaceResolver?.(sessionId);
-  return namespace ? toolResultSpillDir(env, namespace) : undefined;
+/** The spill directories a fork child INHERITED placeholders into, nearest ancestor first, or an empty list
+ *  when this session inherited none. Never includes the session's own directory: an absent answer must stay
+ *  absent, or the guard would widen itself on every un-wired process. */
+export function inheritedToolResultSpillDirs(env: NodeJS.ProcessEnv, sessionId: string): string[] {
+  return (inheritedSpillNamespaceResolver?.(sessionId) ?? []).map((namespace) => toolResultSpillDir(env, namespace));
 }
 
 /** Where a conversation's active implementation plan lives — one markdown file per session. A FILE

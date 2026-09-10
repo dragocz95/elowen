@@ -2,7 +2,7 @@ import { basename, dirname, join } from 'node:path';
 import type { ProjectExecutionRef } from '../shared/projectExecution.js';
 import { currentAccountUserId, currentApiRequest, currentContributionUserId, currentIdentity, currentPathView, currentPolicy, currentProjectRef, currentSessionId, currentSettingsUserId, currentToolPolicy, currentTurnMode, currentTurnPermissions, currentWorkDir, turnPrincipal } from './policyContext.js';
 import { noninteractivePermissionBoundary, type NoninteractivePermissionBoundary } from '../brain/toolPermissions.js';
-import { forkParentToolResultSpillDir, planFilePath, sessionToolResultSpillDir } from '../shared/paths.js';
+import { inheritedToolResultSpillDirs, planFilePath, sessionToolResultSpillDir } from '../shared/paths.js';
 import { realAbs, realPathWithin } from './pathUtils.js';
 export { realPathWithin } from './pathUtils.js';
 
@@ -135,9 +135,10 @@ export function isSessionPlanPath(sessionId: string, candidate: string): boolean
  *  session can ever reach another session's spills. Writes there can't corrupt clearing either —
  *  an EEXIST survivor is latched only when its bytes match the output being spilled.
  *
- *  …with ONE exception, and only for `intent: 'read'`: a session may read the spill dir of the
- *  conversation its transcript was copied from — a fork child its parent's, a branch its source's. The
- *  copy is byte for byte, and that identity is the whole point, since rewriting a single placeholder
+ *  …with ONE exception, and only for `intent: 'read'`: a session may read the spill dirs of the
+ *  conversations its transcript was copied from — a fork child its parent's, a branch its source's, and,
+ *  through a copy of a copy, the older ancestors' as well. The copy is byte for byte, and that identity is
+ *  the whole point, since rewriting a single placeholder
  *  would re-cache the conversation, so it inherits placeholders naming files it does not own and "read
  *  it with the Read tool" is otherwise a promise it cannot keep. Read-only and one-directional: it may
  *  look at what it inherited, never write into a conversation that is not its own, and the source gains
@@ -156,11 +157,8 @@ export function assertPathAllowed(path: string, opts: { intent?: 'read' | 'write
     // Resolved through the session's immutable spill NAMESPACE, not its re-keyable id: after a
     // `/context` bind the conversation keeps reading the directory its placeholders already
     // name, and a fresh conversation minted onto the freed id never inherits access to them.
-    const inherited = opts.intent === 'read' ? forkParentToolResultSpillDir(process.env, sessionId) : undefined;
-    const spill = realPathWithin(path, [
-      sessionToolResultSpillDir(process.env, sessionId),
-      ...(inherited ? [inherited] : []),
-    ]);
+    const inherited = opts.intent === 'read' ? inheritedToolResultSpillDirs(process.env, sessionId) : [];
+    const spill = realPathWithin(path, [sessionToolResultSpillDir(process.env, sessionId), ...inherited]);
     if (spill) return spill;
   }
   throw new Error(`path not allowed: "${path}" is outside your accessible repositories`);

@@ -503,7 +503,8 @@ export function useAssignProject() {
     mutationFn: (v: { userId: number; projectId: number; currentlyAssigned: boolean }) =>
       v.currentlyAssigned ? elowenClient.unassignProject(v.userId, v.projectId) : elowenClient.assignProject(v.userId, v.projectId),
     onSettled: async (_r, _error, v) => {
-      // Revocation can succeed before runtime cleanup fails; refresh even after an error.
+      // A failed call is not proof that nothing landed: the response can be lost after the daemon applied
+      // the change, so refresh the membership views either way.
       await Promise.all([
         qc.invalidateQueries({ queryKey: ['projects'] }),
         qc.invalidateQueries({ queryKey: ['user-projects', v.userId] }),
