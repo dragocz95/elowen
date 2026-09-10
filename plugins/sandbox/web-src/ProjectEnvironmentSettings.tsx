@@ -113,7 +113,7 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   const autoSave = hooks.useAutoSaveStatus([signature], async () => {
     const sent = draft;
     if (!sent) return;
-    await dispatch({ kind: 'limits', limits: sent });
+    await dispatch({ kind: 'limits', limits: { cpus: sent.cpus, memoryMb: sent.memoryMb, pidsLimit: sent.pidsLimit } });
     await refresh();
   }, { ready: !!stored, savable: isAdmin && changed, delay: 900 });
 
