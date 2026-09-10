@@ -52,9 +52,10 @@ const ROW_STATUS_TONE: Record<PluginProjectRowTone, string> = {
   danger: 'text-destructive',
 };
 
-/** A plugin's word on what this row's project is DOING, beside the path it runs from. Core draws the
- *  glyph and the colour; the plugin owns the meaning, the icon it names and the wording of the tooltip,
- *  which is also the icon's accessible name — a coloured dot nobody can hover is not a state report. */
+/** A plugin's word on what this row's project is DOING, at the row's far end directly left of the row
+ *  actions. Core draws the glyph and the colour; the plugin owns the meaning, the icon it names and the
+ *  wording of the tooltip, which is also the icon's accessible name — a coloured dot nobody can hover is
+ *  not a state report. The glyph shares the action menu icon's size, so the two read as one control band. */
 function ProjectRowStatus({ status }: { status?: PluginProjectRowStatus }) {
   if (!status) return null;
   const Icon = pluginLucideIcon(status.icon);
@@ -65,7 +66,7 @@ function ProjectRowStatus({ status }: { status?: PluginProjectRowStatus }) {
       title={status.label}
       className={`inline-flex shrink-0 items-center ${tone}`}
     >
-      {status.busy ? <Spinner size="sm" tone={tone} label={status.label} /> : <Icon size={12} role="img" aria-label={status.label} />}
+      {status.busy ? <Spinner size="md" tone={tone} label={status.label} /> : <Icon size={16} role="img" aria-label={status.label} />}
     </span>
   );
 }
@@ -351,11 +352,14 @@ export function ProjectsView() {
                   {filteredProjects.length === 0 ? (
                     <ControlSurfaceState><EmptyState title={t.projects.noMatches} icon={Search} /></ControlSurfaceState>
                   ) : (
-                    <DataTable ariaLabel={t.projects.tableLabel} columns="minmax(13rem,1.2fr) minmax(15rem,1.5fr) minmax(14rem,1.2fr) 3rem 1.25rem" compactColumns="minmax(0,1fr) 3rem 1.25rem" data-testid="projects-register">
+                    <DataTable ariaLabel={t.projects.tableLabel} columns="minmax(13rem,1.2fr) minmax(15rem,1.5fr) minmax(14rem,1.2fr) 1.25rem 3rem 1.25rem" compactColumns="minmax(0,1fr) 1.25rem 3rem 1.25rem" data-testid="projects-register">
                       <DataTableRow header>
                         <DataTableCell header lines={1}>{t.projects.columnProject}</DataTableCell>
                         <DataTableCell header priority="wide" lines={1}>{t.projects.columnPath}</DataTableCell>
                         <DataTableCell header priority="wide" lines={1}>{t.projects.columnSummary}</DataTableCell>
+                        {/* The state track carries a glyph, not a name of its own: each row's glyph is
+                            named by the state label the plugin itself reports. */}
+                        <DataTableCell header labelHidden lines={1}>{t.projects.columnStatus}</DataTableCell>
                         {/* The chevron track carries no header of its own: the cell is decorative, and the
                             column the row's open control lives in is named by DataTableRow itself. */}
                         <DataTableCell header labelHidden lines={1}>{t.common.actions}</DataTableCell>
@@ -394,7 +398,6 @@ export function ProjectsView() {
                                 <span data-project-compact-path className="flex min-w-0 items-center gap-1.5 @min-[56rem]:hidden">
                                   <Folder size={10} className="shrink-0 text-muted-foreground" aria-hidden />
                                   <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground">{project.executionKind === 'managed' ? s.managed : project.path}</span>
-                                  <ProjectRowStatus status={pluginRows.statusFor(project.id)} />
                                   {project.pathExists === false ? <MissingProjectPathBadge label={t.projects.pathMissing} /> : null}
                                 </span>
                               </span>
@@ -403,11 +406,16 @@ export function ProjectsView() {
                               <span className="flex min-w-0 items-center gap-1.5">
                                 <Folder size={11} className="shrink-0" aria-hidden />
                                 <span className="min-w-0 flex-1 truncate">{project.executionKind === 'managed' ? s.managed : project.path}</span>
-                                <ProjectRowStatus status={pluginRows.statusFor(project.id)} />
                                 {project.pathExists === false ? <MissingProjectPathBadge label={t.projects.pathMissing} /> : null}
                               </span>
                             </DataTableCell>
                             <DataTableCell priority="wide" lines="auto"><ProjectSummaryCell summary={summariesByProject.get(project.id)} membersLabel={t.projects.membersCount} /></DataTableCell>
+                            {/* The state glyph sits at the row's far end, one narrow track left of the row
+                                actions. A row whose plugin says nothing leaves the track empty, so the
+                                actions never move as states arrive and go. */}
+                            <DataTableCell lines="auto" className="flex items-center justify-end">
+                              <ProjectRowStatus status={pluginRows.statusFor(project.id)} />
+                            </DataTableCell>
                             <DataTableCell lines="auto" onClick={(event) => event.stopPropagation()}>
                               <ActionMenu
                                 label={`${project.slug}: ${t.common.actions}`}

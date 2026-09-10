@@ -803,6 +803,7 @@ export const en = {
     columnProject: 'Project',
     columnPath: 'Path',
     columnSummary: 'Summary',
+    columnStatus: 'Status',
     membersCount: '{n} assigned users',
     detailSections: 'Project sections',
     tabOverview: 'Overview',

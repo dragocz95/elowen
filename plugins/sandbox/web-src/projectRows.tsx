@@ -18,14 +18,16 @@ import { jsonBody, localizedError, runtime, type Project } from './runtime';
 type EnvironmentState = ProjectEnvironment['state'];
 
 /** How a state reads on a row: the glyph core draws, its tone, and whether something is in flight. The
- *  wording is the plugin's own `state_*` string, which is already translated in every locale. */
+ *  wording is the plugin's own `state_*` string, which is already translated in every locale. A running
+ *  environment reads as the run glyph and a cold one as the stop square; a state that is IN FLIGHT sets
+ *  `busy`, which is the host's own spinner — a Loader2 — so that is what its glyph names. */
 const STATE_PRESENTATION: Record<EnvironmentState, { icon: string; tone: 'muted' | 'accent' | 'success' | 'warning' | 'danger'; busy?: boolean }> = {
-  running: { icon: 'CircleDot', tone: 'success' },
-  starting: { icon: 'CircleDot', tone: 'accent', busy: true },
-  stopped: { icon: 'Circle', tone: 'muted' },
+  running: { icon: 'Play', tone: 'success' },
+  starting: { icon: 'Loader2', tone: 'accent', busy: true },
+  stopped: { icon: 'Square', tone: 'muted' },
   unprovisioned: { icon: 'CircleDashed', tone: 'muted' },
-  failed: { icon: 'CircleAlert', tone: 'danger' },
-  deleting: { icon: 'CircleSlash', tone: 'warning', busy: true },
+  failed: { icon: 'TriangleAlert', tone: 'danger' },
+  deleting: { icon: 'Loader2', tone: 'warning', busy: true },
   deleted: { icon: 'CircleSlash', tone: 'muted' },
 };
 

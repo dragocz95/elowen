@@ -22,7 +22,7 @@ import { useTranslation } from './i18n';
 
 export type PluginProjectRowTone = 'muted' | 'accent' | 'success' | 'warning' | 'danger';
 
-/** What a plugin says about ONE project row, beside the row's own name and path. */
+/** What a plugin says about ONE project row, at the row's far end, beside the row actions. */
 export interface PluginProjectRowStatus {
   /** The state in the reader's language — the tooltip and the accessible name of the icon. */
   label: string;
