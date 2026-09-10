@@ -180,6 +180,24 @@ describe('status() project section', () => {
     expect(status.status(1, 'brain-1').project).toEqual({ cwd: project, branch: 'main', workspace: null });
   });
 
+  /** A conversation keeps its managed ref after the project is deleted, and the turn resolver runs such
+   *  a conversation on the host. Status used to derive the container directory from the ref alone, so
+   *  the panel named a directory no turn would ever use. */
+  it('reports the host directory for a managed ref whose project is gone', () => {
+    const project = repo('main');
+    const projects = { list: () => [{ id: 1, path: project, executionKind: 'host' as const, lifecycle: 'active' as const }], get: () => null };
+    const { store, status } = harness(
+      () => ({ allowedProjectIds: new Set([1]), allowedPaths: () => [project] }),
+      { projects: projects as unknown as StatusDeps['projects'] },
+    );
+    store.createSession({ id: 'brain-1', userId: 1, model: 'm' });
+    store.setWorkDir('brain-1', project);
+    store.setProjectExecution('brain-1', 1, { kind: 'managed', projectId: 4242 });
+    const view = status.status(1, 'brain-1');
+    expect(view.project).toEqual({ cwd: project, branch: 'main', workspace: null });
+    expect(view.projectRef).toBeUndefined();
+  });
+
   it('reports no workspace for a conversation the Sandbox has no binding for', () => {
     const project = repo('main');
     const worktree = repo('elowen/u1/feature');

@@ -59,7 +59,7 @@ function setup() {
   const spawn = (id: string, clientCwd?: string, extra: Partial<SpawnOpts> = {}) => spawner.spawn({ sessionId: id, ownerUserId: user.id, selection: {}, policy: policy(user.id), autoCompact: false, ...(clientCwd === undefined ? {} : { clientCwd }), ...extra });
   const sessions = new LiveSessionRegistry<LiveBrain>();
   const lifecycle = new ConversationLifecycle({
-    store, sessions, policy, attachments: new ClientAttachments(),
+    store, sessions, policy, projects, attachments: new ClientAttachments(),
     elicitation: { cancelForSession: vi.fn() },
     goals: { cancelGoalContinuation: vi.fn(), reconcileGoal: vi.fn() },
     spawn: (opts: SpawnOpts) => spawner.spawn(opts), selectionAllowed: () => true,
@@ -212,6 +212,21 @@ describe('new personal conversation execution defaults', () => {
     expect(live.workDir).toBe('/chosen');
     h.lifecycle.stampWorkDir('brain-selected', h.root, h.policy(h.user.id));
     expect(h.store.getSession('brain-selected')?.work_dir).toBe('');
+  });
+
+  // The Chetty failure seen from the spawn side: the ref outlived its project, so the session advertised
+  // a container directory while every turn resolved to the host, and the conversation could never record
+  // the host home it was actually working in.
+  it('spawns a conversation whose managed project is gone on the host and records its home', async () => {
+    const h = setup();
+    const host = h.projects.create({ slug: 'host', path: h.root });
+    h.userProjects.assign(h.user.id, host.id);
+    h.store.createSession({ id: 'brain-dead-ref', userId: h.user.id, model: 'gpt-5', provider: 'test' });
+    h.store.setProjectExecution('brain-dead-ref', h.user.id, { kind: 'managed', projectId: 4242 });
+    const live = await h.spawn('brain-dead-ref', h.root);
+    expect(live.workDir).toBe(h.root);
+    h.lifecycle.stampWorkDir('brain-dead-ref', h.root, h.policy(h.user.id));
+    expect(h.store.getSession('brain-dead-ref')?.work_dir).toBe(h.root);
   });
 
   it('does not retarget a healthy live host conversation when another client reconnects without cwd', async () => {

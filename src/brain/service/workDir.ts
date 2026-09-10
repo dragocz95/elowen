@@ -53,6 +53,19 @@ export function turnWorkDir(policy: Policy, clientCwd: string | undefined, proje
 
 interface ProjectView { id: number; path: string; slug?: string; executionKind?: 'host' | 'managed'; lifecycle?: 'active' | 'deleting' }
 
+/** The managed project a stored ref resolves to, or undefined when it resolves to none: the project was
+ *  deleted, is being deleted, or was never managed. Status, the spawn and the per-turn scope all decide
+ *  "does this ref still name a live managed project" HERE, so they cannot answer it differently and
+ *  report one directory while the turn runs in another. */
+export function liveManagedProject(
+  projects: { list(): ProjectView[] } | undefined,
+  ref: ProjectExecutionRef | undefined,
+): ProjectView | undefined {
+  if (ref?.kind !== 'managed') return undefined;
+  const project = projects?.list().find((candidate) => candidate.id === ref.projectId);
+  return project?.executionKind === 'managed' && project.lifecycle === 'active' ? project : undefined;
+}
+
 export interface EffectiveTurnWorkDir {
   /** Registered Project/default directory before Sandbox selection. */
   baseWorkDir?: string;
@@ -85,12 +98,13 @@ export function effectiveTurnWorkDir(input: {
     // deleted (or was never managed) while the conversation kept pointing at it, and refusing here shut
     // BOTH doors: host paths refused because the ref reads managed, the guest refused because the
     // environment is gone. The host is where such a conversation actually lives, so it resolves there.
-    if (ref.kind === 'managed' && project?.executionKind === 'managed' && project.lifecycle === 'active') {
+    const managed = liveManagedProject(input.projects, ref);
+    if (ref.kind === 'managed' && managed) {
       if (!input.sandbox || typeof input.sandbox.prepareExecution !== 'function' || ENVIRONMENT_CONTROL_METHODS.some((method) => typeof input.sandbox?.[method] !== 'function')) throw new Error('project environment provider unavailable');
       if (input.accountUserId === null || !input.policy.canAccessProject?.(ref.projectId)) throw new Error('managed project access denied');
       // The project is mounted inside its own container under its own name, so this is both the guest
       // root and the only directory the turn ever sees.
-      const root = managedGuestRoot(project.slug, ref.projectId);
+      const root = managedGuestRoot(managed.slug, ref.projectId);
       return { baseWorkDir: root, workDir: root, workspace: null, projectRef: ref };
     }
     if (ref.kind !== 'managed') {

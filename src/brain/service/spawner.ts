@@ -33,7 +33,7 @@ import { liveSkillCommandExtension, searchableSkills, sessionPromptFragments, sk
 import { delegatedVisibilityToolPolicy } from '../delegatedScope.js';
 import type { BrainEvent } from '../events.js';
 import type { BrainDeps } from '../brainDeps.js';
-import { clientDir, turnWorkDir } from './workDir.js';
+import { clientDir, liveManagedProject, turnWorkDir } from './workDir.js';
 import { preparePersonalProject } from './personalProject.js';
 import { modelCapabilities, qwenThinkingWire } from '../modelCapabilities.js';
 import { LiveEventReplay } from '../session/liveEventReplay.js';
@@ -328,8 +328,10 @@ export class LiveSessionSpawner {
     const execution = preparePersonalProject(this.d, opts);
     opts = { ...opts, policy: execution.policy };
     // A managed project answers this before any host path does: its directory lives inside the guest, so
-    // neither a client-reported cwd nor a restored durable home describes where its turns run.
-    const managed = execution.projectRef?.kind === 'managed';
+    // neither a client-reported cwd nor a restored durable home describes where its turns run. Resolved
+    // through the same seam the turn uses, so a ref left pointing at a deleted project advertises the
+    // host directory its turns will actually run in rather than a container that no longer exists.
+    const managed = liveManagedProject(this.d.projects, execution.projectRef);
     // A channel conversation respawns through here WITHOUT a lifecycle carrying its stored work_dir
     // back in (ensureLive does that for owner chat), so a spawn whose caller names no cwd restores the
     // conversation's durable home first — only ever written from a validated client report or a
@@ -340,7 +342,7 @@ export class LiveSessionSpawner {
       ? undefined
       : this.d.store.getSession(sessionId)?.work_dir || undefined;
     const cwd = managed
-      ? managedGuestRoot(this.d.projects?.get(execution.projectRef!.projectId!)?.slug, execution.projectRef!.projectId!)
+      ? managedGuestRoot(managed.slug, managed.id)
       : opts.pathView?.root
       ?? turnWorkDir(opts.policy, opts.clientCwd ?? restoredWorkDir, this.d.projectPath) ?? this.d.cwd ?? process.cwd();
     // SIZE GUARD, before anything is built. A fork inherits the whole parent conversation, and the child
@@ -442,7 +444,7 @@ export class LiveSessionSpawner {
     // A project-bound plugin tool is DECLARED from inside one managed project, so its name, description
     // and schema only belong in a session running there. Nothing else narrows it: such a tool can be
     // stored at instance scope, where it carries no owner and would otherwise be composed for everyone.
-    const selectedProjectId = execution.projectRef?.kind === 'managed' ? execution.projectRef.projectId : null;
+    const selectedProjectId = managed?.id ?? null;
     const scopedPluginTools = plugins
       ? projectScopedTools(rawPluginTools, plugins.projectBoundTools, selectedProjectId)
       : rawPluginTools;

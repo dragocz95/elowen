@@ -13,8 +13,9 @@ import type { CardRegistry } from '../cards.js';
 import type { InlineArtifactRegistry } from '../inlineArtifacts.js';
 import type { ClientAttachments } from './attachments.js';
 import type { GoalLoopService } from './goalLoop.js';
-import { clientDir, gitProjectRoot } from './workDir.js';
+import { clientDir, gitProjectRoot, liveManagedProject } from './workDir.js';
 import type { ProjectExecutionRef } from '../../shared/projectExecution.js';
+import type { Project } from '../../store/projectStore.js';
 import { recordSessionEvent } from './sessionEvents.js';
 import { sessionHasWorkInFlight } from './sessionQuiescence.js';
 import { hasActiveNativeCompactionCheck } from '../session/compactionCheckCoordinator.js';
@@ -65,6 +66,8 @@ interface LifecycleDeps {
   artifacts?: Pick<InlineArtifactRegistry, 'closeSession'>;
   /** Session composition (LiveSessionSpawner.spawn) — the single spawn source. */
   spawn(opts: SpawnOpts): Promise<LiveBrain>;
+  /** The project registry, to resolve a conversation's execution ref the same way a turn does. */
+  projects?: { list(): Project[] };
   policy?: (userId: number) => Policy;
   userSettings?: BrainDeps['userSettings'];
   projectModelPreference?: BrainDeps['projectModelPreference'];
@@ -342,7 +345,7 @@ export class ConversationLifecycle {
       // consulted when the conversation carries no model pin of its own, so a pinned conversation is
       // unaffected. A dir that vanished or fell outside the policy simply yields no project root — the
       // same graceful miss as a CLI client launching in a gone directory.
-      const managed = this.d.store.getProjectExecution(sessionId)?.kind === 'managed';
+      const managed = !!liveManagedProject(this.d.projects, this.d.store.getProjectExecution(sessionId));
       const projectRoot = managed ? undefined : gitProjectRoot(policy, resolvedCwd);
       const stored = storedModel && storedProvider
         && storedModel !== userCfg?.visionModel
@@ -394,7 +397,9 @@ export class ConversationLifecycle {
    *  client-reported directory is ever stamped — fallback-resolved workDirs (policy root, primary
    *  project) must not turn a cwd-less web session into a false cwd match. */
   stampWorkDir(sessionId: string, clientCwd: string, policy: Policy): void {
-    if (this.d.store.getProjectExecution(sessionId)?.kind === 'managed') return;
+    // A managed conversation has no host home to record. A ref pointing at a deleted project is NOT
+    // that case: its turns run on the host, so it keeps its durable home like any host conversation.
+    if (liveManagedProject(this.d.projects, this.d.store.getProjectExecution(sessionId))) return;
     const dir = clientDir(policy, clientCwd);
     if (!dir) return;
     const row = this.d.store.getSession(sessionId);

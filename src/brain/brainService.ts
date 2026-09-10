@@ -336,6 +336,7 @@ export class BrainService {
       store: d.store, sessions: this.sessions, attachments: this.attachments,
       elicitation: this.elicitation, goals: this.goals, cards: this.cards, artifacts: this.artifacts,
       spawn: (o) => this.spawner.spawn(o),
+      get projects() { return d.projects; },
       get policy() { return d.policy; },
       get userSettings() { return d.userSettings; },
       get projectModelPreference() { return d.projectModelPreference; },
