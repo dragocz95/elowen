@@ -49,7 +49,7 @@ describe('descriptorCapabilities — models.dev catalog', () => {
   it('keeps a ladder an endpoint publishes itself, but never carries one to another endpoint by name', () => {
     // OpenRouter's own row for qwen3.8-max lists minimal and xhigh, and its `reasoning` object really does
     // accept them, so that endpoint keeps its full ladder instead of being flattened to the family's.
-    expect(levels('openrouter', 'qwen/qwen3.8-max')).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh']);
+    expect(levels('openrouter', 'qwen/qwen3.8-max-0902')).toEqual(['minimal', 'low', 'medium', 'high', 'xhigh']);
     // That same ladder must NOT reach DashScope, which has no row of its own and is matched only by name.
     // There the effort becomes a `thinking_budget`, defined for low/medium/high alone, so an offered
     // `minimal` would ride out as a raw reasoning_effort the endpoint never documented.
