@@ -62,6 +62,53 @@ describe('guestFiles helper parity', () => {
     expect(tail.result.base64).toBe(Buffer.alloc(16).toString('base64'));
   });
 
+  it('names a non-directory in the middle of a followed path instead of leaking the errno', () => {
+    const dir = join(root, 'through-a-file');
+    mkdirSync(dir);
+    const file = join(dir, 'notadir');
+    writeFileSync(file, 'i am a file');
+    const beyond = join(file, 'child.txt');
+
+    // Resolving through a file raises NotADirectoryError, which is NOT a FileNotFoundError — so it used to
+    // miss the "missing path" branch, reach the catch-all and answer with the generic code and the errno
+    // string, and that string spells out the whole guest path.
+    const blocked = runHelper({ kind: 'stat', path: beyond, followSymlinks: true });
+    expect(blocked.ok).toBe(false);
+    if (blocked.ok) return;
+    expect(blocked.error.code).toBe('not_directory');
+    expect(blocked.error.message).toBe('Path resolves through something that is not a directory');
+    expect(blocked.error.message).not.toContain(beyond);
+    expect(blocked.error.message).not.toMatch(/Errno|errno/);
+
+    // A symlink pointing through the same file resolves the same way, for the same reason.
+    const via = join(dir, 'via-link');
+    symlinkSync(beyond, via);
+    const followed = runHelper({ kind: 'stat', path: via, followSymlinks: true });
+    expect(followed.ok).toBe(false);
+    if (followed.ok) return;
+    expect(followed.error.code).toBe('not_directory');
+
+    // Everything that already worked still answers exactly as before: a real file, a symlink followed to
+    // its target, and a dangling symlink — which is a missing path, not a broken one.
+    const plain = runHelper({ kind: 'stat', path: file, followSymlinks: true });
+    expect(plain.ok && plain.result.entry.kind).toBe('file');
+    expect(plain.ok && plain.result.entry.path).toBe(file);
+
+    const alias = join(dir, 'alias');
+    symlinkSync(file, alias);
+    const viaAlias = runHelper({ kind: 'stat', path: alias, followSymlinks: true });
+    expect(viaAlias.ok && viaAlias.result.entry.path).toBe(file);
+    expect(runHelper({ kind: 'stat', path: alias }).ok && (runHelper({ kind: 'stat', path: alias }) as any).result.entry.kind).toBe('symlink');
+
+    const dangling = join(dir, 'dangling');
+    symlinkSync(join(dir, 'never-existed'), dangling);
+    const missing = runHelper({ kind: 'stat', path: dangling, followSymlinks: true });
+    expect(missing.ok).toBe(true);
+    expect(missing.ok && missing.result.entry).toBeNull();
+    // Without following, the dangling link is still an entry in its own right.
+    expect(runHelper({ kind: 'stat', path: dangling }).ok).toBe(true);
+  });
+
   it('keeps stat, read and write on the same final symlink target and preserves the link', () => {
     const dir = join(root, 'links');
     mkdirSync(dir);
