@@ -252,18 +252,12 @@ export class PodmanClient {
 
   async containerInventory(namespace) {
     resourceToken(namespace);
-    const result = await this.#run(['ps', '-a', '--filter', `label=io.elowen.namespace=${namespace}`, '--format', 'json']);
+    const result = await this.#run(['ps', '--filter', `label=io.elowen.namespace=${namespace}`, '--format', '{{.Names}}']);
     if (result.truncated) throw new Error('Podman container inventory exceeded its bound');
-    const rows = JSON.parse(result.stdout);
-    if (!Array.isArray(rows)) throw new Error('Invalid Podman container inventory response');
     const inventory = new Map();
-    for (const row of rows) {
-      const name = Array.isArray(row?.Names) ? row.Names[0] : row?.Names;
-      const state = String(row?.State ?? '').toLowerCase();
-      if (typeof name !== 'string' || !name || !['configured', 'created', 'running', 'paused', 'stopped', 'exited', 'stopping'].includes(state)) {
-        throw new Error('Invalid Podman container inventory entry');
-      }
-      inventory.set(name, state);
+    for (const name of result.stdout.split('\n').map((entry) => entry.trim()).filter(Boolean)) {
+      resourceToken(name);
+      inventory.set(name, 'running');
     }
     return inventory;
   }
