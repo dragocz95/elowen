@@ -64,7 +64,7 @@ export function registerEnvironmentApi(ctx, runtime) {
     try {
       const accountUserId = req.auth.userId;
       if (!Number.isSafeInteger(accountUserId) || accountUserId <= 0) return { status: 401, body: { error: 'account_required' } };
-      const input = req.query ?? {};
+      const input = req.query;
       const project = { kind: 'managed', projectId: Number(input.projectId) };
       if (path !== 'operation' && req.auth.accessibleProjects !== null && !req.auth.accessibleProjects.includes(project.projectId)) return { status: 403, body: { error: 'project_forbidden' } };
       return { status: 200, body: await handler(input, { project, accountUserId }) };

@@ -839,7 +839,6 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           await stopRow(row);
           await podman.remove(previous);
         }
-        delete row.spec.legacyWorkspaceLayout;
         delete row.spec.containerId;
         store.save(row);
         checkpoint(op, { removed: true });

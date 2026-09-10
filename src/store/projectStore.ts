@@ -7,6 +7,10 @@ export interface Project {
   executionKind: 'host' | 'managed'; creatorUserId: number | null; lifecycle: 'active' | 'deleting';
 }
 
+/** The refusal {@link ProjectStore.createManaged} throws when the account is at its ceiling. Both routes
+ *  that create a managed project answer it with a 409, so the text they match on lives with the throw. */
+export const PROJECT_LIMIT_REACHED = 'project creation limit reached';
+
 type ProjectRow = Omit<Project, 'memoryShared' | 'executionKind' | 'creatorUserId'> & {
   memory_shared: number; execution_kind: Project['executionKind']; creator_user_id: number | null;
 };
@@ -34,7 +38,7 @@ export class ProjectStore {
       if (!user) throw new Error('account not found');
       if (!readIsAdmin(this.db, p.creatorUserId)) {
         const { count } = this.db.prepare("SELECT COUNT(*) AS count FROM projects WHERE creator_user_id = ? AND execution_kind = 'managed'").get(p.creatorUserId) as { count: number };
-        if (count >= user.project_limit) throw new Error('project creation limit reached');
+        if (count >= user.project_limit) throw new Error(PROJECT_LIMIT_REACHED);
       }
       const info = this.db.prepare("INSERT INTO projects (slug, path, notes, execution_kind, creator_user_id) VALUES (?, '', ?, 'managed', ?)")
         .run(p.slug, p.notes ?? '', p.creatorUserId);

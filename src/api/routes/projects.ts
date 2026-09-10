@@ -9,7 +9,7 @@ import { createDirectorySchema, createProjectSchema, deleteProjectSchema, update
 import type { ElowenApp, RouteContext } from '../context.js';
 import type { PluginProjectIndicator } from '../../plugins/api.js';
 import { isPluginAllowedForUser } from '../../shared/pluginAccess.js';
-import type { Project as StoredProject } from '../../store/projectStore.js';
+import { PROJECT_LIMIT_REACHED, type Project as StoredProject } from '../../store/projectStore.js';
 import type { ProjectMemberView, ProjectView } from '../../shared/wireContract.js';
 
 const MAX_MEMBER_SAMPLES = 3;
@@ -53,8 +53,8 @@ async function startNewEnvironment(ctx: RouteContext, d: RouteContext['d'], proj
 function environmentRefusal(error: unknown): { error: string; code: string } | null {
   const value = error as { status?: unknown; code?: unknown; message?: unknown };
   const refused = typeof value?.status === 'number' && value.status >= 400 && value.status < 500;
-  if (!refused || typeof value.code !== 'string') return null;
-  return { error: typeof value.message === 'string' ? value.message : 'environment operation refused', code: value.code };
+  if (!refused || typeof value.code !== 'string' || typeof value.message !== 'string') return null;
+  return { error: value.message, code: value.code };
 }
 
 /** Bound concurrent filesystem projections so a large registry cannot flood the libuv worker pool. */
@@ -224,7 +224,7 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
       }
       catch (error) {
         if ((error as { code?: string }).code === 'SQLITE_CONSTRAINT_UNIQUE') return c.json({ error: 'slug taken' }, 409);
-        if (error instanceof Error && error.message === 'project creation limit reached') return c.json({ error: error.message }, 409);
+        if (error instanceof Error && error.message === PROJECT_LIMIT_REACHED) return c.json({ error: error.message }, 409);
         throw error;
       }
     }
@@ -243,7 +243,7 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     catch (error) {
       // The same store limit is a 409 on POST /projects; it is reachable here once an administrator
       // lowers the limit below the account's current managed count.
-      if (error instanceof Error && error.message === 'project creation limit reached') return c.json({ error: error.message }, 409);
+      if (error instanceof Error && error.message === PROJECT_LIMIT_REACHED) return c.json({ error: error.message }, 409);
       throw error;
     }
   });
