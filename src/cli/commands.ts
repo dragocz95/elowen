@@ -2,7 +2,6 @@ import { start as realStart, stop as realStop, status as realStatus, type RunSta
 import { update as realUpdate, type UpdateResult } from './update.js';
 import { callElowenApi } from '../shared/apiClient.js';
 import { restartServices, type RestartTarget } from './systemd.js';
-import { noTimeoutDispatcher, noTimeoutFetch } from './noTimeoutDispatcher.js';
 
 /** `elowen api <METHOD> <path> [jsonBody]` — generic authenticated REST passthrough. Reads
  *  ELOWEN_URL/ELOWEN_TOKEN from the env the daemon injects into every spawned agent, so an agent can
@@ -21,9 +20,8 @@ export async function runApiCommand(
   const url = (env.ELOWEN_URL) ?? 'http://localhost:4400';
   const token = (env.ELOWEN_TOKEN) ?? '';
   // No timeout: `/brain/compact` and friends legitimately run for minutes and the operator wants the
-  // real answer, not undici's 300 s abort. Node's global fetch ignores the dispatcher, so the api
-  // verb fetches through undici's own fetch (see noTimeoutDispatcher.ts).
-  const res = await deps.call(method, path, body, { url, token, fetchImpl: noTimeoutFetch, dispatcher: noTimeoutDispatcher() });
+  // real answer, not undici's 300 s abort. The MCP escape hatch asks for the same thing (src/mcp/tools.ts).
+  const res = await deps.call(method, path, body, { url, token, noTimeout: true });
   deps.out(res.data !== undefined ? JSON.stringify(res.data, null, 2) : res.text);
   return res.ok ? 0 : 1;
 }
