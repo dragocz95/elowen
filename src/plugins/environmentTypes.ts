@@ -26,14 +26,17 @@ export interface GuestFileStat {
   kind: 'file' | 'directory' | 'symlink' | 'other';
   size: number;
   modifiedAt: string;
-  /** A conflict token, never authorization. */
-  version: string;
+  /** A conflict token, never authorization. Absent on a metadata-only listing, which does not hash
+   *  contents; a caller that intends to write must obtain a version from a read or a plain stat. */
+  version?: string;
 }
 /** Decoded bytes per upload chunk; every chunk except the last has exactly this size. */
 export const GUEST_FILE_CHUNK_BYTES = 524288;
 export type GuestFileOperation =
   | { kind: 'stat'; path: string; followSymlinks?: boolean }
-  | { kind: 'list'; path: string; limit: number; cursor?: string }
+  /** `metadata` asks for names, kinds, sizes and modification times without the content hash a version
+   *  costs. Entries answered that way carry NO `version` and so cannot be written against. */
+  | { kind: 'list'; path: string; limit: number; cursor?: string; metadata?: boolean }
   | { kind: 'read'; path: string; maxBytes: number; offset?: number; length?: number }
   | { kind: 'write'; path: string; base64: string; expectedVersion: string | null }
   /** Upload handles are bound to the original account, Project, generation, target and version. */

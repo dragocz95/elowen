@@ -6,7 +6,7 @@ import { manageWorktrees } from './managedWorktrees.mjs';
 import { createSiteImageService } from './environmentSiteImages.mjs';
 import { createSiteCleanupService } from './environmentSiteCleanup.mjs';
 import { createGuestFileTransport, validateUploadOperation, UPLOAD_KINDS } from './guestFileTransport.mjs';
-import { managedShellFrame } from './managedBootstrap.mjs';
+import { managedShellFrame, synchronousShellFrame } from './managedBootstrap.mjs';
 import { createEnvironmentStore } from './environmentDb.mjs';
 import { ownerProvablyDead, processIdentity, withRepoLease } from './db.mjs';
 import { createContainerSpec, createBoundSiteSpec, withContainerLimits, resourceToken, bindContainerIdentity } from './containerSpec.mjs';
@@ -62,13 +62,22 @@ function guestPath(value) {
   if (typeof value !== 'string' || !value.startsWith('/') || value.includes('\0') || value.length > 4096) throw error('invalid_path', 'An absolute guest path is required', 400);
   return posix.normalize(value);
 }
-function command(input) {
+// `synchronous` is a PARAMETER, not a field of `input`, so that no caller reaching this through the
+// public control surface can flip it and hand a duplex consumer a shell that swallows its first frames.
+function command(input, synchronous = false) {
   // `bash -s` would read the script off stdin with a buffered reader and take whatever followed it in
   // the same write — which for a duplex consumer (a language server, a CDP client) is its first protocol
   // frames. The bootstrap reads exactly the declared number of bytes, execs bash on them, and leaves the
   // rest of stdin untouched for the program.
   if (input?.type === 'shell' && typeof input.command === 'string' && Buffer.byteLength(input.command) <= 524288) {
-    const frame = managedShellFrame(input.command);
+    // A SYNCHRONOUS caller sends a script on stdin and reads the result; there is no duplex consumer
+    // behind it and therefore nothing after the script for a buffered reader to swallow. `bash -s` is
+    // then the whole mechanism, and it is already the canonical managed shell that completion capture
+    // requires — so this drops a Python interpreter start-up from every such execution without adding a
+    // shape the rest of the runtime does not already use. Everything else the frame protected is
+    // untouched: the byte bound above, the input validation and NUL rules in the client, the guest path
+    // check on the working directory, the timeout, the exit code and the output sanitizer.
+    const frame = synchronous ? synchronousShellFrame(input.command) : managedShellFrame(input.command);
     return { argv: frame.argv, input: frame.stdin };
   }
   if (input?.type === 'argv' && typeof input.file === 'string' && Array.isArray(input.args)) {
@@ -79,7 +88,7 @@ function command(input) {
 }
 function fileOperation(op) {
   if (UPLOAD_KINDS.includes(op?.kind)) return validateUploadOperation(op);
-  const keys = { stat: ['followSymlinks'], list: ['limit', 'cursor'], read: ['maxBytes', 'offset', 'length'], write: ['base64', 'expectedVersion'], remove: ['expectedVersion'], mkdir: [], rename: ['destination', 'expectedVersion'], search: ['pattern', 'glob', 'caseSensitive', 'limit'] };
+  const keys = { stat: ['followSymlinks'], list: ['limit', 'cursor', 'metadata'], read: ['maxBytes', 'offset', 'length'], write: ['base64', 'expectedVersion'], remove: ['expectedVersion'], mkdir: [], rename: ['destination', 'expectedVersion'], search: ['pattern', 'glob', 'caseSensitive', 'limit'] };
   if (op?.followSymlinks !== undefined && typeof op.followSymlinks !== 'boolean') throw error('invalid_operation', 'followSymlinks must be boolean', 400);
   if (!op || !Object.hasOwn(keys, op.kind) || Object.keys(op).some((key) => !['kind', 'path', ...keys[op.kind]].includes(key))) throw error('invalid_operation', 'Invalid guest file operation', 400);
   guestPath(op.path);
@@ -275,9 +284,22 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       return store.mintLease(current, userId, kind);
     });
   }
-  function leaseHandle(row, lease) {
+  /** `settle` is the closure `PodmanClient.prepareExecution` bound to the execution this lease fences.
+   *  Where it is available, the cleanup below reuses the ownership verification that preparation already
+   *  performed instead of inspecting the container and every volume again. It is only ever supplied by
+   *  the code that prepared the execution; recovery, revocation and cancellation of somebody else's lease
+   *  have no such closure and take the fully verified path, which is also the fallback whenever settling
+   *  this way does not succeed — a container stopped mid-command is handled there rather than here. */
+  function leaseHandle(row, lease, settle = null) {
     const spec = specFor(row.spec);
     let released = false;
+    // Settling through the bound closure is an OPTIMIZATION, never the only attempt: a failure here
+    // falls through to the fully verified path, which re-inspects and reports properly. It cannot mask a
+    // live guest, because that path runs the same termination proof it always did.
+    const settled = async (mode) => {
+      try { await settle(mode); return true; }
+      catch { return false; }
+    };
     return {
       id: lease.id, accountUserId: lease.user_id, workspaceId: null, homeGeneration: null,
       projectId: row.project_id, runtimeGeneration: row.generation,
@@ -292,12 +314,18 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       async cancel() {
         if (released) return;
         db.prepare('UPDATE p_sandbox_execution_leases SET cancel_requested=1 WHERE id=?').run(lease.id);
+        if (settle && await settled({ cancel: true })) return;
         const current = await podman.inspect(spec);
         if (current?.state === 'running') await podman.cancelExecution(spec, lease.execution_id, { persistent: true });
         else if (current && !['stopped', 'exited', 'created'].includes(current.state)) throw error('cancellation_unverified', 'Guest termination cannot be verified');
       },
       async release() {
         if (released) return;
+        if (settle && await settled({ cancel: false })) {
+          db.prepare('DELETE FROM p_sandbox_execution_leases WHERE id=? AND execution_id=?').run(lease.id, lease.execution_id);
+          released = true;
+          return;
+        }
         const current = await podman.inspect(spec);
         if (current?.state === 'running') await podman.releaseExecution(spec, lease.execution_id, { persistent: true });
         else if (current && !['stopped', 'exited', 'created'].includes(current.state)) throw error('cancellation_unverified', 'Guest termination cannot be verified');
@@ -345,9 +373,12 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const program = command(input.command);
     const cwd = guestPath(input.cwd ?? '/workspace');
     const leased = await mint(row, userId, input.leaseKind);
-    const handle = leaseHandle(row, leased);
+    let handle = leaseHandle(row, leased);
     try {
       const prepared = await podman.prepareExecution(specFor(row.spec), leased.execution_id, program.argv, { input: program.input, workdir: cwd, timeoutMs: 900000 });
+      // Preparation has just verified ownership for this execution, so the cleanup after the command
+      // settles reuses that verification rather than inspecting the container and every volume again.
+      handle = leaseHandle(row, leased, prepared.settle);
       return { mode: 'managed', projectRef: input.projectRef, cwd: dataDir, displayCwd: cwd, home: '/root', roots: ['/'],
         launch: prepared.launch, stdin: program.input, cancel: () => handle.cancel(), workspace: null, lease: handle,
         sanitizeOutput: (text) => String(text).split(dataDir).join('[environment-storage]') };
@@ -890,7 +921,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       account(input.accountUserId, true);
       await authorize('site', input.siteId, input.accountUserId, true);
       const row = await ready('site', input.siteId, input.accountUserId);
-      const program = command({ type: 'shell', command: input.command });
+      // SiteExec runs the script to completion and returns its output. Nothing reads the guest's stdin
+      // after the script, so the byte-counting bootstrap that exists to protect a duplex protocol has
+      // nothing to protect here.
+      const program = command({ type: 'shell', command: input.command }, true);
       return await runGuest(row, input.accountUserId, program.argv, { input: program.input, workdir: guestPath(input.workdir ?? '/workspace'), timeoutMs: input.timeoutMs ?? 120000, signal: input.signal, kind: 'sites' });
     },
     siteEnvironmentLogs: (input) => logs('site', input.siteId, input.accountUserId, input.lines),

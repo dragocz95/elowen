@@ -765,6 +765,22 @@ export class PodmanClient {
       launch: { type: 'argv', file: '/usr/bin/podman', args: [...this.#prefix, ...prepared.args], env: { ...this.#env } },
       stdin: input,
       ...(capture ? { completion: { artifact: completionArtifact(executionId) } } : {}),
+      /** Settle THIS prepared execution once its launcher has finished.
+       *
+       *  The closure is bound here, inside the client, and carries the two things a caller would
+       *  otherwise have to supply as data: the row `#prepareGuest` just verified, and whether capture was
+       *  armed. Neither is an argument anywhere — `releaseExecution` and `cancelExecution` still take no
+       *  row and inspect for themselves, so a caller holding a forged one has nowhere to put it.
+       *
+       *  Reuse is admitted by `#reusableRow` only when the row matches the immutable identity pinned into
+       *  the frozen specification, and the durable lease fences lifecycle changes for the whole
+       *  execution. A caller that cannot settle this way is expected to fall back to the fully verified
+       *  path, which also handles a container that is no longer running. */
+      settle: async ({ cancel = false } = {}) => {
+        const row = await this.#reusableRow(spec, prepared.container);
+        if (cancel) { await this.#tombstone(spec, executionId, row, true, capture); return; }
+        await this.#release(spec, executionId, row, true, capture);
+      },
     };
   }
 

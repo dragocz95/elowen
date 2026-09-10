@@ -2,7 +2,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSyn
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { createContainerSpec, createLegacySiteSpec, executionUnit, volumeLabels } from '../../plugins/sandbox/lib/containerSpec.mjs';
+import { bindContainerIdentity, createContainerSpec, createLegacySiteSpec, executionUnit, volumeLabels } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import { cleanPodmanEnv, PodmanClient, SpawnExecutor, isolatedPodmanOptions } from '../../plugins/sandbox/lib/podman.mjs';
 import { PROJECT_CONTAINERFILE } from '../../plugins/sandbox/lib/containerBaseImage.mjs';
 import { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
@@ -345,6 +345,41 @@ describe('clean and confined Podman client', () => {
     // And nothing was ever addressed to the forged identity.
     expect(executor.run.mock.calls.some(([, args]) => args.includes(forged.id))).toBe(false);
     for (const [, args] of executor.run.mock.calls.filter(([, a]) => a[0] === 'exec')) expect(args[1]).toBe('a'.repeat(64));
+  });
+
+  // A prepared execution verified ownership before it launched. Settling it afterwards through the
+  // closure the client bound at that moment reuses that verification instead of inspecting the container
+  // and every volume all over again, which is most of what an interactive shell command paid for after
+  // its own work had already finished.
+  it('settles a prepared execution without repeating the ownership inspection', async () => {
+    // Production pins the container's immutable identity into the specification once the container
+    // exists, and that pin is what makes the reuse below admissible at all.
+    const spec = bindContainerIdentity(fixture().spec, 'a'.repeat(64));
+    const { client, executor } = fake(spec);
+    const executionId = 'b'.repeat(32);
+    const prepared = await client.prepareExecution(spec, executionId, ['/bin/bash', '-s'], { input: 'ls\n' });
+    expect(prepared.launch.args).toContain('systemd-run');
+    executor.run.mockClear();
+
+    await prepared.settle();
+    expect(executor.run.mock.calls.filter(([, args]) => args[0] === 'inspect')).toHaveLength(0);
+    expect(executor.run.mock.calls.filter(([, args]) => args[0] === 'volume' && args[1] === 'inspect')).toHaveLength(0);
+    expect(executor.run.mock.calls.filter(([, args]) => args[0] === 'container' && args[1] === 'exists')).toHaveLength(0);
+    // Every command it did issue went to the container preparation verified, never to anything else.
+    for (const [, args] of executor.run.mock.calls.filter(([, a]) => a[0] === 'exec')) expect(args[1]).toBe('a'.repeat(64));
+  });
+
+  // The closure is the ONLY way that reuse is reachable. It carries the verified row and whether capture
+  // was armed as bound state, so there remains nowhere for a caller to put a row of its own.
+  it('exposes no way to supply a row to the settlement closure', async () => {
+    const spec = bindContainerIdentity(fixture().spec, 'a'.repeat(64));
+    const { client, executor } = fake(spec);
+    const prepared = await client.prepareExecution(spec, 'd'.repeat(32), ['/bin/bash', '-s'], {});
+    executor.run.mockClear();
+
+    const forged = { id: 'f'.repeat(64), state: 'running' };
+    await prepared.settle({ container: forged, completionCapture: true } as never).catch(() => { /* what it DID is the point */ });
+    expect(executor.run.mock.calls.some(([, args]) => args.includes(forged.id))).toBe(false);
   });
 
   it('verifies container ownership once per release instead of twice in a row', async () => {

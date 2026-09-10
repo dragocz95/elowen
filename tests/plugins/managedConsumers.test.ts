@@ -48,19 +48,40 @@ function memoryProvider(initial: Record<string, string | Buffer> = {}) {
     return null;
   };
   let race = false;
+  // Directories that exist without a file beneath them. A real guest image always has these, and a
+  // directory is otherwise implied by the files under it, which is what `stat` reports — so both are
+  // consulted before a write is refused for a missing parent.
+  const directories = new Set<string>(['/', '/tmp', '/workspace', '/root', '/etc', '/data']);
   const projectFiles = vi.fn<ProjectEnvironmentControl['projectFiles']>(async ({ operation: op }): Promise<GuestFileResult> => {
     if (op.kind === 'stat') return { kind: 'stat', entry: stat(op.path) };
     if (op.kind === 'read') {
       const bytes = data.get(op.path);
-      if (!bytes) throw new Error('not a regular file');
+      // The real guest distinguishes these two, and a caller deciding whether to CREATE a file depends on
+      // it: a missing path is `not_found`, while a path that is there but is not a regular file is
+      // `not_regular_file`. A fake that answers the same way for both cannot test that decision.
+      if (!bytes) {
+        const entry = stat(op.path);
+        throw entry
+          ? Object.assign(new Error('Only regular files can be read'), { code: 'not_regular_file' })
+          : Object.assign(new Error(`No such file or directory: ${op.path}`), { code: 'not_found' });
+      }
       const part = bytes.subarray(op.offset ?? 0, (op.offset ?? 0) + (op.length ?? op.maxBytes));
       if (part.length > op.maxBytes) throw new Error('byte cap exceeded');
       return { kind: 'read', base64: part.toString('base64'), totalBytes: bytes.length, version: version(bytes) };
     }
     if (op.kind === 'write') {
       if (race || (stat(op.path)?.version ?? null) !== op.expectedVersion) throw new Error('version conflict');
+      // The guest refuses a write whose parent is not there, with a code of its own, so the host can try
+      // the write first and build the tree only on that specific answer.
+      if (!directories.has(posix.dirname(op.path)) && !stat(posix.dirname(op.path))) {
+        throw Object.assign(new Error(`Parent directory does not exist: ${posix.dirname(op.path)}`), { code: 'parent_missing' });
+      }
       data.set(op.path, Buffer.from(op.base64, 'base64'));
       return { kind: 'write', entry: stat(op.path)! };
+    }
+    if (op.kind === 'mkdir') {
+      directories.add(op.path);
+      return { kind: 'mkdir', entry: { path: op.path, kind: 'directory', size: 0, modifiedAt: '2026-01-01T00:00:00Z', version: 'directory' } };
     }
     if (op.kind === 'list') {
       const entries = [...data.keys()].filter(path => posix.dirname(path) === op.path).map(path => stat(path)!);
@@ -163,6 +184,66 @@ describe('managed builtin consumer routing', () => {
 
   // Every one of these operations is a container round trip costing hundreds of milliseconds, so the
   // COUNT is the latency. A tiny file has to cost one.
+  // Every operation below is a container round trip, so the COUNT is what the user waits for. These
+  // figures are the contract; a change that adds one is a regression worth a conversation.
+  it('writes over an existing managed file in two guest operations', async () => {
+    const provider = memoryProvider({ '/workspace/notes.md': 'before\n' });
+    const { run } = fixture(files, provider);
+    await run('Read', { file_path: '/workspace/notes.md' });
+    provider.projectFiles.mockClear();
+
+    expect((await run('Write', { file_path: '/workspace/notes.md', content: 'after\n' })).details?.ok).toBe(true);
+    // One read for existence, content and the version the swap writes against; then the write itself.
+    // It used to stat the file, read it, then stat its parent before writing.
+    expect(provider.projectFiles.mock.calls.map(([call]) => call.operation.kind)).toEqual(['read', 'write']);
+  });
+
+  it('creates a managed file in two guest operations when its directory is already there', async () => {
+    const provider = memoryProvider({ '/workspace/keep.md': 'x\n' });
+    const { run } = fixture(files, provider);
+    expect((await run('Write', { file_path: '/workspace/fresh.md', content: 'new\n' })).details?.ok).toBe(true);
+    // The opening read reports the absence, and the write is attempted rather than preceded by a walk up
+    // the ancestry confirming what is almost always already true.
+    expect(provider.projectFiles.mock.calls.map(([call]) => call.operation.kind)).toEqual(['read', 'write']);
+    expect(provider.data.get('/workspace/fresh.md')!.toString()).toBe('new\n');
+  });
+
+  it('builds the missing ancestry only when the guest says that is what is in the way', async () => {
+    const provider = memoryProvider({ '/workspace/keep.md': 'x\n' });
+    const { run } = fixture(files, provider);
+    expect((await run('Write', { file_path: '/workspace/deep/nested/file.md', content: 'body\n' })).details?.ok).toBe(true);
+    const kinds = provider.projectFiles.mock.calls.map(([call]) => call.operation.kind);
+    // Attempt, refusal, the walk that establishes what is missing, the directories, then the retry.
+    expect(kinds.filter(kind => kind === 'write')).toHaveLength(2);
+    expect(kinds.filter(kind => kind === 'mkdir')).toHaveLength(2);
+    expect(provider.data.get('/workspace/deep/nested/file.md')!.toString()).toBe('body\n');
+  });
+
+  it('edits a managed file in two guest operations', async () => {
+    const provider = memoryProvider({ '/workspace/edit.md': 'alpha beta\n' });
+    const { run } = fixture(files, provider);
+    await run('Read', { file_path: '/workspace/edit.md' });
+    provider.projectFiles.mockClear();
+
+    expect((await run('Edit', { file_path: '/workspace/edit.md', old_string: 'alpha', new_string: 'ALPHA' })).details?.ok).toBe(true);
+    expect(provider.projectFiles.mock.calls.map(([call]) => call.operation.kind)).toEqual(['read', 'write']);
+  });
+
+  // A traversal never writes against what it saw, and the version it used to ask for made the guest read
+  // and hash the full contents of every file it walked past.
+  it('walks for Glob without asking the guest to hash the files it passes', async () => {
+    const provider = memoryProvider({ '/workspace/a.ts': 'x', '/workspace/b.ts': 'y', '/workspace/c.md': 'z' });
+    const { run } = fixture(files, provider);
+    const result = await run('Glob', { pattern: '/workspace/*.ts' });
+    expect(result.content[0].text).toContain('a.ts');
+
+    const lists = provider.projectFiles.mock.calls.map(([call]) => call.operation).filter(op => op.kind === 'list');
+    expect(lists.length).toBeGreaterThan(0);
+    for (const op of lists) expect(op).toMatchObject({ metadata: true });
+    // And no stat per match on the way back out.
+    expect(provider.projectFiles.mock.calls.filter(([call]) => call.operation.kind === 'stat')).toHaveLength(1);
+  });
+
   it('reads a tiny managed file with a single guest read and no surrounding stat', async () => {
     const provider = memoryProvider({ '/workspace/tiny.txt': 'hello world\n' });
     const { run } = fixture(files, provider);

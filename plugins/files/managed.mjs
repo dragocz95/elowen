@@ -53,8 +53,10 @@ export function managedFiles(ctx, signal) {
       const first = await chunk(path, 0, CHUNK_BYTES);
       return { bytes: first.bytes, totalBytes: first.totalBytes, version: first.version, complete: first.bytes.length >= first.totalBytes };
     } catch (error) {
-      if (error?.code === 'not_found') throw new Error(`File does not exist: ${path}`);
-      if (error?.code === 'not_regular_file') throw new Error('path is not a regular file');
+      // The guest's code is carried onto the readable message, because a caller that must distinguish
+      // "not there, so create it" from "there but unreadable" cannot be asked to match on prose.
+      if (error?.code === 'not_found') throw Object.assign(new Error(`File does not exist: ${path}`), { code: 'not_found' });
+      if (error?.code === 'not_regular_file') throw Object.assign(new Error('path is not a regular file'), { code: 'not_regular_file' });
       throw error;
     }
   };
@@ -105,7 +107,20 @@ export function managedFiles(ctx, signal) {
     }
     return { bytes: Buffer.concat(parts), version: first.version };
   };
+  /** Write the file, and build its ancestry only if the guest says that is what is in the way.
+   *
+   *  Every write used to walk up from the parent statting each directory before it began, which is a
+   *  container round trip spent confirming something that is true for essentially every write an agent
+   *  makes: the directory it is writing into already exists. The guest now answers `parent_missing` for
+   *  exactly that condition and for nothing else, so the tree is built on evidence rather than on
+   *  suspicion. `already_exists` on a directory we are creating is a concurrent writer having got there
+   *  first, which is success, not conflict. */
   const write = async (path, bytes, expectedVersion) => {
+    const attempt = () => operation({ kind: 'write', path, base64: bytes.toString('base64'), expectedVersion });
+    try { return await attempt(); }
+    catch (error) {
+      if (error?.code !== 'parent_missing') throw error;
+    }
     const missing = [];
     let parent = posix.dirname(path);
     while (!(await stat(parent))) {
@@ -120,9 +135,9 @@ export function managedFiles(ctx, signal) {
         if (error.code !== 'already_exists' || (await stat(directory))?.kind !== 'directory') throw error;
       }
     }
-    return operation({ kind: 'write', path, base64: bytes.toString('base64'), expectedVersion });
+    return await attempt();
   };
-  const list = (path, limit) => operation({ kind: 'list', path, limit: Math.min(limit, 1000) });
+  const list = (path, limit, metadata = false) => operation({ kind: 'list', path, limit: Math.min(limit, 1000), ...(metadata ? { metadata: true } : {}) });
   const exec = async (file, args, options = {}) => {
     const prepared = await provider().prepareExecution({
       command: { type: 'argv', file, args }, cwd: options.cwd ?? ctx.defaultCwd(), leaseKind: 'files', projectRef: project,
@@ -169,9 +184,12 @@ export function managedFiles(ctx, signal) {
       catch (cleanup) { throw new AggregateError([...(failure ? [failure] : []), cleanup], 'Guest command cleanup failed'); }
     }
   };
-  // The listing already carries each entry's modification time, so `mtimes` hands it to the caller
-  // instead of making it stat every match back over the container boundary — which is what turned a Glob
-  // over a handful of files into one guest round trip per match.
+  // A traversal wants names, kinds and modification times, and nothing it returns is ever written
+  // against — a caller that goes on to mutate a match reads it first and gets a version then. So every
+  // listing here is metadata-only: the previous shape made the guest read and hash the full contents of
+  // every file it walked past, which is why matching a pattern over a source tree cost far more than the
+  // handful of round trips it looked like. `mtimes` hands the times to the caller so sorting by them
+  // needs no stat back across the boundary either.
   const walk = async (root, limit, skip) => {
     const files = [];
     const mtimes = new Map();
@@ -179,7 +197,7 @@ export function managedFiles(ctx, signal) {
     let visited = 0;
     const visit = async (path) => {
       if (visited >= limit) { truncated = true; return; }
-      const listing = await list(path, limit - visited);
+      const listing = await list(path, limit - visited, true);
       truncated ||= listing.truncated;
       for (const entry of listing.entries) {
         if (++visited > limit) { truncated = true; break; }
