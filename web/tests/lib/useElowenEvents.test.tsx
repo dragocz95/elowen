@@ -64,6 +64,30 @@ describe('useElowenEvents', () => {
     expect(spy).toHaveBeenCalledWith({ queryKey: ['brain-sessions'] });
   });
 
+  // An operation frame arrives on every step of a lifecycle operation. Refreshing the whole cache from
+  // each one put back more traffic than the three-second poll the push replaced.
+  it('refreshes only what an environment operation frame names', () => {
+    const { spy, wrapper } = wrap();
+    renderHook(() => useElowenEvents(), { wrapper });
+    spy.mockClear();
+    coreStream().emit('plugin', { type: 'plugin', plugin: 'sandbox', kind: 'environment-operation', projectId: 5, data: { operation: { id: 'op-1' } } });
+
+    expect(spy).toHaveBeenCalledWith({ queryKey: ['projects'] });
+    expect(spy).not.toHaveBeenCalledWith();
+    const predicate = spy.mock.calls.map(([input]) => input).find((input) => input && 'predicate' in input)?.predicate;
+    expect(predicate!({ queryKey: ['plugin', 'sandbox', 'environment-state', 5] } as never)).toBe(true);
+    expect(predicate!({ queryKey: ['plugin', 'sandbox', 'environment-state', 6] } as never)).toBe(false);
+    expect(predicate!({ queryKey: ['brain-sessions'] } as never)).toBe(false);
+  });
+
+  it('still refreshes everything for a plugin event core knows nothing about', () => {
+    const { spy, wrapper } = wrap();
+    renderHook(() => useElowenEvents(), { wrapper });
+    spy.mockClear();
+    coreStream().emit('plugin', { type: 'plugin', plugin: 'ledger', kind: 'invoice-paid', projectId: null, data: {} });
+    expect(spy).toHaveBeenCalledWith();
+  });
+
   it('ignores malformed event payloads', () => {
     const { spy, wrapper } = wrap();
     renderHook(() => useElowenEvents(), { wrapper });
