@@ -21,7 +21,9 @@ export type ProjectExecutionRef =
   | { kind: 'host'; projectId?: number }
   | { kind: 'managed'; projectId: number };
 
-export interface EnvironmentLimits { cpus: number; memoryMb: number; pidsLimit: number; diskSoftMb: number }
+/** The ceilings a managed environment's container is created with. Each one is a flag Podman is given:
+ *  a figure that no container setting carries is not a limit and does not belong here. */
+export interface EnvironmentLimits { cpus: number; memoryMb: number; pidsLimit: number }
 
 export type EnvironmentAction =
   /** `recreate` rebuilds the container from the current specification without touching the storage

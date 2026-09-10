@@ -117,7 +117,7 @@ export function sandboxCalls(): readonly SandboxCall[] {
 /** The project environment behind the drawer's Environments tab. Its limits are STATE, not a canned
  *  answer: the resource rows auto-save through a durable lifecycle action, so a spec has to be able to
  *  see the figure it moved come back on the next poll, exactly as the running container reports it. */
-const seedLimits = () => ({ cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240 });
+const seedLimits = () => ({ cpus: 1, memoryMb: 1024, pidsLimit: 512 });
 let environmentLimits = seedLimits();
 
 /** Restore the seed workspaces and drop the recorded writes (the control channel's `/__test/reset`). */

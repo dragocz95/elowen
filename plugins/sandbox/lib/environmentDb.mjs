@@ -67,6 +67,12 @@ export const environmentProgressMigration = {
   },
 };
 
+/** The idempotency key a caller attaches to a lifecycle request, which is what one durable operation row
+ *  is identified by for one resource and account. The store that keys rows by it states the rule once:
+ *  the HTTP surface, the runtime and the Sites image service all validate the key a caller sent, and a
+ *  second copy of the pattern is how the two ends come to disagree about which keys exist. */
+export function isRequestId(value) { return typeof value === 'string' && /^[a-zA-Z0-9_.:-]{1,160}$/.test(value); }
+
 /** The one projection of an operation row onto the wire shape both the project and the Site surfaces
  *  read (`EnvironmentOperation`, `SiteEnvironmentOperation`). It lives beside the row mapper because a
  *  second copy of it is how the declared progress fields went missing from one of them. */
@@ -75,6 +81,13 @@ export const operationView = (op) => ({ id: op.id, requestId: op.request_key, [o
   steps: op.steps ?? [], stepIndex: Number(op.step_index ?? 0), stepTotal: (op.steps ?? []).length,
   stepLabel: (op.steps ?? [])[Number(op.step_index ?? 0)] ?? null,
   percent: op.percent === null || op.percent === undefined ? null : Number(op.percent) });
+
+/** How many operations one resource keeps. The project overview reads the newest of them, so a row that
+ *  settles beyond this bound is history nothing reads and is deleted as it settles rather than kept for
+ *  the life of the environment. A row still carrying a container or volume recipe in its checkpoint is
+ *  never counted out: the delete path collects those specs to remove what a past restore left behind, and
+ *  the generation one of them reserved must not be handed out a second time. */
+export const OPERATION_HISTORY = 20;
 
 const runtime = (row) => row ? { ...row, generation: Number(row.generation), spec: JSON.parse(row.spec_json), limits: JSON.parse(row.limits_json) } : null;
 const operation = (row) => row ? { ...row, action: JSON.parse(row.action_json), checkpoint: JSON.parse(row.checkpoint_json),
@@ -111,10 +124,19 @@ export function createEnvironmentStore(db, identity) {
       return db.prepare('SELECT * FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=? ORDER BY rowid DESC LIMIT ?')
         .all(kind, String(id), limit).map(operation);
     },
+    /** The last write of an operation's life, and therefore the one place that knows a row stopped
+     *  moving: a settled operation counts against the resource's bounded history, and the rows it pushes
+     *  out are deleted here. */
     saveOperation(op) {
       db.prepare('UPDATE p_sandbox_runtime_operations SET status=?,checkpoint_json=?,owner_pid=?,owner_identity=?,error=?,snapshot_id=?,steps_json=?,step_index=?,percent=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
         .run(op.status, JSON.stringify(op.checkpoint), op.owner_pid ?? null, op.owner_identity ?? null, op.error ?? null, op.snapshot_id ?? null,
           JSON.stringify(op.steps ?? []), Number(op.step_index ?? 0), op.percent === null || op.percent === undefined ? null : Number(op.percent), op.id);
+      if (op.status !== 'succeeded' && op.status !== 'failed') return;
+      db.prepare(`DELETE FROM p_sandbox_runtime_operations
+        WHERE kind=? AND resource_id=? AND status IN ('succeeded','failed')
+          AND json_extract(checkpoint_json,'$.oldSpec') IS NULL AND json_extract(checkpoint_json,'$.newSpec') IS NULL
+          AND id NOT IN (SELECT id FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=? ORDER BY rowid DESC LIMIT ?)`)
+        .run(op.kind, op.resource_id, op.kind, op.resource_id, OPERATION_HISTORY);
     },
     log(kind, id, message) {
       db.prepare('INSERT INTO p_sandbox_runtime_logs(kind,resource_id,message) VALUES(?,?,?)').run(kind, String(id), String(message).slice(0, 2000));

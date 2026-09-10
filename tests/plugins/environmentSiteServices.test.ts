@@ -14,7 +14,7 @@ afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });
 const error = (code: string, message: string, status = 409) => Object.assign(new Error(message), { code, status });
 
 function siteRecord(registration: any, generation: number) {
-  const effective = { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240, ...registration.limits };
+  const effective = { cpus: 1, memoryMb: 1024, pidsLimit: 512, ...registration.limits };
   return { registration, input: { resource: { kind: 'site', id: registration.siteId }, generation, image: registration.image, network: registration.network,
     workspaceReadOnly: registration.workspaceReadOnly, limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } },
   binding: { namespace: 'elowen', sitesDataDir: registration.sitesDataDir, sourcePath: registration.sourcePath, brokerDir: registration.brokerDir } };
@@ -64,7 +64,7 @@ function setup() {
   };
   const registration = { siteId: 'demo', projectId: 7, image: 'localhost/elowen/site:fixed', sourcePath: '/tmp/env-site-services/sources/demo',
     sitesDataDir: '/tmp/env-site-services/sites', brokerDir: '/tmp/env-site-services/brokers/demo', workspaceReadOnly: false, network: 'shared',
-    limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240 } };
+    limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } };
   const images = createSiteImageService({
     podman: podman as any, store, db, dataDir: '/tmp/env-site-services',
     recipe: (kind: string) => authority.imageRecipe?.(kind),
@@ -78,8 +78,8 @@ function setup() {
     resolveCleanup: (input: any) => authority.resolveCleanup?.(input),
     userExists: (id: number) => users.has(id),
     siteRecord, normalizeLimits: (value: any) => {
-      if (!value || typeof value !== 'object' || Object.keys(value).some((key) => !['cpus', 'memoryMb', 'pidsLimit', 'diskSoftMb'].includes(key))) throw error('invalid_limits', 'Invalid environment limits', 400);
-      return { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240, ...value };
+      if (!value || typeof value !== 'object' || Object.keys(value).some((key) => !['cpus', 'memoryMb', 'pidsLimit'].includes(key))) throw error('invalid_limits', 'Invalid environment limits', 400);
+      return { cpus: 1, memoryMb: 1024, pidsLimit: 512, ...value };
     },
   });
   cleanup.push(() => sql.close());

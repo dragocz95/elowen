@@ -223,7 +223,9 @@ describe('ProjectPicker', () => {
 
       expect(await screen.findByRole('alert')).toHaveTextContent(/predates the named project mount/);
       fireEvent.click(screen.getByRole('button', { name: 'Recreate environment' }));
-      await waitFor(() => expect(requested).toEqual({ action: { kind: 'recreate' } }));
+      // The generation this screen is acting on travels with the request, so a repair composed against an
+      // environment that has moved since is refused by the runtime rather than applied to the new one.
+      await waitFor(() => expect(requested).toEqual({ action: { kind: 'recreate' }, expectedGeneration: 1 }));
     });
   });
 });

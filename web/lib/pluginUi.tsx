@@ -25,6 +25,7 @@ import type { LucideIcon } from 'lucide-react';
 // is erased before bundling. Re-exported below for the app's own consumers.
 import type { ElowenUiRuntime, PLUGIN_UI_API_VERSION as KIT_API_VERSION, PluginPageProps, PluginUiRegistration } from 'elowen-plugin-ui-kit';
 import { BASE, apiErrorMessage, elowenClient, ElowenApiError } from './elowenClient';
+import { recreatable } from './environmentActions';
 import { Button } from '../components/ui/Button';
 import { Input } from '../components/ui/Input';
 import { Slider } from '../components/ui/Slider';
@@ -391,6 +392,9 @@ export function ensurePluginUiRuntime(): void {
       // The host's own markdown pipeline, so a bundle rendering authored notes never ships a second
       // parser or its own sanitizer settings.
       renderMarkdown,
+      // The stale-container rule, so the repair a bundle offers comes from the same reading of the same
+      // daemon message the core screens use rather than a second copy of the pattern.
+      recreatable,
     },
     api,
     navigate: (href) => navigateImpl(href),

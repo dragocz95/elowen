@@ -9,8 +9,12 @@ function read(accountId: number, projectId: number): PendingRequest | null {
   if (!raw) return null;
   let value: unknown;
   try { value = JSON.parse(raw); } catch { throw new Error('request_state_invalid'); }
+  // The id stored here is the one this code minted, replayed as it stands: which keys the runtime ACCEPTS
+  // is its rule, stated once on the server, and a key it refuses comes back as a definitive 400 that
+  // clears the entry. The pattern that used to sit here was narrower than the server's, so the two ends
+  // disagreed about which keys exist. The rest of the shape is still checked as it is read.
   if (!value || typeof value !== 'object' || !('requestId' in value) || typeof value.requestId !== 'string'
-    || !/^[a-zA-Z0-9_-]{1,128}$/.test(value.requestId) || !('fingerprint' in value) || typeof value.fingerprint !== 'string'
+    || value.requestId.length === 0 || !('fingerprint' in value) || typeof value.fingerprint !== 'string'
     || !('expectedGeneration' in value) || !Number.isSafeInteger(value.expectedGeneration) || Number(value.expectedGeneration) < 0) throw new Error('request_state_invalid');
   return value as PendingRequest;
 }

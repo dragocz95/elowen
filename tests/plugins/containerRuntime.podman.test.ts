@@ -232,7 +232,7 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
       const destination = join(scratch, 'published-copy');
       const registration = { siteId: 'copy-site', projectId: 7, image: PROJECT_BASE_IMAGE_TAG, sourcePath: destination,
         sitesDataDir: join(scratch, 'sites'), brokerDir: join(scratch, 'broker'), workspaceReadOnly: true, network: 'isolated',
-        limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240 }, staging: true };
+        limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true };
       runtime.connectSitesRuntime({ resolve: async () => registration, beforeStart: async () => {}, afterStop: async () => {}, projectDependents: async () => [],
         resolveArtifact: async () => ({ kind: 'project-source', project: actor.project, guestPath: `${projectRoot}/publication`, destinationPath: destination }) });
       await runtime.registerSiteEnvironment({ siteId: registration.siteId, accountUserId: 1 });

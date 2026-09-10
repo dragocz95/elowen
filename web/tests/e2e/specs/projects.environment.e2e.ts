@@ -89,7 +89,7 @@ test.describe('managed project Environments tab', () => {
     await expect(app.getByText('1280 MiB')).toBeVisible();
 
     const body = JSON.parse((await write).postData() ?? '{}') as { action?: unknown; expectedGeneration?: number };
-    expect(body.action).toEqual({ kind: 'limits', limits: { cpus: 1, memoryMb: 1280, pidsLimit: 512, diskSoftMb: 10240 } });
+    expect(body.action).toEqual({ kind: 'limits', limits: { cpus: 1, memoryMb: 1280, pidsLimit: 512 } });
     expect(body.expectedGeneration).toBe(2);
     await app.screenshot({ path: `${SHOTS}/environment-saved-light.png` });
   });

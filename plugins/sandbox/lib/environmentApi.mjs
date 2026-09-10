@@ -1,5 +1,6 @@
+import { isRequestId } from './environmentDb.mjs';
+
 const ENVIRONMENT_PATH = /^\/?([1-9][0-9]*)\/environment$/;
-const REQUEST_ID = /^[a-zA-Z0-9_.:-]{1,160}$/;
 const failure = (cause) => ({ status: cause.status ?? 500, body: { error: cause.code ?? 'environment_error', detail: cause.message } });
 const bad = (message, code = 'invalid_body') => Object.assign(new Error(message), { code, status: 400 });
 
@@ -49,7 +50,7 @@ export function registerEnvironmentApi(ctx, runtime) {
     if (!input || typeof input !== 'object' || Array.isArray(input)) throw bad('JSON object body required');
     if (Object.keys(input).some((key) => !['action', 'requestId', 'expectedGeneration'].includes(key))) throw bad('Only action, requestId and expectedGeneration are accepted');
     if (!input.action || typeof input.action !== 'object' || Array.isArray(input.action)) throw bad('An environment action is required');
-    if (input.requestId !== undefined && (typeof input.requestId !== 'string' || !REQUEST_ID.test(input.requestId))) throw bad('Invalid idempotency key');
+    if (input.requestId !== undefined && !isRequestId(input.requestId)) throw bad('Invalid idempotency key');
     if (input.expectedGeneration !== undefined && !Number.isSafeInteger(input.expectedGeneration)) throw bad('Invalid expected generation');
     return await control.requestEnvironment({ project: { kind: 'managed', projectId: id }, accountUserId, action: input.action,
       ...(input.requestId === undefined ? {} : { requestId: input.requestId }),

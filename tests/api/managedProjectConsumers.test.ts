@@ -35,7 +35,7 @@ function setup(environmentState: 'running' | 'stopped' | 'unprovisioned' = 'runn
     prepareExecution() { throw new Error('unexpected execution'); }, projectFiles,
     // A cheap state read that provisions nothing — what a Git inspection consults before it decides
     // whether entering the environment is even possible.
-    environmentFor: async () => ({ projectId: 1, generation: 1, state: environmentState, desiredState: 'running', lastError: null, limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240 } }),
+    environmentFor: async () => ({ projectId: 1, generation: 1, state: environmentState, desiredState: 'running', lastError: null, limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } }),
   } as never);
   registry.controlOwner.set('sandbox', 'sandbox');
   const prepareExecution = vi.fn<SandboxControl['prepareExecution']>(async (input) => ({

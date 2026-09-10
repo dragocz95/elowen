@@ -50,7 +50,7 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
   const dispatch = (action: 'start' | 'recreate') => {
     const projectId = environment.pending?.projectId;
     if (projectId === undefined) return;
-    void requestEnvironmentAction(projectId, { kind: action })
+    void requestEnvironmentAction(projectId, { kind: action }, environment.operation?.generation)
       .then((operation) => environment.follow(operation.id, projectId))
       .catch((error) => toast(apiErrorMessage(error) || t.brainChat.projectPickerFailed, 'error'));
   };
@@ -121,7 +121,7 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
       loadError={environment.loadError}
       onRetry={() => dispatch('start')}
       onRecreate={() => dispatch('recreate')}
-      recreatable={recreatable(environment.operation)}
+      recreatable={recreatable(environment.operation?.error)}
       onSettled={environment.forget}
       onClose={({ running }) => { if (running || environment.running) environment.hide(); else environment.forget(); }}
     />

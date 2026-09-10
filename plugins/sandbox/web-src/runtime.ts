@@ -91,6 +91,9 @@ interface RuntimeComponents {
 interface RuntimeUtils {
   apiErrorMessage(error: unknown): string;
   formatDuration(ms: number): string;
+  /** The host's own reading of the stale-container failure, so the repair this bundle offers and the one
+   *  the core screens offer come from the same rule rather than two copies of the same pattern. */
+  recreatable(error: string | null | undefined): boolean;
 }
 interface SandboxRuntime {
   components: RuntimeComponents;

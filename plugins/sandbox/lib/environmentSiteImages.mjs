@@ -1,8 +1,8 @@
 import { resourceToken } from './containerSpec.mjs';
+import { isRequestId } from './environmentDb.mjs';
 
 const error = (code, message, status = 409) => Object.assign(new Error(message), { code, status });
 const IMAGE_KINDS = ['base', 'static', 'node'];
-const REQUEST_ID = /^[a-zA-Z0-9_.:-]{1,160}$/;
 
 /** Extracted fixed Sites image services. Every authority contact is a fresh injected callback:
  * recipes come only from the trusted Sites authority, actors are re-verified at request and at
@@ -38,7 +38,7 @@ export function createSiteImageService({ podman, store, db, dataDir, recipe, acc
     async request(input) {
       administrator(input.accountUserId);
       recipeFor(input.imageKind);
-      if (input.requestId !== undefined && (typeof input.requestId !== 'string' || !REQUEST_ID.test(input.requestId))) throw error('invalid_request_id', 'Invalid image provisioning request id', 400);
+      if (input.requestId !== undefined && !isRequestId(input.requestId)) throw error('invalid_request_id', 'Invalid image provisioning request id', 400);
       return store.transaction(() => {
         const active = store.active('image', input.imageKind);
         const prior = input.requestId ? store.prior('image', input.imageKind, input.accountUserId, input.requestId) : null;

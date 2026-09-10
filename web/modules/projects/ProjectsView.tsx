@@ -615,7 +615,7 @@ export function ProjectsView() {
         onRetry={() => {
           const id = deletion.pending?.projectId;
           if (id === undefined) return;
-          void requestEnvironmentAction(id, { kind: 'delete' })
+          void requestEnvironmentAction(id, { kind: 'delete' }, deletion.operation?.generation)
             .then((operation) => deletion.follow(operation.id, id))
             .catch((error) => toast(apiErrorMessage(error), 'error'));
         }}
@@ -632,7 +632,7 @@ export function ProjectsView() {
         onRetry={() => {
           const id = creationStart.pending?.projectId;
           if (id === undefined) return;
-          void requestEnvironmentAction(id, { kind: 'start' })
+          void requestEnvironmentAction(id, { kind: 'start' }, creationStart.operation?.generation)
             .then((operation) => creationStart.follow(operation.id, id))
             .catch((error) => toast(apiErrorMessage(error), 'error'));
         }}

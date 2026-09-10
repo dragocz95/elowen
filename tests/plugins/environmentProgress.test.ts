@@ -151,7 +151,7 @@ describe('environment operation progress', () => {
     await runtime.reconcile();
 
     const limits = await runtime.requestEnvironment({ project: input.project, accountUserId: 3, requestId: 'limits',
-      action: { kind: 'limits', limits: { cpus: 2, memoryMb: 2048, pidsLimit: 512, diskSoftMb: 10240 } } });
+      action: { kind: 'limits', limits: { cpus: 2, memoryMb: 2048, pidsLimit: 512 } } });
     expect(limits.steps).toEqual(['apply']);
     await runtime.reconcile();
     expect((await runtime.environmentOperation({ operationId: limits.id, accountUserId: 3 }))?.percent).toBe(100);
@@ -160,6 +160,15 @@ describe('environment operation progress', () => {
     expect(removal.steps).toEqual(['stop', 'containers', 'images', 'volumes', 'storage', 'records']);
     await runtime.reconcile();
     expect((await runtime.environmentOperation({ operationId: removal.id, accountUserId: 1 }))?.status).toBe('succeeded');
+  });
+
+  // A ceiling no container flag carries is not a limit. It used to be accepted, validated and stored so
+  // the Sites plugin could keep sending it; a caller that still asks for it is now told instead.
+  it('refuses a limits action carrying a ceiling nothing enforces', async () => {
+    const { runtime } = setup();
+    await expect(runtime.requestEnvironment({ project: input.project, accountUserId: 3, requestId: 'disk',
+      action: { kind: 'limits', limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240 } } }))
+      .rejects.toThrow(/Invalid environment limits/);
   });
 
   // A build is the one part that can take minutes. Its output has to reach the person watching, and the
@@ -273,26 +282,55 @@ describe('environment operation progress', () => {
     expect(containers.size).toBe(0);
   });
 
-  // The operation rows only ever grew: the environment screen read the whole history into the browser,
-  // and nothing removed it when the project it described was deleted.
-  it('bounds the operation history it hands the browser and clears it with the project', async () => {
+  // The operation rows only ever grew: one start, stop, restart or limits change left a row behind for
+  // the life of the environment, and nothing removed it when the project it described was deleted.
+  it('bounds the operation history it keeps and clears it with the project', async () => {
     const { runtime, db } = setup();
-    await runtime.requestEnvironment({ ...input, requestId: 'up', action: { kind: 'start' } });
-    await runtime.reconcile();
-    for (let n = 0; n < 25; n += 1) {
-      db.prepare("INSERT INTO p_sandbox_runtime_operations(id,kind,resource_id,user_id,request_key,generation,action_json,status) VALUES(?,'project','7',1,?,1,'{\"kind\":\"start\"}','succeeded')")
-        .run(`env_history-${n}`, `history-${n}`);
+    // Real lifecycle cycles rather than rows written behind the store's back: what has to stay bounded is
+    // the growth the runtime itself produces.
+    for (let n = 0; n < 11; n += 1) {
+      await runtime.requestEnvironment({ ...input, requestId: `up-${n}`, action: { kind: 'start' } });
+      await runtime.reconcile();
+      await runtime.requestEnvironment({ ...input, requestId: `down-${n}`, action: { kind: 'stop' } });
+      await runtime.reconcile();
     }
+    const newest = await runtime.requestEnvironment({ ...input, requestId: 'latest', action: { kind: 'start' } });
+    await runtime.reconcile();
 
+    const stored = db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_runtime_operations WHERE kind='project'").get() as { n: number };
+    expect(stored.n).toBe(20);
     const overview = await runtime.projectOverview({ ...input });
     expect(overview.operations).toHaveLength(20);
-    expect(overview.operations[0]!.id).toBe('env_history-24');
+    expect(overview.operations[0]!.id).toBe(newest.id);
 
     const removal = await runtime.requestEnvironment({ ...input, requestId: 'remove', action: { kind: 'delete' } });
     await runtime.reconcile();
     expect((await runtime.environmentOperation({ operationId: removal.id, accountUserId: 1 }))?.status).toBe('succeeded');
     // Only the deletion itself survives, because the surface that reports the outcome still reads it.
     expect(db.prepare("SELECT id FROM p_sandbox_runtime_operations WHERE kind='project'").all()).toEqual([{ id: removal.id }]);
+    // The runtime row goes with the project core has just removed: keeping it would leave one dead row
+    // per deleted project, and nothing can reach the environment it described any more.
+    expect(db.prepare("SELECT kind FROM p_sandbox_runtimes WHERE kind='project'").all()).toEqual([]);
+  });
+
+  // A restore's checkpoint carries the specification it replaced and the generation it reserved. The
+  // delete path collects those specifications to remove every container and volume a past restore left
+  // behind, and handing a reserved generation out twice would build over that leftover data.
+  it('keeps a settled row that still carries a recipe the delete needs', async () => {
+    const { runtime, db } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'seed', action: { kind: 'start' } });
+    await runtime.reconcile();
+    db.prepare("INSERT INTO p_sandbox_runtime_operations(id,kind,resource_id,user_id,request_key,generation,action_json,checkpoint_json,status) VALUES(?,'project','7',1,'restore-1',1,'{\"kind\":\"restore\"}',?,'succeeded')")
+      .run('env_recipe-1', JSON.stringify({ oldSpec: { input: { generation: 1 } }, newSpec: { input: { generation: 2 } } }));
+    for (let n = 0; n < 25; n += 1) {
+      await runtime.requestEnvironment({ ...input, requestId: `cycle-${n}`, action: { kind: n % 2 === 0 ? 'stop' : 'start' } });
+      await runtime.reconcile();
+    }
+
+    const kept = db.prepare("SELECT id FROM p_sandbox_runtime_operations WHERE kind='project' ORDER BY rowid DESC").all() as { id: string }[];
+    // The newest twenty, plus the recipe row whichever end of the history it sits at.
+    expect(kept).toHaveLength(21);
+    expect(kept.map((row) => row.id)).toContain('env_recipe-1');
   });
 
   // A failure carries whatever the host put in it, and the storage root is in most of them. The
@@ -332,7 +370,7 @@ describe('environment operation progress', () => {
     const { runtime, root } = setup();
     const registration = { siteId: 'shop', projectId: 7, image: 'localhost/elowen/site:fixed', network: 'shared',
       workspaceReadOnly: false, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'sources'), brokerDir: join(root, 'brokers'),
-      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240 } };
+      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } };
     runtime.connectSitesRuntime({ resolve: async () => registration, beforeStart: async () => {}, afterStop: async () => {} });
     await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
 

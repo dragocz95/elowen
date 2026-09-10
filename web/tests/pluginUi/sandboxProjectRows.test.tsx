@@ -29,7 +29,7 @@ const projects = [
 ];
 const environmentOf = (projectId: number, state: string) => ({
   projectId, generation: 2, state, desiredState: state, lastError: null,
-  limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 4096 },
+  limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 },
 });
 
 let posted: { projectId: number; body: unknown }[] = [];
