@@ -1332,8 +1332,6 @@ export const en = {
       toolDeferralEnabledHint: "The master switch for the threshold above. Off = no tool is ever withheld from the prompt, whatever the threshold says. On by default.",
       subagentRunnerEnabled: "Run sub-agents in separate processes",
       subagentRunnerEnabledHint: "Delegated turns run in separate processes, so the system can spread work across cores and keep the interface responsive. Off runs them inside the daemon. Takes effect immediately without a restart.",
-      remoteCompactionEnabled: "Compact ChatGPT conversations on the provider",
-      remoteCompactionEnabledHint: "The provider compacts the older part of a long ChatGPT conversation into an opaque block instead of a text summary. This preserves exact values, tool output, and decisions. If it fails, the usual text summary is used. Applies only to models signed in through a ChatGPT account and takes effect immediately.",
       clamped: "Saved as {value} — the value you set was outside the allowed range.",
       secondUnit: "s",
       dayUnit: { one: "day", few: "days", many: "days" },

@@ -1290,8 +1290,6 @@ export const cs = {
       toolDeferralEnabledHint: "Hlavní vypínač k prahu výše. Vypnuto = žádný nástroj se z promptu nikdy nevynechá, bez ohledu na práh. Ve výchozím stavu zapnuto.",
       subagentRunnerEnabled: "Spouštět sub-agenty v samostatných procesech",
       subagentRunnerEnabledHint: "Delegované tahy poběží ve vlastních procesech, takže systém může rozložit práci mezi jádra a rozhraní zůstane svižné. Vypnuto je spouští uvnitř démona. Změna platí hned, bez restartu.",
-      remoteCompactionEnabled: "Zhušťovat konverzace ChatGPT u poskytovatele",
-      remoteCompactionEnabledHint: "Starší část dlouhé konverzace ChatGPT zhustí poskytovatel do nečitelného bloku místo textového shrnutí. Zachová tím přesné hodnoty, výstupy nástrojů a rozhodnutí. Pokud zhuštění selže, použije se běžné textové shrnutí. Platí jen pro modely přihlášené účtem ChatGPT a hned bez restartu.",
       clamped: "Uloženo jako {value} — zadaná hodnota byla mimo povolený rozsah.",
       secondUnit: "s",
       dayUnit: { one: "den", few: "dny", many: "dní" },

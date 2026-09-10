@@ -21,7 +21,6 @@ import type {
   PluginImageEditRequest, PluginImageRequest, PluginImageResult, PluginImageSource, PluginImages, ProviderCredentials,
 } from '../plugins/api.js';
 import type { BrainCredentialAccess } from './providerUsage.js';
-import { accountIdFromToken } from './session/remoteCompactionV2.js';
 import { OAUTH_BUILTIN } from './providers.js';
 import { trimAllTrailingSlashes } from '../shared/url.js';
 
@@ -58,6 +57,24 @@ const DEFAULT_TIMEOUT_MS = 120_000;
 
 const DEFAULT_CODEX_BASE_URL = 'https://chatgpt.com/backend-api';
 const DEFAULT_OPENAI_BASE_URL = 'https://api.openai.com/v1';
+
+/** The JWT claim ChatGPT OAuth tokens carry their account id under (pi-ai's JWT_CLAIM_PATH). */
+const JWT_CLAIM_PATH = 'https://api.openai.com/auth';
+
+/** The ChatGPT account id a token belongs to, read out of the OAuth token's own claim — the same
+ *  derivation pi-ai does, so a re-login cannot leave this pointing at the previous account. */
+function accountIdFromToken(token: string): string | null {
+  const parts = token.split('.');
+  if (parts.length !== 3 || !parts[1]) return null;
+  try {
+    const claims = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8')) as Record<string, unknown>;
+    const scoped = claims[JWT_CLAIM_PATH] as Record<string, unknown> | undefined;
+    const id = scoped?.chatgpt_account_id;
+    return typeof id === 'string' && id.length > 0 ? id : null;
+  } catch {
+    return null;
+  }
+}
 
 /** The Codex CLI build the ChatGPT image backend is served to. Sent verbatim as `originator`, and as the
  *  product half of the user agent, because that is the identity the endpoint was verified against. */

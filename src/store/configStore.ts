@@ -538,16 +538,6 @@ const DEFAULT_SUBAGENT_RUNNER_ENABLED = true;
  *  when the machine's own inputs cannot be trusted (see RuntimeConfig.subagentRunnerPoolMax). */
 const DEFAULT_SUBAGENT_RUNNER_POOL_MAX: number | null = null;
 
-/** Whether a ChatGPT-account session compacts through the provider's opaque compaction instead of a text
- *  summary. OFF: the endpoint is an undocumented beta, and the trade is real in both directions — the
- *  blob carries the compacted stretch far more faithfully than prose, so it is on by default: the session
- *  factory already narrows it to openai-codex, and a provider that cannot produce a blob falls back to the
- *  very text summary this replaces, which makes trying it strictly better than not. The cost is that the
- *  compaction note clients render is a marker no human can read. The switch stays as the kill switch for
- *  an endpoint OpenAI does not document; turning it off restores the text-summary path byte for byte,
- *  because that path never stopped being the fallback. */
-const DEFAULT_REMOTE_COMPACTION_ENABLED = true;
-
 /** Detailed request capture is additive and guarded by admin-only reads in the later API phase. ON by
  * default so exact history starts accumulating immediately; false stops new writes without deleting data. */
 const DEFAULT_PROVIDER_REQUEST_CAPTURE_ENABLED = true;
@@ -853,7 +843,7 @@ const DEFAULT_CONFIG: ElowenConfig = {
     removed: [],
   },
   brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, modelMaxTokens: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, forkParentContext: DEFAULT_FORK_PARENT_CONTEXT, hiddenOauth: [] },
-  runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_TOOL_DEFERRAL_ENABLED, toolDeferralOverrides: { sources: {}, tools: {} }, hostedToolSearch: {}, subagentRunnerEnabled: DEFAULT_SUBAGENT_RUNNER_ENABLED, subagentRunnerPoolMax: DEFAULT_SUBAGENT_RUNNER_POOL_MAX, remoteCompactionEnabled: DEFAULT_REMOTE_COMPACTION_ENABLED, providerRequestCaptureEnabled: DEFAULT_PROVIDER_REQUEST_CAPTURE_ENABLED, memoryRetention: defaultMemoryRetention() },
+  runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_TOOL_DEFERRAL_ENABLED, toolDeferralOverrides: { sources: {}, tools: {} }, hostedToolSearch: {}, subagentRunnerEnabled: DEFAULT_SUBAGENT_RUNNER_ENABLED, subagentRunnerPoolMax: DEFAULT_SUBAGENT_RUNNER_POOL_MAX, providerRequestCaptureEnabled: DEFAULT_PROVIDER_REQUEST_CAPTURE_ENABLED, memoryRetention: defaultMemoryRetention() },
   embedding: { providerId: '', model: '', baseUrl: '', dimensions: null },
   categorization: { providerId: '', model: '', baseUrl: '' },
   // Greeting/pills are opt-in: they replace a core surface (the hero) for every account on the
@@ -955,7 +945,7 @@ const defaultStored = (): Stored => ({
   sandboxPluginMigrated: true,
   changelogPluginMigrated: true,
   brain: { providers: [], agentName: 'Elowen', maxSteps: DEFAULT_MAX_STEPS, modelContextWindows: {}, modelMaxTokens: {}, limits: { ...DEFAULT_BRAIN_LIMITS }, forkParentContext: DEFAULT_FORK_PARENT_CONTEXT, hiddenOauth: [] },
-  runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_CONFIG.runtime.toolDeferralEnabled, toolDeferralOverrides: { sources: {}, tools: {} }, hostedToolSearch: {}, subagentRunnerEnabled: DEFAULT_CONFIG.runtime.subagentRunnerEnabled, subagentRunnerPoolMax: DEFAULT_CONFIG.runtime.subagentRunnerPoolMax, remoteCompactionEnabled: DEFAULT_CONFIG.runtime.remoteCompactionEnabled, providerRequestCaptureEnabled: DEFAULT_CONFIG.runtime.providerRequestCaptureEnabled, memoryRetention: defaultMemoryRetention() },
+  runtime: { limits: { ...DEFAULT_RUNTIME_LIMITS }, toolDeferralEnabled: DEFAULT_CONFIG.runtime.toolDeferralEnabled, toolDeferralOverrides: { sources: {}, tools: {} }, hostedToolSearch: {}, subagentRunnerEnabled: DEFAULT_CONFIG.runtime.subagentRunnerEnabled, subagentRunnerPoolMax: DEFAULT_CONFIG.runtime.subagentRunnerPoolMax, providerRequestCaptureEnabled: DEFAULT_CONFIG.runtime.providerRequestCaptureEnabled, memoryRetention: defaultMemoryRetention() },
   embedding: { ...DEFAULT_CONFIG.embedding },
   categorization: { ...DEFAULT_CONFIG.categorization },
   dashboard: { ...DEFAULT_CONFIG.dashboard, digest: { ...DEFAULT_CONFIG.dashboard.digest } },
@@ -978,7 +968,7 @@ export interface ConfigPatch {
    *  apiKey KEEPS the currently stored key for that id — the UI never sees (or resends) secrets. */
   brain?: { providers?: unknown; agentName?: unknown; maxSteps?: number; modelContextWindows?: Record<string, number>; modelMaxTokens?: Record<string, number>; limits?: Partial<BrainLimits>; forkParentContext?: boolean; hiddenOauth?: string[] };
   /** Runtime knobs merged per-field (like the brain limits): a patch tuning one slider leaves the rest. */
-  runtime?: { limits?: Partial<RuntimeLimits>; toolDeferralEnabled?: boolean; toolDeferralOverrides?: ToolDeferralOverrides; subagentRunnerEnabled?: boolean; subagentRunnerPoolMax?: number | null; remoteCompactionEnabled?: boolean; providerRequestCaptureEnabled?: boolean; memoryRetention?: Partial<MemoryRetentionConfig> };
+  runtime?: { limits?: Partial<RuntimeLimits>; toolDeferralEnabled?: boolean; toolDeferralOverrides?: ToolDeferralOverrides; subagentRunnerEnabled?: boolean; subagentRunnerPoolMax?: number | null; providerRequestCaptureEnabled?: boolean; memoryRetention?: Partial<MemoryRetentionConfig> };
   /** Embedding config is merged per-field; `dimensions: null` clears the width hint. */
   embedding?: { providerId?: string; model?: string; baseUrl?: string; dimensions?: number | null };
   /** Categorization config merged per-field (like embedding). */
@@ -1060,7 +1050,6 @@ export class ConfigStore {
           hostedToolSearch: sanitizeHostedToolSearchCapabilities(p.runtime?.hostedToolSearch),
           subagentRunnerEnabled: typeof p.runtime?.subagentRunnerEnabled === 'boolean' ? p.runtime.subagentRunnerEnabled : d.runtime.subagentRunnerEnabled,
           subagentRunnerPoolMax: p.runtime?.subagentRunnerPoolMax !== undefined ? sanitizePoolMax(p.runtime.subagentRunnerPoolMax, d.runtime.subagentRunnerPoolMax) : d.runtime.subagentRunnerPoolMax,
-          remoteCompactionEnabled: typeof p.runtime?.remoteCompactionEnabled === 'boolean' ? p.runtime.remoteCompactionEnabled : d.runtime.remoteCompactionEnabled,
           providerRequestCaptureEnabled: typeof p.runtime?.providerRequestCaptureEnabled === 'boolean' ? p.runtime.providerRequestCaptureEnabled : d.runtime.providerRequestCaptureEnabled,
           memoryRetention: clampMemoryRetention(p.runtime?.memoryRetention, d.runtime.memoryRetention),
         },
@@ -1359,7 +1348,6 @@ export class ConfigStore {
         hostedToolSearch: cur.runtime.hostedToolSearch,
         subagentRunnerEnabled: typeof patch.runtime?.subagentRunnerEnabled === 'boolean' ? patch.runtime.subagentRunnerEnabled : cur.runtime.subagentRunnerEnabled,
         subagentRunnerPoolMax: patch.runtime?.subagentRunnerPoolMax !== undefined ? sanitizePoolMax(patch.runtime.subagentRunnerPoolMax, cur.runtime.subagentRunnerPoolMax) : cur.runtime.subagentRunnerPoolMax,
-        remoteCompactionEnabled: typeof patch.runtime?.remoteCompactionEnabled === 'boolean' ? patch.runtime.remoteCompactionEnabled : cur.runtime.remoteCompactionEnabled,
         providerRequestCaptureEnabled: typeof patch.runtime?.providerRequestCaptureEnabled === 'boolean' ? patch.runtime.providerRequestCaptureEnabled : cur.runtime.providerRequestCaptureEnabled,
         memoryRetention: clampMemoryRetention(patch.runtime?.memoryRetention, cur.runtime.memoryRetention),
       },

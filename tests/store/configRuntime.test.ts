@@ -36,10 +36,6 @@ describe('ConfigStore runtime limits', () => {
       // AUTO: the pool measures the machine it is on, because any hard-coded count would be wrong on
       // either a 2-core VPS or a 16-core server. An operator only sets a number when those inputs lie.
       subagentRunnerPoolMax: null,
-      // ON: the session factory narrows provider-side compaction to openai-codex, and a provider that
-      // cannot produce a blob falls back to the very text summary it replaces — so the switch is the kill
-      // switch for an undocumented beta, not an opt-in an operator has to find.
-      remoteCompactionEnabled: true,
       providerRequestCaptureEnabled: true,
       memoryRetention: DEFAULT_MEMORY_RETENTION,
     });
@@ -163,27 +159,12 @@ describe('ConfigStore runtime limits', () => {
     expect(cs.get().runtime.subagentRunnerEnabled).toBe(true);
   });
 
-  it('round-trips the remote-compaction switch and leaves it alone on a limits-only patch', () => {
-    const cs = new ConfigStore(openDb(':memory:'));
-    expect(cs.get().runtime.remoteCompactionEnabled).toBe(true); // ON by default; the switch is the kill switch
-    cs.update({ runtime: { remoteCompactionEnabled: false } });
-    expect(cs.get().runtime.remoteCompactionEnabled).toBe(false);
-    // An operator who switched it off must not be silently switched back on by tuning an unrelated knob —
-    // the default is on, so a lost `false` is the direction that would quietly undo the choice.
-    cs.update({ runtime: { limits: { toolDeferThreshold: 12 } } });
-    expect(cs.get().runtime.remoteCompactionEnabled).toBe(false);
-    cs.update({ runtime: { subagentRunnerEnabled: false } });
-    expect(cs.get().runtime.remoteCompactionEnabled).toBe(false);
-    cs.update({ runtime: { remoteCompactionEnabled: true } });
-    expect(cs.get().runtime.remoteCompactionEnabled).toBe(true);
-  });
-
   it('round-trips the provider-request capture kill switch without deleting its state on sibling patches', () => {
     const cs = new ConfigStore(openDb(':memory:'));
     expect(cs.get().runtime.providerRequestCaptureEnabled).toBe(true);
     cs.update({ runtime: { providerRequestCaptureEnabled: false } });
     expect(cs.get().runtime.providerRequestCaptureEnabled).toBe(false);
-    cs.update({ runtime: { limits: { toolDeferThreshold: 12 }, remoteCompactionEnabled: false } });
+    cs.update({ runtime: { limits: { toolDeferThreshold: 12 } } });
     expect(cs.get().runtime.providerRequestCaptureEnabled).toBe(false);
     cs.update({ runtime: { providerRequestCaptureEnabled: true } });
     expect(cs.get().runtime.providerRequestCaptureEnabled).toBe(true);
