@@ -706,6 +706,45 @@ describe('adopted workspace rollback', () => {
   });
 });
 
+describe('site environment tombstones', () => {
+  it('re-registers a deleted Site at a new generation and rejects lifecycle actions on its tombstone', async () => {
+    const { runtime, root, db } = setup();
+    const registration = { siteId: 'shop', projectId: 7, image: 'localhost/elowen/site:fixed', network: 'shared',
+      workspaceReadOnly: false, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'sources'), brokerDir: join(root, 'brokers'),
+      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true };
+    mkdirSync(registration.sourcePath, { recursive: true });
+    runtime.connectSitesRuntime({ resolve: async () => registration, beforeStart: async () => {}, afterStop: async () => {} });
+    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
+    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-delete', action: { kind: 'delete' } });
+    await runtime.reconcile();
+
+    expect(await runtime.siteEnvironmentFor({ siteId: 'shop', accountUserId: 1 })).toMatchObject({ state: 'deleted', generation: 1 });
+    const actions = [
+      { kind: 'start' }, { kind: 'stop' }, { kind: 'restart' }, { kind: 'delete' }, { kind: 'snapshot', includeData: false },
+      { kind: 'restore', snapshotId: 'snap', restoreData: false }, { kind: 'prepare' }, { kind: 'cleanup-stage' },
+      { kind: 'provision-image', imageKind: 'base' }, { kind: 'import-data', artifactId: 'artifact' },
+      { kind: 'export-data', artifactId: 'artifact' }, { kind: 'import-snapshot', artifactId: 'artifact' },
+      { kind: 'remove-artifact', artifactId: 'artifact' }, { kind: 'export-project', artifactId: 'artifact' },
+    ];
+    for (const [index, action] of actions.entries()) {
+      await expect(runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: `tombstone-${index}`, action } as any))
+        .rejects.toThrow(/environment has been deleted/i);
+    }
+    await expect(runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 3, requestId: 'tombstone-limits',
+      action: { kind: 'limits', limits: registration.limits } })).rejects.toThrow(/environment has been deleted/i);
+
+    const recreated = await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
+    expect(recreated).toMatchObject({ state: 'unprovisioned', generation: 2 });
+    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_runtimes WHERE kind='site' AND resource_id='shop'").get()).toEqual({ n: 1 });
+    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-recreated-start',
+      expectedGeneration: 2, action: { kind: 'start' } });
+    await runtime.reconcile();
+    expect(await runtime.siteEnvironmentFor({ siteId: 'shop', accountUserId: 1 })).toMatchObject({ state: 'running', generation: 2 });
+  });
+});
+
 describe('durable project publications', () => {
   // The publication record shares the table the environments live in, so the migration that widens its
   // kind CHECK rebuilds a table that holds live rows. This is the upgrade a database in the field takes:
