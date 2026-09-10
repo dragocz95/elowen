@@ -947,20 +947,23 @@ describe('PlatformOrchestrator — unified per-turn access', () => {
     let sent: ChannelSendOpts | undefined;
     let handler: ((src: never, text: string, onEvent?: unknown) => Promise<unknown>) | undefined;
     const adapter = { name: 'cron', listen: (fn: never) => { handler = fn as never; }, connect: async () => {} };
-    const originCalls: [number, string, string, string][] = [];
+    const originCalls: [number, string, string, string, unknown][] = [];
     const orch = new PlatformOrchestrator({
       plugins: async () => ({ platforms: [adapter] }) as never,
       platformOwner: () => 1,
       identity: linkedResolver(false),
       channels: { sessionOwnerUserId: () => undefined, send: async (o: ChannelSendOpts) => { sent = o; return 'channel reply'; }, fragmentFor: () => '', setLastWriter: () => {} } as never,
       dispatch: noDispatch,
-      originSend: async (userId, sessionId, text, automation) => { originCalls.push([userId, sessionId!, text, automation]); return 'bound reply'; },
+      originSend: async (userId, sessionId, text, automation, _onEvent, _dedicated, projectRef) => { originCalls.push([userId, sessionId!, text, automation, projectRef]); return 'bound reply'; },
     });
     await orch.startAll();
+    // The job's execution target rides the origin: dropping it here is what made the conversation a job
+    // opens (and every run of it) execute on the account default instead of the project it was filed for.
+    const projectRef = { kind: 'managed', projectId: 12 } as const;
     const reply = await handler!({ platform: 'cron', userId: 'cron', channelId: 'job-1', roleIds: [],
-      origin: { sessionId: 'brain-1-abc', userId: 1 }, access: { admin: true, projectIds: [], actAsUserId: 1, scheduled: true } } as never, 'wake up');
+      origin: { sessionId: 'brain-1-abc', userId: 1 }, access: { admin: true, projectIds: [], actAsUserId: 1, scheduled: true, projectRef } } as never, 'wake up');
     expect(reply).toBe('bound reply');
-    expect(originCalls).toEqual([[1, 'brain-1-abc', 'wake up', 'scheduled']]);
+    expect(originCalls).toEqual([[1, 'brain-1-abc', 'wake up', 'scheduled', projectRef]]);
     expect(sent).toBeUndefined(); // the channel path never ran
   });
 
