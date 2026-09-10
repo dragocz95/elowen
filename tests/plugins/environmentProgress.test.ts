@@ -151,7 +151,7 @@ describe('environment operation progress', () => {
     await runtime.reconcile();
 
     const limits = await runtime.requestEnvironment({ project: input.project, accountUserId: 3, requestId: 'limits',
-      action: { kind: 'limits', limits: { cpus: 2, memoryMb: 2048, pidsLimit: 512, diskSoftMb: 10240 } } });
+      action: { kind: 'limits', limits: { cpus: 2, memoryMb: 2048, pidsLimit: 512 } } });
     expect(limits.steps).toEqual(['apply']);
     await runtime.reconcile();
     expect((await runtime.environmentOperation({ operationId: limits.id, accountUserId: 3 }))?.percent).toBe(100);
@@ -160,6 +160,15 @@ describe('environment operation progress', () => {
     expect(removal.steps).toEqual(['stop', 'containers', 'images', 'volumes', 'storage', 'records']);
     await runtime.reconcile();
     expect((await runtime.environmentOperation({ operationId: removal.id, accountUserId: 1 }))?.status).toBe('succeeded');
+  });
+
+  // A ceiling no container flag carries is not a limit. It used to be accepted, validated and stored so
+  // the Sites plugin could keep sending it; a caller that still asks for it is now told instead.
+  it('refuses a limits action carrying a ceiling nothing enforces', async () => {
+    const { runtime } = setup();
+    await expect(runtime.requestEnvironment({ project: input.project, accountUserId: 3, requestId: 'disk',
+      action: { kind: 'limits', limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240 } } }))
+      .rejects.toThrow(/Invalid environment limits/);
   });
 
   // A build is the one part that can take minutes. Its output has to reach the person watching, and the
@@ -361,7 +370,7 @@ describe('environment operation progress', () => {
     const { runtime, root } = setup();
     const registration = { siteId: 'shop', projectId: 7, image: 'localhost/elowen/site:fixed', network: 'shared',
       workspaceReadOnly: false, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'sources'), brokerDir: join(root, 'brokers'),
-      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240 } };
+      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } };
     runtime.connectSitesRuntime({ resolve: async () => registration, beforeStart: async () => {}, afterStop: async () => {} });
     await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
 

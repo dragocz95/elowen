@@ -58,7 +58,7 @@ export function createBoundSiteSpec(input, binding) {
 /** Keep creation ownership labels stable while validating the effective cgroup settings. */
 export function withContainerLimits(spec, requested) {
   assertContainerSpec(spec);
-  closed(requested, ['cpus', 'memoryMb', 'pidsLimit', 'diskSoftMb']);
+  closed(requested, ['cpus', 'memoryMb', 'pidsLimit']);
   const limits = { cpus: requested.cpus, memoryMb: requested.memoryMb, pidsLimit: requested.pidsLimit };
   if (!Number.isFinite(limits.cpus) || limits.cpus <= 0 || limits.cpus > 1024 || !Number.isSafeInteger(limits.cpus * 1e6)) throw new Error('Invalid CPU limit');
   for (const key of ['memoryMb', 'pidsLimit']) if (!Number.isSafeInteger(limits[key]) || limits[key] < 1 || limits[key] > 2 ** 30) throw new Error(`Invalid ${key} limit`);

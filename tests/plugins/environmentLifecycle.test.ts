@@ -88,9 +88,7 @@ describe('durable managed environment lifecycle', () => {
   // change them; the administrator's settings now decide what it is provisioned with.
   it('provisions a project environment with the administrator resource defaults', async () => {
     const { runtime, podman } = setup({ defaultCpus: 2.5, defaultMemoryMb: 4096, defaultPidsLimit: 1024 });
-    // The disk figure is not an administrator setting: nothing enforces it, so it keeps the built-in
-    // value the Sites contract still carries.
-    const expected = { cpus: 2.5, memoryMb: 4096, pidsLimit: 1024, diskSoftMb: 10240 };
+    const expected = { cpus: 2.5, memoryMb: 4096, pidsLimit: 1024 };
     // Reported before the environment exists, so the figures shown are the ones it would be created with.
     expect((await runtime.environmentFor(input)).limits).toEqual(expected);
     await runtime.requestEnvironment({ ...input, requestId: 'defaults-start', action: { kind: 'start' } });
@@ -102,7 +100,7 @@ describe('durable managed environment lifecycle', () => {
 
   it('keeps the built-in figure for a setting that is missing or unusable', async () => {
     const { runtime } = setup({ defaultCpus: 0, defaultMemoryMb: 4096, defaultPidsLimit: 'many' });
-    expect((await runtime.environmentFor(input)).limits).toEqual({ cpus: 1, memoryMb: 4096, pidsLimit: 512, diskSoftMb: 10240 });
+    expect((await runtime.environmentFor(input)).limits).toEqual({ cpus: 1, memoryMb: 4096, pidsLimit: 512 });
   });
 
   it('only the daemon executes a fork-recorded idempotent start', async () => {

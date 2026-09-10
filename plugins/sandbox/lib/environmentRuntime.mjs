@@ -17,10 +17,7 @@ import { PROJECT_BASE_IMAGE_TAG } from './containerBaseImage.mjs';
 
 const FILE_HELPER = readFileSync(new URL('./guestFiles.py', import.meta.url), 'utf8');
 const PREVIEW_HELPER = readFileSync(new URL('./previewProxy.py', import.meta.url), 'utf8');
-/** `diskSoftMb` is accepted and stored but never enforced: no container flag carries it. It stays in the
- *  shape because the Sites plugin sends it with every registration and limits change, and it has no
- *  control of its own here — a project's environment reports the ceilings the container really has. */
-const DEFAULT_LIMITS = { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240 };
+const DEFAULT_LIMITS = { cpus: 1, memoryMb: 1024, pidsLimit: 512 };
 /** What each lifecycle operation is made of, in order, with the relative cost of each part. The list is
  *  DECLARED before the work starts, so a surface watching an operation can say "step 2 of 5" from the
  *  first frame instead of discovering the shape as it goes. The weights are rough durations rather than
@@ -67,7 +64,7 @@ function limits(value) {
   if (!value || typeof value !== 'object' || Object.keys(value).some((key) => !Object.hasOwn(DEFAULT_LIMITS, key))) throw error('invalid_limits', 'Invalid environment limits', 400);
   const result = { ...DEFAULT_LIMITS, ...value };
   if (!Number.isFinite(result.cpus) || result.cpus <= 0 || result.cpus > 1024) throw error('invalid_limits', 'Invalid CPU limit', 400);
-  for (const key of ['memoryMb', 'pidsLimit', 'diskSoftMb']) positive(result[key], key);
+  for (const key of ['memoryMb', 'pidsLimit']) positive(result[key], key);
   return result;
 }
 /** The limits a project environment is provisioned with, from the administrator's plugin settings.

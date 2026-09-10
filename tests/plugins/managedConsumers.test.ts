@@ -142,7 +142,7 @@ function memoryProvider(initial: Record<string, string | Buffer> = {}) {
   });
   const environmentFor = vi.fn<SandboxControl['environmentFor']>(async ({ project }) => ({
     projectId: project.projectId, generation: 3, state: 'running', desiredState: 'running', lastError: null,
-    limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 1024 },
+    limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 },
   }));
   return { projectFiles, prepareExecution, environmentFor, data, release, responses, race: () => { race = true; } };
 }

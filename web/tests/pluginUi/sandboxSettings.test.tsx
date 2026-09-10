@@ -59,7 +59,7 @@ describe('sandbox Project workspaces', () => {
   // stopping it belongs to the project's row in the register now — see sandboxProjectRows.test.tsx —
   // so what this panel still owns is the state, the resources and the snapshots.
   it('shows the managed project environment and its resources, with no lifecycle buttons and no account HOME', async () => {
-    const environment = { projectId: 1, generation: 2, state: 'stopped', desiredState: 'stopped', lastError: null, limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 4096 } };
+    const environment = { projectId: 1, generation: 2, state: 'stopped', desiredState: 'stopped', lastError: null, limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } };
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: false } })),
       http.get('*/api/plugins/sandbox/api/projects/1/environment', () => HttpResponse.json({ environment, snapshots: [], operations: [] })),
@@ -109,7 +109,7 @@ describe('sandbox Project workspaces', () => {
 
 describe('managed environment lifecycle', () => {
   const project = { id: 1, slug: 'demo', path: '', executionKind: 'managed' as const };
-  const environment = { projectId: 1, generation: 2, state: 'stopped', desiredState: 'stopped', lastError: null, limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 4096 } };
+  const environment = { projectId: 1, generation: 2, state: 'stopped', desiredState: 'stopped', lastError: null, limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 } };
   const detail = { environment, operations: [], snapshots: [{ id: 'complete', generation: 2, consistency: 'crash-consistent', createdAt: '2026-09-08', note: 'Before change', completeProject: true }, { id: 'partial', generation: 2, consistency: 'crash-consistent', createdAt: '2026-09-08', note: 'Incomplete', completeProject: false }] };
   const setup = () => server.use(http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: false } })), http.get('*/api/plugins/sandbox/api/projects/1/environment', () => HttpResponse.json(detail)));
 
