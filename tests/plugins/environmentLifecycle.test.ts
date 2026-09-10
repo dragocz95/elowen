@@ -203,17 +203,41 @@ describe('durable managed environment lifecycle', () => {
     await runtime.reconcile();
     await runtime.reconcile();
     expect(podman.start).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(30_000); await runtime.reconcile();
+    await vi.advanceTimersByTimeAsync(29_999); await runtime.reconcile();
+    expect(podman.start).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(1); await runtime.reconcile();
     expect(podman.start).toHaveBeenCalledTimes(2);
-    await vi.advanceTimersByTimeAsync(120_000); await runtime.reconcile();
+    await vi.advanceTimersByTimeAsync(119_999); await runtime.reconcile();
+    expect(podman.start).toHaveBeenCalledTimes(2);
+    await vi.advanceTimersByTimeAsync(1); await runtime.reconcile();
     expect(podman.start).toHaveBeenCalledTimes(3);
-    await vi.advanceTimersByTimeAsync(600_000); await runtime.reconcile();
+    await vi.advanceTimersByTimeAsync(599_999); await runtime.reconcile();
+    expect(podman.start).toHaveBeenCalledTimes(3);
+    await vi.advanceTimersByTimeAsync(1); await runtime.reconcile();
     expect(podman.start).toHaveBeenCalledTimes(4);
     await vi.advanceTimersByTimeAsync(3_600_000); await runtime.reconcile();
     expect(podman.start).toHaveBeenCalledTimes(4);
     expect(db.prepare("SELECT state,error FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get()).toMatchObject({
       state: 'failed', error: expect.stringMatching(/automatic recovery failed after 4 attempts/i),
     });
+  });
+
+  it('resets automatic recovery attempts after ten minutes of stable running', async () => {
+    vi.useFakeTimers();
+    cleanup.push(() => vi.useRealTimers());
+    const { runtime, containers, podman, db } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    containers.values().next().value.state = 'created';
+    await runtime.reconcile();
+    await vi.advanceTimersByTimeAsync(600_000);
+    containers.values().next().value.state = 'created';
+    podman.start.mockClear();
+
+    await runtime.reconcile();
+
+    expect(podman.start).toHaveBeenCalledOnce();
+    expect(db.prepare("SELECT json_extract(checkpoint_json,'$.autoRecovery.attempt') AS attempt FROM p_sandbox_runtime_operations WHERE request_key LIKE 'autostart:%' ORDER BY rowid").all())
+      .toEqual([{ attempt: 1 }, { attempt: 1 }]);
   });
 
   it('leaves explicit stopped and deleted intents untouched during runtime recovery', async () => {
