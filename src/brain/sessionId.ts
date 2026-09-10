@@ -73,8 +73,13 @@ export function isSubagentSession(id: string): boolean {
  *  people; it is wrong for these, and the effect was that retention could reach 5 sessions out of 2683.
  *  A real platform channel is deliberately NOT included here. */
 export function isEphemeralRunSession(id: string): boolean {
-  return isSubagentSession(id) || id.startsWith(CRON_PREFIX);
+  return EPHEMERAL_RUN_PREFIXES.some((prefix) => id.startsWith(prefix));
 }
+
+/** The prefixes {@link isEphemeralRunSession} answers for, listed once so the store's SQL can spell the
+ *  same rule in `LIKE` clauses instead of repeating the literals. Adding a one-shot run family is one
+ *  edit here, not one per call site. */
+export const EPHEMERAL_RUN_PREFIXES = [SUBAGENT_PREFIX, CRON_PREFIX] as const;
 
 /** Archived channel transcript produced by {@link archivedChannelSessionId}; never a live delivery target. */
 export function isArchivedChannelSession(id: string): boolean {

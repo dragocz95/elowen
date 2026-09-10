@@ -7,7 +7,7 @@ import { extractText } from '../brain/messageView.js';
 import { dbTsToIso } from '../shared/time.js';
 import { planFilePath, toolResultSpillDir } from '../shared/paths.js';
 import { logger } from '../shared/logger.js';
-import { CHANNEL_PREFIX, SUBAGENT_PREFIX, CRON_PREFIX, isArchivedChannelSession } from '../brain/sessionId.js';
+import { CHANNEL_PREFIX, EPHEMERAL_RUN_PREFIXES, isArchivedChannelSession } from '../brain/sessionId.js';
 import {
   boundedConversationActivityDetail,
   conversationActivityAutomation,
@@ -196,6 +196,10 @@ export interface BrainSessionEvent {
 }
 /** Radius of context kept around a search match in its snippet. */
 const SNIPPET_RADIUS = 60;
+
+/** {@link isEphemeralRunSession} as SQL over `brain_sessions s`, so retention spells the rule the same way
+ *  the runtime does and a new one-shot run family is one edit in sessionId.ts. */
+const EPHEMERAL_RUN_SQL = EPHEMERAL_RUN_PREFIXES.map((prefix) => `s.id LIKE '${prefix}%'`).join('\n           OR ');
 
 /** THE predicate for "this row is an empty shell, not a conversation" — shared by the two unspoken
  *  listings so the personal rail and the admin register can never disagree about what they hide.
@@ -852,8 +856,7 @@ export class BrainStore {
          -- is a spent shell either way, and a sub-agent or cron run that died before writing its first
          -- message left a row nothing else will ever collect, so those are judged on row age alone.
          AND (
-           s.id LIKE '${SUBAGENT_PREFIX}%'
-           OR s.id LIKE '${CRON_PREFIX}%'
+           ${EPHEMERAL_RUN_SQL}
            OR EXISTS (SELECT 1 FROM brain_messages m WHERE m.session_id = s.id)
          )
          AND (
@@ -863,8 +866,7 @@ export class BrainStore {
            -- One-shot runs (see isEphemeralRunSession): judged on their OWN age, parent or not. A
            -- finished delegation is finished whether or not the conversation that started it lives on,
            -- and these are what actually accumulate. A real platform channel stays excluded.
-           OR s.id LIKE '${SUBAGENT_PREFIX}%'
-           OR s.id LIKE '${CRON_PREFIX}%'
+           OR ${EPHEMERAL_RUN_SQL}
            -- Archived channel transcripts: a channel that sat quiet past the idle cutoff is rolled over
            -- (its prompt cache has expired), the old transcript is re-keyed under a unique -arch- id and
            -- the deterministic channel id is freed for a fresh session. mayDeliverToSession refuses the
