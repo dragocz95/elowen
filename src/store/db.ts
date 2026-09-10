@@ -115,6 +115,9 @@ function applyProjectEnvironmentColumns(db: Db): void {
   addColumn(db, 'projects', 'execution_kind', "TEXT NOT NULL DEFAULT 'host'");
   addColumn(db, 'projects', 'creator_user_id', 'INTEGER');
   addColumn(db, 'projects', 'lifecycle', "TEXT NOT NULL DEFAULT 'active'");
+  // Where a HOST project's directory was when it was adopted as managed. NULL on every project that was
+  // never adopted, which is every project that did not take the in-place route.
+  addColumn(db, 'projects', 'adopted_path', 'TEXT');
   addColumn(db, 'users', 'can_create_projects', 'INTEGER NOT NULL DEFAULT 0');
   addColumn(db, 'users', 'can_share_projects', 'INTEGER NOT NULL DEFAULT 0');
   addColumn(db, 'users', 'project_limit', 'INTEGER NOT NULL DEFAULT 3');

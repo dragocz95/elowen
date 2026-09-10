@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT UNIQUE NOT NULL, path TEXT NOT NULL, notes TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '', memory_shared INTEGER NOT NULL DEFAULT 0, execution_kind TEXT NOT NULL DEFAULT 'host', creator_user_id INTEGER, lifecycle TEXT NOT NULL DEFAULT 'active');
+CREATE TABLE IF NOT EXISTS projects (id INTEGER PRIMARY KEY AUTOINCREMENT, slug TEXT UNIQUE NOT NULL, path TEXT NOT NULL, adopted_path TEXT, notes TEXT NOT NULL DEFAULT '', icon TEXT NOT NULL DEFAULT '', memory_shared INTEGER NOT NULL DEFAULT 0, execution_kind TEXT NOT NULL DEFAULT 'host', creator_user_id INTEGER, lifecycle TEXT NOT NULL DEFAULT 'active');
 -- Explicit share list behind a project's `memory_shared` toggle. When the toggle is on and this table
 -- has NO rows for the project, EVERY project member (user_projects) shares its memory pool; with rows
 -- present, exactly those users share it (an empty selection means everyone, per the feature contract).

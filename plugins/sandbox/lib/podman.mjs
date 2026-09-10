@@ -4,7 +4,7 @@ import { userInfo } from 'node:os';
 import { lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { PROJECT_BASE_IMAGE_TAG, PROJECT_CONTAINERFILE } from './containerBaseImage.mjs';
-import { assertContainerSpec, executionUnit, hostPath, resourceToken, snapshotReference, volumeLabels, withContainerLimits } from './containerSpec.mjs';
+import { assertContainerSpec, executionUnit, hostPath, publicationUnit, resourceToken, snapshotReference, volumeLabels, withContainerLimits } from './containerSpec.mjs';
 import { checkedHostPath } from './containerPaths.mjs';
 import { COMPLETION_CWD_LIMIT, completionArtifact, completionPrelude, parseCompletionCwd } from './managedCompletion.mjs';
 
@@ -723,7 +723,12 @@ export class PodmanClient {
   /** Persist the host-generated executionId in the existing lease BEFORE calling. A timeout or aborted
    * Podman client is followed by guest-side cancellation; inability to verify it is an explicit failure. */
   async #prepareGuest(spec, executionId, argv, options = {}) {
-    const unit = executionUnit(spec, executionId);
+    return await this.#prepareUnit(spec, executionUnit(spec, executionId), argv, options);
+  }
+
+  /** The same preparation for a unit whose NAME the caller owns rather than one derived from a leased
+   *  execution: a publication's forwarder is named after the publication so the same one is found again. */
+  async #prepareUnit(spec, unit, argv, options = {}) {
     validateInput(options.input);
     if (!Array.isArray(argv) || argv.length === 0 || argv.length > 256 || argv.some((arg) => typeof arg !== 'string' || arg.includes('\0'))
       || argv.reduce((bytes, arg) => bytes + Buffer.byteLength(arg), 0) > 64 * 1024 || !argv[0].startsWith('/')) throw new Error('Invalid guest command arguments');
@@ -755,6 +760,31 @@ export class PodmanClient {
     const row = await this.#owned(spec);
     const shown = await this.#run(['exec', row.id, 'systemctl', 'is-active', executionUnit(spec, executionId)]);
     if (shown.stdout.trim() !== 'active') throw new Error('Preview service did not start');
+  }
+
+  /** Establish one publication's forwarder, which is NOT leased and lives until the container ends, so
+   *  starting it is idempotent and a forwarder from a previous socket is retired rather than duplicated.
+   *  A still-active unit refuses a second `systemd-run` under its own name, and the caller has just
+   *  removed the socket that unit served, so it is stopped and the new one takes over. */
+  async startPublication(spec, publicationId, argv) {
+    if (spec.resource.kind !== 'project' || !spec.mounts.some((mount) => mount.target === '/run/elowen')) throw new Error('Project publication transport is unavailable');
+    const unit = publicationUnit(publicationId);
+    const prepared = await this.#prepareUnit(spec, unit, argv);
+    const args = prepared.args.filter((arg) => !['--pipe', '--wait'].includes(arg) && !arg.startsWith('--property=RuntimeMaxSec='));
+    await this.#run(['exec', prepared.container.id, 'systemctl', 'stop', unit], { allowFailure: true });
+    await this.#run(args);
+    const shown = await this.#run(['exec', prepared.container.id, 'systemctl', 'is-active', unit]);
+    if (shown.stdout.trim() !== 'active') throw new Error('Publication service did not start');
+  }
+
+  /** Remove it again, and verify that it is gone rather than reading a client exit code as one. */
+  async stopPublication(spec, publicationId) {
+    const unit = publicationUnit(publicationId);
+    const row = await this.#owned(spec);
+    if (row.state !== 'running') throw new Error('Container is not running');
+    await this.#run(['exec', row.id, 'systemctl', 'stop', unit], { allowFailure: true });
+    const shown = await this.#run(['exec', row.id, 'systemctl', 'is-active', unit], { allowFailure: true });
+    if (shown.stdout.trim() === 'active') throw new Error('Publication service did not stop');
   }
 
   /** Arms completion cwd capture for a canonical managed user shell execution. The returned `stdin`

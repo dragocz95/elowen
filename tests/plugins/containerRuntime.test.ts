@@ -1,8 +1,8 @@
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdtempSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { bindContainerIdentity, createContainerSpec, executionUnit, volumeLabels } from '../../plugins/sandbox/lib/containerSpec.mjs';
+import { bindContainerIdentity, createContainerSpec, executionUnit, publicationUnit, volumeLabels } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import { cleanPodmanEnv, PodmanClient, SpawnExecutor, isolatedPodmanOptions } from '../../plugins/sandbox/lib/podman.mjs';
 import { PROJECT_CONTAINERFILE } from '../../plugins/sandbox/lib/containerBaseImage.mjs';
 import { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
@@ -441,6 +441,112 @@ describe('clean and confined Podman client', () => {
     const original = executor.run.getMockImplementation()!;
     executor.run.mockImplementation(async (file, args, opts) => args.includes('show') ? { code: 0, stdout: 'LoadState=loaded\nActiveState=deactivating\nControlGroup=/work\n', stderr: '' } : original(file, args, opts));
     await expect(client.cancelExecution(spec, 'c'.repeat(32))).rejects.toThrow(/termination/i);
+  });
+});
+
+// A project adopted in place keeps its directory where it was until the first start of its environment;
+// this is the moment it becomes the project's own workspace volume, and the branch that runs depends on
+// whether the volume lives on the same filesystem. /dev/shm is the one other filesystem a Linux test can
+// be sure of; where it is the same one, the case cannot be constructed and the test says so.
+const otherFilesystem = (() => {
+  try { return lstatSync('/dev/shm').isDirectory() && lstatSync('/dev/shm').dev !== lstatSync(tmpdir()).dev ? mkdtempSync(join('/dev/shm', 'elowen-adopt-')) : null; }
+  catch { return null; }
+})();
+afterEach(() => { if (otherFilesystem) rmSync(otherFilesystem, { recursive: true, force: true }); });
+
+describe('adopted project workspace', () => {
+  it('brings an adopted host directory into the project workspace volume exactly once', async () => {
+    const { spec, root } = fixture();
+    const source = join(root, 'host-project');
+    mkdirSync(join(source, 'src'), { recursive: true });
+    writeFileSync(join(source, 'src/index.js'), 'module.exports = 1');
+    writeFileSync(join(source, 'README.md'), 'read me');
+    symlinkSync('src/index.js', join(source, 'link'));
+    const storage = new ContainerStorage({});
+
+    expect(await storage.adoptWorkspace(spec, source)).toBe(true);
+    const workspace = spec.volumes.find((volume: any) => volume.component === 'workspace')!.path;
+    expect(readFileSync(join(workspace, 'src/index.js'), 'utf8')).toBe('module.exports = 1');
+    expect(readlinkSync(join(workspace, 'link'))).toBe('src/index.js');
+    // The second start finds a workspace that already holds the project and moves nothing, so the
+    // operation is idempotent on the one condition it can actually observe.
+    expect(await storage.adoptWorkspace(spec, source)).toBe(false);
+  });
+
+  it('refuses an adopted directory that is not there, and ignores an empty one', async () => {
+    const { spec, root } = fixture();
+    const storage = new ContainerStorage({});
+    const empty = join(root, 'empty-project');
+    mkdirSync(empty);
+    expect(await storage.adoptWorkspace(spec, empty)).toBe(false);
+    await expect(storage.adoptWorkspace(spec, join(root, 'never-existed'))).rejects.toThrow(/missing/);
+  });
+
+  it.runIf(otherFilesystem !== null)('copies, verifies and leaves the original when the volume is elsewhere', async () => {
+    const { spec } = fixture();
+    const source = join(otherFilesystem!, 'host-project');
+    mkdirSync(join(source, 'src'), { recursive: true });
+    writeFileSync(join(source, 'src/index.js'), 'module.exports = 1');
+    symlinkSync('src/index.js', join(source, 'link'));
+    expect(await new ContainerStorage({}).adoptWorkspace(spec, source)).toBe(true);
+    const workspace = spec.volumes.find((volume: any) => volume.component === 'workspace')!.path;
+    expect(readFileSync(join(workspace, 'src/index.js'), 'utf8')).toBe('module.exports = 1');
+    expect(readlinkSync(join(workspace, 'link'))).toBe('src/index.js');
+    // Across filesystems the move is a copy, so the directory it came from is still there and untouched.
+    expect(readFileSync(join(source, 'src/index.js'), 'utf8')).toBe('module.exports = 1');
+  });
+});
+
+describe('durable publication transport', () => {
+  // A publication's forwarder is persistent and re-established rather than leased, so the arguments the
+  // guest unit is configured with, and the checks around it, are the whole of its contract.
+  function publishing() {
+    const { paths, root } = fixture();
+    const spec = createContainerSpec({ resource: { kind: 'project', id: 7 }, workspaceTarget: '/demo', generation: 2,
+      image: 'localhost/elowen-project-base:test', previewBroker: true }, paths);
+    const state = fake(spec);
+    const original = state.executor.run.getMockImplementation()!;
+    state.executor.run.mockImplementation(async (file: string, args: string[], options: any) => {
+      if (args[0] === 'exec' && args.includes('is-active')) return { code: 0, stdout: 'active\n', stderr: '' };
+      if (args[0] === 'exec' && args.includes('stop')) return { code: 0, stdout: '', stderr: '' };
+      return original(file, args, options);
+    });
+    return { spec, root, ...state };
+  }
+  const forwarded = (executor: any) => executor.run.mock.calls.filter(([, args]: any[]) => args[0] === 'exec').map(([, args]: any[]) => args.slice(2));
+
+  it('establishes a forwarder as a named persistent unit, retiring a leftover one first', async () => {
+    const { spec, client, executor } = publishing();
+    await client.startPublication(spec, 'shop', ['/usr/bin/python3', '-c', 'forwarder', '8080', '/run/elowen/pub-shop.sock']);
+    const run = executor.run.mock.calls.find(([, args]: any[]) => args.includes('systemd-run'))![1];
+    expect(run).toContain(`--unit=${publicationUnit('shop')}`);
+    expect(run).toContain('--collect');
+    expect(run).toContain('--property=KillMode=control-group');
+    // Not an execution: nothing waits for it, nothing bounds how long it may live, and it never reads a
+    // caller's stdin.
+    expect(run.join(' ')).not.toMatch(/--wait|--pipe|RuntimeMaxSec/);
+    // A forwarder left over under the same name refuses a second systemd-run, so it is retired first…
+    expect(forwarded(executor)[0]).toEqual(['systemctl', 'stop', 'elowen-pub-shop.service']);
+    // …and the unit is only believed once systemd reports it active.
+    expect(forwarded(executor).at(-1)).toEqual(['systemctl', 'is-active', 'elowen-pub-shop.service']);
+  });
+
+  it('refuses a forwarder that never became active and one that did not stop', async () => {
+    const { spec, client, executor } = publishing();
+    const original = executor.run.getMockImplementation()!;
+    let reported = 'active\n';
+    executor.run.mockImplementation(async (file: string, args: string[], options: any) =>
+      (args[0] === 'exec' && args.includes('is-active') ? { code: 0, stdout: reported, stderr: '' } : original(file, args, options)));
+    reported = 'inactive\n';
+    await expect(client.startPublication(spec, 'shop', ['/usr/bin/python3', '-c', 'forwarder', '8080', '/run/elowen/pub-shop.sock']))
+      .rejects.toThrow(/did not start/);
+    reported = 'active\n';
+    await expect(client.stopPublication(spec, 'shop')).rejects.toThrow(/did not stop/);
+    // A publication transport without the guest mount it forwards through is refused outright.
+    const { paths } = fixture();
+    const plain = createContainerSpec({ resource: { kind: 'project', id: 7 }, workspaceTarget: '/demo', generation: 2, image: 'localhost/test:v1' }, paths);
+    await expect(client.startPublication(plain, 'shop', ['/bin/true'])).rejects.toThrow(/unavailable/);
+    expect(() => publicationUnit('Shop 1')).toThrow(/token/i);
   });
 });
 

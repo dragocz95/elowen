@@ -212,6 +212,36 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
         assert.equal(status, 200);
       } finally { await preview.release(); }
       assert.throws(() => lstatSync(preview.socketPath));
+
+      stage = 'durable publication transport';
+      // Published, not previewed: no lease, no release handle, and the record outlives the request. The
+      // guest unit is the SAME forwarder a preview runs, established for the publication's name.
+      const publication = await runtime.projectPublicationBinding({ ...actor, publicationId: 'storefront', port: 8081 });
+      const published = async () => await new Promise<number>((resolve, reject) => {
+        const request = httpRequest({ socketPath: publication.socketPath, path: '/', timeout: 5000 }, (response) => { response.resume(); response.once('end', () => resolve(response.statusCode ?? 0)); });
+        request.once('error', reject); request.once('timeout', () => request.destroy(new Error('Publication timed out'))); request.end();
+      });
+      try {
+        assert.equal(lstatSync(publication.socketPath).isSocket(), true);
+        assert.equal(await published(), 200);
+
+        // A container restart takes the forwarder with it while its socket FILE stays behind on the host
+        // side of the bind mount, which is why presence is never read as liveness. The application inside
+        // dies with the container too: what survives is the publication RECORD, and the transport answers
+        // again the moment the application does.
+        await perform({ kind: 'stop' });
+        await perform({ kind: 'start' });
+        const restarted = await runtime.prepareExecution({ command: { type: 'shell', command: `systemd-run --unit=preview-target-restart --service-type=exec /usr/bin/python3 -m http.server 8081 --bind 127.0.0.1 --directory ${projectRoot}` }, projectRef: actor.project, cwd: projectRoot, leaseKind: 'terminal' }, 1);
+        await runPrepared(restarted);
+        assert.equal(lstatSync(publication.socketPath).isSocket(), true);
+        assert.equal(await published(), 200);
+
+        // And the reconcile that owns the container lifecycle leaves a healthy publication alone.
+        await runtime.reconcile();
+        assert.equal(await published(), 200);
+      } finally { await runtime.projectPublicationRelease({ ...actor, publicationId: 'storefront' }); }
+      assert.throws(() => lstatSync(publication.socketPath));
+      assert.equal(sql.prepare("SELECT COUNT(*) AS count FROM p_sandbox_runtimes WHERE kind='publication'").get().count, 0);
       stage = 'full project snapshot and fresh-generation restore';
       const saved = await perform({ kind: 'snapshot' });
       await runtime.managedWorktrees({ ...actor, action: { kind: 'create', label: 'after-snapshot', baseRef: 'main' } });

@@ -1,9 +1,39 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { closeSync, copyFileSync, constants, fsyncSync, lstatSync, openSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, copyFileSync, constants, cpSync, fsyncSync, lstatSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, statfsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { assertContainerSpec, resourceToken, snapshotReference } from './containerSpec.mjs';
+import { assertContainerSpec, hostPath, resourceToken, snapshotReference } from './containerSpec.mjs';
 import { checkedHostPath } from './containerPaths.mjs';
+
+/** Every entry below one root, described well enough that two trees can be compared: relative path,
+ *  kind, size or symlink target. Used to verify a copy that crossed a filesystem boundary. */
+function inventoryOf(root) {
+  const entries = [];
+  const walk = (directory, prefix) => {
+    for (const name of readdirSync(directory).sort()) {
+      const path = join(directory, name);
+      const stat = lstatSync(path);
+      const relative = prefix ? `${prefix}/${name}` : name;
+      entries.push(stat.isDirectory() ? `${relative}/` : stat.isSymbolicLink() ? `${relative} -> ${readlinkSync(path)}` : `${relative} ${stat.size}`);
+      if (stat.isDirectory()) walk(path, relative);
+    }
+  };
+  walk(root, '');
+  return entries;
+}
+/** What the same tree would occupy somewhere else, counting a symlink as the name it carries. */
+function bytesIn(root) {
+  let total = 0;
+  const walk = (directory) => {
+    for (const name of readdirSync(directory)) {
+      const path = join(directory, name);
+      const stat = lstatSync(path);
+      if (stat.isDirectory()) walk(path); else total += stat.size;
+    }
+  };
+  walk(root);
+  return total;
+}
 
 function syncPath(path) {
   const fd = openSync(path, 'r');
@@ -51,6 +81,51 @@ export class ContainerStorage {
     if (spec.resource.kind === 'project') for (const mount of spec.mounts.filter((entry) => entry.type === 'bind')) checkedHostPath(mount.source, { create: true });
     for (const volume of spec.volumes) checkedHostPath(volume.path, { create: true });
     for (const volume of spec.volumes) await this.#podman.ensureVolume(spec, volume.component);
+  }
+
+  /** Bring a HOST project's directory into the project's own workspace volume, once. Core's
+   *  `ProjectStore.adoptAsManaged` records where the directory came from and leaves it there; this is the
+   *  one moment it becomes the environment's workspace, so it runs before the first container exists and
+   *  does nothing at all on every start after that — a volume that is not empty has already been served.
+   *
+   *  On one filesystem the rename is atomic and free. Across filesystems the tree is copied, free space
+   *  being established from the destination's own figures first, and the copy is verified entry by entry
+   *  before the project is allowed to start on it; a copy that fails or differs is removed again so the
+   *  next start retries from the untouched original instead of serving half a workspace. */
+  async adoptWorkspace(spec, sourcePath) {
+    assertContainerSpec(spec);
+    if (spec.resource.kind !== 'project') throw new Error('Only a project owns a workspace volume');
+    const source = hostPath(sourcePath);
+    const target = checkedHostPath(spec.volumes.find((volume) => volume.component === 'workspace').path, { create: true });
+    if (readdirSync(target).length) return false;
+    let entries;
+    try { entries = readdirSync(source); }
+    catch (cause) {
+      if (cause.code === 'ENOENT') throw new Error(`The adopted project directory ${source} is missing`);
+      throw cause;
+    }
+    if (!entries.length) return false;
+    try {
+      // Replacing an EMPTY directory is what makes this one rename of the whole tree rather than one per
+      // entry: either the workspace is the project's directory or it is still the empty volume.
+      renameSync(source, target);
+      return true;
+    } catch (cause) { if (cause.code !== 'EXDEV') throw cause; }
+    const required = bytesIn(source);
+    const filesystem = statfsSync(target);
+    const free = filesystem.bavail * filesystem.bsize;
+    if (free < required) throw new Error(`The project workspace volume needs ${required} bytes of free space and has ${free}`);
+    const expected = inventoryOf(source);
+    try {
+      for (const name of entries) cpSync(join(source, name), join(target, name), { recursive: true, preserveTimestamps: true, verbatimSymlinks: true });
+      const copied = inventoryOf(target);
+      if (copied.length !== expected.length || copied.some((line, index) => line !== expected[index])) throw new Error('The adopted directory changed while it was being copied');
+    } catch (cause) {
+      rmSync(target, { recursive: true, force: true });
+      checkedHostPath(target, { create: true });
+      throw cause;
+    }
+    return true;
   }
 
   async snapshot(spec, snapshotId, { includeData = true } = {}) {

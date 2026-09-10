@@ -78,6 +78,8 @@ const readyControl = () => ({
   environmentLogs: async () => { throw new Error('environmentLogs is not expected in this fixture'); },
   managedWorktrees: async () => { throw new Error('managedWorktrees is not expected in this fixture'); },
   projectPreviewBinding: async () => { throw new Error('projectPreviewBinding is not expected in this fixture'); },
+  projectPublicationBinding: async () => { throw new Error('projectPublicationBinding is not expected in this fixture'); },
+  projectPublicationRelease: async () => { throw new Error('projectPublicationRelease is not expected in this fixture'); },
 } as unknown as SandboxControl);
 
 describe('new personal conversation execution defaults', () => {

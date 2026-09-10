@@ -31,6 +31,10 @@ export const createDirectorySchema = z.object({
   name: z.string().trim().refine(isCreatableDirectoryName, 'name must be a creatable directory segment'),
 });
 
+/** Adopt an existing host project as managed, or undo that adoption. A bodyless POST adopts: `undo` is
+ *  the only thing this request can say, and it says it once. */
+export const adoptProjectSchema = z.object({ undo: z.boolean().optional() });
+
 /** Delete a managed project. Both fields are optional and are forwarded verbatim to the environment
  *  provider, which owns the durable deletion intent: `requestId` makes a retried DELETE return the same
  *  operation instead of colliding with the pending one, and `expectedGeneration` refuses the delete when

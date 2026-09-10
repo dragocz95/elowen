@@ -3800,6 +3800,11 @@ describe('BrainService', () => {
       environmentLogs: async () => { throw new Error('environmentLogs is not expected in this fixture'); },
       managedWorktrees: async () => { throw new Error('managedWorktrees is not expected in this fixture'); },
       projectPreviewBinding: async () => { throw new Error('projectPreviewBinding is not expected in this fixture'); },
+      // A publication is a durable transport of a published Site, which this turn-level fixture never
+      // has: an incomplete control would resolve as no provider at all and silently turn this into a
+      // test of the fallback path.
+      projectPublicationBinding: async () => { throw new Error('projectPublicationBinding is not expected in this fixture'); },
+      projectPublicationRelease: async () => { throw new Error('projectPublicationRelease is not expected in this fixture'); },
     } satisfies KnownControls['sandbox'] as never);
     (d as unknown as { plugins: unknown }).plugins = new PluginRegistryProvider(async () => reg);
     let scopedCwd: string | undefined;

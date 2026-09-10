@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { withWriteLock, type Db } from './db.js';
 import { readIsAdmin } from './userStore.js';
+import { isReservedProjectSlug } from '../shared/projectExecution.js';
 
 export interface Project {
-  id: number; slug: string; path: string; notes: string; icon: string; memoryShared: boolean;
+  id: number; slug: string; path: string; adoptedPath: string | null; notes: string; icon: string; memoryShared: boolean;
   executionKind: 'host' | 'managed'; creatorUserId: number | null; lifecycle: 'active' | 'deleting';
 }
 
@@ -11,12 +12,18 @@ export interface Project {
  *  that create a managed project answer it with a 409, so the text they match on lives with the throw. */
 export const PROJECT_LIMIT_REACHED = 'project creation limit reached';
 
-type ProjectRow = Omit<Project, 'memoryShared' | 'executionKind' | 'creatorUserId'> & {
-  memory_shared: number; execution_kind: Project['executionKind']; creator_user_id: number | null;
+/** The refusals {@link ProjectStore.adoptAsManaged} and {@link ProjectStore.releaseAdopted} throw. The
+ *  adopt route answers `managed` with a 409 because adopting twice is a condition of the project rather
+ *  than a bad request, and `notAdopted` with a 409 for the same reason. */
+export const PROJECT_ALREADY_MANAGED = 'project is already managed';
+export const PROJECT_NOT_ADOPTED = 'project was not adopted';
+
+type ProjectRow = Omit<Project, 'memoryShared' | 'executionKind' | 'creatorUserId' | 'adoptedPath'> & {
+  memory_shared: number; execution_kind: Project['executionKind']; creator_user_id: number | null; adopted_path: string | null;
 };
 const toProject = (r: ProjectRow): Project => ({
   id: r.id, slug: r.slug, path: r.path, notes: r.notes ?? '', icon: r.icon ?? '',
-  memoryShared: r.memory_shared === 1, executionKind: r.execution_kind,
+  adoptedPath: r.adopted_path ?? null, memoryShared: r.memory_shared === 1, executionKind: r.execution_kind,
   creatorUserId: r.creator_user_id, lifecycle: r.lifecycle,
 });
 
@@ -85,6 +92,43 @@ export class ProjectStore {
     this.db.prepare('UPDATE projects SET path = ?, notes = ?, icon = ?, memory_shared = ? WHERE id = ?')
       .run(patch.path ?? cur.path, patch.notes ?? cur.notes, patch.icon ?? cur.icon, (patch.memoryShared ?? cur.memoryShared) ? 1 : 0, id);
     return this.get(id);
+  }
+  /** Turn an existing HOST project into a managed one IN PLACE. The row keeps its identity, its members,
+   *  its Sites and its history: what changes is where its directory is — the sandbox moves it into the
+   *  project's own workspace volume on the first start — and where its turns run. `adopted_path` is the
+   *  original location, kept so {@link releaseAdopted} is possible at all.
+   *
+   *  Refused for a project that is already managed, one whose deletion is pending, and one whose slug
+   *  would mount over a base-image directory: such a project could be adopted and then never started, and
+   *  its slug is not patchable. The daemon's own home project is refused by the caller, which is the only
+   *  layer that knows which row that is. */
+  adoptAsManaged(id: number): Project {
+    return withWriteLock(this.db, () => {
+      const current = this.get(id);
+      if (!current) throw new Error('project not found');
+      if (current.executionKind === 'managed') throw new Error(PROJECT_ALREADY_MANAGED);
+      if (current.lifecycle !== 'active') throw new Error('project deletion is pending');
+      if (isReservedProjectSlug(current.slug)) throw new Error('slug is reserved by the project environment');
+      const changed = this.db.prepare("UPDATE projects SET execution_kind='managed', adopted_path=path, path='' WHERE id=? AND execution_kind='host' AND lifecycle='active'").run(id).changes;
+      if (!changed) throw new Error('project changed while it was being adopted');
+      return this.get(id)!;
+    });
+  }
+  /** The exact inverse of {@link adoptAsManaged}: the project is a host project again, at the directory it
+   *  came from. Refused for a project that was never adopted, so this can never blank a path it does not
+   *  own, and for one whose deletion is pending — the runtime teardown that owns that row would otherwise
+   *  finish on a project this had already handed back to the host. The caller refuses it once the sandbox
+   *  has taken the directory, which is a fact about the environment rather than about this row. */
+  releaseAdopted(id: number): Project {
+    return withWriteLock(this.db, () => {
+      const current = this.get(id);
+      if (!current) throw new Error('project not found');
+      if (current.executionKind !== 'managed' || current.adoptedPath === null) throw new Error(PROJECT_NOT_ADOPTED);
+      if (current.lifecycle !== 'active') throw new Error('project deletion is pending');
+      const changed = this.db.prepare('UPDATE projects SET execution_kind=\'host\', path=adopted_path, adopted_path=NULL WHERE id=? AND execution_kind=\'managed\' AND adopted_path IS NOT NULL').run(id).changes;
+      if (!changed) throw new Error('project changed while its adoption was being released');
+      return this.get(id)!;
+    });
   }
   beginDeletion(id: number): boolean {
     return this.db.prepare("UPDATE projects SET lifecycle = 'deleting' WHERE id = ? AND execution_kind = 'managed'").run(id).changes > 0;

@@ -5,11 +5,11 @@ import { RealGitReader } from '../../git/gitReader.js';
 import { runManagedProjectCommand } from '../../integrations/managedProjectExecution.js';
 import { managedGuestRoot } from '../../shared/projectExecution.js';
 import { parseBody } from '../validation.js';
-import { createDirectorySchema, createProjectSchema, deleteProjectSchema, updateProjectSchema, memoryMembersSchema } from '../schemas/projects.js';
+import { adoptProjectSchema, createDirectorySchema, createProjectSchema, deleteProjectSchema, updateProjectSchema, memoryMembersSchema } from '../schemas/projects.js';
 import type { ElowenApp, RouteContext } from '../context.js';
 import type { PluginProjectIndicator } from '../../plugins/api.js';
 import { isPluginAllowedForUser } from '../../shared/pluginAccess.js';
-import { PROJECT_LIMIT_REACHED, type Project as StoredProject } from '../../store/projectStore.js';
+import { PROJECT_ALREADY_MANAGED, PROJECT_LIMIT_REACHED, PROJECT_NOT_ADOPTED, type Project as StoredProject } from '../../store/projectStore.js';
 import type { ProjectMemberView, ProjectView } from '../../shared/wireContract.js';
 
 const MAX_MEMBER_SAMPLES = 3;
@@ -298,6 +298,40 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     }
     if (typeof b.memoryShared === 'boolean') patch.memoryShared = b.memoryShared;
     return c.json(await toProjectView(d.projects.update(id, patch)!));
+  });
+  // Adopting is not metadata editing: it changes where the project's directory lives and hands the
+  // project's execution to the sandbox, so it has its own admin-only door rather than a PATCH field.
+  // `{ undo: true }` is the way back and is refused once the environment has taken the directory.
+  app.post('/projects/:id/adopt', async (c) => {
+    if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
+    if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    const id = Number(c.req.param('id'));
+    // The daemon's own checkout is the one project that must never be moved into an environment. The
+    // store cannot tell which row that is, so the refusal lives where the home project is known.
+    if (id === d.project.id) return c.json({ error: 'cannot adopt the home project' }, 400);
+    const raw = (await c.req.text()).trim();
+    const { undo } = raw ? adoptProjectSchema.parse(JSON.parse(raw)) : {};
+    try {
+      if (!undo) return c.json(await toProjectView(d.projects.adoptAsManaged(id)));
+      const project = d.projects.get(id);
+      // The sandbox moves the directory into the project's workspace volume on the first start of the
+      // environment, and after that a rollback would hand the project back pointing at a path that no
+      // longer holds it. So the environment is asked before the row is reversed.
+      if (project && project.adoptedPath !== null) {
+        const actor = c.get('user');
+        const sandbox = actor ? (await d.plugins?.get().catch(() => undefined))?.control('sandbox') : undefined;
+        if (!sandbox) return c.json({ error: 'project environment provider unavailable' }, 503);
+        const environment = await sandbox.environmentFor({ project: { kind: 'managed', projectId: id }, accountUserId: actor.id });
+        if (environment.state !== 'unprovisioned') return c.json({ error: 'the project environment has taken the adopted directory' }, 409);
+      }
+      return c.json(await toProjectView(d.projects.releaseAdopted(id)));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
+      if (message === 'project not found') return c.json({ error: message }, 404);
+      if ([PROJECT_ALREADY_MANAGED, PROJECT_NOT_ADOPTED, 'project deletion is pending'].includes(message)) return c.json({ error: message }, 409);
+      if (message === 'slug is reserved by the project environment') return c.json({ error: message }, 400);
+      throw error;
+    }
   });
   // The project's shared-memory share list (admin-only). Empty = every project member shares the pool.
   app.get('/projects/:id/memory-members', (c) => {

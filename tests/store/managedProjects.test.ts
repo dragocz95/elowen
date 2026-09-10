@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import Database from 'better-sqlite3';
 import { openDb, type Db } from '../../src/store/db.js';
-import { ProjectStore } from '../../src/store/projectStore.js';
+import { PROJECT_ALREADY_MANAGED, PROJECT_NOT_ADOPTED, ProjectStore } from '../../src/store/projectStore.js';
 import { UserStore } from '../../src/store/userStore.js';
 import { UserProjectStore } from '../../src/store/userProjectStore.js';
 
@@ -80,6 +80,45 @@ describe('managed project foundation', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  /** The in-place route from a host project to a managed one, and the way back. The row is the whole of
+   *  the promise: same identity, same members; what moves is where its directory lives, and the host path
+   *  and the record of where it came from change in ONE statement, so no reader ever sees a managed
+   *  project that still names a host directory. */
+  it('adopts a host project in place and releases it back to where it came from', () => {
+    const { projects } = fixture();
+    const host = projects.create({ slug: 'kolin', path: '/var/www/kolin' });
+    expect(projects.adoptAsManaged(host.id)).toMatchObject({
+      id: host.id, slug: 'kolin', executionKind: 'managed', path: '', adoptedPath: '/var/www/kolin', lifecycle: 'active',
+    });
+    expect(projects.list().map((p) => p.id)).toEqual([host.id]);
+    // A managed row is still a managed row: no host path may be patched back onto it.
+    expect(() => projects.update(host.id, { path: '/etc' })).toThrow(/managed/);
+    expect(projects.releaseAdopted(host.id)).toMatchObject({ executionKind: 'host', path: '/var/www/kolin', adoptedPath: null });
+    // The release is durable, not a value the store computed for the answer.
+    expect(projects.get(host.id)).toMatchObject({ executionKind: 'host', path: '/var/www/kolin', adoptedPath: null });
+  });
+
+  it('refuses every adoption that is not an active, adoptable host project', () => {
+    const { projects, member } = fixture();
+    const managed = projects.ensureDefault(member.id);
+    const host = projects.create({ slug: 'kolin', path: '/var/www/kolin' });
+    expect(() => projects.adoptAsManaged(managed.id)).toThrow(PROJECT_ALREADY_MANAGED);
+    expect(() => projects.adoptAsManaged(9999)).toThrow(/not found/);
+    expect(() => projects.adoptAsManaged(projects.create({ slug: 'workspace', path: '/data/workspace' }).id)).toThrow(/reserved/);
+    // Releasing is refused for exactly the rows this store never adopted, so it can never blank a path it
+    // does not own. A managed project without a record of an adoption is the case that matters.
+    expect(() => projects.releaseAdopted(host.id)).toThrow(PROJECT_NOT_ADOPTED);
+    expect(() => projects.releaseAdopted(managed.id)).toThrow(PROJECT_NOT_ADOPTED);
+    expect(projects.get(host.id)?.path).toBe('/var/www/kolin');
+    expect(projects.get(managed.id)?.path).toBe('');
+    // And a project whose teardown is under way is not handed back to the host underneath it: the
+    // runtime that owns that deletion would otherwise finish on a row that no longer describes it.
+    const adopted = projects.adoptAsManaged(projects.create({ slug: 'shop', path: '/var/www/shop' }).id);
+    projects.beginDeletion(adopted.id);
+    expect(() => projects.releaseAdopted(adopted.id)).toThrow(/deletion is pending/);
+    expect(projects.get(adopted.id)).toMatchObject({ executionKind: 'managed', path: '', adoptedPath: '/var/www/shop' });
   });
 
   it('provisions one private default project idempotently, not a runtime', () => {

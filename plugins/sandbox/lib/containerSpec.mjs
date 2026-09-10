@@ -167,6 +167,14 @@ export function executionUnit(spec, executionId) {
   return `elowen-exec-g${spec.generation}-${executionId}.service`;
 }
 
+/** The guest unit a PUBLICATION's forwarder runs as. It is not an execution unit: nothing leases it, it
+ *  outlives the request that created it and is established again after a container restart, so its name
+ *  is derived from the publication alone and the same forwarder is found again instead of duplicated. */
+export function publicationUnit(publicationId) {
+  resourceToken(publicationId);
+  return `elowen-pub-${publicationId}.service`;
+}
+
 export function snapshotReference(spec, snapshotId) {
   assertContainerSpec(spec);
   resourceToken(snapshotId);

@@ -666,7 +666,7 @@ export async function buildBrainCore(opts: BrainCoreOpts) {
         stores: {
           projects,
           homeProject: () => projects.get(homeProject.id) ?? {
-            id: homeProject.id, slug: homeProject.slug, path: homeProject.path, notes: '', icon: '', memoryShared: false,
+            id: homeProject.id, slug: homeProject.slug, path: homeProject.path, adoptedPath: null, notes: '', icon: '', memoryShared: false,
             executionKind: 'host', creatorUserId: null, lifecycle: 'active',
           },
           userProjects: { canAccess: (userId, projectId) => userProjects.canAccess(userId, projectId), canManage: (userId, projectId) => userProjects.canManage(userId, projectId) },
