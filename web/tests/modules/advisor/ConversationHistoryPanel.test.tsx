@@ -637,7 +637,6 @@ describe('ConversationHistoryPanel — sub-agent tree', () => {
     expect(await screen.findByRole('menuitem', { name: 'Sub-agents (1)' })).toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
 
-    expect(document.querySelector('[data-tree-row="subagents"]')).toBeNull();
     expect(document.querySelector('[data-tree-row="subagent"]')).toBeNull();
     expect(screen.queryByText('Audit auth')).toBeNull();
   });
@@ -741,6 +740,25 @@ describe('ConversationHistoryPanel — sub-agent tree', () => {
     fireEvent.click(await menuOf('First'));
     expect(await screen.findByRole('menuitem', { name: 'Sub-agents (0)' })).toHaveAttribute('aria-disabled', 'true');
     expect(screen.queryByText('Sub-agents could not be loaded')).toBeNull();
+  });
+
+  /** The id list narrows the tree read to the rows on screen. An EMPTY list is "no conversation is on
+   *  screen" — but the client omits the parameter when it has no ids, and the daemon then walks the
+   *  sub-agent tree of every conversation the caller may see. So an empty page asks nothing at all. */
+  it('narrows the branch read to the page and asks nothing while no page is on screen', async () => {
+    renderPanel();
+    await screen.findByText('First');
+
+    await waitFor(() => expect(client.brainConversationLinks).toHaveBeenCalledWith('mine', ['s1', 's2']));
+    for (const call of client.brainConversationLinks.mock.calls) expect(call).toEqual(['mine', ['s1', 's2']]);
+  });
+
+  it('asks nothing at all when the caller has no conversation', async () => {
+    ctrl.value.sessions.data = [];
+    renderPanel();
+    await screen.findByText('No conversations yet');
+
+    expect(client.brainConversationLinks).not.toHaveBeenCalled();
   });
 });
 

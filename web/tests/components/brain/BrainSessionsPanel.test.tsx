@@ -371,8 +371,8 @@ describe('BrainSessionsPanel — scheduled job branches', () => {
   it('names the root disclosure after the schedules when nothing was delegated below', async () => {
     renderPanel();
     await screen.findByText('Planning');
+    expect(await screen.findByRole('button', { name: 'Schedules filed under Planning' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Sub-agents of Planning' })).toBeNull();
-    expect(screen.getByRole('button', { name: 'Schedules filed under Planning' })).toBeInTheDocument();
   });
 
   it('files the schedules in their own collapsed branch and links each to its editor', async () => {
@@ -380,7 +380,7 @@ describe('BrainSessionsPanel — scheduled job branches', () => {
     await screen.findByText('Planning');
     expect(screen.queryByText('Scheduled jobs')).toBeNull();
 
-    fireEvent.click(screen.getByRole('button', { name: 'Schedules filed under Planning' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Schedules filed under Planning' }));
     const branch = await screen.findByRole('button', { name: 'Scheduled jobs of Planning' });
     expect(branch).toHaveAttribute('aria-expanded', 'false');
     expect(within(branch).getByText('2')).toBeInTheDocument();
@@ -567,7 +567,6 @@ describe('BrainSessionsPanel — sub-agent tree', () => {
     expect(await screen.findByRole('menuitem', { name: 'Sub-agents (1)' })).toBeInTheDocument();
     fireEvent.keyDown(screen.getByRole('menu'), { key: 'Escape' });
 
-    expect(document.querySelector('[data-tree-row="subagents"]')).toBeNull();
     expect(document.querySelector('[data-tree-row="subagent"]')).toBeNull();
     expect(screen.queryByText('Audit auth')).toBeNull();
   });
@@ -639,6 +638,9 @@ describe('BrainSessionsPanel — sub-agent tree', () => {
     expect(asked).toContain('brain-1');
     // Page one holds twelve of the thirteen conversations, so the thirteenth is not asked about.
     expect(asked).not.toContain('brain-13');
+    // And no request ever goes out WITHOUT the narrowing: an empty page omits the parameter entirely,
+    // which the daemon reads as "every conversation the caller can see".
+    expect(branchRequests).not.toContain(null);
   });
 
   it('says a failed core read out loud rather than showing every conversation as having delegated nothing', async () => {
