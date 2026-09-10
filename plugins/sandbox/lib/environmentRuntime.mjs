@@ -300,6 +300,31 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       try { await settle(mode); return true; }
       catch { return false; }
     };
+    // Cancelling and releasing the same execution must not interleave, and a release that follows a
+    // cancellation must not undo it. A cancellation ends in a runtime MASK — a tombstone that blocks a
+    // StartTransientUnit arriving late — while a normal release ends in an unmask, so running one after
+    // the other reopened exactly the race the cancellation had just closed and then retired the lease as
+    // though everything were in order. The terminal does precisely this: it cancels, then releases the
+    // lease in its `finally`.
+    let chain = Promise.resolve();
+    const serial = (work) => {
+      const next = chain.then(work, work);
+      chain = next.then(() => {}, () => {});
+      return next;
+    };
+    // The memory of a VERIFIED cancellation has to be durable, not a flag on this object: revocation and
+    // recovery cancel through a handle of their own, and the release that follows comes from the handle
+    // the caller is holding. `cancel_requested` is that record — 1 once a cancellation is requested, 2
+    // once its termination has been proven — and every existing reader tests it for truth, so the second
+    // value narrows the meaning without changing any of them.
+    const REQUESTED = 1;
+    const VERIFIED = 2;
+    const mark = (value) => db.prepare('UPDATE p_sandbox_execution_leases SET cancel_requested=? WHERE id=?').run(value, lease.id);
+    const cancellation = () => db.prepare('SELECT cancel_requested FROM p_sandbox_execution_leases WHERE id=?').get(lease.id)?.cancel_requested ?? 0;
+    const retire = () => {
+      db.prepare('DELETE FROM p_sandbox_execution_leases WHERE id=? AND execution_id=?').run(lease.id, lease.execution_id);
+      released = true;
+    };
     return {
       id: lease.id, accountUserId: lease.user_id, workspaceId: null, homeGeneration: null,
       projectId: row.project_id, runtimeGeneration: row.generation,
@@ -311,27 +336,39 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         if (!current || current.cancel_requested) throw error('execution_revoked', 'Managed execution was revoked', 403);
         db.prepare('UPDATE p_sandbox_execution_leases SET heartbeat_at=?,expires_at=? WHERE id=?').run(Date.now(), Date.now() + 20000, lease.id);
       },
-      async cancel() {
+      cancel: () => serial(async () => {
         if (released) return;
-        db.prepare('UPDATE p_sandbox_execution_leases SET cancel_requested=1 WHERE id=?').run(lease.id);
-        if (settle && await settled({ cancel: true })) return;
+        // Already proven terminated, by this handle or another. Cancelling again would re-run the whole
+        // termination probe against a guest that is already gone.
+        if (cancellation() === VERIFIED) return;
+        mark(REQUESTED);
+        if (settle && await settled({ cancel: true })) { mark(VERIFIED); return; }
         const current = await podman.inspect(spec);
-        if (current?.state === 'running') await podman.cancelExecution(spec, lease.execution_id, { persistent: true });
-        else if (current && !['stopped', 'exited', 'created'].includes(current.state)) throw error('cancellation_unverified', 'Guest termination cannot be verified');
-      },
-      async release() {
+        if (current?.state === 'running') { await podman.cancelExecution(spec, lease.execution_id, { persistent: true }); mark(VERIFIED); return; }
+        if (current && !['stopped', 'exited', 'created'].includes(current.state)) throw error('cancellation_unverified', 'Guest termination cannot be verified');
+        // A container that is gone, stopped or never started cannot be running this execution, so its
+        // termination is established just as firmly as by the tombstone above.
+        mark(VERIFIED);
+      }),
+      release: () => serial(async () => {
         if (released) return;
-        if (settle && await settled({ cancel: false })) {
-          db.prepare('DELETE FROM p_sandbox_execution_leases WHERE id=? AND execution_id=?').run(lease.id, lease.execution_id);
-          released = true;
+        const requested = cancellation();
+        if (requested === VERIFIED) {
+          // The cancellation left a runtime mask deliberately, and it stays until the runtime generation
+          // ends. Unmasking it here would reopen the late-launch race, and re-running the cancellation
+          // would probe a guest already proven gone. Retiring the durable lease is all that is left.
+          retire();
           return;
         }
+        // A cancellation that could NOT be verified leaves this execution in a state the bound closure
+        // must not be trusted to summarize, so the fully verified path below takes over and reports
+        // properly — which is also what recovery relies on.
+        if (!requested && settle && await settled({ cancel: false })) { retire(); return; }
         const current = await podman.inspect(spec);
         if (current?.state === 'running') await podman.releaseExecution(spec, lease.execution_id, { persistent: true });
         else if (current && !['stopped', 'exited', 'created'].includes(current.state)) throw error('cancellation_unverified', 'Guest termination cannot be verified');
-        db.prepare('DELETE FROM p_sandbox_execution_leases WHERE id=? AND execution_id=?').run(lease.id, lease.execution_id);
-        released = true;
-      },
+        retire();
+      }),
       /** Retire the DURABLE lease for a guest execution the client has already settled. Only a caller
        *  that ran the execution through `PodmanClient.exec` may use this: that method releases or
        *  terminates the guest unit itself before returning, so repeating the release here inspected the
@@ -341,8 +378,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
        *  lifecycle changes. Anything that cannot establish the guest is settled must use `release`. */
       finalize() {
         if (released) return;
-        db.prepare('DELETE FROM p_sandbox_execution_leases WHERE id=? AND execution_id=?').run(lease.id, lease.execution_id);
-        released = true;
+        retire();
       },
     };
   }

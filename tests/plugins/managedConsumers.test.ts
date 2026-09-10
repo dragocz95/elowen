@@ -476,8 +476,14 @@ describe('managed guest read version consolidation', () => {
       const count = (seen.get(op.kind) ?? 0) + 1;
       seen.set(op.kind, count);
       ops.push(op.kind);
-      if (failure?.on === op.kind) { const error = failure.error; failure = null; throw error; }
-      if (mutation?.on === op.kind && count >= mutation.nth) { const apply = mutation.apply; mutation = null; apply(); }
+      // Read into a local first: these are mutable closure variables, so a narrowing on the property
+      // access does not survive into the body.
+      // Read into a local and test it explicitly. Optional chaining is not enough here: it yields
+      // undefined when nothing is armed, which would compare equal to an absent `op.kind`.
+      const armedFailure = failure;
+      if (armedFailure && armedFailure.on === op.kind) { failure = null; throw armedFailure.error; }
+      const armedMutation = mutation;
+      if (armedMutation && armedMutation.on === op.kind && count >= armedMutation.nth) { mutation = null; armedMutation.apply(); }
       if (op.kind === 'stat') return { kind: 'stat', entry: stat(op.path) };
       if (op.kind === 'read') {
         const bytes = data.get(op.path)!;

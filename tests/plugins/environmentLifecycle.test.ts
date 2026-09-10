@@ -111,10 +111,61 @@ describe('durable managed environment lifecycle', () => {
     await runtime.revokeProjectAccess({ projectId: 7, accountUserId: 1 });
     expect(podman.cancelExecution).toHaveBeenCalled();
     expect(podman.stop).not.toHaveBeenCalled();
-    expect(sql.prepare('SELECT cancel_requested FROM p_sandbox_execution_leases WHERE id=?').get(prepared.lease.id)).toMatchObject({ cancel_requested: 1 });
+    // 2 records a cancellation whose termination was PROVEN, which is what the release below reads.
+    expect(sql.prepare('SELECT cancel_requested FROM p_sandbox_execution_leases WHERE id=?').get(prepared.lease.id)).toMatchObject({ cancel_requested: 2 });
+
+    // The terminal releases its lease in a `finally`, so this release follows the revocation above. It
+    // must retire the lease and nothing else: a normal release ends in an unmask, and unmasking the
+    // cancellation's tombstone would reopen the late-launch race that cancelling had just closed.
     await prepared.lease.release();
+    expect(podman.releaseExecution).not.toHaveBeenCalled();
+    expect(podman.cancelExecution).toHaveBeenCalledOnce();
     expect(sql.prepare('SELECT 1 FROM p_sandbox_execution_leases WHERE id=?').get(prepared.lease.id)).toBeUndefined();
   });
+  // Cancelling and releasing the same execution race in practice: the terminal cancels a running command
+  // and then releases the lease in its `finally`, and a user closing the tab can do both at once.
+  it('serializes a concurrent cancel and release into one cancellation and one lease deletion', async () => {
+    const { runtime, podman, sql } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    const prepared = await runtime.prepareExecution({ command: { type: 'shell', command: 'sleep 5' }, cwd: '/workspace', projectRef: input.project, leaseKind: 'terminal' }, 1);
+
+    await Promise.all([prepared.lease.cancel(), prepared.lease.release()]);
+
+    // Whichever order they settle in, the guest is cancelled once and never un-cancelled, and the lease
+    // is retired exactly once.
+    expect(podman.cancelExecution).toHaveBeenCalledOnce();
+    expect(podman.releaseExecution).not.toHaveBeenCalled();
+    expect(sql.prepare('SELECT COUNT(*) AS n FROM p_sandbox_execution_leases WHERE id=?').get(prepared.lease.id)).toEqual({ n: 0 });
+  });
+
+  it('cancels once however many times it is asked', async () => {
+    const { runtime, podman } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    const prepared = await runtime.prepareExecution({ command: { type: 'shell', command: 'sleep 5' }, cwd: '/workspace', projectRef: input.project, leaseKind: 'terminal' }, 1);
+
+    await prepared.lease.cancel();
+    await prepared.lease.cancel();
+    await Promise.all([prepared.lease.cancel(), prepared.lease.cancel()]);
+    expect(podman.cancelExecution).toHaveBeenCalledOnce();
+  });
+
+  // A cancellation that could not be PROVEN is not a cancellation. It must not record itself as one, and
+  // the release behind it has to fall back to the fully verified path so recovery still has its footing.
+  it('keeps the verified fallback when a cancellation cannot be proven', async () => {
+    const { runtime, podman, sql } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    const prepared = await runtime.prepareExecution({ command: { type: 'shell', command: 'sleep 5' }, cwd: '/workspace', projectRef: input.project, leaseKind: 'terminal' }, 1);
+    podman.inspect.mockResolvedValue({ id: 'a'.repeat(64), state: 'paused' });
+
+    await expect(prepared.lease.cancel()).rejects.toThrow(/cannot be verified/i);
+    expect(podman.cancelExecution).not.toHaveBeenCalled();
+    // Requested, never proven — so the lease still fences the environment.
+    expect(sql.prepare('SELECT cancel_requested FROM p_sandbox_execution_leases WHERE id=?').get(prepared.lease.id)).toMatchObject({ cancel_requested: 1 });
+
+    await expect(prepared.lease.release()).rejects.toThrow(/cannot be verified/i);
+    expect(sql.prepare('SELECT COUNT(*) AS n FROM p_sandbox_execution_leases WHERE id=?').get(prepared.lease.id)).toEqual({ n: 1 });
+  });
+
   it('refuses a stale generation, read-only mutation and spoofed actor', async () => {
     const { runtime, ctx } = setup();
     await expect(runtime.requestEnvironment({ ...input, expectedGeneration: 8, action: { kind: 'start' } })).rejects.toThrow(/generation/i);
