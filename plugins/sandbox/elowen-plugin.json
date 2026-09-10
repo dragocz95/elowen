@@ -159,6 +159,7 @@
         "icon": "GitBranch"
       }
     ],
+    "projectRows": true,
     "strings": {
       "workspacesTitle": "Workspaces",
       "workspacesHint": "Account-scoped Git worktrees for parallel branches. One workspace can be active per conversation and Project.",
@@ -254,8 +255,6 @@
       "error_confirmation_mismatch": "The confirmation phrase does not match.",
       "errorFallback": "The environment operation failed.",
       "manageEnvironment": "Open environment",
-      "projectTrust": "Every project member has full access to this environment, including all worktrees and guest browser profiles. Worktrees separate unfinished work, not access. Outbound access includes internal services.",
-      "projectCredentials": "Personal integration credentials stay outside the environment. Credentials and exported results stored here are shared project data.",
       "startEnvironment": "Start environment",
       "stopEnvironment": "Stop environment",
       "restartEnvironment": "Restart environment",

@@ -902,6 +902,8 @@ export interface PluginWebUi {
   /** Administrator-only panels mounted for a selected core User. */
   user: { id: string; label: string; icon?: string }[];
   project: { id: string; label: string; icon?: string }[];
+  /** The plugin's bundle contributes status and actions to the core Project register's rows. */
+  projectRows?: boolean;
   /** `placement: 'pluginDetail'` keeps the section out of the main navigation and offers it inside
    *  Settings → Plugins → that plugin instead. Absent means 'page' — what every section did before. */
   settings: { id: string; label: string; icon?: string; layout?: 'classic' | 'orbital'; placement?: 'page' | 'pluginDetail' }[];

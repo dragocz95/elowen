@@ -260,6 +260,10 @@ export interface PluginManifest {
     /** Contextual panels mounted in the selected Project's detail rail. The host passes the Project DTO,
      *  while the plugin keeps ownership of its own data and mutations. */
     project?: { id: string; label: string; icon?: string }[];
+    /** The plugin contributes status and lifecycle actions to the rows of the core Project register
+     *  (its bundle registers a `projectRows` hook). Declared here so the register loads only the bundles
+     *  that actually have something to say about a row, before any plugin JS is fetched. */
+    projectRows?: boolean;
     /** `layout` picks which of the app's two settings renderings the section's groups/rows use:
      *  'classic' (default) stacks rows, 'orbital' renders them as the constellation of pods the core
      *  Settings sections use. A section moved out of core keeps the look it had; a new one that just
@@ -390,6 +394,7 @@ const ManifestSchema = Type.Object({
       label: Type.String({ minLength: 1 }),
       icon: Type.Optional(Type.String()),
     }))),
+    projectRows: Type.Optional(Type.Boolean()),
     settings: Type.Optional(Type.Array(Type.Object({
       id: Type.String({ minLength: 1 }),
       label: Type.String({ minLength: 1 }),

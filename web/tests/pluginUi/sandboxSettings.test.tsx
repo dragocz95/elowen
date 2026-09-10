@@ -55,24 +55,21 @@ function mount(node: ReactNode) {
 }
 
 describe('sandbox Project workspaces', () => {
-  it('shows managed project lifecycle instead of account HOME and reports pending operations honestly', async () => {
-    let submitted: unknown;
+  // The project surface reports the PROJECT's environment, never the account's HOME. Starting and
+  // stopping it belongs to the project's row in the register now — see sandboxProjectRows.test.tsx —
+  // so what this panel still owns is the state, the resources and the snapshots.
+  it('shows the managed project environment and its resources, with no lifecycle buttons and no account HOME', async () => {
     const environment = { projectId: 1, generation: 2, state: 'stopped', desiredState: 'stopped', lastError: null, limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 4096 } };
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: false } })),
       http.get('*/api/plugins/sandbox/api/projects/1/environment', () => HttpResponse.json({ environment, snapshots: [], operations: [] })),
-      http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => { submitted = await request.json(); return HttpResponse.json({ id: 'op-1', requestId: (submitted as { requestId: string }).requestId, projectId: 1, generation: 2, accountUserId: 1, action: { kind: 'start' }, status: 'pending', error: null, steps: ['image', 'storage', 'container', 'boot', 'initialize'], stepIndex: 0, stepTotal: 5, stepLabel: 'image', percent: 0 }); }),
-      http.get('*/api/plugins/sandbox/api/environments/operation', () => HttpResponse.json({ id: 'op-1', requestId: 'r', projectId: 1, generation: 2, accountUserId: 1, action: { kind: 'start' }, status: 'running', error: null, steps: ['image', 'storage', 'container', 'boot', 'initialize'], stepIndex: 2, stepTotal: 5, stepLabel: 'container', percent: 40, logTail: [] })),
     );
     mount(<WorkspacesSettings surface="project" project={{ ...overview.projects[0]!, executionKind: 'managed' }} />);
-    fireEvent.click(await screen.findByRole('button', { name: 'Start environment' }));
-    await waitFor(() => expect(submitted).toEqual({ action: { kind: 'start' }, expectedGeneration: 2, requestId: expect.any(String) }));
-    // The request is no longer reported as a toast that never updates: the shared progress window shows
-    // which step of the start is running and how far along it is.
-    expect(await screen.findByTestId('operation-progress-dialog')).toBeInTheDocument();
-    expect(await screen.findByText('Creating the container')).toBeInTheDocument();
-    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '40');
-    expect(screen.queryByText('Environment started.')).toBeNull();
+    expect(await screen.findByText(strings.state_stopped!)).toBeInTheDocument();
+    expect(screen.getByText(strings.resources!)).toBeInTheDocument();
+    for (const label of [strings.startEnvironment, strings.stopEnvironment, strings.restartEnvironment, strings.snapshotEnvironment]) {
+      expect(screen.queryByRole('button', { name: label })).toBeNull();
+    }
     expect(screen.queryByText('Account HOME')).toBeNull();
   });
   it('opens a row through its single named control and renders the live patch in a Project modal', async () => {
@@ -116,20 +113,29 @@ describe('managed environment lifecycle', () => {
   const detail = { environment, operations: [], snapshots: [{ id: 'complete', generation: 2, consistency: 'crash-consistent', createdAt: '2026-09-08', note: 'Before change', completeProject: true }, { id: 'partial', generation: 2, consistency: 'crash-consistent', createdAt: '2026-09-08', note: 'Incomplete', completeProject: false }] };
   const setup = () => server.use(http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: false } })), http.get('*/api/plugins/sandbox/api/projects/1/environment', () => HttpResponse.json(detail)));
 
-  it('reuses persisted request identity after a lost response', async () => {
+  // Idempotency across a lost response is covered where the lifecycle actions now live, in
+  // tests/pluginUi/sandboxProjectRows.test.tsx; what this drawer still dispatches is limits, restore and
+  // the stale-container repair, through the same `environmentRequest` identity.
+  it('restores a snapshot under the identity a lost response would let it retry', async () => {
     setup();
     const requests: { requestId: string; expectedGeneration: number }[] = [];
     server.use(http.post('*/api/plugins/sandbox/api/projects/1/environment', async ({ request }) => {
       const body = await request.json() as { requestId: string; expectedGeneration: number };
       requests.push(body);
       if (requests.length === 1) return HttpResponse.json({ error: 'Response lost' }, { status: 503 });
-      return HttpResponse.json({ id: 'op-retry', requestId: body.requestId, projectId: 1, generation: 2, accountUserId: 1, action: { kind: 'start' }, status: 'pending', error: null });
+      return HttpResponse.json({ id: 'op-retry', requestId: body.requestId, projectId: 1, generation: 2, accountUserId: 1, action: { kind: 'restore', snapshotId: 'complete' }, status: 'pending', error: null });
     }));
     mount(<ProjectEnvironmentSettings project={project} />);
-    fireEvent.click(await screen.findByRole('button', { name: strings.startEnvironment }));
-    expect(await screen.findByText('Response lost')).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: strings.startEnvironment }));
-    await waitFor(() => expect(requests).toHaveLength(2));
+    const select = await screen.findByRole('combobox', { name: strings.snapshots });
+    fireEvent.keyDown(select, { key: 'ArrowDown' });
+    fireEvent.click(await screen.findByRole('option', { name: /Before change/ }));
+
+    for (const attempt of [1, 2]) {
+      fireEvent.click(screen.getByRole('button', { name: strings.restoreEnvironment }));
+      const dialog = within(await screen.findByRole('alertdialog'));
+      fireEvent.click(dialog.getByRole('button', { name: strings.restoreEnvironment }));
+      await waitFor(() => expect(requests).toHaveLength(attempt));
+    }
     expect(requests[0]).toEqual(requests[1]);
     expect(requests[0]?.requestId).toEqual(expect.any(String));
   });
@@ -240,7 +246,8 @@ describe('managed environment lifecycle', () => {
     server.use(http.get('*/api/plugins/sandbox/api/projects/1/environment', () => HttpResponse.json({ error: 'project environment provider unavailable' }, { status: 503 })));
     mount(<ProjectEnvironmentSettings project={project} />);
     expect(await screen.findByText('project environment provider unavailable')).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: strings.startEnvironment })).toBeNull();
+    expect(screen.queryByRole('button', { name: strings.restoreEnvironment })).toBeNull();
+    expect(screen.queryByRole('combobox', { name: strings.snapshots })).toBeNull();
   });
 
   it('only restores complete snapshots after explicit destructive confirmation', async () => {
@@ -267,12 +274,24 @@ describe('managed environment lifecycle', () => {
   // unrelated places depending on where a project happened to run. It belongs to the action menu every
   // project already has; this panel governs the environment and stops there. The menu's own coverage is
   // in tests/modules/projects/ProjectsView.test.tsx.
-  it('offers environment lifecycle only, and never deletes the project from here', async () => {
+  it('keeps resources and snapshots, and offers neither the lifecycle buttons nor the project deletion', async () => {
     setup();
     let deleted = false;
     server.use(http.delete('*/api/projects/1', () => { deleted = true; return HttpResponse.json({ ok: true }); }));
     mount(<ProjectEnvironmentSettings project={project} />);
-    expect(await screen.findByRole('button', { name: strings.snapshotEnvironment })).toBeInTheDocument();
+
+    // What the drawer is for: the limits card and the complete-snapshot list with its restore.
+    expect(await screen.findByText(strings.resources!)).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: strings.snapshots })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: strings.restoreEnvironment })).toBeInTheDocument();
+    // The four lifecycle buttons moved to the project's row menu, and the access essay that stood above
+    // them is gone in every locale — the manifest no longer carries the strings at all.
+    for (const label of [strings.startEnvironment, strings.stopEnvironment, strings.restartEnvironment, strings.snapshotEnvironment]) {
+      expect(screen.queryByRole('button', { name: label })).toBeNull();
+    }
+    expect(strings.projectTrust).toBeUndefined();
+    expect(strings.projectCredentials).toBeUndefined();
+    expect(screen.queryByText(/full access to this environment|plný přístup|plný prístup/i)).toBeNull();
     expect(screen.queryByRole('button', { name: /Smazat|Delete|Vymazať/ })).toBeNull();
     expect(deleted).toBe(false);
   });

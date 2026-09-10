@@ -17,7 +17,7 @@ import { Field } from '../../components/ui/Field';
 import { Modal, ModalBody, ModalFooter } from '../../components/ui/Modal';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { ModuleHeader } from '../../components/ui/ModuleHeader';
-import { EmptyState, ErrorState, LoadingLine, LoadingState } from '../../components/ui/states';
+import { EmptyState, ErrorState, LoadingLine, LoadingState, Spinner } from '../../components/ui/states';
 import { useTranslation } from '../../lib/i18n';
 import { ContextMenu, DIVIDER, type ContextMenuState, type MenuEntry } from '../../components/ui/ContextMenu';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
@@ -37,10 +37,37 @@ import { pluginLucideIcon } from '../../lib/pluginIcons';
 import { OperationProgressDialog } from '../../components/ui/OperationProgressDialog';
 import { useEnvironmentOperation } from '../../lib/useEnvironmentOperation';
 import { requestEnvironmentAction } from '../../lib/environmentActions';
+import { usePluginProjectRows, type PluginProjectRowStatus, type PluginProjectRowTone } from '../../lib/pluginProjectRows';
 import type { ProjectSummary } from '../../lib/types';
 
 function MissingProjectPathBadge({ label }: { label: string }) {
   return <Badge tone="danger"><AlertTriangle size={11} className="mr-1" aria-hidden />{label}</Badge>;
+}
+
+const ROW_STATUS_TONE: Record<PluginProjectRowTone, string> = {
+  muted: 'text-muted-foreground',
+  accent: 'text-primary',
+  success: 'text-success',
+  warning: 'text-warning',
+  danger: 'text-destructive',
+};
+
+/** A plugin's word on what this row's project is DOING, beside the path it runs from. Core draws the
+ *  glyph and the colour; the plugin owns the meaning, the icon it names and the wording of the tooltip,
+ *  which is also the icon's accessible name — a coloured dot nobody can hover is not a state report. */
+function ProjectRowStatus({ status }: { status?: PluginProjectRowStatus }) {
+  if (!status) return null;
+  const Icon = pluginLucideIcon(status.icon);
+  const tone = ROW_STATUS_TONE[status.tone ?? 'muted'];
+  return (
+    <span
+      data-project-row-status={status.busy ? 'busy' : status.tone ?? 'muted'}
+      title={status.label}
+      className={`inline-flex shrink-0 items-center ${tone}`}
+    >
+      {status.busy ? <Spinner size="sm" tone={tone} label={status.label} /> : <Icon size={12} role="img" aria-label={status.label} />}
+    </span>
+  );
 }
 
 function ProjectSummaryCell({ summary, membersLabel }: { summary?: ProjectSummary; membersLabel: string }) {
@@ -139,6 +166,7 @@ export function ProjectsView() {
           icon: action.icon,
           onClick: action.onSelect,
           danger: action.tone === 'danger',
+          disabled: action.disabled === true,
         })),
       ]),
     });
@@ -166,6 +194,17 @@ export function ProjectsView() {
     // A managed project has no host path, but it does have a path: the guest root its own terminal,
     // editor and executions all work from. Copying that is the same useful action, so the menu offers it
     // rather than going a member short of what a host project gets.
+    // What a plugin says this row can be DONE to — the environment's start/stop/restart/snapshot for a
+    // managed project. They used to be four buttons inside the environment drawer, two screens away from
+    // the register that shows the project, and they belong to the row for the same reason removal does:
+    // one place per decision. The items are the plugin's, in both menus, enabled by the state it reports.
+    ...(pluginRowActions(p).length > 0 ? [pluginRowActions(p).map((action): ActionMenuItem => ({
+      label: action.label,
+      icon: pluginLucideIcon(action.icon),
+      ...(action.disabled ? { disabled: true } : {}),
+      ...(action.tone === 'danger' ? { tone: 'danger' as const } : {}),
+      onSelect: action.onSelect,
+    }))] : []),
     [{ label: t.projects.ctxCopyPath, icon: Copy, onSelect: () => { void copyText(p.executionKind === 'managed' ? MANAGED_PROJECT_ROOT : p.path).then((ok) => { if (ok) toast(t.projects.ctxPathCopied); else toast(t.projects.copyFailed, 'error'); }); } }],
     // Removal lives here for EVERY project. A managed one used to be deleted from a button of its own
     // inside the environment panel, so the same decision sat in two unrelated places depending on where
@@ -239,6 +278,12 @@ export function ProjectsView() {
     const needle = deferredQuery.trim().toLowerCase();
     return (projects.data ?? []).filter((project) => !needle || `${project.slug} ${project.path} ${project.notes}`.toLowerCase().includes(needle));
   }, [deferredQuery, projects.data]);
+
+  // The register asks the plugins that own something about these rows what they have to say. Core keeps
+  // the row, the path and the menu; the environment behind a managed project is the sandbox plugin's,
+  // states and lifecycle actions included, so none of its vocabulary lives here.
+  const pluginRows = usePluginProjectRows(filteredProjects);
+  const pluginRowActions = (project: Project) => pluginRows.actionsFor(project.id);
 
   const summary = useMemo(() => {
     const items = projects.data ?? [];
@@ -349,6 +394,7 @@ export function ProjectsView() {
                                 <span data-project-compact-path className="flex min-w-0 items-center gap-1.5 @min-[56rem]:hidden">
                                   <Folder size={10} className="shrink-0 text-muted-foreground" aria-hidden />
                                   <span className="min-w-0 truncate font-mono text-[10px] text-muted-foreground">{project.executionKind === 'managed' ? s.managed : project.path}</span>
+                                  <ProjectRowStatus status={pluginRows.statusFor(project.id)} />
                                   {project.pathExists === false ? <MissingProjectPathBadge label={t.projects.pathMissing} /> : null}
                                 </span>
                               </span>
@@ -357,6 +403,7 @@ export function ProjectsView() {
                               <span className="flex min-w-0 items-center gap-1.5">
                                 <Folder size={11} className="shrink-0" aria-hidden />
                                 <span className="min-w-0 flex-1 truncate">{project.executionKind === 'managed' ? s.managed : project.path}</span>
+                                <ProjectRowStatus status={pluginRows.statusFor(project.id)} />
                                 {project.pathExists === false ? <MissingProjectPathBadge label={t.projects.pathMissing} /> : null}
                               </span>
                             </DataTableCell>
@@ -586,6 +633,9 @@ export function ProjectsView() {
         onSettled={() => { void qc.invalidateQueries({ queryKey: ['projects'] }); }}
         onClose={() => setStarting(null)}
       />
+
+      {/* The contributing bundles run here, and the dialogs their own actions raise render with them. */}
+      {pluginRows.hosts}
 
       {ctxMenu && <ContextMenu state={ctxMenu} onClose={() => setCtxMenu(null)} />}
     </>
