@@ -17,6 +17,11 @@ import { PROJECT_BASE_IMAGE_TAG } from './containerBaseImage.mjs';
 const FILE_HELPER = readFileSync(new URL('./guestFiles.py', import.meta.url), 'utf8');
 const PREVIEW_HELPER = readFileSync(new URL('./previewProxy.py', import.meta.url), 'utf8');
 const DEFAULT_LIMITS = { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240 };
+/** The file operations that CHANGE the tree. They need write authority and they serialize against each
+ *  other; everything else observes and does neither. One list, because a kind that counted as a mutation
+ *  for permissions but not for serialization — or the reverse — is exactly the sort of drift that turns
+ *  into a data race nobody can see in a diff. */
+const MUTATING_FILE_KINDS = new Set(['write', 'remove', 'mkdir', 'rename', ...UPLOAD_KINDS]);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const error = (code, message, status = 409) => Object.assign(new Error(message), { code, status });
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
@@ -424,12 +429,12 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   async function projectFiles(input) {
     const id = projectId(input.project);
     const op = fileOperation(input.operation);
-    account(input.accountUserId, ['write', 'remove', 'mkdir', 'rename', ...UPLOAD_KINDS].includes(op.kind));
+    account(input.accountUserId, MUTATING_FILE_KINDS.has(op.kind));
     // An upload keeps the readiness probe: its transport does its own staging before any guest command,
     // so the execution's ownership check is not the very next thing to run.
     const row = await ready('project', id, input.accountUserId, UPLOAD_KINDS.includes(op.kind));
     assertGeneration(row, input.expectedGeneration);
-    return await withRepoLease(db, `environment-files:project:${id}`, async () => {
+    const perform = async () => {
       if (UPLOAD_KINDS.includes(op.kind)) return await transfers.perform({ row, accountUserId: input.accountUserId, operation: op });
       const result = await runGuest(row, input.accountUserId, ['/usr/bin/python3', '-c', FILE_HELPER], { input: JSON.stringify(op), timeoutMs: 120000 });
       if (result.truncated) throw error('output_limit', 'Guest file output exceeded its bound');
@@ -438,7 +443,23 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       if (!reply?.ok || result.code !== 0) throw error(reply?.error?.code ?? 'guest_file_error', reply?.error?.message ?? 'Guest file operation failed');
       if (reply.result?.kind !== op.kind) throw error('guest_protocol', 'Guest response kind differs from the requested operation');
       return reply.result;
-    });
+    };
+    // Only the operations that CHANGE the tree serialize against each other. Holding one exclusive
+    // repository lease across every file operation meant a batch of independent reads ran strictly one at
+    // a time and, worse, queued behind whatever mutation happened to be in front of them — five parallel
+    // tool calls became five sequential container executions.
+    //
+    // Nothing that made a read safe came from that lease. Every operation still mints a durable execution
+    // lease, and minting is what checks the caller's authorization, the environment's generation and
+    // running state, that no lifecycle operation is under way, and that no worktree mutation holds the
+    // boundary. A read still verifies the content version inside the guest across its own transfer, and a
+    // write is still a compare-and-swap against the version the caller read. A guest write lands by
+    // writing a temporary file and renaming it over the target, so a concurrent reader observes the old
+    // file or the new one — never a half-written one — and a version that moved under it is reported as a
+    // conflict rather than returned as content.
+    return MUTATING_FILE_KINDS.has(op.kind)
+      ? await withRepoLease(db, `environment-files:project:${id}`, perform)
+      : await perform();
   }
 
   async function cancelLeases(row, userId) {
