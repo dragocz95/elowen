@@ -227,6 +227,14 @@ export class PodmanClient {
     if (this.#namespace && spec.namespace !== this.#namespace) throw new Error('Container namespace differs from the isolated runtime');
   }
 
+  /** Whether a container with this specification's NAME is present at all. Deliberately name-only and
+   * separate from `inspect`: a container built from a superseded specification has to be REPORTED, and
+   * inspecting it would (correctly) throw an ownership mismatch instead of answering the question. */
+  async containerExists(spec) {
+    this.#assertScope(spec);
+    return await this.#exists('container', spec.name);
+  }
+
   #volumeFor(spec, component) {
     this.#assertScope(spec);
     return volumeFor(spec, component);
@@ -283,7 +291,7 @@ export class PodmanClient {
     const args = ['create', '--name', spec.name];
     for (const [key, value] of Object.entries(spec.labels)) args.push('--label', `${key}=${value}`);
     args.push('--cgroups=split', '--systemd=always', `--ipc=${spec.ipcMode}`, `--memory=${spec.limits.memoryMb}m`, `--memory-swap=${spec.limits.memoryMb}m`,
-      `--cpus=${spec.limits.cpus}`, `--pids-limit=${spec.limits.pidsLimit}`, `--network=${spec.network}`, '--workdir=/workspace', '--env=HOME=/root');
+      `--cpus=${spec.limits.cpus}`, `--pids-limit=${spec.limits.pidsLimit}`, `--network=${spec.network}`, `--workdir=${spec.workdir}`, '--env=HOME=/root');
     if (spec.envFile) args.push('--env-file', spec.envFile);
     for (const mount of spec.mounts) args.push('--mount', `type=${mount.type},src=${mount.source},dst=${mount.target}${mount.readOnly ? ',ro' : ''}`);
     args.push(spec.image);
@@ -670,7 +678,7 @@ export class PodmanClient {
     validateInput(options.input);
     if (!Array.isArray(argv) || argv.length === 0 || argv.length > 256 || argv.some((arg) => typeof arg !== 'string' || arg.includes('\0'))
       || argv.reduce((bytes, arg) => bytes + Buffer.byteLength(arg), 0) > 64 * 1024 || !argv[0].startsWith('/')) throw new Error('Invalid guest command arguments');
-    const workdir = options.workdir ?? '/workspace';
+    const workdir = options.workdir ?? spec.workdir;
     if (typeof workdir !== 'string' || !workdir.startsWith('/') || /[\0\r\n]/.test(workdir) || workdir.length > 4096) throw new Error('Invalid guest working directory');
     const timeoutMs = positive(options.timeoutMs ?? 120_000, 15 * 60_000, 'timeout');
     options.signal?.throwIfAborted();

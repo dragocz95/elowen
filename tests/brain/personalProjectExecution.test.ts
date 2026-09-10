@@ -91,13 +91,15 @@ describe('new personal conversation execution defaults', () => {
     expect(h.userProjects.forProject(projectId!)).toEqual([h.user.id]);
     expect(live.policy.allowedProjectIds).toEqual(new Set([projectId]));
     expect(live.policy.canAccessProject?.(projectId!)).toBe(true);
-    expect(live.workDir).toBe('/workspace');
-    expect(h.resourceLoader).toHaveBeenCalledWith(expect.objectContaining({ cwd: '/workspace', contextFiles: false }));
+    // The project is mounted under its own name, so the conversation's directory IS the project.
+    const root = `/${h.projects.get(projectId!)!.slug}`;
+    expect(live.workDir).toBe(root);
+    expect(h.resourceLoader).toHaveBeenCalledWith(expect.objectContaining({ cwd: root, contextFiles: false }));
     const sandbox = readyControl();
     const effective = effectiveTurnWorkDir({ policy: live.policy, accountUserId: h.user.id, sessionId: live.sessionId, projectRef: ref, projects: h.projects, sandbox, baseWorkDir: h.root });
     runWithPolicy(live.policy, () => {
       expect(currentAccess().projectRef).toEqual(ref);
-      expect(defaultCwd()).toBe('/workspace');
+      expect(defaultCwd()).toBe(root);
       expect(() => assertPathAllowed(h.root)).toThrow(/guest filesystem/);
     }, { projectRef: effective.projectRef, workDir: effective.workDir });
     expect(sandbox.requestEnvironment).not.toHaveBeenCalled();
@@ -173,7 +175,7 @@ describe('new personal conversation execution defaults', () => {
     const live = await h.spawn('brain-selected');
     expect(h.store.getProjectExecution(live.sessionId)).toEqual({ kind: 'managed', projectId: project.id });
     expect(h.users.get(h.user.id)?.default_project_id).toBeNull();
-    expect(live.workDir).toBe('/workspace');
+    expect(live.workDir).toBe('/chosen');
     h.lifecycle.stampWorkDir('brain-selected', h.root, h.policy(h.user.id));
     expect(h.store.getSession('brain-selected')?.work_dir).toBe('');
   });

@@ -21,9 +21,9 @@ describe('managed execution boundary', () => {
       expect(currentAccess().projectRef).toEqual(projectRef);
       expect(currentAccess().admin).toBe(true);
       expect(isAllAccess()).toBe(false);
-      expect(defaultCwd()).toBe('/workspace');
+      expect(defaultCwd()).toBe('/sales-dashboard');
       expect(() => assertPathAllowed('/etc/passwd')).toThrow(/guest/);
-    }, { projectRef });
+    }, { projectRef, workDir: '/sales-dashboard' });
   });
   it('preserves the managed reference through durable delegation and rejects unknown or conflicting targets', () => {
     const scope = { admin: false, owner: false, projectIds: [7], contributionUserId: 2, permissionBoundary: null, projectRef };

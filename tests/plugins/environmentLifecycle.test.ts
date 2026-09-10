@@ -20,11 +20,12 @@ function setup(config: Record<string, unknown> = {}) {
   const db = makePluginDb(sql, 'sandbox', { canMigrate: true });
   const users = new Set([1, 2, 3]);
   const members = new Set([1, 2]);
-  const project: any = { id: 7, executionKind: 'managed', lifecycle: 'active', path: '/not-a-host-path' };
+  const project: any = { id: 7, slug: 'sales-dashboard', executionKind: 'managed', lifecycle: 'active', path: '/not-a-host-path' };
   const stores = { usersRead: { list: () => [...users].map((id) => ({ id })), isAdmin: (id: number) => id === 3, mayUsePlugin: () => true },
     userProjects: { canAccess: (id: number) => project.lifecycle === 'active' && (members.has(id) || id === 3), canManage: (id: number) => members.has(id) || id === 3 },
     projects: { get: (id: number) => id === 7 ? project : null, list: () => [project], beginDeletion: () => { project.lifecycle = 'deleting'; return true; }, finishDeletion: vi.fn(() => true) } };
-  const ctx: any = { db: () => db, host: { stores: () => stores }, currentAccountUserId: () => null, currentAccess: () => ({ readOnly: false }), config };
+  const warn = vi.fn();
+  const ctx: any = { db: () => db, host: { stores: () => stores }, currentAccountUserId: () => null, currentAccess: () => ({ readOnly: false }), config, logger: { info: vi.fn(), warn, error: vi.fn() } };
   initSandboxDb(ctx);
   const containers = new Map<string, any>();
   const podman = { ensureProjectImage: vi.fn(async () => 'localhost/elowen-project-base:test'),
@@ -37,17 +38,50 @@ function setup(config: Record<string, unknown> = {}) {
     cancelExecution: vi.fn(async () => ({ terminated: true })), releaseExecution: vi.fn(),
     prepareExecution: vi.fn(async () => ({ launch: { type: 'argv', file: '/usr/bin/podman', args: ['exec', 'owned'], env: { HOME: '/host-service' } } })),
     removeVolume: vi.fn(), removeStorage: vi.fn(), inspectVolume: vi.fn(),
+    containerExists: vi.fn(async (spec: any) => containers.has(spec.name)),
   };
   const storage = { prepare: vi.fn(), snapshot: vi.fn(), readSnapshot: vi.fn(), restoreVolumes: vi.fn() };
   const dependencies = { ctx, db, dataDir: root, podman: podman as unknown as PodmanClient, storage: storage as unknown as ContainerStorage };
   const runtime = createEnvironmentRuntime({ ...dependencies, daemon: true });
   const fork = createEnvironmentRuntime({ ...dependencies, daemon: false });
   cleanup.push(() => { runtime.dispose(); fork.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
-  return { runtime, fork, db, sql, ctx, podman, storage, members, users, project, stores, root };
+  return { runtime, fork, db, sql, ctx, podman, storage, members, users, project, stores, root, containers, warn };
 }
 const input = { project: { kind: 'managed', projectId: 7 }, accountUserId: 1 };
 
 describe('durable managed environment lifecycle', () => {
+  // The project is mounted under its own name, and a container created before that must never be adopted:
+  // its specification identity changed, so adopting it would run the turn against an unverified container.
+  it('mounts the project at its own name and refuses to adopt a container from the previous layout', async () => {
+    const { runtime, podman, db, containers, warn } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'named-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    expect(podman.create.mock.calls[0]![0].workdir).toBe('/sales-dashboard');
+    expect(podman.create.mock.calls[0]![0].mounts.map((mount: any) => mount.target)).toEqual(['/sales-dashboard', '/root', '/data', '/run/elowen']);
+
+    // Rewind the row to what it looked like before this change: no mount point, container already bound.
+    const row = db.prepare("SELECT * FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
+    const spec = JSON.parse(row.spec_json);
+    delete spec.input.workspaceTarget;
+    db.prepare("UPDATE p_sandbox_runtimes SET spec_json=?, state='stopped' WHERE kind='project' AND resource_id='7'").run(JSON.stringify(spec));
+
+    await runtime.requestEnvironment({ ...input, requestId: 'legacy-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    const failed = await runtime.environmentFor(input);
+    expect(failed.lastError).toMatch(/predates the named project mount/);
+    expect(warn.mock.calls.flat().join(' ')).toMatch(/must be recreated at \/sales-dashboard/);
+
+    // Once the operator has removed that container, the environment is recreated at the new mount point
+    // from the same storage volumes, so the project's files survive.
+    containers.clear();
+    podman.create.mockClear();
+    await runtime.requestEnvironment({ ...input, requestId: 'recreate-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    expect(podman.create).toHaveBeenCalledOnce();
+    expect(podman.create.mock.calls[0]![0].workdir).toBe('/sales-dashboard');
+    expect((await runtime.environmentFor(input)).state).toBe('running');
+  });
+
   // A new project environment used to be pinned to the figures compiled into the plugin, with nowhere to
   // change them; the administrator's settings now decide what it is provisioned with.
   it('provisions a project environment with the administrator resource defaults', async () => {

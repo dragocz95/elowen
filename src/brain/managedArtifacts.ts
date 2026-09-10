@@ -21,9 +21,11 @@ export type GuestFileSandbox = Pick<ProjectEnvironmentControl, 'projectFiles'>;
  *  contract has no append and no chunked CAS, so a write larger than one op is refused, never truncated
  *  (reported gap: version-chained or appended writes would lift it). */
 
-/** Guest root of the environment; the prefix under which CENTRAL writes (plan mirror, spills) live. */
-export const GUEST_ROOT = '/workspace';
-export const GUEST_ARTIFACT_ROOT = `${GUEST_ROOT}/.elowen`;
+/** Where CENTRAL writes (the plan mirror, tool-result spills) live inside the guest. The project itself
+ *  is mounted under its own name (`/kolin`), which differs per project and is the person's own working
+ *  tree; Elowen's own artifacts sit on the environment's data volume instead, so their path is the same
+ *  in every environment and a cold pass that has no turn scope can still name them. */
+export const GUEST_ARTIFACT_ROOT = '/data/.elowen';
 const GUEST_PLAN_DIR = `${GUEST_ARTIFACT_ROOT}/plans`;
 const GUEST_SPILL_DIR = `${GUEST_ARTIFACT_ROOT}/tool-results`;
 
@@ -136,7 +138,7 @@ export interface GuestAccess {
 }
 
 /** Validate a model-supplied guest path for READING. The managed guest is a whole filesystem: the model
- *  may share an artifact from anywhere in it (`/tmp/build.pdf`, `/etc/os-release`, `/workspace/a.png`).
+ *  may share an artifact from anywhere in it (`/tmp/build.pdf`, `/etc/os-release`, `/kolin/a.png`).
  *  Confinement is not the read boundary — the provider authorizes the account's environment per op —
  *  only the SHAPE is checked here: absolute, normalized, no NUL, bounded length. `null` = not an
  *  absolute guest path; the caller refuses, it never falls through to the host branch. */

@@ -10,10 +10,12 @@ export async function runManagedProjectCommand(
   projectRef: ManagedProjectRef,
   accountUserId: number,
   command: SandboxExecutionCommand,
-  options: { cwd?: string; timeout?: number; maxBuffer?: number; signal?: AbortSignal } = {},
+  options: { cwd: string; timeout?: number; maxBuffer?: number; signal?: AbortSignal },
 ): Promise<{ stdout: string; stderr: string }> {
-  const prepared = await sandbox.prepareExecution({ projectRef, command, cwd: options.cwd ?? '/workspace', leaseKind: 'files' },
-    { accountUserId, roots: ['/workspace'] });
+  // The caller names the directory: a managed project is mounted under its own name, so there is no
+  // generic guest root left to default to.
+  const prepared = await sandbox.prepareExecution({ projectRef, command, cwd: options.cwd, leaseKind: 'files' },
+    { accountUserId, roots: [options.cwd] });
   // Runtime validation remains necessary: a partially loaded provider must not become host execution.
   const cancellation = 'cancel' in prepared ? prepared.cancel : undefined;
   const input = 'stdin' in prepared ? prepared.stdin : undefined;

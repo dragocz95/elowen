@@ -72,10 +72,10 @@ describe('the managed ambient check', () => {
 
 describe('the guest plan path', () => {
   it('is the hidden artifact path derived from the session slug, and the clamp predicate is exact', async () => {
-    expect(GUEST_PLAN).toBe(`/workspace/.elowen/plans/${planSlug(SESSION)}.md`);
+    expect(GUEST_PLAN).toBe(`/data/.elowen/plans/${planSlug(SESSION)}.md`);
     expect(isSessionGuestPlanPath(SESSION, GUEST_PLAN)).toBe(true);
-    expect(isSessionGuestPlanPath(SESSION, '/workspace/.elowen/plans/../plans/' + planSlug(SESSION) + '.md')).toBe(true);
-    expect(isSessionGuestPlanPath(SESSION, `/workspace/.elowen/plans/${planSlug('other-session')}.md`)).toBe(false);
+    expect(isSessionGuestPlanPath(SESSION, '/data/.elowen/plans/../plans/' + planSlug(SESSION) + '.md')).toBe(true);
+    expect(isSessionGuestPlanPath(SESSION, `/data/.elowen/plans/${planSlug('other-session')}.md`)).toBe(false);
     expect(isSessionGuestPlanPath(SESSION, `${GUEST_PLAN}.bak`)).toBe(false);
     expect(isSessionGuestPlanPath(SESSION, 'plan.md')).toBe(false);
   });

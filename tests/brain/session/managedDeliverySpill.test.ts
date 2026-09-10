@@ -86,7 +86,7 @@ describe('the managed delivery spill', () => {
     setSpillNamespaceResolver((id) => store.spillNamespace(id));
     const namespace = sessionToolResultSpillNamespace(SESSION);
     expect(toolResultSpillDir(process.env, namespace)).toBe(join(home, '.config/elowen/tool-results', namespace));
-    expect(guestSpillDirForNamespace(namespace)).toBe(`/workspace/.elowen/tool-results/${namespace}`);
+    expect(guestSpillDirForNamespace(namespace)).toBe(`/data/.elowen/tool-results/${namespace}`);
   });
 
   it('NEVER falls back to the host spill when the provider is absent — the result is preserved whole', async () => {
@@ -136,7 +136,7 @@ describe('the managed delivery spill', () => {
       managedScope(),
     );
     expect(out).toBeUndefined(); // undefined = PI keeps the executed result untouched
-    expect(guest.exists(`/workspace/.elowen/tool-results/${sessionToolResultSpillNamespace(SESSION)}`)).toBe(false);
+    expect(guest.exists(`/data/.elowen/tool-results/${sessionToolResultSpillNamespace(SESSION)}`)).toBe(false);
   });
 
   it('adopts an identical guest file already at the spill path', async () => {
@@ -185,8 +185,8 @@ describe('the managed delivery spill', () => {
   });
 
   it('never involves the host plan path — the spill helper stays guest-only', () => {
-    expect(guestSpillDirForNamespace('ns')).toMatch(/^\/workspace\/\.elowen\/tool-results\//);
-    expect(guestPlanPath(SESSION)).toMatch(/^\/workspace\/\.elowen\/plans\//);
+    expect(guestSpillDirForNamespace('ns')).toMatch(/^\/data\/\.elowen\/tool-results\//);
+    expect(guestPlanPath(SESSION)).toMatch(/^\/data\/\.elowen\/plans\//);
   });
 
   it('preserves the result whole through a MALFORMED provider (no projectFiles) — no host fallback', async () => {

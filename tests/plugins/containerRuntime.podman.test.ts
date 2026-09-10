@@ -59,7 +59,7 @@ it.runIf(process.env.ELOWEN_TEST_PODMAN === '1')(storageOnly ? 'validates only p
     assert.equal(info.runRoot, paths.runroot);
     engineVerified = true;
     console.log('Isolated rootless engine:', JSON.stringify(info));
-    const spec = createContainerSpec({ resource: { kind: 'project', id: 1 }, generation: 1, image: PROJECT_BASE_IMAGE_TAG }, { sandboxDataDir: join(scratch, 'sandbox'), namespace: paths.namespace });
+    const spec = createContainerSpec({ resource: { kind: 'project', id: 1 }, workspaceTarget: '/demo', generation: 1, image: PROJECT_BASE_IMAGE_TAG }, { sandboxDataDir: join(scratch, 'sandbox'), namespace: paths.namespace });
     stage = 'persistent storage metadata';
     await new ContainerStorage(client).prepare(spec);
     if (storageOnly) {

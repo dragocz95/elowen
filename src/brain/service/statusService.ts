@@ -29,7 +29,7 @@ import { realPathWithin } from '../../plugins/pathGuard.js';
 import { recoverablePartialTurnRows } from '../persistence.js';
 import type { KnownControls } from '../../plugins/api.js';
 import type { TurnAutomation } from '../../plugins/policyContext.js';
-import type { ProjectExecutionRef } from '../../shared/projectExecution.js';
+import { managedGuestRoot, type ProjectExecutionRef } from '../../shared/projectExecution.js';
 import { conversationActivityAutomation } from '../session/conversationActivity.js';
 
 /** One row in the caller's conversation list (the pickers' "attached" marker rides `attached`). */
@@ -484,7 +484,9 @@ export class BrainStatusService {
     // reported the moment that access is revoked.
     const policy = this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
     const projectRef = activeId ? this.d.store.getProjectExecution(activeId) : undefined;
-    const reported = projectRef?.kind === 'managed' ? '/workspace' : clientDir(policy, b?.workDir ?? row?.work_dir ?? undefined) ?? null;
+    const reported = projectRef?.kind === 'managed'
+      ? managedGuestRoot(this.d.projects?.get(projectRef.projectId)?.slug, projectRef.projectId)
+      : clientDir(policy, b?.workDir ?? row?.work_dir ?? undefined) ?? null;
     // Where the next turn actually runs — the resolver a turn uses, fed the same base directory it would
     // compute, so a bound Sandbox workspace shows here exactly when the turn would start inside it. The
     // account is the contribution owner of the live session, else the caller (the noteWorkDir rule).

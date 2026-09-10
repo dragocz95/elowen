@@ -15,7 +15,7 @@ function fixture() {
   roots.push(root);
   const paths = { sandboxDataDir: join(root, 'sandbox'), sitesDataDir: join(root, 'sites'), siteSourcesDir: join(root, 'sources'), siteBrokerDir: join(root, 'brokers') };
   for (const path of Object.values(paths)) mkdirSync(path, { recursive: true });
-  const spec = createContainerSpec({ resource: { kind: 'project', id: 7 }, generation: 2, image: 'localhost/elowen-project-base:test' }, paths);
+  const spec = createContainerSpec({ resource: { kind: 'project', id: 7 }, workspaceTarget: '/demo', generation: 2, image: 'localhost/elowen-project-base:test' }, paths);
   return { root, spec, pinned: bindContainerIdentity(spec, 'c'.repeat(64)) };
 }
 

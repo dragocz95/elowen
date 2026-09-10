@@ -16,6 +16,20 @@ export function hostPath(value) {
   return value;
 }
 
+/** Reserved single-segment guest directories a project mount may never take over. The mount point is
+ * host-derived (the project's own slug), so this guards against a slug that happens to name part of the
+ * base image, not against a hostile caller. */
+const RESERVED_GUEST_ROOTS = new Set(['bin', 'boot', 'data', 'dev', 'etc', 'home', 'lib', 'lib32', 'lib64', 'libx32', 'media', 'mnt', 'opt', 'proc', 'root', 'run', 'sbin', 'srv', 'sys', 'tmp', 'usr', 'var', 'workspace', 'worktrees']);
+
+/** The guest directory a managed project is mounted at: one top-level directory named after the
+ * project, so every path the agent sees starts with the project's own name. */
+export function guestMountTarget(value) {
+  if (typeof value !== 'string' || !/^\/[a-z0-9][a-z0-9-]{0,63}$/.test(value) || RESERVED_GUEST_ROOTS.has(value.slice(1))) {
+    throw new Error('Invalid project mount target');
+  }
+  return value;
+}
+
 function closed(value, keys) {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid container specification');
   for (const key of Object.keys(value)) if (!keys.includes(key)) throw new Error(`Unknown container specification field: ${key}`);
@@ -51,7 +65,7 @@ export function withContainerLimits(spec, requested) {
 }
 
 function buildSpec(input, paths, binding = null) {
-  closed(input, ['resource', 'generation', 'image', 'limits', 'network', 'workspaceReadOnly', 'previewBroker']);
+  closed(input, ['resource', 'generation', 'image', 'limits', 'network', 'workspaceReadOnly', 'previewBroker', 'workspaceTarget']);
   if (input.previewBroker !== undefined && (input.resource?.kind !== 'project' || typeof input.previewBroker !== 'boolean')) throw new Error('Invalid preview broker policy');
   closed(input.resource, ['kind', 'id']);
   const { kind, id } = input.resource;
@@ -82,8 +96,11 @@ function buildSpec(input, paths, binding = null) {
   const volumes = components.map((component) => ({
     component, name: `${name}-${component}`, path: join(storageRoot, 'storage', String(generation), component),
   }));
+  // A project is mounted under its own name; a Site keeps the anonymous `/workspace` its published
+  // containers were created with.
+  const workdir = kind === 'project' ? guestMountTarget(input.workspaceTarget) : '/workspace';
   const mounts = kind === 'project'
-    ? volumes.map((volume) => ({ type: 'volume', source: volume.name, target: { workspace: '/workspace', home: '/root', data: '/data' }[volume.component], readOnly: false }))
+    ? volumes.map((volume) => ({ type: 'volume', source: volume.name, target: { workspace: workdir, home: '/root', data: '/data' }[volume.component], readOnly: false }))
     : [
       { type: 'bind', source: binding?.sourcePath ?? join(hostPath(paths.siteSourcesDir), id), target: '/workspace', readOnly: input.workspaceReadOnly ?? false },
       { type: 'bind', source: join(storageRoot, 'git-stub'), target: '/workspace/.git', readOnly: true },
@@ -93,6 +110,7 @@ function buildSpec(input, paths, binding = null) {
   if (input.previewBroker) mounts.push({ type: 'bind', source: join(storageRoot, 'broker'), target: '/run/elowen', readOnly: false });
   const settings = {
     resource, generation, namespace, name, image: input.image, limits,
+    workdir,
     ipcMode: 'private',
     network: network === 'isolated' ? 'none' : 'slirp4netns:allow_host_loopback=false',
     storageRoot, volumes, mounts, envFile: kind === 'site' ? join(storageRoot, 'container.env') : null,
@@ -100,7 +118,12 @@ function buildSpec(input, paths, binding = null) {
   // The hash preimage keeps the `legacy: null` key every spec carried while Sites containers created by
   // an earlier runtime could still be adopted. It is the identity in the `io.elowen.spec` label of every
   // container created so far, so dropping it from the preimage would make each of them fail ownership.
-  const preimage = { resource, generation, namespace, name, image: input.image, limits, legacy: null, ...settings };
+  // `workdir` is deliberately NOT part of the preimage: for a Site it is the unchanged `/workspace`, and
+  // adding the key would change the identity of every Site container already created. A project's mount
+  // target changes the hash through its `mounts` entry, which is what actually differs in the container.
+  // (`JSON.stringify` drops an undefined value, so the preimage is byte-identical to the one every
+  // existing container was hashed from.)
+  const preimage = { resource, generation, namespace, name, image: input.image, limits, legacy: null, ...settings, workdir: undefined };
   const hash = createHash('sha256').update(JSON.stringify(preimage)).digest('hex');
   /** @type {Record<string, string>} */
   const labels = {

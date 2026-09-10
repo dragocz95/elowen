@@ -148,7 +148,7 @@ describe('the execution-change marker', () => {
     // annotate (see recordSessionEvent's empty-conversation guard).
     h.store.appendMessage({ id: 'm1', sessionId, parentId: null, role: 'user', content: { role: 'user', content: 'hi' } });
     const appended = vi.spyOn(h.store, 'appendSessionEvent');
-    expect(service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: project.id }, sessionId).workDir).toBe('/workspace');
+    expect(service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: project.id }, sessionId).workDir).toBe('/sales-dashboard');
     expect(appended).toHaveBeenCalledWith(sessionId, 'cwd', 'sales-dashboard');
   });
 });

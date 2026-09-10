@@ -40,7 +40,7 @@ function setup(environmentState: 'running' | 'stopped' | 'unprovisioned' = 'runn
   registry.controlOwner.set('sandbox', 'sandbox');
   const prepareExecution = vi.fn<SandboxControl['prepareExecution']>(async (input) => ({
     mode: 'managed', projectRef: input.projectRef, cwd: '/tmp', displayCwd: '/workspace', home: '/root', roots: ['/'], workspace: null,
-    launch: { type: 'argv', file: process.execPath, args: ['-e', 'process.stdout.write("/workspace/assets/logo.png\\0")'], env: {} },
+    launch: { type: 'argv', file: process.execPath, args: ['-e', `process.stdout.write("/${project.slug}/assets/logo.png\\0")`], env: {} },
     stdin: undefined, cancel: async () => {},
     lease: { id: 'icon-test', accountUserId: member.id, workspaceId: null, homeGeneration: null, heartbeat() {}, release() {} },
     sanitizeOutput: text => text,
@@ -99,7 +99,7 @@ describe('managed project API consumers', () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toMatchObject({ icon: 'assets/logo.png' });
     expect(projectFiles).toHaveBeenCalledWith({ project: { kind: 'managed', projectId: project.id }, accountUserId: member.id,
-      operation: { kind: 'stat', path: '/workspace/assets/logo.png' } });
+      operation: { kind: 'stat', path: `/${project.slug}/assets/logo.png` } });
   });
 
   it('refuses lexical and canonical guest escapes and does not contact a provider for outsiders', async () => {
@@ -159,10 +159,10 @@ describe('managed project API consumers', () => {
     // rev-parse → status + remotes (+2 get-url) → branches + commits.
     expect(prepareExecution).toHaveBeenCalledTimes(7);
     expect(prepareExecution.mock.calls[0]?.[0]).toEqual({
-      projectRef: { kind: 'managed', projectId: project.id }, cwd: '/workspace', leaseKind: 'files',
-      command: { type: 'argv', file: 'git', args: ['-c', 'core.fsmonitor=false', '-C', '/workspace', 'rev-parse', '--is-inside-work-tree'] },
+      projectRef: { kind: 'managed', projectId: project.id }, cwd: `/${project.slug}`, leaseKind: 'files',
+      command: { type: 'argv', file: 'git', args: ['-c', 'core.fsmonitor=false', '-C', `/${project.slug}`, 'rev-parse', '--is-inside-work-tree'] },
     });
-    expect(prepareExecution.mock.calls[0]?.[1]).toEqual({ accountUserId: member.id, roots: ['/workspace'] });
+    expect(prepareExecution.mock.calls[0]?.[1]).toEqual({ accountUserId: member.id, roots: [`/${project.slug}`] });
   });
 
   it('recovers a genuine git no-repo verdict (exit 128) as an empty repo and stops probing further commands', async () => {

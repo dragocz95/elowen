@@ -17,3 +17,17 @@ export type ManagedProjectRef = Extract<ProjectExecutionRef, { kind: 'managed' }
 export function sameProjectExecution(a: ProjectExecutionRef, b: ProjectExecutionRef): boolean {
   return a.kind === b.kind && a.projectId === b.projectId;
 }
+
+/** Where a managed project is mounted inside its own container, and therefore the only directory its
+ *  turns ever see. Derived from the project slug so the agent, the tool rows and the container all name
+ *  the same thing (`/kolin`) instead of an anonymous `/workspace`. Each project has its own container,
+ *  so the name only has to be a valid single top-level directory; an unusable slug falls back to the
+ *  registry identity, which is unique by construction.
+ *
+ *  The sandbox plugin mirrors this function in `plugins/sandbox/lib/containerPaths.mjs` (a bundled
+ *  plugin is plain `.mjs` and cannot import core at runtime); `tests/plugins/managedGuestRoot.test.ts`
+ *  holds the two in step. */
+export function managedGuestRoot(slug: string | undefined, projectId: number): string {
+  const name = String(slug ?? '').toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 64).replace(/-+$/, '');
+  return /^[a-z0-9][a-z0-9-]*$/.test(name) ? `/${name}` : `/project-${projectId}`;
+}
