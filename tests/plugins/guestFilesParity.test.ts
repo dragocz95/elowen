@@ -101,4 +101,138 @@ describe('guestFiles helper parity', () => {
     expect(readFileSync(other, 'utf8')).toBe('elsewhere');
     expect(lstatSync(link).isSymbolicLink()).toBe(true);
   });
+
+  // The traversal that used to be driven from the host, one container round trip per directory. These
+  // run the real helper against real trees, because the bounds are the whole point and an in-memory
+  // stand-in cannot exercise a deadline or an output budget.
+  describe('bounded walk', () => {
+    const walk = (path: string, extra: Record<string, unknown> = {}) =>
+      runHelper({ kind: 'walk', path, limit: 10001, skip: ['.git', 'node_modules'], ...extra });
+
+    it('returns every regular file in one pass, sorted, with times and no versions', () => {
+      const dir = join(root, 'walk-basic');
+      mkdirSync(join(dir, 'src', 'deep'), { recursive: true });
+      writeFileSync(join(dir, 'top.md'), 'top');
+      writeFileSync(join(dir, 'src', 'a.ts'), 'a');
+      writeFileSync(join(dir, 'src', 'deep', 'b.ts'), 'b');
+
+      const reply = walk(dir);
+      expect(reply.ok).toBe(true);
+      if (!reply.ok) return;
+      expect(reply.result).toMatchObject({ root: dir, rootKind: 'directory', truncated: false });
+      expect(reply.result.entries.map((item: any) => item.path)).toEqual([
+        join(dir, 'top.md'), join(dir, 'src', 'a.ts'), join(dir, 'src', 'deep', 'b.ts'),
+      ]);
+      // A path and a time is the whole answer: nothing walked past is read, so nothing is hashed.
+      for (const item of reply.result.entries) {
+        expect(Object.keys(item).sort()).toEqual(['mtime', 'path']);
+        expect(item.mtime).toBeGreaterThan(0);
+      }
+    });
+
+    it('never descends a skipped directory and never follows a symlink out of the tree', () => {
+      const dir = join(root, 'walk-skip');
+      mkdirSync(join(dir, 'node_modules', 'pkg'), { recursive: true });
+      mkdirSync(join(dir, '.git'), { recursive: true });
+      mkdirSync(join(dir, 'src'), { recursive: true });
+      writeFileSync(join(dir, 'src', 'kept.ts'), 'kept');
+      writeFileSync(join(dir, 'node_modules', 'pkg', 'dep.ts'), 'dep');
+      writeFileSync(join(dir, '.git', 'HEAD'), 'ref');
+      const outside = join(root, 'walk-skip-outside');
+      mkdirSync(outside, { recursive: true });
+      writeFileSync(join(outside, 'secret.ts'), 'secret');
+      symlinkSync(join(outside, 'secret.ts'), join(dir, 'src', 'link.ts'));
+      symlinkSync(outside, join(dir, 'src', 'linkdir'));
+
+      const reply = walk(dir);
+      expect(reply.ok).toBe(true);
+      if (!reply.ok) return;
+      const paths = reply.result.entries.map((item: any) => item.path);
+      expect(paths).toEqual([join(dir, 'src', 'kept.ts')]);
+      // A link is neither reported as a file nor descended into, so nothing outside the tree appears.
+      expect(paths.some((path: string) => path.includes('secret'))).toBe(false);
+    });
+
+    it('reports a missing root as absent and walks a file root from its parent', () => {
+      const dir = join(root, 'walk-roots');
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, 'only.ts'), 'only');
+
+      const missing = walk(join(dir, 'absent'));
+      expect(missing.ok).toBe(true);
+      if (missing.ok) expect(missing.result).toMatchObject({ rootKind: null, entries: [], truncated: false });
+
+      const fileRoot = walk(join(dir, 'only.ts'));
+      expect(fileRoot.ok).toBe(true);
+      if (fileRoot.ok) {
+        expect(fileRoot.result).toMatchObject({ root: dir, rootKind: 'file' });
+        expect(fileRoot.result.entries.map((item: any) => item.path)).toEqual([join(dir, 'only.ts')]);
+      }
+    });
+
+    it('truncates explicitly on the entry budget rather than answering as though it finished', () => {
+      const dir = join(root, 'walk-entries');
+      mkdirSync(dir, { recursive: true });
+      for (let index = 0; index < 40; index += 1) writeFileSync(join(dir, `f-${String(index).padStart(3, '0')}`), 'x');
+
+      const reply = walk(dir, { limit: 10 });
+      expect(reply.ok).toBe(true);
+      if (!reply.ok) return;
+      expect(reply.result.entries).toHaveLength(10);
+      expect(reply.result.truncated).toBe(true);
+      // A truncated answer is a stable PREFIX of the sorted order, not an arbitrary subset.
+      expect(reply.result.entries[0].path).toBe(join(dir, 'f-000'));
+    });
+
+    it('counts directories and symlinks against the visit budget, not only files', () => {
+      // A tree of empty directories returns no files at all. If only files were counted, a traversal
+      // could wander through an unbounded number of them while its budget never moved.
+      const dir = join(root, 'walk-visits');
+      mkdirSync(dir, { recursive: true });
+      for (let index = 0; index < 11000; index += 1) mkdirSync(join(dir, `d-${String(index).padStart(5, '0')}`));
+
+      const started = Date.now();
+      const reply = walk(dir);
+      expect(reply.ok).toBe(true);
+      if (!reply.ok) return;
+      expect(reply.result.entries).toHaveLength(0);
+      expect(reply.result.truncated).toBe(true);
+      // And it stops on that budget rather than running until the deadline, which is only the backstop
+      // for a filesystem slow enough that even a bounded number of entries takes too long.
+      expect(Date.now() - started).toBeLessThan(10_000);
+    });
+
+    it('truncates on its output budget, well below what the transport would cut', () => {
+      // Long paths rather than many files: a tree can exhaust the byte budget long before it reaches the
+      // entry budget, and that is the case where an unbounded answer would be cut mid-JSON by the
+      // transport and surface as a protocol failure instead of an honest truncation.
+      let dir = join(root, 'walk-bytes');
+      mkdirSync(dir, { recursive: true });
+      for (let level = 0; level < 15; level += 1) { dir = join(dir, 'd'.repeat(240)); mkdirSync(dir); }
+      const long = 'n'.repeat(200);
+      for (let index = 0; index < 2600; index += 1) writeFileSync(join(dir, `${long}-${String(index).padStart(5, '0')}`), 'x');
+
+      const done = spawnSync('python3', ['-c', HELPER], {
+        input: JSON.stringify({ kind: 'walk', path: join(root, 'walk-bytes'), limit: 10001, skip: [] }),
+        encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+      });
+      const reply = JSON.parse(done.stdout) as HelperReply;
+      expect(reply.ok).toBe(true);
+      if (!reply.ok) return;
+      expect(reply.result.truncated).toBe(true);
+      expect(reply.result.entries.length).toBeLessThan(2600);
+      // Comfortably under the 16 MB the transport allows.
+      expect(Buffer.byteLength(done.stdout)).toBeLessThan(12 * 1024 * 1024);
+    });
+
+    it('refuses a malformed skip list instead of ignoring it', () => {
+      const dir = join(root, 'walk-skip-invalid');
+      mkdirSync(dir, { recursive: true });
+      for (const skip of [['ok', 'with/slash'], ['ok', ''], 'notalist', [5]]) {
+        const reply = runHelper({ kind: 'walk', path: dir, limit: 10, skip });
+        expect(reply.ok).toBe(false);
+        if (!reply.ok) expect(reply.error.code).toBe('invalid_operation');
+      }
+    });
+  });
 });

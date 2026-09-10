@@ -394,6 +394,75 @@ def run(op):
         sync_directory(os.path.dirname(name))
         sync_directory(os.path.dirname(destination))
         return {'kind': kind, 'entry': entry(destination)}
+    if kind == 'walk':
+        # One traversal, inside the guest. Driving it from the host cost a round trip per directory, and
+        # each of those is a container execution — a tree of four directories was five crossings before
+        # a single name had been matched. Nothing here is written against, so no content is read and no
+        # version is computed: a path and a modification time is the whole answer.
+        limit = bounded(op.get('limit'), 1, MAX_ENTRIES + 1)
+        skip = op.get('skip', [])
+        if not isinstance(skip, list) or len(skip) > 64 or any(
+                not isinstance(item, str) or not item or len(item) > 255 or '/' in item or '\x00' in item for item in skip):
+            fail('invalid_operation', 'Invalid skip list')
+        skipped = set(skip)
+
+        # The requested path decides the answer before any traversal: absent is reported as such so the
+        # host needs no separate stat, and a path that is not a directory is traversed from its parent,
+        # which is the behaviour Glob has always had.
+        if not os.path.lexists(name):
+            return {'kind': kind, 'root': name, 'rootKind': None, 'entries': [], 'truncated': False}
+        info = os.lstat(name)
+        root_kind = 'directory' if stat.S_ISDIR(info.st_mode) else 'symlink' if stat.S_ISLNK(info.st_mode) else 'file' if stat.S_ISREG(info.st_mode) else 'other'
+        root = name if root_kind == 'directory' else os.path.dirname(name)
+
+        entries = []
+        visited = 0
+        payload = 0
+        truncated = False
+        deadline = time.monotonic() + 10
+        # Depth first in sorted order, so the same tree always answers in the same sequence and a
+        # truncated answer is a stable prefix rather than whatever the filesystem happened to hand back.
+        stack = [root]
+        while stack and not truncated:
+            current = stack.pop()
+            try:
+                with os.scandir(current) as scan:
+                    children = sorted(scan, key=lambda item: item.name)
+            except (FileNotFoundError, NotADirectoryError, PermissionError):
+                # A directory that vanished or cannot be read is not the whole traversal's failure.
+                continue
+            nested = []
+            for item in children:
+                # EVERY entry counts, directories and symlinks included, so a tree made of empty
+                # directories cannot walk indefinitely while the file count stays at zero.
+                visited += 1
+                if visited > MAX_ENTRIES + 1 or time.monotonic() > deadline:
+                    truncated = True
+                    break
+                # `follow_symlinks=False` throughout: a link out of the tree is never descended into and
+                # never reported as a file, which is what keeps the traversal inside the root.
+                try:
+                    if item.is_dir(follow_symlinks=False):
+                        if item.name not in skipped:
+                            nested.append(item.path)
+                        continue
+                    if not item.is_file(follow_symlinks=False):
+                        continue
+                    modified = item.stat(follow_symlinks=False).st_mtime
+                except OSError:
+                    continue
+                if len(entries) >= limit:
+                    truncated = True
+                    break
+                # Bounded well below the transport's own cap, so a wide tree is truncated deliberately
+                # here instead of being cut mid-JSON and reported as a protocol failure.
+                payload += len(item.path.encode()) + 40
+                if payload > 8388608:
+                    truncated = True
+                    break
+                entries.append({'path': item.path, 'mtime': int(modified * 1000)})
+            stack.extend(reversed(nested))
+        return {'kind': kind, 'root': root, 'rootKind': root_kind, 'entries': entries, 'truncated': truncated}
     if kind == 'search':
         limit = bounded(op.get('limit'), 1, 1000)
         pattern = op.get('pattern')
