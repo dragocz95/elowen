@@ -41,7 +41,7 @@ function sandboxFixture(dataDir: string): string {
   writeFileSync(join(dir, 'elowen-plugin.json'), JSON.stringify({
     name: 'sandbox', version: '1.0.0', apiVersion: '1', description: 'environment scope fixture', entry: 'index.mjs',
     capabilities: { reads: ['db', 'stores'] },
-    provides: { apiRoutes: ['projects', 'environments/status', 'environments/request', 'environments/operation', 'environments/snapshots', 'environments/logs', 'environments/files', 'environments/worktrees'] },
+    provides: { apiRoutes: ['projects', 'environments/status', 'environments/operation'] },
   }));
   writeFileSync(join(dir, 'index.mjs'), `
     import { initSandboxDb } from ${JSON.stringify(libUrl('db.mjs'))};

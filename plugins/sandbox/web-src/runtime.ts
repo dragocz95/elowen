@@ -68,7 +68,7 @@ interface HostDictionary { operationProgress: { actions: Record<string, string> 
 export interface EnvironmentOperationView {
   id: string;
   action: { kind: string };
-  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  status: 'pending' | 'running' | 'succeeded' | 'failed';
   error: string | null;
   steps: string[];
   stepIndex: number;

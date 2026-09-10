@@ -5,7 +5,7 @@ import { BASE } from './elowenClient';
 import { subscribePluginEvents } from './pluginEvents';
 
 /** The kind the sandbox plugin publishes one lifecycle operation's live state under. */
-const ENVIRONMENT_OPERATION_EVENT = 'environment-operation';
+export const ENVIRONMENT_OPERATION_EVENT = 'environment-operation';
 
 export interface EnvironmentOperationView {
   operation: EnvironmentOperation | null;

@@ -7,7 +7,7 @@ import { createSiteImageService } from './environmentSiteImages.mjs';
 import { createSiteCleanupService } from './environmentSiteCleanup.mjs';
 import { createGuestFileTransport, validateUploadOperation, UPLOAD_KINDS } from './guestFileTransport.mjs';
 import { managedShellFrame, synchronousShellFrame } from './managedBootstrap.mjs';
-import { createEnvironmentStore } from './environmentDb.mjs';
+import { createEnvironmentStore, operationView } from './environmentDb.mjs';
 import { ownerProvablyDead, processIdentity, withRepoLease } from './db.mjs';
 import { createContainerSpec, createBoundSiteSpec, withContainerLimits, resourceToken, bindContainerIdentity } from './containerSpec.mjs';
 import { managedGuestRoot } from './containerPaths.mjs';
@@ -17,7 +17,13 @@ import { PROJECT_BASE_IMAGE_TAG } from './containerBaseImage.mjs';
 
 const FILE_HELPER = readFileSync(new URL('./guestFiles.py', import.meta.url), 'utf8');
 const PREVIEW_HELPER = readFileSync(new URL('./previewProxy.py', import.meta.url), 'utf8');
+/** `diskSoftMb` is accepted and stored but never enforced: no container flag carries it. It stays in the
+ *  shape because the Sites plugin sends it with every registration and limits change, and it has no
+ *  control of its own here — a project's environment reports the ceilings the container really has. */
 const DEFAULT_LIMITS = { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240 };
+/** How many past operations the project overview carries. The environment screen shows the current one
+ *  and the recent outcomes behind it; the rest is history no browser needs to hold. */
+const OPERATION_HISTORY = 20;
 /** What each lifecycle operation is made of, in order, with the relative cost of each part. The list is
  *  DECLARED before the work starts, so a surface watching an operation can say "step 2 of 5" from the
  *  first frame instead of discovering the shape as it goes. The weights are rough durations rather than
@@ -36,6 +42,10 @@ const STEP_PLANS = {
 /** Every Sites-only action and the image jobs: one step, honestly unlabelled, rather than a fabricated
  *  breakdown of work whose shape nobody has described. */
 const DEFAULT_STEPS = [['work', 1]];
+/** Two of the steps above are a PROJECT's: waiting for the guest system bus, and the quiesce that
+ *  cancels leases and guest transfers. A Site takes neither, so declaring them to a Site's watcher
+ *  would name work that is never going to happen. */
+const PROJECT_STEPS = ['ready', 'quiesce'];
 /** Podman prints `STEP 4/17: RUN …` while it builds and `Copying blob … 12MB / 40MB` while it pulls. The
  *  first is a real fraction of a known whole; the second is a byte count of one layer among several, so
  *  it is reported as indeterminate rather than turned into a percentage of nothing. */
@@ -68,7 +78,7 @@ function limits(value) {
  *  leave a new environment without a ceiling. Read once per provisioning; the settings snapshot refreshes
  *  when the plugin reloads, and environments that already exist keep the limits they were created with. */
 function configuredDefaults(config) {
-  const keys = { cpus: 'defaultCpus', memoryMb: 'defaultMemoryMb', pidsLimit: 'defaultPidsLimit', diskSoftMb: 'defaultDiskSoftMb' };
+  const keys = { cpus: 'defaultCpus', memoryMb: 'defaultMemoryMb', pidsLimit: 'defaultPidsLimit' };
   const chosen = {};
   for (const [key, setting] of Object.entries(keys)) {
     const value = config?.[setting];
@@ -228,11 +238,6 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   }
   const view = (row) => ({ [row.kind === 'project' ? 'projectId' : 'siteId']: row.kind === 'project' ? Number(row.resource_id) : row.resource_id,
     generation: row.generation, state: row.state, desiredState: row.desired_state, lastError: row.error ?? null, limits: row.limits });
-  const operationView = (op) => ({ id: op.id, requestId: op.request_key, [op.kind === 'project' ? 'projectId' : 'siteId']: op.kind === 'project' ? Number(op.resource_id) : op.resource_id,
-    accountUserId: op.user_id, generation: op.generation, action: op.action, status: op.status, error: op.error ?? null, ...(op.snapshot_id ? { snapshotId: op.snapshot_id } : {}),
-    steps: op.steps ?? [], stepIndex: Number(op.step_index ?? 0), stepTotal: (op.steps ?? []).length,
-    stepLabel: (op.steps ?? [])[Number(op.step_index ?? 0)] ?? null,
-    percent: op.percent === null || op.percent === undefined ? null : Number(op.percent) });
   const assertGeneration = (row, expected) => { if (expected !== undefined && expected !== row.generation) throw error('generation_changed', 'Environment generation changed'); };
 
   /** The one place an operation's live state leaves this process. Everything a watcher needs travels in
@@ -249,7 +254,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     // and an indeterminate one. Only a repeat of what was already published is dropped.
     const shape = `${op.status}|${op.step_index}|${op.percent === null}`;
     if (!force && now - publishedAt < 250 && publishedShape.get(op.id) === shape) return;
-    if (['succeeded', 'failed', 'cancelled'].includes(op.status)) publishedShape.delete(op.id);
+    if (['succeeded', 'failed'].includes(op.status)) publishedShape.delete(op.id);
     else publishedShape.set(op.id, shape);
     publishedAt = now;
     try {
@@ -259,12 +264,14 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     } catch (cause) { ctx.logger.warn(`environment operation progress was not published: ${cause.message}`); }
   }
   const checkpoint = (op, values) => { Object.assign(op.checkpoint, values); store.saveOperation(op); publishOperation(op, false); };
-  const stepPlan = (op) => STEP_PLANS[op.action?.kind] ?? DEFAULT_STEPS;
-  /** Declare the step list on the durable row as the operation is claimed. */
+  const stepPlan = (op) => (STEP_PLANS[op.action?.kind] ?? DEFAULT_STEPS).filter(([id]) => op.kind === 'project' || !PROJECT_STEPS.includes(id));
+  const declareSteps = (op) => { op.steps = stepPlan(op).map(([id]) => id); op.step_index = 0; op.percent = 0; };
+  /** Declare the step list on the durable row as the operation is claimed. An operation RESUMED after a
+   *  restart already declared it and reached a position its checkpoints kept, so only one that never
+   *  declared any starts at zero — otherwise the bar would fall back to the beginning for work that is
+   *  not going to be done again. */
   function beginSteps(op) {
-    op.steps = stepPlan(op).map(([id]) => id);
-    op.step_index = 0;
-    op.percent = 0;
+    if (!op.steps?.length) declareSteps(op);
     store.saveOperation(op);
     publishOperation(op);
   }
@@ -284,6 +291,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     publishOperation(op, !streamed);
   }
   const assertLive = () => { if (disposed) throw error('runtime_unavailable', 'The environment provider was detached', 503); };
+  /** The host's storage root is not a project member's business, in a lifecycle error or a build line any
+   *  more than in command output — where `prepareExecution` has always replaced it. One replacement,
+   *  applied wherever host text becomes something a surface displays. */
+  const sanitize = (text) => String(text).split(dataDir).join('[environment-storage]');
 
   async function assertNoPublishedSites(id) {
     if (sites && !sites.projectDependents) throw error('sites_preflight_unavailable', 'Sites must provide publication-dependency preflight before Project deletion');
@@ -329,9 +340,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       store.save(row);
       // The declared step list exists from the moment the intent is durable, so the caller's very first
       // frame can name what is about to happen rather than an empty bar labelled "pending".
-      op.steps = stepPlan(op).map(([id]) => id);
-      op.step_index = 0;
-      op.percent = 0;
+      declareSteps(op);
       store.saveOperation(op);
       return operationView(op);
     });
@@ -524,7 +533,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       handle = leaseHandle(row, leased, prepared.settle);
       return { mode: 'managed', projectRef: input.projectRef, cwd: dataDir, displayCwd: cwd, home: '/root', roots: ['/'],
         launch: prepared.launch, stdin: program.input, cancel: () => handle.cancel(), workspace: null, lease: handle,
-        sanitizeOutput: (text) => String(text).split(dataDir).join('[environment-storage]') };
+        sanitizeOutput: sanitize };
     } catch (cause) { await handle.release(); throw cause; }
   }
 
@@ -593,6 +602,17 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     if (stopped && !['created', 'configured', 'stopped', 'exited'].includes(stopped.state)) throw error('stop_unverified', 'Container stop could not be verified');
     if (row.kind === 'site') await sites.afterStop(row.resource_id);
   }
+  /** End the pre-mount layout by removing the container that carries it. Such a container can be neither
+   *  inspected, stopped nor removed the verified way — the specification that would prove ownership is
+   *  the one that changed — so removing it by name is the only way out, and `recreate` and `delete` are
+   *  the two explicit operations that exist to take it. The storage volumes are untouched. */
+  async function removeLegacyContainer(row) {
+    if (!row.spec.legacyWorkspaceLayout) return;
+    await podman.removeByName(specFor(row.spec));
+    delete row.spec.legacyWorkspaceLayout;
+    delete row.spec.containerId;
+    store.save(row);
+  }
   async function ensureInitialContainer(row, op) {
     const spec = specFor(row.spec);
     // A container created before the project mount carried the project's name was built from a different
@@ -631,7 +651,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       // buffer the log view reads and its own step counter drives the bar. A line that carries no
       // fraction leaves the step indeterminate rather than freezing the bar at a stale figure.
       row.spec.input.image = await podman.ensureProjectImage(dataDir, (line) => {
-        store.log(row.kind, row.resource_id, line);
+        store.log(row.kind, row.resource_id, sanitize(line));
         step(op, 'image', buildFraction(line), true);
       });
       store.save(row); checkpoint(op, { imageReady: true });
@@ -816,6 +836,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       row.state = 'starting'; store.save(row);
       if (!op.checkpoint.removed) {
         step(op, 'remove');
+        // The pre-mount container goes first, before anything inspects it: every verified path below
+        // would refuse it, which is what left this repair unable to perform the repair.
+        await removeLegacyContainer(row);
         const previous = specFor(row.spec);
         await cancelLeases(row);
         if (await podman.containerExists(previous)) {
@@ -913,6 +936,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     } else if (kind === 'delete') {
       if (row.kind === 'project') await assertNoPublishedSites(row.resource_id);
       step(op, 'stop');
+      await removeLegacyContainer(row);
       await stopRow(row);
       const spec = specFor(row.spec);
       const snapshots = store.snapshots(row.kind, row.resource_id);
@@ -949,6 +973,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       checkpoint(op, { storageRemoved: true });
       step(op, 'records');
       store.transaction(() => {
+        // The deletion itself stays: the surface that asked for it still reads its outcome. Everything
+        // that happened to an environment that no longer exists goes with it.
+        db.prepare('DELETE FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=? AND id<>?').run(row.kind, row.resource_id, op.id);
         db.prepare('DELETE FROM p_sandbox_runtime_snapshots WHERE kind=? AND resource_id=?').run(row.kind, row.resource_id);
         db.prepare('DELETE FROM p_sandbox_execution_leases WHERE resource_kind=? AND resource_id=?').run(row.kind, row.resource_id);
         db.prepare('DELETE FROM p_sandbox_file_uploads WHERE resource_kind=? AND resource_id=?').run(row.kind, row.resource_id);
@@ -994,7 +1021,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           publishOperation(op);
         } catch (cause) {
           if (!claimed) throw cause;
-          op.status = 'failed'; op.error = String(cause.message ?? cause).slice(0, 2000); store.saveOperation(op);
+          op.status = 'failed'; op.error = sanitize(cause.message ?? cause).slice(0, 2000); store.saveOperation(op);
           const row = store.get(op.kind, op.resource_id);
           if (row) { row.error = op.error; if (row.desired_state === 'deleted') row.state = 'deleting'; else if (row.state !== 'running' && row.state !== 'stopped') row.state = 'failed'; store.save(row); store.log(row.kind, row.resource_id, op.error); }
           publishOperation(op);
@@ -1095,8 +1122,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     async projectOverview(input) {
       const environment = await control.environmentFor(input);
       const id = projectId(input.project);
-      const operations = db.prepare("SELECT id FROM p_sandbox_runtime_operations WHERE kind='project' AND resource_id=? ORDER BY rowid DESC").all(String(id))
-        .map((item) => operationView(store.getOperation(item.id)));
+      const operations = store.recentOperations('project', id, OPERATION_HISTORY).map(operationView);
       return { environment, snapshots: await snapshots('project', id, input.accountUserId), operations };
     },
     requestEnvironment: (input) => request('project', projectId(input.project), input),

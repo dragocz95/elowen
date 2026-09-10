@@ -218,27 +218,16 @@ describe('managed environment lifecycle', () => {
     }
   });
 
-  // `Number('')` is 0 and `Number('5')` is 5 — both below the row's 512 minimum, and both used to be
-  // written straight into the draft and saved.
-  it('never sends a blank or out-of-range disk figure, and saves the corrected one', async () => {
+  // The drawer offers the ceilings the container actually has. The disk threshold was enforced by
+  // nothing, and the usage beside it read a field the route never returned, so neither is on screen and
+  // the copy for both is gone from the manifest in every locale.
+  it('offers no disk control and no disk usage, because neither exists', async () => {
     setup();
-    const { bodies } = armLimits();
+    server.use(http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: true } })));
     mount(<ProjectEnvironmentSettings project={project} />);
-    const disk = await screen.findByLabelText(strings.diskSoftLimit!);
-
-    for (const attempt of ['', '5', '99999999']) {
-      fireEvent.change(disk, { target: { value: attempt } });
-      // The box keeps what was typed rather than snapping back mid-edit.
-      expect(disk).toHaveValue(attempt === '' ? null : Number(attempt));
-      expect(await screen.findByRole('alert')).toHaveTextContent('512');
-    }
-    await new Promise((resolve) => setTimeout(resolve, 1600));
-    expect(bodies).toHaveLength(0);
-
-    fireEvent.change(disk, { target: { value: '2048' } });
-    expect(screen.queryByRole('alert')).toBeNull();
-    await waitFor(() => expect(bodies).toHaveLength(1), { timeout: 4000 });
-    expect(bodies[0]!.action.limits).toEqual({ ...environment.limits, diskSoftMb: 2048 });
+    expect(await screen.findByRole('slider', { name: strings.memoryLimit })).toBeInTheDocument();
+    for (const key of ['diskSoftLimit', 'diskSoftHint', 'diskUsage', 'limitsRange']) expect(strings[key]).toBeUndefined();
+    expect(screen.queryByText(/disk/i)).toBeNull();
   });
 
   it('fails visibly without exposing actions when the provider is unavailable', async () => {

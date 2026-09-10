@@ -67,6 +67,15 @@ export const environmentProgressMigration = {
   },
 };
 
+/** The one projection of an operation row onto the wire shape both the project and the Site surfaces
+ *  read (`EnvironmentOperation`, `SiteEnvironmentOperation`). It lives beside the row mapper because a
+ *  second copy of it is how the declared progress fields went missing from one of them. */
+export const operationView = (op) => ({ id: op.id, requestId: op.request_key, [op.kind === 'project' ? 'projectId' : 'siteId']: op.kind === 'project' ? Number(op.resource_id) : op.resource_id,
+  accountUserId: op.user_id, generation: op.generation, action: op.action, status: op.status, error: op.error ?? null, ...(op.snapshot_id ? { snapshotId: op.snapshot_id } : {}),
+  steps: op.steps ?? [], stepIndex: Number(op.step_index ?? 0), stepTotal: (op.steps ?? []).length,
+  stepLabel: (op.steps ?? [])[Number(op.step_index ?? 0)] ?? null,
+  percent: op.percent === null || op.percent === undefined ? null : Number(op.percent) });
+
 const runtime = (row) => row ? { ...row, generation: Number(row.generation), spec: JSON.parse(row.spec_json), limits: JSON.parse(row.limits_json) } : null;
 const operation = (row) => row ? { ...row, action: JSON.parse(row.action_json), checkpoint: JSON.parse(row.checkpoint_json),
   steps: JSON.parse(row.steps_json ?? '[]'), step_index: Number(row.step_index ?? 0),
@@ -96,6 +105,12 @@ export function createEnvironmentStore(db, identity) {
       return getOperation(id);
     },
     operations: () => db.prepare("SELECT * FROM p_sandbox_runtime_operations WHERE status IN ('pending','running') ORDER BY created_at,id").all().map(operation),
+    /** The newest operations of one resource, newest first. Bounded because the row set only grows and
+     *  no surface reading it has a use for the whole history. */
+    recentOperations(kind, id, limit) {
+      return db.prepare('SELECT * FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=? ORDER BY rowid DESC LIMIT ?')
+        .all(kind, String(id), limit).map(operation);
+    },
     saveOperation(op) {
       db.prepare('UPDATE p_sandbox_runtime_operations SET status=?,checkpoint_json=?,owner_pid=?,owner_identity=?,error=?,snapshot_id=?,steps_json=?,step_index=?,percent=?,updated_at=CURRENT_TIMESTAMP WHERE id=?')
         .run(op.status, JSON.stringify(op.checkpoint), op.owner_pid ?? null, op.owner_identity ?? null, op.error ?? null, op.snapshot_id ?? null,

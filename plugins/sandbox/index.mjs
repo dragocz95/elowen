@@ -152,9 +152,10 @@ export async function register(ctx) {
     // handed to the child. It is a property of who is driving the turn, never of what a plugin asks
     // for, so an explicit request is always confined. `skipHomeLock` stays internal too: the lease has
     // to be minted under the HOME lock or a reset can race a launch.
+    // A managed project is not routed here: `execution.prepare` below already answers a managed
+    // reference, ambient or explicit, by handing it to the same environment runtime with the same
+    // account. Two routers to one destination is how they come to disagree.
     prepareExecution: (input, options) => {
-      const projectRef = input.projectRef ?? ctx.currentAccess().projectRef;
-      if (projectRef?.kind === 'managed') return environments.prepareExecution({ ...input, projectRef }, options?.accountUserId ?? accountId());
       if (input.workspace) {
         const accountUserId = accountId();
         if (accountUserId === null) throw new Error('a linked Elowen account is required');

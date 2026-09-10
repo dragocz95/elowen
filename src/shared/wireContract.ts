@@ -45,7 +45,7 @@ export interface EnvironmentOperation {
   accountUserId: number;
   generation: number;
   action: EnvironmentAction;
-  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  status: 'pending' | 'running' | 'succeeded' | 'failed';
   error: string | null;
   snapshotId?: string;
   /** The declared step list, in order. Each entry is a stable id the UI localizes. */

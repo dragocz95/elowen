@@ -175,7 +175,11 @@ describe('react-query cache invalidation', () => {
     const calls = count(/invalidateQueries\(/g);
     expect(calls).toBeGreaterThan(0);
     const allQueryInvalidations = count(/invalidateQueries\(\s*\)/g);
-    expect(readSites + count(/invalidateQueries\(\{\s*queryKey\s*\}\)/g) + allQueryInvalidations).toBe(calls);
+    // A PREDICATE invalidation names no key: it is asked about whatever the cache holds at the time, so
+    // it carries no head that can outlive the query it belonged to. Counted here so the shape stays
+    // declared rather than quietly falling outside the check.
+    const predicateInvalidations = count(/invalidateQueries\(\{\s*predicate:/g);
+    expect(readSites + count(/invalidateQueries\(\{\s*queryKey\s*\}\)/g) + allQueryInvalidations + predicateInvalidations).toBe(calls);
     expect(unreadable).toEqual([]);
 
     expect([...invalidated].filter((head) => !registered.has(head))).toEqual([]);

@@ -6,6 +6,7 @@ import { BASE } from './elowenClient';
 import { createReconnectController } from './reconnect';
 import { subscribeRevive, STALE_HIDE_MS } from './useRevive';
 import { emitPluginEvent, isPluginEvent } from './pluginEvents';
+import { ENVIRONMENT_OPERATION_EVENT } from './useEnvironmentOperation';
 
 /** Subscribe to the core daemon SSE bus and keep shared query caches fresh. */
 export function useElowenEvents(): void {
@@ -32,11 +33,21 @@ export function useElowenEvents(): void {
     const pluginHandler = (event: MessageEvent) => {
       let parsed: unknown;
       try { parsed = JSON.parse(event.data); } catch { return; }
-      // The payload goes to whoever is listening for it BEFORE the blanket invalidation, so a surface
-      // that follows a pushed operation reads the frame it was sent rather than refetching it.
+      // The payload goes to whoever is listening for it BEFORE any invalidation, so a surface that
+      // follows a pushed operation reads the frame it was sent rather than refetching it.
       if (isPluginEvent(parsed)) emitPluginEvent(parsed);
-      // Plugin data is intentionally opaque to core. Invalidate active queries so the owning bundle
-      // refreshes without core learning its private query-key convention.
+      // A lifecycle operation publishes a frame per step — up to four a second while an image builds —
+      // and every one of them used to refresh the WHOLE cache, which cost more than the poll the push
+      // replaced. Such a frame names the project it belongs to, so it refreshes what names the same
+      // project plus the project list, without core learning any bundle's private key convention.
+      if (isPluginEvent(parsed) && parsed.kind === ENVIRONMENT_OPERATION_EVENT && typeof parsed.projectId === 'number') {
+        const { projectId } = parsed;
+        qc.invalidateQueries({ predicate: (query) => query.queryKey.includes(projectId) });
+        qc.invalidateQueries({ queryKey: ['projects'] });
+        return;
+      }
+      // Every other plugin's data is intentionally opaque to core: invalidate active queries so the
+      // owning bundle refreshes whatever it keeps.
       qc.invalidateQueries();
     };
     const activityHandler = makeHandler(() => {

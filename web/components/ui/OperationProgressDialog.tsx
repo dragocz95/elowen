@@ -76,7 +76,7 @@ function OpenOperationProgressDialog({
 
   const status = operation?.status ?? 'pending';
   const running = RUNNING_STATUSES.has(status);
-  const failed = status === 'failed' || status === 'cancelled';
+  const failed = status === 'failed';
   const succeeded = status === 'succeeded';
   const close = () => onClose({ running });
 

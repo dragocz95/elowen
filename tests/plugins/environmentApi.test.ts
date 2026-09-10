@@ -38,11 +38,14 @@ function setup(options: { lifecycle?: string; canManage?: boolean; accessible?: 
 }
 
 describe('UI projects/:id/environment API', () => {
-  it('registers the namespaced projects mount beside the legacy environments routes', () => {
+  // The two per-environment READS a browser makes, and nothing else: every write goes through the
+  // namespaced mount, and a route no surface calls is a surface nobody is defending.
+  it('registers the namespaced projects mount and only the two environment reads', () => {
     const { routes } = setup();
     expect(routes.get('projects')?.map((route) => route.method).sort()).toEqual(['GET', 'POST']);
-    for (const path of ['environments/status', 'environments/request', 'environments/operation', 'environments/snapshots', 'environments/logs', 'environments/files', 'environments/worktrees']) {
-      expect(routes.get(path)?.length).toBeGreaterThan(0);
+    expect([...routes.keys()].sort()).toEqual(['environments/operation', 'environments/status', 'projects']);
+    for (const path of ['environments/status', 'environments/operation']) {
+      expect(routes.get(path)?.map((route) => route.method)).toEqual(['GET']);
     }
   });
 
@@ -82,27 +85,27 @@ describe('UI projects/:id/environment API', () => {
     expect(control.projectOverview).not.toHaveBeenCalled();
   });
 
-  it('scopes by accessibleProjects, allowing only deleting-project managers outside it', async () => {
+  it('scopes by accessibleProjects alone, whatever the project lifecycle', async () => {
     const base = setup({ accessible: [8] });
     expect((await base.request('GET', '7/environment')).status).toBe(403);
     expect((await base.request('POST', '7/environment', { json: { action: { kind: 'start' } } })).status).toBe(403);
     expect(base.control.projectOverview).not.toHaveBeenCalled();
 
-    const deleting = setup({ accessible: [8], lifecycle: 'deleting', canManage: true });
+    // A deleting project keeps its members' assignments, so a manager is inside the scope already and
+    // can still drive the deletion that is under way.
+    const deleting = setup({ accessible: [7], lifecycle: 'deleting', canManage: true });
     expect((await deleting.request('GET', '7/environment')).status).toBe(200);
-    expect(deleting.stores.projects.get).toHaveBeenCalledWith(7);
-    expect(deleting.stores.userProjects.canManage).toHaveBeenCalledWith(1, 7);
     const retried = await deleting.request('POST', '7/environment', { json: { action: { kind: 'delete' }, requestId: 'del-1' } });
     expect(retried.status).toBe(200);
     expect(retried.body).toMatchObject({ id: 'op_1', status: 'pending' });
 
-    const notManager = setup({ accessible: [8], lifecycle: 'deleting', canManage: false });
-    expect((await notManager.request('GET', '7/environment')).status).toBe(403);
-    expect((await notManager.request('POST', '7/environment', { json: { action: { kind: 'delete' } } })).status).toBe(403);
-
-    const active = setup({ accessible: [8], lifecycle: 'active', canManage: true });
-    expect((await active.request('GET', '7/environment')).status).toBe(403);
-    expect((await active.request('POST', '7/environment', { json: { action: { kind: 'delete' } } })).status).toBe(403);
+    // Managing rights are not a way around the scope, and this gate no longer reads the project rows to
+    // decide: the runtime resolves membership again for itself.
+    const outside = setup({ accessible: [8], lifecycle: 'deleting', canManage: true });
+    expect((await outside.request('GET', '7/environment')).status).toBe(403);
+    expect((await outside.request('POST', '7/environment', { json: { action: { kind: 'delete' } } })).status).toBe(403);
+    expect(outside.stores.projects.get).not.toHaveBeenCalled();
+    expect(outside.stores.userProjects.canManage).not.toHaveBeenCalled();
   });
 
   it('treats a null scope as unscoped like the legacy routes', async () => {

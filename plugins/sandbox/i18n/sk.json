@@ -25,10 +25,6 @@
     "defaultPidsLimit": {
       "label": "Procesy",
       "hint": "Najvyšší počet procesov a vlákien vnútri prostredia."
-    },
-    "defaultDiskSoftMb": {
-      "label": "Prah diskového miesta",
-      "hint": "Iba orientačný. Využitie disku sa voči tejto hodnote vykazuje, nie je to vynútená kvóta."
     }
   },
   "web": {
@@ -151,10 +147,6 @@
       "cpuLimit": "Procesor",
       "memoryLimit": "Pamäť",
       "processLimit": "Procesy",
-      "diskSoftLimit": "Prah diskového miesta",
-      "diskSoftHint": "Prah disku je orientačný, nejde o vynútenú kvótu.",
-      "limitsRange": "Zadajte celé číslo medzi {min} a {max} {unit}.",
-      "diskUsage": "Využitie disku",
       "snapshots": "Úplné snímky",
       "noSnapshots": "Nie sú k dispozícii žiadne úplné snímky.",
       "state_unprovisioned": "Nevytvorené",

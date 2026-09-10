@@ -87,8 +87,10 @@ describe('durable managed environment lifecycle', () => {
   // A new project environment used to be pinned to the figures compiled into the plugin, with nowhere to
   // change them; the administrator's settings now decide what it is provisioned with.
   it('provisions a project environment with the administrator resource defaults', async () => {
-    const { runtime, podman } = setup({ defaultCpus: 2.5, defaultMemoryMb: 4096, defaultPidsLimit: 1024, defaultDiskSoftMb: 20480 });
-    const expected = { cpus: 2.5, memoryMb: 4096, pidsLimit: 1024, diskSoftMb: 20480 };
+    const { runtime, podman } = setup({ defaultCpus: 2.5, defaultMemoryMb: 4096, defaultPidsLimit: 1024 });
+    // The disk figure is not an administrator setting: nothing enforces it, so it keeps the built-in
+    // value the Sites contract still carries.
+    const expected = { cpus: 2.5, memoryMb: 4096, pidsLimit: 1024, diskSoftMb: 10240 };
     // Reported before the environment exists, so the figures shown are the ones it would be created with.
     expect((await runtime.environmentFor(input)).limits).toEqual(expected);
     await runtime.requestEnvironment({ ...input, requestId: 'defaults-start', action: { kind: 'start' } });
