@@ -84,10 +84,10 @@ export default tseslint.config(
     },
   },
   {
-    // Enabled in `src/` and not yet in `web/`, where they are still owed real reading: ~460 unnecessary
-    // assertions (mostly `web/tests`, where an `expect(x!)` is harmless) and ~80 floating promises that
-    // are almost all `queryClient.invalidateQueries(...)` — fire-and-forget by TanStack Query's own
-    // design, so awaiting them in `onSuccess` would change behavior rather than fix anything.
+    // Enabled in `src/` and not yet in `web/`, where they are still owed real reading: 444 unnecessary
+    // assertions (392 of them in `web/tests`, where an `expect(x!)` is harmless) and 83 floating
+    // promises, almost all `queryClient.invalidateQueries(...)` — fire-and-forget by TanStack Query's
+    // own design, so awaiting them in `onSuccess` would change behavior rather than fix anything.
     files: ['src/**/*.ts'],
     rules: {
       '@typescript-eslint/no-floating-promises': 'error',
@@ -97,7 +97,7 @@ export default tseslint.config(
   {
     // no-unnecessary-condition needs a judgement per finding — delete a dead guard, or fix the type that
     // lies about it — so it is widened one directory at a time as those judgements are made. Still owed:
-    // src/brain (~112), src/api (~68), src/cli (~64), src/plugins (~32) and web (~180).
+    // src/brain (112), src/api (68), src/cli (64), src/plugins (32) and web (245).
     files: [
       'src/daemon/**/*.ts', 'src/embeddings/**/*.ts', 'src/integrations/**/*.ts',
       'src/privileged/**/*.ts', 'src/shared/**/*.ts', 'src/store/**/*.ts', 'src/subagent/**/*.ts',
