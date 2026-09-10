@@ -24,9 +24,9 @@ const DEFAULT_LIMITS = { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10
  *  shares of a bar: building or pulling the base image dominates a first start by an order of magnitude,
  *  and giving it the same fifth as "write the row" would leave the bar at 20% for ten minutes. */
 const STEP_PLANS = {
-  start: [['image', 10], ['storage', 1], ['container', 2], ['boot', 2], ['initialize', 1]],
-  recreate: [['remove', 2], ['image', 10], ['storage', 1], ['container', 2], ['boot', 2], ['initialize', 1]],
-  restart: [['quiesce', 1], ['stop', 2], ['image', 10], ['storage', 1], ['container', 2], ['boot', 2], ['initialize', 1]],
+  start: [['image', 10], ['storage', 1], ['container', 2], ['boot', 2], ['ready', 2], ['initialize', 1]],
+  recreate: [['remove', 2], ['image', 10], ['storage', 1], ['container', 2], ['boot', 2], ['ready', 2], ['initialize', 1]],
+  restart: [['quiesce', 1], ['stop', 2], ['image', 10], ['storage', 1], ['container', 2], ['boot', 2], ['ready', 2], ['initialize', 1]],
   stop: [['quiesce', 1], ['stop', 2]],
   snapshot: [['quiesce', 1], ['capture', 8], ['record', 1]],
   restore: [['quiesce', 1], ['stop', 2], ['import', 8], ['container', 2], ['boot', 2], ['switch', 1], ['cleanup', 1]],
@@ -647,6 +647,14 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     else if (current.state !== 'running') await podman.start(spec);
     if ((await podman.inspect(spec))?.state !== 'running') throw error('start_unverified', 'Container start could not be verified');
     const root = rootOf(row);
+    // A running container is not yet a usable guest: initialization below, and every execution after it,
+    // runs through `systemd-run` and therefore needs the guest system bus. Waiting for it here is its own
+    // step because it is the part of a start that can take a while, and because a guest whose boot never
+    // finishes is then reported as exactly that instead of a dbus error from the initialize command.
+    if (row.kind === 'project') {
+      step(op, 'ready', null);
+      await podman.waitForSystemBus(spec);
+    }
     step(op, 'initialize');
     if (row.kind === 'project' && !op.checkpoint.initialized) {
       const result = await podman.exec(spec, randomUUID().replaceAll('-', ''), ['/bin/bash', '-s'], { input: `set -eu\nif [ ! -e ${root}/.git ]; then\n git init -b main ${root}\n git -C ${root} -c user.name=Elowen -c user.email=environment@localhost -c core.hooksPath=/dev/null commit --allow-empty -m "Initialize managed project"\nfi\nmkdir -p /worktrees\n`, timeoutMs: 30000, persistent: true });

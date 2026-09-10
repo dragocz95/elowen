@@ -296,6 +296,7 @@ export const en = {
       storage: 'Preparing storage',
       container: 'Creating the container',
       boot: 'Starting the container',
+      ready: 'Waiting for the system to come up',
       initialize: 'Initializing the project',
       quiesce: 'Finishing running work',
       stop: 'Stopping the container',

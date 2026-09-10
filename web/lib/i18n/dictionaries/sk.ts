@@ -270,6 +270,7 @@ export const sk = {
       storage: 'Pripravujem úložisko',
       container: 'Vytváram kontajner',
       boot: 'Spúšťam kontajner',
+      ready: 'Čakám na naštartovanie systému',
       initialize: 'Inicializujem projekt',
       quiesce: 'Dokončujem bežiacu prácu',
       stop: 'Zastavujem kontajner',

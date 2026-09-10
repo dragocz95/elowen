@@ -24,6 +24,24 @@ async function toProjectView(project: StoredProject): Promise<ProjectView> {
   return project.executionKind === 'managed' ? { ...project } : { ...project, pathExists: await projectPathExists(project.path) };
 }
 
+/** Enqueue the start that belongs to a just-created managed project and hand back the operation to
+ *  follow. Best effort by design: the project is already durable and its environment surface reports its
+ *  own state, so a provider that is unavailable or refuses costs the caller a progress window, never the
+ *  project it just made. The request key is derived from the project, so a retried creation response
+ *  reconciles onto the same operation instead of queueing a second one. */
+async function startNewEnvironment(ctx: RouteContext, d: RouteContext['d'], projectId: number, accountUserId: number): Promise<string | undefined> {
+  const sandbox = (await d.plugins?.get().catch(() => undefined))?.control('sandbox');
+  if (typeof sandbox?.requestEnvironment !== 'function') return undefined;
+  try {
+    const operation = await sandbox.requestEnvironment({ project: { kind: 'managed', projectId }, accountUserId,
+      action: { kind: 'start' }, requestId: `project-create:${projectId}` });
+    return operation.id;
+  } catch (error) {
+    ctx.log.warn(`environment start was not requested for the new managed project ${projectId}: ${error instanceof Error ? error.message : String(error)}`);
+    return undefined;
+  }
+}
+
 /** Bound concurrent filesystem projections so a large registry cannot flood the libuv worker pool. */
 async function toProjectViews(projects: StoredProject[]): Promise<ProjectView[]> {
   const output = new Array<ProjectView>(projects.length);
@@ -176,7 +194,15 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (body.executionKind === 'managed') {
       const actor = c.get('user');
       if (!actor || (!actor.is_admin && !actor.can_create_projects)) return c.json({ error: 'project creation is not permitted' }, 403);
-      try { return c.json(await toProjectView(d.projects.createForUser(actor.id, body)), 201); }
+      try {
+        const created = d.projects.createForUser(actor.id, body);
+        // A managed project IS its environment: created and left stopped, it can hold nothing and run
+        // nothing until someone presses start. The start is enqueued as part of the creation, and it is
+        // the ordinary start operation, so the one operation the caller follows carries the container
+        // work and the progress window shows it. Explicit stop and start stay what they are afterwards.
+        const environmentOperationId = await startNewEnvironment(ctx, d, created.id, actor.id);
+        return c.json({ ...await toProjectView(created), ...(environmentOperationId ? { environmentOperationId } : {}) }, 201);
+      }
       catch (error) {
         if ((error as { code?: string }).code === 'SQLITE_CONSTRAINT_UNIQUE') return c.json({ error: 'slug taken' }, 409);
         if (error instanceof Error && error.message === 'project creation limit reached') return c.json({ error: error.message }, 409);

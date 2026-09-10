@@ -11,6 +11,8 @@ import { COMPLETION_CWD_LIMIT, completionArtifact, completionPrelude, parseCompl
 const SYSTEM_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 const INPUT_LIMIT = 1024 * 1024;
 const OUTPUT_LIMIT = 256 * 1024;
+/** The socket `systemd-run` connects to inside the guest; its presence is what makes an execution possible. */
+const GUEST_SYSTEM_BUS = '/run/dbus/system_bus_socket';
 const isolatedStores = new WeakSet();
 
 function positive(value, max, name) {
@@ -333,6 +335,27 @@ export class PodmanClient {
     const row = await this.#owned(spec);
     if (row.state !== 'paused') throw new Error('Container is not paused');
     await this.#run(['unpause', row.id]);
+  }
+
+  /** Wait until the guest system bus is listening. `podman start` returns when PID 1 exists, which is
+   *  well before systemd has activated dbus.socket, and EVERY guest execution goes through `systemd-run`,
+   *  which talks to that bus — so a start that hands the container over the moment it is "running" races
+   *  the boot and the first execution fails with `Failed to connect to bus: No such file or directory`.
+   *  A guest whose boot stalls for good, which is what a host out of inotify instances produces, then has
+   *  to be reported as a boot that never finished rather than as an opaque dbus error from initialization,
+   *  so the timeout carries what systemd itself says about the state it is stuck in. */
+  async waitForSystemBus(spec, { timeoutMs = 120_000 } = {}) {
+    const row = await this.#owned(spec);
+    const deadline = Date.now() + positive(timeoutMs, 15 * 60_000, 'system bus timeout');
+    for (;;) {
+      const probe = await this.#run(['exec', row.id, '/usr/bin/test', '-S', GUEST_SYSTEM_BUS], { allowFailure: true, timeoutMs: 30_000 });
+      if (probe.code === 0) return;
+      if (Date.now() >= deadline) {
+        const status = await this.#run(['exec', row.id, 'systemctl', 'is-system-running'], { allowFailure: true, timeoutMs: 30_000 });
+        throw new Error(`Guest system bus did not become available within ${Math.round(timeoutMs / 1000)}s (systemd reports ${status.stdout.trim() || 'nothing'})`);
+      }
+      await new Promise((resolve) => { setTimeout(resolve, 250); });
+    }
   }
 
   /** Verify one already-fetched volume row against what the spec says that component must be. Split out

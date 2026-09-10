@@ -28,6 +28,8 @@ function setup() {
   initSandboxDb(ctx);
   const containers = new Map<string, any>();
   let buildLines: string[] = [];
+  let busReady = false;
+  let busFails = false;
   const podman = {
     ensureProjectImage: vi.fn(async (_dir: string, onOutput?: (line: string) => void) => {
       for (const line of buildLines) onOutput?.(line);
@@ -38,7 +40,13 @@ function setup() {
     start: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'running'; }),
     stop: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'stopped'; }),
     remove: vi.fn(async (spec: any) => { containers.delete(spec.name); }),
-    exec: vi.fn(async () => ({ code: 0, stdout: '', stderr: '', truncated: false })),
+    // The real guest: every execution goes through `systemd-run`, so until the system bus is listening a
+    // command does not run at all. This is the shape the container on the live host produced — the bus
+    // socket absent while PID 1 was already up, and dbus refused with exactly this message.
+    exec: vi.fn(async () => busReady
+      ? { code: 0, stdout: '', stderr: '', truncated: false }
+      : { code: 1, stdout: '', stderr: 'Failed to connect to bus: No such file or directory', truncated: false }),
+    waitForSystemBus: vi.fn(async () => { if (busFails) throw new Error('Guest system bus did not become available within 120s (systemd reports initializing)'); busReady = true; }),
     cancelExecution: vi.fn(async () => ({ terminated: true })), releaseExecution: vi.fn(),
     removeVolume: vi.fn(), removeStorage: vi.fn(), inspectVolume: vi.fn(),
     containerExists: vi.fn(async (spec: any) => containers.has(spec.name)),
@@ -48,7 +56,10 @@ function setup() {
     storage: storage as unknown as ContainerStorage, daemon: true });
   cleanup.push(() => { runtime.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
   return { runtime, db, ctx, podman, containers, published, project,
-    setBuildOutput: (lines: string[]) => { buildLines = lines; } };
+    setBuildOutput: (lines: string[]) => { buildLines = lines; },
+    // A guest whose boot never finishes: the container runs, the bus never listens. That is what a host
+    // out of inotify instances produced, and it must be reported as a boot that did not come up.
+    failSystemBus: () => { busFails = true; } };
 }
 const input = { project: { kind: 'managed', projectId: 7 } as const, accountUserId: 1 };
 const operationEvents = (published: any[]) => published.filter((event) => event.type === 'plugin' && event.kind === 'environment-operation');
@@ -59,8 +70,8 @@ describe('environment operation progress', () => {
   it('declares the step list when the operation is enqueued and walks it to completion', async () => {
     const { runtime, published } = setup();
     const enqueued = await runtime.requestEnvironment({ ...input, requestId: 'progress-start', action: { kind: 'start' } });
-    expect(enqueued.steps).toEqual(['image', 'storage', 'container', 'boot', 'initialize']);
-    expect(enqueued.stepTotal).toBe(5);
+    expect(enqueued.steps).toEqual(['image', 'storage', 'container', 'boot', 'ready', 'initialize']);
+    expect(enqueued.stepTotal).toBe(6);
     expect(enqueued.stepIndex).toBe(0);
     expect(enqueued.percent).toBe(0);
 
@@ -77,15 +88,45 @@ describe('environment operation progress', () => {
     expect(percents).toEqual([...percents].sort((a, b) => a - b));
   });
 
+  // A container Podman calls "running" is not yet a guest that can run anything: `systemd-run`, which
+  // carries every execution including project initialization, needs the guest system bus, and that is
+  // activated some way into the boot. Waiting for it is the fix for a start that reported
+  // `Failed to connect to bus: No such file or directory` at 94%.
+  it('waits for the guest system bus before it initializes the project', async () => {
+    const { runtime, podman } = setup();
+    const op = await runtime.requestEnvironment({ ...input, requestId: 'bus', action: { kind: 'start' } });
+    await runtime.reconcile();
+
+    const done = await runtime.environmentOperation({ operationId: op.id, accountUserId: 1 });
+    expect([done?.status, done?.error]).toEqual(['succeeded', null]);
+    expect(podman.waitForSystemBus).toHaveBeenCalledTimes(1);
+    // Order, not merely presence: initialization must not be the thing that discovers the bus is missing.
+    expect(podman.waitForSystemBus.mock.invocationCallOrder[0]!).toBeLessThan(podman.exec.mock.invocationCallOrder[0]!);
+  });
+
+  // A guest that never finishes booting is a boot failure and has to read as one, on its own step.
+  it('fails on the readiness step when the guest system never comes up', async () => {
+    const { runtime, podman, failSystemBus } = setup();
+    failSystemBus();
+    const op = await runtime.requestEnvironment({ ...input, requestId: 'stalled', action: { kind: 'start' } });
+    await runtime.reconcile();
+
+    const failed = await runtime.environmentOperation({ operationId: op.id, accountUserId: 1 });
+    expect(failed?.status).toBe('failed');
+    expect(failed?.error).toContain('Guest system bus did not become available');
+    expect(failed?.stepLabel).toBe('ready');
+    expect(podman.exec).not.toHaveBeenCalled();
+  });
+
   it('declares a different step list per action, and each one completes', async () => {
     const { runtime } = setup();
     await runtime.requestEnvironment({ ...input, requestId: 'up', action: { kind: 'start' } });
     await runtime.reconcile();
 
     for (const [action, steps] of [
-      [{ kind: 'restart' }, ['quiesce', 'stop', 'image', 'storage', 'container', 'boot', 'initialize']],
+      [{ kind: 'restart' }, ['quiesce', 'stop', 'image', 'storage', 'container', 'boot', 'ready', 'initialize']],
       [{ kind: 'stop' }, ['quiesce', 'stop']],
-      [{ kind: 'recreate' }, ['remove', 'image', 'storage', 'container', 'boot', 'initialize']],
+      [{ kind: 'recreate' }, ['remove', 'image', 'storage', 'container', 'boot', 'ready', 'initialize']],
     ] as const) {
       const op = await runtime.requestEnvironment({ ...input, requestId: `plan-${action.kind}`, action });
       expect(op.steps).toEqual(steps);

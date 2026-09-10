@@ -270,6 +270,7 @@ export const cs = {
       storage: 'Připravuji úložiště',
       container: 'Vytvářím kontejner',
       boot: 'Spouštím kontejner',
+      ready: 'Čekám na nastartování systému',
       initialize: 'Inicializuji projekt',
       quiesce: 'Dokončuji běžící práci',
       stop: 'Zastavuji kontejner',

@@ -59,6 +59,31 @@ describe('managed project API', () => {
     expect(seen).toEqual([{ project: { kind: 'managed', projectId: p.id }, accountUserId: member.id, action: { kind: 'delete' }, requestId: 'req-1', expectedGeneration: 4 }]);
     expect(projects.get(p.id)?.lifecycle).toBe('active');
   });
+  // A managed project IS its environment, so creating one starts it. The caller gets the operation that
+  // start produced and follows it in the same progress window every other lifecycle action uses.
+  it('starts the environment as part of creating a managed project', async () => {
+    const seen: Record<string, unknown>[] = [];
+    const sandbox = { requestEnvironment: (input: Record<string, unknown>) => { seen.push(input); return { id: 'op-start', requestId: 'project-create', status: 'pending' }; } };
+    const { app, users, admin, member, token } = setup(sandbox);
+    users.setProjectPermissions(admin.id, member.id, { canCreateProjects: true });
+    const response = await app.request('/projects', request(token, 'POST', { slug: 'work', executionKind: 'managed' }));
+    expect(response.status).toBe(201);
+    const created = await response.json() as { id: number; environmentOperationId?: string };
+    expect(created.environmentOperationId).toBe('op-start');
+    expect(seen).toEqual([{ project: { kind: 'managed', projectId: created.id }, accountUserId: member.id,
+      action: { kind: 'start' }, requestId: `project-create:${created.id}` }]);
+  });
+  // The project is already durable when the start is asked for: a provider that refuses costs the caller
+  // the progress window, never the project.
+  it('still creates the project when its environment start is refused', async () => {
+    const sandbox = { requestEnvironment: () => { throw new Error('provider down'); } };
+    const { app, users, projects, admin, member, token } = setup(sandbox);
+    users.setProjectPermissions(admin.id, member.id, { canCreateProjects: true });
+    const response = await app.request('/projects', request(token, 'POST', { slug: 'work', executionKind: 'managed' }));
+    expect(response.status).toBe(201);
+    expect(await response.json()).not.toHaveProperty('environmentOperationId');
+    expect(projects.list().some((p) => p.slug === 'work')).toBe(true);
+  });
   it('rejects a malformed idempotency key instead of forwarding it', async () => {
     const sandbox = { requestEnvironment: () => { throw new Error('must not be reached'); } };
     const { app, projects, member, token } = setup(sandbox); const p = projects.ensureDefault(member.id);

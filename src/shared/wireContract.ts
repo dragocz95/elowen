@@ -367,6 +367,9 @@ export interface ProjectView {
   executionKind?: 'host' | 'managed';
   creatorUserId?: number | null;
   lifecycle?: 'active' | 'deleting';
+  /** Only on the POST answer for a managed project, and only when the start that creation implies was
+   *  accepted: the lifecycle operation bringing the new environment up, for the caller to follow. */
+  environmentOperationId?: string;
 }
 
 /** One member of a project as served by `GET /projects/:id/users`. Bounded on purpose: it carries the

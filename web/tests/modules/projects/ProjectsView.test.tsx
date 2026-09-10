@@ -71,6 +71,31 @@ describe('ProjectsView', () => {
     await waitFor(() => expect(body).toEqual({ slug: 'analysis', notes: '', executionKind: 'managed' }));
   });
 
+  // Creating a managed project starts its environment, so the same progress window every other lifecycle
+  // action uses opens on the operation the creation answered with.
+  it('follows the environment start that creating a managed project implies', async () => {
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 4, is_admin: false, can_create_projects: true } })),
+      http.post('*/api/projects', () => HttpResponse.json({ id: 3, slug: 'analysis', path: '', notes: '', executionKind: 'managed', environmentOperationId: 'env_op_9' })),
+      http.get('*/api/plugins/sandbox/api/environments/operation', () => HttpResponse.json({
+        id: 'env_op_9', requestId: 'project-create:3', projectId: 3, accountUserId: 4, generation: 1,
+        action: { kind: 'start' }, status: 'running', error: null,
+        steps: ['image', 'storage', 'container', 'boot', 'ready', 'initialize'], stepIndex: 3, stepTotal: 6,
+        stepLabel: 'boot', percent: 65, logTail: [],
+      })),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+    fireEvent.click(await screen.findByRole('button', { name: 'New project' }));
+    const dialog = within(screen.getByRole('dialog', { name: 'New project' }));
+    fireEvent.change(dialog.getByLabelText(/Slug/), { target: { value: 'analysis' } });
+    fireEvent.click(dialog.getByRole('button', { name: 'Create' }));
+
+    expect(await screen.findByText('Starting the container')).toBeInTheDocument();
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '65');
+    expect(screen.getByText('Step 4 of 6')).toBeInTheDocument();
+  });
+
   it('offers equal managed-project editing rights without host path controls', async () => {
     server.use(
       http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 4, is_admin: false } })),
