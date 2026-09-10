@@ -41,7 +41,7 @@ import { LiveSessionSpawner } from './service/spawner.js';
 import { ConversationLifecycle } from './service/lifecycle.js';
 import { recordSessionEvent, recordWorkflowFinishMarker, scheduleReasoningMarker } from './service/sessionEvents.js';
 import { moveSessionWorkDir, switchableProjects, effectiveTurnWorkDir, type SwitchableProject } from './service/workDir.js';
-import type { ProjectExecutionRef } from '../shared/projectExecution.js';
+import { sameProjectExecution, type ProjectExecutionRef } from '../shared/projectExecution.js';
 import { runWithContributionUser } from '../plugins/policyContext.js';
 import { BrainTurnRunner, subagentResultReminder } from './service/turnRunner.js';
 import type { BoundClientRequest, TurnRequest } from './service/turnRequest.js';
@@ -336,6 +336,7 @@ export class BrainService {
       store: d.store, sessions: this.sessions, attachments: this.attachments,
       elicitation: this.elicitation, goals: this.goals, cards: this.cards, artifacts: this.artifacts,
       spawn: (o) => this.spawner.spawn(o),
+      get projects() { return d.projects; },
       get policy() { return d.policy; },
       get userSettings() { return d.userSettings; },
       get projectModelPreference() { return d.projectModelPreference; },
@@ -1613,29 +1614,40 @@ export class BrainService {
     if (!policy) throw new Error('brain not started');
     const effective = effectiveTurnWorkDir({ policy, baseWorkDir: live?.workDir ?? this.d.store.getSession(sessionId)?.work_dir ?? undefined, accountUserId: userId, sessionId, projects: this.d.projects, sandbox, projectRef: ref, hostAuthorized: this.d.users.get(userId)?.is_admin === true });
     if (!effective.workDir) throw new Error('execution target has no working directory');
-    this.d.store.setProjectExecution(sessionId, userId, ref);
+    // The resolver decides what a ref MEANS, and an explicit selection may not disagree with it. A
+    // managed ref naming a host project — or one that no longer exists — resolves to neither, and
+    // storing the caller's ref anyway left the conversation permanently out of step with its own row.
+    if (!effective.projectRef || !sameProjectExecution(effective.projectRef, ref)) throw new Error('execution target is not available');
+    this.d.store.setProjectExecution(sessionId, userId, effective.projectRef);
+    // A host target keeps a directory on this machine, and that is the conversation's durable home —
+    // what a cold respawn restores. Every other move writes it (moveSessionWorkDir); a switch that only
+    // moved the live record silently reverted on the next spawn. A managed project has no host home.
+    if (effective.projectRef.kind !== 'managed') this.d.store.setWorkDir(sessionId, effective.workDir);
     if (live) {
       live.workDir = effective.workDir;
-      // A managed project's directory is `/workspace` inside its own container — an implementation
-      // detail that names nothing a person recognizes. The marker carries the project instead, the same
-      // label the channel project switch passes, and every surface renders the name it already knows.
-      const managed = effective.projectRef?.kind === 'managed' ? effective.projectRef : undefined;
+      // A managed project's directory is the project's own mount inside its container — an
+      // implementation detail that names nothing a person recognizes. The marker carries the project
+      // instead, the same label the channel project switch passes, and every surface renders the name
+      // it already knows.
+      const managed = effective.projectRef.kind === 'managed' ? effective.projectRef : undefined;
       const slug = managed ? this.d.projects?.list().find((p) => p.id === managed.projectId)?.slug : undefined;
       recordSessionEvent(this.d.store, sessionId, live, 'cwd', slug ?? effective.workDir);
     }
-    return { projectRef: ref, workDir: effective.workDir, ...(await this.ensureSelectedEnvironment(sessionId, userId, effective.projectRef)) };
+    return { projectRef: effective.projectRef, workDir: effective.workDir, ...(await this.ensureSelectedEnvironment(userId, effective.projectRef)) };
   }
 
   /** Record the intent to have the selected environment running, and hand back the operation that will
    *  do it. It ENQUEUES and returns: the container work happens in daemon reconciliation, so the switch
    *  answers in a database round trip whether the environment is up, cold or still being built, and the
    *  caller follows the operation instead of holding a request open across a fifteen-minute image build
-   *  or losing it to a restart. The key is derived from the conversation and the project, so a retried
-   *  or duplicated switch returns the SAME operation rather than queueing a second one.
+   *  or losing it to a restart. No idempotency key is sent: the provider already rejoins a start that is
+   *  still live, while a key stable for the life of a conversation-project pair kept answering with the
+   *  first start that ever ran — after a manual stop the switch reported that historical success,
+   *  queued nothing, and the next turn died on a stopped environment.
    *
    *  A refused request is not a failed switch. The selection is already durable and the environment
    *  surface reports its own state; the operation is the optimisation, not the decision. */
-  private async ensureSelectedEnvironment(sessionId: string, userId: number, projectRef?: ProjectExecutionRef): Promise<{ operationId?: string }> {
+  private async ensureSelectedEnvironment(userId: number, projectRef?: ProjectExecutionRef): Promise<{ operationId?: string }> {
     if (projectRef?.kind !== 'managed') return {};
     const sandbox = this.d.plugins?.peek()?.control('sandbox');
     if (typeof sandbox?.requestEnvironment !== 'function' || typeof sandbox.environmentFor !== 'function') return {};
@@ -1643,8 +1655,7 @@ export class BrainService {
     try {
       const environment = await sandbox.environmentFor({ project, accountUserId: userId });
       if (environment.state === 'running') return {};
-      const operation = await sandbox.requestEnvironment({ project, accountUserId: userId, action: { kind: 'start' },
-        requestId: `chat-switch:${sessionId}:${projectRef.projectId}` });
+      const operation = await sandbox.requestEnvironment({ project, accountUserId: userId, action: { kind: 'start' } });
       return { operationId: operation.id };
     } catch (error) {
       logger('brain').warn(`environment start was not requested for the selected project ${projectRef.projectId}: ${error instanceof Error ? error.message : String(error)}`);

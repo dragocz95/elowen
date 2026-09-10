@@ -1,10 +1,18 @@
 import { z } from 'zod';
 import { isCreatableDirectoryName } from '../../integrations/projectFiles.js';
+import { isReservedProjectSlug } from '../../shared/projectExecution.js';
 
-/** Register a project. slug + path are required; notes is the optional Pilot brief. */
+/** Register a project. slug + path are required; notes is the optional Pilot brief.
+ *  A managed project is mounted in its container under its own slug, so a slug that names a directory
+ *  of the base image is refused here: the project would be created and every start would fail on the
+ *  mount target, with no way to rename it. */
 export const createProjectSchema = z.union([
   z.object({ slug: z.string().min(1), path: z.string().min(1), notes: z.string().optional(), executionKind: z.literal('host').optional() }),
-  z.object({ slug: z.string().trim().min(1).max(128), notes: z.string().optional(), executionKind: z.literal('managed') }).strict(),
+  z.object({
+    slug: z.string().trim().min(1).max(128).refine((slug) => !isReservedProjectSlug(slug), 'slug is reserved by the project environment'),
+    notes: z.string().optional(),
+    executionKind: z.literal('managed'),
+  }).strict(),
 ]);
 
 /** Edit a project. All fields optional; trimming and icon validation stay in the handler.

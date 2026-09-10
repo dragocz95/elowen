@@ -31,6 +31,9 @@ describe('managed project API', () => {
     expect(response.status).toBe(201);
     expect(await response.json()).toMatchObject({ executionKind: 'managed', path: '', creatorUserId: member.id });
     expect((await app.request('/projects', request(token, 'POST', { slug: 'escape', executionKind: 'managed', path: '/etc' }))).status).toBe(400);
+    // A slug that would mount over a base-image directory is refused at creation: the project could be
+    // created, could never start, and its slug cannot be patched afterwards.
+    expect((await app.request('/projects', request(token, 'POST', { slug: 'etc', executionKind: 'managed' }))).status).toBe(400);
   });
   it('lets equal members manage a project while invitations check their own grant', async () => {
     const { app, users, projects, userProjects, admin, member, peer, token, peerToken } = setup();

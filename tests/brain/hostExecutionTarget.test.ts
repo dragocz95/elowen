@@ -177,15 +177,40 @@ describe('selecting a managed project does not wait for its container', () => {
     expect(h.sandbox.requestEnvironment).toHaveBeenCalledWith(expect.objectContaining({ action: { kind: 'start' } }));
   });
 
-  it('uses one idempotency key per conversation and project, so a repeated switch rejoins its operation', async () => {
+  // A key that was stable for the life of a conversation-project pair made the provider hand back the
+  // FIRST start it ever ran: after a manual stop, switching back returned that historical success,
+  // queued nothing, and the next turn died on `environment_stopped`. The switch therefore carries no
+  // key and leans on the provider's own dedupe of a live operation.
+  it('starts a stopped environment again instead of rejoining a start that already finished', async () => {
+    const h = await managedFixture();
+    // The provider's rule, as `plugins/sandbox/lib/environmentRuntime.mjs:307-321` implements it: a
+    // stored key answers with its operation whatever its status, while a keyless request rejoins only
+    // an operation that is still live.
+    const operations: { id: string; requestId?: string; status: string }[] = [];
+    h.sandbox.requestEnvironment.mockImplementation(({ requestId }: { requestId?: string }) => {
+      const prior = requestId ? operations.find((op) => op.requestId === requestId) : operations.find((op) => op.status === 'pending');
+      if (prior) return prior;
+      const created = { id: `env_op_${operations.length + 1}`, ...(requestId ? { requestId } : {}), status: 'pending' };
+      operations.push(created);
+      return created;
+    });
+    h.sandbox.environmentFor.mockResolvedValue({ state: 'unprovisioned' });
+    const first = await h.service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: h.project.id }, h.sessionId);
+    operations[0]!.status = 'succeeded';
+    // …the environment then ran, the owner stopped it by hand, and the same switch is made again.
+    h.sandbox.environmentFor.mockResolvedValue({ state: 'stopped' });
+    const second = await h.service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: h.project.id }, h.sessionId);
+    expect(second.operationId).not.toBe(first.operationId);
+    expect(operations).toHaveLength(2);
+  });
+
+  it('rejoins the start that is still running rather than queueing a second one', async () => {
     const h = await managedFixture();
     h.sandbox.environmentFor.mockResolvedValue({ state: 'stopped' });
     h.sandbox.requestEnvironment.mockResolvedValue({ id: 'env_op_1', status: 'pending' });
-    await h.service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: h.project.id }, h.sessionId);
-    await h.service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: h.project.id }, h.sessionId);
-    const keys = h.sandbox.requestEnvironment.mock.calls.map(([call]) => (call as { requestId: string }).requestId);
-    expect(new Set(keys).size).toBe(1);
-    expect(keys[0]).toContain(String(h.project.id));
+    const first = await h.service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: h.project.id }, h.sessionId);
+    const second = await h.service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: h.project.id }, h.sessionId);
+    expect([first.operationId, second.operationId]).toEqual(['env_op_1', 'env_op_1']);
   });
 
   it('asks for nothing when the environment is already running', async () => {
@@ -204,6 +229,37 @@ describe('selecting a managed project does not wait for its container', () => {
     const result = await h.service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: h.project.id }, h.sessionId);
     expect(result.operationId).toBeUndefined();
     expect(result.projectRef).toEqual({ kind: 'managed', projectId: h.project.id });
+  });
+});
+
+describe('an execution selection the resolver does not accept', () => {
+  // `POST /brain/execution` accepts any well-formed ref, and the resolver answers a managed ref that
+  // names a host project by running the conversation on the host. Storing the caller's ref anyway left
+  // the row claiming a project the conversation would never execute in.
+  it('refuses a managed ref that names a host project instead of persisting it', async () => {
+    const h = serviceFixture();
+    h.d.runtime = await inMemoryModelRuntime() as never;
+    const root = mkdtempSync(join(tmpdir(), 'host-target-')); roots.push(root);
+    const host = h.projects.create({ slug: 'legacy', path: root });
+    const service = new BrainService(h.d as never);
+    const { sessionId } = await service.start(h.owner.id);
+    await expect(service.selectProjectExecution(h.owner.id, { kind: 'managed', projectId: host.id }, sessionId))
+      .rejects.toThrow(/not available/);
+    expect(h.store.getProjectExecution(sessionId)).toBeUndefined();
+  });
+
+  // Every other move persists the conversation's durable home; a host project switch set only the live
+  // cwd, so the next cold respawn restored the directory the conversation had left.
+  it('writes the durable home when the conversation moves into a host project', async () => {
+    const h = serviceFixture();
+    h.d.runtime = await inMemoryModelRuntime() as never;
+    const root = mkdtempSync(join(tmpdir(), 'host-target-')); roots.push(root);
+    const host = h.projects.create({ slug: 'legacy', path: root });
+    const service = new BrainService(h.d as never);
+    const { sessionId } = await service.start(h.owner.id);
+    const result = await service.selectProjectExecution(h.owner.id, { kind: 'host', projectId: host.id }, sessionId);
+    expect(result.workDir).toBe(root);
+    expect(h.store.getSession(sessionId)?.work_dir).toBe(root);
   });
 });
 

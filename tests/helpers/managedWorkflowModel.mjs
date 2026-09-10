@@ -22,9 +22,12 @@ import { createServer } from 'node:http';
 /** The host-injected role prompt every delegated child carries. */
 export const SUBAGENT_PROMPT = 'You are a focused sub-agent';
 
-/** Guest-only paths. `/workspace` is the managed project's own tree; neither path exists on the host. */
-export const GUEST_MARKER_PATH = '/workspace/scope-marker.txt';
-export const GUEST_NODES_PATH = '/workspace/wf.json';
+/** The slug of the managed project this suite creates. A project is mounted in its container under its
+ *  own name, so the slug IS the guest root and the paths below are absolute inside that guest. */
+export const GUEST_PROJECT_SLUG = 'wf-managed';
+/** Guest-only paths inside the project's own tree; neither path exists on the host. */
+export const GUEST_MARKER_PATH = `/${GUEST_PROJECT_SLUG}/scope-marker.txt`;
+export const GUEST_NODES_PATH = `/${GUEST_PROJECT_SLUG}/wf.json`;
 
 /** The contents of the guest-only file. A node that reports this string read the project's guest. */
 export const GUEST_MARKER = 'MANAGED-GUEST-MARKER-4f1c9a';

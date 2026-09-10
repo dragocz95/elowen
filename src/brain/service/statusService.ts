@@ -24,7 +24,7 @@ import type { PermissionApprovalService } from './permissionApproval.js';
 import type { BrainStreamSnapshot } from '../session/liveEventReplay.js';
 import { abortSessionWork } from '../session/abortSessionWork.js';
 import { gitBranch } from './gitBranch.js';
-import { clientDir, effectiveTurnWorkDir, turnWorkDir } from './workDir.js';
+import { clientDir, effectiveTurnWorkDir, liveManagedProject, turnWorkDir } from './workDir.js';
 import { realPathWithin } from '../../plugins/pathGuard.js';
 import { recoverablePartialTurnRows } from '../persistence.js';
 import type { KnownControls } from '../../plugins/api.js';
@@ -483,15 +483,20 @@ export class BrainStatusService {
     // from the stored stamp: a directory stamped while the user still had the project must stop being
     // reported the moment that access is revoked.
     const policy = this.d.policy?.(userId) ?? { allowedProjectIds: 'all' as const, allowedPaths: () => [] };
-    const projectRef = activeId ? this.d.store.getProjectExecution(activeId) : undefined;
-    const reported = projectRef?.kind === 'managed'
-      ? managedGuestRoot(this.d.projects?.get(projectRef.projectId)?.slug, projectRef.projectId)
+    const stored = activeId ? this.d.store.getProjectExecution(activeId) : undefined;
+    // The SAME question a turn asks: does this ref still name a live managed project? A conversation
+    // whose project was deleted keeps the ref, and its turns run on the host — reporting the container
+    // directory for one named a directory no turn would use, and kept the dead ref on every surface.
+    const managed = liveManagedProject(this.d.projects, stored);
+    const projectRef = stored?.kind === 'managed' && !managed ? undefined : stored;
+    const reported = managed
+      ? managedGuestRoot(managed.slug, managed.id)
       : clientDir(policy, b?.workDir ?? row?.work_dir ?? undefined) ?? null;
     // Where the next turn actually runs — the resolver a turn uses, fed the same base directory it would
     // compute, so a bound Sandbox workspace shows here exactly when the turn would start inside it. The
     // account is the contribution owner of the live session, else the caller (the noteWorkDir rule).
     // Resolve mutable selection fresh: a single post-turn refresh must observe a release immediately.
-    const effective = activeId && projectRef?.kind !== 'managed' ? effectiveTurnWorkDir({
+    const effective = activeId && !managed ? effectiveTurnWorkDir({
       policy,
       baseWorkDir: turnWorkDir(policy, reported ?? undefined, this.d.projectPath),
       accountUserId: b?.contributionUserId ?? userId,
@@ -544,7 +549,7 @@ export class BrainStatusService {
       // drives the CLI's warning-toned indicator.
       yolo: this.d.permissions.effectiveYolo(userId, b),
       ...(projectRef ? { projectRef } : {}),
-      project: { cwd, branch: cwd && projectRef?.kind !== 'managed' ? gitBranch(cwd, policy) : null, workspace },
+      project: { cwd, branch: cwd && !managed ? gitBranch(cwd, policy) : null, workspace },
     };
   }
 

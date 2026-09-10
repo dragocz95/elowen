@@ -53,8 +53,8 @@ describe('ProjectPicker', () => {
   });
 
   // A conversation may still sit in a host target with no project behind it. The picker shows no host
-  // mode for that either — no label, no shield, no red — only the neutral wording any nameless target
-  // gets. Presentation only: the execution state is left exactly as the daemon reported it.
+  // mode for that either — no label, no shield, no red — and names the state for what it is: a target
+  // that WAS chosen and has no project. Presentation only: the execution state is left as reported.
   it('shows no host mode for a nameless host target a conversation already sits in', async () => {
     chat.activeSessionId = 'brain-1-a'; chat.telemetry.projectRef = { kind: 'host' };
     let posted = 0;
@@ -65,7 +65,7 @@ describe('ProjectPicker', () => {
     );
     mount();
 
-    const trigger = await screen.findByRole('button', { name: 'Execution target not selected' });
+    const trigger = await screen.findByRole('button', { name: 'No project' });
     await waitFor(() => expect(trigger).toBeEnabled());
     // None of the ways host mode used to announce itself here.
     expect(screen.queryByText('HOST MODE')).toBeNull();

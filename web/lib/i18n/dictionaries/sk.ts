@@ -1658,6 +1658,7 @@ export const sk = {
     modelPickerError: 'Modely sa nepodarilo načítať',
     modelPickerRetry: 'Skúsiť znovu',
     projectPickerFailed: 'Pracovný adresár sa nepodarilo zmeniť',
+    projectPickerHost: 'Bez projektu',
     newConversationProject: {
       title: 'Kde má táto konverzácia bežať?',
       description: 'Vyberte projekt, v ktorom bude konverzácia pracovať. Neskôr ho možno zmeniť v záhlaví chatu.',

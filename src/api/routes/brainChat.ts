@@ -269,8 +269,7 @@ export function registerBrainChatRoutes(app: ElowenApp, route: BrainRouteContext
     const { target, session } = await parseBody(c, brainExecutionSchema);
     // Non-blocking by construction: a managed target's environment is ENQUEUED, never awaited, so the
     // response carries the operation to follow instead of holding the request open while a container is
-    // built. The idempotency key is the conversation and the project, so a retry after a lost response
-    // rejoins the same operation rather than starting a second one.
+    // built. A retry rejoins the operation that is still live rather than starting a second one.
     try { return c.json(await brain.selectProjectExecution(c.get('user').id, target, session)); }
     catch (error) { return c.json({ error: error instanceof Error ? error.message : 'execution selection failed' }, 409); }
   }));

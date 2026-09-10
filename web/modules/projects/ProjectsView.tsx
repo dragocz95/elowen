@@ -8,7 +8,6 @@ import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTr
 import { useProjects, useProjectSummaries, useProjectGit, usePluginPresent, useMe } from '../../lib/queries';
 import { useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
 import type { Project } from '../../lib/types';
-import { MANAGED_PROJECT_ROOT } from '../../lib/types';
 import { useToast } from '../../components/ui/Toast';
 import { Badge } from '../../components/ui/Badge';
 import { Button } from '../../components/ui/Button';
@@ -206,7 +205,9 @@ export function ProjectsView() {
       ...(action.tone === 'danger' ? { tone: 'danger' as const } : {}),
       onSelect: action.onSelect,
     }))] : []),
-    [{ label: t.projects.ctxCopyPath, icon: Copy, onSelect: () => { void copyText(p.executionKind === 'managed' ? MANAGED_PROJECT_ROOT : p.path).then((ok) => { if (ok) toast(t.projects.ctxPathCopied); else toast(t.projects.copyFailed, 'error'); }); } }],
+    // A managed project has no host path: what it copies is the directory it is mounted at inside its own
+    // environment, which the daemon serves rather than the client deriving it from the slug.
+    [{ label: t.projects.ctxCopyPath, icon: Copy, onSelect: () => { void copyText(p.guestRoot ?? p.path).then((ok) => { if (ok) toast(t.projects.ctxPathCopied); else toast(t.projects.copyFailed, 'error'); }); } }],
     // Removal lives here for EVERY project. A managed one used to be deleted from a button of its own
     // inside the environment panel, so the same decision sat in two unrelated places depending on where
     // the project happened to run. The confirmation below still tells a managed project the truth about

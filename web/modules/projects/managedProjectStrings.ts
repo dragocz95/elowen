@@ -16,7 +16,6 @@ const en = {
   inviteDenied: 'Inviting members requires an administrator-granted sharing permission.',
   deleting: 'Project deletion requested. Cleanup is pending.',
   deleteWarning: 'Delete this project and its environment, including files, installed packages, HOME and data? Published sites must be transferred or deleted separately. Private conversation history is preserved.',
-  unknownTarget: 'Execution target not selected',
 };
 const cs: typeof en = {
   gitEnvironmentStopped: 'Podrobnosti o repozitáři budou dostupné, jakmile poběží prostředí projektu.', managed: 'Spravované prostředí', host: 'Adresář hostitele', executionKind: 'Cíl spouštění',
@@ -34,7 +33,6 @@ const cs: typeof en = {
   inviteDenied: 'Pozvání členů vyžaduje oprávnění ke sdílení udělené správcem.',
   deleting: 'Bylo vyžádáno smazání projektu. Úklid čeká na dokončení.',
   deleteWarning: 'Smazat projekt a jeho prostředí včetně souborů, nainstalovaných balíčků, HOME a dat? Publikované weby je nutné samostatně převést nebo smazat. Soukromá historie konverzací zůstane zachována.',
-  unknownTarget: 'Cíl spouštění není vybrán',
 };
 const sk: typeof en = {
   gitEnvironmentStopped: 'Podrobnosti o repozitári budú dostupné, hneď ako pobeží prostredie projektu.', managed: 'Spravované prostredie', host: 'Adresár hostiteľa', executionKind: 'Cieľ spúšťania',
@@ -52,6 +50,5 @@ const sk: typeof en = {
   inviteDenied: 'Pozvanie členov vyžaduje oprávnenie na zdieľanie udelené správcom.',
   deleting: 'Bolo vyžiadané vymazanie projektu. Čistenie čaká na dokončenie.',
   deleteWarning: 'Vymazať projekt a jeho prostredie vrátane súborov, nainštalovaných balíkov, HOME a dát? Publikované weby je nutné samostatne previesť alebo vymazať. Súkromná história konverzácií zostane zachovaná.',
-  unknownTarget: 'Cieľ spúšťania nie je vybraný',
 };
 export const managedProjectStrings: Record<Locale, typeof en> = { en, cs, sk };
