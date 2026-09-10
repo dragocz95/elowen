@@ -915,7 +915,7 @@ function sanitizePlugins(input: unknown, fallback: Stored['plugins']): Stored['p
   const raw = input as Partial<Stored['plugins']>;
   const keep = (name: string): boolean => !RETIRED_DOMAIN_PLUGINS.has(name);
   const config = raw.config && typeof raw.config === 'object' && !Array.isArray(raw.config)
-    ? canonicalizePluginExecConfig(Object.fromEntries(Object.entries(raw.config).filter(([name]) => keep(name))) as Record<string, Record<string, unknown>>)
+    ? canonicalizePluginExecConfig(Object.fromEntries(Object.entries(raw.config).filter(([name]) => keep(name))))
     : {};
   return {
     enabled: (Array.isArray(raw.enabled) ? sanitizeStringList(raw.enabled) : []).filter(keep),

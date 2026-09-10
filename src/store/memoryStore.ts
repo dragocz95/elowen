@@ -563,7 +563,7 @@ export class MemoryStore {
     return rows
       .filter((r) => r.embedded_hash === hashBody(r.body)) // drop stale vectors — body edited since embed
       .map(({ vector, embedded_hash, ...memory }) => ({
-        memory: memory as MemoryRow,
+        memory: memory,
         // Unpack the little-endian BLOB. Slice to a fresh ArrayBuffer so the view isn't tied to the
         // BLOB's byteOffset within a shared buffer (better-sqlite3 hands back a Node Buffer).
         vector: new Float32Array(vector.buffer.slice(vector.byteOffset, vector.byteOffset + vector.byteLength)),
@@ -620,7 +620,7 @@ export class MemoryStore {
         if (active?.dimensions != null && r.embedded_dims !== active.dimensions) return true; // dimensions changed
         return false;
       })
-      .map(({ embedded_hash, embedded_model, embedded_dims, ...m }) => m as MemoryRow);
+      .map(({ embedded_hash, embedded_model, embedded_dims, ...m }) => m);
   }
 
   /** Audit feed for a user, newest first. */

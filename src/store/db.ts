@@ -794,7 +794,7 @@ function rewriteStoredExecs(db: Db, canonical: (value: unknown) => unknown): voi
         root.allowedExecs = rewriteList(root.allowedExecs);
         root.hiddenPresets = rewriteList(root.hiddenPresets);
         if (Array.isArray(root.customModels)) {
-          for (const item of root.customModels as Record<string, unknown>[]) if (item && typeof item === 'object') item.exec = canonical(item.exec);
+          for (const item of root.customModels as (Record<string, unknown> | null)[]) if (item && typeof item === 'object') item.exec = canonical(item.exec);
         }
         if (root.modelNotes && typeof root.modelNotes === 'object' && !Array.isArray(root.modelNotes)) {
           root.modelNotes = Object.fromEntries(Object.entries(root.modelNotes as Record<string, unknown>).map(([k, v]) => [canonical(k) as string, v]));
@@ -868,7 +868,7 @@ function renameStoredToolNames(db: Db, rename: (name: string) => string): void {
       }
       const rules = (blob as { permissionBoundary?: { rules?: unknown } }).permissionBoundary?.rules;
       if (Array.isArray(rules)) {
-        for (const r of rules as { scope?: unknown; pattern?: unknown }[]) {
+        for (const r of rules as ({ scope?: unknown; pattern?: unknown } | null)[]) {
           if (r?.scope === 'tools' && typeof r.pattern === 'string') r.pattern = rename(r.pattern);
         }
       }

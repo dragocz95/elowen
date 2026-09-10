@@ -419,7 +419,7 @@ export class BrainStore {
     detail?: string,
     automation?: TurnAutomation,
   ): boolean {
-    if (!sessionId || !turnId || (surface !== 'web' && surface !== 'cli')) return false;
+    if (!sessionId || !turnId) return false;
     const bootId = this.delegation.currentBootId() || null;
     return this.db.prepare(
       `UPDATE brain_sessions
@@ -434,7 +434,7 @@ export class BrainStore {
   /** Settle the current turn exactly once. Clearing the turn and boot ids makes any later duplicate or stale
    *  settlement a no-op, while the terminal state and sequence remain durable until the next accepted turn. */
   settleSessionActivity(sessionId: string, turnId: string, surface: ConversationActivitySurface, state: 'done' | 'failed', detail?: string): boolean {
-    if (!sessionId || !turnId || (surface !== 'web' && surface !== 'cli') || (state !== 'done' && state !== 'failed')) return false;
+    if (!sessionId || !turnId) return false;
     return this.db.prepare(
       `UPDATE brain_sessions
           SET activity_state = ?, activity_seq = activity_seq + 1,
@@ -447,7 +447,7 @@ export class BrainStore {
   /** Acknowledge a rendered activity sequence. CLI reads advance an existing web baseline but never create
    * participation; web reads also establish the baseline on first use. */
   ackSessionActivity(sessionId: string, readSeq?: number, surface: ConversationActivitySurface = 'web'): boolean {
-    if (!sessionId || (surface !== 'web' && surface !== 'cli')) return false;
+    if (!sessionId) return false;
     const requested = Number.isFinite(readSeq) ? Math.max(0, Math.floor(readSeq!)) : null;
     const row = this.db.prepare(
       'SELECT activity_seq, activity_read_seq, web_participated_at FROM brain_sessions WHERE id = ?',
@@ -793,7 +793,7 @@ export class BrainStore {
   /** Token totals across every account — the cross-account counterpart of {@link tokenTotals}. */
   tokenTotalsAll(): Record<string, number> {
     const out: Record<string, number> = {};
-    for (const row of this.tokenTotalRows()) out[row.id] = row.tokens ?? 0;
+    for (const row of this.tokenTotalRows()) out[row.id] = row.tokens;
     return out;
   }
 
@@ -935,7 +935,7 @@ export class BrainStore {
    * reads slightly stale (acceptable). */
   tokenTotals(userId: number): Record<string, number> {
     const out: Record<string, number> = {};
-    for (const row of this.tokenTotalRows(userId)) out[row.id] = row.tokens ?? 0;
+    for (const row of this.tokenTotalRows(userId)) out[row.id] = row.tokens;
     return out;
   }
 
@@ -1536,7 +1536,7 @@ export class BrainStore {
     const cards: BrainCard[] = [];
     for (const row of rows) {
       try {
-        const card = JSON.parse(row.payload) as BrainCard;
+        const card = JSON.parse(row.payload) as BrainCard | null;
         if (card && typeof card.id === 'string' && card.id) cards.push(card);
       } catch { /* unparseable row — drop this card, keep the rest of the panel */ }
     }
@@ -1625,8 +1625,10 @@ export class BrainStore {
     row: { tool_call_id: string; token_hash: string; payload: string; expires_at: number },
   ): StoredInlineArtifact | undefined {
     try {
-      const artifact = JSON.parse(row.payload) as BrainInlineArtifact;
-      if (!artifact || artifact.status !== 'open' || artifact.id !== artifactId || artifact.plugin !== plugin
+      // A CLOSED artifact is deleted from durable storage rather than rewritten, so a row that exists is
+      // an open one; what still has to be proven is that it belongs to this session, plugin and call.
+      const artifact = JSON.parse(row.payload) as BrainInlineArtifact | null;
+      if (!artifact || artifact.id !== artifactId || artifact.plugin !== plugin
         || artifact.sessionId !== sessionId || artifact.toolCallId !== row.tool_call_id) return undefined;
       return { artifact, tokenHash: row.token_hash, expiresAtMs: row.expires_at };
     } catch { return undefined; }
@@ -1868,7 +1870,7 @@ export class BrainStore {
     const out: string[] = [];
     for (const r of rows) {
       try {
-        const parsed = JSON.parse(r.content) as { isMeta?: boolean };
+        const parsed = JSON.parse(r.content) as { isMeta?: boolean } | null;
         if (parsed && typeof parsed === 'object' && parsed.isMeta) continue;
         const text = extractText(parsed).trim();
         if (text) out.push(text);
@@ -2306,7 +2308,9 @@ export class BrainStore {
     // Runtime column whitelist — the keys are interpolated into SQL, so never trust the object's shape
     // (a route could forward a parsed body here); only these columns may be written.
     const ALLOWED = new Set(['status', 'subgoals', 'turns_used', 'last_verdict', 'last_evidence', 'paused_reason']);
-    const entries = Object.entries(patch).filter(([k, v]) => v !== undefined && ALLOWED.has(k));
+    // Typed as `unknown` on purpose: the declared Partial promises the values are absent rather than
+    // present-and-undefined, and a forwarded request body keeps no such promise.
+    const entries = (Object.entries(patch) as [string, unknown][]).filter(([k, v]) => v !== undefined && ALLOWED.has(k));
     if (entries.length === 0) return this.getGoal(sessionId);
     const sets = entries.map(([k]) => `${k} = @${k}`).join(', ');
     this.db.prepare(`UPDATE brain_goals SET ${sets}, updated_at = datetime('now') WHERE session_id = @session_id`)
@@ -2379,7 +2383,7 @@ export class BrainStore {
       const content = (parsed as { content?: unknown }).content;
       // Last block wins within a row: a tool that returned several images ends on its newest.
       for (const part of Array.isArray(content) ? [...content].reverse() : []) {
-        const block = part as { type?: unknown; ref?: unknown };
+        const block = part as { type?: unknown; ref?: unknown } | null;
         if (block?.type !== 'image') continue;
         // Validated here, not just where it is read back: a plugin or MCP tool can put whatever it likes
         // in a `ref`, and this value goes on to be served and uploaded by name.

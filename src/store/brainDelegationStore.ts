@@ -495,7 +495,6 @@ export class BrainDelegationStore {
     if (typeof update.sessionId !== 'string' || !update.sessionId) return false;
     const state = normalizeSubagentState(update);
     if (!state) return false;
-    if (durableStatus !== undefined && durableStatus !== 'running' && durableStatus !== 'done' && durableStatus !== 'error') return false;
     return withWriteLock(this.db, () => {
       const relation = this.db.prepare(
         `SELECT p.user_id AS parent_user, c.user_id AS child_user, c.parent_session_id AS linked_parent
