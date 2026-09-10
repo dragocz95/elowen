@@ -79,6 +79,38 @@ function memoryProvider(initial: Record<string, string | Buffer> = {}) {
       data.set(op.path, Buffer.from(op.base64, 'base64'));
       return { kind: 'write', entry: stat(op.path)! };
     }
+    // The guest walks the whole tree in ONE operation, under its own bounds, and reports what the
+    // requested path was so the caller needs no existence stat. Modelled here the same way: sorted,
+    // regular files only, never descending into a skipped directory, and truncating explicitly.
+    if (op.kind === 'walk') {
+      const requested = op.path;
+      const rootKind = data.has(requested) ? 'file'
+        : directories.has(requested) || [...data.keys()].some(name => name.startsWith(`${requested}/`)) ? 'directory'
+          : null;
+      if (rootKind === null) return { kind: 'walk', root: requested, rootKind, entries: [], truncated: false };
+      const root = rootKind === 'directory' ? requested : posix.dirname(requested);
+      const skipped = new Set(op.skip ?? []);
+      const depthOf = (name: string) => posix.relative(root, name).split('/').length - 1;
+      const maxDepth = op.maxDepth ?? 64;
+      // Directories are entries of their own, so an empty one is visible; every entry the traversal looks
+      // at counts against `limit`, which is what makes a bounded walk report itself as incomplete.
+      const nested = new Set<string>();
+      for (const name of data.keys()) {
+        if (!name.startsWith(root === '/' ? '/' : `${root}/`)) continue;
+        const parts = posix.relative(root, name).split('/');
+        for (let index = 1; index < parts.length; index += 1) nested.add(posix.join(root, ...parts.slice(0, index)));
+      }
+      const all = [...[...data.keys()].filter(name => name.startsWith(root === '/' ? '/' : `${root}/`)), ...nested].sort();
+      const kept = all.filter(name => {
+        const parts = posix.relative(root, name).split('/');
+        return !parts.slice(0, -1).some(part => skipped.has(part)) && depthOf(name) <= maxDepth;
+      });
+      const entries = kept.slice(0, op.limit).map(name => ({
+        path: name, kind: (nested.has(name) ? 'directory' : 'file') as 'file' | 'directory',
+        size: data.get(name)?.length ?? 0, mtime: 1767225600000,
+      }));
+      return { kind: 'walk', root, rootKind, entries, truncated: kept.length > op.limit };
+    }
     if (op.kind === 'mkdir') {
       directories.add(op.path);
       return { kind: 'mkdir', entry: { path: op.path, kind: 'directory', size: 0, modifiedAt: '2026-01-01T00:00:00Z', version: 'directory' } };
@@ -231,17 +263,94 @@ describe('managed builtin consumer routing', () => {
 
   // A traversal never writes against what it saw, and the version it used to ask for made the guest read
   // and hash the full contents of every file it walked past.
-  it('walks for Glob without asking the guest to hash the files it passes', async () => {
-    const provider = memoryProvider({ '/workspace/a.ts': 'x', '/workspace/b.ts': 'y', '/workspace/c.md': 'z' });
+  // The traversal happens inside the guest, so the whole of Glob is ONE crossing of the container
+  // boundary however deep the tree is. It used to be a stat for the root plus a listing per directory.
+  it('matches a managed Glob in a single guest operation', async () => {
+    const provider = memoryProvider({
+      '/workspace/a.ts': 'x', '/workspace/src/b.ts': 'y', '/workspace/src/deep/c.ts': 'z', '/workspace/d.md': 'w',
+    });
     const { run } = fixture(files, provider);
+    const result = await run('Glob', { pattern: '/workspace/**/*.ts' });
+    expect(result.content[0].text).toContain('a.ts');
+    expect(result.content[0].text).toContain('c.ts');
+
+    expect(provider.projectFiles.mock.calls.map(([call]) => call.operation.kind)).toEqual(['walk']);
+    // Names and modification times only: nothing walked past is read or hashed.
+    const [[{ operation }]] = provider.projectFiles.mock.calls;
+    expect(operation).toMatchObject({ kind: 'walk', path: '/workspace' });
+    expect(operation).not.toHaveProperty('metadata');
+  });
+
+  // The traversal reports directories and symlinks so a tree view can show them. A pattern match is about
+  // regular files, and that filtering happens on the host from the one answer already in hand.
+  it('matches only regular files even though the walk reports directories and links', async () => {
+    const provider = memoryProvider({ '/workspace/a.ts': 'x' });
+    const { run } = fixture(files, provider);
+    provider.projectFiles.mockResolvedValueOnce({
+      kind: 'walk', root: '/workspace', rootKind: 'directory', truncated: false,
+      entries: [
+        { path: '/workspace/a.ts', kind: 'file', size: 1, mtime: 1767225600000 },
+        { path: '/workspace/nested.ts', kind: 'directory', size: 0, mtime: 1767225600000 },
+        { path: '/workspace/link.ts', kind: 'symlink', size: 12, mtime: 1767225600000 },
+      ],
+    } as never);
+
     const result = await run('Glob', { pattern: '/workspace/*.ts' });
     expect(result.content[0].text).toContain('a.ts');
+    expect(result.content[0].text).not.toContain('nested.ts');
+    expect(result.content[0].text).not.toContain('link.ts');
+    expect(result.details).toMatchObject({ matches: 1 });
+  });
 
-    const lists = provider.projectFiles.mock.calls.map(([call]) => call.operation).filter(op => op.kind === 'list');
-    expect(lists.length).toBeGreaterThan(0);
-    for (const op of lists) expect(op).toMatchObject({ metadata: true });
-    // And no stat per match on the way back out.
-    expect(provider.projectFiles.mock.calls.filter(([call]) => call.operation.kind === 'stat')).toHaveLength(1);
+  it('stays one operation over a directory of more than a thousand siblings', async () => {
+    const wide: Record<string, string> = {};
+    for (let index = 0; index < 1500; index += 1) wide[`/workspace/f${String(index).padStart(5, '0')}.ts`] = 'x';
+    const provider = memoryProvider(wide);
+    const { run } = fixture(files, provider);
+    // The page size of a listing used to bound how much one crossing could carry; the walk is bounded by
+    // its own entry, time and byte budgets instead, so a wide directory is not a reason to cross again.
+    expect((await run('Glob', { pattern: '/workspace/*.ts' })).details?.ok).toBe(true);
+    expect(provider.projectFiles.mock.calls.map(([call]) => call.operation.kind)).toEqual(['walk']);
+  });
+
+  it('carries the skip list into the guest rather than filtering after the fact', async () => {
+    const provider = memoryProvider({ '/workspace/a.ts': 'x', '/workspace/node_modules/pkg/b.ts': 'y', '/workspace/.git/c.ts': 'z' });
+    const { run } = fixture(files, provider);
+    const result = await run('Glob', { pattern: '/workspace/**/*.ts' });
+    expect(result.content[0].text).toContain('a.ts');
+    // Skipped in the guest, so their contents never cross the boundary at all.
+    expect(result.content[0].text).not.toContain('node_modules');
+    expect(result.content[0].text).not.toContain('.git');
+    const [[{ operation }]] = provider.projectFiles.mock.calls;
+    expect(operation).toMatchObject({ kind: 'walk', skip: expect.arrayContaining(['node_modules', '.git']) });
+  });
+
+  it('reports a truncated traversal as unfinished rather than as a complete answer', async () => {
+    const provider = memoryProvider({ '/workspace/a.ts': 'x' });
+    const { run } = fixture(files, provider);
+    // Whatever bound the guest hit — entries, deadline or output bytes — it says so, and the answer must
+    // not read as a finished search that simply found little.
+    provider.projectFiles.mockResolvedValueOnce({
+      kind: 'walk', root: '/workspace', rootKind: 'directory', truncated: true,
+      entries: [{ path: '/workspace/a.ts', kind: 'file', size: 1, mtime: 1767225600000 }],
+    } as never);
+    const result = await run('Glob', { pattern: '/workspace/*.ts' });
+    expect(result.content[0].text).toContain('a.ts');
+    expect(result.content[0].text).toMatch(/stopped|narrower/i);
+    expect(result.details).toMatchObject({ walkTruncated: true });
+  });
+
+  it('answers a missing root and a file root the way it always did', async () => {
+    const provider = memoryProvider({ '/workspace/only.ts': 'x' });
+    const { run } = fixture(files, provider);
+    const missing = await run('Glob', { pattern: '*.ts', path: '/workspace/absent' });
+    expect(missing.details?.ok).toBe(false);
+    expect(missing.content[0].text).toMatch(/does not exist/i);
+
+    // A path that is not a directory is matched from its parent, which the guest resolves itself.
+    const fileRoot = await run('Glob', { pattern: '*.ts', path: '/workspace/only.ts' });
+    expect(fileRoot.details?.ok).toBe(true);
+    expect(fileRoot.content[0].text).toContain('only.ts');
   });
 
   it('reads a tiny managed file with a single guest read and no surrounding stat', async () => {

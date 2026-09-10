@@ -394,6 +394,108 @@ def run(op):
         sync_directory(os.path.dirname(name))
         sync_directory(os.path.dirname(destination))
         return {'kind': kind, 'entry': entry(destination)}
+    if kind == 'walk':
+        # One traversal, inside the guest. Driving it from the host cost a round trip per directory, and
+        # each of those is a container execution — a tree of four directories was five crossings before
+        # a single name had been matched. Nothing here is written against, so no content is read and no
+        # version is computed: a path and a modification time is the whole answer.
+        # `limit` bounds every entry the traversal LOOKS AT, not the subset it chooses to return. A
+        # directory and a symlink cost the same work to examine as a file, so counting only files let a
+        # walk wander through any number of them and still answer "complete".
+        limit = bounded(op.get('limit'), 1, MAX_ENTRIES + 1)
+        # Levels of descent BELOW the root. 0 lists the root's own children and goes no deeper, which is
+        # what expanding one directory in an editor asks for.
+        max_depth = bounded(op.get('maxDepth', 64), 0, 64)
+        skip = op.get('skip', [])
+        if not isinstance(skip, list) or len(skip) > 64 or any(
+                not isinstance(item, str) or not item or len(item) > 255 or '/' in item or '\x00' in item for item in skip):
+            fail('invalid_operation', 'Invalid skip list')
+        skipped = set(skip)
+
+        # The requested path decides the answer before any traversal: absent is reported as such so the
+        # host needs no separate stat, and a path that is not a directory is traversed from its parent,
+        # which is the behaviour Glob has always had.
+        if not os.path.lexists(name):
+            return {'kind': kind, 'root': name, 'rootKind': None, 'entries': [], 'truncated': False}
+        info = os.lstat(name)
+        root_kind = 'directory' if stat.S_ISDIR(info.st_mode) else 'symlink' if stat.S_ISLNK(info.st_mode) else 'file' if stat.S_ISREG(info.st_mode) else 'other'
+        root = name if root_kind == 'directory' else os.path.dirname(name)
+
+        entries = []
+        visited = 0
+        payload = 0
+        truncated = False
+        deadline = time.monotonic() + 10
+        # Depth first in sorted order, so the same tree always answers in the same sequence and a
+        # truncated answer is a stable prefix rather than whatever the filesystem happened to hand back.
+        stack = [(root, 0)]
+        while stack and not truncated:
+            current, depth = stack.pop()
+            # The deadline is checked WHILE enumerating. Sorting a materialized listing first meant a
+            # directory of a million names was read in full before the clock was ever consulted, so the
+            # bound could be exceeded by an unbounded margin.
+            children = []
+            expired = False
+            try:
+                with os.scandir(current) as scan:
+                    for item in scan:
+                        if time.monotonic() > deadline:
+                            expired = True
+                            break
+                        children.append(item)
+            except (FileNotFoundError, NotADirectoryError):
+                # It was a directory when it was queued and is not one now. The answer is incomplete and
+                # says so, rather than quietly omitting a subtree.
+                truncated = True
+                continue
+            if expired:
+                # Discard this directory's partial listing entirely: half of one directory, in scandir
+                # order, is not a prefix of the sorted answer and must not be presented as one.
+                truncated = True
+                break
+            children.sort(key=lambda item: item.name)
+            nested = []
+            for item in children:
+                visited += 1
+                if visited > limit or visited > MAX_ENTRIES + 1 or time.monotonic() > deadline:
+                    truncated = True
+                    break
+                # `follow_symlinks=False` throughout, so a link is never DESCENDED into and the traversal
+                # cannot be walked out of its own root. It is still reported, because a tree view has
+                # always shown links and a consumer that wants to know where one points can follow it
+                # deliberately, one path at a time, rather than have this walk do it silently.
+                try:
+                    link = item.is_symlink()
+                    directory = not link and item.is_dir(follow_symlinks=False)
+                    regular = not link and item.is_file(follow_symlinks=False)
+                    if not link and not directory and not regular:
+                        continue
+                    # A skipped directory is omitted ENTIRELY, not merely left undescended: reporting it
+                    # while refusing to walk it would present it to a consumer as an empty directory,
+                    # which is a different and false statement about the tree.
+                    if directory and item.name in skipped:
+                        continue
+                    # The link's OWN size and time, never its target's: resolving the target is the
+                    # caller's decision, and a broken link must still describe itself.
+                    facts = item.stat(follow_symlinks=False)
+                except OSError:
+                    truncated = True
+                    continue
+                record = {'path': item.path, 'kind': 'symlink' if link else 'directory' if directory else 'file',
+                          'size': facts.st_size, 'mtime': int(facts.st_mtime * 1000)}
+                # The ACTUAL encoded size, with the same escaping the reply is written with: a name of
+                # non-ASCII text inflates to six bytes per character once escaped, so a byte count taken
+                # on the raw path would under-measure a tree of such names several times over.
+                encoded = len(json.dumps(record, ensure_ascii=True, separators=(',', ':'))) + 1
+                if payload + encoded > 8388608:
+                    truncated = True
+                    break
+                payload += encoded
+                entries.append(record)
+                if directory and depth < max_depth:
+                    nested.append((item.path, depth + 1))
+            stack.extend(reversed(nested))
+        return {'kind': kind, 'root': root, 'rootKind': root_kind, 'entries': entries, 'truncated': truncated}
     if kind == 'search':
         limit = bounded(op.get('limit'), 1, 1000)
         pattern = op.get('pattern')

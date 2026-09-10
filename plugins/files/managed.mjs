@@ -184,29 +184,30 @@ export function managedFiles(ctx, signal) {
       catch (cleanup) { throw new AggregateError([...(failure ? [failure] : []), cleanup], 'Guest command cleanup failed'); }
     }
   };
-  // A traversal wants names, kinds and modification times, and nothing it returns is ever written
-  // against — a caller that goes on to mutate a match reads it first and gets a version then. So every
-  // listing here is metadata-only: the previous shape made the guest read and hash the full contents of
-  // every file it walked past, which is why matching a pattern over a source tree cost far more than the
-  // handful of round trips it looked like. `mtimes` hands the times to the caller so sorting by them
-  // needs no stat back across the boundary either.
+  /** ONE guest operation for an entire traversal.
+   *
+   *  Driving the recursion from the host meant a listing per directory, and every listing is a container
+   *  execution: a tree of four directories crossed the boundary five times before a single name had been
+   *  matched. The guest now walks it in a single pass under its own entry, time and output bounds, and
+   *  says whether it stopped early — so a truncated answer is a fact established by the traversal rather
+   *  than the host running out of budget partway through. The answer also reports what the requested path
+   *  was, which is where the caller's separate existence stat went.
+   *
+   *  Nothing here is ever written against: a caller that goes on to mutate a match reads it first and
+   *  gets a version then. So no content is read and no hash is computed for anything walked past. */
   const walk = async (root, limit, skip) => {
-    const files = [];
-    const mtimes = new Map();
-    let truncated = false;
-    let visited = 0;
-    const visit = async (path) => {
-      if (visited >= limit) { truncated = true; return; }
-      const listing = await list(path, limit - visited, true);
-      truncated ||= listing.truncated;
-      for (const entry of listing.entries) {
-        if (++visited > limit) { truncated = true; break; }
-        if (entry.kind === 'file') { files.push(entry.path); mtimes.set(entry.path, Date.parse(entry.modifiedAt ?? '') || 0); }
-        else if (entry.kind === 'directory' && !skip.has(posix.basename(entry.path))) await visit(entry.path);
-      }
+    const result = await operation({ kind: 'walk', path: root, limit: Math.min(limit, 10001), skip: [...skip] });
+    // The traversal reports directories too, because a consumer showing a tree needs to see an empty one.
+    // A pattern match is about files, so that is what this hands back.
+    const files = result.entries.filter((item) => item.kind === 'file');
+    return {
+      root: result.root,
+      rootKind: result.rootKind,
+      entries: result.entries,
+      files: files.map((item) => item.path),
+      mtimes: new Map(files.map((item) => [item.path, item.mtime])),
+      truncated: result.truncated,
     };
-    await visit(root);
-    return { files, mtimes, truncated };
   };
   // Resolving the control does no I/O, so a caller that must tell "this managed project has no filesystem
   // behind it" apart from "the filesystem failed to answer" can establish the first before it starts.

@@ -1661,7 +1661,9 @@ export function register(ctx) {
         const guest = managedFiles(ctx, _signal);
         const abs = guest ? guest.resolve(p.path) : ctx.assertPathAllowed(p.path);
         if (guest) {
-          const listing = await guest.list(abs, WALK_CAP);
+          // Names and kinds are the whole answer, so the guest need not read and hash every file in the
+          // directory to produce a version nothing here looks at.
+          const listing = await guest.list(abs, WALK_CAP, true);
           const names = listing.entries.map((entry) => `${basename(entry.path)}${entry.kind === 'directory' ? '/' : ''}`);
           return ok('ListDir', (names.join('\n') || '(empty)') + (listing.truncated ? '\n[Directory listing truncated.]' : ''), {
             ...pathMeta(abs), count: names.length, truncated: listing.truncated,
@@ -1836,8 +1838,22 @@ export function register(ctx) {
         return fail('Glob', safeError(e));
       }
       try {
-        const entry = guest ? await guest.stat(searchRoot) : null;
-        if (guest && !entry) {
+        // Both refusals below are settled BEFORE anything is traversed. The fs-root one can only fire
+        // when no path was given at all, and the root is then the working directory itself, so testing it
+        // rather than the walk's answer decides the same question without walking a filesystem root first.
+        if (!p.path && !anchored && isFsRoot(searchRoot)) return ok('Glob', 'Error: no path given and no project root is set — pass an explicit path.', { ok: false });
+        const regex = globRegex(anchored ? anchored.pattern : p.pattern);
+        if (!regex) return ok('Glob', 'Error: invalid glob pattern.', { ok: false });
+        const globMax = Math.min(Math.max(Number(ctx.config.globMax) || DEFAULT_GLOB_MAX, 10), 500);
+        // One over the cap, so "the tree holds exactly WALK_CAP files" is distinguishable from "the walk
+        // ran out of budget" — the notice below claims matches were never examined, which must not be
+        // said about a traversal that actually finished.
+        //
+        // The managed traversal is a SINGLE guest operation, and it reports what the requested path was,
+        // so the existence stat that used to precede it is gone: it could only tell us what the walk
+        // reports anyway, and it cost a container round trip to do so.
+        const guestWalk = guest ? await guest.walk(searchRoot, WALK_CAP + 1, SKIP_DIRS) : null;
+        if (guest && guestWalk.rootKind === null) {
           return ok('Glob', `Error: ${pathNotFoundMessage(
             `Directory does not exist: ${ctx.displayPath(searchRoot)}.`, searchRoot, ctx.defaultCwd(), (value) => ctx.displayPath(value),
           )}`, { ok: false, ...pathMeta(searchRoot) });
@@ -1847,15 +1863,9 @@ export function register(ctx) {
             `Directory does not exist: ${ctx.displayPath(searchRoot)}.`, searchRoot, ctx.defaultCwd(), (value) => ctx.displayPath(value),
           )}`, { ok: false, ...pathMeta(searchRoot) });
         }
-        const abs = (guest ? entry.kind === 'directory' : statSync(searchRoot).isDirectory()) ? searchRoot : dirname(searchRoot);
-        if (!p.path && !anchored && isFsRoot(abs)) return ok('Glob', 'Error: no path given and no project root is set — pass an explicit path.', { ok: false });
-        const regex = globRegex(anchored ? anchored.pattern : p.pattern);
-        if (!regex) return ok('Glob', 'Error: invalid glob pattern.', { ok: false });
-        const globMax = Math.min(Math.max(Number(ctx.config.globMax) || DEFAULT_GLOB_MAX, 10), 500);
-        // One over the cap, so "the tree holds exactly WALK_CAP files" is distinguishable from "the walk
-        // ran out of budget" — the notice below claims matches were never examined, which must not be
-        // said about a traversal that actually finished.
-        const guestWalk = guest ? await guest.walk(abs, WALK_CAP + 1, SKIP_DIRS) : null;
+        // A path that is not a directory is matched from its parent, as it always has been; the guest
+        // resolved that itself, so both sides agree without a second look.
+        const abs = guest ? guestWalk.root : (statSync(searchRoot).isDirectory() ? searchRoot : dirname(searchRoot));
         const walked = guestWalk ? guestWalk.files : walkFiles(abs, WALK_CAP + 1);
         const walkTruncated = guestWalk?.truncated === true || walked.length > WALK_CAP;
         const files = walked.slice(0, WALK_CAP);

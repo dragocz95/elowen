@@ -88,7 +88,7 @@ function command(input, synchronous = false) {
 }
 function fileOperation(op) {
   if (UPLOAD_KINDS.includes(op?.kind)) return validateUploadOperation(op);
-  const keys = { stat: ['followSymlinks'], list: ['limit', 'cursor', 'metadata'], read: ['maxBytes', 'offset', 'length'], write: ['base64', 'expectedVersion'], remove: ['expectedVersion'], mkdir: [], rename: ['destination', 'expectedVersion'], search: ['pattern', 'glob', 'caseSensitive', 'limit'] };
+  const keys = { stat: ['followSymlinks'], list: ['limit', 'cursor', 'metadata'], read: ['maxBytes', 'offset', 'length'], write: ['base64', 'expectedVersion'], remove: ['expectedVersion'], mkdir: [], rename: ['destination', 'expectedVersion'], walk: ['limit', 'skip', 'maxDepth'], search: ['pattern', 'glob', 'caseSensitive', 'limit'] };
   if (op?.followSymlinks !== undefined && typeof op.followSymlinks !== 'boolean') throw error('invalid_operation', 'followSymlinks must be boolean', 400);
   if (!op || !Object.hasOwn(keys, op.kind) || Object.keys(op).some((key) => !['kind', 'path', ...keys[op.kind]].includes(key))) throw error('invalid_operation', 'Invalid guest file operation', 400);
   guestPath(op.path);

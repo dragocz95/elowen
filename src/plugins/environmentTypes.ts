@@ -46,6 +46,14 @@ export type GuestFileOperation =
   | { kind: 'remove'; path: string; expectedVersion: string }
   | { kind: 'mkdir'; path: string }
   | { kind: 'rename'; path: string; destination: string; expectedVersion: string }
+  /** One bounded recursive traversal, performed inside the guest.
+   *
+   *  `limit` bounds every entry the traversal LOOKS AT, directories and symlinks included, not the subset
+   *  it returns — examining an entry costs the same whatever it turns out to be. `maxDepth` counts levels
+   *  of descent below the root, so 0 lists the root's own children and goes no deeper. `skip` names
+   *  directories not to descend into. Nothing returned is written against, so no content is read and no
+   *  version is computed. */
+  | { kind: 'walk'; path: string; limit: number; skip?: string[]; maxDepth?: number }
   | { kind: 'search'; path: string; pattern: string; glob?: string; caseSensitive?: boolean; limit: number };
 export type GuestFileResult =
   | { kind: 'stat'; entry: GuestFileStat | null }
@@ -56,6 +64,19 @@ export type GuestFileResult =
   | { kind: 'write-chunk'; received: number }
   | { kind: 'write-abort'; aborted: true }
   | { kind: 'remove'; removed: boolean }
+  /** `rootKind` describes the path that was ASKED for — null when it is not there at all, which saves the
+   *  caller a stat of its own. `root` is the directory actually traversed, which is the requested path
+   *  when it is a directory and its parent otherwise.
+   *
+   *  Entries are files, directories and symlinks, in a stable sorted order, so a truncated answer is a
+   *  prefix rather than an arbitrary subset. An empty directory appears as an entry of its own. A symlink
+   *  is REPORTED but never followed and never descended into, and its `size` and `mtime` are the link's
+   *  own, never its target's — a consumer that needs the target resolves it deliberately, one path at a
+   *  time, and a broken link still describes itself. `truncated` is the single honest signal that the
+   *  traversal stopped early, whichever bound it hit; a directory that could not be read at all fails the
+   *  operation instead. */
+  | { kind: 'walk'; root: string; rootKind: 'file' | 'directory' | 'symlink' | 'other' | null;
+      entries: { path: string; kind: 'file' | 'directory' | 'symlink'; size: number; mtime: number }[]; truncated: boolean }
   | { kind: 'search'; matches: { path: string; line: number; text: string }[]; truncated: boolean };
 export interface ManagedWorktree { id: string; projectId: number; createdBy: number; path: string; branch: string; baseRef: string; label: string }
 export type ManagedWorktreeAction = { kind: 'list' } | { kind: 'create'; label: string; baseRef: string } | { kind: 'remove'; workspaceId: string };
