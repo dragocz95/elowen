@@ -91,10 +91,9 @@ export async function resolveManagedArtifactTurn(
   return await resolveFor(resolver, turn);
 }
 
-/** Shared tail: resolve the live provider for an ALREADY-VALIDATED turn request — the share tools call
- *  it after their own ambient branch decision. Not for arbitrary callers: the tenancy check is the
- *  caller's here. */
-export async function resolveFor(
+/** Shared tail: resolve the live provider for an ALREADY-VALIDATED turn request. Module-private, because
+ *  the tenancy check is its caller's and both callers here do it first. */
+async function resolveFor(
   resolver: SandboxResolver | undefined,
   turn: ManagedArtifactTurn,
 ): Promise<ResolvedManagedTurn | string> {
@@ -142,7 +141,7 @@ export interface GuestAccess {
  *  Confinement is not the read boundary — the provider authorizes the account's environment per op —
  *  only the SHAPE is checked here: absolute, normalized, no NUL, bounded length. `null` = not an
  *  absolute guest path; the caller refuses, it never falls through to the host branch. */
-export function guestAbsolutePath(rawPath: unknown): string | null {
+function guestAbsolutePath(rawPath: unknown): string | null {
   if (typeof rawPath !== 'string' || !rawPath || rawPath.includes('\0') || rawPath.length > 4096) return null;
   if (!posix.isAbsolute(rawPath)) return null;
   return posix.resolve(rawPath);
