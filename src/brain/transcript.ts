@@ -3,6 +3,7 @@ import { isEmptyCard } from './cards.js';
 import { EXIT_PLAN_MODE_TOOL } from '../shared/planTool.js';
 import type { ToolOutputView } from './messageView.js';
 import { collapseWhitespace } from '../shared/text.js';
+import type { BrainSubagentView } from '../shared/wireContract.js';
 
 /** The CLI/web projection of a live `workflow` snapshot — structurally the event payload itself (a
  *  workflow event carries the WHOLE DAG each time), so it aliases WorkflowUpdate to stay single-source
@@ -42,38 +43,11 @@ export function submittedPlanOf(item: ToolItem): string | undefined {
 }
 
 /** Live progress of a delegated sub-agent, attached to its `delegate` tool item by call id — what the
- *  CLI renders as the `↳ …` line under the tool row (current child tool, counters, drill-in target). */
-export interface SubagentState {
-  sessionId: string;
-  status: 'running' | 'done' | 'error';
-  task: string;
-  /** The delegation's short label — what a row shows instead of the whole task text. Mirrors
-   *  BrainSubagentView; absent for a run recorded before the field existed. */
-  name?: string;
-  detail?: string;
-  tools: number;
-  tokens?: number;
-  seconds: number;
-  /** The model the sub-agent runs on (its own, or the delegating conversation's) — shown in the table. */
-  model?: string;
-  /** The sub-agent's own effective reasoning effort (level id + display label), for the child status bar. */
-  thinkingLevel?: string;
-  thinkingLabel?: string;
-  /** Existing durable timestamps used by richer clients; optional for legacy transcript rows. */
-  startedAt?: string;
-  updatedAt?: string;
-  /** True once the user detached this job from the parent tool wait with Ctrl+B. */
-  background?: boolean;
-  autoDeliver?: boolean;
-  resultDelivery?: 'pending' | 'acknowledged';
-  /** Sandbox workspace the child was confined to, when Delegate passed `workspaceId`. Mirrors
-   *  BrainSubagentView; drives the sandboxed-run glyph next to the sub-agent's status icon. */
-  workspaceId?: string;
-  /** This call is a DelegateContinue whose message was STEERED into the child's already running turn: it
-   *  ran no tools and finished nothing, so the row renders as a steer rather than a settled run. Mirrors
-   *  BrainSubagentView; present only on such a call. */
-  steered?: true;
-}
+ *  CLI renders as the `↳ …` line under the tool row (current child tool, counters, drill-in target).
+ *  Structurally the wire's own sub-agent view, so it aliases it for the same reason WorkflowState
+ *  aliases WorkflowUpdate: a field added to the durable row must reach the CLI without a second edit.
+ *  It was a hand-copy of all eighteen fields until jscpd showed the two drifting apart. */
+export type SubagentState = BrainSubagentView;
 type Segment =
   | { kind: 'text'; text: string }
   /** The model's reasoning/thinking stream — rendered dim + separate from the answer. */

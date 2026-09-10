@@ -452,6 +452,10 @@ export async function runHeadless(
           if (!isGoalRun && !settled && activity) { if (!o.json) io.stdout('\n'); finish(0); }
         });
         break;
+      // Headless output is a deliberate SUBSET of the stream: the cases above are what a script reads on
+      // stdout/stderr, and the rest of the bus (queue, session, workflow, sub-agent rails…) belongs to the
+      // interactive TUI. `--json` already emits every event verbatim before this switch.
+      default: break;
     }
   };
   snapshots = new HeadlessSnapshotReconciler(onEvent);

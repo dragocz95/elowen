@@ -459,7 +459,7 @@ function sanitizePayloadValue(value: unknown, sanitize: (text: string) => string
 export function providerPathScrubber(sanitize: (text: string) => string): (pi: ExtensionAPI) => void {
   return (pi) => {
     pi.on('before_provider_request', (event) => {
-      const next = sanitizePayloadValue(event.payload, sanitize) as typeof event.payload;
+      const next = sanitizePayloadValue(event.payload, sanitize);
       return next === event.payload ? undefined : next;
     });
   };

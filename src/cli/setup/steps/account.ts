@@ -13,10 +13,10 @@ async function createFlow(ctx: WizardCtx): Promise<StepResult> {
   const username = (guard(await p.text({
     message: 'Admin username', initialValue: 'admin',
     validate: (v) => (!(v ?? '').trim() ? 'Required' : undefined),
-  })) as string).trim();
+  }))).trim();
   const password = guard(await p.password({
     message: 'Admin password', validate: (v) => ((v ?? '').length < 4 ? 'At least 4 characters' : undefined),
-  })) as string;
+  }));
   guard(await p.password({
     message: 'Confirm password', validate: (v) => (v !== password ? 'Passwords do not match' : undefined),
   }));
@@ -56,7 +56,7 @@ async function existingFlow(ctx: WizardCtx): Promise<StepResult> {
         { value: 'skip', label: 'Skip for now' },
         { value: 'back', label: '← Go back' },
       ];
-  const choice = guard(await p.select({ message: 'How do you want to continue?', options })) as string;
+  const choice = guard(await p.select({ message: 'How do you want to continue?', options }));
   if (choice === 'back') return { status: 'back' };
   if (choice === 'continue') {
     ctx.answers.account = { username: '', created: false, signedIn: false };
@@ -71,8 +71,8 @@ async function existingFlow(ctx: WizardCtx): Promise<StepResult> {
  *  bounce forever between username and password. */
 async function signInLoop(ctx: WizardCtx): Promise<StepResult> {
   for (let attempt = 1; ; attempt++) {
-    const username = (guard(await p.text({ message: 'Username', initialValue: 'admin' })) as string).trim();
-    const password = guard(await p.password({ message: 'Password' })) as string;
+    const username = (guard(await p.text({ message: 'Username', initialValue: 'admin' }))).trim();
+    const password = guard(await p.password({ message: 'Password' }));
     const s = p.spinner();
     s.start('Signing in…');
     try {
@@ -93,7 +93,7 @@ async function signInLoop(ctx: WizardCtx): Promise<StepResult> {
           { value: 'skip', label: 'Skip sign-in' },
           { value: 'back', label: '← Go back' },
         ],
-      })) as string;
+      }));
       if (next === 'back') return { status: 'back' };
       if (next === 'skip') return skipSignIn(ctx);
       // 'retry' → loop.

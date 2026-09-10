@@ -25,7 +25,7 @@ export async function runProjectStep(ctx: WizardCtx): Promise<StepResult> {
       { value: 'skip', label: 'Skip for now' },
       { value: 'back', label: '← Go back' },
     ],
-  })) as string;
+  }));
   if (choice === 'back') return { status: 'back' };
   if (choice === 'skip') return { status: 'skipped' };
 
@@ -33,7 +33,7 @@ export async function runProjectStep(ctx: WizardCtx): Promise<StepResult> {
     const pick = guard(await p.select({
       message: 'Pick a project',
       options: existing.map((e) => ({ value: String(e.id), label: e.slug, hint: e.path })),
-    })) as string;
+    }));
     const proj = existing.find((e) => String(e.id) === pick)!;
     ctx.answers.project = { slug: proj.slug, path: proj.path, connected: true };
     return { status: 'done' };
@@ -42,7 +42,7 @@ export async function runProjectStep(ctx: WizardCtx): Promise<StepResult> {
   // A new path: resolve it, validate via the daemon (the process that must read it), optionally create.
   let path = process.cwd();
   if (choice === 'custom') {
-    const entered = (guard(await p.text({ message: 'Project folder path', placeholder: process.cwd() })) as string).trim();
+    const entered = (guard(await p.text({ message: 'Project folder path', placeholder: process.cwd() }))).trim();
     if (!entered) return { status: 'skipped' };
     path = entered;
   }
@@ -62,7 +62,7 @@ export async function runProjectStep(ctx: WizardCtx): Promise<StepResult> {
   let slug = (guard(await p.text({
     message: 'Short name (slug)', initialValue: uniqueSlug(deriveSlug(path), taken),
     validate: (v) => (!/^[a-z0-9][a-z0-9-]*$/.test((v ?? '').trim()) ? 'Lowercase letters, numbers and dashes' : undefined),
-  })) as string).trim();
+  }))).trim();
 
   // Register — on a slug clash, tell them and re-prompt with the next free suggestion.
   for (;;) {
@@ -77,7 +77,7 @@ export async function runProjectStep(ctx: WizardCtx): Promise<StepResult> {
       slug = (guard(await p.text({
         message: `"${slug}" is taken — pick another`, initialValue: uniqueSlug(slug, taken),
         validate: (v) => (!/^[a-z0-9][a-z0-9-]*$/.test((v ?? '').trim()) ? 'Lowercase letters, numbers and dashes' : undefined),
-      })) as string).trim();
+      }))).trim();
       continue;
     }
     p.log.error(humanError(new Error(`registering the project failed (${r.status})`), r.status));

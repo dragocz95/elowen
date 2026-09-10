@@ -121,7 +121,7 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
     // under the in-memory test DB, where installing process-wide signal handlers would leak across tests.
     if (deps.dbPath !== ':memory:') deps.onShutdownInstalled(installGracefulShutdown(deps.brain, deps.log));
     // Purge expired auth tokens hourly so the table can't grow unbounded over a long-running daemon.
-    const purgeTokens = () => deps.users?.purgeExpiredTokens(deps.config.get().security.tokenTtlDays);
+    const purgeTokens = () => deps.users.purgeExpiredTokens(deps.config.get().security.tokenTtlDays);
     purgeTokens();
     const stopTokenPurge = clock.setInterval(purgeTokens, 3_600_000);
     // Same for the activity timeline: every bus event is persisted (events.record), so without a
@@ -172,7 +172,7 @@ export function createMaintenanceLoops(deps: MaintenanceDeps): () => () => void 
     // registry (the cronjob retention seam), so the sweep awaits each user in turn.
     const purgeStaleSessions = async () => {
       const retention = deps.config.get().sessionRetention;
-      if (!retention.enabled || !deps.brain || !deps.users) return;
+      if (!retention.enabled || !deps.brain) return;
       try {
         let removed = 0;
         for (const user of deps.users.list()) removed += await deps.brain.purgeStaleSessionsForUser(user.id, retention.days);

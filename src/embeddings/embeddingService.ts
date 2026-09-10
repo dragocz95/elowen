@@ -39,7 +39,9 @@ const EMBEDDINGS_TIMEOUT_MS = 30_000;
 const embeddingsUrl = (base: string) => `${stripTrailingV1(trimTrailingSlash(base))}/v1/embeddings`;
 
 interface EmbeddingsResponse {
-  data?: { embedding?: unknown }[];
+  /** A wire payload, so every level is optional: an endpoint can answer `data: [null]` just as easily
+   *  as it can omit `embedding`. The element type says so, and `toVector` rejects whatever arrives. */
+  data?: ({ embedding?: unknown } | null)[];
 }
 
 /** Turns text into vectors via an OpenAI-compatible `/v1/embeddings` endpoint, reusing Elowen's

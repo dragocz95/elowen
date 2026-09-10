@@ -61,6 +61,53 @@ export default tseslint.config(
     },
   },
   {
+    // Type-aware rules, deliberately four of them rather than a strict preset: each one catches a class
+    // of real defect (dead branch, lying assertion, unawaited promise, forgotten union member) and none
+    // of them is a style opinion. The project service hands every file to the tsconfig that already owns
+    // it — `tsconfig.json` for `src/`, `web/tsconfig.json` for the app — so no file is forced into a
+    // foreign program. `tests/` is out: it is in no tsconfig today and does not type-check
+    // (1000+ errors from partial fixtures and mock doubles), so type information there would be wrong,
+    // and a rule that deletes a guard from a lying type is worse than no rule.
+    files: ['src/**/*.ts', 'web/**/*.{ts,tsx}'],
+    ignores: [
+      // Excluded from web/tsconfig.json (it belongs to the Playwright harness), so no project owns it.
+      'web/playwright.config.ts',
+    ],
+    languageOptions: {
+      parserOptions: { projectService: true, tsconfigRootDir: import.meta.dirname },
+    },
+    plugins: { '@typescript-eslint': tseslint.plugin },
+    rules: {
+      // A switch WITH a default already says what happens to the rest, so only a switch without one has
+      // to enumerate its union. That is the half that catches a member added to a union later.
+      '@typescript-eslint/switch-exhaustiveness-check': ['error', { considerDefaultExhaustiveForUnions: true }],
+    },
+  },
+  {
+    // Enabled in `src/` and not yet in `web/`, where they are still owed real reading: 444 unnecessary
+    // assertions (392 of them in `web/tests`, where an `expect(x!)` is harmless) and 83 floating
+    // promises, almost all `queryClient.invalidateQueries(...)` — fire-and-forget by TanStack Query's
+    // own design, so awaiting them in `onSuccess` would change behavior rather than fix anything.
+    files: ['src/**/*.ts'],
+    rules: {
+      '@typescript-eslint/no-floating-promises': 'error',
+      '@typescript-eslint/no-unnecessary-type-assertion': 'error',
+    },
+  },
+  {
+    // no-unnecessary-condition needs a judgement per finding — delete a dead guard, or fix the type that
+    // lies about it — so it is widened one directory at a time as those judgements are made. Still owed:
+    // src/brain (112), src/api (68), src/cli (64), src/plugins (32) and web (245).
+    files: [
+      'src/daemon/**/*.ts', 'src/embeddings/**/*.ts', 'src/integrations/**/*.ts',
+      'src/privileged/**/*.ts', 'src/shared/**/*.ts', 'src/store/**/*.ts', 'src/subagent/**/*.ts',
+    ],
+    rules: {
+      // `while (true)` is the language's own spelling of an unbounded loop, not a mistaken condition.
+      '@typescript-eslint/no-unnecessary-condition': ['error', { allowConstantLoopConditions: 'only-allowed-literals' }],
+    },
+  },
+  {
     // A plugin's browser bundle is React too — the pages extracted out of core web keep their inline
     // hook directives, and hook correctness matters just as much once the code is served from a plugin.
     // Next's plugin is deliberately absent: a bundle has no Next router, pages or <Image>.

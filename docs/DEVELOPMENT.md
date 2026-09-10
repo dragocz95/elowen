@@ -66,6 +66,7 @@ Run commands from the repository root unless a command explicitly uses `--prefix
 | `npm run typecheck` | Type-check the daemon without emitting files. |
 | `npm run deadcode` | Run Knip unused-code analysis. |
 | `npm run depcruise` | Check dependency boundaries and cycles across `src/`, `web/`, and bundled plugins. |
+| `npm run dupes` | Report duplicate code blocks (jscpd). A report to read, not a gate: it stays outside `npm run check` and is non-blocking in CI. |
 | `npm run languages-check` | Check Czech/English and plugin translation coverage. |
 | `npm run check` | Run lint, Knip, dependency-cruiser, daemon typecheck, and language checks; it does not run tests or builds and does not type-check `web/`. |
 | `npm --prefix web test` | Run web Vitest and React Testing Library tests. |

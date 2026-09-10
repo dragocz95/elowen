@@ -46,5 +46,5 @@ export class WizardCancelled extends Error {
 /** Unwrap a prompt result, throwing WizardCancelled on cancel so step code reads top-to-bottom. */
 export function guard<T>(value: T | symbol): T {
   if (isCancel(value)) throw new WizardCancelled();
-  return value as T;
+  return value;
 }

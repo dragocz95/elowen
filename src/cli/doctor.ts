@@ -13,7 +13,7 @@ interface ReadinessResponse { checks: ReadinessCheck[] }
  *  rather than crashing with a stack trace. */
 function guard<T>(value: T | symbol): T {
   if (p.isCancel(value)) { p.cancel('Cancelled.'); process.exit(1); }
-  return value as T;
+  return value;
 }
 
 /** Prompt for admin credentials (default username `admin`) and sign in via the same `/auth/login` helper

@@ -22,7 +22,7 @@ type ProjectRow = Omit<Project, 'memoryShared' | 'executionKind' | 'creatorUserI
   memory_shared: number; execution_kind: Project['executionKind']; creator_user_id: number | null; adopted_path: string | null;
 };
 const toProject = (r: ProjectRow): Project => ({
-  id: r.id, slug: r.slug, path: r.path, notes: r.notes ?? '', icon: r.icon ?? '',
+  id: r.id, slug: r.slug, path: r.path, notes: r.notes, icon: r.icon,
   adoptedPath: r.adopted_path ?? null, memoryShared: r.memory_shared === 1, executionKind: r.execution_kind,
   creatorUserId: r.creator_user_id, lifecycle: r.lifecycle,
 });

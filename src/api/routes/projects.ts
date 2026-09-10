@@ -373,7 +373,7 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     if (id === d.project.id) return c.json({ error: 'cannot remove the home project' }, 400);
     const target = d.projects.get(id);
     if (!target) return c.json({ error: 'project not found' }, 404);
-    if (target.executionKind === 'managed' ? !(c.get('user') && d.userProjects?.canManage(c.get('user')!.id, id)) : notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
+    if (target.executionKind === 'managed' ? !(c.get('user') && d.userProjects?.canManage(c.get('user').id, id)) : notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     // DELETE carries a body only when the caller wants idempotency or a stale-view check. Clients send a
     // JSON content-type even for a bodyless delete, so the empty body is decided on the payload itself;
     // a malformed or wrongly shaped one still fails like every other validated body.

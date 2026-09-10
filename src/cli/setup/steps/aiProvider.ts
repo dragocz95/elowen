@@ -46,7 +46,7 @@ export async function runAiStep(ctx: WizardCtx): Promise<StepResult> {
       { value: 'skip', label: 'Connect later', hint: 'set up in the web UI' },
       { value: 'back', label: '← Go back' },
     ],
-  })) as string;
+  }));
 
   if (choice === 'back') return { status: 'back' };
   if (choice === 'skip') return skip(ctx);
@@ -73,9 +73,9 @@ async function ollamaFlow(ctx: WizardCtx, providers: PublicProvider[]): Promise<
       ...suggestions.map((m) => ({ value: m, label: local.includes(m) ? `${m} (already downloaded)` : m })),
       { value: '__manual__', label: 'Enter another model tag…' },
     ],
-  })) as string;
+  }));
   const model = pick === '__manual__'
-    ? (guard(await p.text({ message: 'Ollama model tag', placeholder: 'e.g. llama3.2:3b' })) as string).trim()
+    ? (guard(await p.text({ message: 'Ollama model tag', placeholder: 'e.g. llama3.2:3b' }))).trim()
     : pick;
   if (!model) return skip(ctx);
 
@@ -117,13 +117,13 @@ async function apiKeyFlow(ctx: WizardCtx, custom: boolean, providers: PublicProv
   let base = API_KEY_PROVIDERS[0]!.base;
   let label = 'Custom';
   if (!custom) {
-    const pick = guard(await p.select({ message: 'Provider', options: API_KEY_PROVIDERS.map((x) => ({ value: x.key, label: x.label, hint: x.base })) })) as string;
+    const pick = guard(await p.select({ message: 'Provider', options: API_KEY_PROVIDERS.map((x) => ({ value: x.key, label: x.label, hint: x.base })) }));
     const preset = API_KEY_PROVIDERS.find((x) => x.key === pick)!;
     type = preset.type; base = preset.base; label = preset.label;
   } else {
-    base = (guard(await p.text({ message: 'API base URL', placeholder: 'https://…/v1', validate: validUrl })) as string).trim();
+    base = (guard(await p.text({ message: 'API base URL', placeholder: 'https://…/v1', validate: validUrl }))).trim();
   }
-  const apiKey = (guard(await p.password({ message: 'API key (leave blank to add later in the web UI)' })) as string).trim();
+  const apiKey = (guard(await p.password({ message: 'API key (leave blank to add later in the web UI)' }))).trim();
 
   const model = await chooseModel(ctx, type, base, apiKey);
   if (model === null) return skip(ctx);
@@ -141,7 +141,7 @@ async function apiKeyFlow(ctx: WizardCtx, custom: boolean, providers: PublicProv
 /** Resolve the default model: probe /models for an openai endpoint with a key (validates key + URL),
  *  otherwise ask. Returns the model, '' (none), or null (the user chose to skip AI setup). */
 async function chooseModel(ctx: WizardCtx, type: BrainProviderType, base: string, apiKey: string): Promise<string | null> {
-  if (type === 'anthropic') return (guard(await p.text({ message: 'Default model', initialValue: PREFERRED_DEFAULT.anthropic })) as string).trim();
+  if (type === 'anthropic') return (guard(await p.text({ message: 'Default model', initialValue: PREFERRED_DEFAULT.anthropic }))).trim();
   if (type === 'openai' && apiKey) {
     for (;;) {
       const s = p.spinner(); s.start('Checking the endpoint…');
@@ -156,19 +156,19 @@ async function chooseModel(ctx: WizardCtx, type: BrainProviderType, base: string
           { value: 'retry', label: 'Retry' },
           { value: 'skip', label: 'Skip AI setup' },
         ],
-      })) as string;
+      }));
       if (next === 'retry') continue;
       if (next === 'skip') return null;
-      return (guard(await p.text({ message: 'Model id', placeholder: 'e.g. gpt-5.5' })) as string).trim();
+      return (guard(await p.text({ message: 'Model id', placeholder: 'e.g. gpt-5.5' }))).trim();
     }
   }
-  return (guard(await p.text({ message: 'Default model (optional)', placeholder: 'e.g. gpt-5.5' })) as string).trim();
+  return (guard(await p.text({ message: 'Default model (optional)', placeholder: 'e.g. gpt-5.5' }))).trim();
 }
 
 async function pickFromList(models: string[]): Promise<string> {
   const opts = models.slice(0, 40).map((m) => ({ value: m, label: m }));
-  const pick = guard(await p.select({ message: 'Default model', options: [...opts, { value: '__manual__', label: 'Enter another…' }] })) as string;
-  return pick === '__manual__' ? (guard(await p.text({ message: 'Model id' })) as string).trim() : pick;
+  const pick = guard(await p.select({ message: 'Default model', options: [...opts, { value: '__manual__', label: 'Enter another…' }] }));
+  return pick === '__manual__' ? (guard(await p.text({ message: 'Model id' }))).trim() : pick;
 }
 
 // ── OAuth (same paste-back flow the web uses) ─────────────────────────────────────────────────────
@@ -184,7 +184,7 @@ async function oauthFlow(ctx: WizardCtx, type: BrainProviderType, providers: Pub
         { value: 'switch', label: 'Choose a different provider' },
         { value: 'skip', label: 'Skip AI setup' },
       ],
-    })) as string;
+    }));
     if (again === 'retry') continue;
     if (again === 'switch') return runAiStep(ctx);
     return skip(ctx);
@@ -236,7 +236,7 @@ async function connectOAuth(ctx: WizardCtx, type: BrainProviderType): Promise<'s
       if (f.needsInput && !asked) {
         asked = true;
         s.stop('');
-        const pasted = (guard(await p.text({ message: 'Paste the authorization code / redirect URL here' })) as string).trim();
+        const pasted = (guard(await p.text({ message: 'Paste the authorization code / redirect URL here' }))).trim();
         const sub = await apiJson(ctx, 'POST', `/brain/oauth/flow/${flowId}/input`, { value: pasted });
         if (!sub.ok) p.log.warn('Submitting the code failed — the sign-in may still complete on its own.');
         s.start('Verifying…');
@@ -333,7 +333,7 @@ async function runAgentSmokeTest(ctx: WizardCtx, providerId: string, model: stri
         { value: 'change', label: 'Change provider' },
         { value: 'keep', label: 'Keep anyway (unverified)' },
       ],
-    })) as string;
+    }));
     if (next === 'retry') continue;
     if (next === 'change') return 'change';
     return 'kept';

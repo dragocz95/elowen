@@ -93,7 +93,7 @@ export async function chooseDeployment(r: Runner, webPort: number): Promise<Depl
       options: [{ value: 'nginx', label: 'nginx', hint: 'recommended' }, { value: 'apache', label: 'apache2' }],
     });
     if (p.isCancel(which)) return null;
-    proxyPreference = which as ProxyKind;
+    proxyPreference = which;
   }
 
   const wantTls = await p.confirm({ message: `Obtain a free HTTPS certificate for ${domain.trim()} via Let's Encrypt?` });

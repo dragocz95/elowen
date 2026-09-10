@@ -11,7 +11,7 @@ import { resolveFastModeRoute } from '../fastMode.js';
 import { isOfferableBrainModel } from '../../shared/execs.js';
 import { buildMemoryTools, BUILTIN_TOOL_DEFER_LOADING, BUILTIN_TOOL_ICONS, BUILTIN_TOOL_PLAN_SAFE } from '../tools/index.js';
 import { buildShareFileTool } from '../tools/shareFileTool.js';
-import type { GuestFileSandbox, SandboxResolver } from '../managedArtifacts.js';
+import type { SandboxResolver } from '../managedArtifacts.js';
 import { setManagedSandboxResolver } from '../session/toolResultClearing.js';
 import { buildShareImageTool } from '../tools/shareImageTool.js';
 import { makeToolIconResolver } from '../toolIcons.js';
@@ -402,7 +402,7 @@ export class LiveSessionSpawner {
     // through the registry on each call rather than captured here, so a plugin reload never leaves a
     // consumer holding a disposed control; absent or disabled means those consumers refuse, and a
     // managed turn never falls back to the host filesystem.
-    const sandbox: SandboxResolver = async () => (await this.d.plugins())?.control('sandbox') as GuestFileSandbox | undefined;
+    const sandbox: SandboxResolver = async () => (await this.d.plugins())?.control('sandbox');
     setManagedSandboxResolver(sandbox);
     // The security invariant (a SHARED platform channel — trusted OR foreign — never gets the owner's
     // Elowen* control-plane tools or owner API token) lives in composeSessionTools; the token is minted

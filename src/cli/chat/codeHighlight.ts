@@ -190,7 +190,7 @@ export function highlightLine(line: string, lang: string): CodeToken[] | null {
  *  keeps its previous styling for that block. */
 export function highlightBlock(code: string, lang: string): string[] | null {
   if (!LANG_LOADERS[lang]) return null;
-  ensureLang(lang);
+  void ensureLang(lang);
   // The unloaded state is transient — never cache its null, or the block would stay plain after the
   // grammar lands (mirrors highlightLine). Only memoize real tokenization results.
   if (!highlighter || !loadedLangs.has(lang)) return null;

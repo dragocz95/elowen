@@ -10,7 +10,7 @@ import { openWorkflowModal as showWorkflowModal } from './workflowModal.js';
 import { activeMention, CLIPBOARD_MENTION, imageMimeFor, rankMentionFiles, bumpMentionFrecency, mentionInsertText } from './mentions.js';
 import { isSlashCommandDraft } from './commands.js';
 import { activeKeymap, createLeaderState } from './keys.js';
-import type { KeybindAction } from './keys.js';
+import type { ResolvedKeybindAction } from './keys.js';
 import { padAnsi, terminalSafeAnsi } from '../ui/text.js';
 import { ELOWEN_CLI_VERSION } from '../version.js';
 import { computeTelemetryRailBudget } from './layoutBudget.js';
@@ -242,7 +242,7 @@ export function createChatComposition(
   let fullOverlayReflowPending = false;
   let preparedMessagePresence = hasMessages();
   const activeInputComponent = (): (Component & { setMaxRows?: (rows: number | null) => void }) | undefined =>
-    editorSlot.children[0] as (Component & { setMaxRows?: (rows: number | null) => void }) | undefined;
+    editorSlot.children[0];
   const hasPriorityInput = (): boolean => activeInputComponent() !== editor;
   const startInput: Component & { setMaxRows(rows: number | null): void } = {
     invalidate: () => inputStack.invalidate?.(),
@@ -828,7 +828,7 @@ export function createChatComposition(
       slashOverlay = overlay;
       slashHandle = showSuggestions('slash', overlay);
     }
-    (slashOverlay as ArgOverlay).setItems(modelArgSuggestions(query));
+    (slashOverlay).setItems(modelArgSuggestions(query));
     render('overlay:model-arg');
     if (modelArgModels === null && !modelArgLoading) {
       modelArgLoading = true;
@@ -1155,7 +1155,7 @@ export function createChatComposition(
     if (inputRouter) return;
     /** Run one keybind action. Fired by its direct chord (while the main editor is focused) or as a
      *  resolved leader sequence — one dispatcher so both paths share guards and behavior. */
-    const dispatchAction = (action: KeybindAction): void => {
+    const dispatchAction = (action: ResolvedKeybindAction): void => {
       switch (action) {
         case 'quit': actions.quit(); return;
         // No telemetry panel on the start screen — a toggle there would silently pre-hide it for later.

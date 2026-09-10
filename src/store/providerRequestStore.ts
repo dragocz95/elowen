@@ -221,7 +221,7 @@ function displayText(value: unknown, depth = 0): string {
   if (!record) return '';
   // `thinking` is Anthropic's reasoning field; without it the block serializes to JSON in the preview.
   for (const key of ['text', 'output_text', 'input_text', 'thinking', 'description']) {
-    if (typeof record[key] === 'string') return record[key] as string;
+    if (typeof record[key] === 'string') return record[key];
   }
   if (record.content !== undefined) {
     const content = displayText(record.content, depth + 1);

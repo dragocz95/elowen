@@ -77,7 +77,7 @@ export function registerBrainStreamRoutes(app: ElowenApp, route: BrainRouteConte
     if (rawSurface !== undefined && rawSurface !== 'web' && rawSurface !== 'cli') {
       return c.json({ error: 'invalid surface' }, 400);
     }
-    const surface = rawSurface as 'web' | 'cli' | undefined;
+    const surface = rawSurface;
     const rawClientGeneration = c.req.query('generation');
     const clientGeneration = rawClientGeneration === undefined ? undefined : Number(rawClientGeneration);
     if (clientGeneration !== undefined

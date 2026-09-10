@@ -83,7 +83,7 @@ const readAllowedExecs = (value: string): string[] => {
   try { raw = JSON.parse(value) as unknown[]; } catch { raw = value.split(','); }
   return Array.isArray(raw) ? raw.map(canonicalExec).filter(Boolean) : [];
 };
-const mask = (r: Row): User => ({ id: r.id, username: r.username, created_at: r.created_at, is_admin: !!r.is_admin, allowed_execs: readAllowedExecs(r.allowed_execs), disabled_tools: r.disabled_tools ? r.disabled_tools.split(',').filter(Boolean) : [], allowed_tools: r.allowed_tools ? r.allowed_tools.split(',').filter(Boolean) : [], granted_plugins: r.granted_plugins ? r.granted_plugins.split(',').filter(Boolean) : [], name: r.name ?? '', email: r.email ?? '', avatar: r.avatar ?? '', default_exec: canonicalExec(r.default_exec), advisor_exec: canonicalExec(r.advisor_exec), advisor_autostart: r.advisor_autostart === undefined ? true : !!r.advisor_autostart, can_create_projects: !!r.can_create_projects, can_share_projects: !!r.can_share_projects, project_limit: r.project_limit, default_project_id: r.default_project_id });
+const mask = (r: Row): User => ({ id: r.id, username: r.username, created_at: r.created_at, is_admin: !!r.is_admin, allowed_execs: readAllowedExecs(r.allowed_execs), disabled_tools: r.disabled_tools ? r.disabled_tools.split(',').filter(Boolean) : [], allowed_tools: r.allowed_tools ? r.allowed_tools.split(',').filter(Boolean) : [], granted_plugins: r.granted_plugins ? r.granted_plugins.split(',').filter(Boolean) : [], name: r.name, email: r.email, avatar: r.avatar, default_exec: canonicalExec(r.default_exec), advisor_exec: canonicalExec(r.advisor_exec), advisor_autostart: !!r.advisor_autostart, can_create_projects: !!r.can_create_projects, can_share_projects: !!r.can_share_projects, project_limit: r.project_limit, default_project_id: r.default_project_id });
 
 function hashPassword(password: string): string {
   const salt = randomBytes(16);
@@ -98,7 +98,9 @@ function verifyPassword(password: string, stored: string): boolean {
   return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
-function externalKey(value: string, label: string, pattern?: RegExp): string {
+/** The trust boundary for an external identity key. `unknown` rather than `string` because the values
+ *  arrive from an SSO assertion, where a claim can be missing or a number however the caller types it. */
+function externalKey(value: unknown, label: string, pattern?: RegExp): string {
   const raw = String(value ?? '');
   if (!raw || raw !== raw.trim() || raw.length > 255 || /[\u0000-\u001f\u007f]/.test(raw) || (pattern && !pattern.test(raw))) {
     throw new TypeError(`invalid external identity ${label}`);

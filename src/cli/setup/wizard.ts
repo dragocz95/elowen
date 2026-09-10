@@ -141,10 +141,10 @@ async function review(ctx: WizardCtx, steps: WizardStep[]): Promise<ReviewDecisi
       { value: 'edit', label: 'Go back and edit…' },
       { value: 'skip', label: 'Skip remaining' },
     ],
-  })) as string;
+  }));
   if (decision === 'finish') return 'finish';
   if (decision === 'skip') return 'skip-remaining';
-  const which = guard(await p.select({ message: 'Edit which step?', options: steps.map((s, idx) => ({ value: String(idx), label: s.title })) })) as string;
+  const which = guard(await p.select({ message: 'Edit which step?', options: steps.map((s, idx) => ({ value: String(idx), label: s.title })) }));
   return Number(which);
 }
 

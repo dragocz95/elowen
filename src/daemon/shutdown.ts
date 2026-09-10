@@ -23,7 +23,7 @@ const PAUSE_PLUGIN_SHUTDOWN_MS = 3_000;
 async function bounded(work: Promise<unknown> | undefined, ms: number): Promise<void> {
   if (!work) return;
   let timer: NodeJS.Timeout | undefined;
-  const limit = new Promise<void>((resolve) => { timer = setTimeout(resolve, ms); timer.unref?.(); });
+  const limit = new Promise<void>((resolve) => { timer = setTimeout(resolve, ms); timer.unref(); });
   try { await Promise.race([work, limit]); }
   finally { if (timer) clearTimeout(timer); }
 }
@@ -40,6 +40,13 @@ async function bounded(work: Promise<unknown> | undefined, ms: number): Promise<
  *  Hermes agent reserves for this. The units pin it with `RestartForceExitStatus`; the currently installed
  *  units already restart on any non-zero status, so this works there too. */
 export const RESTART_EXIT_CODE = 75;
+
+/** What the pause is allowed to assume about the brain. The seam is OPTIONAL on purpose: a minimally
+ *  built daemon reaches this handler with a brain that implements only the chat surface, and the pause
+ *  has to exit cleanly for it rather than throw on a missing method. Spelling that here is what makes
+ *  the `?.` calls below honest instead of defensive — a full BrainService satisfies it unchanged. */
+type PausableBrain = Pick<BrainService, 'notify'>
+  & Partial<Pick<BrainService, 'pauseForRestart' | 'settleUnparkable' | 'shutdownPluginServices'>>;
 
 /** Handle returned by {@link installGracefulShutdown} for asking the daemon to restart itself. */
 export interface ShutdownControl {
@@ -64,7 +71,7 @@ export interface ShutdownControl {
  *  Handlers registered once, at boot. Exit code 0 throughout: a paused shutdown is a clean one, and
  *  `Restart=on-failure` must not read a deliberate stop as a crash to bounce back from. */
 export function installGracefulShutdown(
-  brain: BrainService | undefined,
+  brain: PausableBrain | undefined,
   log: { info: (m: string) => void; error: (m: string, e?: unknown) => void },
   opts?: { exit?: (code: number) => never; notify?: boolean },
 ): ShutdownControl {
@@ -96,7 +103,7 @@ export function installGracefulShutdown(
       // can. What the guard does catch is everything asynchronous around it (a checkpoint that returns a
       // promise from a test brain, a wedged wait), so the process never sits idle waiting to be killed.
       let guard = setTimeout(() => { log.error('pause checkpoint did not return in time — exiting anyway'); exit(exitCode); }, PAUSE_CHECKPOINT_GUARD_MS);
-      guard.unref?.();
+      guard.unref();
       // Everything durable happens synchronously in here (SQLite writes): after this line the checkpoint
       // is complete and only best-effort courtesies remain between us and the exit. A failing checkpoint
       // is logged, not fatal: the per-message mirror is already on disk.
@@ -109,7 +116,7 @@ export function installGracefulShutdown(
       // The one bounded wait, for turns nothing can resume; its own budget is inside settleUnparkable,
       // and this guard only catches a wait that wedges. Then the courtesies, each bounded on its own.
       guard = setTimeout(() => { log.error('pause wait for un-parkable turns wedged — exiting anyway'); exit(exitCode); }, PAUSE_UNPARKABLE_GUARD_MS);
-      guard.unref?.();
+      guard.unref();
       if (at.unparkable.length > 0) {
         try {
           const interrupted = await brain?.settleUnparkable?.(at.unparkable) ?? [];

@@ -1,4 +1,4 @@
-import type { HookOutcome, HookPatch, HookResult, PluginCapabilities, PluginHook, PluginHookName } from './api.js';
+import type { HookOutcome, HookPatch, PluginCapabilities, PluginHook, PluginHookName } from './api.js';
 
 /** Minimal logger surface the bus needs — a warn sink for isolated hook failures. */
 export interface HookBusLogger { warn(msg: string): void }
@@ -193,7 +193,7 @@ export class PluginHookBus {
 /** Extract a hook's `patch.appendContext` string if it returned one, else undefined. */
 function asAppendContext(outcome: HookOutcome): string | undefined {
   if (!outcome || typeof outcome !== 'object') return undefined;
-  return (outcome as HookResult).patch?.appendContext;
+  return (outcome).patch?.appendContext;
 }
 
 /** Extract a hook's `patch.denyToolCall` veto reason if it returned one, else undefined. An empty or
@@ -201,6 +201,6 @@ function asAppendContext(outcome: HookOutcome): string | undefined {
  *  retrying the same thing forever. */
 function asDenyToolCall(outcome: HookOutcome): string | undefined {
   if (!outcome || typeof outcome !== 'object') return undefined;
-  const reason = (outcome as HookResult).patch?.denyToolCall;
+  const reason = (outcome).patch?.denyToolCall;
   return typeof reason === 'string' && reason.trim() ? reason.trim() : undefined;
 }

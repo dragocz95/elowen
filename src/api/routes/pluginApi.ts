@@ -67,7 +67,7 @@ async function dispatchPluginApi(
     platform: 'http',
     userId: String(request.auth.userId ?? ''),
     ...(request.auth.userId !== null ? { elowenUserId: request.auth.userId } : {}),
-    ...(c.get('user')?.username ? { elowenUsername: c.get('user')!.username } : {}),
+    ...(c.get('user')?.username ? { elowenUsername: c.get('user').username } : {}),
     admin: request.auth.admin,
     // Same rule as inside a turn (see `operatesInstance`), not a second opinion: this used to compare the
     // caller against `users.ownerId()` — the FIRST admin by creation order — so a second admin passed every

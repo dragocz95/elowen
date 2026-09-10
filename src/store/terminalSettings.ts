@@ -104,7 +104,7 @@ function clampToBounds(n: unknown, [min, max]: [number, number], fallback: numbe
 function sanitizePalette(input: unknown, base: TerminalPalette): TerminalPalette {
   const src = (input && typeof input === 'object' ? input : {}) as Record<string, unknown>;
   const out = {} as TerminalPalette;
-  for (const k of PALETTE_KEYS) out[k] = isHex6(src[k]) ? (src[k] as string).toLowerCase() : base[k];
+  for (const k of PALETTE_KEYS) out[k] = isHex6(src[k]) ? (src[k]).toLowerCase() : base[k];
   return out;
 }
 

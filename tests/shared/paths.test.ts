@@ -1,4 +1,6 @@
+import { dirname, resolve } from 'node:path';
 import { describe, it, expect } from 'vitest';
+import fc from 'fast-check';
 import { dataDir, dbPath, fsSafeSegment, logDir, runFile, sessionToolResultSpillDir, setSpillNamespaceResolver, toolResultSpillDir } from '../../src/shared/paths.js';
 
 describe('shared/paths', () => {
@@ -53,5 +55,49 @@ describe('shared/paths', () => {
     expect(encoded.size).toBe(ids.length);
     expect(fsSafeSegment('..')).toBe('%..');
     expect(fsSafeSegment('_..')).toBe('_..');
+  });
+});
+
+/** The two claims above are made over ten hand-picked ids, and both are claims about EVERY id: a tool
+ *  call id is minted by a provider, a plugin or an MCP server, so the interesting inputs are the ones
+ *  nobody thought to write down. These generate them.
+ *
+ *  Containment is a security property — the encoded id is pasted straight into a path, and an id that
+ *  escaped its directory would let one conversation read another's spilled tool output. Injectivity is
+ *  the other half: two ids sharing one file would serve the wrong conversation's output under a name
+ *  the model was already told to read. */
+describe('shared/paths — properties over arbitrary ids', () => {
+  const env = { HOME: '/h' } as NodeJS.ProcessEnv;
+  const root = '/h/.config/elowen/tool-results';
+
+  /** Free text alone almost never produces a separator, so the generator is weighted towards the
+   *  fragments an attacker would actually send; the plain strings keep the rest of the space covered. */
+  const hostileId = fc.stringMatching(/^[-\w./\\%: ]{0,12}$/);
+  const anyId = fc.oneof(hostileId, fc.string(), fc.string({ unit: 'binary' }));
+
+  it('an encoded segment is always exactly one path component', () => {
+    fc.assert(fc.property(anyId, (id) => {
+      const segment = fsSafeSegment(id);
+      expect(segment).not.toBe('');
+      expect(segment).not.toBe('.');
+      expect(segment).not.toBe('..');
+      expect(segment.includes('/')).toBe(false);
+      expect(segment.includes('\\')).toBe(false);
+    }));
+  });
+
+  it('no id can escape the spill root', () => {
+    fc.assert(fc.property(anyId, (id) => {
+      const dir = toolResultSpillDir(env, id);
+      expect(dirname(dir)).toBe(root);
+      expect(resolve(dir).startsWith(`${root}/`)).toBe(true);
+    }));
+  });
+
+  it('two different ids never share a spill directory', () => {
+    fc.assert(fc.property(anyId, anyId, (a, b) => {
+      fc.pre(a !== b);
+      expect(toolResultSpillDir(env, a)).not.toBe(toolResultSpillDir(env, b));
+    }));
   });
 });

@@ -90,7 +90,7 @@ export function watchLoopLag(
       log.info(`event loop recovered — p50 ${p50}ms, p99 ${p99}ms`);
     }
   }, opts.checkMs ?? 30_000);
-  timer.unref?.();
+  timer.unref();
   return () => clearInterval(timer);
 }
 
@@ -127,7 +127,7 @@ export function startLoopLagMonitor(windowMs = WINDOW_MS): LoopLagMonitor {
     while (stalls.length > 0 && (stalls[0] as StallInterval).end <= older.resetAt) stalls.shift();
   }, Math.max(1, windowMs / 2));
   // Never hold the process open for a metric — a daemon shutting down must not wait for this.
-  roll.unref?.();
+  roll.unref();
 
   let lastTick = now();
   const stallTick = setInterval(() => {
@@ -136,7 +136,7 @@ export function startLoopLagMonitor(windowMs = WINDOW_MS): LoopLagMonitor {
     lastTick = t;
     if (gap >= STALL_FLOOR_MS) stalls.push({ start: t - gap, end: t });
   }, STALL_TICK_MS);
-  stallTick.unref?.();
+  stallTick.unref();
 
   return {
     lag: () => {

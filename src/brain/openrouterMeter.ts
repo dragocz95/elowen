@@ -94,7 +94,7 @@ function meterStream(res: Response, meter: CostMeter): Response {
             meter.costUsd += cost;
             meter.reported = true;
             meter.currency = 'USD';
-            meter.raw = obj.usage as Record<string, unknown>;
+            meter.raw = obj.usage;
           }
         }
       } catch { /* best-effort sniff — a partial/odd frame must not break the response */ }
@@ -134,12 +134,12 @@ export function createMeteredFetch(base: typeof fetch): typeof fetch {
     }
     // base() runs ONCE. A fetch rejection must propagate (pi-ai owns retries) — never re-issue the request
     // here, or a dropped connection would silently double-send a chat-completions POST (double model cost).
-    const res = await base(input as never, nextInit);
+    const res = await base(input, nextInit);
     if (!meterIt) return res;
     const meter = meterStore.getStore();
     if (!meter) return res; // no active run to attribute to — pass through (accounting flag still set)
     try { return meterStream(res, meter); } catch (e) { log.error('openrouter meter stream tee failed, passing raw response', e); return res; }
-  }) as typeof fetch;
+  });
 }
 
 let installed = false;

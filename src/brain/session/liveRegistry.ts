@@ -168,8 +168,8 @@ export class LiveSessionRegistry<T extends { sessionId: string; session: { dispo
       let timer: ReturnType<typeof setTimeout> | undefined;
       const settle = (outcome: 'idle' | 'timeout') => {
         if (timer) clearTimeout(timer);
-        waiters!.delete(onIdle);
-        if (waiters!.size === 0) this.childIdleWaiters.delete(parentSessionId);
+        waiters.delete(onIdle);
+        if (waiters.size === 0) this.childIdleWaiters.delete(parentSessionId);
         resolve(outcome);
       };
       const onIdle = () => settle('idle');

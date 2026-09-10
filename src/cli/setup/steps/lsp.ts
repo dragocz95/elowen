@@ -74,7 +74,7 @@ export async function runLspStep(ctx: WizardCtx, deps: LspStepDeps = defaultDeps
       { value: 'skip', label: 'Skip for now' },
       { value: 'back', label: '← Go back' },
     ],
-  })) as string;
+  }));
   if (choice === 'back') return { status: 'back' };
   if (choice === 'skip') return skip(ctx);
 

@@ -30,7 +30,7 @@ function prefsFilePath(env: NodeJS.ProcessEnv = process.env): string {
 export function loadPrefs(env: NodeJS.ProcessEnv = process.env): CliPrefs {
   try {
     const parsed = JSON.parse(readFileSync(prefsFilePath(env), 'utf-8')) as unknown;
-    return parsed && typeof parsed === 'object' ? (parsed as CliPrefs) : {};
+    return parsed && typeof parsed === 'object' ? (parsed) : {};
   } catch { return {}; }
 }
 

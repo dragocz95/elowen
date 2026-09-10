@@ -39,7 +39,7 @@ function answersMatch(questions: readonly AskQuestion[], answers: unknown): answ
     const answer = raw as { header?: unknown; selected?: unknown; other?: unknown };
     if (answer.header !== question.header || !Array.isArray(answer.selected)) return false;
     if (!answer.selected.every((label): label is string => typeof label === 'string')) return false;
-    const selected = answer.selected as string[];
+    const selected = answer.selected;
     const hasOther = typeof answer.other === 'string' && answer.other.trim().length > 0;
     if (selected.length === 0 && !hasOther) return false;
     const distinct = new Set(selected);

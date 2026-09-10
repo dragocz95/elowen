@@ -118,7 +118,7 @@ function defaultInvoker(request: SiteGatewayHelperRequest): Promise<HelperRespon
       child.kill('SIGKILL');
       finish(new Error('the site gateway helper timed out'));
     }, siteGatewayHelperTimeoutMs(request));
-    timer.unref?.();
+    timer.unref();
     child.stdin.end(JSON.stringify(request));
   });
 }

@@ -196,7 +196,7 @@ export class TurnRenderer {
             // The file path in the tool detail picks the grammar (unknown extension → plain colors);
             // ensureLang kicks the async grammar load so the NEXT render highlights this language.
             const diffLang = langForPath(item.detail);
-            if (diffLang) ensureLang(diffLang);
+            if (diffLang) void ensureLang(diffLang);
             const { lines: block, expandable } = framedDiffBlock(
               item.diff, width, toolRowSpec(item.name, item.detail).title,
               options.expandedTools.has(diffKey), diffLang, SHOWN_OUTPUT_CONNECTOR,

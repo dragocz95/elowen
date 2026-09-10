@@ -437,7 +437,7 @@ export function isErroredContextOverflow(message: unknown, contextWindow: number
     input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0,
     ...(raw.usage ?? {}),
   };
-  try { return isContextOverflow({ ...(message as object), usage } as Parameters<typeof isContextOverflow>[0], contextWindow); }
+  try { return isContextOverflow({ ...(message), usage } as Parameters<typeof isContextOverflow>[0], contextWindow); }
   catch { return false; }
 }
 

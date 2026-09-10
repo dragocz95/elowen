@@ -184,8 +184,9 @@ describe('toolResultSpillPath', () => {
   });
 
   // The mode and the byte count are in the name for UNIQUENESS: two clearings of the same id must not
-  // collide on one file, and a write-once spill can then adopt an identical survivor safely. Nothing
-  // parses them back out.
+  // collide on one file, and a write-once spill can then adopt an identical survivor safely. They are
+  // also READ BACK — the v1 placeholder migrations in store/db.ts parse `<id>.v1-<mode>-<bytes>.txt`
+  // off disk — so a format change here has to mint v2 rather than reinterpret these names.
   it('carries the mode and byte count that make the name unique', () => {
     expect(toolResultSpillPath('/s', 'c', { mode: 'preview', bytes: 50003 })).toBe('/s/c.v1-preview-50003.txt');
   });
