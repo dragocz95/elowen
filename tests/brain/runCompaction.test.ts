@@ -16,15 +16,13 @@ function fakeSession(tokens: () => number, compact: () => Promise<void>): AgentS
 }
 
 describe('runCompaction', () => {
-  it('reports a real compaction with the context it started and ended on', async () => {
+  it('reports a real compaction with the context it ended on', async () => {
     let context = 92_754;
     const session = fakeSession(() => context, async () => { context = 76_295; });
 
     const result = await runCompaction(session);
 
     expect(result.compacted).toBe(true);
-    expect(result.contextBefore).toBe(92_754);
-    expect(result.contextAfter).toBe(76_295);
     expect(result.usage.tokens).toBe(76_295);
   });
 

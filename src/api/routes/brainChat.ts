@@ -101,7 +101,7 @@ export const SERVER_COMMANDS: Readonly<Record<string, ServerCommandHandler>> = {
     const r = await brain.compact(c.get('user').id, target, compactInstruction(body.argument ?? body.instruction));
     return c.json({
       ok: true,
-      message: r.compacted ? 'Conversation compacted.' : (r.message ?? 'Nothing to compact yet.'),
+      message: r.compacted ? 'Conversation compacted.' : r.message,
       data: { usage: r.usage },
     });
   },

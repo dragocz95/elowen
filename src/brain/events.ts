@@ -284,17 +284,13 @@ export interface WorkflowCompletion {
 }
 
 /** Result of a manual/auto context compaction. `compacted` is false when there was nothing to compact
- *  (session too small / already compacted) — a benign no-op the clients report as a friendly notice
- *  rather than an error. `usage` is always the fresh post-call context fill. */
-export interface CompactResult {
-  usage: BrainUsage;
-  compacted: boolean;
-  message?: string;
-  /** Context fill either side of a real compaction, so a caller can report what the summarization
-   *  actually bought instead of only the post-call number. Absent on a no-op, where nothing moved. */
-  contextBefore?: number | null;
-  contextAfter?: number | null;
-}
+ *  (session too small / already compacted) — a benign no-op that carries the notice its callers show,
+ *  rather than an error. `usage` is always the fresh post-call context fill. The no-op message is written
+ *  HERE and nowhere else: a client that repeats it as a fallback ends up telling an already-compacted
+ *  session it has nothing to compact yet. */
+export type CompactResult =
+  | { usage: BrainUsage; compacted: true }
+  | { usage: BrainUsage; compacted: false; message: string };
 
 /** PI decides whether there is anything to compact BEFORE it reaches any extension hook or issues a
  *  single summarization request: `prepareCompaction` returning nothing is what raises "Already compacted"
@@ -318,13 +314,9 @@ function noopCompactMessage(e: unknown): string | undefined {
  *  which appends it to the summary prompt as an "Additional focus" line; empty/undefined runs a default
  *  compaction. */
 export async function runCompaction(session: AgentSession, customInstruction?: string): Promise<CompactResult> {
-  // Measured before the call, because `compact()` replaces the context in place: afterwards there is no
-  // way left to say what the summarization actually bought.
-  const before = usageOf(session).tokens;
   try {
     await session.compact(customInstruction);
-    const usage = usageOf(session);
-    return { usage, compacted: true, contextBefore: before, contextAfter: usage.tokens };
+    return { usage: usageOf(session), compacted: true };
   } catch (e) {
     const message = noopCompactMessage(e);
     if (message !== undefined) return { usage: usageOf(session), compacted: false, message };

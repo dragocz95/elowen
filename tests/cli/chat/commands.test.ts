@@ -240,8 +240,10 @@ describe('compactNotice', () => {
     expect(compactNotice({ compacted: false, message: 'Nothing to compact yet.' })).toBe('Nothing to compact yet.');
   });
 
-  it('a no-op with no server message falls back to a default so the command never looks silent', () => {
-    expect(compactNotice({ compacted: false })).toBe('Nothing to compact yet.');
+  // The no-op wording is written once, by the daemon's runCompaction. A local fallback covered only one
+  // of its two cases and told an already-compacted session it had nothing to compact yet.
+  it('shows nothing of its own when the server sent no message', () => {
+    expect(compactNotice({ compacted: false })).toBeNull();
   });
 });
 
