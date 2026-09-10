@@ -18,6 +18,7 @@ import { PROJECT_BASE_IMAGE_TAG } from './containerBaseImage.mjs';
 const FILE_HELPER = readFileSync(new URL('./guestFiles.py', import.meta.url), 'utf8');
 const PREVIEW_HELPER = readFileSync(new URL('./previewProxy.py', import.meta.url), 'utf8');
 const DEFAULT_LIMITS = { cpus: 1, memoryMb: 1024, pidsLimit: 512 };
+const LIMIT_KEYS = Object.keys(DEFAULT_LIMITS);
 /** What each lifecycle operation is made of, in order, with the relative cost of each part. The list is
  *  DECLARED before the work starts, so a surface watching an operation can say "step 2 of 5" from the
  *  first frame instead of discovering the shape as it goes. The weights are rough durations rather than
@@ -69,6 +70,11 @@ function limits(value) {
   if (!Number.isFinite(result.cpus) || result.cpus <= 0 || result.cpus > 1024) throw error('invalid_limits', 'Invalid CPU limit', 400);
   for (const key of ['memoryMb', 'pidsLimit']) positive(result[key], key);
   return result;
+}
+function effectiveLimits(value) {
+  const chosen = {};
+  for (const key of LIMIT_KEYS) if (value?.[key] !== undefined) chosen[key] = value[key];
+  return limits(chosen);
 }
 /** The limits a project environment is provisioned with, from the administrator's plugin settings.
  *  An unset or unusable field falls back to the built-in figure per key, so a single bad value cannot
@@ -240,7 +246,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     return row;
   }
   const view = (row) => ({ [row.kind === 'project' ? 'projectId' : 'siteId']: row.kind === 'project' ? Number(row.resource_id) : row.resource_id,
-    generation: row.generation, state: row.state, desiredState: row.desired_state, lastError: row.error ?? null, limits: row.limits });
+    generation: row.generation, state: row.state, desiredState: row.desired_state, lastError: row.error ?? null, limits: effectiveLimits(row.limits) });
   const assertGeneration = (row, expected) => { if (expected !== undefined && expected !== row.generation) throw error('generation_changed', 'Environment generation changed'); };
 
   /** The one place an operation's live state leaves this process. Everything a watcher needs travels in

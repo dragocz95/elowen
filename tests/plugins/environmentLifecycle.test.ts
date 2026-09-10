@@ -157,6 +157,20 @@ describe('durable managed environment lifecycle', () => {
     expect((await runtime.environmentFor(input)).limits).toEqual({ cpus: 1, memoryMb: 4096, pidsLimit: 512 });
   });
 
+  it('round-trips stored limits through the public read and write contract', async () => {
+    const { runtime, db } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'round-trip-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    db.prepare("UPDATE p_sandbox_runtimes SET limits_json=? WHERE kind='project' AND resource_id='7'")
+      .run(JSON.stringify({ cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240 }));
+
+    const actor = { ...input, accountUserId: 3 };
+    const stored = (await runtime.environmentFor(actor)).limits;
+    expect(stored).toEqual({ cpus: 1, memoryMb: 1024, pidsLimit: 512 });
+    await expect(runtime.requestEnvironment({ ...actor, requestId: 'round-trip-limits', action: { kind: 'limits', limits: stored } }))
+      .resolves.toMatchObject({ action: { kind: 'limits', limits: stored } });
+  });
+
   it('uses one container inventory and skips full inspection for healthy environments', async () => {
     const { runtime, podman } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();

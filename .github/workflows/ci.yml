@@ -252,6 +252,8 @@ jobs:
       - run: npm run build
       - run: npm run build:web
       - run: node scripts/tests/web-e2e/run.mjs
+      - run: npm exec --prefix web playwright install --with-deps chromium
+      - run: npm run test:e2e:web-environment
 
   delegate-e2e:
     name: Delegate E2E (sub-agent + workflow)

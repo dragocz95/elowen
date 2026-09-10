@@ -8,6 +8,7 @@
 // the slider is a Radix widget with no layout in jsdom.
 import { test, expect, Seed, type Page } from '../fixtures/index.ts';
 import type { Seed as SeedFixture } from '../fixtures/Seed.ts';
+import { DAEMON_URL } from '../fixtures/env.ts';
 
 const authedOnly = (testInfo: { project: { name: string } }) =>
   test.skip(testInfo.project.name !== 'authed', 'needs the authenticated shell');
@@ -41,6 +42,21 @@ async function openEnvironment(page: Page): Promise<void> {
   await expect(page.getByText('Prostředky', { exact: true })).toBeVisible();
 }
 
+function failOnBrowserErrors(page: Page): () => void {
+  const failures: string[] = [];
+  page.on('console', (message) => {
+    if (message.type() !== 'error') return;
+    // The fake daemon's intentionally long-lived ambient SSE is aborted by full-page reloads through the
+    // Next dev proxy. Chromium reports that harness teardown as a MIME error after the page has left.
+    if (message.text().startsWith("EventSource's response has a MIME type")) return;
+    failures.push(`console: ${message.text()}`);
+  });
+  page.on('response', (response) => {
+    if (['fetch', 'xhr'].includes(response.request().resourceType()) && !response.ok()) failures.push(`HTTP ${response.status()}: ${response.url()}`);
+  });
+  return () => expect(failures, failures.join('\n')).toEqual([]);
+}
+
 test.describe('managed project Environments tab', () => {
   test('states every resource with its unit and holds the rows at 390px', async ({ app, seed }, testInfo) => {
     authedOnly(testInfo);
@@ -53,9 +69,8 @@ test.describe('managed project Environments tab', () => {
       await expect(app.getByText('1 CPU')).toBeVisible();
       await expect(app.getByText('1024 MiB')).toBeVisible();
       await expect(app.getByText('512 procesů')).toBeVisible();
-      await expect(app.getByText('10240 MiB')).toBeVisible();
-      await expect(app.getByText('700.0 MiB')).toBeVisible(); // the reported usage, beside its threshold
       await expect(app.getByRole('slider', { name: 'Paměť' })).toBeVisible();
+      await expect(app.getByText(/disk/i)).toHaveCount(0);
 
       const spill = await app.evaluate(() => {
         const rows = [...document.querySelectorAll('.settings-row')];
@@ -71,9 +86,41 @@ test.describe('managed project Environments tab', () => {
     }
   });
 
+  test('round-trips stop, start and recreate state through the environment API', async ({ app, seed }, testInfo) => {
+    authedOnly(testInfo);
+    test.skip(!(await prepare(app, seed, 'studio-light')), 'the sandbox browser bundle is not built here');
+    const assertNoBrowserErrors = failOnBrowserErrors(app);
+    await openEnvironment(app);
+    await expect(app.getByRole('status', { name: 'Spuštěno' })).toBeVisible();
+
+    for (const [kind, state] of [['stop', 'Zastaveno'], ['start', 'Spuštěno']] as const) {
+      await app.evaluate(async (action) => {
+        const response = await fetch('/api/plugins/sandbox/api/projects/1/environment', {
+          method: 'POST', headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ action: { kind: action }, expectedGeneration: 2, requestId: `e2e-${action}` }),
+        });
+        if (!response.ok) throw new Error(`environment ${action} failed: ${response.status}`);
+      }, kind);
+      await app.reload();
+      await openEnvironment(app);
+      await expect(app.getByRole('status', { name: state })).toBeVisible();
+    }
+
+    await app.request.post(`${DAEMON_URL}/__test/sandbox-environment`, {
+      data: { state: 'failed', lastError: 'Environment predates the named project mount' },
+    });
+    await app.reload();
+    await openEnvironment(app);
+    await expect(app.getByRole('status', { name: 'Selhalo' })).toBeVisible();
+    await app.getByRole('button', { name: 'Znovu vytvořit prostředí' }).click();
+    await expect(app.getByRole('status', { name: 'Spuštěno' })).toBeVisible();
+    assertNoBrowserErrors();
+  });
+
   test('auto-saves a resource change and shows the environment reporting it back', async ({ app, seed }, testInfo) => {
     authedOnly(testInfo);
     test.skip(!(await prepare(app, seed, 'studio-light')), 'the sandbox browser bundle is not built here');
+    const assertNoBrowserErrors = failOnBrowserErrors(app);
     await app.setViewportSize({ width: 1440, height: 900 });
     await openEnvironment(app);
 
@@ -91,6 +138,12 @@ test.describe('managed project Environments tab', () => {
     const body = JSON.parse((await write).postData() ?? '{}') as { action?: unknown; expectedGeneration?: number };
     expect(body.action).toEqual({ kind: 'limits', limits: { cpus: 1, memoryMb: 1280, pidsLimit: 512 } });
     expect(body.expectedGeneration).toBe(2);
+    await expect(app.getByText('Ukládání…', { exact: true })).toHaveCount(0);
+    await expect(app.getByText('Nepodařilo se uložit', { exact: true })).toHaveCount(0);
+    await app.reload();
+    await openEnvironment(app);
+    await expect(app.getByText('1280 MiB')).toBeVisible();
     await app.screenshot({ path: `${SHOTS}/environment-saved-light.png` });
+    assertNoBrowserErrors();
   });
 });
