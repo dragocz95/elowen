@@ -1623,19 +1623,21 @@ export class BrainService {
       const slug = managed ? this.d.projects?.list().find((p) => p.id === managed.projectId)?.slug : undefined;
       recordSessionEvent(this.d.store, sessionId, live, 'cwd', slug ?? effective.workDir);
     }
-    return { projectRef: ref, workDir: effective.workDir, ...(await this.ensureSelectedEnvironment(sessionId, userId, effective.projectRef)) };
+    return { projectRef: ref, workDir: effective.workDir, ...(await this.ensureSelectedEnvironment(userId, effective.projectRef)) };
   }
 
   /** Record the intent to have the selected environment running, and hand back the operation that will
    *  do it. It ENQUEUES and returns: the container work happens in daemon reconciliation, so the switch
    *  answers in a database round trip whether the environment is up, cold or still being built, and the
    *  caller follows the operation instead of holding a request open across a fifteen-minute image build
-   *  or losing it to a restart. The key is derived from the conversation and the project, so a retried
-   *  or duplicated switch returns the SAME operation rather than queueing a second one.
+   *  or losing it to a restart. No idempotency key is sent: the provider already rejoins a start that is
+   *  still live, while a key stable for the life of a conversation-project pair kept answering with the
+   *  first start that ever ran — after a manual stop the switch reported that historical success,
+   *  queued nothing, and the next turn died on a stopped environment.
    *
    *  A refused request is not a failed switch. The selection is already durable and the environment
    *  surface reports its own state; the operation is the optimisation, not the decision. */
-  private async ensureSelectedEnvironment(sessionId: string, userId: number, projectRef?: ProjectExecutionRef): Promise<{ operationId?: string }> {
+  private async ensureSelectedEnvironment(userId: number, projectRef?: ProjectExecutionRef): Promise<{ operationId?: string }> {
     if (projectRef?.kind !== 'managed') return {};
     const sandbox = this.d.plugins?.peek()?.control('sandbox');
     if (typeof sandbox?.requestEnvironment !== 'function' || typeof sandbox.environmentFor !== 'function') return {};
@@ -1643,8 +1645,7 @@ export class BrainService {
     try {
       const environment = await sandbox.environmentFor({ project, accountUserId: userId });
       if (environment.state === 'running') return {};
-      const operation = await sandbox.requestEnvironment({ project, accountUserId: userId, action: { kind: 'start' },
-        requestId: `chat-switch:${sessionId}:${projectRef.projectId}` });
+      const operation = await sandbox.requestEnvironment({ project, accountUserId: userId, action: { kind: 'start' } });
       return { operationId: operation.id };
     } catch (error) {
       logger('brain').warn(`environment start was not requested for the selected project ${projectRef.projectId}: ${error instanceof Error ? error.message : String(error)}`);
