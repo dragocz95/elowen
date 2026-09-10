@@ -818,7 +818,8 @@ export class BrainStore {
    *  candidates for the retention janitor. The DB-derivable exclusions live HERE so they are applied
    *  atomically and can never drift from the delete: a non-user session (channel/task shell), a delegated
    *  child (`parent_session_id` set — deleting one out from under its parent tree is wrong), and an
-   *  unspoken empty shell that is not an ephemeral run are all filtered out. The live-state exclusions
+   *  unspoken empty shell that is not an ephemeral run and a child whose own delegation is still owed a
+   *  turn are all filtered out. The live-state exclusions
    *  (running, active, running children) cannot be seen from SQLite and are the caller's to apply before
    *  deleting. `days` is clamped
    *  to a positive integer — it is interpolated into a SQLite date modifier, so it must never be a string. */
@@ -853,6 +854,15 @@ export class BrainStore {
            -- narrowed by the exact predicate below — a channel NAME could contain "-arch-" and must not
            -- be mistaken for an archive while it is still live.
            OR s.id LIKE '%-arch-%'
+         )
+         -- A delegation still owed a turn holds its CHILD back too. The janitor's durable guard
+         -- (hasUnfinishedSubagentRuns) asks whether a candidate is a PARENT, which a leaf child never is,
+         -- so a child older than the horizon would be judged on its own age and take the run row, the
+         -- transcript and the spill directory with it while a human DelegateContinue is still expected.
+         AND NOT EXISTS (
+           SELECT 1 FROM brain_subagent_runs r
+            WHERE r.child_session_id = s.id
+              AND r.lifecycle IN ('running', 'recovering', 'recovery_required')
          )`
     ).all(userId) as { id: string }[];
     return rows

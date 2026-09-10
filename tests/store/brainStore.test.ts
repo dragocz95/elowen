@@ -819,6 +819,28 @@ describe('BrainStore', () => {
     ]);
   });
 
+  /** An ephemeral run is judged on its OWN age, so a delegated child older than the horizon is a candidate
+   *  even while the run it belongs to is still owed a turn. The janitor's guard asks whether a candidate is
+   *  a PARENT, which a leaf child never is, so without the child-side exclusion a parked `recovery_required`
+   *  delegation loses its transcript and its spill directory before the human DelegateContinue arrives. */
+  it('staleConversationIds keeps a delegated child whose own run still owes a turn', () => {
+    const spoke = (id: string) => store.appendMessage({ id: `${id}-m`, sessionId: id, parentId: null, role: 'user', content: { text: 'hi' } });
+    const age = (id: string) => db.prepare("UPDATE brain_sessions SET updated_at = datetime('now', '-90 days') WHERE id = ?").run(id);
+    const agedChild = (id: string, parentSessionId: string) => {
+      store.createSession({ id, userId: 7, model: 'm', parentSessionId });
+      spoke(id); age(id);
+    };
+
+    store.createSession({ id: 'root', userId: 7, model: 'm' }); spoke('root'); age('root');
+    agedChild('brain-ch-subagent-sub-parked', 'root');
+    agedChild('brain-ch-subagent-sub-finished', 'root');
+    store.upsertSubagentRun('root', { id: 'call-parked', sessionId: 'brain-ch-subagent-sub-parked', status: 'running', task: 'wait', tools: 1, seconds: 1 });
+    store.upsertSubagentRun('root', { id: 'call-finished', sessionId: 'brain-ch-subagent-sub-finished', status: 'done', task: 'done', tools: 1, seconds: 1 });
+    db.prepare("UPDATE brain_subagent_runs SET lifecycle = 'recovery_required' WHERE tool_call_id = 'call-parked'").run();
+
+    expect(store.staleConversationIds(7, 30).sort()).toEqual(['brain-ch-subagent-sub-finished', 'root']);
+  });
+
   /** A run that died before writing its first message leaves a row NOTHING collects: dropIfUnspoken only
    *  runs on a live conversation's dispose, and the sweep's "spoken in" requirement skipped it forever.
    *  Judged on row age instead — but only for ephemeral runs, never for an owner conversation, whose empty
