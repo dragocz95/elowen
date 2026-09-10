@@ -90,9 +90,25 @@ function memoryProvider(initial: Record<string, string | Buffer> = {}) {
       if (rootKind === null) return { kind: 'walk', root: requested, rootKind, entries: [], truncated: false };
       const root = rootKind === 'directory' ? requested : posix.dirname(requested);
       const skipped = new Set(op.skip ?? []);
-      const inside = [...data.keys()].filter(name => name.startsWith(root === '/' ? '/' : `${root}/`)).sort();
-      const kept = inside.filter(name => !posix.relative(root, name).split('/').slice(0, -1).some(part => skipped.has(part)));
-      const entries = kept.slice(0, op.limit).map(name => ({ path: name, mtime: 1767225600000 }));
+      const depthOf = (name: string) => posix.relative(root, name).split('/').length - 1;
+      const maxDepth = op.maxDepth ?? 64;
+      // Directories are entries of their own, so an empty one is visible; every entry the traversal looks
+      // at counts against `limit`, which is what makes a bounded walk report itself as incomplete.
+      const nested = new Set<string>();
+      for (const name of data.keys()) {
+        if (!name.startsWith(root === '/' ? '/' : `${root}/`)) continue;
+        const parts = posix.relative(root, name).split('/');
+        for (let index = 1; index < parts.length; index += 1) nested.add(posix.join(root, ...parts.slice(0, index)));
+      }
+      const all = [...[...data.keys()].filter(name => name.startsWith(root === '/' ? '/' : `${root}/`)), ...nested].sort();
+      const kept = all.filter(name => {
+        const parts = posix.relative(root, name).split('/');
+        return !parts.slice(0, -1).some(part => skipped.has(part)) && depthOf(name) <= maxDepth;
+      });
+      const entries = kept.slice(0, op.limit).map(name => ({
+        path: name, kind: (nested.has(name) ? 'directory' : 'file') as 'file' | 'directory',
+        size: data.get(name)?.length ?? 0, mtime: 1767225600000,
+      }));
       return { kind: 'walk', root, rootKind, entries, truncated: kept.length > op.limit };
     }
     if (op.kind === 'mkdir') {
@@ -285,7 +301,7 @@ describe('managed builtin consumer routing', () => {
     expect(result.content[0].text).not.toContain('node_modules');
     expect(result.content[0].text).not.toContain('.git');
     const [[{ operation }]] = provider.projectFiles.mock.calls;
-    expect(operation.skip).toEqual(expect.arrayContaining(['node_modules', '.git']));
+    expect(operation).toMatchObject({ kind: 'walk', skip: expect.arrayContaining(['node_modules', '.git']) });
   });
 
   it('reports a truncated traversal as unfinished rather than as a complete answer', async () => {
@@ -295,7 +311,7 @@ describe('managed builtin consumer routing', () => {
     // not read as a finished search that simply found little.
     provider.projectFiles.mockResolvedValueOnce({
       kind: 'walk', root: '/workspace', rootKind: 'directory', truncated: true,
-      entries: [{ path: '/workspace/a.ts', mtime: 1767225600000 }],
+      entries: [{ path: '/workspace/a.ts', kind: 'file', size: 1, mtime: 1767225600000 }],
     } as never);
     const result = await run('Glob', { pattern: '/workspace/*.ts' });
     expect(result.content[0].text).toContain('a.ts');

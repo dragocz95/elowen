@@ -197,11 +197,15 @@ export function managedFiles(ctx, signal) {
    *  gets a version then. So no content is read and no hash is computed for anything walked past. */
   const walk = async (root, limit, skip) => {
     const result = await operation({ kind: 'walk', path: root, limit: Math.min(limit, 10001), skip: [...skip] });
+    // The traversal reports directories too, because a consumer showing a tree needs to see an empty one.
+    // A pattern match is about files, so that is what this hands back.
+    const files = result.entries.filter((item) => item.kind === 'file');
     return {
       root: result.root,
       rootKind: result.rootKind,
-      files: result.entries.map((item) => item.path),
-      mtimes: new Map(result.entries.map((item) => [item.path, item.mtime])),
+      entries: result.entries,
+      files: files.map((item) => item.path),
+      mtimes: new Map(files.map((item) => [item.path, item.mtime])),
       truncated: result.truncated,
     };
   };

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { closeSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, symlinkSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, closeSync, lstatSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, symlinkSync, truncateSync, unlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -109,7 +109,7 @@ describe('guestFiles helper parity', () => {
     const walk = (path: string, extra: Record<string, unknown> = {}) =>
       runHelper({ kind: 'walk', path, limit: 10001, skip: ['.git', 'node_modules'], ...extra });
 
-    it('returns every regular file in one pass, sorted, with times and no versions', () => {
+    it('returns files AND directories in one pass, sorted, with kind, size and time', () => {
       const dir = join(root, 'walk-basic');
       mkdirSync(join(dir, 'src', 'deep'), { recursive: true });
       writeFileSync(join(dir, 'top.md'), 'top');
@@ -120,14 +120,20 @@ describe('guestFiles helper parity', () => {
       expect(reply.ok).toBe(true);
       if (!reply.ok) return;
       expect(reply.result).toMatchObject({ root: dir, rootKind: 'directory', truncated: false });
-      expect(reply.result.entries.map((item: any) => item.path)).toEqual([
-        join(dir, 'top.md'), join(dir, 'src', 'a.ts'), join(dir, 'src', 'deep', 'b.ts'),
+      // Directories are entries of their own, which is what lets a consumer show an empty one.
+      expect(reply.result.entries.map((item: any) => [item.path, item.kind])).toEqual([
+        [join(dir, 'src'), 'directory'],
+        [join(dir, 'top.md'), 'file'],
+        [join(dir, 'src', 'a.ts'), 'file'],
+        [join(dir, 'src', 'deep'), 'directory'],
+        [join(dir, 'src', 'deep', 'b.ts'), 'file'],
       ]);
-      // A path and a time is the whole answer: nothing walked past is read, so nothing is hashed.
+      // Metadata only: nothing walked past is read, so nothing is hashed and no version exists.
       for (const item of reply.result.entries) {
-        expect(Object.keys(item).sort()).toEqual(['mtime', 'path']);
+        expect(Object.keys(item).sort()).toEqual(['kind', 'mtime', 'path', 'size']);
         expect(item.mtime).toBeGreaterThan(0);
       }
+      expect(reply.result.entries.find((item: any) => item.path.endsWith('top.md')).size).toBe(3);
     });
 
     it('never descends a skipped directory and never follows a symlink out of the tree', () => {
@@ -148,7 +154,9 @@ describe('guestFiles helper parity', () => {
       expect(reply.ok).toBe(true);
       if (!reply.ok) return;
       const paths = reply.result.entries.map((item: any) => item.path);
-      expect(paths).toEqual([join(dir, 'src', 'kept.ts')]);
+      // `src` itself is reported; the skipped directories are not descended into and the two symlinks are
+      // neither followed nor emitted.
+      expect(paths).toEqual([join(dir, 'src'), join(dir, 'src', 'kept.ts')]);
       // A link is neither reported as a file nor descended into, so nothing outside the tree appears.
       expect(paths.some((path: string) => path.includes('secret'))).toBe(false);
     });
@@ -192,10 +200,14 @@ describe('guestFiles helper parity', () => {
       for (let index = 0; index < 11000; index += 1) mkdirSync(join(dir, `d-${String(index).padStart(5, '0')}`));
 
       const started = Date.now();
-      const reply = walk(dir);
+      const done = spawnSync('python3', ['-c', HELPER], {
+        input: JSON.stringify({ kind: 'walk', path: dir, limit: 10001, skip: [] }),
+        encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+      });
+      const reply = JSON.parse(done.stdout) as HelperReply;
       expect(reply.ok).toBe(true);
       if (!reply.ok) return;
-      expect(reply.result.entries).toHaveLength(0);
+      expect(reply.result.entries.length).toBeLessThanOrEqual(10001);
       expect(reply.result.truncated).toBe(true);
       // And it stops on that budget rather than running until the deadline, which is only the backstop
       // for a filesystem slow enough that even a bounded number of entries takes too long.
@@ -223,6 +235,139 @@ describe('guestFiles helper parity', () => {
       expect(reply.result.entries.length).toBeLessThan(2600);
       // Comfortably under the 16 MB the transport allows.
       expect(Buffer.byteLength(done.stdout)).toBeLessThan(12 * 1024 * 1024);
+    });
+
+    // A directory costs the same to examine as a file. Counting only the files it chose to RETURN let a
+    // walk look at any number of directories and still answer "complete".
+    it('counts directories against the requested limit, so a shallow bound is not a false complete', () => {
+      const dir = join(root, 'walk-limit-dirs');
+      mkdirSync(dir, { recursive: true });
+      for (let index = 0; index < 20; index += 1) mkdirSync(join(dir, `d-${String(index).padStart(2, '0')}`));
+
+      const reply = runHelper({ kind: 'walk', path: dir, limit: 10, skip: [] });
+      expect(reply.ok).toBe(true);
+      if (!reply.ok) return;
+      expect(reply.result.entries).toHaveLength(10);
+      expect(reply.result.truncated).toBe(true);
+    });
+
+    it('counts a symlink against the requested limit even though it never reports one', () => {
+      const dir = join(root, 'walk-limit-links');
+      mkdirSync(dir, { recursive: true });
+      for (let index = 0; index < 6; index += 1) symlinkSync('/etc/hostname', join(dir, `l-${index}`));
+      writeFileSync(join(dir, 'z-real.ts'), 'real');
+
+      const reply = runHelper({ kind: 'walk', path: dir, limit: 4, skip: [] });
+      expect(reply.ok).toBe(true);
+      if (!reply.ok) return;
+      // Four entries were examined and all four were links, so nothing is returned — and the answer says
+      // it is incomplete rather than describing an empty directory.
+      expect(reply.result.entries).toHaveLength(0);
+      expect(reply.result.truncated).toBe(true);
+    });
+
+    it('descends exactly as far as maxDepth allows', () => {
+      const dir = join(root, 'walk-depth');
+      mkdirSync(join(dir, 'one', 'two', 'three'), { recursive: true });
+      writeFileSync(join(dir, 'root.ts'), 'r');
+      writeFileSync(join(dir, 'one', 'a.ts'), 'a');
+      writeFileSync(join(dir, 'one', 'two', 'b.ts'), 'b');
+      writeFileSync(join(dir, 'one', 'two', 'three', 'c.ts'), 'c');
+
+      // Depth 0 lists the root's own children and goes no further, which is what expanding a single
+      // directory asks for. The child directory is still visible, just not opened.
+      const shallow = runHelper({ kind: 'walk', path: dir, limit: 10001, skip: [], maxDepth: 0 });
+      expect(shallow.ok).toBe(true);
+      if (shallow.ok) {
+        expect(shallow.result.entries.map((item: any) => item.path)).toEqual([join(dir, 'one'), join(dir, 'root.ts')]);
+        expect(shallow.result.truncated).toBe(false);
+      }
+
+      const deeper = runHelper({ kind: 'walk', path: dir, limit: 10001, skip: [], maxDepth: 1 });
+      expect(deeper.ok).toBe(true);
+      if (deeper.ok) {
+        expect(deeper.result.entries.map((item: any) => item.path)).toEqual([
+          join(dir, 'one'), join(dir, 'root.ts'), join(dir, 'one', 'a.ts'), join(dir, 'one', 'two'),
+        ]);
+      }
+    });
+
+    it('shows an empty directory as an entry of its own', () => {
+      const dir = join(root, 'walk-empty');
+      mkdirSync(join(dir, 'hollow'), { recursive: true });
+      const reply = runHelper({ kind: 'walk', path: dir, limit: 10001, skip: [] });
+      expect(reply.ok).toBe(true);
+      if (!reply.ok) return;
+      expect(reply.result.entries).toEqual([
+        { path: join(dir, 'hollow'), kind: 'directory', size: expect.any(Number), mtime: expect.any(Number) },
+      ]);
+      expect(reply.result.truncated).toBe(false);
+    });
+
+    // A directory that cannot be read is not an empty directory, and answering as though it were hides a
+    // misconfiguration behind a result that looks complete.
+    it('fails on a directory it may not read, at the root and nested alike', () => {
+      const dir = join(root, 'walk-permission');
+      mkdirSync(join(dir, 'closed'), { recursive: true });
+      writeFileSync(join(dir, 'closed', 'hidden.ts'), 'hidden');
+      writeFileSync(join(dir, 'open.ts'), 'open');
+      chmodSync(join(dir, 'closed'), 0o000);
+      try {
+        const nested = runHelper({ kind: 'walk', path: dir, limit: 10001, skip: [] });
+        expect(nested.ok).toBe(false);
+        if (!nested.ok) expect(nested.error.code).toBe('permission_denied');
+
+        const asRoot = runHelper({ kind: 'walk', path: join(dir, 'closed'), limit: 10001, skip: [] });
+        expect(asRoot.ok).toBe(false);
+        if (!asRoot.ok) expect(asRoot.error.code).toBe('permission_denied');
+      } finally {
+        chmodSync(join(dir, 'closed'), 0o700);
+      }
+    });
+
+    // The budget is spent on the ENCODED answer. Non-ASCII names inflate to six bytes per character once
+    // escaped, so a count taken on raw path bytes under-measures such a tree several times over.
+    it('budgets the escaped encoding, not the raw path bytes', () => {
+      let dir = join(root, 'walk-unicode');
+      mkdirSync(dir, { recursive: true });
+      // Every component is non-ASCII, so an encoded path costs six bytes per character where the raw one
+      // costs two. A budget kept on raw bytes would let roughly three times this tree through.
+      const component = 'ř'.repeat(120);
+      for (let level = 0; level < 10; level += 1) { dir = join(dir, `${component}${level}`); mkdirSync(dir); }
+      for (let index = 0; index < 1200; index += 1) writeFileSync(join(dir, `${component}-${String(index).padStart(5, '0')}`), 'x');
+
+      const done = spawnSync('python3', ['-c', HELPER], {
+        input: JSON.stringify({ kind: 'walk', path: join(root, 'walk-unicode'), limit: 10001, skip: [] }),
+        encoding: 'utf8', maxBuffer: 64 * 1024 * 1024,
+      });
+      const reply = JSON.parse(done.stdout) as HelperReply;
+      expect(reply.ok).toBe(true);
+      if (!reply.ok) return;
+      expect(reply.result.truncated).toBe(true);
+      // The escaped reply stays under the budget; measured on raw UTF-8 it would have sailed past it.
+      expect(Buffer.byteLength(done.stdout)).toBeLessThan(12 * 1024 * 1024);
+    });
+
+    // The deadline used to be consulted only after a whole directory had been read and sorted, so a
+    // single enormous directory could overshoot it without bound. Running a COPY of the helper whose
+    // deadline has already passed proves the check happens during enumeration, and needs no seam in the
+    // shipped source to do it.
+    it('stops during enumeration when the deadline has already passed, and reports truncation', () => {
+      const dir = join(root, 'walk-deadline');
+      mkdirSync(dir, { recursive: true });
+      for (let index = 0; index < 200; index += 1) writeFileSync(join(dir, `f-${String(index).padStart(3, '0')}`), 'x');
+
+      const expired = HELPER.replace('deadline = time.monotonic() + 10', 'deadline = time.monotonic() - 1');
+      expect(expired).not.toBe(HELPER);
+      const done = spawnSync('python3', ['-c', expired], {
+        input: JSON.stringify({ kind: 'walk', path: dir, limit: 10001, skip: [] }), encoding: 'utf8',
+      });
+      const reply = JSON.parse(done.stdout) as HelperReply;
+      expect(reply.ok).toBe(true);
+      if (!reply.ok) return;
+      // The partial listing is discarded rather than passed off as a prefix of the sorted answer.
+      expect(reply.result.entries).toEqual([]);
+      expect(reply.result.truncated).toBe(true);
     });
 
     it('refuses a malformed skip list instead of ignoring it', () => {

@@ -399,7 +399,13 @@ def run(op):
         # each of those is a container execution — a tree of four directories was five crossings before
         # a single name had been matched. Nothing here is written against, so no content is read and no
         # version is computed: a path and a modification time is the whole answer.
+        # `limit` bounds every entry the traversal LOOKS AT, not the subset it chooses to return. A
+        # directory and a symlink cost the same work to examine as a file, so counting only files let a
+        # walk wander through any number of them and still answer "complete".
         limit = bounded(op.get('limit'), 1, MAX_ENTRIES + 1)
+        # Levels of descent BELOW the root. 0 lists the root's own children and goes no deeper, which is
+        # what expanding one directory in an editor asks for.
+        max_depth = bounded(op.get('maxDepth', 64), 0, 64)
         skip = op.get('skip', [])
         if not isinstance(skip, list) or len(skip) > 64 or any(
                 not isinstance(item, str) or not item or len(item) > 255 or '/' in item or '\x00' in item for item in skip):
@@ -422,45 +428,67 @@ def run(op):
         deadline = time.monotonic() + 10
         # Depth first in sorted order, so the same tree always answers in the same sequence and a
         # truncated answer is a stable prefix rather than whatever the filesystem happened to hand back.
-        stack = [root]
+        stack = [(root, 0)]
         while stack and not truncated:
-            current = stack.pop()
+            current, depth = stack.pop()
+            # The deadline is checked WHILE enumerating. Sorting a materialized listing first meant a
+            # directory of a million names was read in full before the clock was ever consulted, so the
+            # bound could be exceeded by an unbounded margin.
+            children = []
+            expired = False
             try:
                 with os.scandir(current) as scan:
-                    children = sorted(scan, key=lambda item: item.name)
-            except (FileNotFoundError, NotADirectoryError, PermissionError):
-                # A directory that vanished or cannot be read is not the whole traversal's failure.
+                    for item in scan:
+                        if time.monotonic() > deadline:
+                            expired = True
+                            break
+                        children.append(item)
+            except (FileNotFoundError, NotADirectoryError):
+                # It was a directory when it was queued and is not one now. The answer is incomplete and
+                # says so, rather than quietly omitting a subtree.
+                truncated = True
                 continue
+            if expired:
+                # Discard this directory's partial listing entirely: half of one directory, in scandir
+                # order, is not a prefix of the sorted answer and must not be presented as one.
+                truncated = True
+                break
+            children.sort(key=lambda item: item.name)
             nested = []
             for item in children:
-                # EVERY entry counts, directories and symlinks included, so a tree made of empty
-                # directories cannot walk indefinitely while the file count stays at zero.
                 visited += 1
-                if visited > MAX_ENTRIES + 1 or time.monotonic() > deadline:
+                if visited > limit or visited > MAX_ENTRIES + 1 or time.monotonic() > deadline:
                     truncated = True
                     break
-                # `follow_symlinks=False` throughout: a link out of the tree is never descended into and
-                # never reported as a file, which is what keeps the traversal inside the root.
+                # `follow_symlinks=False` throughout: a link is never descended into and never reported,
+                # which is what keeps the traversal inside the root. It still counts as visited.
                 try:
-                    if item.is_dir(follow_symlinks=False):
-                        if item.name not in skipped:
-                            nested.append(item.path)
+                    directory = item.is_dir(follow_symlinks=False)
+                    regular = item.is_file(follow_symlinks=False)
+                    if not directory and not regular:
                         continue
-                    if not item.is_file(follow_symlinks=False):
+                    # A skipped directory is omitted ENTIRELY, not merely left undescended: reporting it
+                    # while refusing to walk it would present it to a consumer as an empty directory,
+                    # which is a different and false statement about the tree.
+                    if directory and item.name in skipped:
                         continue
-                    modified = item.stat(follow_symlinks=False).st_mtime
+                    facts = item.stat(follow_symlinks=False)
                 except OSError:
+                    truncated = True
                     continue
-                if len(entries) >= limit:
+                record = {'path': item.path, 'kind': 'directory' if directory else 'file',
+                          'size': facts.st_size, 'mtime': int(facts.st_mtime * 1000)}
+                # The ACTUAL encoded size, with the same escaping the reply is written with: a name of
+                # non-ASCII text inflates to six bytes per character once escaped, so a byte count taken
+                # on the raw path would under-measure a tree of such names several times over.
+                encoded = len(json.dumps(record, ensure_ascii=True, separators=(',', ':'))) + 1
+                if payload + encoded > 8388608:
                     truncated = True
                     break
-                # Bounded well below the transport's own cap, so a wide tree is truncated deliberately
-                # here instead of being cut mid-JSON and reported as a protocol failure.
-                payload += len(item.path.encode()) + 40
-                if payload > 8388608:
-                    truncated = True
-                    break
-                entries.append({'path': item.path, 'mtime': int(modified * 1000)})
+                payload += encoded
+                entries.append(record)
+                if directory and depth < max_depth:
+                    nested.append((item.path, depth + 1))
             stack.extend(reversed(nested))
         return {'kind': kind, 'root': root, 'rootKind': root_kind, 'entries': entries, 'truncated': truncated}
     if kind == 'search':
