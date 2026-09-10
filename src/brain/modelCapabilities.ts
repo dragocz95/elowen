@@ -113,6 +113,24 @@ const CATALOG_ALIAS: Readonly<Record<string, string>> = {
 
 const catalogName = (key: string): string => CATALOG_ALIAS[key] ?? key;
 
+/** Model ids an endpoint publishes under a different name than the catalog row that describes them. The
+ *  native DeepSeek API renamed its models on the wire (`deepseek-flash`, `deepseek-pro`) and the ids
+ *  cannot be renamed back, while models.dev still publishes the versioned rows. Keyed
+ *  `<registry-provider>/<model>`, valued `<catalog>/<model>`; resolved before any generic lookup, so an
+ *  aliased id reports the row of the model it actually is. */
+const MODEL_ALIAS: Readonly<Record<string, string>> = {
+  'deepseek/deepseek-flash': 'deepseek/deepseek-v4-flash',
+  'deepseek/deepseek-pro': 'deepseek/deepseek-v4-pro',
+};
+
+/** The (catalog, model) a direct row lookup should read, with a published model alias resolved first. */
+function aliasedLookup(catalog: string, model: string): readonly [string, string] {
+  const alias = MODEL_ALIAS[`${catalog}/${model}`];
+  if (alias === undefined) return [catalog, model];
+  const slash = alias.indexOf('/');
+  return [alias.slice(0, slash), alias.slice(slash + 1)];
+}
+
 /** The row for `<catalog>/<model>`, retried without a tag the catalog does not publish (`glm-5.2:latest`
  *  is still glm-5.2 — the capability is the model's, not the pull's). */
 function catalogRow(catalog: string, model: string) {
@@ -185,7 +203,8 @@ function nameWithin(model: string): CatalogCapability | undefined {
 /** The model's row in the models.dev catalog, or undefined when it lists no such model. */
 function catalogCapability(provider: string, model: string) {
   const key = fromRegistryProvider(provider);
-  const row = catalogRow(catalogName(key), model);
+  const [directCatalog, directModel] = aliasedLookup(catalogName(key), model);
+  const row = catalogRow(directCatalog, directModel);
   if (row !== undefined) return row;
 
   // A private relay is in no catalog under its own name, but it says which upstream it is proxying by
@@ -265,7 +284,8 @@ function costWithin(model: string): CatalogCost | undefined {
 export function catalogModelCost(provider: string, model: string): ModelCost | undefined {
   if (provider === 'openai-codex') return undefined; // ChatGPT's own catalog, not models.dev
   const key = fromRegistryProvider(provider);
-  const direct = costRow(catalogName(key), model);
+  const [directCatalog, directModel] = aliasedLookup(catalogName(key), model);
+  const direct = costRow(directCatalog, directModel);
   if (direct !== undefined) return toCost(direct);
   const slash = model.indexOf('/');
   const upstream = slash > 0 ? costRow(catalogName(model.slice(0, slash)), model.slice(slash + 1)) : undefined;
@@ -320,7 +340,8 @@ function visionWithin(model: string): boolean | undefined {
 export function catalogModelVision(provider: string, model: string): boolean | undefined {
   if (provider === 'openai-codex') return undefined; // ChatGPT's own catalog, not models.dev
   const key = fromRegistryProvider(provider);
-  const direct = visionRow(catalogName(key), model);
+  const [directCatalog, directModel] = aliasedLookup(catalogName(key), model);
+  const direct = visionRow(directCatalog, directModel);
   if (direct !== undefined) return direct;
   const slash = model.indexOf('/');
   const upstream = slash > 0 ? visionRow(catalogName(model.slice(0, slash)), model.slice(slash + 1)) : undefined;
