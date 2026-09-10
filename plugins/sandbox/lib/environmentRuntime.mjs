@@ -618,7 +618,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     store.save(row);
   }
   async function ensureInitialContainer(row, op) {
-    const spec = specFor(row.spec);
+    let spec = specFor(row.spec);
     // A container created before the project mount carried the project's name was built from a different
     // specification, so it fails ownership by construction and must never be adopted. Its storage volumes
     // are untouched and remount under the new name, so recreating it preserves the project's files — but
@@ -631,13 +631,19 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       delete row.spec.legacyWorkspaceLayout;
       delete row.spec.containerId;
       store.save(row);
+      spec = specFor(row.spec);
     }
     let current = await podman.inspect(spec);
     if (row.spec.containerId) {
       if (current) return current;
       if (!op.checkpoint.autoRecovery) throw error('persistent_container_missing', 'The persistent root filesystem is missing; restore a snapshot explicitly');
       delete row.spec.containerId;
+      // The missing container ended the old creation identity. A replacement is created with the limits
+      // currently effective for the environment, then future live updates preserve those as its baseline.
+      row.spec.creationLimits = { ...row.spec.input.limits };
       store.save(row);
+      spec = specFor(row.spec);
+      current = await podman.inspect(spec);
     }
     if (current && !op.checkpoint.creating) throw error('container_unclaimed', 'A container exists without this creation checkpoint');
     if (!op.checkpoint.creating) checkpoint(op, { creating: true });

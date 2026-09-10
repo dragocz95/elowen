@@ -47,7 +47,10 @@ function setup(config: Record<string, unknown> = {}) {
   const podman = { ensureProjectImage: vi.fn(async () => 'localhost/elowen-project-base:test'),
     containerInventory: vi.fn(async () => new Map([...containers].map(([name, row]) => [name, row.state]))),
     inspect: vi.fn(async (spec: any) => containers.get(spec.name) ?? null), inspectBinding: vi.fn(async (spec: any) => containers.get(spec.name)),
-    create: vi.fn(async (spec: any) => { const row = { id: 'a'.repeat(64), state: 'created' }; containers.set(spec.name, row); return row; }),
+    create: vi.fn(async (spec: any) => {
+      if (spec.expectedId) throw new Error('An immutable container binding cannot be recreated');
+      const row = { id: 'a'.repeat(64), state: 'created' }; containers.set(spec.name, row); return row;
+    }),
     start: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'running'; }),
     stop: vi.fn(async (spec: any) => {
       containers.get(spec.name).state = 'stopped';
@@ -69,6 +72,7 @@ function setup(config: Record<string, unknown> = {}) {
     }),
     stopPublication: vi.fn(async (spec: any, publicationId: string) => { forwarders.get(publicationId)?.close(); forwarders.delete(publicationId); }),
     activePublications: vi.fn(async (_spec: any, publicationIds: string[]) => publicationIds.filter((publicationId) => forwarders.has(publicationId))),
+    update: vi.fn(async () => {}),
     remove: vi.fn(async (spec: any) => { containers.delete(spec.name); }),
     exec: vi.fn(async () => ({ code: 0, stdout: '', stderr: '', truncated: false })),
     // A start waits for the guest system bus before anything runs through `systemd-run`.
@@ -212,15 +216,31 @@ describe('durable managed environment lifecycle', () => {
     expect(podman.start).not.toHaveBeenCalled();
   });
 
-  it('recreates a missing desired running container from its existing volumes', async () => {
-    const { runtime, containers, podman } = setup();
+  it('recreates a missing limited container from its volumes and restores publications', async () => {
+    const { runtime, containers, podman, root, endForwarders, staleSocket } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    const changed = { cpus: 2, memoryMb: 2048, pidsLimit: 1024 };
+    await runtime.requestEnvironment({ ...input, accountUserId: 3, action: { kind: 'limits', limits: changed } }); await runtime.reconcile();
+    const publication = await runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
+    const marker = join(root, 'projects/7/storage/1/data/preserved');
+    mkdirSync(dirname(marker), { recursive: true });
+    writeFileSync(marker, 'still here');
+
     containers.clear();
+    await endForwarders();
+    staleSocket(publication.socketPath);
     podman.create.mockClear();
+    podman.startPublication.mockClear();
 
     await runtime.reconcile();
 
     expect(podman.create).toHaveBeenCalledOnce();
+    const recreated = podman.create.mock.calls[0]![0];
+    expect(recreated.expectedId).toBeUndefined();
+    expect(recreated.limits).toEqual(changed);
+    expect(recreated.creationLimits ?? recreated.limits).toEqual(changed);
+    expect(readFileSync(marker, 'utf8')).toBe('still here');
+    expect(podman.startPublication).toHaveBeenCalledWith(expect.anything(), 'shop', expect.anything());
     expect((await runtime.environmentFor(input)).state).toBe('running');
   });
 
