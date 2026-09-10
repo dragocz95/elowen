@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import type { AgentSession } from '@earendil-works/pi-coding-agent';
 import {
   buildContextBreakdown,
+  contextSnapshotOf,
   residentContextUsageOf,
   useLocalResidentContextEstimate,
   type ContextMessage,
@@ -174,6 +175,41 @@ describe('resident context ownership', () => {
       getContextUsage: () => ({ tokens: 123_456, contextWindow: 200_000, percent: 61.728 }),
     } as unknown as AgentSession;
     expect(residentContextUsageOf(session)).toEqual({ tokens: 123_456, contextWindow: 200_000, percent: 61.728 });
+  });
+
+  /** The status meter answers with the estimate when the provider declines to count, but the breakdown's
+   *  `reportedTokens` is rendered as "Reported by provider": an estimate under that label is our own
+   *  arithmetic wearing the provider's name, and the estimate is already published beside it. */
+  it('leaves reportedTokens null when the count is ours rather than the provider\'s', () => {
+    const session = {
+      model: { contextWindow: 200_000 },
+      systemPrompt: 's'.repeat(400),
+      getAllTools: () => [{ name: 'Read', description: 'd'.repeat(36), parameters: undefined }],
+      getActiveToolNames: () => ['Read'],
+      messages: [user(4_000), assistant(2_000)],
+      getContextUsage: () => ({ tokens: null, contextWindow: 200_000, percent: null }),
+      settingsManager: { getCompactionSettings: () => ({ enabled: true, reserveTokens: 20_000 }) },
+    } as unknown as AgentSession;
+
+    const snap = contextSnapshotOf(session, 'test-model');
+    expect(snap.reportedTokens).toBeNull();
+    // The window still comes from the resident owner, and the estimate is unaffected.
+    expect(snap.contextWindow).toBe(200_000);
+    expect(residentContextUsageOf(session)?.tokens).toBe(1_610);
+  });
+
+  it('reports the provider count when the provider gave one', () => {
+    const session = {
+      model: { contextWindow: 200_000 },
+      systemPrompt: '',
+      getAllTools: () => [],
+      getActiveToolNames: () => [],
+      messages: [],
+      getContextUsage: () => ({ tokens: 123_456, contextWindow: 200_000, percent: 61.728 }),
+      settingsManager: { getCompactionSettings: () => ({ enabled: false, reserveTokens: 0 }) },
+    } as unknown as AgentSession;
+
+    expect(contextSnapshotOf(session, 'test-model').reportedTokens).toBe(123_456);
   });
 });
 
