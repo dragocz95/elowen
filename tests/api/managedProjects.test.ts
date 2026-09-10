@@ -10,7 +10,7 @@ import { createServer } from '../../src/api/server.js';
 
 const databases: Db[] = [];
 const request = (token: string, method = 'GET', body?: unknown) => ({ method, headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, ...(body === undefined ? {} : { body: JSON.stringify(body) }) });
-function setup(sandbox?: { requestEnvironment: (input: unknown) => unknown }) {
+function setup(sandbox?: Record<string, (input: never) => unknown>) {
   const db = openDb(':memory:'); databases.push(db);
   const users = new UserStore(db); const projects = new ProjectStore(db); const userProjects = new UserProjectStore(db);
   const home = projects.create({ slug: 'host', path: '/host' });
@@ -83,6 +83,54 @@ describe('managed project API', () => {
     expect(response.status).toBe(201);
     expect(await response.json()).not.toHaveProperty('environmentOperationId');
     expect(projects.list().some((p) => p.slug === 'work')).toBe(true);
+  });
+  /** A teardown already under way, a stale generation, a deleting environment: the provider signals all of
+   *  them with a code and a 4xx status, and the second click during a teardown is exactly that case
+   *  (no client sends the requestId the documented retry needs). `internal error` told the caller nothing
+   *  and read as a server fault. */
+  it('answers a provider refusal on delete with its code rather than a 500', async () => {
+    const refusal = Object.assign(new Error('An environment lifecycle operation is already pending'), { code: 'environment_busy', status: 409 });
+    const sandbox = { requestEnvironment: () => { throw refusal; } };
+    const { app, projects, member, token } = setup(sandbox); const p = projects.ensureDefault(member.id);
+    const response = await app.request(`/projects/${p.id}`, request(token, 'DELETE'));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'An environment lifecycle operation is already pending', code: 'environment_busy' });
+    expect(projects.get(p.id)?.lifecycle).toBe('active');
+  });
+  it('keeps a genuine provider failure a 500', async () => {
+    const sandbox = { requestEnvironment: () => { throw new Error('podman socket closed'); } };
+    const { app, projects, member, token } = setup(sandbox); const p = projects.ensureDefault(member.id);
+    expect((await app.request(`/projects/${p.id}`, request(token, 'DELETE'))).status).toBe(500);
+  });
+  /** The same store limit two routes above is a clean 409, so the default route answering 500 was the
+   *  outlier. Reachable once an administrator lowers the limit below the current managed count. */
+  it('answers the project limit with a 409 on the default route', async () => {
+    const { app, users, projects, admin, member, token } = setup();
+    users.setProjectPermissions(admin.id, member.id, { projectLimit: 1 });
+    projects.beginDeletion(projects.ensureDefault(member.id).id);
+    const response = await app.request('/projects/default', request(token, 'POST'));
+    expect(response.status).toBe(409);
+    expect(await response.json()).toEqual({ error: 'project creation limit reached' });
+  });
+  /** Authorization before validation, as /fs/dirs does it: an account that may create nothing must not be
+   *  able to probe the body schema. */
+  it('refuses a caller without the creation grant before it validates the body', async () => {
+    const { app, token } = setup();
+    const response = await app.request('/projects', request(token, 'POST', { slug: '', executionKind: 'nonsense' }));
+    expect(response.status).toBe(403);
+  });
+  /** The membership row is deleted before the runtime is asked to drop the guest's access, so a failed
+   *  revocation leaves half the work done. `internal error` reads as "nothing happened". */
+  it('says which half succeeded when the runtime cannot revoke project access', async () => {
+    const sandbox = { requestEnvironment: () => ({ id: 'op', status: 'pending' }), revokeProjectAccess: () => { throw new Error('provider unreachable'); } };
+    const { app, users, projects, userProjects, admin, member, peer, token } = setup(sandbox);
+    const p = projects.ensureDefault(member.id);
+    users.setProjectPermissions(admin.id, member.id, { canShareProjects: true });
+    expect((await app.request(`/users/${peer.id}/projects`, request(token, 'POST', { projectId: p.id }))).status).toBe(200);
+    const response = await app.request(`/users/${peer.id}/projects/${p.id}`, request(token, 'DELETE'));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'membership revoked; runtime cleanup failed' });
+    expect(userProjects.canAccess(peer.id, p.id)).toBe(false);
   });
   it('rejects a malformed idempotency key instead of forwarding it', async () => {
     const sandbox = { requestEnvironment: () => { throw new Error('must not be reached'); } };

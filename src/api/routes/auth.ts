@@ -709,7 +709,14 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       if (project?.executionKind === 'managed') {
         const sandbox = (await d.plugins?.get())?.control('sandbox');
         if (!sandbox) return c.json({ error: 'membership revoked; runtime cleanup unavailable' }, 503);
-        await sandbox.revokeProjectAccess({ projectId, accountUserId: userId });
+        // The membership row is already gone, so a failed cleanup is not "nothing happened": name which
+        // half succeeded, exactly as the missing-provider branch above does, instead of an internal error
+        // the caller can only read as a total failure.
+        try { await sandbox.revokeProjectAccess({ projectId, accountUserId: userId }); }
+        catch (error) {
+          log.warn(`project access revocation failed for account ${userId} on project ${projectId}: ${error instanceof Error ? error.message : String(error)}`);
+          return c.json({ error: 'membership revoked; runtime cleanup failed' }, 503);
+        }
       }
       return c.json({ ok: true });
     });

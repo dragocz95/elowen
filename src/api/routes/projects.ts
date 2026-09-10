@@ -31,7 +31,7 @@ async function toProjectView(project: StoredProject): Promise<ProjectView> {
  *  reconciles onto the same operation instead of queueing a second one. */
 async function startNewEnvironment(ctx: RouteContext, d: RouteContext['d'], projectId: number, accountUserId: number): Promise<string | undefined> {
   const sandbox = (await d.plugins?.get().catch(() => undefined))?.control('sandbox');
-  if (typeof sandbox?.requestEnvironment !== 'function') return undefined;
+  if (!sandbox) return undefined;
   try {
     const operation = await sandbox.requestEnvironment({ project: { kind: 'managed', projectId }, accountUserId,
       action: { kind: 'start' }, requestId: `project-create:${projectId}` });
@@ -40,6 +40,19 @@ async function startNewEnvironment(ctx: RouteContext, d: RouteContext['d'], proj
     ctx.log.warn(`environment start was not requested for the new managed project ${projectId}: ${error instanceof Error ? error.message : String(error)}`);
     return undefined;
   }
+}
+
+/** THE project-route answer to a provider refusal. The environment runtime signals a refused lifecycle
+ *  request with a stable `code` and a 4xx `status` (an already running teardown, a stale generation, an
+ *  environment that is deleting), which is a CONDITION of the environment rather than a server fault, so
+ *  it answers 409 with the provider's code instead of `internal error`. The documented retry needs the
+ *  same requestId and no client sends one, so the second click during a teardown is exactly this case.
+ *  Anything without that shape is a real failure and keeps its 500. */
+function environmentRefusal(error: unknown): { error: string; code: string } | null {
+  const value = error as { status?: unknown; code?: unknown; message?: unknown };
+  const refused = typeof value?.status === 'number' && value.status >= 400 && value.status < 500;
+  if (!refused || typeof value.code !== 'string') return null;
+  return { error: typeof value.message === 'string' ? value.message : 'environment operation refused', code: value.code };
 }
 
 /** Bound concurrent filesystem projections so a large registry cannot flood the libuv worker pool. */
@@ -190,10 +203,14 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
   });
   app.post('/projects', async (c) => {
     if (!d.projects) return c.json({ error: 'projects unavailable' }, 400);
+    // Authorization before validation, the order /fs/dirs uses: an account that may create neither kind of
+    // project is refused without being told what the body should look like. A daemon with no user store
+    // has no actor to ask and stays as open as it has always been.
+    const actor = c.get('user');
+    if (actor && !actor.is_admin && !actor.can_create_projects) return c.json({ error: 'project creation is not permitted' }, 403);
     const body = await parseBody(c, createProjectSchema);
     if (body.executionKind === 'managed') {
-      const actor = c.get('user');
-      if (!actor || (!actor.is_admin && !actor.can_create_projects)) return c.json({ error: 'project creation is not permitted' }, 403);
+      if (!actor) return c.json({ error: 'project creation is not permitted' }, 403);
       try {
         const created = d.projects.createForUser(actor.id, body);
         // A managed project IS its environment: created and left stopped, it can hold nothing and run
@@ -220,7 +237,13 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
     const actor = c.get('user');
     if (!actor) return c.json({ error: 'forbidden' }, 403);
     if (!d.projects) return c.json({ error: 'projects unavailable' }, 503);
-    return c.json(await toProjectView(d.projects.ensureDefault(actor.id)));
+    try { return c.json(await toProjectView(d.projects.ensureDefault(actor.id))); }
+    catch (error) {
+      // The same store limit is a 409 on POST /projects; it is reachable here once an administrator
+      // lowers the limit below the account's current managed count.
+      if (error instanceof Error && error.message === 'project creation limit reached') return c.json({ error: error.message }, 409);
+      throw error;
+    }
   });
   // Host path changes remain admin-only; managed metadata belongs to all project members.
   app.patch('/projects/:id', async (c) => {
@@ -322,8 +345,14 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
       // inside the same transaction as the enqueued operation. Recording it a second time here would
       // re-mark an already finished project as deleting when an idempotent retry returns its prior
       // operation, so core only forwards the caller's idempotency key and expected generation.
-      const operation = await sandbox.requestEnvironment({ project: { kind: 'managed', projectId: id }, accountUserId: actor.id, action: { kind: 'delete' }, ...body });
-      return c.json({ operation }, 202);
+      try {
+        const operation = await sandbox.requestEnvironment({ project: { kind: 'managed', projectId: id }, accountUserId: actor.id, action: { kind: 'delete' }, ...body });
+        return c.json({ operation }, 202);
+      } catch (error) {
+        const refusal = environmentRefusal(error);
+        if (!refusal) throw error;
+        return c.json(refusal, 409);
+      }
     }
     for (const handler of registry?.projectRemovedHandlers ?? []) {
       try { await handler.fn(id); }
@@ -354,7 +383,7 @@ export function registerProjectRoutes(app: ElowenApp, ctx: RouteContext): void {
           return null;
         });
       if (!environment) return c.json({ error: 'project environment Git inspection unavailable' }, 503);
-      if (environment.state !== 'running') return c.json({ error: 'project environment is not running', state: environment.state }, 409);
+      if (environment.state !== 'running') return c.json({ error: 'project environment is not running' }, 409);
       const projectRoot = managedGuestRoot(p.slug, p.id);
       try {
         const reader = new RealGitReader(async (file, args, options) =>
