@@ -1617,6 +1617,13 @@ export const cs = {
     modelPickerError: 'Modely se nepodařilo načíst',
     modelPickerRetry: 'Zkusit znovu',
     projectPickerFailed: 'Pracovní adresář se nepodařilo změnit',
+    newConversationProject: {
+      title: 'Kde má tato konverzace běžet?',
+      description: 'Vyberte projekt, ve kterém bude konverzace pracovat. Později jej lze změnit v záhlaví chatu.',
+      hostOption: 'Pokračovat bez projektu',
+      hostHint: 'Plný přístup k hostiteli',
+      empty: 'Pro tento účet není dostupný žádný projekt.',
+    },
     modelActive: 'Aktivní model',
     modelReasoning: 'Náročnost uvažování',
     askWaiting: 'Asistent čeká na váš výběr',

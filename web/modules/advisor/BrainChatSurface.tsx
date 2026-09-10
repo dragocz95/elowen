@@ -1384,7 +1384,7 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
     turns, busy, ready, notice, ask, cards, artifacts, narration, agentsOpen, setAgentsOpen, statsOpen, setStatsOpen,
     reasoningOpen, setReasoningOpen, skillsOpen, setSkillsOpen, tasksOpen, setTasksOpen, pluginPicker, closePluginPicker,
     helpOpen, setHelpOpen, modelOpen, setModelOpen, queued, readOnly,
-    usage, goal, lineCfg, currentModel, subagents, attachments, removeAttachment, switchSession,
+    usage, goal, lineCfg, currentModel, subagents, attachments, removeAttachment, startNewConversation,
     openReadOnly, exitReadOnly, onQueueRemove, onAnswer, sessions, activeSessionId, focusNonce,
     ensureAttached, loadOlder, hasMoreHistory, showThoughts,
     planDecision, implementPlan, dismissPlan, planSubmitting, renameOpen, closeRename, renameSession,
@@ -1973,7 +1973,9 @@ export function BrainChatSurface({ variant = 'compact', onOpenTelemetry, telemet
     };
   }, [variant, pinToNewest]);
 
-  const newChat = () => { void switchSession({ fresh: true }).catch(() => toast(t.brainChat.searchOpenError, 'error')); };
+  // A new conversation is created and then asked which project it runs in — the controller owns both
+  // halves, so this control and the switcher's do exactly the same thing.
+  const newChat = () => { void startNewConversation().catch(() => toast(t.brainChat.searchOpenError, 'error')); };
 
   return (
     <div
