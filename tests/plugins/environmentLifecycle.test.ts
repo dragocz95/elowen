@@ -2,8 +2,10 @@ import { mkdtempSync, rmSync, readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { createHash } from 'node:crypto';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { openDb } from '../../src/store/db.js';
+import { PROJECT_BASE_IMAGE_TAG, PROJECT_CONTAINERFILE } from '../../plugins/sandbox/lib/containerBaseImage.mjs';
 import { makePluginDb } from '../../src/store/pluginDb.js';
 import { initSandboxDb } from '../../plugins/sandbox/lib/db.mjs';
 import { createEnvironmentRuntime } from '../../plugins/sandbox/lib/environmentRuntime.mjs';
@@ -188,6 +190,59 @@ describe('durable managed environment lifecycle', () => {
     expect(sql.prepare("SELECT generation,desired_state FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get()).toMatchObject({ generation: 2, desired_state: 'running' });
     expect(sql.prepare("SELECT id FROM p_sandbox_runtime_operations WHERE request_key='stale-delete'").get()).toBeUndefined();
   });
+  it('answers a failed guest upload from a fixed table rather than forwarding guest text', async () => {
+    const { runtime, podman, root } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    const real = async (...args: any[]) => {
+      const argv = args[2]; const options = args[3];
+      const result = spawnSync(argv[0], argv.slice(1), { input: options.input, encoding: 'utf8', maxBuffer: 2 ** 21,
+        env: { ...process.env, ELOWEN_UPLOAD_ROOT: join(root, 'uploads') } });
+      return { code: result.status ?? 1, stdout: result.stdout, stderr: result.stderr, truncated: false };
+    };
+    podman.exec.mockImplementation(real);
+    const path = join(root, 'uploaded');
+    const files = (operation: any) => runtime.projectFiles({ ...input, accountUserId: 1, operation });
+    const { uploadId } = await files({ kind: 'write-begin', path, expectedVersion: null, size: 4 });
+
+    // A guest failure carries whatever the operating system put in it: the staging directory, the candidate
+    // file, an errno. The guest's failures are raised from inside the transfer, so its text is a running
+    // commentary on a private staging area — none of which the caller can act on or should be shown.
+    const guestSays = (error: unknown) => { podman.exec.mockImplementation(async () =>
+      ({ code: 1, stdout: JSON.stringify({ ok: false, error }), stderr: '', truncated: false })); };
+    const rejection = async (operation: any) => {
+      try { await files(operation); } catch (raised) { return raised as { code?: string; status?: number; message: string }; }
+      throw new Error('the upload was expected to fail');
+    };
+    const chunk = { kind: 'write-chunk', path, uploadId, offset: 0, base64: Buffer.from('abcd').toString('base64') };
+    const staging = "[Errno 20] Not a directory: '/data/.elowen-uploads/ab12cd34/.elowen-upload-ab12cd34'";
+
+    guestSays({ code: 'not_directory', message: staging });
+    const known = await rejection(chunk);
+    expect(known).toMatchObject({ code: 'not_directory', status: 409 });
+    expect(known.message).not.toContain('.elowen-upload');
+    expect(known.message).not.toContain('/data/.elowen-uploads');
+    expect(known.message).not.toMatch(/Errno|errno/);
+
+    // A code nobody agreed on cannot be acted on either, so it becomes one internal answer — forwarding it
+    // would be the same disclosure by another route.
+    guestSays({ code: 'shutil_exploded', message: `${staging} while removing staging` });
+    const unknown = await rejection(chunk);
+    expect(unknown).toMatchObject({ code: 'guest_upload_error', status: 409 });
+    expect(unknown.message).toBe('The guest could not complete this upload');
+
+    // A reply with no error at all must not become an empty or undefined code.
+    guestSays(undefined);
+    expect(await rejection(chunk)).toMatchObject({ code: 'guest_upload_error', status: 409 });
+
+    // The permission-shaped code keeps its own status: a refusal is not a conflict.
+    guestSays({ code: 'upload_forbidden', message: staging });
+    const refused = await rejection(chunk);
+    expect(refused).toMatchObject({ code: 'upload_forbidden', status: 403 });
+    expect(refused.message).not.toContain('.elowen-upload');
+
+    podman.exec.mockImplementation(real);
+  });
+
   it('routes chunk uploads through the canonical actor and generation bound file control', async () => {
     const { runtime, podman, root, sql, ctx } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
@@ -231,5 +286,68 @@ describe('durable managed environment lifecycle', () => {
     const op = await runtime.requestEnvironment({ ...input, action: { kind: 'delete' } }); await runtime.reconcile();
     expect((await runtime.environmentOperation({ operationId: op.id, accountUserId: 1 }))?.status).toBe('failed');
     expect(stores.projects.finishDeletion).not.toHaveBeenCalled();
+  });
+});
+
+describe('project base image binding', () => {
+  // Adding a package to the recipe changes the tag, because the tag IS the hash of the recipe. That is how
+  // a NEW environment picks the package up without a version to bump — and it is also the moment an
+  // existing environment could be broken, if the runtime treated the new tag as the one it should be on.
+  it('names an image derived from the recipe, and the recipe carries the PDF tools Read advertises', () => {
+    expect(PROJECT_CONTAINERFILE).toMatch(/\bpoppler-utils\b/);
+    const digest = createHash('sha256').update(PROJECT_CONTAINERFILE).digest('hex').slice(0, 16);
+    expect(PROJECT_BASE_IMAGE_TAG).toBe(`localhost/elowen-project-base:${digest}`);
+
+    // The same recipe without the package hashes elsewhere, so no existing image is silently redefined:
+    // the older environments keep referring to a tag that still means what it always meant.
+    const previous = PROJECT_CONTAINERFILE.replace(' poppler-utils', '');
+    expect(previous).not.toBe(PROJECT_CONTAINERFILE);
+    expect(createHash('sha256').update(previous).digest('hex').slice(0, 16)).not.toBe(digest);
+  });
+
+  it('stamps a NEW environment with the current recipe and builds it', async () => {
+    const { runtime, podman } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'fresh', action: { kind: 'start' } });
+    await runtime.reconcile();
+    // The build only runs for a row that names the CURRENT recipe, so reaching it is itself the proof that
+    // a project created now was stamped with the tag carrying the new package.
+    expect(podman.ensureProjectImage).toHaveBeenCalledTimes(1);
+    expect(podman.ensureProjectImage.mock.results[0]!.type).toBe('return');
+  });
+
+  it('leaves an environment bound to an older recipe on the image it was built with', async () => {
+    const { runtime, podman, sql } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'initial', action: { kind: 'start' } });
+    await runtime.reconcile();
+    expect((await runtime.environmentFor(input)).state).toBe('running');
+
+    // Put the row into the state every already-provisioned project is in the moment the recipe changes:
+    // its stored specification names the image the earlier recipe produced.
+    const stale = 'localhost/elowen-project-base:0000000000000000';
+    const row = sql.prepare('SELECT kind, resource_id, spec_json FROM p_sandbox_runtimes').get() as any;
+    const spec = JSON.parse(row.spec_json);
+    spec.input.image = stale;
+    sql.prepare('UPDATE p_sandbox_runtimes SET spec_json=? WHERE kind=? AND resource_id=?')
+      .run(JSON.stringify(spec), row.kind, row.resource_id);
+
+    podman.ensureProjectImage.mockClear();
+    podman.create.mockClear();
+    podman.remove.mockClear();
+    await runtime.requestEnvironment({ ...input, requestId: 'cycle-stop', action: { kind: 'stop' } });
+    await runtime.reconcile();
+    await runtime.requestEnvironment({ ...input, requestId: 'cycle-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+
+    // No build for the new recipe was attempted on this project's behalf, nothing was removed, and nothing
+    // was recreated: the container it had is the container it still has.
+    expect(podman.ensureProjectImage).not.toHaveBeenCalled();
+    expect(podman.create).not.toHaveBeenCalled();
+    expect(podman.remove).not.toHaveBeenCalled();
+    expect(podman.start.mock.calls.at(-1)![0].image).toBe(stale);
+    expect((await runtime.environmentFor(input)).state).toBe('running');
+
+    // And the stored specification still names the old image afterwards — nothing rewrote it in passing.
+    const after = JSON.parse((sql.prepare('SELECT spec_json FROM p_sandbox_runtimes').get() as any).spec_json);
+    expect(after.input.image).toBe(stale);
   });
 });

@@ -4,6 +4,51 @@ import { promisify } from 'node:util';
 
 const execFileP = promisify(execFile);
 const CHUNK_BYTES = 128 * 1024;
+/** A shell reports a program it could not find as 127, and `systemd-run --pipe --wait` passes the unit's
+ *  status straight through, so this is the guest's answer to "that command is not installed here". */
+const COMMAND_NOT_FOUND = 127;
+const GUEST_STDERR_BOUND = 2000;
+
+/** Turn a failed guest command into an error that describes the GUEST.
+ *
+ *  The launcher is a host `podman` invocation carrying its store flags, the container id and the whole
+ *  wrapped argv, and Node puts that entire command line into the message of a non-zero exit. Reporting it
+ *  told whoever asked to read a PDF that `/usr/bin/podman --root … exec <64 hex chars> …` had failed,
+ *  which names none of their concern, cannot be acted on, and writes the container's identity into a
+ *  transcript. What the caller needs is which program failed, in which environment, and why.
+ *
+ *  `code` is stable and is the contract other plugins match on; the guest's own stderr is sanitised and
+ *  bounded, and the host command line never appears in either. */
+function guestCommandFailure(file, error, sanitize) {
+  const clean = (text) => sanitize(String(text ?? '')).replace(/\s+$/, '').slice(0, GUEST_STDERR_BOUND);
+  // Not a completed process: an aborted run, a lease that could not be renewed, a validation refusal.
+  // These already carry their own meaning and never hold a host command line.
+  if (!error || typeof error !== 'object' || !('code' in error || 'stderr' in error)) {
+    if (error instanceof Error) error.message = clean(error.message);
+    return error;
+  }
+  if (error.code === 'ENOENT' || error.code === 'EACCES') {
+    // The HOST launcher itself is missing or unusable. That is a transport fault, not a missing guest
+    // program, and it must not be reported as one — nor may it disclose where the launcher lives.
+    return Object.assign(new Error('The managed execution transport is unavailable'), { code: 'guest_transport_unavailable' });
+  }
+  const status = Number.isInteger(error.code) ? error.code : null;
+  const stderr = clean(error.stderr);
+  if (status === COMMAND_NOT_FOUND) {
+    return Object.assign(new Error(`${file} is not available in this project environment`),
+      { code: 'guest_command_missing', command: file, guestStatus: status });
+  }
+  if (status !== null) {
+    return Object.assign(new Error(`${file} failed in this project environment with status ${status}${stderr ? `: ${stderr}` : ''}`),
+      { code: 'guest_command_failed', command: file, guestStatus: status, stderr });
+  }
+  if (error.killed || error.signal) {
+    return Object.assign(new Error(`${file} was terminated in this project environment${error.signal ? ` by ${error.signal}` : ''}`),
+      { code: 'guest_command_terminated', command: file, signal: error.signal ?? null });
+  }
+  return Object.assign(new Error(`${file} could not be run in this project environment`),
+    { code: 'guest_command_failed', command: file, guestStatus: null, stderr });
+}
 
 /** This adapter only speaks the existing Sandbox project contract. Guest names never enter host fs. */
 export function managedFiles(ctx, signal) {
@@ -171,8 +216,7 @@ export function managedFiles(ctx, signal) {
       if (typeof result.stderr === 'string') result.stderr = prepared.sanitizeOutput(result.stderr);
       return result;
     } catch (error) {
-      failure = leaseError ?? error;
-      if (failure instanceof Error) failure.message = prepared.sanitizeOutput(failure.message);
+      failure = guestCommandFailure(file, leaseError ?? error, (text) => prepared.sanitizeOutput(text));
       if (cancel) {
         try { await cancel(); }
         catch (cleanup) { failure = new AggregateError([failure, cleanup], `Guest cancellation failed: ${prepared.sanitizeOutput(cleanup.message)}`); }

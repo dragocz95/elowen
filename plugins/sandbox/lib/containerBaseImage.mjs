@@ -9,7 +9,7 @@ RUN apt-get update \\
  && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \\
       systemd systemd-sysv dbus ca-certificates curl iproute2 procps less \\
       git openssh-client python3 bash tar util-linux ripgrep \\
-      chromium fonts-liberation \\
+      chromium fonts-liberation poppler-utils \\
       libreoffice-writer libreoffice-calc libreoffice-impress \\
  && apt-get clean \\
  && rm -rf /var/lib/apt/lists/* \\
@@ -20,4 +20,10 @@ STOPSIGNAL SIGRTMIN+3
 ENTRYPOINT ["/sbin/init"]
 `;
 
+/** The tag IS the recipe: changing a single package changes the hash and therefore the image a NEW
+ *  environment is created from. That is deliberate, and so is what it does not do. A project's image is
+ *  stamped into its stored specification once, when its row is first created, and every later start reads
+ *  it from there — so an environment already bound to an older recipe keeps running and restarting on the
+ *  image it was built with. A new tag never replaces a container underneath a running project, and it is
+ *  never built for one either: the build step only fires when the stored image matches the current tag. */
 export const PROJECT_BASE_IMAGE_TAG = `localhost/elowen-project-base:${createHash('sha256').update(PROJECT_CONTAINERFILE).digest('hex').slice(0, 16)}`;

@@ -470,9 +470,15 @@ async function readPdf(abs, pageSpec, supportsImages, readCap, maxPages, guest) 
   try {
     total = await pdfPageCount(abs, guest);
   } catch (e) {
-    // ENOENT here means poppler is not installed; anything else is a genuinely broken/encrypted PDF.
-    if (e && typeof e === 'object' && e.code === 'ENOENT') {
-      return fail('Read', new Error('Reading PDFs requires poppler-utils (pdfinfo/pdftotext/pdftoppm), which is not installed on this host.'), { path: abs, pdf: true });
+    // "The tool is missing" and "the PDF is broken" are different answers, and they arrive differently
+    // depending on where the read happens: a host read fails to spawn at all (ENOENT), while a managed one
+    // runs and the guest reports the program as not found. Both mean poppler is absent, and the message
+    // has to name the environment the caller was actually reading in — telling someone reading a file in
+    // a project to install a package on the host sends them somewhere they cannot fix it.
+    if (e && typeof e === 'object' && (e.code === 'ENOENT' || e.code === 'guest_command_missing')) {
+      return fail('Read', new Error(guest
+        ? 'Reading PDFs requires poppler-utils (pdfinfo, pdftotext, pdftoppm), which is not installed in this project environment.'
+        : 'Reading PDFs requires poppler-utils (pdfinfo, pdftotext, pdftoppm), which is not installed on this host.'), { path: abs, pdf: true });
     }
     return fail('Read', new Error(`Could not read the PDF: ${e instanceof Error ? e.message : String(e)}`), { path: abs, pdf: true });
   }

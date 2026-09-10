@@ -3,6 +3,39 @@ import { randomBytes } from 'node:crypto';
 const CHUNK = 524288;
 const TTL = 24 * 60 * 60 * 1000;
 const failure = (code, message, status = 409) => Object.assign(new Error(message), { code, status });
+
+/** Every guest upload failure a caller is allowed to be told about, with the wording and status it gets.
+ *
+ *  The guest's own message is NOT forwarded. Its failures are raised from inside the transfer and their
+ *  text carries whatever the operating system put there: the staging directory, the candidate file name,
+ *  an errno. None of that is the caller's, none of it is actionable, and a message assembled by the guest
+ *  is not a contract anything can be written against. The code is the contract, and it is answered here
+ *  from a fixed table. */
+const GUEST_UPLOAD_FAILURES = {
+  upload_forbidden: { status: 403, message: 'This upload does not belong to this destination or scope' },
+  upload_unknown: { status: 409, message: 'Upload handle is unavailable' },
+  upload_invalid: { status: 409, message: 'Upload state is not valid for this step' },
+  upload_completed: { status: 409, message: 'Upload is already committed' },
+  upload_incomplete: { status: 409, message: 'Upload is missing chunks and cannot be committed' },
+  upload_cleanup_unverified: { status: 409, message: 'Upload staging could not be verified and was left in place' },
+  chunk_conflict: { status: 409, message: 'A different chunk already occupies this offset' },
+  resolution_drift: { status: 409, message: 'Upload destination was retargeted while the upload was open' },
+  version_conflict: { status: 409, message: 'The destination changed since the version this upload was opened against' },
+  not_directory: { status: 409, message: 'Upload destination is inside something that is not a directory' },
+  invalid_path: { status: 400, message: 'An absolute guest path is required' },
+  invalid_operation: { status: 400, message: 'Invalid upload operation' },
+  file_too_large: { status: 413, message: 'Upload exceeds the size the guest accepts' },
+};
+
+/** A guest reply that failed, rendered for the caller. An unrecognised code becomes one internal error:
+ *  a code nobody has agreed on cannot be acted on either, and passing it through would be the same leak
+ *  by another route. */
+const guestUploadFailure = (reply) => {
+  const known = GUEST_UPLOAD_FAILURES[reply?.error?.code];
+  return known
+    ? failure(reply.error.code, known.message, known.status)
+    : failure('guest_upload_error', 'The guest could not complete this upload', 409);
+};
 export const UPLOAD_KINDS = ['write-begin', 'write-chunk', 'write-commit', 'write-abort'];
 export const guestFileMigration = { version: 4, up(m) {
   m.exec(`CREATE TABLE p_sandbox_file_uploads (
@@ -39,7 +72,7 @@ export function createGuestFileTransport({ db, runGuest, runCleanup, helperSourc
     if (result.truncated) throw failure('guest_protocol', 'Upload response exceeded its bound');
     let reply;
     try { reply = JSON.parse(result.stdout); } catch { throw failure('guest_protocol', 'Invalid upload response'); }
-    if (!reply?.ok || result.code !== 0) throw failure(reply?.error?.code ?? 'guest_upload_error', reply?.error?.message ?? 'Guest upload failed');
+    if (!reply?.ok || result.code !== 0) throw guestUploadFailure(reply);
     if (reply.result?.kind !== op.kind) throw failure('guest_protocol', 'Upload response kind changed');
     return reply.result;
   }
