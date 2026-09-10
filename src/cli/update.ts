@@ -7,6 +7,7 @@ import { dirname, basename, join } from 'node:path';
 import { isNewer } from './version.js';
 import { start, stop, isAlive } from './launcher.js';
 import { readInstallInfo } from './installInfo.js';
+import { installSiteGatewayHelper } from '../privileged/publishedSitesGateway.js';
 import { restartServices } from './systemd.js';
 import { launchdRestart } from './launchd.js';
 import { dataDir } from '../shared/paths.js';
@@ -89,6 +90,8 @@ export interface UpdateDeps {
   current: string;
   /** Run the global install. Injected for tests; defaults to `npm i -g elowen@latest`. */
   install?: () => Promise<void>;
+  /** Refresh the root-owned published-sites helper from the package after update, or repair drift alone. */
+  refreshSiteGatewayHelper?: () => Promise<boolean | void>;
   /** Restart running services after a successful install. */
   restart?: (env: NodeJS.ProcessEnv) => Promise<void>;
   /** File lock serialising concurrent update runs. Injected for tests; the real default writes
@@ -135,6 +138,12 @@ export function acquireUpdateLock(env: NodeJS.ProcessEnv, deps: UpdateLockDeps):
 
 export interface UpdateResult { updated: boolean; from: string; to: string }
 
+async function refreshSiteGatewayHelper(): Promise<boolean> {
+  const installInfo = readInstallInfo();
+  if (process.platform !== 'linux' || installInfo?.mode !== 'domain') return false;
+  return await installSiteGatewayHelper();
+}
+
 /** The systemd half of an update restart. Exactly one canonical non-blocking attempt is allowed: falling
  *  back to a blocking legacy command can deadlock when the updater runs inside the daemon cgroup. */
 export async function restartSystemdAfterUpdate(
@@ -158,12 +167,17 @@ export async function update(env: NodeJS.ProcessEnv, deps: UpdateDeps): Promise<
   try {
     const fetchFn = deps.fetch ?? fetch;
     const latest = await fetchLatestVersion(fetchFn);
-    // Registry unreachable (null) → can't tell if newer, so treat as a no-op rather than throwing, which
-    // would redden the hourly update timer on a transient blip.
-    if (latest === null || !isNewer(latest, deps.current)) return { updated: false, from: deps.current, to: latest ?? deps.current };
+    const refreshHelper = deps.refreshSiteGatewayHelper ?? refreshSiteGatewayHelper;
+    // Helper repair is independent of the registry: a checkout deploy or an older update may have left the
+    // root-owned copy stale even when npm has no newer release to install.
+    if (latest === null || !isNewer(latest, deps.current)) {
+      await refreshHelper();
+      return { updated: false, from: deps.current, to: latest ?? deps.current };
+    }
 
     const install = deps.install ?? (() => reinstall());
     await install();
+    await refreshHelper();
 
     // A box provisioned by `elowen install` is systemd-managed — restart those units (sudo when not root).
     // A plain launcher install has no install.json — fall back to stop/start of our own spawned daemon.

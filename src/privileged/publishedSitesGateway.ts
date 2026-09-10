@@ -1,6 +1,10 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
+import { readFile, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import { promisify } from 'node:util';
+import { fileURLToPath } from 'node:url';
 import type {
   PublishedSitesEnvironmentItem,
   PublishedSitesEnvironmentStatus,
@@ -8,7 +12,15 @@ import type {
   PublishedSitesGatewayStatus,
 } from '../plugins/api.js';
 import { logger, type Logger } from '../shared/logger.js';
-import { SITE_GATEWAY_HELPER_PATH, SITE_RUNTIME_SOCKET_ROOT } from '../shared/siteGateway.js';
+import {
+  SITE_GATEWAY_HELPER_INSTALL_ARGS,
+  SITE_GATEWAY_HELPER_INSTALL_SOURCE,
+  SITE_GATEWAY_HELPER_PATH,
+  SITE_RUNTIME_SOCKET_ROOT,
+} from '../shared/siteGateway.js';
+const execFileAsync = promisify(execFile);
+const SITE_GATEWAY_HELPER_SOURCE = fileURLToPath(new URL('../../scripts/elowen-site-gateway.mjs', import.meta.url));
+const SITE_GATEWAY_HELPER_INSTALL_COMMAND = `sudo -n /usr/bin/install ${SITE_GATEWAY_HELPER_INSTALL_ARGS.join(' ')}`;
 const MAX_OUTPUT_BYTES = 64 * 1024;
 const HELPER_TIMEOUT_MS = 30_000;
 /** Issuance talks to a certificate authority over the network, so it gets its own budget. */
@@ -44,6 +56,72 @@ interface HelperResponse {
 }
 
 export type SiteGatewayHelperInvoker = (request: SiteGatewayHelperRequest) => Promise<HelperResponse>;
+
+export interface SiteGatewayHelperMaintenance {
+  status(): Promise<PublishedSitesEnvironmentItem>;
+  install(): Promise<boolean>;
+}
+
+export interface SiteGatewayHelperInstallIO {
+  readFile(path: string): Promise<Buffer>;
+  writeFile(path: string, data: Buffer): Promise<void>;
+  exec(command: string, args: string[]): Promise<void>;
+  remove(path: string): Promise<void>;
+}
+
+const defaultHelperInstallIO: SiteGatewayHelperInstallIO = {
+  readFile: async (path) => await readFile(path),
+  writeFile: async (path, data) => { await writeFile(path, data, { mode: 0o600 }); },
+  exec: async (command, args) => { await execFileAsync(command, args); },
+  remove: async (path) => { await rm(path, { force: true }); },
+};
+
+function digest(content: Buffer): string {
+  return createHash('sha256').update(content).digest('hex');
+}
+
+export async function siteGatewayHelperStatus(io: SiteGatewayHelperInstallIO = defaultHelperInstallIO): Promise<PublishedSitesEnvironmentItem> {
+  try {
+    const [shipped, installed] = await Promise.all([
+      io.readFile(SITE_GATEWAY_HELPER_SOURCE),
+      io.readFile(SITE_GATEWAY_HELPER_PATH),
+    ]);
+    const ok = digest(shipped) === digest(installed);
+    return {
+      id: 'helper:site-gateway',
+      label: 'Published-sites gateway helper',
+      ok,
+      detail: ok
+        ? 'installed helper matches this Elowen release'
+        : `installed helper differs from this Elowen release. Run: ${SITE_GATEWAY_HELPER_INSTALL_COMMAND}`,
+    };
+  } catch (cause) {
+    return {
+      id: 'helper:site-gateway',
+      label: 'Published-sites gateway helper',
+      ok: false,
+      detail: `helper cannot be verified: ${cause instanceof Error ? cause.message : String(cause)}. Run: ${SITE_GATEWAY_HELPER_INSTALL_COMMAND}`,
+    };
+  }
+}
+
+export async function installSiteGatewayHelper(io: SiteGatewayHelperInstallIO = defaultHelperInstallIO): Promise<boolean> {
+  const status = await siteGatewayHelperStatus(io);
+  if (status.ok) return false;
+  const source = await io.readFile(SITE_GATEWAY_HELPER_SOURCE);
+  await io.writeFile(SITE_GATEWAY_HELPER_INSTALL_SOURCE, source);
+  try {
+    await io.exec('sudo', ['-n', '/usr/bin/install', ...SITE_GATEWAY_HELPER_INSTALL_ARGS]);
+  } finally {
+    await io.remove(SITE_GATEWAY_HELPER_INSTALL_SOURCE);
+  }
+  return true;
+}
+
+const defaultHelperMaintenance: SiteGatewayHelperMaintenance = {
+  status: () => siteGatewayHelperStatus(),
+  install: () => installSiteGatewayHelper(),
+};
 
 export function siteGatewayHelperTimeoutMs(request: SiteGatewayHelperRequest): number {
   if (request.op === 'ensure-site') return ISSUE_TIMEOUT_MS;
@@ -152,10 +230,12 @@ export function createPublishedSitesGatewayControl(options: {
   publicWebUrl: string | null;
   invoke?: SiteGatewayHelperInvoker;
   audit?: Pick<Logger, 'info' | 'warn'>;
+  helper?: SiteGatewayHelperMaintenance;
 }): PublishedSitesGatewayControl {
   const base = hostnameBase(options.publicWebUrl);
   const invoke = options.invoke ?? defaultInvoker;
   const audit = options.audit ?? auditLog;
+  const helper = options.helper ?? defaultHelperMaintenance;
 
   const call = async (request: SiteGatewayHelperRequest): Promise<PublishedSitesGatewayStatus> => {
     if (!base) return unavailable('published sites require a trusted HTTPS domain deployment');
@@ -179,14 +259,23 @@ export function createPublishedSitesGatewayControl(options: {
 
   const environmentsCall = async (op: 'environments-status' | 'environments-provision'): Promise<PublishedSitesEnvironmentStatus> => {
     try {
+      if (op === 'environments-provision') await helper.install();
+      const helperItem = await helper.status();
+      if (!helperItem.ok) {
+        return {
+          ready: false,
+          items: [helperItem],
+          detail: 'the installed published-sites gateway helper differs from this Elowen release',
+        };
+      }
       const result = await invoke({ op });
-      if (!result.ok) return environmentsUnavailable(result.detail || 'the site gateway helper refused the request');
+      if (!result.ok) return { ...environmentsUnavailable(result.detail || 'the site gateway helper refused the request'), items: [helperItem] };
       const items = Array.isArray(result.items)
         ? result.items.map(environmentItem).filter((item): item is PublishedSitesEnvironmentItem => item !== null)
         : [];
       return {
         ready: result.ready === true && items.length > 0 && items.every((item) => item.ok),
-        items,
+        items: [helperItem, ...items],
         ...(typeof result.detail === 'string' && result.detail ? { detail: result.detail.slice(0, 500) } : {}),
       };
     } catch (error) {

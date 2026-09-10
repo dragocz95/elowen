@@ -25,6 +25,7 @@ function io(over: Partial<ReinstallIO> = {}): ReinstallIO & { ran: { cmd: string
 // ~/.config/elowen, so each test gets a fresh temp lock file instead.
 let lock: UpdateLockDeps;
 let lockDir: string;
+const helperCurrent = async () => false;
 beforeEach(() => {
   lockDir = mkdtempSync(join(tmpdir(), 'elowen-update-lock-'));
   lock = { lockPath: () => join(lockDir, 'update.lock'), isAlive: (pid) => pid === process.pid };
@@ -32,27 +33,33 @@ beforeEach(() => {
 afterEach(() => rmSync(lockDir, { recursive: true, force: true }));
 
 describe('cli/update.update', () => {
-  it('does nothing when already on the latest version', async () => {
-    let installed = false;
-    const r = await update({} as NodeJS.ProcessEnv, { current: '1.2.0', fetch: registry('1.2.0'), install: async () => { installed = true; }, restart: async () => {}, lock });
+  it('repairs a drifted site gateway helper even when already on the latest version', async () => {
+    const order: string[] = [];
+    const r = await update({} as NodeJS.ProcessEnv, {
+      current: '1.2.0', fetch: registry('1.2.0'),
+      install: async () => { order.push('install'); },
+      refreshSiteGatewayHelper: async () => { order.push('helper'); },
+      restart: async () => { order.push('restart'); },
+      lock,
+    });
     expect(r).toEqual({ updated: false, from: '1.2.0', to: '1.2.0' });
-    expect(installed).toBe(false);
+    expect(order).toEqual(['helper']);
   });
-  it('installs and restarts when a newer version exists', async () => {
+  it('installs, refreshes the site gateway helper and restarts when a newer version exists', async () => {
     const order: string[] = [];
     const r = await update({} as NodeJS.ProcessEnv, {
       current: '1.2.0', fetch: registry('1.3.0'),
       install: async () => { order.push('install'); },
+      refreshSiteGatewayHelper: async () => { order.push('helper'); },
       restart: async () => { order.push('restart'); },
-      confirmReadyToRestart: () => true,
       lock,
     });
     expect(r).toEqual({ updated: true, from: '1.2.0', to: '1.3.0' });
-    expect(order).toEqual(['install', 'restart']);
+    expect(order).toEqual(['install', 'helper', 'restart']);
   });
   it('treats an unreachable registry as a no-op (so the hourly timer stays green)', async () => {
     const down = (async () => new Response('nope', { status: 503 })) as unknown as typeof fetch;
-    const r = await update({} as NodeJS.ProcessEnv, { current: '1.2.0', fetch: down, install: async () => { throw new Error('must not install'); }, restart: async () => {}, lock });
+    const r = await update({} as NodeJS.ProcessEnv, { current: '1.2.0', fetch: down, install: async () => { throw new Error('must not install'); }, refreshSiteGatewayHelper: helperCurrent, restart: async () => {}, lock });
     expect(r).toEqual({ updated: false, from: '1.2.0', to: '1.2.0' });
   });
 });
@@ -83,6 +90,7 @@ describe('cli/update.update lock (cross-process serialisation)', () => {
       await expect(update({} as NodeJS.ProcessEnv, {
         current: '1.2.0', fetch: registry('1.3.0'),
         install: async () => { installed = true; },
+        refreshSiteGatewayHelper: helperCurrent,
         restart: async () => {},
         lock,
       })).rejects.toThrow('another `elowen update` is already in progress');
@@ -93,11 +101,11 @@ describe('cli/update.update lock (cross-process serialisation)', () => {
   });
   it('reclaims a stale lock left by a dead holder (a crash between acquire and release)', async () => {
     writeFileSync(lock.lockPath({} as NodeJS.ProcessEnv), String(2147483646), 'utf8'); // surely-dead pid
-    const r = await update({} as NodeJS.ProcessEnv, { current: '1.2.0', fetch: registry('1.2.0'), lock });
+    const r = await update({} as NodeJS.ProcessEnv, { current: '1.2.0', fetch: registry('1.2.0'), refreshSiteGatewayHelper: helperCurrent, lock });
     expect(r).toEqual({ updated: false, from: '1.2.0', to: '1.2.0' });
   });
   it('releases the lock when the update finishes, so the next run can proceed', async () => {
-    await update({} as NodeJS.ProcessEnv, { current: '1.2.0', fetch: registry('1.3.0'), install: async () => {}, restart: async () => {}, confirmReadyToRestart: () => true, lock });
+    await update({} as NodeJS.ProcessEnv, { current: '1.2.0', fetch: registry('1.3.0'), install: async () => {}, refreshSiteGatewayHelper: helperCurrent, restart: async () => {}, lock });
     expect(() => acquireUpdateLock({} as NodeJS.ProcessEnv, lock)).not.toThrow();
   });
 });

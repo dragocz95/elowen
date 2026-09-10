@@ -52,6 +52,14 @@ For a source deployment, build both `dist/` and `web-dist/` before changing the 
 
 Custom unit files and deploy scripts are not owned by `elowen install`. Preserve absolute Project paths and the data directory across updates, back them up together with `plugin-secrets.key`, restart through systemd, and verify both the daemon health endpoint and the web root. Keep the daemon and web listeners on loopback when nginx is the public edge.
 
+A checkout deploy for a domain host must refresh the root-owned published-sites helper before restarting services:
+
+```bash
+sudo install -o root -g root -m 0755 scripts/elowen-site-gateway.mjs /usr/local/libexec/elowen-site-gateway
+```
+
+The Sites readiness check reports a stale helper and shows the matching install command. The **Install missing dependencies** action and `elowen update` also repair it on installations provisioned by `elowen install`.
+
 ## Services and lifecycle
 
 Linux installs create:
