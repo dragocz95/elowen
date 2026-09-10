@@ -43,6 +43,9 @@ interface RuntimeHooks {
   useToast(): { toast(message: string, tone?: 'ok' | 'error'): void };
   useQuery<T>(options: Record<string, unknown>): QueryResult<T>;
   useMutation<TData, _TError, TVars>(options: Record<string, unknown>): MutationResult<TVars, TData>;
+  /** One read per row of a register: the host's own React Query, so the register's environment states
+   *  share the cache (and the pushed invalidation) with every other surface reading them. */
+  useQueries<T>(options: { queries: Record<string, unknown>[] }): { data?: T }[];
   useQueryClient(): QueryClient;
   useAutoSaveStatus(
     deps: readonly unknown[],
@@ -98,10 +101,18 @@ interface SandboxRuntime {
 
 type PluginUserComponent = ComponentType<{ plugin: string; panelId: string; user: User; surface: 'user' }>;
 type PluginProjectComponent = ComponentType<{ plugin: string; panelId: string; project: Project; surface: 'project' }>;
+/** The Project register's row seam: called once per host render with the rows on screen, answering with
+ *  a state per project, the actions that state allows, and the dialogs those actions raise. */
+type PluginProjectRowsHook = (input: { projects: Project[] }) => {
+  status?: Record<number, { label: string; icon?: string; tone?: 'muted' | 'accent' | 'success' | 'warning' | 'danger'; busy?: boolean }>;
+  actions?: Record<number, { id: string; label: string; icon?: string; disabled?: boolean; tone?: 'danger'; onSelect: () => void }[]>;
+  overlay?: unknown;
+};
 interface Registration {
   requiresApiVersion: number;
   user?: Record<string, PluginUserComponent>;
   project?: Record<string, PluginProjectComponent>;
+  projectRows?: PluginProjectRowsHook;
 }
 interface HostWindow {
   ElowenUiRuntime?: unknown;

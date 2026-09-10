@@ -133,8 +133,6 @@
       "error_confirmation_mismatch": "Potvrdzovacia fráza nesúhlasí.",
       "errorFallback": "Operácia prostredí zlyhala.",
       "manageEnvironment": "Otvoriť prostredie",
-      "projectTrust": "Každý člen projektu má plný prístup k prostrediu vrátane všetkých pracovných stromov a profilov prehliadača. Pracovné stromy oddeľujú rozpracovanú prácu, nie prístup. Odchádzajúca sieť zahŕňa interné služby.",
-      "projectCredentials": "Údaje osobných integrácií zostávajú mimo prostredia. Prihlasovacie údaje a exportované výsledky tu uložené sú zdieľané dáta projektu.",
       "startEnvironment": "Spustiť prostredie",
       "stopEnvironment": "Zastaviť prostredie",
       "restartEnvironment": "Reštartovať prostredie",
