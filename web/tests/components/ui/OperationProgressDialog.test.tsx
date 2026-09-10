@@ -1,3 +1,4 @@
+import { StrictMode } from 'react';
 import { describe, expect, it, vi } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 import { createWrapper } from '../../test-utils';
@@ -113,6 +114,31 @@ describe('OperationProgressDialog', () => {
     const { rerender } = render(view(1));
     rerender(view(2));
     rerender(view(3));
+    await waitFor(() => expect(onSettled).toHaveBeenCalledOnce());
+    expect(onClose).toHaveBeenCalledWith({ running: false });
+  });
+
+  // Strict Mode runs every effect's setup twice, and `Activity` re-activates an instance the same way. An
+  // "already fired" flag armed on the first setup left the second with no timer at all, so the window that
+  // exists to close itself on a success sat on `Done` for the rest of the session.
+  it('closes itself after a success when Strict Mode re-runs the effect setup', async () => {
+    const onSettled = vi.fn();
+    const onClose = vi.fn();
+    const { wrapper: Wrapper } = createWrapper();
+    render(
+      <StrictMode>
+        <Wrapper>
+          <OperationProgressDialog
+            open
+            title="Starting the environment"
+            operation={operation({ status: 'succeeded', percent: 100, stepIndex: 4, stepLabel: 'initialize' })}
+            onSettled={onSettled}
+            onClose={onClose}
+            successDelayMs={20}
+          />
+        </Wrapper>
+      </StrictMode>,
+    );
     await waitFor(() => expect(onSettled).toHaveBeenCalledOnce());
     expect(onClose).toHaveBeenCalledWith({ running: false });
   });

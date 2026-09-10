@@ -129,13 +129,16 @@ export interface ConfirmDialogProps {
 }
 
 /** The durable operation row a progress window renders, as the daemon publishes it. List projections
- *  omit `logTail`; the single-operation read and the live `environment-operation` frame carry it. */
+ *  omit `logTail`; the single-operation read and the live `environment-operation` frame carry it.
+ *  The status union is the daemon's own (`EnvironmentOperation` in the wire contract): an environment
+ *  operation is never cancelled, and a status this side invents is one a bundle would render as "still
+ *  preparing" forever. */
 export interface EnvironmentOperationView {
   id: string;
   projectId: number;
   generation: number;
   action: { kind: string };
-  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
+  status: 'pending' | 'running' | 'succeeded' | 'failed';
   error: string | null;
   /** The declared step list, in order. Each entry is a stable id the host localizes. */
   steps: string[];
