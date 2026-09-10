@@ -2277,6 +2277,16 @@ describe('BrainStore', () => {
         });
         expect(store.forkParentSpillNamespace('old-fork')).toBe('old-boss');
       });
+
+      /** A branch copies the source transcript verbatim, placeholders included, and those name the
+       *  SOURCE's files. Same inheritance, same one-directional read allowance as a delegated fork
+       *  child — the source never gains a claim on the branch. */
+      it('resolves to the source of a branched conversation', () => {
+        store.createSession({ id: 'origin', userId: 7, model: 'm' });
+        const branch = store.forkSession('origin', 'branch');
+        expect(store.forkParentSpillNamespace(branch.id)).toBe(store.spillNamespace('origin'));
+        expect(store.forkParentSpillNamespace('origin')).toBeUndefined();
+      });
     });
   });
 

@@ -330,10 +330,10 @@ export class BrainStore {
         provider: source.provider, work_dir: source.work_dir, forked_from_session_id: sourceId, execution_ref: source.execution_ref,
         // A branched conversation gets its OWN namespace: sharing one would let either session's deletion
         // sweep the other's files. The copied transcript does carry the source's cleared-result
-        // placeholders, which name the SOURCE's spill dir — the branch reads its own history fine, but a
-        // Read of such a path is refused, and the model has to ask the source conversation instead. The
-        // one-directional allowance for delegated fork children (forkParentSpillNamespace) does not cover
-        // this: a branch is a peer, not a child, and it outlives the conversation it was taken from.
+        // placeholders, which name the SOURCE's spill dir, so the branch reads them back through the same
+        // one-directional allowance a delegated fork child uses (forkParentSpillNamespace resolves
+        // forked_from_session_id too). Read-only and never the reverse; a source deleted before the branch
+        // takes its files with it, and such a Read then fails as the missing file it is.
         spill_ns: mintSpillNamespace(newId),
       });
       this.db.prepare(
@@ -1232,21 +1232,24 @@ export class BrainStore {
     return row?.spill_ns || sessionId;
   }
 
-  /** The spill namespace of the conversation a FORK child was spawned from, or undefined for every session
-   *  that is not one — which is what makes the allowance it feeds one-directional.
+  /** The spill namespace of the conversation this one inherited its transcript from — a delegated FORK
+   *  child from its parent, a branch from the session it was forked off — or undefined for every session
+   *  that is neither, which is what makes the allowance it feeds one-directional.
    *
-   *  A fork seeds the child with the parent's transcript verbatim, cleared tool results included, so the
-   *  child inherits placeholders naming files under the PARENT's namespace and needs to read them back.
-   *  Only a fork: an ordinary delegated child composes its own history and inherits no placeholder. The
-   *  fork flag is read from the durable delegated scope rather than from the live turn, so a runner
-   *  process and a respawn answer exactly as the spawning turn did.
+   *  Both seed the new session with the source transcript verbatim, cleared tool results included, so it
+   *  inherits placeholders naming files under the SOURCE's namespace and needs to read them back. An
+   *  ordinary delegated child composes its own history and inherits no placeholder. The fork flag is read
+   *  from the durable delegated scope rather than from the live turn, so a runner process and a respawn
+   *  answer exactly as the spawning turn did.
    *
    *  The same '' fallback {@link spillNamespace} applies, for a parent row minted before the backfill. */
   forkParentSpillNamespace(sessionId: string): string | undefined {
     const row = this.db.prepare(
       `SELECT p.id AS id, p.spill_ns AS spill_ns
-         FROM brain_sessions c JOIN brain_sessions p ON p.id = c.parent_session_id
-        WHERE c.id = ? AND json_valid(c.delegated_access) AND json_extract(c.delegated_access, '$.fork') = 1`
+         FROM brain_sessions c JOIN brain_sessions p ON p.id = COALESCE(c.forked_from_session_id, c.parent_session_id)
+        WHERE c.id = ?
+          AND (c.forked_from_session_id IS NOT NULL
+               OR (json_valid(c.delegated_access) AND json_extract(c.delegated_access, '$.fork') = 1))`
     ).get(sessionId) as { id: string; spill_ns: string } | undefined;
     return row ? row.spill_ns || row.id : undefined;
   }
