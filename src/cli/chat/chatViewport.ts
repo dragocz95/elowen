@@ -93,7 +93,6 @@ interface ViewportTailAnchor {
   index: number;
   turn: ChatTurn | null;
   withinTurn: number;
-  viewportHeight: number;
   layoutEpoch: number;
   wasTail: boolean;
 }
@@ -605,7 +604,6 @@ export class ChatViewport implements Component {
       index,
       turn: this.layout[index]?.turn ?? null,
       withinTurn: localStart - (this.heightIndex.prefixSum(index) - knownBase),
-      viewportHeight: this.viewportHeight,
       layoutEpoch: this.layoutEpoch,
       wasTail: index === this.layout.length - 1,
     };
@@ -627,7 +625,7 @@ export class ChatViewport implements Component {
   /** Put the anchored row back at the top of the window. Returns whether the offset moved, so the caller
    *  can extend the indexed tail over the rows the growth added. */
   private restoreTailAnchor(anchor: ViewportTailAnchor): boolean {
-    if (anchor.layoutEpoch !== this.layoutEpoch || anchor.viewportHeight !== this.viewportHeight) return false;
+    if (anchor.layoutEpoch !== this.layoutEpoch) return false;
     if (this.estimatedLayout || anchor.index >= this.layout.length || anchor.index < this.knownStart) return false;
     // The settled anchor keeps its object identity across frames. The live tail does not — TranscriptModel
     // rebuilds it per delta — so anchoring inside the streaming turn is matched by position instead.

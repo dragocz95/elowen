@@ -3,10 +3,9 @@ import type { Component, MarkdownTheme, TUI } from '@earendil-works/pi-tui';
 import { color } from './theme.js';
 import { projectStatusLabel } from './projectLabel.js';
 import { StatusBar, CardPanel, SubagentPanel } from './components.js';
-import type { SubagentPanelEntry } from './components.js';
 import type { BrainRateLimits, BrainStatus } from './brainClient.js';
 import type { BrainCard } from '../../brain/events.js';
-import type { WorkflowState } from '../../brain/transcript.js';
+import type { SubagentState, WorkflowState } from '../../brain/transcript.js';
 import { openWorkflowModal as showWorkflowModal } from './workflowModal.js';
 import { activeMention, CLIPBOARD_MENTION, imageMimeFor, rankMentionFiles, bumpMentionFrecency, mentionInsertText } from './mentions.js';
 import { isSlashCommandDraft } from './commands.js';
@@ -407,7 +406,7 @@ export function createChatComposition(
     return provider ? (rt.rateLimitsByProvider[provider] ?? null) : null;
   };
   let currentRunSeconds = 0;
-  let currentAgents: readonly SubagentPanelEntry[] = [];
+  let currentAgents: readonly SubagentState[] = [];
   let currentWorkflows: readonly WorkflowState[] = [];
   telemetry = new TelemetryPanel(() => ({
     usage: focusedUsage(),

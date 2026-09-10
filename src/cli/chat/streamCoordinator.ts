@@ -7,8 +7,7 @@ import type { BrainMessageView } from '../../brain/messageView.js';
 import type { BrainStreamSnapshot } from '../../brain/session/liveEventReplay.js';
 import { usageProviderOf } from './brainClient.js';
 import type { BrainStreamFrame } from './brainClient.js';
-import type { SubagentPanelEntry } from './components.js';
-import type { WorkflowState } from '../../brain/transcript.js';
+import type { SubagentState, WorkflowState } from '../../brain/transcript.js';
 import type { ChatState } from './chatState.js';
 import type { ChatApplicationActions, ChatApplicationResources } from './chatCapabilities.js';
 import type { Flows } from './flows.js';
@@ -22,7 +21,7 @@ const historyNotice = (scope: 'conversation' | 'sub-agent', error: unknown): str
 };
 
 export interface StreamCoordinatorPort {
-  subagentStates(): readonly SubagentPanelEntry[];
+  subagentStates(): readonly SubagentState[];
   workflowStates(): readonly WorkflowState[];
   openSubagent(sessionId: string): Promise<void>;
   closeSubagent(): void;
@@ -32,6 +31,14 @@ export interface StreamCoordinatorPort {
   switchTo(target: { session?: string; fresh?: boolean }): Promise<void>;
   stop(): void;
 }
+
+/** Command work Ctrl+B can move to the background: an in-flight `Bash` call, or a blocking `ProcessOutput`
+ *  read parked on a background process. Both hold the turn open and both are released by the same
+ *  `/brain/commands/background` call, so the hint, the key guard and the dispatch all ask this one
+ *  question. */
+export const releasableCommand = (
+  proc: { running: boolean; completionMode?: string; blockedRead?: boolean },
+): boolean => proc.running && (proc.completionMode === 'foreground' || proc.blockedRead === true);
 
 /** The foreground work Ctrl+B can detach, counted per kind. Both the key guard (which decides whether to
  *  claim the chord at all, since it is also the editor's backward-character binding) and the action that
@@ -43,14 +50,6 @@ export interface StreamCoordinatorPort {
  *  counting them made a conversation whose only workflow was already detached take the "moving work to the
  *  background" path and then report that it had finished or moved — when the honest answer is that there
  *  was nothing in the foreground to move. */
-/** Command work Ctrl+B can move to the background: an in-flight `Bash` call, or a blocking `ProcessOutput`
- *  read parked on a background process. Both hold the turn open and both are released by the same
- *  `/brain/commands/background` call, so the hint, the key guard and the dispatch all ask this one
- *  question. */
-export const releasableCommand = (
-  proc: { running: boolean; completionMode?: string; blockedRead?: boolean },
-): boolean => proc.running && (proc.completionMode === 'foreground' || proc.blockedRead === true);
-
 export function foregroundWork(
   stream: StreamCoordinatorPort,
   processes: ChatState['processes'],
@@ -64,7 +63,7 @@ export function foregroundWork(
 /** Application-owned event/hydration coordinator. Parent and child use independent lanes of the one
  * explicitly injected bounded hydrator; all callbacks also capture their stream/session generation. */
 export class StreamCoordinator implements StreamCoordinatorPort {
-  readonly subagentStates: () => readonly SubagentPanelEntry[];
+  readonly subagentStates: () => readonly SubagentState[];
   readonly workflowStates: () => readonly WorkflowState[];
   readonly openSubagent: (sessionId: string) => Promise<void>;
   readonly closeSubagent: () => void;
@@ -106,7 +105,7 @@ export class StreamCoordinator implements StreamCoordinatorPort {
       clearHydrationNotice('child');
     };
 
-    const subagentStates = (): readonly SubagentPanelEntry[] => rt.transcript.subagents();
+    const subagentStates = (): readonly SubagentState[] => rt.transcript.subagents();
     const workflowStates = (): readonly WorkflowState[] => rt.transcript.workflows();
     const subagentSessions = (): { sessionId: string }[] =>
       subagentStates().map(({ sessionId }) => ({ sessionId }));
