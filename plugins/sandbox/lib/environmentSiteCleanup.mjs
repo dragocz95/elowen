@@ -1,4 +1,5 @@
 import { resourceToken } from './containerSpec.mjs';
+import { operationView } from './environmentDb.mjs';
 
 const error = (code, message, status = 409) => Object.assign(new Error(message), { code, status });
 
@@ -17,7 +18,6 @@ export function createSiteCleanupService({ store, resolveCleanup, userExists, si
   for (const [key, value] of Object.entries({ store, resolveCleanup, userExists, siteRecord, normalizeLimits })) {
     if (!value) throw error('invalid_configuration', `A ${key} injection is required for the Sites cleanup service`);
   }
-  const view = (op) => ({ id: op.id, requestId: op.request_key, siteId: op.resource_id, accountUserId: op.user_id, generation: op.generation, action: op.action, status: op.status, error: op.error ?? null, ...(op.snapshot_id ? { snapshotId: op.snapshot_id } : {}) });
   async function registration(siteId, removedAccountUserId) {
     positive(removedAccountUserId, 'removed account');
     resourceToken(siteId);
@@ -41,14 +41,14 @@ export function createSiteCleanupService({ store, resolveCleanup, userExists, si
         const active = store.active('site', input.siteId);
         if (prior) {
           if (prior.status === 'failed' && !active) { prior.status = 'pending'; prior.error = null; store.saveOperation(prior); }
-          return view(prior);
+          return operationView(prior);
         }
         if (active) throw error('site_busy', 'Finish the active Site operation before lifecycle cleanup');
         const op = store.enqueue(row, null, { kind: 'delete' }, key);
         Object.assign(op.checkpoint, { lifecycle: { removedAccountUserId: input.removedAccountUserId } });
         store.saveOperation(op);
         row.state = 'deleting'; row.desired_state = 'deleted'; store.save(row);
-        return view(op);
+        return operationView(op);
       });
     },
     /** Dispatch-time authority recheck: cleanup intent, removed account, and the trusted binding

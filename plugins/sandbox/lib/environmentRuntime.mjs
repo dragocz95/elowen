@@ -7,7 +7,7 @@ import { createSiteImageService } from './environmentSiteImages.mjs';
 import { createSiteCleanupService } from './environmentSiteCleanup.mjs';
 import { createGuestFileTransport, validateUploadOperation, UPLOAD_KINDS } from './guestFileTransport.mjs';
 import { managedShellFrame, synchronousShellFrame } from './managedBootstrap.mjs';
-import { createEnvironmentStore } from './environmentDb.mjs';
+import { createEnvironmentStore, operationView } from './environmentDb.mjs';
 import { ownerProvablyDead, processIdentity, withRepoLease } from './db.mjs';
 import { createContainerSpec, createBoundSiteSpec, withContainerLimits, resourceToken, bindContainerIdentity } from './containerSpec.mjs';
 import { managedGuestRoot } from './containerPaths.mjs';
@@ -39,6 +39,10 @@ const STEP_PLANS = {
 /** Every Sites-only action and the image jobs: one step, honestly unlabelled, rather than a fabricated
  *  breakdown of work whose shape nobody has described. */
 const DEFAULT_STEPS = [['work', 1]];
+/** Two of the steps above are a PROJECT's: waiting for the guest system bus, and the quiesce that
+ *  cancels leases and guest transfers. A Site takes neither, so declaring them to a Site's watcher
+ *  would name work that is never going to happen. */
+const PROJECT_STEPS = ['ready', 'quiesce'];
 /** Podman prints `STEP 4/17: RUN …` while it builds and `Copying blob … 12MB / 40MB` while it pulls. The
  *  first is a real fraction of a known whole; the second is a byte count of one layer among several, so
  *  it is reported as indeterminate rather than turned into a percentage of nothing. */
@@ -231,11 +235,6 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   }
   const view = (row) => ({ [row.kind === 'project' ? 'projectId' : 'siteId']: row.kind === 'project' ? Number(row.resource_id) : row.resource_id,
     generation: row.generation, state: row.state, desiredState: row.desired_state, lastError: row.error ?? null, limits: row.limits });
-  const operationView = (op) => ({ id: op.id, requestId: op.request_key, [op.kind === 'project' ? 'projectId' : 'siteId']: op.kind === 'project' ? Number(op.resource_id) : op.resource_id,
-    accountUserId: op.user_id, generation: op.generation, action: op.action, status: op.status, error: op.error ?? null, ...(op.snapshot_id ? { snapshotId: op.snapshot_id } : {}),
-    steps: op.steps ?? [], stepIndex: Number(op.step_index ?? 0), stepTotal: (op.steps ?? []).length,
-    stepLabel: (op.steps ?? [])[Number(op.step_index ?? 0)] ?? null,
-    percent: op.percent === null || op.percent === undefined ? null : Number(op.percent) });
   const assertGeneration = (row, expected) => { if (expected !== undefined && expected !== row.generation) throw error('generation_changed', 'Environment generation changed'); };
 
   /** The one place an operation's live state leaves this process. Everything a watcher needs travels in
@@ -262,12 +261,14 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     } catch (cause) { ctx.logger.warn(`environment operation progress was not published: ${cause.message}`); }
   }
   const checkpoint = (op, values) => { Object.assign(op.checkpoint, values); store.saveOperation(op); publishOperation(op, false); };
-  const stepPlan = (op) => STEP_PLANS[op.action?.kind] ?? DEFAULT_STEPS;
-  /** Declare the step list on the durable row as the operation is claimed. */
+  const stepPlan = (op) => (STEP_PLANS[op.action?.kind] ?? DEFAULT_STEPS).filter(([id]) => op.kind === 'project' || !PROJECT_STEPS.includes(id));
+  const declareSteps = (op) => { op.steps = stepPlan(op).map(([id]) => id); op.step_index = 0; op.percent = 0; };
+  /** Declare the step list on the durable row as the operation is claimed. An operation RESUMED after a
+   *  restart already declared it and reached a position its checkpoints kept, so only one that never
+   *  declared any starts at zero — otherwise the bar would fall back to the beginning for work that is
+   *  not going to be done again. */
   function beginSteps(op) {
-    op.steps = stepPlan(op).map(([id]) => id);
-    op.step_index = 0;
-    op.percent = 0;
+    if (!op.steps?.length) declareSteps(op);
     store.saveOperation(op);
     publishOperation(op);
   }
@@ -287,6 +288,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     publishOperation(op, !streamed);
   }
   const assertLive = () => { if (disposed) throw error('runtime_unavailable', 'The environment provider was detached', 503); };
+  /** The host's storage root is not a project member's business, in a lifecycle error or a build line any
+   *  more than in command output — where `prepareExecution` has always replaced it. One replacement,
+   *  applied wherever host text becomes something a surface displays. */
+  const sanitize = (text) => String(text).split(dataDir).join('[environment-storage]');
 
   async function assertNoPublishedSites(id) {
     if (sites && !sites.projectDependents) throw error('sites_preflight_unavailable', 'Sites must provide publication-dependency preflight before Project deletion');
@@ -332,9 +337,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       store.save(row);
       // The declared step list exists from the moment the intent is durable, so the caller's very first
       // frame can name what is about to happen rather than an empty bar labelled "pending".
-      op.steps = stepPlan(op).map(([id]) => id);
-      op.step_index = 0;
-      op.percent = 0;
+      declareSteps(op);
       store.saveOperation(op);
       return operationView(op);
     });
@@ -527,7 +530,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       handle = leaseHandle(row, leased, prepared.settle);
       return { mode: 'managed', projectRef: input.projectRef, cwd: dataDir, displayCwd: cwd, home: '/root', roots: ['/'],
         launch: prepared.launch, stdin: program.input, cancel: () => handle.cancel(), workspace: null, lease: handle,
-        sanitizeOutput: (text) => String(text).split(dataDir).join('[environment-storage]') };
+        sanitizeOutput: sanitize };
     } catch (cause) { await handle.release(); throw cause; }
   }
 
@@ -645,7 +648,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       // buffer the log view reads and its own step counter drives the bar. A line that carries no
       // fraction leaves the step indeterminate rather than freezing the bar at a stale figure.
       row.spec.input.image = await podman.ensureProjectImage(dataDir, (line) => {
-        store.log(row.kind, row.resource_id, line);
+        store.log(row.kind, row.resource_id, sanitize(line));
         step(op, 'image', buildFraction(line), true);
       });
       store.save(row); checkpoint(op, { imageReady: true });
@@ -1015,7 +1018,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           publishOperation(op);
         } catch (cause) {
           if (!claimed) throw cause;
-          op.status = 'failed'; op.error = String(cause.message ?? cause).slice(0, 2000); store.saveOperation(op);
+          op.status = 'failed'; op.error = sanitize(cause.message ?? cause).slice(0, 2000); store.saveOperation(op);
           const row = store.get(op.kind, op.resource_id);
           if (row) { row.error = op.error; if (row.desired_state === 'deleted') row.state = 'deleting'; else if (row.state !== 'running' && row.state !== 'stopped') row.state = 'failed'; store.save(row); store.log(row.kind, row.resource_id, op.error); }
           publishOperation(op);

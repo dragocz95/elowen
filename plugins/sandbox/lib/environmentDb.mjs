@@ -67,6 +67,15 @@ export const environmentProgressMigration = {
   },
 };
 
+/** The one projection of an operation row onto the wire shape both the project and the Site surfaces
+ *  read (`EnvironmentOperation`, `SiteEnvironmentOperation`). It lives beside the row mapper because a
+ *  second copy of it is how the declared progress fields went missing from one of them. */
+export const operationView = (op) => ({ id: op.id, requestId: op.request_key, [op.kind === 'project' ? 'projectId' : 'siteId']: op.kind === 'project' ? Number(op.resource_id) : op.resource_id,
+  accountUserId: op.user_id, generation: op.generation, action: op.action, status: op.status, error: op.error ?? null, ...(op.snapshot_id ? { snapshotId: op.snapshot_id } : {}),
+  steps: op.steps ?? [], stepIndex: Number(op.step_index ?? 0), stepTotal: (op.steps ?? []).length,
+  stepLabel: (op.steps ?? [])[Number(op.step_index ?? 0)] ?? null,
+  percent: op.percent === null || op.percent === undefined ? null : Number(op.percent) });
+
 const runtime = (row) => row ? { ...row, generation: Number(row.generation), spec: JSON.parse(row.spec_json), limits: JSON.parse(row.limits_json) } : null;
 const operation = (row) => row ? { ...row, action: JSON.parse(row.action_json), checkpoint: JSON.parse(row.checkpoint_json),
   steps: JSON.parse(row.steps_json ?? '[]'), step_index: Number(row.step_index ?? 0),
