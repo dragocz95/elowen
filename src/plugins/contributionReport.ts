@@ -32,7 +32,7 @@ function summarizeSchema(parameters: unknown): string | undefined {
   if (!p.properties || typeof p.properties !== 'object') return 'schema available';
   const required = new Set(Array.isArray(p.required) ? p.required.filter((v): v is string => typeof v === 'string') : []);
   const fields = Object.keys(p.properties as Record<string, unknown>).slice(0, 8).map((key) => `${key}${required.has(key) ? '*' : ''}`);
-  const extra = Object.keys(p.properties as Record<string, unknown>).length > fields.length ? '…' : '';
+  const extra = Object.keys(p.properties).length > fields.length ? '…' : '';
   return fields.length ? fields.join(', ') + extra : 'schema available';
 }
 

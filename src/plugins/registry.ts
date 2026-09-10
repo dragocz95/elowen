@@ -1464,7 +1464,7 @@ export class PluginRegistry {
               timer = setInterval(() => {
                 try {
                   const out = fn();
-                  if (out && typeof (out as Promise<void>).catch === 'function') (out as Promise<void>).catch((e) => scoped.warn(`interval '${intervalName}' tick failed: ${e instanceof Error ? e.message : String(e)}`));
+                  if (out && typeof (out).catch === 'function') (out).catch((e) => scoped.warn(`interval '${intervalName}' tick failed: ${e instanceof Error ? e.message : String(e)}`));
                 } catch (e) { scoped.warn(`interval '${intervalName}' tick failed: ${e instanceof Error ? e.message : String(e)}`); }
               }, ms);
               timer.unref?.();

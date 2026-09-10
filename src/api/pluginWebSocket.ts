@@ -35,7 +35,7 @@ const log = logger('plugin-ws');
 function toBuffer(raw: RawData): Buffer {
   if (Buffer.isBuffer(raw)) return raw;
   if (Array.isArray(raw)) return Buffer.concat(raw);
-  return Buffer.from(raw as ArrayBuffer);
+  return Buffer.from(raw);
 }
 
 /** Answer an upgrade request with a plain HTTP status and hang up. Deliberately body-less and

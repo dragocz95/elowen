@@ -599,7 +599,7 @@ export function registerPluginRoutes(app: ElowenApp, ctx: RouteContext): void {
       }
       // Persistence is the commit point. Any failure here remains a request failure and no reload starts.
       try {
-        d.config.update({ plugins: { config: { [name]: stored as Record<string, never> } } }, baseline.revision);
+        d.config.update({ plugins: { config: { [name]: stored } } }, baseline.revision);
       } catch (error) {
         if (error instanceof ConfigRevisionConflict) {
           if (suppliedRevision === undefined) continue;

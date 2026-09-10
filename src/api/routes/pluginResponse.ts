@@ -91,7 +91,7 @@ export function pluginResponse(
     return new Response(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer, { status, headers });
   }
   if (body instanceof ReadableStream) {
-    return new Response(requestScopedStream(body as ReadableStream<Uint8Array>, ctx.signal, ctx.onStreamError), { status, headers });
+    return new Response(requestScopedStream(body, ctx.signal, ctx.onStreamError), { status, headers });
   }
   if (!headers.has('content-type')) headers.set('content-type', 'application/json; charset=UTF-8');
   return new Response(JSON.stringify(body), { status, headers });

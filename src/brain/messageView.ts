@@ -638,7 +638,7 @@ export function shapeBrainMessages(
   if (sessionEvents.length === 0) return stamped.map((s) => s.view);
   const events = sessionEvents.map((e) => ({
     ms: parseDbTs(e.at),
-    view: { id: e.id, role: 'event', text: '', kind: e.kind, detail: e.detail } as BrainMessageView,
+    view: { id: e.id, role: 'event', text: '', kind: e.kind, detail: e.detail },
   }));
   const merged: BrainMessageView[] = [];
   let next = 0;

@@ -206,9 +206,9 @@ export function normalizePlatformTurnEnvelope(raw: unknown): PlatformTurnResumeE
     accountUserId: e.accountUserId,
     ...(sender ? { sender: { id: sender.id as string, name: sender.name as string } } : {}),
     identity: {
-      platform: identity.platform as string,
-      userId: identity.userId as string,
-      ...(identity.elowenUserId !== undefined ? { elowenUserId: identity.elowenUserId as number } : {}),
+      platform: identity.platform,
+      userId: identity.userId,
+      ...(identity.elowenUserId !== undefined ? { elowenUserId: identity.elowenUserId } : {}),
       ...(identity.elowenUsername !== undefined ? { elowenUsername: identity.elowenUsername } : {}),
       admin: identity.admin,
       owner: identity.owner,
@@ -596,7 +596,7 @@ export class ChannelSessionService {
    *  cheaper fork, it is a different conversation. The fork simply misses the cache and says so in its own
    *  log line. */
   private parentForkHistory(parentSessionId: string): ForkMessage[] {
-    return storedContextMessages(this.d.store, parentSessionId) as ForkMessage[];
+    return storedContextMessages(this.d.store, parentSessionId);
   }
 
   /** How big the parent's warm prefix was, for the fork's own log line — off its LIVE record when this

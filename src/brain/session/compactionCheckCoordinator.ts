@@ -80,7 +80,7 @@ export function coordinateNativeCompactionChecks(session: AgentSession): CheckCo
         if (residentTokens !== undefined && checkedMessage.stopReason === 'error') {
           const contextWindow = session.model?.contextWindow ?? 0;
           if (!isContextOverflow(checkedMessage, contextWindow)) {
-            checkedMessage = { ...checkedMessage, stopReason: 'stop' } as PiAssistantMessage;
+            checkedMessage = { ...checkedMessage, stopReason: 'stop' };
           }
         }
         result = await original(checkedMessage, skipAbortedCheck);

@@ -394,7 +394,7 @@ export class PlatformOrchestrator {
           const adopted = claimsDirect
             && existingOwner === owner
             && linkedUserId !== owner
-            && this.d.channels.adoptPersonalChat(canonicalSessionId, owner, linkedUserId!);
+            && this.d.channels.adoptPersonalChat(canonicalSessionId, owner, linkedUserId);
           const directChat = claimsDirect && (existingOwner === undefined || existingOwner === linkedUserId || adopted);
           // Safe unconditionally BECAUSE of that check: the row either does not exist yet or is already
           // this account's, so nothing is re-pointed. Ownership intentionally carries usage attribution,

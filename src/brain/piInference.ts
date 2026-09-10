@@ -1,5 +1,5 @@
 import { contentText } from '@earendil-works/pi-ai';
-import type { Api, Context, Model } from '@earendil-works/pi-ai';
+import type { Context } from '@earendil-works/pi-ai';
 import type { InferenceClient } from '../inference/types.js';
 import { buildBrainRegistry, registryProviderName, type BrainRuntimeConfig } from './providers.js';
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
@@ -35,7 +35,7 @@ export function piInferenceClient(deps: {
   // For built-in OAuth providers this also extends the catalog (Opus 5, Codex models) and applies
   // pinned windows — identical to what a session spawn would have done.
   buildBrainRegistry(cfg, deps.runtime);
-  const model = deps.runtime.getModel(registryProviderName(entry), route.model) as Model<Api> | undefined;
+  const model = deps.runtime.getModel(registryProviderName(entry), route.model);
   if (!model) return null;
 
   return {

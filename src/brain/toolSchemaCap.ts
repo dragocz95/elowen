@@ -93,5 +93,5 @@ export function capExternalToolSchema(
       MAX_EXTERNAL_DESCRIPTION_BYTES - Buffer.byteLength(OMITTED_SCHEMA_NOTE, 'utf8'),
     ) + OMITTED_SCHEMA_NOTE,
     parameters: PERMISSIVE_SCHEMA,
-  } as unknown as ToolDefinition;
+  };
 }

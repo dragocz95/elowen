@@ -60,7 +60,7 @@ export function stripReason(tool: ToolDefinition): ToolDefinition {
     const params = args[1];
     if (params && typeof params === 'object' && (REASON_KEY in params || LEGACY_REASON_KEY in params)) {
       const { [REASON_KEY]: _note, [LEGACY_REASON_KEY]: _legacy, ...rest } = params as Record<string, unknown>;
-      args[1] = rest as typeof args[1];
+      args[1] = rest;
     }
     return run(...args);
   }) as ToolDefinition['execute'];

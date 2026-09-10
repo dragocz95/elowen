@@ -527,7 +527,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
       }
     }
     if (b.can_create_projects !== undefined || b.can_share_projects !== undefined || b.project_limit !== undefined) {
-      users.setProjectPermissions(c.get('user')!.id, id, { canCreateProjects: b.can_create_projects, canShareProjects: b.can_share_projects, projectLimit: b.project_limit });
+      users.setProjectPermissions(c.get('user').id, id, { canCreateProjects: b.can_create_projects, canShareProjects: b.can_share_projects, projectLimit: b.project_limit });
     }
     if (typeof b.name === 'string') users.setProfile(id, { name: b.name.trim() });
     if (typeof b.is_admin === 'boolean') {
@@ -649,7 +649,7 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
   // when the admin ends the impersonation via logout).
   app.post('/users/:id/impersonate', (c) => {
     if (denyNonAdmin(c)) return c.json({ error: 'forbidden' }, 403);
-    const actor = c.get('user')!; // present: denyNonAdmin above rejects a request without one
+    const actor = c.get('user'); // present: denyNonAdmin above rejects a request without one
     const id = Number(c.req.param('id'));
     if (id === actor.id) return c.json({ error: 'cannot impersonate yourself' }, 400);
     const target = users.get(id);

@@ -667,7 +667,7 @@ export function installToolResultDeliverySpill(
       log.info(`spilled ${input.toolCall.id} on delivery (${trigger} trigger, ${bytes} bytes, managed)`);
       return {
         ...hooked,
-        content: clearedToolResultContent(content, placeholder) as DeliveryContent,
+        content: clearedToolResultContent(content, placeholder),
         details: clearedToolResultDetails(hooked?.details ?? input.result.details, marker),
       };
     }
@@ -689,7 +689,7 @@ export function installToolResultDeliverySpill(
     log.info(`spilled ${input.toolCall.id} on delivery (${trigger} trigger, ${bytes} bytes)`);
     return {
       ...hooked,
-      content: clearedToolResultContent(content, placeholder) as DeliveryContent,
+      content: clearedToolResultContent(content, placeholder),
       details: clearedToolResultDetails(hooked?.details ?? input.result.details, marker),
     };
   }

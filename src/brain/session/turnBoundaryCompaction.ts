@@ -4,11 +4,9 @@ import {
   type AgentSession,
   type SessionManager,
 } from '@earendil-works/pi-coding-agent';
-import type { AssistantMessage } from '@earendil-works/pi-ai';
 import { coordinateNativeCompactionChecks, withResidentContextTokens } from './compactionCheckCoordinator.js';
 import { localResidentContextTokens } from '../contextBreakdown.js';
 
-type PiAssistantMessage = AssistantMessage;
 export interface PendingCompactionMessage {
   text: string;
   images?: readonly { type: 'image'; data: string; mimeType: string }[];
@@ -110,7 +108,7 @@ export function installTurnBoundaryAutoCompaction(
             input: boundaryTokens, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: boundaryTokens,
             cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
           },
-        }) as PiAssistantMessage;
+        });
     // AgentSession.abort() owns the Agent controller, while PI auto-compaction owns a separate controller.
     // Bridge the public Agent signal to public abortCompaction() for exactly this awaited boundary check.
     let aborted = signal?.aborted === true;

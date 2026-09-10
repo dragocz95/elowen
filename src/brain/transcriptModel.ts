@@ -459,7 +459,7 @@ export class TranscriptModel implements TranscriptRead {
       return { kind: 'full', revision: this.currentRevision };
     }
     if (revision === this.currentRevision) return { kind: 'none', revision: this.currentRevision };
-    const first = this.changes.keys().next().value as number | undefined;
+    const first = this.changes.keys().next().value;
     if (first == null || revision < first - 1) return { kind: 'full', revision: this.currentRevision };
 
     let suffixFrom = Number.POSITIVE_INFINITY;
@@ -744,7 +744,7 @@ export class TranscriptModel implements TranscriptRead {
     this.currentRevision += 1;
     this.changes.set(this.currentRevision, change);
     while (this.changes.size > this.journalLimit) {
-      const oldest = this.changes.keys().next().value as number | undefined;
+      const oldest = this.changes.keys().next().value;
       if (oldest == null) break;
       this.changes.delete(oldest);
     }

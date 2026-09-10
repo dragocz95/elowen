@@ -386,7 +386,7 @@ function withIncrementalToolStreaming(model: Model<Api>): Model<Api> {
   // `api === 'anthropic-messages'` doesn't narrow the compat UNION for TS, so read the one flag structurally.
   const compat = model.compat as { supportsEagerToolInputStreaming?: boolean } | undefined;
   if (compat?.supportsEagerToolInputStreaming === false) return model;
-  return { ...model, compat: { ...compat, supportsEagerToolInputStreaming: false } } as Model<Api>;
+  return { ...model, compat: { ...compat, supportsEagerToolInputStreaming: false } };
 }
 
 export function resolveBrainModelRoute(
