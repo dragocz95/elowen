@@ -37,10 +37,17 @@ const PI_GUARD = 'Do NOT continue the conversation';
 /** The opening line of PI's turn-prefix prompt, which a split turn adds as a SECOND request. */
 const PI_TURN_PREFIX = 'This is the PREFIX of a turn that was too large to keep.';
 
+/** Stamped onto the payload by the session's own `before_provider_request` chain, which the fixture below
+ *  installs exactly as the session factory does. */
+const SESSION_PAYLOAD_MARKER = 'elowen_session_payload';
+
 interface ProviderCall {
   model: Model<Api>;
   context: Context;
   options?: SimpleStreamOptions;
+  /** What `onPayload` RETURNED: the payload after the session's whole extension chain, i.e. what a real
+   *  adapter would put on the wire. */
+  payload: Record<string, unknown>;
 }
 
 interface FixtureOptions {
@@ -53,6 +60,9 @@ interface FixtureOptions {
   /** Append a turn big enough that the cut point falls INSIDE it, which is what makes PI split the turn
    *  and issue a second, turn-prefix summarization request. */
   splitTurn?: boolean;
+  /** Leave a previous compaction summary in the session, which PI threads into the NEXT summarization
+   *  prompt inside `<previous-summary>` tags. */
+  previousSummary?: string;
 }
 
 let apiSequence = 0;
@@ -121,13 +131,23 @@ function appendSplitTurn(sm: SessionManager, model: Model<Api>): void {
   sm.appendMessage(assistantMessage(model, [{ type: 'text', text: 'done' }]));
 }
 
+/** A session that already carries a compaction summary. PI appends it to the next summarization prompt
+ *  inside `<previous-summary>` tags, so whatever a real one — model-written prose — contains is threaded
+ *  back in. The retained message is what makes the following messages summarizable again. */
+function appendPreviousCompaction(sm: SessionManager, summary: string): void {
+  const retained = sm.appendMessage({ role: 'user', content: 'retained after the previous compaction', timestamp: Date.now() });
+  sm.appendCompaction(summary, retained, 1_000);
+}
+
 /** The request classifier the fake provider uses, and the same one the assertions read: an in-session
- *  summary is the request that keeps the SESSION's system prompt and carries PI's instruction last. */
+ *  summary is the request that keeps the SESSION's own system prompt and carries its instruction as a
+ *  trailing user message. Keying on that prompt is what makes the classifier right for BOTH prompt
+ *  shapes PI issues (the initial one and the update that follows a previous summary); PI's standalone
+ *  summary always replaces the system prompt with its summarization persona, which is precisely what this
+ *  module must not do. */
 function isInSessionSummary(context: Context): boolean {
   const last = context.messages.at(-1);
-  return context.systemPrompt?.startsWith(SYSTEM_PROMPT) === true
-    && last?.role === 'user'
-    && JSON.stringify(last.content).includes(PI_INSTRUCTION);
+  return context.systemPrompt?.startsWith(SYSTEM_PROMPT) === true && last?.role === 'user';
 }
 
 function isStandaloneSummary(context: Context): boolean {
@@ -159,9 +179,12 @@ async function fixture(o: FixtureOptions = {}): Promise<{
   registry.registerProvider('elowen-warm', {
     name: 'Warm prefix provider', api, baseUrl: 'https://provider.example.test', apiKey: 'session-key',
     streamSimple: async (model, context, options) => {
-      calls.push({ model, context, options });
       // The seam the request recorder observes; a real provider adapter always reports its final body.
-      await options?.onPayload?.({ model: model.id, system: context.systemPrompt, messages: context.messages }, model);
+      // The payload extension chain runs in `onPayload`, so its RETURN value is the body that would go on
+      // the wire and the only thing worth asserting on.
+      const body = { model: model.id, system: context.systemPrompt, messages: context.messages };
+      const sent = await options?.onPayload?.(body, model) ?? body;
+      calls.push({ model, context, options, payload: sent as Record<string, unknown> });
       await options?.onResponse?.({ status: 200, headers: {} } as never, model);
       if (isStandaloneSummary(context)) return responseStream(model, [{ type: 'text', text: 'standalone PI summary' }], 10);
       if (!isInSessionSummary(context)) return responseStream(model, [{ type: 'text', text: 'chat answer' }], 20);
@@ -199,6 +222,7 @@ async function fixture(o: FixtureOptions = {}): Promise<{
   }, { projectTrusted: true });
   const cwd = process.cwd();
   const sessionManager = SessionManager.inMemory(cwd);
+  if (o.previousSummary !== undefined) appendPreviousCompaction(sessionManager, o.previousSummary);
   appendToolHistory(sessionManager, model, 'one');
   if (o.splitTurn) appendSplitTurn(sessionManager, model);
   const resourceLoader = new DefaultResourceLoader({
@@ -206,6 +230,12 @@ async function fixture(o: FixtureOptions = {}): Promise<{
     noExtensions: true, noSkills: true, noPromptTemplates: true, noThemes: true, noContextFiles: true,
     extensionFactories: [
       ...(o.cancelBefore ? [(pi: ExtensionAPI) => { pi.on('session_before_compact', () => ({ cancel: true })); }] : []),
+      // A session payload extension, in the shape the session factory installs the hosted-tool replay
+      // restore in. A request carrying this session's real history has to go out through this chain, so
+      // the marker it stamps is what proves the request did.
+      (pi: ExtensionAPI) => {
+        pi.on('before_provider_request', (event) => ({ ...(event.payload as object), [SESSION_PAYLOAD_MARKER]: true }));
+      },
       inSession.extension,
       observer,
     ],
@@ -261,6 +291,10 @@ describe('In-session compaction', () => {
     expect(call.options?.cacheRetention).toBeUndefined();
     expect(call.options?.sessionId).toBe(f.session.agent.sessionId);
     expect(call.options?.reasoning).toBe('high');
+    // PI's own summarization path bypasses `before_provider_request` entirely. This request carries the
+    // session's real history, which the hosted-tool replay restore in that chain makes acceptable, so the
+    // payload it sent has to be the one the chain produced.
+    expect(call.payload[SESSION_PAYLOAD_MARKER]).toBe(true);
     // PI persisted a compaction it did not generate itself.
     expect(f.compactions).toEqual([{ fromExtension: true, reason: 'manual' }]);
     expect(result.summary).toContain('in-session summary');
@@ -275,8 +309,10 @@ describe('In-session compaction', () => {
     // A split turn is TWO summarization requests: the history, then the prefix of the turn being split.
     expect(f.calls).toHaveLength(2);
     const [history, prefix] = f.calls as [ProviderCall, ProviderCall];
-    // The history question is the one that pays off on the session's own warm prefix.
+    // The history question is the one that pays off on the session's own warm prefix, history that the
+    // session's payload chain has to have accepted.
     expect(isInSessionSummary(history.context)).toBe(true);
+    expect(history.payload[SESSION_PAYLOAD_MARKER]).toBe(true);
     // The prefix question is about the split turn ALONE, so it goes out as PI built it: PI's
     // summarization system prompt and its one serialized message. Answering it with the live context
     // would summarize the whole conversation a second time, under a heading that claims to describe
@@ -293,6 +329,27 @@ describe('In-session compaction', () => {
     expect(prefix.options?.cacheRetention).toBe('none');
     expect(prefix.options?.apiKey).toBe(history.options?.apiKey);
     expect(result.summary).toContain('Turn Context (split turn)');
+  });
+
+  it('still answers the history question in-session when the previous summary quotes the turn-prefix prompt', async () => {
+    // A summary is model-written prose, and PI drops it into the SAME user message as the instruction, in
+    // `<previous-summary>` tags. One summary that happens to quote the turn-prefix opening line is enough
+    // for a substring match on the whole instruction to misread the history question as the prefix
+    // question — and hand the live conversation back to PI's standalone request, silently giving up the
+    // warm prefix this module exists for.
+    const f = await fixture({ previousSummary: `Earlier work summarized.\n\n${PI_TURN_PREFIX}\nThen the suffix was kept.` });
+
+    await f.session.compact();
+
+    expect(f.calls).toHaveLength(1);
+    const call = f.calls[0]!;
+    expect(isInSessionSummary(call.context)).toBe(true);
+    expect(call.context.systemPrompt).toBe(f.session.agent.state.systemPrompt);
+    const appended = JSON.stringify(call.context.messages.at(-1)!.content);
+    // The previous summary and the update instruction both reach the model; only the classification of
+    // the request is at stake here.
+    expect(appended).toContain(PI_TURN_PREFIX);
+    expect(appended).toContain('Update the existing structured summary');
   });
 
   it('leaves the session history untouched and appends nothing that could carry a new cache breakpoint', async () => {
