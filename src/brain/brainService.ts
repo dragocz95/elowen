@@ -2024,7 +2024,7 @@ export class BrainService {
   }
 
   /** Start (or resume) a conversation — see ConversationLifecycle.start. */
-  async start(userId: number, opts?: { provider?: string; model?: string; session?: string; fresh?: boolean; cwd?: string; clientId?: string; clientGeneration?: number; surface?: ConversationActivitySurface }): Promise<{ sessionId: string }> {
+  async start(userId: number, opts?: { provider?: string; model?: string; session?: string; fresh?: boolean; cwd?: string; clientId?: string; clientGeneration?: number; surface?: ConversationActivitySurface }): Promise<{ sessionId: string; created: boolean }> {
     const started = await this.lifecycle.start(userId, opts);
     // Drain only — never sweep. Opening a conversation says nothing about whether its still-'running'
     // delegation rows are orphans (see reconcileDelegationsOnBoot); the inbox may hold a background child's

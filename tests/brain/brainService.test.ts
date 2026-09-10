@@ -2353,6 +2353,18 @@ describe('BrainService', () => {
     await expect(svc.setThinkingLevel(1, 'ultra', second.sessionId)).resolves.toEqual({ thinkingLevel: 'xhigh' });
   });
 
+  it('reports whether start() had to create the conversation it opened', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    // No conversation exists yet: resuming mints one, and the client must learn that so it can ask
+    // about the project exactly as it does for an explicit fresh conversation.
+    expect(await svc.start(1)).toEqual({ sessionId: 'brain-1', created: true });
+    expect(await svc.start(1)).toEqual({ sessionId: 'brain-1', created: false });
+    const fresh = await svc.start(1, { fresh: true });
+    expect(fresh.created).toBe(true);
+    expect(await svc.start(1, { session: fresh.sessionId })).toEqual({ sessionId: fresh.sessionId, created: false });
+  });
+
   it('keeps Fast enabled when the current route is unsupported', async () => {
     const d = fakeDeps();
     let storedFast = false;
