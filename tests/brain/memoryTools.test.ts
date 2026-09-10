@@ -337,13 +337,15 @@ describe('memory tool argument bounds', () => {
   it('declares the accepted range in the schema of every tool that takes one', () => {
     const { byName } = toolset();
     const params = (name: string) => byName(name).parameters as {
-      properties?: Record<string, { minimum?: number; maximum?: number }>;
+      properties?: Record<string, { type?: string; minimum?: number; maximum?: number }>;
     };
 
-    expect(params('MemorySearch').properties?.limit).toMatchObject({ minimum: 1, maximum: 50 });
-    expect(params('MemoryListRecent').properties?.limit).toMatchObject({ minimum: 1, maximum: 50 });
-    expect(params('MemoryAdd').properties?.importance).toMatchObject({ minimum: 1, maximum: 5 });
-    expect(params('MemoryUpdate').properties?.importance).toMatchObject({ minimum: 1, maximum: 5 });
+    // Integers, not numbers: a limit is a count and importance is a rank, so a fractional one is a value
+    // the tool has to reinterpret rather than the value the model asked for.
+    expect(params('MemorySearch').properties?.limit).toMatchObject({ type: 'integer', minimum: 1, maximum: 50 });
+    expect(params('MemoryListRecent').properties?.limit).toMatchObject({ type: 'integer', minimum: 1, maximum: 50 });
+    expect(params('MemoryAdd').properties?.importance).toMatchObject({ type: 'integer', minimum: 1, maximum: 5 });
+    expect(params('MemoryUpdate').properties?.importance).toMatchObject({ type: 'integer', minimum: 1, maximum: 5 });
   });
 
   it('clamps a limit that would dump the whole store into the context', async () => {
@@ -369,5 +371,17 @@ describe('memory tool argument bounds', () => {
 
     await run(OWNER, () => byName('MemoryUpdate').execute('c2', { id: added.id, importance: 0 }));
     expect(store.list(1)[0]?.importance).toBe(1);
+  });
+
+  it('never rounds a fractional importance up into the pin', async () => {
+    const { store, byName } = toolset();
+
+    // 4.5 rounded to the nearest rank is 5 — the one rank that never decays. A value the schema refuses
+    // must not be answered with a stronger memory than the caller asked for.
+    await run(OWNER, () => byName('MemoryAdd').execute('c1', { body: 'A strong fact.', importance: 4.5 }));
+    expect(store.list(1)[0]?.importance).toBe(4);
+
+    await run(OWNER, () => byName('MemoryUpdate').execute('c2', { id: store.list(1)[0]!.id, importance: 4.9 }));
+    expect(store.list(1)[0]?.importance).toBe(4);
   });
 });
