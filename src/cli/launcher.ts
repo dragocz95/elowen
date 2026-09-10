@@ -12,8 +12,9 @@ export const DAEMON_PORT = 4400;
 const WEB_PORT = 4500;
 
 /** Where the CLI reaches the daemon when `ELOWEN_URL` says nothing. Every verb that talks to the API
- *  — the api passthrough, the chat launcher, the menu, the installer's health probe — starts from
- *  this one, so a changed port or host is one edit rather than five agreeing copies. */
+ *  over HTTP — the api passthrough, the chat launcher, the menu, `ensureDaemon`'s probe — starts from
+ *  this one, so a changed host is one edit. `DAEMON_PORT` is all the installer shares: it composes its
+ *  own `127.0.0.1` URL because it needs the number for the units and the proxy too. */
 export const DEFAULT_DAEMON_URL = `http://localhost:${DAEMON_PORT}`;
 
 /** Read the tracked run state, or null when absent/corrupt. A corrupt file (partial write, manual
