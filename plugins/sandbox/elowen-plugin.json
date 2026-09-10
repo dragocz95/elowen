@@ -37,12 +37,7 @@
       "environment/reset-preview",
       "environment/reset",
       "environments/status",
-      "environments/request",
-      "environments/operation",
-      "environments/snapshots",
-      "environments/logs",
-      "environments/files",
-      "environments/worktrees"
+      "environments/operation"
     ]
   },
   "icons": {
