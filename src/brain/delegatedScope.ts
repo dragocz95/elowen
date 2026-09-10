@@ -218,7 +218,11 @@ export function normalizeDelegatedExecutionScope(raw: unknown): DelegatedExecuti
     const parsed = projectExecutionRefSchema.safeParse(value.projectRef);
     if (!parsed.success || workspaceRef) return undefined;
     projectRef = parsed.data;
-    if (projectRef.kind === 'host' && (!value.admin || !value.owner)) return undefined;
+    // A host ref that NAMES a project the parent is assigned to travels with the same authority the
+    // parent's own turns have; the child is confined to that project's root either way. The nameless
+    // host target is the machine itself and stays an owner-admin decision.
+    if (projectRef.kind === 'host' && projectRef.projectId === undefined && (!value.admin || !value.owner)) return undefined;
+    if (projectRef.kind === 'host' && projectRef.projectId !== undefined && !value.admin && !canonicalProjectIds.includes(projectRef.projectId)) return undefined;
     if (projectRef.kind === 'managed' && (contributionUserId === undefined || (!value.admin && !canonicalProjectIds.includes(projectRef.projectId)))) return undefined;
   }
 

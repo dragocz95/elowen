@@ -81,15 +81,25 @@ export function effectiveTurnWorkDir(input: {
   if (input.projectRef) {
     const ref = projectExecutionRefSchema.parse(input.projectRef);
     const project = ref.projectId === undefined ? undefined : input.projects?.list().find((p) => p.id === ref.projectId);
-    if (ref.kind === 'managed') {
+    // A managed ref whose project no longer resolves is not a state to fail closed on. The project was
+    // deleted (or was never managed) while the conversation kept pointing at it, and refusing here shut
+    // BOTH doors: host paths refused because the ref reads managed, the guest refused because the
+    // environment is gone. The host is where such a conversation actually lives, so it resolves there.
+    if (ref.kind === 'managed' && project?.executionKind === 'managed' && project.lifecycle === 'active') {
       if (!input.sandbox || typeof input.sandbox.prepareExecution !== 'function' || ENVIRONMENT_CONTROL_METHODS.some((method) => typeof input.sandbox?.[method] !== 'function')) throw new Error('project environment provider unavailable');
-      if (!project || project.executionKind !== 'managed' || project.lifecycle !== 'active') throw new Error('managed project unavailable');
       if (input.accountUserId === null || !input.policy.canAccessProject?.(ref.projectId)) throw new Error('managed project access denied');
       return { baseWorkDir: '/workspace', workDir: '/workspace', workspace: null, projectRef: ref };
     }
-    if (!input.hostAuthorized || !input.policy.canExecuteHost?.()) throw new Error('explicit host execution requires administrator permission');
-    if (ref.projectId !== undefined && (!project || project.executionKind === 'managed' || project.lifecycle === 'deleting')) throw new Error('host project unavailable');
-    return { baseWorkDir: project?.path ?? input.baseWorkDir, workDir: project?.path ?? input.baseWorkDir, workspace: null, projectRef: ref };
+    if (ref.kind !== 'managed') {
+      // A host project the caller is assigned to is theirs to work in: `allowedPaths()` already carries
+      // its root, so the file tools confine them exactly as they always did. Only the NAMELESS host
+      // target — the machine itself, no project behind it — stays an administrator decision.
+      const named = ref.projectId !== undefined && !!project && project.executionKind !== 'managed' && project.lifecycle !== 'deleting'
+        && (input.policy.allowedProjectIds === 'all' || input.policy.canAccessProject?.(ref.projectId) === true);
+      if (ref.projectId !== undefined && !named) throw new Error('host project unavailable');
+      if (!named && (!input.hostAuthorized || !input.policy.canExecuteHost?.())) throw new Error('explicit host execution requires administrator permission');
+      return { baseWorkDir: project?.path ?? input.baseWorkDir, workDir: project?.path ?? input.baseWorkDir, workspace: null, projectRef: ref };
+    }
   }
   const fallback: EffectiveTurnWorkDir = { baseWorkDir: input.baseWorkDir, workDir: input.baseWorkDir, workspace: null };
   if (!input.baseWorkDir || input.accountUserId === null || !input.projects || !input.sandbox) return fallback;

@@ -602,7 +602,10 @@ function eventLabel(kind: string, detail: string, t: LocaleDict): string {
     case 'mode': return `${t.brainChat.eventMode} → ${detail}`;
     case 'rename': return `${t.brainChat.eventRenamed} → "${detail}"`;
     case 'reasoning': return `reasoning → ${detail}`;
-    case 'cwd': return `${t.brainChat.eventCwd} → …/${detail.split('/').filter(Boolean).slice(-2).join('/')}`;
+    // A path is shortened to its last two segments; a project name is not a path and is shown whole.
+    case 'cwd': return detail.startsWith('/')
+      ? `${t.brainChat.eventCwd} → …/${detail.split('/').filter(Boolean).slice(-2).join('/')}`
+      : `${t.brainChat.eventCwd} → ${detail}`;
     case 'subagent': {
       const marker = parseSubagentMarker(detail);
       if (!marker) return detail;

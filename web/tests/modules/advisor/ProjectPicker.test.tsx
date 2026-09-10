@@ -92,30 +92,31 @@ describe('ProjectPicker', () => {
     expect(screen.queryByText('Saved')).not.toBeInTheDocument();
   });
 
-  it('does not offer host execution to members', async () => {
+  // A host project the API offered this account is a project like any other. The list it returns is
+  // already the set this account may reach, so the picker does not re-decide that on its own.
+  it('offers host projects to members exactly as it offers managed ones', async () => {
     chat.activeSessionId = 'brain-1-a';
-    server.use(http.get('*/api/projects', () => HttpResponse.json([...PROJECTS, { id: 3, slug: 'server', path: '/host', executionKind: 'host' }])));
+    server.use(http.get('*/api/projects', () => HttpResponse.json([...PROJECTS, HOST_PROJECT])));
     mount();
     const trigger = await screen.findByRole('button');
     await waitFor(() => expect(trigger).toBeEnabled());
     fireEvent.keyDown(trigger, { key: 'ArrowDown' });
     await screen.findByRole('menuitemradio', { name: /kolin/ });
     expect(screen.queryByText('HOST MODE')).toBeNull();
-    expect(screen.queryByText('server')).toBeNull();
+    expect(screen.getAllByRole('menuitemradio').map((item) => item.textContent)).toEqual(['kolin', 'elowen', 'server']);
   });
 
-  // Choosing a NAMED host project is still a host decision: it asks first, and it travels the same
-  // authorized execution endpoint carrying the same host target it always did.
-  it('confirms a named host project and still sends a host target', async () => {
+  // Host mode asks nothing: choosing a host project sends the host target straight away.
+  it('sends a host target with no confirmation step', async () => {
     chat.activeSessionId = 'brain-1-a'; chat.telemetry.projectRef = { kind: 'managed', projectId: 1 };
     let body: unknown;
     let calls = 0;
     server.use(
       http.get('*/api/projects', () => HttpResponse.json([...PROJECTS, HOST_PROJECT])),
-      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: true } })),
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, is_admin: false } })),
       http.post('*/api/brain/execution', async ({ request }) => {
         calls++; body = await request.json();
-        return HttpResponse.json({ error: 'conversation still has active work' }, { status: 409 });
+        return HttpResponse.json({ projectRef: { kind: 'host', projectId: 3 }, workDir: '/host' });
       }),
     );
     mount();
@@ -124,13 +125,9 @@ describe('ProjectPicker', () => {
     fireEvent.keyDown(trigger, { key: 'ArrowDown' });
     fireEvent.click(await screen.findByRole('menuitemradio', { name: 'server' }));
 
-    // Nothing is sent until the person confirms.
-    const confirm = within(await screen.findByRole('alertdialog'));
-    expect(calls).toBe(0);
-    fireEvent.click(confirm.getByRole('button', { name: 'Use host mode' }));
     await waitFor(() => expect(calls).toBe(1));
     expect(body).toEqual({ target: { kind: 'host', projectId: 3 }, session: 'brain-1-a' });
-    // A refused move keeps the conversation where it was, with the reason visible.
-    expect(await confirm.findByText('conversation still has active work')).toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog')).toBeNull();
+    expect(await screen.findByRole('button', { name: /server/ })).toBeInTheDocument();
   });
 });

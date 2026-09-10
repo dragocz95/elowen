@@ -16,8 +16,7 @@ const en = {
   inviteDenied: 'Inviting members requires an administrator-granted sharing permission.',
   deleting: 'Project deletion requested. Cleanup is pending.',
   deleteWarning: 'Delete this project and its environment, including files, installed packages, HOME and data? Published sites must be transferred or deleted separately. Private conversation history is preserved.',
-  hostWarning: 'Commands and files will operate directly on the host, outside a managed project environment. Only administrators can select this target.',
-  hostConfirm: 'Use host mode', unknownTarget: 'Execution target not selected',
+  unknownTarget: 'Execution target not selected',
 };
 const cs: typeof en = {
   gitEnvironmentStopped: 'Podrobnosti o repozitáři budou dostupné, jakmile poběží prostředí projektu.', managed: 'Spravované prostředí', host: 'Adresář hostitele', executionKind: 'Cíl spouštění',
@@ -35,8 +34,7 @@ const cs: typeof en = {
   inviteDenied: 'Pozvání členů vyžaduje oprávnění ke sdílení udělené správcem.',
   deleting: 'Bylo vyžádáno smazání projektu. Úklid čeká na dokončení.',
   deleteWarning: 'Smazat projekt a jeho prostředí včetně souborů, nainstalovaných balíčků, HOME a dat? Publikované weby je nutné samostatně převést nebo smazat. Soukromá historie konverzací zůstane zachována.',
-  hostWarning: 'Příkazy a soubory budou pracovat přímo na hostiteli mimo spravované prostředí projektu. Tento cíl mohou zvolit pouze správci.',
-  hostConfirm: 'Použít režim hostitele', unknownTarget: 'Cíl spouštění není vybrán',
+  unknownTarget: 'Cíl spouštění není vybrán',
 };
 const sk: typeof en = {
   gitEnvironmentStopped: 'Podrobnosti o repozitári budú dostupné, hneď ako pobeží prostredie projektu.', managed: 'Spravované prostredie', host: 'Adresár hostiteľa', executionKind: 'Cieľ spúšťania',
@@ -54,7 +52,6 @@ const sk: typeof en = {
   inviteDenied: 'Pozvanie členov vyžaduje oprávnenie na zdieľanie udelené správcom.',
   deleting: 'Bolo vyžiadané vymazanie projektu. Čistenie čaká na dokončenie.',
   deleteWarning: 'Vymazať projekt a jeho prostredie vrátane súborov, nainštalovaných balíkov, HOME a dát? Publikované weby je nutné samostatne previesť alebo vymazať. Súkromná história konverzácií zostane zachovaná.',
-  hostWarning: 'Príkazy a súbory budú pracovať priamo na hostiteľovi mimo spravovaného prostredia projektu. Tento cieľ môžu zvoliť iba správcovia.',
-  hostConfirm: 'Použiť režim hostiteľa', unknownTarget: 'Cieľ spúšťania nie je vybraný',
+  unknownTarget: 'Cieľ spúšťania nie je vybraný',
 };
 export const managedProjectStrings: Record<Locale, typeof en> = { en, cs, sk };

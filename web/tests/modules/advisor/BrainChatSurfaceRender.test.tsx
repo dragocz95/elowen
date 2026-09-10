@@ -180,6 +180,24 @@ describe('BrainChatSurface renders the daemon-parity rows without crashing', () 
     expect(await screen.findByText(/formatted a\.ts with prettier/)).toBeInTheDocument();
   });
 
+  // A managed project's directory is `/workspace` in its own container, which names nothing a reader
+  // recognizes. The daemon sends the project name for those, so the marker must show it whole rather
+  // than run it through the last-two-segments shortening a path gets.
+  it('names a managed project in the cwd marker instead of shortening a path', async () => {
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><BrainChatProvider><BrainChat /></BrainChatProvider></ToastProvider></Wrapper>);
+    await waitFor(() => expect(FakeES.instances.length).toBe(1));
+    FakeES.instances[0]!.emit('snapshot', {
+      type: 'snapshot', sessionId: 'brain-1', events: [], hasMore: false, nextBefore: null,
+      history: [
+        { id: 'c-evt', role: 'event', text: '', kind: 'cwd', detail: 'sales-dashboard' },
+        { id: 'c-evt2', role: 'event', text: '', kind: 'cwd', detail: '/var/www/kolin' },
+      ],
+    });
+    expect(await screen.findByText('cwd → sales-dashboard')).toBeInTheDocument();
+    expect(await screen.findByText('cwd → …/www/kolin')).toBeInTheDocument();
+  });
+
   it('renders a sub-agent finish marker parsed from its JSON detail', async () => {
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><BrainChatProvider><BrainChat /></BrainChatProvider></ToastProvider></Wrapper>);
