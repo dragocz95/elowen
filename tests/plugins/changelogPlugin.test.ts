@@ -22,6 +22,7 @@ async function setup() {
   const db = openDb(':memory:');
   db.prepare("INSERT INTO users (id, username, password_hash, is_admin) VALUES (1, 'amy', 'x', 0)").run();
   db.prepare("INSERT INTO users (id, username, password_hash, is_admin) VALUES (2, 'bob', 'x', 0)").run();
+  db.prepare("INSERT INTO users (id, username, password_hash, is_admin, name) VALUES (3, 'root', 'x', 1, 'Root')").run();
   const registry = await loadPlugins({
     dirs: [pluginsDir], enabled: ['changelog'], logger: log, dataRoot: temp('data'),
     pluginDb: (name) => makePluginDb(db, name, { canMigrate: true }),
@@ -38,6 +39,7 @@ async function call(
   path: string,
   userId: number | null = 1,
   query: Record<string, string> = {},
+  admin = false,
 ): Promise<{ status: number; body: PluginHttpResponse['body']; headers?: PluginHttpResponse['headers'] }> {
   const match = registry.apiRoute('changelog', path, method);
   if (!match) throw new Error(`no route for ${method} ${path}`);
@@ -49,7 +51,7 @@ async function call(
     params: {},
     body: () => Promise.resolve(Buffer.alloc(0)),
     json: () => Promise.resolve({}),
-    auth: { userId, admin: false, tokenScope: 'user' as const, accessibleProjects: null },
+    auth: { userId, admin, tokenScope: 'user' as const, accessibleProjects: null },
   } satisfies PluginApiRequest;
   const res = await match.handler(req);
   return { status: res.status ?? 200, body: res.body, headers: res.headers };
@@ -184,13 +186,16 @@ describe('changelog routes', () => {
     expect(german.body).toBe(original.body);
   });
 
-  it('declares every route it registers, and every route is user-level', async () => {
+  it('declares every route it registers: the reader\'s own three are user-level, the two admin views are not', async () => {
     const { registry } = await setup();
     for (const path of ['entries', 'seen', 'asset']) {
       const route = registry.apiRoute('changelog', path, path === 'seen' ? 'POST' : 'GET');
       expect(route?.access).toBe('user');
     }
-    // No write surface beyond the reader's own marker: the content is shipped, not edited at runtime.
+    // Other people's reading, and an action over everybody's marker: neither is a user-level surface.
+    expect(registry.apiRoute('changelog', 'readers', 'GET')?.access).toBe('admin');
+    expect(registry.apiRoute('changelog', 'unread/0.28.25', 'POST')?.access).toBe('admin');
+    // No write surface beyond the reader's own marker and the admin reset: content is shipped, not edited.
     expect(registry.apiRoute('changelog', 'entries', 'POST')).toBeUndefined();
     expect(registry.apiRoute('changelog', 'entries', 'DELETE')).toBeUndefined();
   });
@@ -236,6 +241,81 @@ describe('changelog routes', () => {
     expect(badge({ userId: 1, isAdmin: false })).toBeNull();
     for (const { fn } of registry.userRemovedHandlers) await fn(1);
     expect(badge({ userId: 1, isAdmin: false })).not.toBeNull();
+  });
+});
+
+describe('changelog readers, for an admin', () => {
+  type Readers = { people: { id: number; username: string; name: string; avatar: string }[]; entries: { version: string; readerIds: number[] }[] };
+  const newest = (versions: string[]) => [...versions].sort(compareVersions)[0]!;
+
+  it('reports every account and which of them has read each release', async () => {
+    const { registry } = await setup();
+    const list = (await call(registry, 'GET', 'entries')).body as { entries: { version: string }[] };
+    const top = newest(list.entries.map((e) => e.version));
+    await call(registry, 'POST', 'seen', 1);
+
+    const report = (await call(registry, 'GET', 'readers', 3, {}, true)).body as Readers;
+    // The denominator is the account list itself — the people who have NOT read it are the point.
+    expect(report.people.map((p) => p.username)).toEqual(['amy', 'bob', 'root']);
+    expect(report.people.find((p) => p.username === 'root')!.name).toBe('Root');
+    expect(report.entries.map((e) => e.version)).toEqual(list.entries.map((e) => e.version));
+    const forTop = report.entries.find((e) => e.version === top)!;
+    expect(forTop.readerIds).toEqual([1]);
+    // Reading the newest release means having read the older ones too — it is one marker, not a per-entry
+    // tick, so an older release cannot come back as unread for somebody who is past it.
+    for (const entry of report.entries) expect(entry.readerIds).toEqual([1]);
+  });
+
+  it('refuses the report and the reset to a non-admin', async () => {
+    const { registry } = await setup();
+    const list = (await call(registry, 'GET', 'entries')).body as { entries: { version: string }[] };
+    const top = newest(list.entries.map((e) => e.version));
+    expect((await call(registry, 'GET', 'readers', 1)).status).toBe(403);
+    expect((await call(registry, 'POST', `unread/${top}`, 1)).status).toBe(403);
+    // And the refused reset really did nothing.
+    await call(registry, 'POST', 'seen', 1);
+    expect((await call(registry, 'POST', `unread/${top}`, 1)).status).toBe(403);
+    expect(registry.navBadge.get('changelog')!({ userId: 1, isAdmin: false })).toBeNull();
+  });
+
+  it('puts a release back to unread for everybody who had read it, and leaves older reading alone', async () => {
+    const { registry } = await setup();
+    const badge = registry.navBadge.get('changelog')!;
+    const list = (await call(registry, 'GET', 'entries')).body as { entries: { version: string }[] };
+    const top = newest(list.entries.map((e) => e.version));
+    await call(registry, 'POST', 'seen', 1);
+    await call(registry, 'POST', 'seen', 2);
+    expect(badge({ userId: 1, isAdmin: false })).toBeNull();
+
+    const res = await call(registry, 'POST', `unread/${top}`, 3, {}, true);
+    expect(res.status).toBe(200);
+    expect((res.body as { reset: number }).reset).toBe(2);
+
+    // The badge is back for both — and shows ONLY the release that was reset, because the marker fell
+    // back to the one before it rather than being wiped.
+    expect(badge({ userId: 1, isAdmin: false })).toBe(1);
+    expect(badge({ userId: 2, isAdmin: false })).toBe(1);
+    const after = (await call(registry, 'GET', 'entries', 1)).body as { entries: { version: string; unread: boolean }[] };
+    expect(after.entries.filter((e) => e.unread).map((e) => e.version)).toEqual([top]);
+
+    const report = (await call(registry, 'GET', 'readers', 3, {}, true)).body as Readers;
+    expect(report.entries.find((e) => e.version === top)!.readerIds).toEqual([]);
+  });
+
+  it('resets an account that never read anything to nothing at all, and refuses a version that never shipped', async () => {
+    const { registry } = await setup();
+    const list = (await call(registry, 'GET', 'entries')).body as { entries: { version: string }[] };
+    const oldest = [...list.entries.map((e) => e.version)].sort(compareVersions).at(-1)!;
+    await call(registry, 'POST', 'seen', 1);
+
+    // Nothing shipped before the oldest release, so the marker has nowhere to fall back to and the row
+    // goes away — the account is back to having read nothing.
+    expect(((await call(registry, 'POST', `unread/${oldest}`, 3, {}, true)).body as { reset: number }).reset).toBe(1);
+    const listing = (await call(registry, 'GET', 'entries', 1)).body as { lastSeenVersion: string | null; entries: { unread: boolean }[] };
+    expect(listing.lastSeenVersion).toBeNull();
+    expect(listing.entries.every((e) => e.unread)).toBe(true);
+
+    expect((await call(registry, 'POST', 'unread/9.9.9', 3, {}, true)).status).toBe(404);
   });
 });
 

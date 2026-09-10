@@ -18,6 +18,12 @@ const server = setupServer(
   http.get('*/api/plugins/ui', () => HttpResponse.json([
     { name: 'changelog', url: '/plugins/changelog/web/index.js', apiVersion: 16, nav: [], settings: [], strings },
   ])),
+  // A body for whatever release a test opened. A default rather than a per-test handler: the open entry
+  // fetches its Markdown on mount, and a test about the readers row has no opinion about the notes.
+  http.get('*/api/plugins/changelog/api/entries/:version', ({ params }) => HttpResponse.json({
+    version: String(params.version), date: '2026-09-02', title: `Release ${String(params.version)}`,
+    tags: [], pinned: false, unread: false, body: `Notes for ${String(params.version)}.`,
+  })),
 );
 beforeAll(() => server.listen({ onUnhandledRequest })); afterEach(() => server.resetHandlers()); afterAll(() => server.close());
 
@@ -42,6 +48,93 @@ const mount = () => {
   const { wrapper: Wrapper } = createWrapper();
   render(<Wrapper><ChangelogPage /></Wrapper>);
 };
+
+const PEOPLE = [
+  { id: 1, username: 'amy', name: 'Amy Reader', avatar: '' },
+  { id: 2, username: 'bob', name: '', avatar: '' },
+  { id: 3, username: 'root', name: 'Root', avatar: '' },
+];
+
+/** Sign the page in as an admin or not, and answer the admin readers report. */
+function serveReaders(isAdmin: boolean, readerIds: number[] = [1]) {
+  server.use(
+    http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 3, is_admin: isAdmin } })),
+    http.get('*/api/plugins/changelog/api/readers', () => (isAdmin
+      ? HttpResponse.json({ people: PEOPLE, entries: [{ version: '0.28.25', readerIds }] })
+      : HttpResponse.json({ error: 'forbidden' }, { status: 403 }))),
+  );
+}
+
+describe('changelog readers, for an admin', () => {
+  it('shows every account as an avatar, dims the ones who have not read, and counts them', async () => {
+    serveEntries([entry('0.28.25')]);
+    serveReaders(true, [1, 3]);
+    mount();
+
+    const count = await screen.findByText(strings.readersCount!.replace('{read}', '2').replace('{total}', '3'));
+    expect(count).toBeInTheDocument();
+    // The name is on hover, and it says which side of the line the person is on.
+    const read = screen.getByTitle(`Amy Reader — ${strings.readersRead}`);
+    const unread = screen.getByTitle(`bob — ${strings.readersUnread}`);
+    expect(read).toBeInTheDocument();
+    // Dimming is what tells the two apart at a glance; without it the row is just a list of everybody.
+    expect(unread.className).toContain('opacity-40');
+    expect(read.className).not.toContain('opacity-40');
+  });
+
+  it('shows nothing of the kind to a non-admin', async () => {
+    serveEntries([entry('0.28.25')]);
+    serveReaders(false);
+    mount();
+
+    expect(await screen.findByText('Release 0.28.25')).toBeInTheDocument();
+    expect(screen.queryByText(/have read/)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: strings.markUnread })).not.toBeInTheDocument();
+  });
+
+  it('marks a release unread for everyone, but only after the confirmation is answered', async () => {
+    let resetFor: string | null = null;
+    serveEntries([entry('0.28.25')]);
+    serveReaders(true, [1, 3]);
+    server.use(http.post('*/api/plugins/changelog/api/unread/:version', ({ params }) => {
+      resetFor = String(params.version);
+      return HttpResponse.json({ reset: 2 });
+    }));
+    mount();
+
+    fireEvent.click(await screen.findByRole('button', { name: strings.markUnread }));
+    // The confirmation names the release, so the admin cannot reset the wrong one by muscle memory.
+    expect(await screen.findByText(strings.markUnreadTitle!.replace('{version}', '0.28.25'))).toBeInTheDocument();
+    expect(resetFor).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: strings.markUnreadConfirm }));
+    await waitFor(() => expect(resetFor).toBe('0.28.25'));
+    await waitFor(() => expect(screen.queryByText(strings.markUnreadTitle!.replace('{version}', '0.28.25'))).not.toBeInTheDocument());
+  });
+
+  it('leaves the reset standing instead of quietly re-reading the release for the admin who ran it', async () => {
+    // The reset moved the admin's own marker back too. The visit guard must not fire again and post the
+    // release straight back to read on their own screen.
+    let seenCalls = 0;
+    let unread = false;
+    server.use(
+      http.get('*/api/plugins/changelog/api/entries', () => HttpResponse.json({
+        lastSeenVersion: unread ? null : '0.28.25',
+        entries: [entry('0.28.25', { unread })],
+      })),
+      http.post('*/api/plugins/changelog/api/seen', () => { seenCalls += 1; return HttpResponse.json({ lastSeenVersion: '0.28.25' }); }),
+      http.post('*/api/plugins/changelog/api/unread/:version', () => { unread = true; return HttpResponse.json({ reset: 2 }); }),
+    );
+    serveReaders(true, [1, 3]);
+    mount();
+
+    fireEvent.click(await screen.findByRole('button', { name: strings.markUnread }));
+    fireEvent.click(await screen.findByRole('button', { name: strings.markUnreadConfirm }));
+    await waitFor(() => expect(screen.getByText(strings.unread!)).toBeInTheDocument());
+    await new Promise((done) => { setTimeout(done, 50); });
+    expect(seenCalls).toBe(0);
+  });
+});
 
 describe('changelog page', () => {
   it('lists releases newest first and renders the open one as Markdown', async () => {

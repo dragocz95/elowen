@@ -23,13 +23,29 @@ export interface EntryListing {
   entries: EntrySummary[];
 }
 
+/** An account as the admin-only readers route reports it — enough to draw an avatar and name it. */
+export interface Person {
+  id: number;
+  username: string;
+  name: string;
+  avatar: string;
+}
+/** Who has read which release, for admins only. */
+export interface ReadersReport {
+  people: Person[];
+  entries: { version: string; readerIds: number[] }[];
+}
+
 interface QueryResult<T> { data?: T; isLoading: boolean; isError: boolean; error?: unknown; refetch(): void }
-interface MutationResult<TVars> { mutate(vars: TVars): void; isPending: boolean }
+interface MutationResult<TVars> { mutate(vars: TVars): void; mutateAsync(vars: TVars): Promise<unknown>; isPending: boolean; error?: unknown }
 interface QueryClient { invalidateQueries: (input: { queryKey: unknown[] }) => Promise<void> }
 
 interface RuntimeHooks {
   /** Only the locale is read: the plugin's own strings come through usePluginStrings. */
   useTranslation(): { locale: string };
+  /** The signed-in account. Only `is_admin` is read here — it decides whether the page asks for the
+   *  readers report at all, so a non-admin never fires a request the daemon would refuse. */
+  useMe(): QueryResult<{ user: { id: number; is_admin: boolean } }>;
   usePluginStrings(plugin: string): Record<string, string>;
   useQuery<T>(options: Record<string, unknown>): QueryResult<T>;
   useMutation<TVars>(options: Record<string, unknown>): MutationResult<TVars>;
@@ -47,6 +63,32 @@ interface RuntimeComponents {
   EmptyState: ComponentType<{ title: string; description?: string }>;
   ErrorState: ComponentType<{ message: string; onRetry?: () => void }>;
   LoadingState: ComponentType<{ variant?: 'list' | 'cards' | 'block'; height?: string }>;
+  /** The host's account avatar. `user.avatar` is the stored image; initials are drawn without one. */
+  Avatar: ComponentType<{
+    name?: string;
+    src?: string;
+    user?: { id: number; username: string; name?: string; avatar?: string };
+    size?: number | 'sm' | 'md' | 'lg';
+  }>;
+  Button: ComponentType<{
+    children: ReactNode;
+    onClick?: () => void;
+    variant?: 'default' | 'accent' | 'ghost' | 'danger' | 'ghost-danger' | 'outline' | 'outline-danger';
+    size?: 'sm' | 'default' | 'lg';
+    disabled?: boolean;
+    type?: 'button' | 'submit';
+  }>;
+  ConfirmDialog: ComponentType<{
+    open: boolean;
+    title: string;
+    description?: string;
+    confirmLabel?: string;
+    confirmVariant?: 'default' | 'accent' | 'ghost' | 'danger' | 'ghost-danger' | 'outline' | 'outline-danger';
+    pending?: boolean;
+    error?: ReactNode;
+    onConfirm: () => unknown;
+    onClose: () => void;
+  }>;
 }
 
 interface RuntimeUtils { apiErrorMessage(error: unknown): string; renderMarkdown(text: string): string }

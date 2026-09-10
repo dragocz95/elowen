@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { renderMarkdown } from './markdown';
 import { PLUGIN, runtime } from './runtime';
-import type { EntryDetail, EntryListing, EntrySummary } from './runtime';
+import type { EntryDetail, EntryListing, EntrySummary, Person, ReadersReport } from './runtime';
 
 /** Typography for the rendered Markdown. The plugin's stylesheet is COMPILED from the utility classes
  *  found in the built bundle, so element rules for HTML that only exists at runtime have to be written
@@ -22,13 +23,58 @@ const MARKDOWN_CLASS = [
   '[&_blockquote]:my-3 [&_blockquote]:border-l-2 [&_blockquote]:border-border [&_blockquote]:pl-3',
 ].join(' ');
 
+/** Who has read a release: every account as an avatar, the ones who have not read it dimmed, with the
+ *  name and state on hover. Admin-only — the page does not even ask for the report otherwise, so a
+ *  non-admin never sees other people's reading and never fires a request the daemon would refuse. */
+function Readers({ people, readerIds, strings, onMarkUnread }: {
+  people: Person[];
+  readerIds: number[];
+  strings: Record<string, string>;
+  onMarkUnread: () => void;
+}) {
+  const { components } = runtime();
+  const { Avatar, Button } = components;
+  const read = new Set(readerIds);
+  // Readers first, so the row reads as "these people have it" and the gap is the tail of it.
+  const ordered = [...people].sort((a, b) => Number(read.has(b.id)) - Number(read.has(a.id)));
+
+  return (
+    <div className="flex flex-wrap items-center gap-x-3 gap-y-2 border-t border-border px-4 py-2">
+      <div className="flex items-center">
+        {ordered.map((person) => {
+          const hasRead = read.has(person.id);
+          const label = person.name.trim() || person.username;
+          return (
+            <span
+              key={person.id}
+              title={`${label} — ${hasRead ? strings.readersRead : strings.readersUnread}`}
+              className={`-ml-1.5 rounded-full ring-2 ring-card first:ml-0 ${hasRead ? '' : 'opacity-40 grayscale'}`}
+            >
+              <Avatar
+                user={{ id: person.id, username: person.username, name: person.name, avatar: person.avatar }}
+                size="sm"
+              />
+            </span>
+          );
+        })}
+      </div>
+      <span className="text-xs text-muted-foreground">
+        {strings.readersCount.replace('{read}', String(read.size)).replace('{total}', String(people.length))}
+      </span>
+      <Button variant="ghost" size="sm" onClick={onMarkUnread}>{strings.markUnread}</Button>
+    </div>
+  );
+}
+
 /** One release, collapsed to its header until the reader opens it. The body is fetched on first open —
  *  a listing carrying every release's Markdown would grow with the whole history of the product. */
-function Entry({ entry, expanded, onToggle, strings }: {
+function Entry({ entry, expanded, onToggle, strings, readers }: {
   entry: EntrySummary;
   expanded: boolean;
   onToggle: () => void;
   strings: Record<string, string>;
+  /** The admin readers strip, rendered between the header and the body. Absent for everybody else. */
+  readers?: ReactNode;
 }) {
   const { components, hooks, utils } = runtime();
   const { Badge } = components;
@@ -68,6 +114,7 @@ function Entry({ entry, expanded, onToggle, strings }: {
           </span>
         </button>
       </h3>
+      {readers}
       <div id={bodyId} hidden={!expanded} className="border-t border-border px-4 py-3">
         {detail.isLoading ? <p className="text-sm text-muted-foreground">{strings.loading}</p> : null}
         {detail.isError ? <p className="text-sm text-destructive">{utils.apiErrorMessage(detail.error)}</p> : null}
@@ -79,7 +126,7 @@ function Entry({ entry, expanded, onToggle, strings }: {
 
 export function ChangelogPage() {
   const { components, hooks, utils } = runtime();
-  const { WorkspaceShell, WorkspaceMetric, EmptyState, ErrorState, LoadingState } = components;
+  const { WorkspaceShell, WorkspaceMetric, EmptyState, ErrorState, LoadingState, ConfirmDialog } = components;
   // The plugin name is spelled out rather than passed as the shared constant: the contract test that
   // proves every key a bundle reads exists in its manifest resolves the binding from this literal.
   const strings = hooks.usePluginStrings('changelog');
@@ -109,6 +156,29 @@ export function ChangelogPage() {
     seenSent.current = true;
     markSeen.mutate();
   }, [unreadCount, markSeen]);
+
+  // Who has read what, and the admin action over it. Both are gated on the account being an admin: the
+  // report is other people's reading, and the route refuses it to anybody else anyway.
+  const isAdmin = hooks.useMe().data?.user.is_admin === true;
+  const readers = hooks.useQuery<ReadersReport>({
+    queryKey: ['plugin', PLUGIN, 'readers'],
+    queryFn: () => runtime().api(`/plugins/${PLUGIN}/api/readers`),
+    enabled: isAdmin,
+  });
+  const [confirming, setConfirming] = useState<string | null>(null);
+  const markUnread = hooks.useMutation<string>({
+    mutationFn: (version: string) => runtime().api(`/plugins/${PLUGIN}/api/unread/${encodeURIComponent(version)}`, { method: 'POST' }),
+    onSuccess: () => {
+      setConfirming(null);
+      // The reset moved the admin's own marker back too. Without this the visit guard would fire again
+      // the moment the listing returns unread and quietly re-read the release for them, so the action
+      // they just took would half undo itself on their own screen.
+      seenSent.current = true;
+      queryClient.invalidateQueries({ queryKey: ['plugin', PLUGIN] });
+      queryClient.invalidateQueries({ queryKey: ['plugin-ui'] });
+    },
+  });
+  const readerIdsFor = (version: string) => readers.data?.entries.find((e) => e.version === version)?.readerIds;
 
   // The release the reader came for is already open: the first one that is new to them, or the top of
   // the list when nothing is. Not simply `entries[0]`, which a pinned older release occupies.
@@ -160,11 +230,30 @@ export function ChangelogPage() {
                     : [...current, entry.version]
                 ))}
                 strings={strings}
+                readers={isAdmin && readers.data && readerIdsFor(entry.version) ? (
+                  <Readers
+                    people={readers.data.people}
+                    readerIds={readerIdsFor(entry.version)!}
+                    strings={strings}
+                    onMarkUnread={() => setConfirming(entry.version)}
+                  />
+                ) : null}
               />
             </div>
           ))}
         </div>
       ) : null}
+      <ConfirmDialog
+        open={confirming !== null}
+        title={strings.markUnreadTitle.replace('{version}', confirming ?? '')}
+        description={strings.markUnreadDescription.replace('{version}', confirming ?? '')}
+        confirmLabel={strings.markUnreadConfirm}
+        confirmVariant="danger"
+        pending={markUnread.isPending}
+        error={markUnread.error ? utils.apiErrorMessage(markUnread.error) || strings.markUnreadFailed : undefined}
+        onConfirm={() => markUnread.mutate(confirming!)}
+        onClose={() => setConfirming(null)}
+      />
     </WorkspaceShell>
   );
 }
