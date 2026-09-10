@@ -7,7 +7,7 @@ import { createSiteImageService } from './environmentSiteImages.mjs';
 import { createSiteCleanupService } from './environmentSiteCleanup.mjs';
 import { createGuestFileTransport, validateUploadOperation, UPLOAD_KINDS } from './guestFileTransport.mjs';
 import { managedShellFrame, synchronousShellFrame } from './managedBootstrap.mjs';
-import { createEnvironmentStore, operationView } from './environmentDb.mjs';
+import { createEnvironmentStore, operationView, OPERATION_HISTORY } from './environmentDb.mjs';
 import { ownerProvablyDead, processIdentity, withRepoLease } from './db.mjs';
 import { createContainerSpec, createBoundSiteSpec, withContainerLimits, resourceToken, bindContainerIdentity } from './containerSpec.mjs';
 import { managedGuestRoot } from './containerPaths.mjs';
@@ -21,9 +21,6 @@ const PREVIEW_HELPER = readFileSync(new URL('./previewProxy.py', import.meta.url
  *  shape because the Sites plugin sends it with every registration and limits change, and it has no
  *  control of its own here — a project's environment reports the ceilings the container really has. */
 const DEFAULT_LIMITS = { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240 };
-/** How many past operations the project overview carries. The environment screen shows the current one
- *  and the recent outcomes behind it; the rest is history no browser needs to hold. */
-const OPERATION_HISTORY = 20;
 /** What each lifecycle operation is made of, in order, with the relative cost of each part. The list is
  *  DECLARED before the work starts, so a surface watching an operation can say "step 2 of 5" from the
  *  first frame instead of discovering the shape as it goes. The weights are rough durations rather than
@@ -981,7 +978,11 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         db.prepare('DELETE FROM p_sandbox_file_uploads WHERE resource_kind=? AND resource_id=?').run(row.kind, row.resource_id);
         if (row.kind === 'project') db.prepare('DELETE FROM p_sandbox_managed_worktrees WHERE project_id=?').run(row.project_id);
         if (row.kind === 'project' && !stores().projects.finishDeletion(Number(row.resource_id))) throw error('project_finalize_failed', 'Core Project deletion could not be finalized');
-        row.state = 'deleted'; row.error = null; store.save(row);
+        // A project's runtime row goes with the project: core has just removed the rows that made the
+        // environment reachable, so a tombstone would only be one dead row per deleted project. A Site
+        // keeps its own: a re-published Site resumes from the generation that row records.
+        if (row.kind === 'project') db.prepare('DELETE FROM p_sandbox_runtimes WHERE kind=? AND resource_id=?').run(row.kind, row.resource_id);
+        else { row.state = 'deleted'; row.error = null; store.save(row); }
         op.status = 'succeeded'; op.error = null; store.saveOperation(op);
       });
     }
