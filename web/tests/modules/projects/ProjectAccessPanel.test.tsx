@@ -1,6 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
-import { http, HttpResponse } from 'msw';
+import { http, HttpResponse, delay } from 'msw';
 import { setupServer } from 'msw/node';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
@@ -164,5 +164,37 @@ describe('project membership', () => {
     expect(await dialog.findByRole('alert')).toBeInTheDocument();
     fireEvent.click(dialog.getByRole('button', { name: 'Cancel' }));
     await waitFor(() => expect(screen.getByText('1 user has access')).toBeInTheDocument());
+  });
+
+  // The administrator's summary counts the instance directory. While that read is still in flight — and
+  // after it failed — an empty list of accounts is the absence of an answer, not an instance with no
+  // member accounts, and saying so sends the administrator looking for accounts they have.
+  it('does not call the directory empty before it has answered', async () => {
+    const directory = [
+      { id: 3, username: 'dana', name: 'Dana Nováková', email: 'dana@example.test', avatar: '', is_admin: false },
+      { id: 4, username: 'petr', name: 'Petr Malý', email: 'petr@example.test', avatar: '', is_admin: false },
+    ];
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'root', name: 'Root', is_admin: true } })),
+      http.get('*/api/users', async () => { await delay(80); return HttpResponse.json(directory); }),
+    );
+    mount();
+    // `Loading…` is the directory read in flight; nothing has claimed anything about accounts yet.
+    expect(await screen.findByText('Loading…')).toBeInTheDocument();
+    expect(screen.queryByText('No member accounts are available')).toBeNull();
+    expect(screen.queryByText(/have access/)).toBeNull();
+
+    expect(await screen.findByText('1 of 2 users have access')).toBeInTheDocument();
+  });
+
+  it('reports a failed directory read instead of reporting no accounts', async () => {
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'root', name: 'Root', is_admin: true } })),
+      http.get('*/api/users', () => HttpResponse.json({ error: 'directory unavailable' }, { status: 503 })),
+    );
+    mount();
+    expect(await screen.findByRole('alert')).toHaveTextContent('directory unavailable');
+    expect(screen.queryByText('No member accounts are available')).toBeNull();
+    expect(screen.queryByText(/have access/)).toBeNull();
   });
 });
