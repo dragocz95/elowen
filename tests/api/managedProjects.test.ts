@@ -122,9 +122,11 @@ describe('managed project API', () => {
     const response = await app.request('/projects', request(token, 'POST', { slug: '', executionKind: 'nonsense' }));
     expect(response.status).toBe(403);
   });
-  /** The membership row is deleted before the runtime is asked to drop the guest's access, so a failed
-   *  revocation leaves half the work done. `internal error` reads as "nothing happened". */
-  it('says which half succeeded when the runtime cannot revoke project access', async () => {
+  /** The membership row is BOTH the permission the account is judged by and the handle a retry needs, so
+   *  the runtime teardown runs before it goes away: deleting it first left a failed revocation with the
+   *  guest still able to reach the environment and nothing left to revoke it against. The refusal names the
+   *  half that did NOT happen. */
+  it('keeps the membership when the runtime cannot drop the guest access', async () => {
     const sandbox = { requestEnvironment: () => ({ id: 'op', status: 'pending' }), revokeProjectAccess: () => { throw new Error('provider unreachable'); } };
     const { app, users, projects, userProjects, admin, member, peer, token } = setup(sandbox);
     const p = projects.ensureDefault(member.id);
@@ -132,7 +134,41 @@ describe('managed project API', () => {
     expect((await app.request(`/users/${peer.id}/projects`, request(token, 'POST', { projectId: p.id }))).status).toBe(200);
     const response = await app.request(`/users/${peer.id}/projects/${p.id}`, request(token, 'DELETE'));
     expect(response.status).toBe(503);
-    expect(await response.json()).toEqual({ error: 'membership revoked; runtime cleanup failed' });
+    expect(await response.json()).toEqual({ error: 'runtime cleanup failed; membership kept' });
+    expect(userProjects.canAccess(peer.id, p.id)).toBe(true);
+  });
+  it('keeps the membership when no runtime provider is loaded', async () => {
+    const { app, users, projects, userProjects, admin, member, peer, token } = setup();
+    const p = projects.ensureDefault(member.id);
+    users.setProjectPermissions(admin.id, member.id, { canShareProjects: true });
+    expect((await app.request(`/users/${peer.id}/projects`, request(token, 'POST', { projectId: p.id }))).status).toBe(200);
+    const response = await app.request(`/users/${peer.id}/projects/${p.id}`, request(token, 'DELETE'));
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'runtime cleanup unavailable; membership kept' });
+    expect(userProjects.canAccess(peer.id, p.id)).toBe(true);
+  });
+  /** The teardown acts on another account's running environment, and a core route reaches a plugin control
+   *  without an identity scope — so the provider cannot be the gate that stops a non-member reaching it. */
+  it('refuses a non-member before the runtime teardown is asked', async () => {
+    let asked = 0;
+    const sandbox = { requestEnvironment: () => ({ id: 'op', status: 'pending' }), revokeProjectAccess: () => { asked += 1; } };
+    const { app, projects, userProjects, member, peerToken } = setup(sandbox);
+    const p = projects.ensureDefault(member.id);
+    const response = await app.request(`/users/${member.id}/projects/${p.id}`, request(peerToken, 'DELETE'));
+    expect(response.status).toBe(403);
+    expect(await response.json()).toEqual({ error: 'project access denied' });
+    expect(asked).toBe(0);
+    expect(userProjects.canAccess(member.id, p.id)).toBe(true);
+  });
+  it('removes the membership once the runtime has dropped the guest access', async () => {
+    const revoked: number[] = [];
+    const sandbox = { requestEnvironment: () => ({ id: 'op', status: 'pending' }), revokeProjectAccess: (input: { accountUserId: number }) => { revoked.push(input.accountUserId); } };
+    const { app, users, projects, userProjects, admin, member, peer, token } = setup(sandbox);
+    const p = projects.ensureDefault(member.id);
+    users.setProjectPermissions(admin.id, member.id, { canShareProjects: true });
+    expect((await app.request(`/users/${peer.id}/projects`, request(token, 'POST', { projectId: p.id }))).status).toBe(200);
+    expect((await app.request(`/users/${peer.id}/projects/${p.id}`, request(token, 'DELETE'))).status).toBe(200);
+    expect(revoked).toEqual([peer.id]);
     expect(userProjects.canAccess(peer.id, p.id)).toBe(false);
   });
   it('rejects a malformed idempotency key instead of forwarding it', async () => {
