@@ -132,9 +132,11 @@ describe('chat production architecture boundaries', () => {
 
   it('has no dead leader dispatch branch (keys.ts filters "leader" out of every action lookup)', () => {
     // directAction/leaderAction both exclude 'leader', and LeaderState.resolve() only ever calls
-    // leaderAction — so dispatchAction can never be invoked with 'leader'. See keys.ts:247-250.
-    expect(source('keys.ts')).toMatch(/directAction:\s*\(data\)\s*=>\s*KEYBIND_ACTIONS\.find\(\(a\)\s*=>\s*a\s*!==\s*'leader'/);
-    expect(source('keys.ts')).toMatch(/leaderAction:\s*\(data\)\s*=>\s*KEYBIND_ACTIONS\.find\(\s*\n\s*\(a\)\s*=>\s*a\s*!==\s*'leader'/);
+    // leaderAction — so dispatchAction can never be invoked with 'leader'. Both narrow to
+    // ResolvedKeybindAction as they filter, which is what makes the dispatcher's switch exhaustive.
+    expect(source('keys.ts')).toMatch(/directAction:\s*\(data\)\s*=>\s*KEYBIND_ACTIONS\.find\(\s*\n?\s*\(a\): a is ResolvedKeybindAction\s*=>\s*a\s*!==\s*'leader'/);
+    expect(source('keys.ts')).toMatch(/leaderAction:\s*\(data\)\s*=>\s*KEYBIND_ACTIONS\.find\(\s*\n?\s*\(a\): a is ResolvedKeybindAction\s*=>\s*a\s*!==\s*'leader'/);
+    expect(source('keys.ts')).toMatch(/export type ResolvedKeybindAction = Exclude<KeybindAction, 'leader'>/);
     expect(source('chatComposition.ts')).not.toMatch(/case\s+'leader':/);
   });
 

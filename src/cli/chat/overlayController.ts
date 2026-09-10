@@ -42,7 +42,7 @@ export class OverlayController {
 
   constructor(private readonly tui: TUI, private readonly forceRender: (reason: string) => void) {
     this.nativeShowOverlay = tui.showOverlay.bind(tui);
-    tui.showOverlay = ((component, options) => this.open(component, options)) as TUI['showOverlay'];
+    tui.showOverlay = ((component, options) => this.open(component, options));
   }
 
   show(name: string, component: Component, options: OverlayOptionsSource): OverlayHandle {

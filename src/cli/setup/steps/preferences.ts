@@ -38,7 +38,7 @@ export async function runPreferencesStep(ctx: WizardCtx): Promise<StepResult> {
     initialValue: detected,
     placeholder: 'e.g. Europe/Prague',
     validate: validTimezone,
-  })) as string).trim();
+  }))).trim();
   if (tz) {
     // The per-plugin config route rather than a raw PUT /config: it read-merges the stored values,
     // validates the key against the plugin's manifest schema, and hot-reloads so the zone applies to the

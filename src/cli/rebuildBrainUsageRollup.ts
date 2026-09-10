@@ -3,7 +3,6 @@ import Database from 'better-sqlite3';
 import { existsSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { installBrainUsageRollup, rebuildBrainUsageRollup } from '../store/brainUsageRollup.js';
-import type { Db } from '../store/db.js';
 
 const pathArg = process.argv[2];
 const confirmed = process.argv.includes('--confirmed-backup');
@@ -17,7 +16,7 @@ if (!existsSync(path)) {
   console.error(`Database does not exist: ${path}`);
   process.exit(2);
 }
-const db = new Database(path) as Db;
+const db = new Database(path);
 try {
   installBrainUsageRollup(db);
   const before = db.prepare('SELECT COUNT(*) AS rows FROM brain_messages').get() as { rows: number };

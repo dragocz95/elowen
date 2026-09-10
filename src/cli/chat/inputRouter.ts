@@ -2,7 +2,7 @@ import type { TUI } from '@earendil-works/pi-tui';
 import type { ChatState } from './chatState.js';
 import type { ChatEditor } from './picker.js';
 import { foregroundWork, type StreamCoordinatorPort } from './streamCoordinator.js';
-import type { KeybindAction, Keymap } from './keys.js';
+import type { ResolvedKeybindAction, Keymap } from './keys.js';
 import {
   isDownKey, isEnterKey, isEscapeKey, isKeyRelease, isPageDownKey, isPageUpKey, isTabByte, isUpKey,
 } from './keys.js';
@@ -21,7 +21,7 @@ export type InputRouteResult = { consume: boolean } | undefined;
 
 interface LeaderInputState {
   pending(): boolean;
-  resolve(data: string): KeybindAction | null;
+  resolve(data: string): ResolvedKeybindAction | null;
   arm(): void;
 }
 
@@ -34,7 +34,7 @@ export interface ChatInputContext {
   renderForced(reason?: string): void;
   keymap(): Keymap;
   leader(): LeaderInputState;
-  dispatchAction(action: KeybindAction): void;
+  dispatchAction(action: ResolvedKeybindAction): void;
   render(reason?: string): void;
   animations: AnimationController;
   hasMessages(): boolean;

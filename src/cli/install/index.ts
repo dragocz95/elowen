@@ -422,7 +422,7 @@ async function chooseServiceUser(): Promise<ServiceUserChoice> {
     validate: (v) => (mode === 'existing' && !(v ?? '').trim() ? 'Required' : undefined),
   });
   bail(name);
-  return { mode: mode as ServiceUserChoice['mode'], username: name.trim() || 'elowen' };
+  return { mode: mode, username: name.trim() || 'elowen' };
 }
 
 async function chooseAgents(r: Runner, user: string): Promise<string[]> {
@@ -438,7 +438,7 @@ async function chooseAgents(r: Runner, user: string): Promise<string[]> {
     options: missing.map((c) => ({ value: c.id, label: c.id, hint: c.pkg })),
   });
   if (p.isCancel(pick)) return [];
-  return pick as string[];
+  return pick;
 }
 
 // ── entry point ──────────────────────────────────────────────────────────────

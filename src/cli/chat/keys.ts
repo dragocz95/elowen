@@ -64,6 +64,10 @@ export type KeybindAction =
   | 'model_picker'
   | 'sessions_picker';
 
+/** What a resolved keypress can name. The leader is a PREFIX, never a thing to do: both resolvers
+ *  already skip it, and saying so in the type is what lets the dispatcher's switch be exhaustive. */
+export type ResolvedKeybindAction = Exclude<KeybindAction, 'leader'>;
+
 /** Display/listing order for /keybinds. */
 export const KEYBIND_ACTIONS: readonly KeybindAction[] = [
   'leader', 'quit', 'mode_toggle', 'reasoning_cycle', 'stash', 'subagent_cycle', 'subagent_background', 'telemetry_toggle',
@@ -187,9 +191,9 @@ export interface Keymap {
   /** Does `data` match one of the action's DIRECT chords? Leader sequences never match here. */
   matches(action: KeybindAction, data: string): boolean;
   /** Resolve a direct chord to its action (leader and quit excluded — those have dedicated checks). */
-  directAction(data: string): KeybindAction | null;
+  directAction(data: string): ResolvedKeybindAction | null;
   /** Resolve the key pressed AFTER the leader to its leader-bound action. */
-  leaderAction(data: string): KeybindAction | null;
+  leaderAction(data: string): ResolvedKeybindAction | null;
   isLeader(data: string): boolean;
   /** Display label for the action's first binding ("ctrl+r", "ctrl+x t"), or null when unbound. */
   chordLabel(action: KeybindAction): string | null;
@@ -250,9 +254,11 @@ export function createKeymap(overrides?: Record<string, unknown>): Keymap {
   return {
     warnings,
     matches,
-    directAction: (data) => KEYBIND_ACTIONS.find((a) => a !== 'leader' && a !== 'quit' && matches(a, data)) ?? null,
+    directAction: (data) => KEYBIND_ACTIONS.find(
+      (a): a is ResolvedKeybindAction => a !== 'leader' && a !== 'quit' && matches(a, data),
+    ) ?? null,
     leaderAction: (data) => KEYBIND_ACTIONS.find(
-      (a) => a !== 'leader' && (bindings.get(a) ?? []).some((b) => b.leader && matchChord(data, b.chord)),
+      (a): a is ResolvedKeybindAction => a !== 'leader' && (bindings.get(a) ?? []).some((b) => b.leader && matchChord(data, b.chord)),
     ) ?? null,
     isLeader: (data) => matches('leader', data),
     chordLabel: (action) => {
@@ -296,7 +302,7 @@ export interface LeaderState {
   cancel(): void;
   /** Consume the key AFTER the leader: closes the window; returns the bound action, or null for
    *  esc/an unbound key (the keypress is swallowed either way — it never types into the editor). */
-  resolve(data: string): KeybindAction | null;
+  resolve(data: string): ResolvedKeybindAction | null;
 }
 
 export function createLeaderState(keymap: Keymap, opts: { onExpire(): void; timeoutMs?: number }): LeaderState {
@@ -316,7 +322,7 @@ export function createLeaderState(keymap: Keymap, opts: { onExpire(): void; time
       timer.unref?.();
     },
     cancel: clear,
-    resolve: (data): KeybindAction | null => {
+    resolve: (data): ResolvedKeybindAction | null => {
       if (!pending) return null;
       clear();
       if (isEscapeKey(data)) return null;

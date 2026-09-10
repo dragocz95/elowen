@@ -23,7 +23,7 @@ export async function runMemoryStep(ctx: WizardCtx): Promise<StepResult> {
       { value: 'skip', label: 'Skip for now' },
       { value: 'back', label: '← Go back' },
     ],
-  })) as string;
+  }));
   if (choice === 'back') return { status: 'back' };
   if (choice === 'skip') return skip(ctx);
 
@@ -33,7 +33,7 @@ export async function runMemoryStep(ctx: WizardCtx): Promise<StepResult> {
   // The recommended model, with an advanced override.
   let model = RECOMMENDED_EMBEDDING_MODEL;
   const useRecommended = guard(await p.confirm({ message: `Use the recommended embedding model (${model})?`, initialValue: true }));
-  if (!useRecommended) model = (guard(await p.text({ message: 'Embedding model', initialValue: model })) as string).trim() || model;
+  if (!useRecommended) model = (guard(await p.text({ message: 'Embedding model', initialValue: model }))).trim() || model;
 
   // Persist BEFORE testing — the test endpoint reads the persisted config, not the request body.
   const put = await apiJson(ctx, 'PUT', '/memory/embedding', { providerId, model, baseUrl: '' });
@@ -57,7 +57,7 @@ async function ensureOpenRouter(ctx: WizardCtx): Promise<string> {
   const existing = providers.find((x) => x.type === 'openai' && x.baseUrl === OPENROUTER_BASE && x.apiKeySet);
   if (existing) return existing.id;
 
-  const key = (guard(await p.password({ message: 'OpenRouter API key' })) as string).trim();
+  const key = (guard(await p.password({ message: 'OpenRouter API key' }))).trim();
   if (!key) return '';
   const id = 'openrouter';
   const kept = providers.filter((e) => e.id !== id).map(keepProvider);
@@ -84,7 +84,7 @@ async function runTest(ctx: WizardCtx): Promise<'ok' | 'kept' | 'edit' | 'off'> 
         { value: 'keep', label: 'Keep anyway (unverified)' },
         { value: 'off', label: 'Turn memory off' },
       ],
-    })) as string;
+    }));
     if (next === 'retry') continue;
     if (next === 'edit') return 'edit';
     if (next === 'keep') return 'kept';
