@@ -135,7 +135,7 @@ describe('managed project API consumers', () => {
     const { app, project, token, prepareExecution } = setup(state);
     const response = await app.request(`/projects/${project.id}/git`, { headers: { authorization: `Bearer ${token}` } });
     expect(response.status).toBe(409);
-    expect(await response.json()).toEqual({ error: 'project environment is not running', state });
+    expect(await response.json()).toEqual({ error: 'project environment is not running' });
     expect(prepareExecution).not.toHaveBeenCalled();
   });
 

@@ -18,7 +18,7 @@ function compactInstruction(v: unknown): string | undefined {
 
 /** A `provider/model` spec sent as a bare `model` is split at its first slash when — and only when —
  *  the prefix is a configured provider id (a provider id never contains a slash, a model id may). */
-export function splitCanonicalModelSpec(
+function splitCanonicalModelSpec(
   sel: { provider?: string; model?: string }, providerIds: readonly string[],
 ): { provider?: string; model?: string } {
   if (sel.provider || !sel.model) return sel;

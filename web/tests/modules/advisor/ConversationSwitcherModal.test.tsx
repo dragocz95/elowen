@@ -214,7 +214,6 @@ describe('ConversationSwitcherModal — sub-agent tree', () => {
       status: 'available',
       links: [],
       subagentStatus: 'available',
-      subagentsTruncated: false,
       subagents: { s1: [{ kind: 'delegate', key: 'sub:a', name: 'Audit auth', status: 'done', childSessionId: 'brain-ch-subagent-sub-a', children: [] }] },
     };
     const { onClose } = renderModal();

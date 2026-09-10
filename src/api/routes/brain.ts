@@ -299,19 +299,17 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     // Read FIRST and independently, so nothing the cron half does below can reach it.
     let subagentStatus: 'available' | 'unavailable' | 'error' = 'unavailable';
     let subagents: Record<string, unknown> = {};
-    let subagentsTruncated = false;
     if (d.brainStore) {
       try {
         const branches = d.brainStore.conversationSubagentBranches(rootIds);
         subagents = branches.byConversation;
-        subagentsTruncated = branches.truncated;
         subagentStatus = 'available';
       } catch (e) {
         logger('brain-conversation-links').error(`sub-agent branch read failed: ${(e as Error).message}`);
         subagentStatus = 'error';
       }
     }
-    const core = { subagentStatus, subagents, subagentsTruncated };
+    const core = { subagentStatus, subagents };
 
     let registry;
     try { registry = await d.plugins?.get(); }

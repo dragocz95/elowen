@@ -98,7 +98,7 @@ const link = (over: Partial<CronConversationLink> = {}): CronConversationLink =>
 
 /** What the response carries when no core store is wired at all — there is nothing to read, which is not
  *  the same answer as "this conversation delegated nothing". */
-const NO_BRANCH = { subagentStatus: 'unavailable' as const, subagents: {}, subagentsTruncated: false };
+const NO_BRANCH = { subagentStatus: 'unavailable' as const, subagents: {} };
 
 async function links(
   app: { request: (p: string, o?: unknown) => Promise<Response> },
@@ -297,7 +297,6 @@ describe('GET /brain/conversation-links — sub-agent branches', () => {
     expect(branchCalls).toEqual([['brain-2', 'brain-2-b']]);
     expect(body.subagentStatus).toBe('available');
     expect(body.subagents).toEqual({ 'brain-2': [node()] });
-    expect(body.subagentsTruncated).toBe(false);
     // The scheduled-job half is untouched by any of it.
     expect(body.status).toBe('available');
     expect(body.links.map((l) => l.jobId)).toEqual(['job-1']);
@@ -419,7 +418,6 @@ describe('GET /brain/conversation-links — sub-agent branches', () => {
 
     const { body } = await links(app, amyTok);
 
-    expect(body.subagentsTruncated).toBe(true);
     expect(body.subagents['brain-2']![0]!.truncated).toBe(true);
   });
 });

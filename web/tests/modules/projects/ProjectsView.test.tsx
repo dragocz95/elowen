@@ -150,7 +150,7 @@ describe('ProjectsView', () => {
   it('says the environment is not running instead of starting one', async () => {
     server.use(
       http.get('*/api/projects', () => HttpResponse.json([{ id: 3, slug: 'analysis', path: '', notes: '', icon: '', executionKind: 'managed' }])),
-      http.get('*/api/projects/3/git', () => HttpResponse.json({ error: 'project environment is not running', state: 'stopped' }, { status: 409 })),
+      http.get('*/api/projects/3/git', () => HttpResponse.json({ error: 'project environment is not running' }, { status: 409 })),
     );
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);

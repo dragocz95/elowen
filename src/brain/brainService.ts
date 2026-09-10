@@ -1638,7 +1638,7 @@ export class BrainService {
   private async ensureSelectedEnvironment(sessionId: string, userId: number, projectRef?: ProjectExecutionRef): Promise<{ operationId?: string }> {
     if (projectRef?.kind !== 'managed') return {};
     const sandbox = this.d.plugins?.peek()?.control('sandbox');
-    if (typeof sandbox?.requestEnvironment !== 'function' || typeof sandbox.environmentFor !== 'function') return {};
+    if (!sandbox) return {};
     const project = { kind: 'managed', projectId: projectRef.projectId } as const;
     try {
       const environment = await sandbox.environmentFor({ project, accountUserId: userId });

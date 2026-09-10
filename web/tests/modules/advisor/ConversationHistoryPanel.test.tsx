@@ -617,7 +617,7 @@ describe('ConversationHistoryPanel — sub-agent tree', () => {
   });
   const withBranch = (subagents: Record<string, unknown[]>, over: Record<string, unknown> = {}) => {
     client.brainConversationLinks.mockResolvedValue({
-      status: 'available', links: [], subagentStatus: 'available', subagents, subagentsTruncated: false, ...over,
+      status: 'available', links: [], subagentStatus: 'available', subagents, ...over,
     });
   };
   const menuOf = (title: string) => screen.findByRole('button', { name: new RegExp(`^${title}: (More actions|Další akce|Ďalšie akcie)`) });
@@ -726,7 +726,7 @@ describe('ConversationHistoryPanel — sub-agent tree', () => {
 
   it('says a failed core read out loud instead of showing every conversation as having delegated nothing', async () => {
     client.brainConversationLinks.mockResolvedValue({
-      status: 'available', links: [], subagentStatus: 'error', subagents: {}, subagentsTruncated: false,
+      status: 'available', links: [], subagentStatus: 'error', subagents: {},
     });
     renderPanel();
 
