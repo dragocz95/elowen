@@ -53,14 +53,18 @@ function setup() {
   const sql = openDb(':memory:');
   const db = makePluginDb(sql, 'sandbox', { canMigrate: true });
   const project: any = { id: 7, executionKind: 'managed', lifecycle: 'active', path: '/not-a-host-path' };
+  let authorizeHook: (() => void) | null = null;
   const stores = {
     usersRead: { list: () => [{ id: 1 }], isAdmin: () => false, mayUsePlugin: () => true },
-    userProjects: { canAccess: () => true, canManage: () => true },
+    // `canAccess` is consulted by `authorize`, which runs INSIDE mint and after `ready` has returned its
+    // row. A test needing something to happen in exactly that window hangs it here.
+    userProjects: { canAccess: () => { authorizeHook?.(); return true; }, canManage: () => true },
     projects: { get: (id: number) => (id === 7 ? project : null), list: () => [project], beginDeletion: () => true, finishDeletion: vi.fn(() => true) },
   };
   const ctx: any = { db: () => db, host: { stores: () => stores }, currentAccountUserId: () => null, currentAccess: () => ({ readOnly: false }), config: {} };
   initSandboxDb(ctx);
 
+  const masked = new Set<string>();
   const containers = new Map<string, ReturnType<typeof parseCreate>>();
   const volumes = new Map<string, Record<string, unknown>>();
   const calls: Call[] = [];
@@ -133,7 +137,7 @@ function setup() {
         const created = parseCreate(args);
         const name = args.at(-1)!;
         // `--opt` repeats, so the device comes from the raw pairs rather than the flag record.
-        const device = args.filter((value, index) => args[index - 1] === '--opt').find((value) => value.startsWith('device='))!;
+        const device = args.filter((_, index) => args[index - 1] === '--opt').find((value) => value.startsWith('device='))!;
         volumes.set(name, { Name: name, Labels: created.labels, Driver: 'local', Options: { type: 'none', o: 'bind', device: device.slice('device='.length) } });
         return reply(0);
       }
@@ -154,8 +158,18 @@ function setup() {
           }
           return reply(0);
         }
-        // A launcher that settled normally leaves no unit behind; that is the cheap release path.
-        if (args.includes('show')) return reply(0, 'LoadState=not-found\nActiveState=inactive\nSubState=dead\nControlGroup=\n');
+        // Masking a unit changes what `show` says about it afterwards, and a cancellation VERIFIES that
+        // change before it calls the guest terminated. A fake that always answered "no such unit" would
+        // let a cancellation look impossible on a path that works.
+        const unit = args.at(-1)!;
+        if (args.includes('mask') && !args.includes('unmask')) masked.add(unit);
+        if (args.includes('unmask')) masked.delete(unit);
+        if (args.includes('show')) {
+          return masked.has(unit)
+            ? reply(0, 'LoadState=masked\nActiveState=inactive\nSubState=dead\nControlGroup=\n')
+            // A launcher that settled normally leaves no unit behind; that is the cheap release path.
+            : reply(0, 'LoadState=not-found\nActiveState=inactive\nSubState=dead\nControlGroup=\n');
+        }
         return reply(0);
       }
       return reply(0);
@@ -166,7 +180,9 @@ function setup() {
   const storage = new ContainerStorage(podman);
   const runtime = createEnvironmentRuntime({ ctx, db, dataDir: root, podman, storage, daemon: true });
   cleanup.push(() => { runtime.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
-  return { runtime, db, calls, executor, root, files, versionOf, setHook: (fn: ((op: any) => Promise<void>) | null) => { hook = fn; } };
+  return { runtime, db, calls, executor, root, files, versionOf,
+    setAuthorizeHook: (fn: (() => void) | null) => { authorizeHook = fn; },
+    setHook: (fn: ((op: any) => Promise<void>) | null) => { hook = fn; } };
 }
 
 const input = { project: { kind: 'managed', projectId: 7 }, accountUserId: 1 } as const;
@@ -290,11 +306,18 @@ describe('managed file operation concurrency', () => {
     expect(peak).toBe(1);
     expect(state.files.get('/workspace/tiny.txt')).toBe('second');
 
-    // And concurrently: whichever lands first, the other is refused rather than silently overwriting it.
-    const settled = await Promise.allSettled([
+    // Issued CONCURRENTLY. Both reach the guest, and the recorder shows they did not run there at the
+    // same moment — the conflict below would look identical if the loser had merely been rejected early,
+    // so exclusivity has to be measured rather than inferred from it.
+    const race = await overlap(state, () => Promise.allSettled([
       write(state, 'a'.repeat(6), state.versionOf('second')),
       write(state, 'b'.repeat(9), state.versionOf('second')),
-    ]);
+    ]));
+    expect(race.seen).toEqual(['write', 'write']);
+    expect(race.peak).toBe(1);
+
+    // Whichever landed first, the other is refused rather than silently overwriting it.
+    const settled = race.result as PromiseSettledResult<unknown>[];
     expect(settled.filter((entry) => entry.status === 'fulfilled')).toHaveLength(1);
     expect(String((settled.find((entry) => entry.status === 'rejected') as PromiseRejectedResult).reason)).toMatch(/version_conflict|changed/i);
   });
@@ -319,28 +342,70 @@ describe('managed file operation concurrency', () => {
     expect(state.db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_execution_leases').get()).toEqual({ n: 0 });
   });
 
-  // Dropping the repository lease from reads must not weaken the durable one, which is what actually
-  // fences an environment being stopped, revoked or regenerated underneath a running operation.
-  it('cancels the leases of reads in flight when the environment is stopped', async () => {
-    const state = await provisioned();
-    let observed = 0;
-    state.setHook(async () => {
-      observed = state.db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_execution_leases WHERE kind='files'").get().n;
-      await new Promise((resolve) => setTimeout(resolve, 40));
-    });
-    const running = Promise.allSettled([read(state), read(state), walk(state)]);
-    await new Promise((resolve) => setTimeout(resolve, 20));
+  /** A promise a test can hold open and release when it chooses. */
+  function gate() {
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => { release = resolve; });
+    return { promise, release };
+  }
 
-    // Every concurrent read is visible as a durable lease, so a stop can see and cancel all of them.
-    expect(observed).toBeGreaterThan(1);
+  const files = (state: any) => state.db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_execution_leases WHERE kind='files'").get() as { n: number };
+
+  // Dropping the repository lease from reads must not weaken the durable one, which is what actually
+  // fences an environment being stopped, revoked or regenerated underneath a running operation. These
+  // two hold the reads open INSIDE the guest and act while they are there, because a test that waits for
+  // them to finish first proves nothing about what happens to work in flight.
+  it.each([
+    ['stopped', async (state: any) => { await state.runtime.requestEnvironment({ ...input, requestId: 'stop-open', action: { kind: 'stop' } }); }],
+    ['revoked', async (state: any) => { await state.runtime.revokeProjectAccess({ projectId: 7, accountUserId: 1 }); }],
+  ])('observes and cancels every read lease when the environment is %s while they are open', async (_label, act) => {
+    const state = await provisioned();
+    const held = gate();
+    const allIn = gate();
+    let entered = 0;
+    state.setHook(async () => {
+      if ((entered += 1) === 3) allIn.release();
+      await held.promise;
+    });
+
+    const running = Promise.allSettled([read(state), read(state), walk(state)]);
+    await allIn.promise;
+    // All three are genuinely suspended inside the guest right now, each holding a durable lease — which
+    // is the state a stop or a revocation has to be able to see and act on.
+    expect(files(state)).toEqual({ n: 3 });
+
+    await act(state);
+    held.release();
     await running;
     state.setHook(null);
-    await state.runtime.requestEnvironment({ ...input, requestId: 'stop-1', action: { kind: 'stop' } });
     await state.runtime.reconcile();
     expect(state.db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_execution_leases').get()).toEqual({ n: 0 });
   });
 
-  it('refuses to lease a read once the generation has moved', async () => {
+  // The generation moves AFTER `ready` has resolved its row and before the lease is minted, which is the
+  // window a stale `expectedGeneration` never reaches — that one is refused earlier, by a check the
+  // caller supplied the answer to. What has to hold here is that minting itself refuses a row that has
+  // gone out of date under a read already on its way.
+  it('refuses to mint when the generation moves between ready and mint', async () => {
+    const state = await provisioned();
+    // `authorize` runs twice per operation: once inside `ready`, which resolves the row, and again inside
+    // `mint`. Bumping on the SECOND call lands the change in the gap between them, which is precisely the
+    // window under test — bumping on the first would simply hand `ready` the newer row.
+    let calls = 0;
+    let bumped = false;
+    state.setAuthorizeHook(() => {
+      if ((calls += 1) !== 2) return;
+      bumped = true;
+      state.db.prepare("UPDATE p_sandbox_runtimes SET generation=generation+1 WHERE kind='project' AND resource_id='7'").run();
+    });
+
+    await expect(read(state)).rejects.toThrow(/environment changed|busy/i);
+    state.setAuthorizeHook(null);
+    expect(bumped).toBe(true);
+    expect(state.db.prepare('SELECT COUNT(*) AS n FROM p_sandbox_execution_leases').get()).toEqual({ n: 0 });
+  });
+
+  it('refuses a read whose caller names a generation that is already stale', async () => {
     const state = await provisioned();
     const before = (await state.runtime.environmentFor(input)).generation;
     await expect(state.runtime.projectFiles({
