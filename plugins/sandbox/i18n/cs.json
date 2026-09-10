@@ -137,6 +137,8 @@
       "projectCredentials": "Údaje osobních integrací zůstávají mimo prostředí. Přihlašovací údaje a exportované výsledky zde uložené jsou sdílená data projektu.",
       "startEnvironment": "Spustit prostředí",
       "stopEnvironment": "Zastavit prostředí",
+      "restartEnvironment": "Restartovat prostředí",
+      "recreateEnvironment": "Znovu vytvořit prostředí",
       "snapshotEnvironment": "Vytvořit snímek",
       "restoreEnvironment": "Obnovit snímek",
       "operationRequested": "Operace byla vyžádána. Dokončení oznámí prostředí.",

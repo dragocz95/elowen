@@ -166,8 +166,9 @@ describe('ProjectsView', () => {
       http.get('*/api/projects', () => HttpResponse.json([{ id: 3, slug: 'analysis', path: '', notes: '', icon: '', executionKind: 'managed' }])),
       http.delete('*/api/projects/3', () => {
         deleted = true;
-        return HttpResponse.json({ operation: { id: 'op-delete', requestId: 'r', projectId: 3, generation: 1, accountUserId: 1, action: { kind: 'delete' }, status: 'pending', error: null } }, { status: 202 });
+        return HttpResponse.json({ operation: { id: 'op-delete', requestId: 'r', projectId: 3, generation: 1, accountUserId: 1, action: { kind: 'delete' }, status: 'pending', error: null, steps: ['stop', 'containers', 'images', 'volumes', 'storage', 'records'], stepIndex: 0, stepTotal: 6, stepLabel: 'stop', percent: 0 } }, { status: 202 });
       }),
+      http.get('*/api/plugins/sandbox/api/environments/operation', () => HttpResponse.json({ id: 'op-delete', requestId: 'r', projectId: 3, generation: 1, accountUserId: 1, action: { kind: 'delete' }, status: 'running', error: null, steps: ['stop', 'containers', 'images', 'volumes', 'storage', 'records'], stepIndex: 1, stepTotal: 6, stepLabel: 'containers', percent: 18, logTail: [] })),
     );
     const { wrapper: Wrapper } = createWrapper();
     render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
@@ -180,8 +181,11 @@ describe('ProjectsView', () => {
     expect(deleted).toBe(false);
     fireEvent.click(dialog.getByRole('button', { name: 'Remove' }));
     await waitFor(() => expect(deleted).toBe(true));
-    // Cleanup is asynchronous, so the answer is that deletion was requested rather than finished.
-    expect(await screen.findByText(/deletion requested/i)).toBeInTheDocument();
+    // Teardown is a durable operation, so the answer is the progress window that follows it rather than
+    // a toast saying it was requested and then never saying anything again.
+    expect(await screen.findByTestId('operation-progress-dialog')).toBeInTheDocument();
+    expect(await screen.findByText('Removing containers')).toBeInTheDocument();
+    expect(screen.getByText('Step 2 of 6')).toBeInTheDocument();
   });
 
   // A managed project has no host path, which is why the menu used to go one item short of a host

@@ -62,6 +62,14 @@ describe('plugin UI runtime', () => {
     // Published so a plugin charts a series with the app's own axes and tooltip instead of hand-rolling
     // one; asserted here because a plugin bundle compiles elsewhere and would not fail with this repo.
     expect(window.ElowenUiRuntime?.components).toHaveProperty('TimeSeriesChart');
+    // The environment-operation progress window and the hook that follows one operation. Both are
+    // published rather than rebuilt inside the sandbox bundle because the chat picker, the project
+    // register and the environment settings all drive the SAME durable operation row, and a bundle
+    // cannot subscribe to the host's SSE bus on its own. The API version deliberately does not move: it
+    // is a compatibility CEILING, so an addition is safe for every bundle that has not heard of it.
+    expect(window.ElowenUiRuntime?.components).toHaveProperty('OperationProgressDialog');
+    expect(window.ElowenUiRuntime?.hooks).toHaveProperty('useEnvironmentOperation');
+    expect(window.ElowenUiRuntime?.hooks).toHaveProperty('useTranslation');
     expect(window.ElowenUiRuntime?.hooks).toHaveProperty('usePluginConfigDraft');
     expect(window.ElowenUiRuntime?.hooks).toHaveProperty('useUsers');
     expect(window.ElowenUiRuntime?.hooks).toEqual(expect.objectContaining({

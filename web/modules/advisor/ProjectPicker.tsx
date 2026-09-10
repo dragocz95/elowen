@@ -11,6 +11,9 @@ import type { SaveStatus } from '../../lib/useAutoSaveStatus';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
 import { managedProjectStrings } from '../projects/managedProjectStrings';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuRadioGroup, DropdownMenuRadioItem, DropdownMenuTrigger } from '../../components/ui/shadcn/dropdown-menu';
+import { OperationProgressDialog } from '../../components/ui/OperationProgressDialog';
+import { useEnvironmentOperation } from '../../lib/useEnvironmentOperation';
+import { recreatable, requestEnvironmentAction } from '../../lib/environmentActions';
 import { useBrainChat } from './BrainChatProvider';
 
 /** Selection comes from durable execution identity, never from cwd or conversation filing. */
@@ -26,6 +29,10 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
   const [moveStatus, setMoveStatus] = useState<SaveStatus>('idle');
   const [retryTarget, setRetryTarget] = useState<ProjectExecutionRef | null>(null);
   const [confirmed, setConfirmed] = useState<{ session: string; target: ProjectExecutionRef } | null>(null);
+  // The environment the switch asked for, followed until it settles. The id outlives the dialog on
+  // purpose: hiding the window leaves the operation running and the chip below brings it back.
+  const [pending, setPending] = useState<{ operationId: string; projectId: number } | null>(null);
+  const [progressOpen, setProgressOpen] = useState(false);
   const sessionRef = useRef(activeSessionId);
   sessionRef.current = activeSessionId;
   const reported = telemetry.projectRef;
@@ -41,6 +48,14 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
   // and the authority over an execution target lives in the daemon.
   const label = current?.slug ?? s.unknownTarget;
   const ready = Boolean(activeSessionId) && !projects.isLoading && !projects.isError && !me.isLoading && !me.isError;
+  const progress = useEnvironmentOperation(pending?.operationId ?? null, pending?.projectId);
+  const operationRunning = progress.operation ? ['pending', 'running'].includes(progress.operation.status) : Boolean(pending);
+  const dispatch = (action: 'start' | 'recreate') => {
+    if (!pending) return;
+    void requestEnvironmentAction(pending.projectId, { kind: action })
+      .then((operation) => setPending({ operationId: operation.id, projectId: pending.projectId }))
+      .catch((error) => toast(apiErrorMessage(error) || t.brainChat.projectPickerFailed, 'error'));
+  };
 
   const move = async (next: ProjectExecutionRef) => {
     const session = activeSessionId;
@@ -50,6 +65,13 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
       const response = await elowenClient.brainSetExecution(next, session);
       if (sessionRef.current !== session) return;
       setConfirmed({ session, target: response.projectRef }); setMoveStatus('idle');
+      // The switch itself is already done — the daemon answered before the container work started. What
+      // comes back is the operation that brings the environment up, and following it is what replaces
+      // the spinner that used to sit on the save indicator until the container happened to appear.
+      if (response.operationId && next.projectId !== undefined) {
+        setPending({ operationId: response.operationId, projectId: next.projectId });
+        setProgressOpen(true);
+      }
     } catch (error) {
       const message = apiErrorMessage(error) || t.brainChat.projectPickerFailed;
       if (sessionRef.current === session) { setMoveStatus('error'); toast(message, 'error'); }
@@ -89,5 +111,24 @@ export function ProjectPicker({ variant = 'full' }: { variant?: 'full' | 'compac
       </DropdownMenuContent>
     </DropdownMenu>
     <AutoSaveStatus status={moveStatus} onRetry={() => { if (retryTarget && !moving) select(retryTarget); }} />
+    {/* Hiding the window does not stop the environment coming up, so the chip is the way back into it. */}
+    {pending && !progressOpen ? (
+      <button type="button" data-testid="chat-environment-chip" onClick={() => setProgressOpen(true)}
+        className="ml-1 rounded-md border border-border px-1.5 py-0.5 text-tiny text-muted-foreground hover:bg-accent">
+        {t.operationProgress.reopen}
+      </button>
+    ) : null}
+    <OperationProgressDialog
+      open={progressOpen && pending !== null}
+      title={t.operationProgress.actions[(progress.operation?.action.kind ?? 'start') as keyof typeof t.operationProgress.actions] ?? t.operationProgress.actions.start}
+      operation={progress.operation}
+      logTail={progress.logTail}
+      loadError={progress.loadError}
+      onRetry={() => dispatch('start')}
+      onRecreate={() => dispatch('recreate')}
+      recreatable={recreatable(progress.operation)}
+      onSettled={() => setPending(null)}
+      onClose={({ running }) => { setProgressOpen(false); if (!running && !operationRunning) setPending(null); }}
+    />
   </div>;
 }

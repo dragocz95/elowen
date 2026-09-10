@@ -34,6 +34,9 @@ import { ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState } f
 import { copyText } from '../../lib/clipboard';
 import { Avatar } from '../../components/ui/Avatar';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
+import { OperationProgressDialog } from '../../components/ui/OperationProgressDialog';
+import { useEnvironmentOperation } from '../../lib/useEnvironmentOperation';
+import { requestEnvironmentAction } from '../../lib/environmentActions';
 import type { ProjectSummary } from '../../lib/types';
 
 function MissingProjectPathBadge({ label }: { label: string }) {
@@ -117,6 +120,7 @@ export function ProjectsView() {
   const removeProject = useRemoveProject();
   // Host removal detaches metadata; managed removal requests durable environment teardown.
   const [removing, setRemoving] = useState<Project | null>(null);
+  const [deleting, setDeleting] = useState<{ operationId: string; projectId: number } | null>(null);
   const removePendingRef = useRef(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
 
@@ -201,6 +205,8 @@ export function ProjectsView() {
     );
   }
 
+  const deletion = useEnvironmentOperation(deleting?.operationId ?? null, deleting?.projectId);
+
   async function handleRemove(): Promise<void> {
     const target = removing;
     if (!target || removePendingRef.current) return;
@@ -211,7 +217,11 @@ export function ProjectsView() {
       setRemoving((current) => current?.id === id ? null : current);
       setEditProject((current) => current?.id === id ? null : current);
       setSelectedId((current) => current === id && !('operation' in result) ? null : current);
-      toast('operation' in result ? s.deleting : t.projects.removed);
+      // A managed project's deletion is a durable operation, not a request that finished. Following it
+      // is the difference between "deleting…" as a toast that never updates and a window that says which
+      // of the six teardown steps is running and stops on the one that failed.
+      if ('operation' in result) setDeleting({ operationId: result.operation.id, projectId: id });
+      else toast(t.projects.removed);
     } catch (e) {
       toast(apiErrorMessage(e), 'error');
     } finally {
@@ -535,6 +545,23 @@ export function ProjectsView() {
         confirmLabel={t.projects.removeConfirmBtn}
         onConfirm={handleRemove}
         onClose={() => { if (!removePendingRef.current) setRemoving(null); }}
+      />
+
+      <OperationProgressDialog
+        open={deleting !== null}
+        title={t.operationProgress.actions.delete}
+        operation={deletion.operation}
+        logTail={deletion.logTail}
+        loadError={deletion.loadError}
+        onRetry={() => {
+          const id = deleting?.projectId;
+          if (id === undefined) return;
+          void requestEnvironmentAction(id, { kind: 'delete' })
+            .then((operation) => setDeleting({ operationId: operation.id, projectId: id }))
+            .catch((error) => toast(apiErrorMessage(error), 'error'));
+        }}
+        onSettled={() => { setSelectedId((current) => current === deleting?.projectId ? null : current); toast(t.projects.removed); }}
+        onClose={() => setDeleting(null)}
       />
 
       {ctxMenu && <ContextMenu state={ctxMenu} onClose={() => setCtxMenu(null)} />}

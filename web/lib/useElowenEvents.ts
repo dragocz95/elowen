@@ -5,6 +5,7 @@ import { QUERY_KEYS } from './queries';
 import { BASE } from './elowenClient';
 import { createReconnectController } from './reconnect';
 import { subscribeRevive, STALE_HIDE_MS } from './useRevive';
+import { emitPluginEvent, isPluginEvent } from './pluginEvents';
 
 /** Subscribe to the core daemon SSE bus and keep shared query caches fresh. */
 export function useElowenEvents(): void {
@@ -28,11 +29,16 @@ export function useElowenEvents(): void {
       qc.invalidateQueries({ queryKey: ['marketplace'] });
       qc.invalidateQueries({ queryKey: QUERY_KEYS.brainCommands });
     });
-    const pluginHandler = makeHandler(() => {
+    const pluginHandler = (event: MessageEvent) => {
+      let parsed: unknown;
+      try { parsed = JSON.parse(event.data); } catch { return; }
+      // The payload goes to whoever is listening for it BEFORE the blanket invalidation, so a surface
+      // that follows a pushed operation reads the frame it was sent rather than refetching it.
+      if (isPluginEvent(parsed)) emitPluginEvent(parsed);
       // Plugin data is intentionally opaque to core. Invalidate active queries so the owning bundle
       // refreshes without core learning its private query-key convention.
       qc.invalidateQueries();
-    });
+    };
     const activityHandler = makeHandler(() => {
       qc.invalidateQueries({ queryKey: ['activity'] });
       qc.invalidateQueries({ queryKey: ['activity-presence'] }); // someone started working

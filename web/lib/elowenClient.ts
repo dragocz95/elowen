@@ -262,8 +262,10 @@ export const elowenClient = {
   /** Switch the conversation's model (the `/model` picker). Server rebuilds the session; `session` targets
    *  the caller's own bound conversation. */
   brainSetModel: (sel: { provider?: string; model?: string }, session?: string) => req<{ model: string }>('/brain/model', json({ ...sel, ...(session ? { session } : {}) })),
-  /** Select a durable execution identity. The daemon rechecks project membership and host authority. */
-  brainSetExecution: (target: import('./types').ProjectExecutionRef, session: string) => req<{ projectRef: import('./types').ProjectExecutionRef; workDir: string }>('/brain/execution', json({ target, session })),
+  /** Select a durable execution identity. The daemon rechecks project membership and host authority.
+   *  `operationId` is present when the selected environment was not already running: its start is
+   *  ENQUEUED and the response returns at once, so the caller follows that operation, never the request. */
+  brainSetExecution: (target: import('./types').ProjectExecutionRef, session: string) => req<{ projectRef: import('./types').ProjectExecutionRef; workDir: string; operationId?: string }>('/brain/execution', json({ target, session })),
   /** Set the conversation's reasoning effort live (the `/reasoning` picker). Applies to the running
    *  conversation AND becomes the account default shown in Account → Elowen AI — one value, so the
    *  choice survives a reload instead of being replaced by the saved one. */

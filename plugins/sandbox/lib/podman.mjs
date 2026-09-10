@@ -93,10 +93,23 @@ export class SpawnExecutor {
       options.signal?.addEventListener('abort', onAbort, { once: true });
       // Abort can land between the initial check and listener registration.
       if (options.signal?.aborted) onAbort();
+      // A long build is the one command whose output matters BEFORE it finishes, so `onOutput` sees each
+      // complete line as it is written. The buffers below are untouched by it: the returned result is
+      // still the bounded capture every other caller reads, and a throwing observer must not take the
+      // command down with it.
+      const partial = { stdout: '', stderr: '' };
+      const observe = (stream, chunk) => {
+        if (!options.onOutput) return;
+        const text = partial[stream] + chunk.toString('utf8');
+        const lines = text.split(/\r?\n|\r/);
+        partial[stream] = lines.pop() ?? '';
+        for (const line of lines) { if (line.trim()) { try { options.onOutput(line); } catch { /* an observer never fails the command */ } } }
+      };
       for (const stream of ['stdout', 'stderr']) child[stream].on('data', (chunk) => {
         const combined = Buffer.concat([buffers[stream], chunk]);
         if (combined.length > options.outputLimitBytes) truncated = true;
         buffers[stream] = combined.subarray(Math.max(0, combined.length - options.outputLimitBytes));
+        observe(stream, chunk);
       });
       child.once('error', (error) => { failure ??= error; });
       child.stdin.on('error', (error) => {
@@ -185,7 +198,7 @@ export class PodmanClient {
     validateInput(options.input);
     const result = await this.#executor.run('/usr/bin/podman', [...this.#prefix, ...args], {
       env: { ...this.#env }, timeoutMs: positive(options.timeoutMs ?? this.#timeoutMs, 15 * 60_000, 'timeout'),
-      outputLimitBytes: this.#outputLimit, input: options.input, signal: options.signal,
+      outputLimitBytes: this.#outputLimit, input: options.input, signal: options.signal, onOutput: options.onOutput,
     });
     if (!Number.isInteger(result.code) || typeof result.stdout !== 'string' || typeof result.stderr !== 'string') throw new Error('Invalid Podman command result');
     let truncated = result.truncated ?? false;
@@ -550,7 +563,9 @@ export class PodmanClient {
     await this.#run(['unshare', '/usr/bin/rm', '-rf', '--', directory]);
   }
 
-  async ensureProjectImage(dataDir) {
+  /** `onOutput` receives each line the build writes, so the caller can show what a fifteen-minute image
+   *  build is doing instead of a spinner. An image that is already present returns without calling it. */
+  async ensureProjectImage(dataDir, onOutput) {
     const context = checkedHostPath(join(hostPath(dataDir), 'environment-base', PROJECT_BASE_IMAGE_TAG.split(':').at(-1)), { create: true });
     if (await this.#exists('image', PROJECT_BASE_IMAGE_TAG)) return PROJECT_BASE_IMAGE_TAG;
     await this.#assertRootless();
@@ -561,7 +576,7 @@ export class PodmanClient {
       checkedHostPath(file, { file: true });
       if (readFileSync(file, 'utf8') !== PROJECT_CONTAINERFILE) throw new Error('Project base image context differs from the trusted recipe');
     }
-    await this.#run(['build', '--tag', PROJECT_BASE_IMAGE_TAG, context], { timeoutMs: 15 * 60_000 });
+    await this.#run(['build', '--tag', PROJECT_BASE_IMAGE_TAG, context], { timeoutMs: 15 * 60_000, onOutput });
     if (!await this.#exists('image', PROJECT_BASE_IMAGE_TAG)) throw new Error('Project base image build produced no image');
     return PROJECT_BASE_IMAGE_TAG;
   }

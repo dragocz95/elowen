@@ -137,6 +137,8 @@
       "projectCredentials": "Údaje osobných integrácií zostávajú mimo prostredia. Prihlasovacie údaje a exportované výsledky tu uložené sú zdieľané dáta projektu.",
       "startEnvironment": "Spustiť prostredie",
       "stopEnvironment": "Zastaviť prostredie",
+      "restartEnvironment": "Reštartovať prostredie",
+      "recreateEnvironment": "Znovu vytvoriť prostredie",
       "snapshotEnvironment": "Vytvoriť snímku",
       "restoreEnvironment": "Obnoviť snímku",
       "operationRequested": "Operácia bola vyžiadaná. Dokončenie oznámi prostredie.",

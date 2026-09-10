@@ -18,6 +18,32 @@ import { PROJECT_BASE_IMAGE_TAG } from './containerBaseImage.mjs';
 const FILE_HELPER = readFileSync(new URL('./guestFiles.py', import.meta.url), 'utf8');
 const PREVIEW_HELPER = readFileSync(new URL('./previewProxy.py', import.meta.url), 'utf8');
 const DEFAULT_LIMITS = { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240 };
+/** What each lifecycle operation is made of, in order, with the relative cost of each part. The list is
+ *  DECLARED before the work starts, so a surface watching an operation can say "step 2 of 5" from the
+ *  first frame instead of discovering the shape as it goes. The weights are rough durations rather than
+ *  shares of a bar: building or pulling the base image dominates a first start by an order of magnitude,
+ *  and giving it the same fifth as "write the row" would leave the bar at 20% for ten minutes. */
+const STEP_PLANS = {
+  start: [['image', 10], ['storage', 1], ['container', 2], ['boot', 2], ['initialize', 1]],
+  recreate: [['remove', 2], ['image', 10], ['storage', 1], ['container', 2], ['boot', 2], ['initialize', 1]],
+  restart: [['quiesce', 1], ['stop', 2], ['image', 10], ['storage', 1], ['container', 2], ['boot', 2], ['initialize', 1]],
+  stop: [['quiesce', 1], ['stop', 2]],
+  snapshot: [['quiesce', 1], ['capture', 8], ['record', 1]],
+  restore: [['quiesce', 1], ['stop', 2], ['import', 8], ['container', 2], ['boot', 2], ['switch', 1], ['cleanup', 1]],
+  limits: [['apply', 1]],
+  delete: [['stop', 2], ['containers', 2], ['images', 2], ['volumes', 2], ['storage', 2], ['records', 1]],
+};
+/** Every Sites-only action and the image jobs: one step, honestly unlabelled, rather than a fabricated
+ *  breakdown of work whose shape nobody has described. */
+const DEFAULT_STEPS = [['work', 1]];
+/** Podman prints `STEP 4/17: RUN …` while it builds and `Copying blob … 12MB / 40MB` while it pulls. The
+ *  first is a real fraction of a known whole; the second is a byte count of one layer among several, so
+ *  it is reported as indeterminate rather than turned into a percentage of nothing. */
+export function buildFraction(line) {
+  const step = /^STEP\s+(\d+)\/(\d+)\b/.exec(String(line).trim());
+  if (!step || Number(step[2]) <= 0) return null;
+  return Math.min(1, Number(step[1]) / Number(step[2]));
+}
 /** The file operations that CHANGE the tree. They need write authority and they serialize against each
  *  other; everything else observes and does neither. One list, because a kind that counted as a mutation
  *  for permissions but not for serialization — or the reverse — is exactly the sort of drift that turns
@@ -53,7 +79,11 @@ function configuredDefaults(config) {
 }
 function action(value, kind) {
   if (!value || typeof value !== 'object') throw error('invalid_action', 'An environment action is required', 400);
+  // `recreate` is a project-only repair: it removes the container this runtime can no longer verify and
+  // builds a new one from the current specification. The storage volumes are untouched, so the project's
+  // files come back with it — which is exactly why it is an explicit action and never an automatic one.
   const fields = { start: [], stop: [], restart: [], delete: [], snapshot: ['note', 'includeData'], restore: ['snapshotId', 'restoreData'], limits: ['limits'],
+    ...(kind === 'project' ? { recreate: [] } : {}),
     ...(kind === 'site' ? { prepare: [], 'cleanup-stage': [], 'provision-image': ['imageKind'], 'import-data': ['artifactId'], 'export-data': ['artifactId'], 'import-snapshot': ['artifactId'], 'remove-artifact': ['artifactId'], 'export-project': ['artifactId'] } : {}) };
   if (value.imageKind !== undefined && !['base', 'static', 'node'].includes(value.imageKind)) throw error('invalid_action', 'Unknown fixed Sites image recipe', 400);
   for (const key of ['artifactId', 'snapshotId']) if (value[key] !== undefined && (typeof value[key] !== 'string' || !/^[A-Za-z0-9_.:-]{1,160}$/.test(value[key]))) throw error('invalid_action', 'Invalid retained artifact identity', 400);
@@ -199,9 +229,60 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   const view = (row) => ({ [row.kind === 'project' ? 'projectId' : 'siteId']: row.kind === 'project' ? Number(row.resource_id) : row.resource_id,
     generation: row.generation, state: row.state, desiredState: row.desired_state, lastError: row.error ?? null, limits: row.limits });
   const operationView = (op) => ({ id: op.id, requestId: op.request_key, [op.kind === 'project' ? 'projectId' : 'siteId']: op.kind === 'project' ? Number(op.resource_id) : op.resource_id,
-    accountUserId: op.user_id, generation: op.generation, action: op.action, status: op.status, error: op.error ?? null, ...(op.snapshot_id ? { snapshotId: op.snapshot_id } : {}) });
+    accountUserId: op.user_id, generation: op.generation, action: op.action, status: op.status, error: op.error ?? null, ...(op.snapshot_id ? { snapshotId: op.snapshot_id } : {}),
+    steps: op.steps ?? [], stepIndex: Number(op.step_index ?? 0), stepTotal: (op.steps ?? []).length,
+    stepLabel: (op.steps ?? [])[Number(op.step_index ?? 0)] ?? null,
+    percent: op.percent === null || op.percent === undefined ? null : Number(op.percent) });
   const assertGeneration = (row, expected) => { if (expected !== undefined && expected !== row.generation) throw error('generation_changed', 'Environment generation changed'); };
-  const checkpoint = (op, values) => { Object.assign(op.checkpoint, values); store.saveOperation(op); };
+
+  /** The one place an operation's live state leaves this process. Everything a watcher needs travels in
+   *  the event — the operation view and the tail of the same ring buffer the log view reads — so no
+   *  surface has to poll the operation endpoint to learn that a step advanced. Publishing is best effort:
+   *  a bus that refuses an event must not fail the container work the event was describing. */
+  let publishedAt = 0;
+  const publishedShape = new Map();
+  function publishOperation(op, force = true) {
+    if (!ctx.publishEvent) return;
+    const now = Date.now();
+    // The throttle exists for a build that writes a hundred lines a second, and it must not swallow a
+    // frame that SAYS something: a step change, a status change, or the move between a real percentage
+    // and an indeterminate one. Only a repeat of what was already published is dropped.
+    const shape = `${op.status}|${op.step_index}|${op.percent === null}`;
+    if (!force && now - publishedAt < 250 && publishedShape.get(op.id) === shape) return;
+    if (['succeeded', 'failed', 'cancelled'].includes(op.status)) publishedShape.delete(op.id);
+    else publishedShape.set(op.id, shape);
+    publishedAt = now;
+    try {
+      ctx.publishEvent({ type: 'plugin', plugin: 'sandbox', kind: 'environment-operation',
+        projectId: op.kind === 'project' ? Number(op.resource_id) : null,
+        data: { operation: operationView(op), logTail: store.logTail(op.kind, op.resource_id, 40) } });
+    } catch (cause) { ctx.logger.warn(`environment operation progress was not published: ${cause.message}`); }
+  }
+  const checkpoint = (op, values) => { Object.assign(op.checkpoint, values); store.saveOperation(op); publishOperation(op, false); };
+  const stepPlan = (op) => STEP_PLANS[op.action?.kind] ?? DEFAULT_STEPS;
+  /** Declare the step list on the durable row as the operation is claimed. */
+  function beginSteps(op) {
+    op.steps = stepPlan(op).map(([id]) => id);
+    op.step_index = 0;
+    op.percent = 0;
+    store.saveOperation(op);
+    publishOperation(op);
+  }
+  /** Enter a declared step. `fraction` is progress WITHIN it: a number when the work reports one, and
+   *  `null` when it does not — which is what leaves the bar indeterminate instead of inventing a figure. */
+  function step(op, id, fraction = 0, streamed = false) {
+    const plan = stepPlan(op);
+    const index = plan.findIndex(([name]) => name === id);
+    if (index < 0) return;
+    const total = plan.reduce((sum, [, weight]) => sum + weight, 0);
+    const done = plan.slice(0, index).reduce((sum, [, weight]) => sum + weight, 0);
+    const inside = fraction === null ? null : plan[index][1] * Math.max(0, Math.min(1, fraction));
+    op.steps = plan.map(([name]) => name);
+    op.step_index = index;
+    op.percent = inside === null ? null : Math.round(((done + inside) / total) * 1000) / 10;
+    store.saveOperation(op);
+    publishOperation(op, !streamed);
+  }
   const assertLive = () => { if (disposed) throw error('runtime_unavailable', 'The environment provider was detached', 503); };
 
   async function assertNoPublishedSites(id) {
@@ -243,9 +324,15 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         if (kind === 'project' && !stores().projects.beginDeletion(Number(id))) throw error('project_deletion_changed', 'Core Project deletion intent could not be recorded');
         row.desired_state = 'deleted'; row.state = 'deleting';
       }
-      else if (['start', 'restart'].includes(requested.kind)) row.desired_state = 'running';
+      else if (['start', 'restart', 'recreate'].includes(requested.kind)) row.desired_state = 'running';
       else if (requested.kind === 'stop') row.desired_state = 'stopped';
       store.save(row);
+      // The declared step list exists from the moment the intent is durable, so the caller's very first
+      // frame can name what is about to happen rather than an empty bar labelled "pending".
+      op.steps = stepPlan(op).map(([id]) => id);
+      op.step_index = 0;
+      op.percent = 0;
+      store.saveOperation(op);
       return operationView(op);
     });
   }
@@ -255,7 +342,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const op = store.getOperation(input.operationId);
     if (!op || op.kind !== kind) return null;
     if (!(op.action.kind === 'delete' && op.status === 'succeeded' && op.user_id === input.accountUserId)) await authorize(kind, op.resource_id, input.accountUserId, true);
-    return operationView(op);
+    // The single read a watcher makes before it starts listening: the operation AND the log tail the live
+    // event carries, so a dialog opened mid-flight shows the same thing a dialog opened at the start does.
+    return { ...operationView(op), logTail: store.logTail(op.kind, op.resource_id, 40) };
   }
 
   /** `verifyRuntime` false is for a caller whose very next step is a prepared or direct guest execution:
@@ -513,7 +602,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     if (row.spec.legacyWorkspaceLayout) {
       if (await podman.containerExists(spec)) {
         ctx.logger.warn(`project ${row.resource_id} still has the pre-mount container ${spec.name}; remove it to recreate the environment at ${rootOf(row)}`);
-        throw error('legacy_workspace_layout', `This environment predates the named project mount. Remove its old container (${spec.name}) and start it again; its files are kept in the storage volumes.`, 409);
+        throw error('legacy_workspace_layout', `This environment predates the named project mount. Recreate it to build a new container (${spec.name}); its files are kept in the storage volumes.`, 409);
       }
       delete row.spec.legacyWorkspaceLayout;
       delete row.spec.containerId;
@@ -536,18 +625,29 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   }
 
   async function startRow(row, op) {
+    step(op, 'image');
     if (row.kind === 'project' && row.spec.input.image === PROJECT_BASE_IMAGE_TAG && !op.checkpoint.imageReady) {
-      row.spec.input.image = await podman.ensureProjectImage(dataDir);
+      // A build is the one part of a start that can take minutes, so its output goes into the same ring
+      // buffer the log view reads and its own step counter drives the bar. A line that carries no
+      // fraction leaves the step indeterminate rather than freezing the bar at a stale figure.
+      row.spec.input.image = await podman.ensureProjectImage(dataDir, (line) => {
+        store.log(row.kind, row.resource_id, line);
+        step(op, 'image', buildFraction(line), true);
+      });
       store.save(row); checkpoint(op, { imageReady: true });
     }
+    step(op, 'storage');
     if (!row.spec.containerId) await storage.prepare(specFor(row.spec));
+    step(op, 'container');
     const current = await ensureInitialContainer(row, op);
     const spec = specFor(row.spec);
+    step(op, 'boot');
     if (row.kind === 'site') await sites.beforeStart(row.resource_id);
     if (current.state === 'paused') await podman.unpause(spec);
     else if (current.state !== 'running') await podman.start(spec);
     if ((await podman.inspect(spec))?.state !== 'running') throw error('start_unverified', 'Container start could not be verified');
     const root = rootOf(row);
+    step(op, 'initialize');
     if (row.kind === 'project' && !op.checkpoint.initialized) {
       const result = await podman.exec(spec, randomUUID().replaceAll('-', ''), ['/bin/bash', '-s'], { input: `set -eu\nif [ ! -e ${root}/.git ]; then\n git init -b main ${root}\n git -C ${root} -c user.name=Elowen -c user.email=environment@localhost -c core.hooksPath=/dev/null commit --allow-empty -m "Initialize managed project"\nfi\nmkdir -p /worktrees\n`, timeoutMs: 30000, persistent: true });
       if (result.code !== 0) throw error('initialization_failed', result.stderr || 'Project initialization failed');
@@ -692,20 +792,43 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   async function perform(row, op) {
     const kind = op.action.kind;
     if (row.kind === 'project' && ['stop', 'restart', 'snapshot', 'restore'].includes(kind)) {
+      step(op, 'quiesce');
       await cancelLeases(row);
       await transfers.quiesce({ row });
     }
     if (row.kind === 'site' && ['prepare', 'cleanup-stage', 'provision-image', 'import-data', 'export-data', 'import-snapshot', 'remove-artifact', 'export-project'].includes(kind)) return await performSiteAction(row, op);
     if (kind === 'start' || kind === 'restart') {
       row.state = 'starting'; store.save(row);
-      if (kind === 'restart' && !op.checkpoint.stopped) { await stopRow(row); checkpoint(op, { stopped: true }); }
+      if (kind === 'restart' && !op.checkpoint.stopped) { step(op, 'stop'); await stopRow(row); checkpoint(op, { stopped: true }); }
+      await startRow(row, op);
+    } else if (kind === 'recreate') {
+      // The container this runtime cannot verify is removed and rebuilt from the current specification.
+      // Only the container: the storage volumes are left alone and remount under the new name, so the
+      // project's files survive the repair.
+      row.state = 'starting'; store.save(row);
+      if (!op.checkpoint.removed) {
+        step(op, 'remove');
+        const previous = specFor(row.spec);
+        await cancelLeases(row);
+        if (await podman.containerExists(previous)) {
+          await stopRow(row);
+          await podman.remove(previous);
+        }
+        delete row.spec.legacyWorkspaceLayout;
+        delete row.spec.containerId;
+        store.save(row);
+        checkpoint(op, { removed: true });
+      }
       await startRow(row, op);
     } else if (kind === 'stop') {
+      step(op, 'stop');
       await stopRow(row); row.state = 'stopped'; row.error = null; store.save(row);
     } else if (kind === 'snapshot') {
       if (!op.snapshot_id) { op.snapshot_id = `snapshot-${op.id.slice(4)}`; store.saveOperation(op); }
       await cancelLeases(row);
+      step(op, 'capture');
       await snapshot(row, op, op.snapshot_id, op.action.note, op.action.includeData !== false);
+      step(op, 'record');
       if (row.kind === 'site') await pruneSiteSnapshots(row, op);
     } else if (kind === 'restore') {
       const saved = store.snapshot(row.kind, row.resource_id, op.action.snapshotId);
@@ -715,6 +838,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       const manifest = await storage.readSnapshot(specFor(source), storageId);
       if (!op.checkpoint.oldSpec) checkpoint(op, { oldSpec: row.spec, oldGeneration: row.generation, wasRunning: row.desired_state === 'running' });
       const old = { ...row, spec: op.checkpoint.oldSpec, generation: op.checkpoint.oldGeneration };
+      step(op, 'stop');
       await stopRow(old);
       if (!op.checkpoint.newSpec) {
         const next = JSON.parse(JSON.stringify(old.spec));
@@ -725,6 +849,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         checkpoint(op, { newSpec: next });
       }
       let target = specFor(op.checkpoint.newSpec);
+      step(op, 'import');
       if (!op.checkpoint.imported) {
         if (row.kind === 'site' && op.action.restoreData === false) {
           const backupId = `preserve-${op.id.slice(4)}`;
@@ -734,6 +859,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         } else await storage.restoreVolumes(specFor(source), storageId, target);
         checkpoint(op, { imported: true });
       }
+      step(op, 'container');
       let restored = await podman.inspect(target);
       if (op.checkpoint.newSpec.containerId && !restored) throw error('restore_target_missing', 'The bound restore target is missing; start a new restore intent');
       if (restored && !op.checkpoint.newSpec.containerId && !op.checkpoint.targetCreating) throw error('restore_target_unclaimed', 'The restore target has no creation checkpoint');
@@ -747,11 +873,13 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         checkpoint(op, { newSpec: op.checkpoint.newSpec });
         target = specFor(op.checkpoint.newSpec);
       }
+      step(op, 'boot');
       if (op.checkpoint.wasRunning) {
         if (row.kind === 'site') await sites.beforeStart(row.resource_id);
         if ((await podman.inspect(target))?.state !== 'running') await podman.start(target);
         if ((await podman.inspect(target))?.state !== 'running') throw error('restore_start_failed', 'Restored container did not start');
       }
+      step(op, 'switch');
       if (!op.checkpoint.switched) store.transaction(() => {
         if (row.kind === 'project') {
           const worktrees = JSON.parse(saved.manifest_json).worktrees ?? [];
@@ -763,9 +891,11 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         row.state = op.checkpoint.wasRunning ? 'running' : 'stopped'; row.error = null; store.save(row);
         checkpoint(op, { switched: true });
       });
+      step(op, 'cleanup');
       if (await podman.inspect(specFor(old.spec))) await podman.remove(specFor(old.spec));
       // Old volumes are retained until explicit Project deletion, providing a non-destructive rollback checkpoint.
     } else if (kind === 'limits') {
+      step(op, 'apply');
       if (!stores().usersRead.isAdmin(op.user_id)) throw error('admin_required', 'Resource-limit authority was revoked', 403);
       const prior = specFor(row.spec);
       await podman.update(prior, op.action.limits);
@@ -774,6 +904,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       row.limits = op.action.limits; store.save(row);
     } else if (kind === 'delete') {
       if (row.kind === 'project') await assertNoPublishedSites(row.resource_id);
+      step(op, 'stop');
       await stopRow(row);
       const spec = specFor(row.spec);
       const snapshots = store.snapshots(row.kind, row.resource_id);
@@ -784,6 +915,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         for (const key of ['oldSpec', 'newSpec']) if (previous[key]) recipes.set(specFor(previous[key]).name, previous[key]);
       }
       recipes.set(spec.name, row.spec);
+      step(op, 'containers');
       for (const recipe of recipes.values()) {
         const owned = specFor(recipe);
         if (await podman.inspect(owned)) {
@@ -792,18 +924,22 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         }
       }
       checkpoint(op, { containerRemoved: true });
+      step(op, 'images');
       for (const saved of snapshots) {
         const owned = specFor(JSON.parse(saved.spec_json));
         const manifest = JSON.parse(saved.manifest_json);
         if (manifest.retained) await podman.removeRetainedSiteImage(owned, manifest.image.reference, manifest.image.id);
         else await podman.removeSnapshotImage(owned, manifest.snapshotId);
       }
+      step(op, 'volumes');
       for (const recipe of recipes.values()) {
         const owned = specFor(recipe);
         for (const volume of owned.volumes) await podman.removeVolume(owned, volume.component);
       }
+      step(op, 'storage');
       await podman.removeStorage(spec);
       checkpoint(op, { storageRemoved: true });
+      step(op, 'records');
       store.transaction(() => {
         db.prepare('DELETE FROM p_sandbox_runtime_snapshots WHERE kind=? AND resource_id=?').run(row.kind, row.resource_id);
         db.prepare('DELETE FROM p_sandbox_execution_leases WHERE resource_kind=? AND resource_id=?').run(row.kind, row.resource_id);
@@ -832,11 +968,12 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
             store.saveOperation(op); return true;
           });
           if (!claimed) continue;
+          beginSteps(op);
           if (op.kind === 'image') {
             await siteImages.authorizeJob(op);
             const imageReference = await siteImages.provision(op.action.imageKind);
             checkpoint(op, { imageReference });
-            op.status = 'succeeded'; op.error = null; store.saveOperation(op);
+            op.status = 'succeeded'; op.error = null; op.percent = 100; store.saveOperation(op); publishOperation(op);
             continue;
           }
           const row = op.user_id === null ? await siteCleanup.rowForOperation(op) : await rowFor(op.kind, op.resource_id, op.user_id, true, true);
@@ -844,13 +981,15 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           if (row.generation !== expected) throw error('generation_changed', 'Queued environment generation changed');
           store.log(row.kind, row.resource_id, `${op.action.kind} started (${op.id})`);
           await perform(row, op);
-          op.status = 'succeeded'; op.error = null; store.saveOperation(op);
+          op.status = 'succeeded'; op.error = null; op.step_index = Math.max(0, (op.steps ?? []).length - 1); op.percent = 100; store.saveOperation(op);
           store.log(row.kind, row.resource_id, `${op.action.kind} completed (${op.id})`);
+          publishOperation(op);
         } catch (cause) {
           if (!claimed) throw cause;
           op.status = 'failed'; op.error = String(cause.message ?? cause).slice(0, 2000); store.saveOperation(op);
           const row = store.get(op.kind, op.resource_id);
           if (row) { row.error = op.error; if (row.desired_state === 'deleted') row.state = 'deleting'; else if (row.state !== 'running' && row.state !== 'stopped') row.state = 'failed'; store.save(row); store.log(row.kind, row.resource_id, op.error); }
+          publishOperation(op);
         }
       }
       for (const row of store.all()) {

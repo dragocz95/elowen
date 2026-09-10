@@ -24,13 +24,20 @@ export type ProjectExecutionRef =
 export interface EnvironmentLimits { cpus: number; memoryMb: number; pidsLimit: number; diskSoftMb: number }
 
 export type EnvironmentAction =
-  | { kind: 'start' | 'stop' | 'restart' | 'delete' }
+  /** `recreate` rebuilds the container from the current specification without touching the storage
+   *  volumes: the repair for an environment whose container this runtime can no longer verify. */
+  | { kind: 'start' | 'stop' | 'restart' | 'delete' | 'recreate' }
   | { kind: 'snapshot'; note?: string; includeData?: boolean }
   | { kind: 'restore'; snapshotId: string; restoreData?: boolean }
   | { kind: 'limits'; limits: EnvironmentLimits };
 
 /** One durable environment lifecycle operation, as the managed delete response and the environment
- *  screens read it. `plugins/environmentTypes` re-exports these to the daemon side. */
+ *  screens read it. `plugins/environmentTypes` re-exports these to the daemon side.
+ *
+ *  The progress fields are declared BEFORE the work starts and live on the same durable row, so an
+ *  operation resumed after a daemon restart still reports where it is. `percent` is a real figure
+ *  wherever the work reports one and `null` where it does not, which is the honest way to say
+ *  "indeterminate" rather than freezing a bar at a stale number. */
 export interface EnvironmentOperation {
   id: string;
   requestId: string;
@@ -41,6 +48,15 @@ export interface EnvironmentOperation {
   status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   error: string | null;
   snapshotId?: string;
+  /** The declared step list, in order. Each entry is a stable id the UI localizes. */
+  steps: string[];
+  stepIndex: number;
+  stepTotal: number;
+  stepLabel: string | null;
+  percent: number | null;
+  /** The tail of the environment's log ring buffer. Present on the single-operation read and on the
+   *  live `environment-operation` plugin event; absent from list projections, which do not need it. */
+  logTail?: string[];
 }
 
 export interface ToolOutputView {

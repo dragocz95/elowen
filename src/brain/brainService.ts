@@ -1597,7 +1597,7 @@ export class BrainService {
    *  against the target it was launched with while the conversation claimed to be somewhere else, and a
    *  restricted Sandbox workspace still bound to this session has to be released by its owner first,
    *  because a project environment and a bound workspace are two answers to the same question. */
-  selectProjectExecution(userId: number, ref: ProjectExecutionRef, session?: string): { projectRef: ProjectExecutionRef; workDir: string } {
+  async selectProjectExecution(userId: number, ref: ProjectExecutionRef, session?: string): Promise<{ projectRef: ProjectExecutionRef; workDir: string; operationId?: string }> {
     const sessionId = session ? this.lifecycle.ownedUserSession(userId, session) : this.lifecycle.activeSessionId(userId);
     const live = this.sessions.get(sessionId);
     if (live && (live.session.isStreaming || this.sessions.hasActiveChildren(sessionId) || processRegistry.runningJobCountForSession(sessionId) > 0)) throw new Error('conversation still has active work');
@@ -1620,7 +1620,33 @@ export class BrainService {
       const slug = managed ? this.d.projects?.list().find((p) => p.id === managed.projectId)?.slug : undefined;
       recordSessionEvent(this.d.store, sessionId, live, 'cwd', slug ?? effective.workDir);
     }
-    return { projectRef: ref, workDir: effective.workDir };
+    return { projectRef: ref, workDir: effective.workDir, ...(await this.ensureSelectedEnvironment(sessionId, userId, effective.projectRef)) };
+  }
+
+  /** Record the intent to have the selected environment running, and hand back the operation that will
+   *  do it. It ENQUEUES and returns: the container work happens in daemon reconciliation, so the switch
+   *  answers in a database round trip whether the environment is up, cold or still being built, and the
+   *  caller follows the operation instead of holding a request open across a fifteen-minute image build
+   *  or losing it to a restart. The key is derived from the conversation and the project, so a retried
+   *  or duplicated switch returns the SAME operation rather than queueing a second one.
+   *
+   *  A refused request is not a failed switch. The selection is already durable and the environment
+   *  surface reports its own state; the operation is the optimisation, not the decision. */
+  private async ensureSelectedEnvironment(sessionId: string, userId: number, projectRef?: ProjectExecutionRef): Promise<{ operationId?: string }> {
+    if (projectRef?.kind !== 'managed') return {};
+    const sandbox = this.d.plugins?.peek()?.control('sandbox');
+    if (typeof sandbox?.requestEnvironment !== 'function' || typeof sandbox.environmentFor !== 'function') return {};
+    const project = { kind: 'managed', projectId: projectRef.projectId } as const;
+    try {
+      const environment = await sandbox.environmentFor({ project, accountUserId: userId });
+      if (environment.state === 'running') return {};
+      const operation = await sandbox.requestEnvironment({ project, accountUserId: userId, action: { kind: 'start' },
+        requestId: `chat-switch:${sessionId}:${projectRef.projectId}` });
+      return { operationId: operation.id };
+    } catch (error) {
+      logger('brain').warn(`environment start was not requested for the selected project ${projectRef.projectId}: ${error instanceof Error ? error.message : String(error)}`);
+      return {};
+    }
   }
 
   /** Record that the client moved its working directory (the CLI's /cd), as a visible marker plus a

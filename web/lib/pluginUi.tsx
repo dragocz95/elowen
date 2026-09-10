@@ -63,6 +63,7 @@ import { ChangeStrip } from '../components/ui/ChangeStrip';
 import { ProgressRibbon } from '../components/ui/ProgressRibbon';
 import { PatchView } from '../components/ui/PatchView';
 import { ConfirmDialog } from '../components/ui/ConfirmDialog';
+import { OperationProgressDialog } from '../components/ui/OperationProgressDialog';
 import { ManageSelectionModal } from '../components/ui/ManageSelectionModal';
 import { SelectionSummary, SummaryChip } from '../components/ui/SelectionSummary';
 import { LinkedAccountRow } from '../components/ui/LinkedAccountRow';
@@ -92,6 +93,7 @@ import { allModels } from './execPresets';
 import { compactElapsed, parseTs } from './format';
 import { isValidSchedule } from './cronSchedule';
 import { useAutoSaveStatus } from './useAutoSaveStatus';
+import { useEnvironmentOperation } from './useEnvironmentOperation';
 import { useMobile } from './useMobile';
 import { baseName } from './filePath';
 import { copyText } from './clipboard';
@@ -307,7 +309,11 @@ export function ensurePluginUiRuntime(): void {
       WorkspacePage, CompactWorkspaceHeader, PluginPageHeader, PluginPageFrame, PluginSection, ProjectFilterPills, ProjectIcon,
       ControlSurfaceDocument, ControlSurfaceRegister, ControlSurfaceState, ControlSurfaceToolbar,
       ModelIcon, OutcomeBadge, ProjectPill, IconButton, ActionMenu, ContextMenu, ChangeStrip,
-      ConfirmDialog, LiveTail,
+      // The one environment-operation progress window. It is published rather than reimplemented in the
+      // sandbox bundle because both sides drive the SAME durable operation row: the chat picker and the
+      // project register raise it from core, the environment settings raise it from the plugin, and a
+      // second copy would be two answers to "what is this container doing".
+      ConfirmDialog, OperationProgressDialog, LiveTail,
       SettingsDocument, SettingsGroup, SettingsRow, SpatialIdentity, TimeSeriesChart, PluginConfigEditor, DirectoryPicker, BackendPicker, ProviderPicker, ModelCatalogField, ChoiceField,
       AutoSaveStatus, ProviderLogo,
       // The moved settings-deck editors' primitives (cronjob's jobs editor and friends). DetailBlock is
@@ -365,6 +371,10 @@ export function ensurePluginUiRuntime(): void {
       // would get a second context and an empty cache, so every query/mutation/infinite-query path crosses
       // this runtime surface instead.
       useQuery, useMutation, useInfiniteQuery, useQueries, useQueryClient,
+      // Following one environment lifecycle operation: one seed read, then the daemon's pushed frames.
+      // A bundle cannot subscribe to the SSE bus itself, and reimplementing this as a poll is exactly
+      // what the pushed progress replaced.
+      useEnvironmentOperation,
     },
     // Pure helpers shared with plugin bundles (formatting, navigation and error shaping).
     utils: {
