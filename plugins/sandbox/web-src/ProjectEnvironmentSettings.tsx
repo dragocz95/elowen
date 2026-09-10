@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { CircleDashed, CircleSlash, Loader2, Play, Square, TriangleAlert, type LucideIcon } from 'lucide-react';
 import { acknowledgeEnvironmentRequest, dispatchEnvironmentAction } from './environmentRequest';
 import type { EnvironmentAction, EnvironmentOperation, ProjectEnvironment } from '../../../src/plugins/environmentTypes';
 import { localizedError, runtime, type Project } from './runtime';
@@ -26,6 +27,17 @@ const LIMIT_KEYS = ROWS.map((row) => row.key);
 /** CPU carries one decimal; every other figure is a whole number the runtime validates as an integer. */
 const readout = (key: LimitKey, value: number) => key === 'cpus' ? String(Math.round(value * 10) / 10) : String(Math.round(value));
 const sameLimits = (a: Limits, b: Limits) => LIMIT_KEYS.every((key) => a[key] === b[key]);
+
+/** The same glyph and tone the project register draws for a state, so the drawer and the row agree. */
+const STATE_GLYPH: Record<ProjectEnvironment['state'], { icon: LucideIcon; className: string; spin?: boolean }> = {
+  running: { icon: Play, className: 'text-success' },
+  starting: { icon: Loader2, className: 'text-accent', spin: true },
+  stopped: { icon: Square, className: 'text-muted-foreground' },
+  unprovisioned: { icon: CircleDashed, className: 'text-muted-foreground' },
+  failed: { icon: TriangleAlert, className: 'text-destructive' },
+  deleting: { icon: Loader2, className: 'text-warning', spin: true },
+  deleted: { icon: CircleSlash, className: 'text-muted-foreground' },
+};
 
 export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   const { components: C, hooks, utils, api } = runtime();
@@ -126,8 +138,16 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   // snapshotting are confirmed where they are now offered, in the project's row menu.
   const confirmation = s.restoreWarning;
   const actionLabel = s.restoreEnvironment;
+  const glyph = STATE_GLYPH[environment.state] ?? STATE_GLYPH.unprovisioned;
+  const StateIcon = glyph.icon;
+  const stateLabel = s[`state_${environment.state}`] || environment.state;
+  // The state reads as the same glyph the project register uses, beside the group's autosave status,
+  // rather than as a banner above the table.
+  const state = <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" role="status" aria-label={stateLabel}>
+    <StateIcon aria-hidden className={`h-3.5 w-3.5 ${glyph.className}${glyph.spin ? ' animate-spin' : ''}`} />
+    {stateLabel}
+  </span>;
   return <section className="flex flex-col gap-4 border-b border-border py-4">
-    <C.Badge tone={environment.state === 'running' ? 'success' : environment.state === 'failed' ? 'danger' : 'muted'}>{s[`state_${environment.state}`]}</C.Badge>
     {requestError ? <p role="alert" className="text-sm text-destructive">{requestError}</p> : null}
     {environment.lastError ? <p role="alert" className="break-words text-sm text-destructive">{environment.lastError}</p> : null}
 
@@ -135,9 +155,12 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
       title={s.resources}
       description={s.resourcesHint}
       density="compact"
-      actions={isAdmin
-        ? <C.AutoSaveStatus status={autoSave.status} onRetry={autoSave.retry} />
-        : <C.Badge tone="muted">{s.limitsAdminOnly}</C.Badge>}
+      actions={<span className="inline-flex items-center gap-3">
+        {state}
+        {isAdmin
+          ? <C.AutoSaveStatus status={autoSave.status} onRetry={autoSave.retry} />
+          : <C.Badge tone="muted">{s.limitsAdminOnly}</C.Badge>}
+      </span>}
     >
       {ROWS.map((row) => (
         <C.SettingsRow
