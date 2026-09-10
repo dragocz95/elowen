@@ -163,6 +163,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   let reconciling = false;
   const releasingAdoptions = new Set();
   const previews = new Set();
+  const publicationEstablishments = new Map();
   const stores = () => ctx.host.stores();
   const account = (id, writable = false) => {
     assertLive();
@@ -1230,8 +1231,13 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   }
 
   async function establishPublication(row, publicationId, port) {
-    const name = publicationSocketName(publicationId);
-    return await startForwarder(row, name, port, 'publication', (spec, argv) => podman.startPublication(spec, publicationId, argv));
+    const active = publicationEstablishments.get(publicationId);
+    if (active) return await active;
+    const establishing = startForwarder(row, publicationSocketName(publicationId), port, 'publication',
+      (spec, argv) => podman.startPublication(spec, publicationId, argv));
+    publicationEstablishments.set(publicationId, establishing);
+    try { return await establishing; }
+    finally { if (publicationEstablishments.get(publicationId) === establishing) publicationEstablishments.delete(publicationId); }
   }
 
   /** Every publication of one project, established again after the container that carried them ended.

@@ -772,6 +772,31 @@ describe('durable project publications', () => {
     expect(podman.activePublications).toHaveBeenCalledWith(expect.anything(), [publicationId]);
   });
 
+  it('shares one in-flight publication establishment between a request and reconciliation', async () => {
+    const { runtime, podman } = setup();
+    await starting(runtime);
+    const startPublication = podman.startPublication.getMockImplementation()!;
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    let first = true;
+    podman.startPublication.mockImplementation(async (spec: any, publicationId: string, argv: string[]) => {
+      if (first) { first = false; await gate; }
+      return await (startPublication as any)(spec, publicationId, argv);
+    });
+
+    const binding = runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
+    await vi.waitFor(() => expect(podman.startPublication).toHaveBeenCalledTimes(1));
+    const reconciling = runtime.reconcile();
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    const callsWhileBlocked = podman.startPublication.mock.calls.length;
+    release();
+    const results = await Promise.allSettled([binding, reconciling]);
+
+    expect(callsWhileBlocked).toBe(1);
+    expect(results.every((result) => result.status === 'fulfilled')).toBe(true);
+    expect(podman.startPublication).toHaveBeenCalledTimes(1);
+  });
+
   it('restores a lost forwarder on reconciliation and keeps serving for an account that lost access', async () => {
     const { runtime, podman, members, forwarders, staleSocket, publicationSocket } = setup();
     await starting(runtime);
