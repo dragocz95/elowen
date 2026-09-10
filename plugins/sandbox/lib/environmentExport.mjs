@@ -81,6 +81,16 @@ export async function exportProjectTree({ destination, operationId, manifest, re
 }
 
 export function removeOwnedArtifact(path) {
-  try { checkedHostPath(path, { file: true }); } catch (cause) { if (cause.code === 'ENOENT') return; throw cause; }
-  unlinkSync(path); sync(dirname(path));
+  const stat = exists(path);
+  if (!stat) return;
+  if (stat.isFile()) {
+    checkedHostPath(path, { file: true });
+    unlinkSync(path);
+  } else if (stat.isDirectory()) {
+    checkedHostPath(path);
+    rmSync(path, { recursive: true });
+  } else {
+    throw new Error('Unexpected container storage path type');
+  }
+  sync(dirname(path));
 }
