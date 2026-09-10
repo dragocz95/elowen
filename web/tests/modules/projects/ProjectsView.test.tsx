@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within, act } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { ProjectsView } from '../../../modules/projects/ProjectsView';
 import { ToastProvider } from '../../../components/ui/Toast';
 import { createWrapper } from '../../test-utils';
+import { emitPluginEvent } from '../../../lib/pluginEvents';
 
 const server = setupServer(
   http.get('*/api/projects', () => HttpResponse.json([{ id: 1, slug: 'elowen', path: '/var/www/elowen', notes: '', icon: '' }])),
@@ -217,6 +218,60 @@ describe('ProjectsView', () => {
     expect(await screen.findByTestId('operation-progress-dialog')).toBeInTheDocument();
     expect(await screen.findByText('Removing containers')).toBeInTheDocument();
     expect(screen.getByText('Step 2 of 6')).toBeInTheDocument();
+  });
+
+  /** The teardown every spec below follows: the request answers with a durable operation, and that
+   *  operation is read once and then pushed. */
+  const teardown = () => [
+    http.get('*/api/projects', () => HttpResponse.json([{ id: 3, slug: 'analysis', path: '', notes: '', icon: '', executionKind: 'managed' }])),
+    http.delete('*/api/projects/3', () => HttpResponse.json({
+      operation: { id: 'op-delete', requestId: 'r', projectId: 3, generation: 1, accountUserId: 1, action: { kind: 'delete' }, status: 'pending', error: null, steps: ['stop', 'containers', 'images', 'volumes', 'storage', 'records'], stepIndex: 0, stepTotal: 6, stepLabel: 'stop', percent: 0 },
+    }, { status: 202 })),
+    http.get('*/api/plugins/sandbox/api/environments/operation', () => HttpResponse.json({ id: 'op-delete', requestId: 'r', projectId: 3, generation: 1, accountUserId: 1, action: { kind: 'delete' }, status: 'running', error: null, steps: ['stop', 'containers', 'images', 'volumes', 'storage', 'records'], stepIndex: 1, stepTotal: 6, stepLabel: 'containers', percent: 18, logTail: [] })),
+  ];
+  const frame = (over: Record<string, unknown>) => ({
+    id: 'op-delete', requestId: 'r', projectId: 3, generation: 1, accountUserId: 1, action: { kind: 'delete' }, error: null,
+    steps: ['stop', 'containers', 'images', 'volumes', 'storage', 'records'], stepIndex: 5, stepTotal: 6, stepLabel: 'records', percent: 100, logTail: [], ...over,
+  });
+  const startTeardown = async () => {
+    fireEvent.click(await screen.findByRole('button', { name: 'analysis: Actions' }));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Remove project' }));
+    const confirm = within(await screen.findByRole('alertdialog'));
+    fireEvent.click(confirm.getByRole('button', { name: 'Remove' }));
+    expect(await screen.findByText('Removing containers')).toBeInTheDocument();
+  };
+
+  // Hiding the window is not a cancel: the containers keep going down. Its outcome therefore has to reach
+  // the register anyway, or the project that is gone stays selected in a list that is being re-read, and
+  // nothing ever says the removal happened.
+  it('settles a teardown that finished while its window was hidden', async () => {
+    server.use(...teardown());
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+    await startTeardown();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide' }));
+    expect(screen.queryByTestId('operation-progress-dialog')).toBeNull();
+
+    act(() => emitPluginEvent({ type: 'plugin', plugin: 'sandbox', kind: 'environment-operation', projectId: 3, data: { operation: frame({ status: 'succeeded' }) } }));
+
+    expect(await screen.findByText('Project removed')).toBeInTheDocument();
+    expect(screen.queryByTestId('operation-progress-dialog')).toBeNull();
+  });
+
+  // A teardown that stopped on its second step behind a hidden window comes back on screen: that is the
+  // difference between a window over a durable operation and a message that goes away with the dialog.
+  it('brings the teardown window back when it failed while hidden', async () => {
+    server.use(...teardown());
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+    await startTeardown();
+    fireEvent.click(screen.getByRole('button', { name: 'Hide' }));
+    expect(screen.queryByTestId('operation-progress-dialog')).toBeNull();
+
+    act(() => emitPluginEvent({ type: 'plugin', plugin: 'sandbox', kind: 'environment-operation', projectId: 3, data: { operation: frame({ status: 'failed', stepIndex: 1, stepLabel: 'containers', percent: 18, error: 'container stop failed' }) } }));
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('container stop failed');
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 
   // A managed project has no host path, which is why the menu used to go one item short of a host

@@ -1,10 +1,11 @@
 import { describe, expect, it, vi, beforeAll, afterAll, afterEach, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, act } from '@testing-library/react';
 import { setupServer } from 'msw/node';
 import { http, HttpResponse } from 'msw';
 import { onUnhandledRequest } from '../../msw';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
+import { emitPluginEvent } from '../../../lib/pluginEvents';
 import type { ProjectExecutionRef } from '../../../lib/types';
 
 /** The question a brand-new conversation is asked, before the first message is written.
@@ -27,6 +28,9 @@ const chat = vi.hoisted(() => {
   };
 });
 vi.mock('../../../modules/advisor/BrainChatProvider', () => ({ useBrainChat: () => chat.value }));
+// The real provider closes the question and flips the flag this component reads; the stand-in does the
+// same, so a spec that follows a choice past the dialog sees what the app does.
+chat.closeProjectChoice.mockImplementation(() => { chat.value.projectChoiceOpen = false; });
 vi.mock('../../../lib/useMobile', () => ({
   useMobileViewport: () => viewport.mobile,
   useIsMobile: () => viewport.mobile === true,
@@ -157,6 +161,8 @@ describe('NewConversationProjectModal', () => {
     await waitFor(() => expect(bodies).toHaveLength(1));
     first.unmount();
 
+    // A second new conversation asks the question again, which is what the provider does when it starts one.
+    chat.value.projectChoiceOpen = true;
     mount();
     fireEvent.click(await screen.findByRole('radio', { name: /Continue without a project/i }));
     await waitFor(() => expect(bodies).toHaveLength(2));
@@ -194,7 +200,46 @@ describe('NewConversationProjectModal', () => {
     fireEvent.click(await screen.findByRole('radio', { name: /elowen/ }));
     expect(await screen.findByTestId('operation-progress-dialog')).toBeInTheDocument();
     expect(await screen.findByText('Creating the container')).toBeInTheDocument();
-    expect(chat.closeProjectChoice).not.toHaveBeenCalled();
+    // The question is answered, so it is over: the person belongs in the composer while the window above
+    // reports the start.
+    await waitFor(() => expect(chat.closeProjectChoice).toHaveBeenCalledTimes(1));
+  });
+
+  // Dismissing the window is not dismissing the start it reports. Followed inside the dialog, that
+  // dismissal threw the operation away with it — the destination list is gone by then — and a start that
+  // failed afterwards was silent.
+  it('keeps following a hidden start and brings its window back when it fails', async () => {
+    server.use(
+      http.post('*/api/brain/execution', () => HttpResponse.json({ projectRef: { kind: 'managed', projectId: 2 }, workDir: '/workspace', operationId: 'env_op_1' })),
+      http.get('*/api/plugins/sandbox/api/environments/operation', () => HttpResponse.json({
+        id: 'env_op_1', requestId: 'r', projectId: 2, accountUserId: 1, generation: 1,
+        action: { kind: 'start' }, status: 'running', error: null,
+        steps: ['image', 'storage', 'container', 'boot', 'initialize'], stepIndex: 2, stepTotal: 5,
+        stepLabel: 'container', percent: 40,
+      })),
+    );
+    mount();
+    fireEvent.click(await screen.findByRole('radio', { name: /elowen/ }));
+    expect(await screen.findByText('Creating the container')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Hide' }));
+    expect(screen.queryByTestId('operation-progress-dialog')).toBeNull();
+    // The destination list did not come back either: the choice was made, and what is left is the start.
+    expect(screen.queryByTestId('new-conversation-projects')).toBeNull();
+
+    act(() => emitPluginEvent({
+      type: 'plugin', plugin: 'sandbox', kind: 'environment-operation', projectId: 2,
+      data: {
+        operation: {
+          id: 'env_op_1', requestId: 'r', projectId: 2, accountUserId: 1, generation: 1,
+          action: { kind: 'start' }, status: 'failed', error: 'image build failed',
+          steps: ['image', 'storage', 'container', 'boot', 'initialize'], stepIndex: 0, stepTotal: 5,
+          stepLabel: 'image', percent: null,
+        },
+      },
+    }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('image build failed');
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
   });
 
   // A destination list that could not be read is not an empty one: "no project is available" sends the

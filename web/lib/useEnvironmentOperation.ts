@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import type { EnvironmentOperation } from '../../src/shared/wireContract';
 import { BASE } from './elowenClient';
 import { subscribePluginEvents } from './pluginEvents';
@@ -83,19 +83,40 @@ export interface EnvironmentOperationWindow extends EnvironmentOperationView {
  *
  *  A window the person HID still settles: a success stops being followed (the chip that offers the way
  *  back disappears with it) and a failure brings the window back, because a start that failed silently is
- *  the state this whole surface exists to prevent. */
-export function useEnvironmentOperationWindow(): EnvironmentOperationWindow {
+ *  the state this whole surface exists to prevent.
+ *
+ *  `onSettled` is that same settle, handed to the call site: it runs ONCE when the followed operation
+ *  succeeds, whether or not its window was on screen at the time. Hiding a window leaves the container
+ *  work running, and whatever the caller does about that success — a toast, a refresh, closing the flow
+ *  that started it — must not depend on a dialog the person may have dismissed. It is read at fire time,
+ *  like the dialog's own callback: every call site passes an inline arrow. */
+export function useEnvironmentOperationWindow(onSettled?: (settled: { operationId: string; projectId: number }) => void): EnvironmentOperationWindow {
   const [pending, setPending] = useState<{ operationId: string; projectId: number } | null>(null);
   const [open, setOpen] = useState(false);
   const view = useEnvironmentOperation(pending?.operationId ?? null, pending?.projectId);
-  const status = view.operation?.status;
+  const operation = view.operation;
+  const status = operation?.status;
   const running = status ? RUNNING_STATUSES.has(status) : pending !== null;
   const forget = useCallback(() => { setPending(null); setOpen(false); }, []);
+  const settle = useRef(onSettled);
+  settle.current = onSettled;
+  const reported = useRef<string | null>(null);
   useEffect(() => {
-    if (open || !status || RUNNING_STATUSES.has(status)) return;
-    if (status === 'succeeded') setPending(null);
-    else setOpen(true);
-  }, [open, status]);
+    // Only the FOLLOWED operation answers here: the view can still hold the previous one for a render
+    // after a new follow, and settling on that would forget the operation just started.
+    if (!pending || !operation || operation.id !== pending.operationId || RUNNING_STATUSES.has(operation.status)) return;
+    if (operation.status === 'succeeded') {
+      if (reported.current !== operation.id) {
+        reported.current = operation.id;
+        settle.current?.({ operationId: operation.id, projectId: operation.projectId });
+      }
+      // An open window closes itself after its beat, and the call site forgets it there. A hidden one has
+      // nobody left to report to, so the window is done here.
+      if (!open) forget();
+      return;
+    }
+    setOpen(true);
+  }, [pending, operation, open, forget]);
   return {
     ...view,
     pending,
