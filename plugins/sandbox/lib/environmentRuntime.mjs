@@ -251,7 +251,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     // and an indeterminate one. Only a repeat of what was already published is dropped.
     const shape = `${op.status}|${op.step_index}|${op.percent === null}`;
     if (!force && now - publishedAt < 250 && publishedShape.get(op.id) === shape) return;
-    if (['succeeded', 'failed', 'cancelled'].includes(op.status)) publishedShape.delete(op.id);
+    if (['succeeded', 'failed'].includes(op.status)) publishedShape.delete(op.id);
     else publishedShape.set(op.id, shape);
     publishedAt = now;
     try {

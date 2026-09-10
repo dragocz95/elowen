@@ -66,8 +66,6 @@ export function bubblewrapProbe() {
   return probeCache;
 }
 
-export function resetBubblewrapProbe() { probeCache = null; }
-
 function ensurePrivateDir(path) {
   mkdirSync(path, { recursive: true, mode: 0o700 });
   chmodSync(path, 0o700);
@@ -527,8 +525,3 @@ export function assertRelativePath(value) {
   return normalized.replace(/^\.\//, '');
 }
 
-export function relativeInside(root, absolute) {
-  const rel = relative(realpathSync(root), realpathSync(absolute));
-  if (!rel || rel === '..' || rel.startsWith(`..${sep}`) || isAbsolute(rel)) throw new Error('path is outside the workspace');
-  return rel.split(sep).join('/');
-}
