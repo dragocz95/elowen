@@ -179,6 +179,25 @@ describe('durable managed environment lifecycle', () => {
       .map((entry: any) => entry.message).join('\n')).toMatch(/container not running after host reboot/);
   });
 
+  // A container that fails the ownership check (a pre-batch site container, say) is not ours to restart,
+  // and one such row must not end the sweep before the environments behind it are looked at.
+  it('skips an environment whose container cannot be verified and keeps sweeping the rest', async () => {
+    const { runtime, containers, podman, db } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    containers.values().next().value.state = 'created';
+    podman.inspect.mockImplementationOnce(async () => { throw new Error('Container ownership or runtime specification mismatch: labels, mounts'); });
+    podman.start.mockClear();
+
+    await expect(runtime.reconcile()).resolves.toBeUndefined();
+
+    expect(podman.start).not.toHaveBeenCalled();
+    expect(db.prepare("SELECT message FROM p_sandbox_runtime_logs WHERE kind='project' AND resource_id='7' ORDER BY id").all()
+      .map((entry: any) => entry.message).join('\n')).toMatch(/Automatic recovery skipped: .*mismatch: labels, mounts/);
+
+    await runtime.reconcile();
+    expect(podman.start).toHaveBeenCalledOnce();
+  });
+
   it('recreates a missing desired running container from its existing volumes', async () => {
     const { runtime, containers, podman } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();

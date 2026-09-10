@@ -1072,9 +1072,15 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         if (row.kind === 'project' && (!rootOf(row) || releasingAdoptions.has(Number(row.resource_id)))) continue;
         const spec = specFor(row.spec);
         if (inventory.get(spec.name) === 'running') continue;
-        const observed = await podman.inspect(spec);
-        if (observed?.state === 'running') continue;
-        await queueAutomaticRecovery(row, observed);
+        // A container this runtime cannot verify (a mismatched specification, a Podman error) is not a
+        // recovery candidate, and it must not stop the sweep for every other environment either.
+        try {
+          const observed = await podman.inspect(spec);
+          if (observed?.state === 'running') continue;
+          await queueAutomaticRecovery(row, observed);
+        } catch (cause) {
+          store.log(row.kind, row.resource_id, `Automatic recovery skipped: ${cause.message}`);
+        }
       }
       for (const op of store.operations()) {
         if (disposed) break;
