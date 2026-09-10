@@ -149,6 +149,21 @@ describe('plugin response bodies stream instead of being buffered', () => {
   // behind per request is how a long-running daemon accumulates them. Asserted against the mapper
   // directly: a Request copies the signal it is given, so a listener count taken from outside would be
   // counting the copy's own bookkeeping instead of this one.
+  // A proxied runtime answers a conditional request with 304 and an empty byte body (the sites
+  // gateway buffers whatever the container returned); the Response constructor rejects any body on
+  // a no-body status, so the empty buffer must be dropped instead of surfacing as a 500.
+  it('answers a no-body status with headers alone whatever body shape the plugin handed over', () => {
+    for (const body of [new Uint8Array(0), '', { ok: true }] as const) {
+      const res = pluginResponse(
+        { status: 304, headers: { etag: 'W/"1"' }, body },
+        { method: 'GET', signal: new AbortController().signal, onStreamError: () => {} },
+      );
+      expect(res.status).toBe(304);
+      expect(res.headers.get('etag')).toBe('W/"1"');
+      expect(res.body).toBeNull();
+    }
+  });
+
   it('drops its abort listener once the body has been read to the end', async () => {
     const controller = new AbortController();
     const res = pluginResponse(

@@ -76,19 +76,21 @@ export function pluginResponse(
   const status = (res.status ?? 200) as ContentfulStatusCode;
   const headers = pluginResponseHeaders(res.headers);
   const body = res.body;
+  // HEAD keeps the GET's status and headers — content-length included — and carries no body, so a
+  // stream source is cancelled here rather than handed to a writer that must not write it. A status
+  // that carries no body at all is the same case whatever the body's shape (a proxied 304 arrives as
+  // an empty buffer): the Response constructor rejects one, and the throw would surface as a 500 and
+  // strand a plugin's open file with nobody left holding a handle to close it.
+  if (body instanceof ReadableStream && (ctx.method === 'HEAD' || NO_BODY_STATUS.has(status))) {
+    void body.cancel().catch(() => {});
+    return new Response(null, { status, headers });
+  }
+  if (NO_BODY_STATUS.has(status)) return new Response(null, { status, headers });
   if (body === undefined || typeof body === 'string') return new Response(body ?? '', { status, headers });
   if (body instanceof Uint8Array) {
     return new Response(body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) as ArrayBuffer, { status, headers });
   }
   if (body instanceof ReadableStream) {
-    // HEAD keeps the GET's status and headers — content-length included — and carries no body, so the
-    // source is cancelled here rather than handed to a writer that must not write it. A status that
-    // carries no body at all is the same case: the Response constructor rejects one, and the throw
-    // would strand the plugin's open file with nobody left holding a handle to close it.
-    if (ctx.method === 'HEAD' || NO_BODY_STATUS.has(status)) {
-      void body.cancel().catch(() => {});
-      return new Response(null, { status, headers });
-    }
     return new Response(requestScopedStream(body as ReadableStream<Uint8Array>, ctx.signal, ctx.onStreamError), { status, headers });
   }
   if (!headers.has('content-type')) headers.set('content-type', 'application/json; charset=UTF-8');
