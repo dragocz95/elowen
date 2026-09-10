@@ -582,6 +582,9 @@ function useBrainChatController(): BrainChatValue {
     boundSessionRef.current = started.sessionId;
     boundGenRef.current = generation;
     setActiveSessionId(started.sessionId);
+    // A conversation that did not exist before this connect gets the project question, whether the person
+    // asked for a new one or simply opened the chat with nothing to resume.
+    if (started.created) setProjectChoiceOpen(true);
     // The stream's snapshot frame hydrates the transcript (see the `snapshot` listener), so there is no
     // history fetch here. The view is cleared up front only when what it currently shows does NOT belong to
     // the conversation being connected — another conversation, or a read-only preview of a foreign session.
@@ -903,7 +906,6 @@ function useBrainChatController(): BrainChatValue {
    *  composer is what the person lands in (see `closeProjectChoice`). */
   const startNewConversation = async (): Promise<void> => {
     await switchSession({ fresh: true });
-    setProjectChoiceOpen(true);
   };
 
   const submit = async (): Promise<void> => {

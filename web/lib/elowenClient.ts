@@ -241,7 +241,7 @@ export const elowenClient = {
   /** `identity` claims the tab's stable client id + the new start generation on the selected conversation,
    *  so the daemon fences a network-reordered older selection (mirror of the CLI's start()). */
   brainStart: (opts: { session?: string; fresh?: boolean } = {}, identity?: { client: string; generation: number }) =>
-    req<{ sessionId: string }>('/brain/start', json({ ...opts, surface: 'web', ...(identity ?? {}) })),
+    req<{ sessionId: string; created: boolean }>('/brain/start', json({ ...opts, surface: 'web', ...(identity ?? {}) })),
   /** `bind` threads the bound session + client/generation onto the turn so it lands in THIS client's
    *  conversation regardless of where the server's active pointer moved (mirror of the CLI's send()). */
   /** `mode` stamps the turn's work mode (build/plan/workflow), exactly like the CLI's send(): the daemon

@@ -205,8 +205,10 @@ export class ConversationLifecycle {
    *  `fresh` opens a brand-new one; a bare start with a client `cwd` (the CLI) resolves via
    *  `resolveStartSession` (cwd match, never a conversation another client holds); a bare start without
    *  one (the web dock) keeps following the active pointer. Either way it becomes the user's active
-   *  conversation. Idempotent when the target is already live. */
-  async start(userId: number, opts?: { provider?: string; model?: string; session?: string; fresh?: boolean; cwd?: string; clientId?: string; clientGeneration?: number; surface?: 'web' | 'cli' }): Promise<{ sessionId: string }> {
+   *  conversation. Idempotent when the target is already live. `created` reports that the conversation
+   *  did not exist before this call — every fresh one, and a resume that found nothing and minted the
+   *  default — so a client can ask about the project in both cases, not only after "new conversation". */
+  async start(userId: number, opts?: { provider?: string; model?: string; session?: string; fresh?: boolean; cwd?: string; clientId?: string; clientGeneration?: number; surface?: 'web' | 'cli' }): Promise<{ sessionId: string; created: boolean }> {
     let sessionId: string;
     if (opts?.fresh) sessionId = freshUserSessionId(userId);
     else if (opts?.session) sessionId = this.ownedUserSession(userId, opts.session);
@@ -214,6 +216,7 @@ export class ConversationLifecycle {
     // while an omitted surface preserves the old behavior for older clients.
     else if (opts?.cwd && opts.surface !== 'web') sessionId = this.resolveStartSession(userId, opts.cwd);
     else sessionId = this.activeSessionId(userId);
+    const created = !this.d.store.getSession(sessionId);
     const prevActive = this.d.sessions.activeIdFor(userId);
     // Claim synchronously, before ensureLive's first async boundary. Besides making Ctrl+C during start
     // target this requested conversation, claim() detaches only THIS client's old stream; the guard below
@@ -225,7 +228,7 @@ export class ConversationLifecycle {
     // reordered request must not mutate the active pointer, old-driver cleanup, or spawn state at all.
     if (claim && !claim.accepted) {
       if (claim.closed) throw new Error('client request is no longer current');
-      return { sessionId: claim.sessionId };
+      return { sessionId: claim.sessionId, created: false }; // the newer request owns what it opened
     }
     const claimGeneration = claim?.generation;
     // Opening a blank conversation is also when the previous blank ones stop being worth keeping.
@@ -264,7 +267,7 @@ export class ConversationLifecycle {
       this.d.elicitation.cancelForSession(sessionId, 'client closed during start');
       this.d.sessions.dispose(sessionId);
     }
-    return { sessionId };
+    return { sessionId, created };
   }
 
   /** Validate (or, after a daemon restart, reconstruct) the stable generation binding carried by a bound
