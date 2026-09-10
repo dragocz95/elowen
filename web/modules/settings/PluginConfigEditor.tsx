@@ -25,6 +25,7 @@ import { ProviderPicker } from '../../components/ui/ProviderPicker';
 import { interpolate, useTranslation } from '../../lib/i18n';
 import { useBrand } from '../../lib/brand';
 import { useConfig, useBrainModels, useBrainOauthStatus, useNotificationDestinations, usePlugins, usePluginTools, useProjects } from '../../lib/queries';
+import { chatModelCatalog } from '../../lib/modelProvider';
 import type { BrainModelOption, PluginConfigField, PluginDetail, RolePolicy, McpServerSpec } from '../../lib/types';
 import { RISK_TONE, CONNECTION_KEYS } from './pluginDetail.shared';
 import { numberOutOfBounds, type PluginConfigCommitResult, type PluginConfigDraft } from '../../lib/usePluginConfigDraft';
@@ -676,7 +677,14 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
   // A connected Claude/ChatGPT account exposes no embeddings endpoint, so offering one for an
   // `embeddingModel` field can only ever produce a runtime failure. Same filter the core embedding role
   // uses; every other model field keeps the whole catalog, because a chat completion works there.
-  const embeddingCapableModels = useMemo(() => (brainModels ?? []).filter((m) => m.source !== 'oauth'), [brainModels]);
+  const embeddingCapableModels = useMemo(() => chatModelCatalog(brainModels ?? []).filter((m) => m.source !== 'oauth'), [brainModels]);
+  // Everything that ends in a chat completion sees the chat half of the catalog; a `modelKind` field
+  // takes the other half (see the `model` case).
+  const chatModels = useMemo(() => chatModelCatalog(brainModels ?? []), [brainModels]);
+  const imageModels = useMemo(() => (brainModels ?? []).filter((m) => m.kind === 'image'), [brainModels]);
+  // The provider a `modelKind` picker narrows to is the one this same schema already asks for, so the
+  // field needs no second attribute naming it.
+  const providerFieldKey = useMemo(() => detail.configSchema?.find((f) => f.type === 'provider')?.key, [detail.configSchema]);
   const { values, setValue: set } = draft;
   const [replacingSecrets, setReplacingSecrets] = useState<Set<string>>(new Set());
   const [secretDrafts, setSecretDrafts] = useState<Record<string, string>>({});
@@ -753,9 +761,19 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
       }
       case 'secret':
         return <Input type="password" aria-label={fieldLabel(f)} value={String(values[f.key] ?? '')} onChange={(e) => set(f.key, e.target.value)} autoComplete="off" />;
-      case 'model':
+      case 'model': {
+        if (f.modelKind === 'image') {
+          // Image models of the provider this plugin is pointed at, and only those the account's model
+          // allowlist enables — "enable on the account, then pick here". The value stays the bare model
+          // id the image APIs take, so a config written before the picker existed still resolves, and an
+          // empty value keeps meaning the provider's own default.
+          const provider = providerFieldKey ? String(values[providerFieldKey] ?? '') : '';
+          const offered = provider ? imageModels.filter((m) => m.provider === provider) : imageModels;
+          return <BrainModelField value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} models={offered} title={fieldLabel(f)} subtitle={fieldHint(f)} defaultLabel={t.brain.imageModelDefault} keyOf={(m) => m.model} />;
+        }
         // Brain-only picker: the shared modal/search catalog used by account and cron settings.
-        return <BrainModelField value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} models={brainModels ?? []} title={fieldLabel(f)} subtitle={fieldHint(f)} defaultLabel={t.managePicker.none} allowDefault={false} keyOf={(m) => m.exec} />;
+        return <BrainModelField value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} models={chatModels} title={fieldLabel(f)} subtitle={fieldHint(f)} defaultLabel={t.managePicker.none} allowDefault={false} keyOf={(m) => m.exec} />;
+      }
       case 'embeddingModel':
         // Same shared brain catalog, minus the OAuth accounts that cannot embed at all (see above).
         return <BrainModelField value={String(values[f.key] ?? '')} onChange={(v) => set(f.key, v)} models={embeddingCapableModels} title={fieldLabel(f)} subtitle={fieldHint(f)} defaultLabel={t.managePicker.none} allowDefault={false} keyOf={(m) => m.exec} />;
@@ -778,7 +796,7 @@ export function PluginConfigEditor({ detail, fieldLabel, fieldHint, fieldOptions
       }
       case 'models': {
         const selected = Array.isArray(values[f.key]) ? (values[f.key] as string[]) : [];
-        return <ModelsField label={fieldLabel(f)} hint={fieldHint(f)} models={brainModels ?? []} value={selected} onChange={(v) => set(f.key, v)} />;
+        return <ModelsField label={fieldLabel(f)} hint={fieldHint(f)} models={chatModels} value={selected} onChange={(v) => set(f.key, v)} />;
       }
       case 'timezone':
         return <TimezoneField label={fieldLabel(f)} hint={fieldHint(f)} value={String(values[f.key] ?? '')} onChange={(value) => set(f.key, value)} />;

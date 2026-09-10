@@ -4,7 +4,7 @@ import { ModelIcon } from './ModelIcon';
 import { type ManageSelectionItem } from './ManageSelectionModal';
 import { RowPicker } from './RowPicker';
 import { ProviderIcon, providerMeta } from '../../modules/settings/providers';
-import { execProvider, brainModelId, SOURCE_BADGE, type ProviderId } from '../../lib/modelProvider';
+import { execProvider, brainModelId, chatModelCatalog, SOURCE_BADGE, type ProviderId } from '../../lib/modelProvider';
 import { useBrainModels, useConfig } from '../../lib/queries';
 import { useTranslation } from '../../lib/i18n';
 
@@ -40,7 +40,7 @@ export function BackendPicker({ value, onChange, models, relayLabel, allowRelay 
   // Elowen AI models gated by the global allow-list (what may run as an executor), grouped by their real
   // provider — same rule as ExecutorPicker's `kind='all'` Elowen AI section.
   const allowed = config.data?.allowedExecs;
-  const brainList = (brain.data ?? []).filter((m) => kind === 'brain' || !allowed || allowed.includes(brainModelId(m)));
+  const brainList = chatModelCatalog(brain.data ?? []).filter((m) => kind === 'brain' || !allowed || allowed.includes(brainModelId(m)));
 
   // Worker CLI models (from the preset catalog), grouped by engine; elowen execs live in the brain
   // section, never as workers — mirrors ExecutorPicker.

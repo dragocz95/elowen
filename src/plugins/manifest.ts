@@ -68,6 +68,11 @@ export interface PluginConfigField {
   /** For `provider` fields: restrict the picker to providers of this type (e.g. `openai`), or to any of
    *  several — the image plugins take an API-key endpoint or the connected ChatGPT account. */
   providerType?: string | string[];
+  /** For `model` fields: offer the account's IMAGE models instead of its chat models, narrowed to the
+   *  provider chosen in this schema's `provider` field and to what the account's allowlist enables. Such
+   *  a field stores the bare model id the image APIs take, and empty means the provider's default.
+   *  An older core does not know this attribute, ignores it and renders the ordinary model picker. */
+  modelKind?: 'image';
   /** Choices for `enum`/`multiSelect` fields. */
   options?: { value: string; label: string }[];
   /** Syntax mode for `code` fields (e.g. `js`, `python`). */
@@ -295,6 +300,7 @@ const ConfigFieldSchema = Type.Object({
   browse: Type.Optional(Type.Literal('directory')),
   default: Type.Optional(Type.Union([Type.String(), Type.Number(), Type.Boolean(), Type.Array(Type.String())])),
   providerType: Type.Optional(Type.Union([Type.String(), Type.Array(Type.String())])),
+  modelKind: Type.Optional(Type.Literal('image')),
   options: Type.Optional(Type.Array(Type.Object({
     value: Type.String(),
     label: Type.String(),

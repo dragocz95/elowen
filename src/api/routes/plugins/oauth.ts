@@ -1,5 +1,6 @@
 import { OAUTH_BUILTIN } from '../../../brain/providers.js';
 import { oauthBuiltinCatalog } from '../../../brain/models.js';
+import { oauthImageCatalog } from '../../../brain/imageService.js';
 import type { ElowenApp, RouteContext } from '../../context.js';
 
 /** ── Brain provider OAuth (admin): connect an Anthropic / GitHub Copilot / OpenAI account. ──
@@ -23,7 +24,9 @@ export function registerBrainOAuthRoutes(app: ElowenApp, ctx: RouteContext): voi
     if (notAdmin(c)) return c.json({ error: 'forbidden' }, 403);
     const type = c.req.param('type');
     if (!oauthProviderOf(type)) return c.json({ error: 'unknown oauth provider' }, 404);
-    return c.json({ models: await oauthBuiltinCatalog(type) });
+    // `imageModels` marks the subset the picker badges as image models: they enable through the same
+    // allowlist as the chat models, but only an image plugin may pick one.
+    return c.json({ models: await oauthBuiltinCatalog(type), imageModels: oauthImageCatalog(type) });
   });
 
   app.post('/brain/oauth/:type/start', (c) => {

@@ -10,6 +10,7 @@ type PlatformLinks = Partial<Record<PlatformLinkKey, string>>;
 // the autosave, so the order it seeds and saves cannot drift from the order the user sees.
 import { PlatformLinksCard, PLATFORM_LINK_ORDER } from './PlatformLinksCard';
 import { useMe, useMyCliSettings, useBrainModels, usePluginUi, useUserPluginConfigs } from '../../lib/queries';
+import { chatModelCatalog } from '../../lib/modelProvider';
 import { useUpdateMe, useUploadAvatar, useChangePassword, useSaveMyCliSettings } from '../../lib/mutations';
 import { Avatar } from '../../components/ui/Avatar';
 import { Badge } from '../../components/ui/Badge';
@@ -295,7 +296,9 @@ export function AccountView() {
   const restricted = u.allowed_execs.length > 0;
   // Elowen AI chat models honour the user's personal allow-list even for an administrator viewing their
   // own Account; brainModels is already per-user-scoped server-side for non-admins.
-  const elowenModels = (brainModels.data ?? []).filter((m) => !restricted || u.allowed_execs.includes(m.exec));
+  // Every model surface below is a chat one (primary model, vision, compaction), so the account's image
+  // models are not part of it.
+  const elowenModels = chatModelCatalog(brainModels.data ?? []).filter((m) => !restricted || u.allowed_execs.includes(m.exec));
 
   const onFile = (e: React.ChangeEvent<HTMLInputElement>) => {
     const f = e.target.files?.[0];

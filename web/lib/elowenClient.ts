@@ -386,7 +386,8 @@ export const elowenClient = {
   /** Subscription usage for every connected OAuth account, keyed by pi provider id (`openai-codex`,
    *  `kimi-coding`). Powers the per-account usage rail in Settings → Brain. */
   brainRateLimitsAll: () => req<Record<string, ProviderUsage>>('/brain/rate-limits/all'),
-  brainOauthCatalog: (type: string) => req<{ models: string[] }>(`/brain/oauth/${encodeURIComponent(type)}/catalog`),
+  /** `imageModels` is the subset of `models` the account serves on its image endpoint. Absent on an older daemon. */
+  brainOauthCatalog: (type: string) => req<{ models: string[]; imageModels?: string[] }>(`/brain/oauth/${encodeURIComponent(type)}/catalog`),
   brainProviderProbe: (body: { baseUrl: string; apiKey?: string; id?: string }) => req<{ models: string[] }>('/brain/providers/probe', { method: 'POST', body: JSON.stringify(body) }),
   /** Every provider the native (hosted) tool search can apply to, connected OAuth accounts included.
    *  `enabled` is the operator switch, `verifiable` marks the Azure deployments whose native search the

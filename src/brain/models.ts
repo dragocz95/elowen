@@ -4,6 +4,7 @@ import type { BrainProviderEntry, BrainRuntimeConfig } from './providers.js';
 import { buildBrainRegistry, inMemoryModelRuntime, openAiApiFor, registryProviderName, resolveBrainModel, OAUTH_BUILTIN, DEFAULT_CONTEXT_WINDOW, DEFAULT_MAX_OUTPUT_TOKENS, clampOutputTokens } from './providers.js';
 import { catalogModelVision, inferredModelCapabilities, modelCapabilities } from './modelCapabilities.js';
 import { resolveFastModeRoute } from './fastMode.js';
+import { isImageModelId, oauthImageCatalog } from './imageService.js';
 
 /** One pickable model for the account UI dropdown, grouped by the provider entry it runs through.
  *  `source` marks how the provider authenticates (OAuth account / API key / relay fallback).
@@ -32,6 +33,11 @@ export interface BrainModelOption {
    *  which a picker must treat as selectable (fail-open) rather than as text-only — every `openai-codex`
    *  model lands here. Only an explicit `false` is a catalogued text-only model. */
   vision?: boolean;
+  /** `'image'` marks a model the provider serves on its IMAGE endpoint. It belongs to the same
+   *  per-account allowlist as the chat models — that is the one mechanism an operator enables models
+   *  with, and an image plugin may only pick what is enabled there — but the chat APIs reject it, so no
+   *  chat picker and no conversation/helper/vision/compaction role may offer it. Absent = a chat model. */
+  kind?: 'image';
 }
 
 const FETCH_TTL_MS = 60_000;
@@ -82,13 +88,14 @@ export async function fetchOpenAiModels(p: BrainProviderEntry, fetchImpl: typeof
 /** Clear the /models fetch cache (tests). */
 export function clearModelsCache(): void { cache.clear(); }
 
-/** The full built-in pi-ai catalog for one OAuth provider type (e.g. 'oauth-anthropic') — what the
- *  account COULD serve, regardless of any manual selection. Feeds the settings model picker. */
+/** The full catalog for one OAuth provider type (e.g. 'oauth-anthropic') — what the account COULD serve,
+ *  regardless of any manual selection. Feeds the settings model picker, so it carries the account's chat
+ *  models AND its image models; `oauthImageCatalog()` names which of them are the image ones. */
 export async function oauthBuiltinCatalog(type: string): Promise<string[]> {
   const builtin = OAUTH_BUILTIN[type];
   if (!builtin) return [];
   const registry = buildBrainRegistry({ providers: [] }, await inMemoryModelRuntime());
-  return registry.getAll().filter((m) => m.provider === builtin).map((m) => m.id);
+  return [...registry.getAll().filter((m) => m.provider === builtin).map((m) => m.id), ...oauthImageCatalog(type)];
 }
 
 /** Aggregate the pickable models across every configured provider: manual lists first; `openai`
@@ -130,6 +137,10 @@ export async function listBrainModels(cfg: BrainRuntimeConfig, fetchImpl: typeof
         // Carry the catalog's own window across: dropping it left every model of an unlisted OAuth account
         // showing the generic placeholder instead of what it actually serves.
         entries = registry.getAll().filter((m) => m.provider === builtin).map((m) => ({ id: m.id, contextWindow: m.contextWindow }));
+        // The account's image models are not pi-ai descriptors (the Responses API rejects them), so the
+        // registry cannot carry them. They are still models of this account, and the allowlist is one
+        // list, so an unselected account offers them exactly like the rest of its catalog.
+        entries.push(...oauthImageCatalog(p.type).map((id) => ({ id })));
       }
     }
     const toOption = (e: FetchedModel): BrainModelOption => {
@@ -165,6 +176,7 @@ export async function listBrainModels(cfg: BrainRuntimeConfig, fetchImpl: typeof
         } : {}),
         ...(fastAvailable ? { fastAvailable: true } : {}),
         ...(visionKnown !== undefined ? { vision: visionKnown } : {}),
+        ...(isImageModelId(p.type, e.id) ? { kind: 'image' as const } : {}),
         ...(p.id === defaultProvider && e.id === defaultModel ? { default: true } : {}),
       };
     };

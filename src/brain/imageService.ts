@@ -35,6 +35,24 @@ export const OPENAI_CODEX_IMAGE_MODELS = [
   'gpt-image-1.5',
 ] as const;
 
+/** Whether a configured provider's model id names an IMAGE model rather than a chat model. The account
+ *  model list carries both, marked apart by `BrainModelOption.kind`, so the same allowlist decides what
+ *  an image plugin may pick.
+ *
+ *  The ChatGPT account has the fixed catalog above, and that list is also what a stored id is validated
+ *  against. An API-key OpenAI endpoint needs no catalog of its own: it already advertises its image
+ *  models in the same `/models` answer as its chat models, and OpenAI names every one of them
+ *  `gpt-image-*`, so that prefix is the recognition rule there. */
+export function isImageModelId(providerType: string, id: string): boolean {
+  if (providerType === 'oauth-openai-codex') return (OPENAI_CODEX_IMAGE_MODELS as readonly string[]).includes(id);
+  return providerType === 'openai' && id.startsWith('gpt-image');
+}
+
+/** The image models a connected OAuth account of `type` serves, for the account's model allowlist. */
+export function oauthImageCatalog(type: string): string[] {
+  return type === 'oauth-openai-codex' ? [...OPENAI_CODEX_IMAGE_MODELS] : [];
+}
+
 /** Image models are slow; a generation regularly takes tens of seconds. */
 const DEFAULT_TIMEOUT_MS = 120_000;
 
