@@ -116,4 +116,14 @@ describe('loadAgentRegistry', () => {
   it('returns an empty map when the dirs do not exist', () => {
     expect(loadAgentRegistry({ builtinDir: '/no/such/dir', userDir: undefined }).size).toBe(0);
   });
+
+  it('ships the built-in types with the tool scope each one needs', () => {
+    const reg = loadAgentRegistry({ builtinDir: join(__dirname, '../../../prompts/agents'), userDir: undefined });
+    expect([...reg.keys()].sort()).toEqual(['explore', 'plan', 'review']);
+    expect(reg.get('explore')?.toolsSpec).toBe('read-only');
+    // plan writes its plan file and review runs the real checks: both need the shell, neither edits code.
+    expect(reg.get('plan')?.toolsSpec).toBe('inherit');
+    expect(reg.get('review')?.toolsSpec).toBe('inherit');
+    expect(reg.get('review')?.body).toContain('you review, you do not fix');
+  });
 });

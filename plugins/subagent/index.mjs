@@ -414,14 +414,14 @@ export function register(ctx) {
     },
   }));
 
-  // The typed sub-agent catalog (built-in explore/plan + user `.md` types), read once at register time so
+  // The typed sub-agent catalog (built-in explore/plan/review + user `.md` types), read once at register time so
   // the tool description can list them. The host resolves the chosen name into the child's role prompt,
   // toolset and permission boundary — the plugin only forwards it.
   const agentTypes = ctx.subagentTypes?.() ?? [];
   const agentTypeLine = agentTypes.length
     ? ' You may run the sub-agent as a named TYPE via subagent_type — each carries its own role prompt and toolset. Available types: '
       + agentTypes.map((t) => `"${t.name}" (${t.description})`).join('; ')
-      + '. A read-only type (e.g. explore/plan) gets read-only tools plus the non-destructive shell clamp no matter what you hold. Omit subagent_type for a generic sub-agent that inherits your own tools.'
+      + '. A read-only type (e.g. explore) gets read-only tools plus the non-destructive shell clamp no matter what you hold. Omit subagent_type for a generic sub-agent that inherits your own tools.'
     : '';
 
   ctx.registerTool(defineTool({

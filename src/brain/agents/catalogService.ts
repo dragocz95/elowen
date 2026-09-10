@@ -7,7 +7,7 @@ import { builtinToolMetas } from '../tools/index.js';
 import type { PluginSubagentCatalog, SubagentCatalogEntry, SubagentCatalogResult } from '../../plugins/api.js';
 
 /** The core-owned editor over the typed sub-agent catalog (one `.md` per agent: frontmatter
- *  name/description/tools + a body prompt). Built-in explore/plan ship in dist/prompts/agents and are
+ *  name/description/tools + a body prompt). Built-in explore/plan/review ship in dist/prompts/agents and are
  *  read-only; user agents live next to the DB in <config>/agents. The catalog FORMAT — and therefore
  *  its validation — is core's (agentRegistry parses these files for delegation), so the editor lives
  *  here too; the subagent plugin serves the HTTP surface over it via ctx.host.subagentCatalog(). */

@@ -3,7 +3,7 @@
  * …) that the Amp/Claude-Code prompt format uses with Elowen's own tool names, and resolve the
  * environment conditionals to the branch that matches Elowen's runtime. This lets a prompt author (built-in
  * or a user's own `.md`) write portable prompts without hard-coding our tool names, and keeps the built-in
- * explore/plan prompts readable rather than pre-substituted.
+ * explore/plan/review prompts readable rather than pre-substituted.
  */
 
 /** Placeholder → Elowen tool name. Truth is `src/store/toolRenames.ts` (the snake_case → TitleCase map).
