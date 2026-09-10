@@ -47,7 +47,6 @@ export class ContainerStorage {
 
   async prepare(spec) {
     assertContainerSpec(spec);
-    if (spec.legacy) { await this.#podman.inspectBinding(spec); return; }
     checkedHostPath(spec.storageRoot, { create: true });
     if (spec.resource.kind === 'project') for (const mount of spec.mounts.filter((entry) => entry.type === 'bind')) checkedHostPath(mount.source, { create: true });
     for (const volume of spec.volumes) checkedHostPath(volume.path, { create: true });
@@ -114,7 +113,6 @@ export class ContainerStorage {
 
   async restoreVolumes(sourceSpec, snapshotId, targetSpec) {
     assertContainerSpec(targetSpec);
-    if (targetSpec.legacy) throw new Error('A legacy binding cannot be a restore destination');
     const manifest = await this.readSnapshot(sourceSpec, snapshotId);
     if (sourceSpec.resource.kind !== targetSpec.resource.kind
       || (sourceSpec.resource.id === targetSpec.resource.id && sourceSpec.generation === targetSpec.generation)) throw new Error('Restore needs a new resource or generation');

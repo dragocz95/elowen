@@ -160,14 +160,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const effective = limits(registration.limits);
     return { registration, input: { resource: { kind: 'site', id: registration.siteId }, generation, image: registration.image, network: registration.network,
       workspaceReadOnly: registration.workspaceReadOnly, limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } },
-      binding: { namespace, sitesDataDir: registration.sitesDataDir, sourcePath: registration.sourcePath, brokerDir: registration.brokerDir, ...(registration.legacy ? { legacy: legacyPins(registration.legacy) } : {}) } };
-  }
-  /** Only the pinned engine observations reach the spec. A registration carries `diskSoftMb` with its
-   *  limits, which the closed legacy binding does not accept. */
-  function legacyPins(legacy) {
-    return { containerId: legacy.containerId, imageId: legacy.imageId, volumeMountpoint: legacy.volumeMountpoint,
-      ...(legacy.gitStubPath ? { gitStubPath: legacy.gitStubPath } : {}),
-      ...(legacy.limits ? { limits: { cpus: legacy.limits.cpus, memoryMb: legacy.limits.memoryMb, pidsLimit: legacy.limits.pidsLimit } } : {}) };
+      binding: { namespace, sitesDataDir: registration.sitesDataDir, sourcePath: registration.sourcePath, brokerDir: registration.brokerDir } };
   }
   function specFor(record) {
     const input = { ...record.input, limits: record.creationLimits ?? record.input.limits };
@@ -501,7 +494,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   async function ensureInitialContainer(row, op) {
     const spec = specFor(row.spec);
     let current = await podman.inspect(spec);
-    if (row.spec.containerId || spec.legacy) {
+    if (row.spec.containerId) {
       if (!current) throw error('persistent_container_missing', 'The persistent root filesystem is missing; restore a snapshot explicitly');
       return current;
     }
@@ -521,7 +514,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       row.spec.input.image = await podman.ensureProjectImage(dataDir);
       store.save(row); checkpoint(op, { imageReady: true });
     }
-    if (!row.spec.containerId && !row.spec.binding?.legacy) await storage.prepare(specFor(row.spec));
+    if (!row.spec.containerId) await storage.prepare(specFor(row.spec));
     const current = await ensureInitialContainer(row, op);
     const spec = specFor(row.spec);
     if (row.kind === 'site') await sites.beforeStart(row.resource_id);
@@ -582,7 +575,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     siteSpec: (registration) => specFor(siteRecord(registration, 1)),
     resolveSnapshotImage: (input) => sites?.resolveSnapshotImage?.(input),
   });
-  const siteCleanup = createSiteCleanupService({ podman, store, namespace, siteRecord, normalizeLimits: limits,
+  const siteCleanup = createSiteCleanupService({ store, siteRecord, normalizeLimits: limits,
     userExists: (id) => stores().usersRead.list().some((user) => user.id === id),
     resolveCleanup: (input) => sites?.resolveCleanup?.(input),
   });
@@ -597,7 +590,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       return;
     }
     if (kind === 'prepare') {
-      if (!row.spec.containerId && !spec.legacy) await storage.prepare(spec);
+      if (!row.spec.containerId) await storage.prepare(spec);
       const current = await ensureInitialContainer(row, op);
       row.state = current?.state === 'running' ? 'running' : 'stopped';
       row.desired_state = row.state; store.save(row); return;
@@ -607,7 +600,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       await stopRow(row);
       if (await podman.inspect(spec)) await podman.remove(spec);
       for (const volume of spec.volumes) await podman.removeVolume(spec, volume.component);
-      if (!spec.legacy) await podman.removeGenerationStorage(spec);
+      await podman.removeGenerationStorage(spec);
       row.state = 'deleted'; row.desired_state = 'deleted'; store.save(row); return;
     }
     if (!sites.resolveArtifact) throw error('site_artifact_missing', 'Sites did not provide retained artifact resolution');
@@ -702,7 +695,6 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         next.input.generation = Math.max(old.generation, Number(reserved?.generation ?? 0)) + 1;
         next.input.image = manifest.image.reference; next.creationLimits = next.input.limits;
         delete next.containerId;
-        if (next.binding?.legacy) delete next.binding.legacy;
         checkpoint(op, { newSpec: next });
       }
       let target = specFor(op.checkpoint.newSpec);
@@ -783,7 +775,6 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         const owned = specFor(recipe);
         for (const volume of owned.volumes) await podman.removeVolume(owned, volume.component);
       }
-      if (row.kind === 'site') await podman.removeOrphanLegacySiteData(spec);
       await podman.removeStorage(spec);
       checkpoint(op, { storageRemoved: true });
       store.transaction(() => {
@@ -942,11 +933,6 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       if (!authority || typeof authority.resolve !== 'function' || typeof authority.beforeStart !== 'function' || typeof authority.afterStop !== 'function') throw error('invalid_sites_authority', 'A complete trusted Sites authority is required');
       sites = authority;
     },
-    async discoverSiteEnvironment(input) {
-      const registration = await authorize('site', input.siteId, input.accountUserId, true);
-      const record = siteRecord(registration, 1);
-      return await podman.discoverLegacySite(record.input, { namespace, sitesDataDir: registration.sitesDataDir, sourcePath: registration.sourcePath, brokerDir: registration.brokerDir });
-    },
     async registerSiteEnvironment(input) {
       account(input.accountUserId, true);
       const registration = await authorize('site', input.siteId, input.accountUserId, true);
@@ -957,18 +943,17 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       if (stores().projects.get(registration.projectId)?.lifecycle === 'deleting') throw error('project_deleting', 'A deleting Project cannot acquire a new published Site');
       if (store.active('site', input.siteId)) throw error('site_busy', 'The previous Site lifecycle operation has not completed');
       const record = siteRecord(registration, existing ? existing.generation + 1 : 1);
-      const actual = registration.legacy ? await podman.inspectBinding(specFor(record)) : null;
       const intent = registration.initialIntent;
       if (intent && (!['running', 'stopped'].includes(intent.desiredState) || ![null, 'start', 'stop', 'restart'].includes(intent.pendingAction)
-        || (intent.restartSequence !== undefined && (!Number.isSafeInteger(intent.restartSequence) || intent.restartSequence < 0)))) throw error('invalid_handover_intent', 'Invalid legacy lifecycle checkpoint');
+        || (intent.restartSequence !== undefined && (!Number.isSafeInteger(intent.restartSequence) || intent.restartSequence < 0)))) throw error('invalid_handover_intent', 'Invalid Site lifecycle checkpoint');
       return store.transaction(() => {
         const raced = store.get('site', input.siteId);
         if (raced && raced.state !== 'deleted') return view(raced);
         const row = raced ?? store.insert('site', input.siteId, registration.projectId, record, effective);
         row.spec = record; row.generation = record.input.generation; row.limits = effective; row.error = null;
-        row.state = actual ? actual.state === 'running' ? 'running' : 'stopped' : 'unprovisioned';
-        row.desired_state = intent?.desiredState ?? (actual ? row.state : 'running');
-        const pending = intent?.pendingAction ?? (intent && ((row.desired_state === 'running' && row.state !== 'running') || (row.desired_state === 'stopped' && row.state === 'running')) ? row.desired_state === 'running' ? 'start' : 'stop' : null);
+        row.state = 'unprovisioned';
+        row.desired_state = intent?.desiredState ?? 'running';
+        const pending = intent?.pendingAction ?? (intent && row.desired_state === 'running' ? 'start' : null);
         if (pending) {
           store.enqueue(row, input.accountUserId, { kind: pending }, `handover:${row.generation}:${intent.restartSequence ?? 0}`);
           if (pending !== 'stop') row.state = 'starting';

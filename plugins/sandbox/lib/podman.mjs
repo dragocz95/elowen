@@ -4,7 +4,7 @@ import { userInfo } from 'node:os';
 import { lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { PROJECT_BASE_IMAGE_TAG, PROJECT_CONTAINERFILE } from './containerBaseImage.mjs';
-import { assertContainerSpec, executionUnit, hostPath, resourceToken, snapshotReference, volumeLabels, withContainerLimits, createLegacySiteSpec } from './containerSpec.mjs';
+import { assertContainerSpec, executionUnit, hostPath, resourceToken, snapshotReference, volumeLabels, withContainerLimits } from './containerSpec.mjs';
 import { checkedHostPath } from './containerPaths.mjs';
 import { COMPLETION_CWD_LIMIT, completionArtifact, completionPrelude, parseCompletionCwd } from './managedCompletion.mjs';
 
@@ -119,27 +119,6 @@ export class SpawnExecutor {
 
 function labelsMatch(actual, expected) {
   return actual && Object.entries(expected).every(([key, value]) => actual[key] === value);
-}
-/** What an existing Site container IS, read from the engine at handover: the Git-stub bind source it
- * actually carries and the cgroup limits it actually runs under. Both are pinned into the legacy
- * binding so adoption compares the container against itself instead of against a layout or a
- * configuration that changed after it was created. Anything unreadable stays underived, which leaves
- * the strict derived expectation in place. */
-function legacyShape(container) {
-  const shape = {};
-  const stub = (container.Mounts ?? []).find((mount) => mount.Destination === '/workspace/.git');
-  if (stub?.Type === 'bind' && typeof stub.Source === 'string') shape.gitStubPath = stub.Source;
-  const host = container.HostConfig ?? {};
-  const cpus = host.NanoCpus > 0 ? host.NanoCpus / 1e9 : host.CpuPeriod > 0 ? host.CpuQuota / host.CpuPeriod : 0;
-  const memoryMb = host.Memory / (1024 * 1024);
-  if (cpus > 0 && Number.isSafeInteger(memoryMb) && memoryMb > 0 && Number.isSafeInteger(host.PidsLimit) && host.PidsLimit > 0) {
-    shape.limits = { cpus, memoryMb, pidsLimit: host.PidsLimit };
-  }
-  return shape;
-}
-function legacyLabelsMatch(labels, siteId) {
-  return labels?.['io.elowen.site'] === siteId
-    && Object.keys(labels).every((key) => !key.startsWith('io.elowen.') || key === 'io.elowen.site');
 }
 function manyJson(result, count) {
   if (result.truncated) throw new Error('Podman inspection output exceeded its bound');
@@ -269,8 +248,6 @@ export class PodmanClient {
     const cpus = host?.NanoCpus > 0 ? host.NanoCpus / 1e9 : host?.CpuPeriod > 0 ? host.CpuQuota / host.CpuPeriod : 0;
     if (!/^[a-f0-9]{64}$/.test(row.Id) || (spec.expectedId && row.Id !== spec.expectedId) || row.Name?.replace(/^\//, '') !== spec.name
       || !labelsMatch(row.Config?.Labels, spec.labels) || row.ImageName !== spec.image || !mountsMatch || !networkMatches
-      || (spec.legacy && (row.Id !== spec.legacy.containerId || String(row.Image).replace(/^sha256:/, '') !== spec.legacy.imageId.replace(/^sha256:/, '')
-        || !legacyLabelsMatch(row.Config?.Labels, spec.resource.id)))
       || host.Privileged !== false || host.ReadonlyRootfs !== false
       || (host.CapAdd && host.CapAdd.length !== 0) || (host.Devices && host.Devices.length !== 0)
       || (host.SecurityOpt && host.SecurityOpt.length !== 0)
@@ -292,15 +269,11 @@ export class PodmanClient {
     const container = await this.inspect(spec);
     if (!container) throw new Error('Container is missing');
     await this.#inspectVolumes(spec, spec.volumes.map((volume) => volume.component));
-    if (spec.legacy) {
-      for (const mount of spec.mounts.filter((entry) => entry.type === 'bind')) checkedHostPath(mount.source, { file: mount.target === '/workspace/.git' });
-    }
     return container;
   }
 
   async create(spec) {
     this.#assertScope(spec);
-    if (spec.legacy) throw new Error('Legacy bindings cannot create or recreate a container');
     if (spec.expectedId) throw new Error('An immutable container binding cannot be recreated');
     await this.#assertRootless();
     if (await this.#exists('container', spec.name)) throw new Error('Container already exists; lifecycle adoption must validate it');
@@ -345,11 +318,8 @@ export class PodmanClient {
    *  so the single and batched inspections below hold every volume to exactly the same bar. */
   #verifyVolume(spec, component, row) {
     const volume = this.#volumeFor(spec, component);
-    const storageMatches = spec.legacy
-      ? row.Mountpoint === volume.path && row.Options != null && Object.keys(row.Options).length === 0 && legacyLabelsMatch(row.Labels, spec.resource.id)
-      : row.Options?.type === 'none' && row.Options?.o === 'bind' && row.Options?.device === volume.path;
+    const storageMatches = row.Options?.type === 'none' && row.Options?.o === 'bind' && row.Options?.device === volume.path;
     if (row.Name !== volume.name || !labelsMatch(row.Labels, volumeLabels(spec, component)) || row.Driver !== 'local' || !storageMatches) throw new Error('Volume ownership or storage specification mismatch');
-    if (spec.legacy) checkedHostPath(volume.path);
     return volume;
   }
 
@@ -378,7 +348,6 @@ export class PodmanClient {
 
   async ensureVolume(spec, component) {
     const volume = this.#volumeFor(spec, component);
-    if (spec.legacy) return await this.inspectVolume(spec, component);
     checkedHostPath(volume.path);
     if (await this.#exists('volume', volume.name)) return await this.inspectVolume(spec, component);
     const args = ['volume', 'create'];
@@ -404,7 +373,6 @@ export class PodmanClient {
     resourceToken(snapshotId);
     this.#volumeFor(sourceSpec, component);
     const target = this.#volumeFor(targetSpec, component);
-    if (targetSpec.legacy) throw new Error('A legacy binding cannot be a restore destination');
     if (sourceSpec.resource.kind !== targetSpec.resource.kind
       || (sourceSpec.resource.id === targetSpec.resource.id && sourceSpec.generation === targetSpec.generation)) throw new Error('Restore needs a new resource or generation');
     if (await this.#exists('container', targetSpec.name)) throw new Error('Restore destination already exists');
@@ -498,19 +466,6 @@ export class PodmanClient {
     throw new Error('Environment storage removal was not verified');
   }
 
-  async discoverLegacySite(input, binding) {
-    if (input.resource.kind !== 'site') throw new Error('Site identity is required');
-    resourceToken(input.resource.id);
-    const name = `elowen-site-${input.resource.id}`;
-    if (!await this.#exists('container', name)) return null;
-    const container = oneJson(await this.#run(['inspect', name]));
-    const volume = oneJson(await this.#run(['volume', 'inspect', `${name}-data`]));
-    const pins = { containerId: container.Id, imageId: container.Image, volumeMountpoint: volume.Mountpoint, ...legacyShape(container) };
-    const spec = createLegacySiteSpec(input, { ...binding, ...pins });
-    const verified = await this.#owned(spec);
-    return { ...pins, state: verified.state === 'running' ? 'running' : verified.state === 'paused' ? 'paused' : 'stopped' };
-  }
-
   async ensureSiteImage(dataDir, recipe) {
     if (!recipe || typeof recipe.tag !== 'string' || !/^localhost\/[a-z0-9][a-zA-Z0-9._/:-]{1,240}$/.test(recipe.tag)
       || !recipe.files || typeof recipe.files.Containerfile !== 'string') throw new Error('A fixed Sites image recipe is required');
@@ -543,20 +498,6 @@ export class PodmanClient {
     const row = oneJson(await this.#run(['image', 'inspect', reference]));
     if (!/^(sha256:)?[a-f0-9]{64}$/.test(row.Id) || !labelsMatch(row.Labels ?? row.Config?.Labels, { 'io.elowen.site': spec.resource.id })) throw new Error('Retained Sites image ownership mismatch');
     return row.Id;
-  }
-
-  async removeOrphanLegacySiteData(spec) {
-    this.#assertScope(spec);
-    if (spec.resource.kind !== 'site') throw new Error('Sites lifecycle authority is required');
-    const name = `elowen-site-${spec.resource.id}`;
-    if (await this.#exists('container', name)) throw new Error('An unretired legacy Sites container still exists');
-    const volumeName = `${name}-data`;
-    if (!await this.#exists('volume', volumeName)) return;
-    const volume = oneJson(await this.#run(['volume', 'inspect', volumeName]));
-    if (volume.Name !== volumeName || volume.Driver !== 'local' || !volume.Options || Object.keys(volume.Options).length || !legacyLabelsMatch(volume.Labels, spec.resource.id)) throw new Error('Orphan legacy volume ownership mismatch');
-    checkedHostPath(volume.Mountpoint);
-    await this.#run(['volume', 'rm', volumeName]);
-    if (await this.#exists('volume', volumeName)) throw new Error('Legacy volume cleanup was not verified');
   }
 
   async inspectRetainedSiteImage(spec, reference, imageId) {
@@ -594,7 +535,6 @@ export class PodmanClient {
 
   async removeGenerationStorage(spec) {
     this.#assertScope(spec);
-    if (spec.legacy) throw new Error('Legacy storage cannot be staging storage');
     if (await this.inspect(spec)) throw new Error('Remove the staging container before its storage');
     for (const volume of spec.volumes) if (await this.#exists('volume', volume.name)) throw new Error('A volume still owns staging storage');
     const directory = join(spec.storageRoot, 'storage', String(spec.generation));

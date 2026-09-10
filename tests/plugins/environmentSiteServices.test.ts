@@ -17,7 +17,7 @@ function siteRecord(registration: any, generation: number) {
   const effective = { cpus: 1, memoryMb: 1024, pidsLimit: 512, diskSoftMb: 10240, ...registration.limits };
   return { registration, input: { resource: { kind: 'site', id: registration.siteId }, generation, image: registration.image, network: registration.network,
     workspaceReadOnly: registration.workspaceReadOnly, limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } },
-  binding: { namespace: 'elowen', sitesDataDir: registration.sitesDataDir, sourcePath: registration.sourcePath, brokerDir: registration.brokerDir, ...(registration.legacy ? { legacy: registration.legacy } : {}) } };
+  binding: { namespace: 'elowen', sitesDataDir: registration.sitesDataDir, sourcePath: registration.sourcePath, brokerDir: registration.brokerDir } };
 }
 
 function setup() {
@@ -51,7 +51,6 @@ function setup() {
       if (!owned || owned.site !== spec.resource.id) throw error('retained_ownership', 'Retained Sites image ownership mismatch');
       return owned.id;
     }),
-    discoverLegacySite: vi.fn(async (): Promise<any> => null),
   };
   const recipes: Record<string, any> = {
     base: { tag: 'localhost/elowen-sites-base:fixed', files: { Containerfile: 'FROM scratch\n' } },
@@ -75,7 +74,7 @@ function setup() {
     resolveSnapshotImage: (input: any) => authority.resolveSnapshotImage?.(input),
   });
   const cleanupService = createSiteCleanupService({
-    podman: podman as any, store, namespace: 'elowen',
+    store,
     resolveCleanup: (input: any) => authority.resolveCleanup?.(input),
     userExists: (id: number) => users.has(id),
     siteRecord, normalizeLimits: (value: any) => {
@@ -208,17 +207,14 @@ describe('extracted removed-account Site cleanup services', () => {
     await expect(cleanupService.request({ siteId: 'BAD_ID', removedAccountUserId: 2 })).rejects.toMatchObject({ message: /resource token/i });
   });
 
-  it('establishes deletion intent with a NULL actor from verified legacy adoption metadata', async () => {
-    const { cleanupService, podman, db, authority, users, registration } = setup();
+  it('establishes deletion intent with a NULL actor for a Site the runtime never registered', async () => {
+    const { cleanupService, db, authority, users, registration } = setup();
     users.delete(2);
     authority.resolveCleanup.mockResolvedValue(registration);
-    podman.discoverLegacySite.mockResolvedValue({ containerId: 'c'.repeat(64), imageId: `sha256:${'e'.repeat(64)}`, volumeMountpoint: '/tmp/env-site-services/volumes/demo', state: 'stopped' });
     const op = await cleanupService.request({ siteId: 'demo', removedAccountUserId: 2 });
-    expect(podman.discoverLegacySite).toHaveBeenCalledWith(expect.objectContaining({ resource: { kind: 'site', id: 'demo' } }),
-      { namespace: 'elowen', sitesDataDir: '/tmp/env-site-services/sites', sourcePath: '/tmp/env-site-services/sources/demo', brokerDir: '/tmp/env-site-services/brokers/demo' });
     expect(op).toMatchObject({ siteId: 'demo', accountUserId: null, action: { kind: 'delete' }, status: 'pending' });
     const row = db.prepare('SELECT * FROM p_sandbox_runtimes WHERE kind=? AND resource_id=?').get('site', 'demo') as any;
-    expect(JSON.parse(row.spec_json).binding.legacy).toMatchObject({ containerId: 'c'.repeat(64) });
+    expect(JSON.parse(row.spec_json).binding).toEqual({ namespace: 'elowen', sitesDataDir: '/tmp/env-site-services/sites', sourcePath: '/tmp/env-site-services/sources/demo', brokerDir: '/tmp/env-site-services/brokers/demo' });
     expect(row.project_id).toBe(7);
     expect(row.state).toBe('deleting');
     expect(row.desired_state).toBe('deleted');
