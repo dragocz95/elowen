@@ -12,7 +12,7 @@ import { Field } from '../../components/ui/Field';
 import { ConfirmDialog } from '../../components/ui/ConfirmDialog';
 import { ManageSelectionModal, type ManageSelectionItem } from '../../components/ui/ManageSelectionModal';
 import { SelectionSummary } from '../../components/ui/SelectionSummary';
-import { ErrorState, LoadingState } from '../../components/ui/states';
+import { ErrorState, LoadingLine, LoadingState } from '../../components/ui/states';
 
 /** What to call a member: the display name when the account has one, the handle otherwise. */
 const labelOf = (member: ProjectMemberView) => member.name.trim() || member.username;
@@ -96,22 +96,29 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
 
   return (
     <div className="py-3">
-      {isAdmin && assignable.length === 0 ? <p className="text-xs text-muted-foreground">{t.projects.accessEmpty}</p> : (
-        <SelectionSummary
-          // The administrator's wording counts members WITHIN the directory they can see, so an
-          // administrator who reaches the project without an assignment row is not counted against a
-          // total they are not part of. A member sees no directory, so there is no total to state.
-          countText={isAdmin
-            ? t.projects.accessCount.replace('{n}', String(assignable.filter((user) => memberIds.has(user.id)).length)).replace('{total}', String(assignable.length))
-            : plural(s.accessCountMembers, rows.length).replace('{n}', String(rows.length))}
-          samples={rows.slice(0, 3).map((member) => ({ id: String(member.id), label: labelOf(member), icon: <Avatar user={member} size={16} /> }))}
-          moreCount={Math.max(0, rows.length - 3)}
-          onManage={() => setOpen(true)}
-          manageLabel={t.managePicker.manage}
-        />
-      )}
-      {/* The directory is a secondary read: when it fails the summary is still correct, so the failure is
-          reported beside it instead of replacing the whole tab. */}
+      {/* The directory is what the administrator's summary counts, so the summary waits for it. Rendered
+          unconditionally, an empty `assignable` while it is still arriving — or after it failed — would
+          say "no member accounts are available", which is the empty state inventing a reason of its own.
+          A member reads no directory at all and goes straight to the summary. */}
+      {!isAdmin || directory.isSuccess ? (
+        isAdmin && assignable.length === 0 ? <p className="text-xs text-muted-foreground">{t.projects.accessEmpty}</p> : (
+          <SelectionSummary
+            // The administrator's wording counts members WITHIN the directory they can see, so an
+            // administrator who reaches the project without an assignment row is not counted against a
+            // total they are not part of. A member sees no directory, so there is no total to state.
+            countText={isAdmin
+              ? t.projects.accessCount.replace('{n}', String(assignable.filter((user) => memberIds.has(user.id)).length)).replace('{total}', String(assignable.length))
+              : plural(s.accessCountMembers, rows.length).replace('{n}', String(rows.length))}
+            samples={rows.slice(0, 3).map((member) => ({ id: String(member.id), label: labelOf(member), icon: <Avatar user={member} size={16} /> }))}
+            moreCount={Math.max(0, rows.length - 3)}
+            onManage={() => setOpen(true)}
+            manageLabel={t.managePicker.manage}
+          />
+        )
+      ) : directory.isLoading ? <LoadingLine /> : null}
+      {/* A directory that failed is not an empty one, so no count is stated at all: the only figure left
+          would be a zero the reader would take for the truth. The failure is said in the summary's place,
+          with the retry that fixes it, rather than replacing the whole tab. */}
       {isAdmin && directory.isError ? (
         <p role="alert" className="mt-2 flex flex-wrap items-center gap-2 text-xs text-destructive">
           {apiErrorMessage(directory.error)}

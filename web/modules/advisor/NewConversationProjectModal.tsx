@@ -10,7 +10,7 @@ import { Modal, ModalBody } from '../../components/ui/Modal';
 import { ErrorState } from '../../components/ui/states';
 import { ProjectIcon } from '../../components/ui/ProjectIcon';
 import { OperationProgressDialog } from '../../components/ui/OperationProgressDialog';
-import { useEnvironmentOperationWindow } from '../../lib/useEnvironmentOperation';
+import { useEnvironmentOperationWindow, type EnvironmentOperationWindow } from '../../lib/useEnvironmentOperation';
 import { recreatable, requestEnvironmentAction } from '../../lib/environmentActions';
 import { executionRefKey, executionRefOf, type Project, type ProjectExecutionRef } from '../../lib/types';
 import { useBrainChat } from './BrainChatProvider';
@@ -43,14 +43,52 @@ function newConversationDestinations(projects: readonly Project[], isAdmin: bool
  *
  *  The conversation already EXISTS by the time this is on screen: the daemon has picked its default
  *  target (an administrator's host, or the project this account is assigned to), so this modal is a
- *  chance to move it, never a gate in front of chatting. Dismissing it keeps that default. */
+ *  chance to move it, never a gate in front of chatting. Dismissing it keeps that default.
+ *
+ *  The environment a chosen project may still have to start is followed HERE, one level above the
+ *  destination list: that list is done the moment a card is clicked, while the container work it set off
+ *  carries on. Kept inside the dialog, dismissing it threw the operation away — the person landed in the
+ *  composer with no signal that the project they picked was still being built, and no way to learn that
+ *  it had failed. */
 export function NewConversationProjectModal() {
   const { projectChoiceOpen, closeProjectChoice } = useBrainChat();
-  if (!projectChoiceOpen) return null;
-  return <NewConversationProjectDialog onClose={closeProjectChoice} />;
+  const { t } = useTranslation();
+  const { toast } = useToast();
+  const environment = useEnvironmentOperationWindow();
+
+  // The same lifecycle requests the environment's own settings raise. The daemon answers with the
+  // operation that carries them out, which is what the window reports.
+  const dispatch = (action: 'start' | 'recreate') => {
+    const projectId = environment.pending?.projectId;
+    if (projectId === undefined) return;
+    void requestEnvironmentAction(projectId, { kind: action }, environment.operation?.generation)
+      .then((operation) => environment.follow(operation.id, projectId))
+      .catch((error) => toast(apiErrorMessage(error) || t.brainChat.projectPickerFailed, 'error'));
+  };
+
+  return (
+    <>
+      {projectChoiceOpen ? <NewConversationProjectDialog environment={environment} onClose={closeProjectChoice} /> : null}
+      {environment.pending ? (
+        <OperationProgressDialog
+          // Hiding the window is not a cancel: the start carries on without the tab, and a failure reopens
+          // it — the same contract the chat's project picker follows.
+          open={environment.open}
+          title={t.operationProgress.actions[(environment.operation?.action.kind ?? 'start') as keyof typeof t.operationProgress.actions] ?? t.operationProgress.actions.start}
+          operation={environment.operation}
+          logTail={environment.logTail}
+          loadError={environment.loadError}
+          onRetry={() => dispatch('start')}
+          onRecreate={() => dispatch('recreate')}
+          recreatable={recreatable(environment.operation?.error)}
+          onClose={({ running }) => { if (running || environment.running) environment.hide(); else environment.forget(); }}
+        />
+      ) : null}
+    </>
+  );
 }
 
-function NewConversationProjectDialog({ onClose }: { onClose: () => void }) {
+function NewConversationProjectDialog({ environment, onClose }: { environment: EnvironmentOperationWindow; onClose: () => void }) {
   const { t } = useTranslation();
   const s = t.projects;
   const { toast } = useToast();
@@ -73,9 +111,6 @@ function NewConversationProjectDialog({ onClose }: { onClose: () => void }) {
   // with no target to preselect, and the first card is then simply the one arrows and Tab start from —
   // checking it would claim a conversation runs somewhere it does not.
   const hand = chosen ?? destinations[0]?.key ?? null;
-  // The environment the chosen project may still have to start. The daemon answers the switch with it
-  // precisely when the environment is cold, which is the wait nobody else on this screen reports.
-  const environment = useEnvironmentOperationWindow();
 
   const choose = async (destination: Destination) => {
     const session = activeSessionId;
@@ -85,44 +120,16 @@ function NewConversationProjectDialog({ onClose }: { onClose: () => void }) {
       // The same authorized endpoint the chat's project picker uses; the daemon owns whether this
       // account may enter the target.
       const response = await elowenClient.brainSetExecution(destination.ref, session);
-      if (response.operationId && destination.ref.projectId !== undefined) {
-        environment.follow(response.operationId, destination.ref.projectId);
-        return;
-      }
+      // A cold environment answers the switch with the operation that brings it up. The window that
+      // follows it belongs to the level above, so the question is over the moment it is answered: the
+      // person lands in the composer and that window reports the start.
+      if (response.operationId && destination.ref.projectId !== undefined) environment.follow(response.operationId, destination.ref.projectId);
       onClose();
     } catch (error) {
       toast(apiErrorMessage(error) || t.brainChat.projectPickerFailed, 'error');
       setPending(false);
     }
   };
-
-  const dispatch = (action: 'start' | 'recreate') => {
-    const projectId = environment.pending?.projectId;
-    if (projectId === undefined) return;
-    void requestEnvironmentAction(projectId, { kind: action }, environment.operation?.generation)
-      .then((operation) => environment.follow(operation.id, projectId))
-      .catch((error) => toast(apiErrorMessage(error) || t.brainChat.projectPickerFailed, 'error'));
-  };
-
-  // The conversation is already switched by the time this shows: what is left is the environment coming
-  // up, so the choice gives way to the window that reports it. Dismissing either one lands in the
-  // composer, and the start carries on without the tab.
-  if (environment.pending) {
-    return (
-      <OperationProgressDialog
-        open
-        title={t.operationProgress.actions[(environment.operation?.action.kind ?? 'start') as keyof typeof t.operationProgress.actions] ?? t.operationProgress.actions.start}
-        operation={environment.operation}
-        logTail={environment.logTail}
-        loadError={environment.loadError}
-        onRetry={() => dispatch('start')}
-        onRecreate={() => dispatch('recreate')}
-        recreatable={recreatable(environment.operation?.error)}
-        onSettled={onClose}
-        onClose={onClose}
-      />
-    );
-  }
 
   /** Arrows walk the cards and carry focus with them; Enter and Space are the button's own. Both axes
    *  move by one because the cards wrap: a row holds a different number of them at every width. */

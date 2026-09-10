@@ -1,33 +1,16 @@
 'use client';
 import { useEffect, useId, useRef, useState } from 'react';
 import { Loader2 } from 'lucide-react';
-import type { EnvironmentOperation } from '../../../src/shared/wireContract';
+import type { OperationProgressDialogProps } from 'elowen-plugin-ui-kit';
 import { useTranslation } from '../../lib/i18n';
 import { Button } from './Button';
 import { Modal, ModalBody, ModalFooter } from './Modal';
 import { Progress } from './shadcn/progress';
 
-export interface OperationProgressDialogProps {
-  open: boolean;
-  /** What the person asked for, in their words. The dialog adds the step, never the intent. */
-  title: string;
-  operation: EnvironmentOperation | null;
-  logTail?: string[];
-  /** A transport failure of the read that follows the operation, distinct from a failed operation. */
-  loadError?: string | null;
-  /** Run the same intent again. Omitted, the retry action is not offered. */
-  onRetry?: () => void;
-  /** The stale-environment repair. Offered only while `recreatable` holds. */
-  onRecreate?: () => void;
-  recreatable?: boolean;
-  /** `running` says whether the operation was still working when the dialog went away, which is what
-   *  tells the caller to keep following it behind a status chip rather than forget it. */
-  onClose: (info: { running: boolean }) => void;
-  /** Fired once when a succeeded operation closes itself. */
-  onSettled?: () => void;
-  /** How long a success stays on screen before it closes itself. */
-  successDelayMs?: number;
-}
+// The published props are the contract, so they are declared once, in the kit the plugin bundles read —
+// exactly as `ConfirmDialog` does it. A second declaration here would be free to drift from what the
+// bundles type against, and the runtime surface assertion would hide the difference.
+export type { OperationProgressDialogProps } from 'elowen-plugin-ui-kit';
 
 const RUNNING_STATUSES = new Set(['pending', 'running']);
 
@@ -79,12 +62,13 @@ function OpenOperationProgressDialog({
   // The callbacks are read at fire time rather than watched. Every call site passes an inline arrow, so
   // holding them in the dependency list armed the timer against a render and disarmed it on the next
   // one: any parent re-render inside the window cancelled the close and the window then hung on `Done`.
-  const settledRef = useRef(false);
+  // For the same reason there is no "already fired" flag: the effect answers the OPERATION's state, its
+  // cleanup owns the timer, and a setup re-run (Strict Mode's, or `Activity` reactivating the instance)
+  // simply arms it again instead of leaving the window stranded open.
   const settle = useRef<() => void>(() => {});
   settle.current = () => { onSettled?.(); onClose({ running: false }); };
   useEffect(() => {
-    if (!succeeded || settledRef.current) return;
-    settledRef.current = true;
+    if (!succeeded) return;
     const timer = setTimeout(() => settle.current(), successDelayMs);
     return () => clearTimeout(timer);
   }, [succeeded, successDelayMs]);

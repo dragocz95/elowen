@@ -146,9 +146,16 @@ export function ProjectsView() {
   const removeProject = useRemoveProject();
   // Host removal detaches metadata; managed removal requests durable environment teardown.
   const [removing, setRemoving] = useState<Project | null>(null);
-  const deletion = useEnvironmentOperationWindow();
-  // The start a managed project's creation implies, followed in the same shared progress window.
-  const creationStart = useEnvironmentOperationWindow();
+  // What a finished teardown leaves behind, whether or not its window was on screen when it finished: the
+  // register stops showing a project that is gone, and the person is told it happened. Dismissing the
+  // window is not a cancel, so this may not hang off the dialog alone.
+  const deletion = useEnvironmentOperationWindow(({ projectId }) => {
+    setSelectedId((current) => current === projectId ? null : current);
+    toast(t.projects.removed);
+  });
+  // The start a managed project's creation implies, followed in the same shared progress window. Its
+  // success is what makes the new project's environment state true, so the register is re-read.
+  const creationStart = useEnvironmentOperationWindow(() => { void qc.invalidateQueries({ queryKey: ['projects'] }); });
   const removePendingRef = useRef(false);
   const [ctxMenu, setCtxMenu] = useState<ContextMenuState | null>(null);
 
@@ -619,8 +626,7 @@ export function ProjectsView() {
             .then((operation) => deletion.follow(operation.id, id))
             .catch((error) => toast(apiErrorMessage(error), 'error'));
         }}
-        onSettled={() => { const id = deletion.pending?.projectId; setSelectedId((current) => current === id ? null : current); toast(t.projects.removed); }}
-        onClose={deletion.forget}
+        onClose={({ running }) => { if (running || deletion.running) deletion.hide(); else deletion.forget(); }}
       />
 
       <OperationProgressDialog
@@ -636,8 +642,7 @@ export function ProjectsView() {
             .then((operation) => creationStart.follow(operation.id, id))
             .catch((error) => toast(apiErrorMessage(error), 'error'));
         }}
-        onSettled={() => { void qc.invalidateQueries({ queryKey: ['projects'] }); }}
-        onClose={creationStart.forget}
+        onClose={({ running }) => { if (running || creationStart.running) creationStart.hide(); else creationStart.forget(); }}
       />
 
       {/* The contributing bundles run here, and the dialogs their own actions raise render with them. */}
