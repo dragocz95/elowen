@@ -250,6 +250,18 @@ export class PodmanClient {
     return await this.#exists('container', spec.name);
   }
 
+  async containerInventory(namespace) {
+    resourceToken(namespace);
+    const result = await this.#run(['ps', '--filter', `label=io.elowen.namespace=${namespace}`, '--format', '{{.Names}}']);
+    if (result.truncated) throw new Error('Podman container inventory exceeded its bound');
+    const inventory = new Map();
+    for (const name of result.stdout.split('\n').map((entry) => entry.trim()).filter(Boolean)) {
+      resourceToken(name);
+      inventory.set(name, 'running');
+    }
+    return inventory;
+  }
+
   #volumeFor(spec, component) {
     this.#assertScope(spec);
     return volumeFor(spec, component);
