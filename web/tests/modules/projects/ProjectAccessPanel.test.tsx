@@ -4,9 +4,10 @@ import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
 import { createWrapper } from '../../test-utils';
 import { ToastProvider } from '../../../components/ui/Toast';
-import { ManagedProjectMembers } from '../../../modules/projects/ManagedProjectMembers';
+import { ProjectAccessPanel } from '../../../modules/projects/ProjectAccessPanel';
 
 const project = { id: 7, slug: 'shared', path: '', notes: '', icon: '', executionKind: 'managed' as const };
+const hostProject = { ...project, path: '/srv/shared', executionKind: 'host' as const };
 const member = (id: number, username: string, name: string, email: string) => ({ id, username, name, email, avatar: '' });
 /** Which shape the tab asked the membership endpoint for, so a spec can prove it OPTED IN to profiles
  *  rather than quietly depending on the default answer having changed underneath it. */
@@ -23,12 +24,12 @@ const server = setupServer(
 beforeAll(() => server.listen({ onUnhandledRequest: 'error' }));
 afterEach(() => { server.resetHandlers(); requestedViews = []; });
 afterAll(() => server.close());
-function mount() {
+function mount(target: typeof project | typeof hostProject = project) {
   const { wrapper: Wrapper } = createWrapper();
-  render(<Wrapper><ToastProvider><ManagedProjectMembers project={project} /></ToastProvider></Wrapper>);
+  render(<Wrapper><ToastProvider><ProjectAccessPanel project={target} /></ToastProvider></Wrapper>);
 }
 
-describe('managed project membership', () => {
+describe('project membership', () => {
   // This tab used to be a bespoke roster: a heading, a paragraph, one row per person and a Remove button
   // on each. A host project shows a one-line access summary with a Manage button, and a managed project
   // is the same kind of record, so it now shows the same thing built from the same components.
@@ -119,6 +120,26 @@ describe('managed project membership', () => {
     fireEvent.click(dialog.getByRole('button', { name: /Petr Malý/ }));
     fireEvent.click(dialog.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(granted).toEqual([4]));
+  });
+
+  // One People tab serves both kinds of project. What a HOST project does not carry is the environment's
+  // sharing consequence and the invite-by-id path, because there is no environment to hand over and its
+  // reader is an administrator with the directory in front of them.
+  it('states a host project in its own terms, with no environment warning and no invite by id', async () => {
+    server.use(
+      http.get('*/api/auth/me', () => HttpResponse.json({ user: { id: 1, username: 'root', name: 'Root', is_admin: true } })),
+      http.get('*/api/users', () => HttpResponse.json([
+        { id: 3, username: 'dana', name: 'Dana Nováková', email: 'dana@example.test', avatar: '', is_admin: false },
+      ])),
+    );
+    mount(hostProject);
+    expect(await screen.findByText('1 of 1 users have access')).toBeInTheDocument();
+    expect(screen.queryByLabelText('Account ID')).toBeNull();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage' }));
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.queryByText(/all existing project files/)).toBeNull();
+    expect(dialog.getByText(/may use this Project/)).toBeInTheDocument();
   });
 
   it('refreshes membership after revocation succeeds but runtime cleanup fails', async () => {

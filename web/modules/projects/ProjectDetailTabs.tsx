@@ -6,8 +6,8 @@ import { Info, UsersRound } from 'lucide-react';
 import type { Project } from '../../lib/types';
 import type { PluginUiListing } from '../../lib/types';
 import { usePluginUi, useProjectMemoryMembers, useProjectUsers, useUsers } from '../../lib/queries';
-import { useAssignProject, useSetProjectMemoryMembers, useUpdateProject } from '../../lib/mutations';
-import { plural, useTranslation } from '../../lib/i18n';
+import { useSetProjectMemoryMembers, useUpdateProject } from '../../lib/mutations';
+import { useTranslation } from '../../lib/i18n';
 import { PLUGIN_UI_API_VERSION, loadPluginUi } from '../../lib/pluginUi';
 import { pluginLucideIcon } from '../../lib/pluginIcons';
 import { Segmented } from '../../components/ui/Segmented';
@@ -18,7 +18,7 @@ import { SpatialRow } from '../../components/ui/SpatialPrimitives';
 import { Toggle } from '../../components/ui/Toggle';
 import { Avatar } from '../../components/ui/Avatar';
 import { useToast } from '../../components/ui/Toast';
-import { ManagedProjectMembers } from './ManagedProjectMembers';
+import { ProjectAccessPanel } from './ProjectAccessPanel';
 
 type ProjectRegistration = PluginUiRegistration & {
   project?: Record<string, ComponentType<PluginProjectPanelProps>>;
@@ -49,69 +49,6 @@ function PluginProjectPanel({ panel, project }: { panel: ProjectPanel; project: 
   const Component = registration.project?.[panel.id];
   if (!Component) return <ErrorState message={t.pluginUi.settingsUnavailable} />;
   return <Component plugin={panel.entry.name} panelId={panel.id} project={project} surface="project" />;
-}
-
-function ProjectAccessPanel({ project }: { project: Project }) {
-  const { t } = useTranslation();
-  const { toast } = useToast();
-  const users = useUsers();
-  const members = useProjectUsers(project.id);
-  const assign = useAssignProject();
-  const [open, setOpen] = useState(false);
-
-  if (users.isError || members.isError) return <ErrorState message={t.users.loadError} onRetry={() => { void users.refetch(); void members.refetch(); }} />;
-  if (users.isLoading || members.isLoading) return <LoadingState variant="list" />;
-
-  const assignable = (users.data ?? []).filter((user) => !user.is_admin);
-  const selectedIds = new Set(members.data ?? []);
-  const assigned = assignable.filter((user) => selectedIds.has(user.id));
-  const items: ManageSelectionItem[] = assignable.map((user) => ({
-    id: String(user.id),
-    label: user.name || user.username,
-    badges: [{ text: `@${user.username}`, tone: 'muted' }],
-    group: 'members',
-    groupLabel: t.users.member,
-    icon: <Avatar user={user} size={18} />,
-  }));
-
-  const save = async (next: Set<string>) => {
-    const changes = assignable.filter((user) => next.has(String(user.id)) !== selectedIds.has(user.id));
-    try {
-      await Promise.all(changes.map((user) => assign.mutateAsync({
-        userId: user.id,
-        projectId: project.id,
-        currentlyAssigned: selectedIds.has(user.id),
-      })));
-    } catch (error) {
-      toast(error instanceof Error ? error.message : t.users.updateError, 'error');
-      throw error;
-    }
-  };
-
-  return (
-    <div className="py-3">
-      {assignable.length === 0 ? <p className="text-xs text-muted-foreground">{t.projects.accessEmpty}</p> : (
-        <SelectionSummary
-          countText={t.projects.accessCount.replace('{n}', String(assigned.length)).replace('{total}', String(assignable.length))}
-          samples={assigned.slice(0, 3).map((user) => ({ label: user.name || user.username, icon: <Avatar user={user} size={16} /> }))}
-          moreCount={Math.max(0, assigned.length - 3)}
-          onManage={() => setOpen(true)}
-          manageLabel={t.managePicker.manage}
-        />
-      )}
-      <ManageSelectionModal
-        title={t.projects.accessTitle}
-        subtitle={t.projects.accessHint}
-        open={open}
-        onClose={() => setOpen(false)}
-        items={items}
-        selected={new Set(assigned.map((user) => String(user.id)))}
-        onSave={save}
-        saving={assign.isPending}
-        countLabel={(count) => plural(t.projects.accessSelected, count).replace('{n}', String(count))}
-      />
-    </div>
-  );
 }
 
 /** Admin control for the project's SHARED MEMORY: a toggle plus, when on, the share list. An empty
@@ -230,9 +167,12 @@ export function ProjectDetailTabs({ project, isAdmin, overview }: {
   }, [active, panels]);
 
   const selectedPanel = panels.find((panel) => panel.tabId === active);
+  // Who a project's membership is anyone's business: an administrator's on every project, and its own
+  // members' on a managed one, where membership is what shares the environment.
+  const access = isAdmin || project.executionKind === 'managed';
   const options = [
     { value: 'overview', label: t.projects.tabOverview, icon: Info },
-    ...(isAdmin || project.executionKind === 'managed' ? [{ value: 'access', label: t.projects.tabAccess, icon: UsersRound }] : []),
+    ...(access ? [{ value: 'access', label: t.projects.tabAccess, icon: UsersRound }] : []),
     ...panels.map((panel) => ({ value: panel.tabId, label: panel.label, icon: pluginLucideIcon(panel.icon) })),
   ];
 
@@ -242,9 +182,9 @@ export function ProjectDetailTabs({ project, isAdmin, overview }: {
         <Segmented value={active} onChange={setActive} options={options} variant="line" nowrap aria-label={t.projects.detailSections} className="w-full" />
       </div>
       {active === 'overview' ? overview
-        : active === 'access' && (isAdmin || project.executionKind === 'managed') ? (
+        : active === 'access' && access ? (
           <div>
-            {project.executionKind === 'managed' ? <ManagedProjectMembers key={project.id} project={project} /> : <ProjectAccessPanel project={project} />}
+            <ProjectAccessPanel key={project.id} project={project} />
             {isAdmin ? <SharedMemoryPanel project={project} /> : null}
           </div>
         )
