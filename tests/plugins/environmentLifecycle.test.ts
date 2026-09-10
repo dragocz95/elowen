@@ -244,6 +244,33 @@ describe('durable managed environment lifecycle', () => {
     expect((await runtime.environmentFor(input)).state).toBe('running');
   });
 
+  it('reaches recovery attempts one through four after short successful restarts and manual start resets them', async () => {
+    vi.useFakeTimers();
+    cleanup.push(() => vi.useRealTimers());
+    const { runtime, containers, podman, db } = setup();
+    await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
+    podman.start.mockClear();
+    const stopAgain = () => { containers.values().next().value.state = 'created'; };
+
+    stopAgain(); await runtime.reconcile();
+    stopAgain(); await vi.advanceTimersByTimeAsync(30_000); await runtime.reconcile();
+    stopAgain(); await vi.advanceTimersByTimeAsync(120_000); await runtime.reconcile();
+    stopAgain(); await vi.advanceTimersByTimeAsync(600_000); await runtime.reconcile();
+
+    expect(db.prepare("SELECT json_extract(checkpoint_json,'$.autoRecovery.attempt') AS attempt FROM p_sandbox_runtime_operations WHERE request_key LIKE 'autostart:%' ORDER BY rowid").all())
+      .toEqual([{ attempt: 1 }, { attempt: 2 }, { attempt: 3 }, { attempt: 4 }]);
+    expect(podman.start).toHaveBeenCalledTimes(4);
+
+    stopAgain(); await runtime.reconcile();
+    expect((await runtime.environmentFor(input))).toMatchObject({ state: 'failed', lastError: expect.stringMatching(/automatic recovery failed after 4 attempts/i) });
+
+    await runtime.requestEnvironment({ ...input, requestId: 'manual-recovery', action: { kind: 'start' } }); await runtime.reconcile();
+    expect((await runtime.environmentFor(input)).state).toBe('running');
+    stopAgain(); await runtime.reconcile();
+    expect(db.prepare("SELECT json_extract(checkpoint_json,'$.autoRecovery.attempt') AS attempt FROM p_sandbox_runtime_operations WHERE request_key LIKE 'autostart:%' ORDER BY rowid DESC LIMIT 1").get())
+      .toEqual({ attempt: 1 });
+  });
+
   it('backs off repeated automatic recovery failures and eventually marks the environment failed', async () => {
     vi.useFakeTimers();
     cleanup.push(() => vi.useRealTimers());
@@ -275,14 +302,14 @@ describe('durable managed environment lifecycle', () => {
     });
   });
 
-  it('resets automatic recovery attempts after ten minutes of stable running', async () => {
+  it('resets automatic recovery attempts after the stability window', async () => {
     vi.useFakeTimers();
     cleanup.push(() => vi.useRealTimers());
     const { runtime, containers, podman, db } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
     containers.values().next().value.state = 'created';
     await runtime.reconcile();
-    await vi.advanceTimersByTimeAsync(600_000);
+    await vi.advanceTimersByTimeAsync(900_000);
     containers.values().next().value.state = 'created';
     podman.start.mockClear();
 

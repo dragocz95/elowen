@@ -157,7 +157,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   let sites;
   let disposed = false;
   const AUTO_RECOVERY_DELAYS_MS = [0, 30_000, 120_000, 600_000];
-  const AUTO_RECOVERY_RESET_MS = 600_000;
+  // Longer than every retry delay, so a container that dies when attempt four becomes eligible cannot be
+  // mistaken for one that completed a genuinely stable run.
+  const AUTO_RECOVERY_STABILITY_MS = 15 * 60_000;
   let reconciling = false;
   const releasingAdoptions = new Set();
   const previews = new Set();
@@ -1038,9 +1040,15 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   async function queueAutomaticRecovery(row, observed) {
     if (row.desired_state !== 'running' || row.state === 'deleted' || row.spec.legacyWorkspaceLayout || (row.kind === 'project' && !rootOf(row))) return;
     const history = store.recentOperations(row.kind, row.resource_id, OPERATION_HISTORY);
-    const previous = history.find((op) => op.checkpoint.autoRecovery)?.checkpoint.autoRecovery;
+    const previousIndex = history.findIndex((op) => op.checkpoint.autoRecovery);
+    // A successful explicit start is the operator taking ownership of recovery again. Automatic attempts
+    // before it no longer count against the next failure; without this, a manual repair after exhaustion
+    // returned straight to the terminal failed state on the next container death.
+    const manuallyRestarted = previousIndex > 0 && history.slice(0, previousIndex)
+      .some((op) => op.action.kind === 'start' && op.status === 'succeeded' && !op.checkpoint.autoRecovery);
+    const previous = manuallyRestarted || previousIndex < 0 ? undefined : history[previousIndex].checkpoint.autoRecovery;
     const now = Date.now();
-    const stable = previous?.completedAt && now - previous.completedAt >= AUTO_RECOVERY_RESET_MS;
+    const stable = previous?.completedAt && now - previous.completedAt >= AUTO_RECOVERY_STABILITY_MS;
     const attempt = stable ? 1 : Number(previous?.attempt ?? 0) + 1;
     if (attempt > AUTO_RECOVERY_DELAYS_MS.length) {
       if (row.state === 'failed' && row.error?.startsWith(`Automatic recovery failed after ${AUTO_RECOVERY_DELAYS_MS.length} attempts`)) return;
