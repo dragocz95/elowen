@@ -38,6 +38,17 @@ describe('plugin manifest icons', () => {
       unknown.map((entry) => `${entry.plugin} → ${entry.icon}`).join(', ')}`).toEqual([]);
   });
 
+  it('resolves every icon the sandbox register rows name', () => {
+    // A bundle may also name icons, and those never reach a manifest: `projectRows.tsx` picks the glyph
+    // for each environment state and each lifecycle action from tables of its own. Same silent puzzle
+    // piece if a name is missing from the map, and the manifest walk above cannot see it.
+    const source = readFileSync(join(PLUGINS_DIR, 'sandbox/web-src/projectRows.tsx'), 'utf8');
+    const named = [...source.matchAll(/icon: '([A-Za-z0-9]+)'/g)].map((match) => match[1]!);
+    expect(named.length).toBeGreaterThan(0);
+    const unknown = named.filter((icon) => !PLUGIN_ICON_NAMES.includes(icon));
+    expect(unknown, `add these to ICONS in web/lib/pluginIcons.ts: ${unknown.join(', ')}`).toEqual([]);
+  });
+
   it('still falls back to the puzzle piece rather than crashing on an unknown name', () => {
     // Registry plugins are installed at runtime and this repo cannot see their manifests, so the
     // fallback has to stay — the test above narrows the blast radius, it does not remove the need.

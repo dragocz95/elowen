@@ -2,7 +2,7 @@ import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from '@earendil-works
 import { isDownKey, isEnterKey, isEscapeKey, isKeyRelease, isUpKey } from './keys.js';
 import type { Component, Container, Editor, Focusable, TUI } from '@earendil-works/pi-tui';
 import type { AskQuestion, BrainCard, BrainCardItem } from '../../brain/events.js';
-import type { WorkflowState } from '../../brain/transcript.js';
+import type { SubagentState, WorkflowState } from '../../brain/transcript.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
 import { ansi, chatTheme, color, inputRow, paintRow } from './theme.js';
 import { highlightLine, wrapTokens } from './codeHighlight.js';
@@ -162,35 +162,13 @@ export class CardPanel implements Component {
   }
 }
 
-/** One row of the live sub-agents panel (see {@link SubagentPanel}). */
-export interface SubagentPanelEntry {
-  sessionId: string;
-  task: string;
-  /** The delegation's short label — what this row is titled with. Absent for a run recorded before the
-   *  field existed, where the task text stands in. */
-  name?: string;
-  status: 'running' | 'done' | 'error';
-  detail?: string;
-  tools: number;
-  tokens?: number;
-  seconds: number;
-  model?: string;
-  thinkingLevel?: string;
-  thinkingLabel?: string;
-  background?: boolean;
-  autoDeliver?: boolean;
-  resultDelivery?: 'pending' | 'acknowledged';
-  /** Sandbox workspace the child was confined to — drives the `[S]` sandboxed-run marker on this row. */
-  workspaceId?: string;
-}
-
 /** A bounded live list shared by the telemetry rail and its narrow-terminal chat fallback — a spinner
  *  + task per row with the child's current tool and counters, each row clickable to open that session.
  *  RUNNING children only: a finished sub-agent leaves the panel at once — its result reaches the
  *  conversation as a message, and its transcript stays drillable there, so a completed row has no reason
  *  to linger (least of all a delivery stuck pending forever). */
 export class SubagentPanel implements Component {
-  private entries: SubagentPanelEntry[] = [];
+  private entries: SubagentState[] = [];
   private collapsed = false;
   private maxRows = Number.POSITIVE_INFINITY;
   private scrollOffset = 0;
@@ -201,7 +179,7 @@ export class SubagentPanel implements Component {
   /** The sub-agent the user is currently switched into, or null while the parent is focused. */
   private selected: string | null = null;
   invalidate(): void { /* re-rendered on the next frame */ }
-  set(entries: readonly SubagentPanelEntry[]): void {
+  set(entries: readonly SubagentState[]): void {
     this.entries = entries.filter((e) => e.status === 'running');
     this.clampScroll();
   }
@@ -931,6 +909,6 @@ export function toolOutputBlock(output: ToolOutputView, width: number, expanded 
   // long path or a one-line JSON result was unreadable in the transcript. The row width is what
   // simpleBlock leaves inside its frame; wrapTextWithAnsi keeps the tone SGR intact across the split.
   const inner = Math.max(1, width - 6);
-  const rows = lines.flatMap((line) => (line === '' ? [''] : wrapTextWithAnsi(line, inner)));
+  const rows = lines.flatMap((line) => wrapTextWithAnsi(line, inner));
   return simpleBlock(title, rows.map((line) => CODE_ROW(line, inner)), width, undefined, connector);
 }

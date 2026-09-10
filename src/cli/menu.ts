@@ -1,5 +1,5 @@
 import * as p from './ui/prompts.js';
-import { status } from './launcher.js';
+import { status, DEFAULT_DAEMON_URL } from './launcher.js';
 import { defaultLifecycleDeps, formatStatus, runLifecycle } from './commands.js';
 import { maybeOfferSetup } from './setup/command.js';
 import { openBrowser } from './setup/browser.js';
@@ -9,7 +9,7 @@ import { SERVICES, restartServices, runCmd, systemctl, servicesActive } from './
 import { launchdLogTail, launchdRestart, launchdServicesActive, launchdStart, launchdStatusText, launchdStop } from './launchd.js';
 import { launchChat } from './chat/launch.js';
 
-const BASE = (process.env.ELOWEN_URL) ?? 'http://localhost:4400';
+const BASE = (process.env.ELOWEN_URL) ?? DEFAULT_DAEMON_URL;
 
 /** The provisioned-service seam the menu drives: systemd units on Linux, per-user launchd agents on
  *  macOS. One menu loop, two thin backends — the actions and wording stay identical. */

@@ -255,8 +255,9 @@ export class BrainClient {
   /** The bound conversation id (undefined before the first start()). */
   get boundSession(): string | undefined { return this.bound; }
 
-  /** Rebind to another conversation WITHOUT a server round-trip — used when the server rolls the idle
-   *  conversation over into a fresh one (the `session` event carries the replacement id). */
+  /** Rebind to another conversation WITHOUT a server round-trip — used when the stream announces that
+   *  it now belongs to a different persisted conversation, either as a `session` event or as a
+   *  snapshot carrying an id this client was not bound to. */
   rebind(sessionId: string): void { this.bound = sessionId; }
 
   /** `?session=<bound>` suffix for GET routes (empty before the first start()). */

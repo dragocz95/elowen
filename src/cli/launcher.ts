@@ -8,8 +8,13 @@ interface Svc { pid: number; port: number }
 export interface RunState { daemon: Svc; web: Svc; version: string; startedAt: string }
 export interface SvcStatus { running: boolean; pid: number | null; port: number; healthy: boolean }
 
-const DAEMON_PORT = 4400;
+export const DAEMON_PORT = 4400;
 const WEB_PORT = 4500;
+
+/** Where the CLI reaches the daemon when `ELOWEN_URL` says nothing. Every verb that talks to the API
+ *  — the api passthrough, the chat launcher, the menu, the installer's health probe — starts from
+ *  this one, so a changed port or host is one edit rather than five agreeing copies. */
+export const DEFAULT_DAEMON_URL = `http://localhost:${DAEMON_PORT}`;
 
 /** Read the tracked run state, or null when absent/corrupt. A corrupt file (partial write, manual
  *  edit) must not throw — the caller treats null as "nothing running" and can re-start cleanly. */

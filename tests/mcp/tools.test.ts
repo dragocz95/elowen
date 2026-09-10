@@ -1,13 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import { CORE_MCP_TOOLS, makeMcpRequest } from '../../src/mcp/tools.js';
-import type { CallResult } from '../../src/shared/apiClient.js';
+import type { CallOpts, CallResult } from '../../src/shared/apiClient.js';
 
-type Call = { m: string; p: string; b: unknown; url: string; token: string };
+type Call = { m: string; p: string; b: unknown; url: string; token: string; noTimeout?: boolean };
 
 function spy(result: CallResult = { status: 200, ok: true, data: { ok: 1 }, text: '' }) {
   const calls: Call[] = [];
-  const call = async (m: string, p: string, b: unknown, o: { url: string; token: string }): Promise<CallResult> => {
-    calls.push({ m, p, b, url: o.url, token: o.token });
+  const call = async (m: string, p: string, b: unknown, o: CallOpts): Promise<CallResult> => {
+    calls.push({ m, p, b, url: o.url, token: o.token, noTimeout: o.noTimeout });
     return result;
   };
   return { calls, call };
@@ -28,8 +28,19 @@ describe('daemon MCP tools (REST proxies over makeMcpRequest)', () => {
     const { calls, call } = spy();
     const req = makeMcpRequest({ url: 'http://d:4400', token: 'usr', call: call as never });
     const out = await tool('elowen_request').run({ method: 'POST', path: '/tasks', body: { title: 'x' } }, req);
-    expect(calls[0]).toEqual({ m: 'POST', p: '/tasks', b: { title: 'x' }, url: 'http://d:4400', token: 'usr' });
+    expect(calls[0]).toEqual({ m: 'POST', p: '/tasks', b: { title: 'x' }, url: 'http://d:4400', token: 'usr', noTimeout: true });
     expect(out).toEqual({ ok: 1 });
+  });
+
+  // `elowen_request` is the same operator escape hatch as the `elowen api` verb and reaches the same
+  // long routes, so it must not be the one that still dies on undici's 300 s default. Both call sites
+  // ask for it with the SAME option, decided once inside callElowenApi — tests/cli/apiCommand.test.ts
+  // asserts the other one.
+  it('asks for the no-timeout path, exactly as the api verb does', async () => {
+    const { calls, call } = spy();
+    const req = makeMcpRequest({ url: 'http://d', token: 't', call: call as never });
+    await req('POST', '/brain/compact', undefined);
+    expect(calls[0]?.noTimeout).toBe(true);
   });
 
   it('makeMcpRequest throws on a non-ok response so the agent sees the error', async () => {

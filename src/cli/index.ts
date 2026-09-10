@@ -9,11 +9,11 @@ import { callElowenApi } from '../shared/apiClient.js';
 import { menu } from './menu.js';
 import { interactiveLogin, launchChat } from './chat/launch.js';
 import { resolveToken } from './chat/token.js';
-import { urlHealthy, waitHealthy, type ReadinessOpts } from './launcher.js';
+import { urlHealthy, waitHealthy, DEFAULT_DAEMON_URL, type ReadinessOpts } from './launcher.js';
 import { runCmd, SERVICES } from './systemd.js';
 import { flagValue as flag } from './flags.js';
 
-const BASE = (process.env.ELOWEN_URL) ?? 'http://localhost:4400';
+const BASE = (process.env.ELOWEN_URL) ?? DEFAULT_DAEMON_URL;
 
 const USAGE = "usage: elowen [command] [options]  —  run `elowen --help` for the full command list";
 

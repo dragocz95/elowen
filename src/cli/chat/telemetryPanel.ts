@@ -3,8 +3,7 @@ import type { Component } from '@earendil-works/pi-tui';
 import { resolveMascotArt } from './mascot.js';
 import { FLOAT_BAND } from './mascotFloat.js';
 import { ProcessPanel, SubagentPanel, WorkflowPanel, sectionHeaderContent, sectionHeaderRow } from './components.js';
-import type { SubagentPanelEntry } from './components.js';
-import type { WorkflowState } from '../../brain/transcript.js';
+import type { SubagentState, WorkflowState } from '../../brain/transcript.js';
 import { chatTheme, color, paintRow } from './theme.js';
 import type { BrainRateLimits, BrainRateLimitWindow, BrainUsageView, GoalView, McpServerView } from './brainClient.js';
 import type { ProcessInfo } from '../../brain/processRegistry.js';
@@ -25,7 +24,7 @@ export interface TelemetryState {
    *  height; the rail keeps the existing collapse + click-to-kill ProcessPanel behavior. */
   processes?: ProcessInfo[];
   /** Running delegated sessions. Settled agents stay in the transcript; only live work appears here. */
-  subagents?: readonly SubagentPanelEntry[];
+  subagents?: readonly SubagentState[];
   /** The sub-agent the user is switched into, so the rail says WHICH agent the Context section describes.
    *  Null on the parent. Optional: the panel renders identically without it. */
   focusedSubagent?: string | null;

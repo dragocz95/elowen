@@ -6,12 +6,13 @@ import type { PluginMcpRequest, PluginMcpTool } from '../plugins/api.js';
 export interface ElowenToolDeps { url: string; token: string; call?: typeof callElowenApi }
 
 /** The request core every MCP tool proxies through — the single shared `callElowenApi` path (exactly
- *  the same forward as the `elowen api` CLI verb), bound to the caller's token and throwing on a
- *  non-ok response with the `elowen <status>: …` text agents have always seen. */
+ *  the same forward as the `elowen api` CLI verb, including its no-timeout escape hatch), bound to
+ *  the caller's token and throwing on a non-ok response with the `elowen <status>: …` text agents
+ *  have always seen. */
 export function makeMcpRequest(d: ElowenToolDeps): PluginMcpRequest {
   const call = d.call ?? callElowenApi;
   return async (method, path, body) => {
-    const r = await call(method, path, body, { url: d.url, token: d.token });
+    const r = await call(method, path, body, { url: d.url, token: d.token, noTimeout: true });
     if (!r.ok) throw new Error(`elowen ${r.status}: ${r.text || JSON.stringify(r.data)}`);
     return r.data;
   };

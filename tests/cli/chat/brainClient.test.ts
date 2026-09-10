@@ -481,7 +481,7 @@ describe('BrainClient', () => {
     expect(seen).toEqual([{ type: 'snapshot', cursor: 2, history: [], events: [] }]);
   });
 
-  it('rebinds a missed idle-rollover snapshot before the following reconnect URL', async () => {
+  it('rebinds to the id a missed snapshot announced, before the following reconnect URL', async () => {
     let attempts = 0;
     const f = vi.fn(async (url: string) => {
       if (url.endsWith('/brain/start')) return j(201, { sessionId: 'brain-old' });
