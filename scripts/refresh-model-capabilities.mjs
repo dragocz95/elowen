@@ -18,13 +18,14 @@ const CATALOG_URL = 'https://models.dev/api.json';
 const OUT = new URL('../src/brain/modelCapabilityData.ts', import.meta.url);
 
 /** models.dev provider keys for the endpoints Elowen ships (src/cli/setup/constants.ts) plus the OAuth
- *  built-ins. Ollama Cloud is published as `ollama-cloud`, Moonshot as `moonshotai`, and the Kimi Code
- *  subscription as `kimi-for-coding`; the rest match our own keys 1:1 (see CATALOG_ALIAS in
- *  modelCapabilities.ts for the translation). */
+ *  built-ins. Ollama Cloud is published as `ollama-cloud`, Moonshot as `moonshotai`, the Kimi Code
+ *  subscription as `kimi-for-coding`, Together as `togetherai` and Fireworks as `fireworks-ai`; the rest
+ *  match our own keys 1:1 (see CATALOG_ALIAS in modelCapabilities.ts for the translation). An endpoint
+ *  the setup offers but this list omits can only ever be matched by model NAME, never by its own rows. */
 const PROVIDERS = [
   'openai', 'anthropic', 'google', 'openrouter', 'xai', 'deepseek', 'groq', 'mistral', 'cerebras',
   'perplexity', 'deepinfra', 'zai', 'nvidia', 'huggingface', 'baseten', 'ollama-cloud', 'github-copilot',
-  'moonshotai', 'kimi-for-coding',
+  'moonshotai', 'kimi-for-coding', 'togetherai', 'fireworks-ai',
 ];
 
 /** Elowen's canonical effort vocabulary (CANONICAL_THINKING_LEVELS minus `off`, which is a separate

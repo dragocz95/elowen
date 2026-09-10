@@ -91,7 +91,9 @@ const NON_REASONING = /(?:^|[-_/])(image|embedding|embed|whisper|tts|dall-e|mode
 // bare id. Match the actual family segment in both forms rather than keying capability to one relay.
 const OPENAI_REASONING = /(?:^|\/)(?:gpt-5|o[134](?:-|$))/i;
 const CLAUDE_REASONING = /(?:^|\/)claude-(?:opus|sonnet|haiku)-(?:4|5)(?:[.-]|$)/i;
-const GEMINI_REASONING = /(?:^|\/)gemini-(?:2\.5|3|3\.1|3\.5)(?:-|$)/i;
+// Every 3.x release reasons, so the generation is matched as a number instead of listed one by one: the
+// enumerated form quietly stopped recognising 3.6 and later while the catalog already carried them.
+const GEMINI_REASONING = /(?:^|\/)gemini-(?:2\.5|3(?:\.\d+)?)(?:-|$)/i;
 // The Qwen generation right after the family name: `qwen3.7-max`, `qwen/qwen3.6-flash`, `qwen3.5:397b`.
 // Deliberately not matching `qwen-plus`-style ids — those carry no generation to reason about.
 const QWEN_GENERATION = /(?:^|\/)qwen-?(\d+(?:\.\d+)?)/i;
@@ -101,7 +103,8 @@ const OTHER_REASONING = /(?:deepseek[-_/]?r1|qwq|reasoning)/i;
  *  `ollama-cloud` (a self-hosted Ollama serves the same model families, so it reads the same rows),
  *  Z.AI is published unhyphenated while relays namespace it `z-ai/…`, and Moonshot's two endpoints are
  *  published under names of their own: the generic API as `moonshotai` and the Kimi Code subscription
- *  (PI's `kimi-coding` provider) as `kimi-for-coding`, which serves its own model ids. */
+ *  (PI's `kimi-coding` provider) as `kimi-for-coding`, which serves its own model ids. Together and
+ *  Fireworks are published as `togetherai` and `fireworks-ai`. */
 const CATALOG_ALIAS: Readonly<Record<string, string>> = {
   ollama: 'ollama-cloud',
   'ollama-local': 'ollama-cloud',
@@ -109,6 +112,8 @@ const CATALOG_ALIAS: Readonly<Record<string, string>> = {
   zhipuai: 'zai',
   moonshot: 'moonshotai',
   'kimi-coding': 'kimi-for-coding',
+  together: 'togetherai',
+  fireworks: 'fireworks-ai',
 };
 
 const catalogName = (key: string): string => CATALOG_ALIAS[key] ?? key;
