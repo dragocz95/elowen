@@ -200,6 +200,7 @@ export function ProjectsView() {
     // the register that shows the project, and they belong to the row for the same reason removal does:
     // one place per decision. The items are the plugin's, in both menus, enabled by the state it reports.
     ...(pluginRowActions(p).length > 0 ? [pluginRowActions(p).map((action): ActionMenuItem => ({
+      id: `${action.plugin}:${action.id}`,
       label: action.label,
       icon: pluginLucideIcon(action.icon),
       ...(action.disabled ? { disabled: true } : {}),

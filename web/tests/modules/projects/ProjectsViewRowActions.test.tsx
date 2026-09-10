@@ -130,6 +130,28 @@ describe('Project register rows: environment state and lifecycle actions', () =>
     expect(screen.getAllByText('environment progress')).toHaveLength(1);
   });
 
+  // The seam promises `<plugin>:<id>` keys. Two plugins may well both call their action "Restart", and a
+  // menu keyed by wording makes React reuse one item's element for the other's.
+  it('keys a row action by its plugin and id, so two plugins may name an action the same', async () => {
+    const warnings: unknown[][] = [];
+    const console_error = vi.spyOn(console, 'error').mockImplementation((...args) => { warnings.push(args); });
+    loadPluginUi.mockResolvedValue({
+      requiresApiVersion: 4,
+      projectRows: () => ({
+        actions: { 3: [
+          { id: 'restart', label: 'Restart', icon: 'RotateCcw', onSelect: () => chosen.push('sandbox:restart') },
+          { id: 'reboot', label: 'Restart', icon: 'RotateCcw', onSelect: () => chosen.push('sandbox:reboot') },
+        ] },
+      }),
+    });
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'analysis: Actions' }));
+    const items = await screen.findAllByRole('menuitem');
+    expect(items.filter((item) => item.textContent === 'Restart')).toHaveLength(2);
+    expect(warnings.flat().join(' ')).not.toMatch(/same key/);
+    console_error.mockRestore();
+  });
+
   // The busy row's menu is the same list; only what it allows differs.
   it('refuses a start and a stop on a row whose environment is already moving', async () => {
     mount();
