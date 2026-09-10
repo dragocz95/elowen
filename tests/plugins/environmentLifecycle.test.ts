@@ -563,6 +563,7 @@ describe('durable project publications', () => {
     const binding = await runtime.projectPublicationBinding({ ...input, publicationId: 'shop', port: 8080 });
 
     users.delete(1);
+    await expect(runtime.projectPublicationBinding({ project: input.project, publicationId: 'shop', port: 8080 })).resolves.toEqual(binding);
     await runtime.projectPublicationRelease({ project: input.project, publicationId: 'shop' });
     expect(podman.stopPublication).toHaveBeenCalledWith(expect.anything(), 'shop');
     expect(records(sql)).toEqual([]);

@@ -1154,15 +1154,25 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   /** A published transport is DURABLE and account-independent: its record is keyed by the project and the
    *  publication, and no execution lease is taken, because the visitor it answers is nobody's account. */
   async function projectPublicationBinding(input) {
-    account(input.accountUserId, true);
+    assertLive();
     const id = projectId(input.project);
     const publicationId = resourceToken(String(input.publicationId ?? ''));
     if (!Number.isSafeInteger(input.port) || input.port < 1 || input.port > 65535) throw error('invalid_port', 'Invalid guest publication port', 400);
-    const row = await ready('project', id, input.accountUserId);
-    // The record first: it is the whole of the durability claim, and a transport that cannot be
-    // established on this attempt is then reconciliation's to establish rather than something the
-    // caller has to remember to ask for again.
-    store.savePublication(row, publicationId, input.port);
+    const existing = store.publications(id).find((publication) => publication.publicationId === publicationId);
+    let row;
+    if (input.accountUserId === undefined) {
+      if (!existing || existing.port !== input.port) throw error('publication_identity_required', 'An account is required to create or change a publication binding', 403);
+      row = store.get('project', id);
+      if (!row || row.state !== 'running' || store.active('project', id)) throw error('environment_stopped', 'The publication project environment is not running');
+      if ((await podman.inspect(specFor(row.spec)))?.state !== 'running') throw error('runtime_unavailable', 'The validated container is not running', 503);
+    } else {
+      account(input.accountUserId, true);
+      row = await ready('project', id, input.accountUserId);
+      // The record first: it is the whole of the durability claim, and a transport that cannot be
+      // established on this attempt is then reconciliation's to establish rather than something the
+      // caller has to remember to ask for again.
+      store.savePublication(row, publicationId, input.port);
+    }
     const socketPath = await establishPublication(row, publicationId, input.port);
     return { generation: row.generation, socketPath };
   }

@@ -116,7 +116,7 @@ export interface ProjectEnvironmentControl {
   projectPreviewBinding(input: { project: ManagedProjectRef; accountUserId: number; port: number }): Promise<ProjectPreviewBinding>;
   /** Durable by design: the binding survives the caller, the account and a container restart, and is
    *  re-established by the runtime's own reconciliation rather than by anything holding a lease. */
-  projectPublicationBinding(input: { project: ManagedProjectRef; accountUserId: number; publicationId: string; port: number }): Promise<ProjectPublicationBinding>;
+  projectPublicationBinding(input: { project: ManagedProjectRef; accountUserId?: number; publicationId: string; port: number }): Promise<ProjectPublicationBinding>;
   projectPublicationRelease(input: { project: ManagedProjectRef; publicationId: string }): Promise<void>;
   releaseAdoptedWorkspace(input: { project: ManagedProjectRef; accountUserId: number }): Promise<void>;
 }
