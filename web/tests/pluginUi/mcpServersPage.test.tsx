@@ -218,6 +218,42 @@ describe('mcp register row switch', () => {
   });
 });
 
+/** Moving a server between ownership scopes is a transfer followed by the ordinary field PATCH. The
+ *  transfer is a compare-and-swap, so it bumps the row's revision — and the PATCH that follows carried
+ *  the revision the drawer opened with, which the daemon refused every single time. */
+describe('mcp scope change', () => {
+  it('patches with the revision the transfer produced instead of the one the drawer opened with', async () => {
+    let patched: Record<string, unknown> | undefined;
+    let transferred: Record<string, unknown> | undefined;
+    msw.use(
+      http.get('*/api/plugins/mcp/api/servers', () => HttpResponse.json({
+        personal: [remoteServer], instance: [], canManageInstance: true,
+      })),
+      http.post('*/api/plugins/mcp/api/transfer', async ({ request }) => {
+        transferred = await request.json() as Record<string, unknown>;
+        return HttpResponse.json({ server: { ...remoteServer, scope: 'instance', revision: 4 } });
+      }),
+      http.patch('*/api/plugins/mcp/api/servers/docs', async ({ request }) => {
+        patched = await request.json() as Record<string, unknown>;
+        if (patched.expectedRevision !== 4) return HttpResponse.json({ error: 'server changed on the server' }, { status: 409 });
+        return HttpResponse.json({ server: { ...remoteServer, scope: 'instance', revision: 5 } });
+      }),
+    );
+    mount();
+    await screen.findByText('docs');
+
+    fireEvent.click(screen.getByRole('button', { name: strings.openServer!.replace('{name}', 'docs') }));
+    const editor = await screen.findByRole('dialog');
+    fireEvent.keyDown(within(editor).getByRole('combobox', { name: strings.scope! }), { key: 'ArrowDown' });
+    fireEvent.click(await screen.findByRole('option', { name: strings.scopeInstance! }));
+    fireEvent.click(within(editor).getByRole('button', { name: strings.save! }));
+
+    await waitFor(() => expect(transferred).toMatchObject({ fromScope: 'personal', toScope: 'instance', name: 'docs', expectedRevision: 3 }));
+    await waitFor(() => expect(patched).toMatchObject({ scope: 'instance', expectedRevision: 4 }));
+    expect(screen.queryByText('server changed on the server')).toBeNull();
+  });
+});
+
 // The register's footer is the app's one pager, page-size select included, so /p/mcp reads exactly like
 // the skills register rather than growing a footer of its own.
 describe('mcp register footer', () => {

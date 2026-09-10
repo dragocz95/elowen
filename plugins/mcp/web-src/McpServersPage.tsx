@@ -428,20 +428,26 @@ export function McpServersPage() {
       // The move runs FIRST because it is the step that can be refused on its own — a name already
       // taken in the target scope, or a local-process server — and a refusal has to leave the server
       // exactly where it was rather than edited into a scope it never reached.
-      if (selected && editor.draft.scope !== selected.scope) {
-        await apiJson('/plugins/mcp/api/transfer', {
+      let draft = editor.draft;
+      if (selected && draft.scope !== selected.scope) {
+        const moved = await apiJson<{ server: McpServer }>('/plugins/mcp/api/transfer', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({ fromScope: selected.scope, name: selected.name, toScope: editor.draft.scope, expectedRevision: editor.draft.revision ?? 0 }),
+          body: JSON.stringify({ fromScope: selected.scope, name: selected.name, toScope: draft.scope, expectedRevision: draft.revision ?? 0 }),
         });
-        // If the later PATCH fails, Retry must address the row in the scope where the completed move left it.
-        setEditor((current) => current ? { ...current, key: serverKey({ scope: editor.draft.scope, name: selected.name }) } : current);
+        // The move is a compare-and-swap of its own, so it leaves the row on a NEW revision. The PATCH
+        // below is checked against that one, and sending the revision the drawer opened with refused
+        // every scope change outright.
+        draft = { ...draft, revision: moved.server.revision };
+        // If the later PATCH fails, Retry must address the row in the scope where the completed move left
+        // it, on the revision the move produced.
+        setEditor((current) => current ? { ...current, key: serverKey({ scope: draft.scope, name: selected.name }), draft } : current);
       }
       const path = selected ? `/plugins/mcp/api/servers/${encodeURIComponent(selected.name)}` : '/plugins/mcp/api/servers';
       await apiJson(path, {
         method: selected ? 'PATCH' : 'POST',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(serverPayload(editor.draft)),
+        body: JSON.stringify(serverPayload(draft)),
       });
       setEditor(undefined);
       await load();
