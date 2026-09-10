@@ -424,6 +424,7 @@ export const elowenClient = {
   defaultProject: () => req<Project>('/projects/default', json({})),
   createProject: (v: { slug: string; path: string; notes?: string; executionKind?: 'host' } | { slug: string; notes?: string; executionKind: 'managed' }) => req<Project>('/projects', json(v)),
   updateProject: (id: number, patch: { path?: string; notes?: string; icon?: string; memoryShared?: boolean }) => req<Project>(`/projects/${id}`, json(patch, 'PATCH')),
+  adoptProject: (id: number, undo = false) => req<Project>(`/projects/${id}/adopt`, json(undo ? { undo: true } : {})),
   removeProject: (id: number) => req<{ ok: boolean } | { operation: import('../../src/shared/wireContract').EnvironmentOperation }>(`/projects/${id}`, { method: 'DELETE' }),
   projectGit: (id: number) => req<ProjectGit>(`/projects/${id}/git`),
   /** The account ids assigned to a project — the endpoint's default answer. */

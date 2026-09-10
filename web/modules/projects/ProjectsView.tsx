@@ -5,7 +5,7 @@ import { ElowenApiError, apiErrorMessage, elowenClient } from '../../lib/elowenC
 import { SelectMenu } from '../../components/ui/SelectMenu';
 import { FolderGit2, GitBranch, GitCommitHorizontal, Plus, CheckCircle2, AlertTriangle, ArrowUp, ArrowDown, Folder, MoreHorizontal, Code2, Copy, Pencil, Trash2, ImageIcon, Search, FileText } from 'lucide-react';
 import { useProjects, useProjectSummaries, useProjectGit, useProjectEnvironmentState, usePluginPresent, useMe } from '../../lib/queries';
-import { useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
+import { useAdoptProject, useCreateProject, useUpdateProject, useRemoveProject } from '../../lib/mutations';
 import type { Project } from '../../lib/types';
 import { useToast } from '../../components/ui/Toast';
 import { Badge } from '../../components/ui/Badge';
@@ -153,7 +153,9 @@ export function ProjectsView() {
   const s = t.projects;
   const createProject = useCreateProject();
   const updateProject = useUpdateProject();
+  const adoptProject = useAdoptProject();
   const removeProject = useRemoveProject();
+  const [adoption, setAdoption] = useState<{ project: Project; undo: boolean } | null>(null);
   // Host removal detaches metadata; managed removal requests durable environment teardown.
   const [removing, setRemoving] = useState<Project | null>(null);
   // What a finished teardown leaves behind, whether or not its window was on screen when it finished: the
@@ -266,6 +268,14 @@ export function ProjectsView() {
         onError: (e) => toast(apiErrorMessage(e), 'error'),
       }
     );
+  }
+
+  async function handleAdoption(): Promise<void> {
+    const target = adoption;
+    if (!target) return;
+    await adoptProject.mutateAsync({ id: target.project.id, undo: target.undo });
+    setAdoption(null);
+    toast(target.undo ? s.adoptionUndone : s.adopted);
   }
 
   async function handleRemove(): Promise<void> {
@@ -459,6 +469,10 @@ export function ProjectsView() {
                     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border/70 py-3">
                       {editorEnabled ? <button type="button" onClick={() => openEditor(null)} className="inline-flex items-center gap-1.5 text-xs font-medium text-primary hover:text-foreground"><Code2 size={13} aria-hidden />{t.projects.openEditor}</button> : null}
                       {canManage(selectedProject) ? <button type="button" onClick={() => openEdit(selectedProject)} className="inline-flex items-center gap-1.5 text-xs text-muted-foreground hover:text-foreground"><Pencil size={13} aria-hidden />{t.projects.editProject}</button> : null}
+                      {isAdmin && selectedProject.executionKind !== 'managed' ? <Button variant="ghost" onClick={() => setAdoption({ project: selectedProject, undo: false })}>{s.adoptProject}</Button> : null}
+                      {isAdmin && selectedProject.executionKind === 'managed' && selectedProject.adoptedPath && environment.data?.environment.state === 'unprovisioned'
+                        ? <Button variant="ghost" onClick={() => setAdoption({ project: selectedProject, undo: true })}>{s.undoAdoption}</Button>
+                        : null}
                     </div>
 
                     <ProjectDetailTabs project={selectedProject} isAdmin={isAdmin} overview={<>
@@ -612,6 +626,17 @@ export function ProjectsView() {
       )}
 
       {editorEnabled && iconFor && <ProjectIconPicker project={iconFor} onClose={() => setIconFor(null)} />}
+
+      <ConfirmDialog
+        open={adoption !== null}
+        title={adoption?.undo ? s.undoAdoption : s.adoptProject}
+        description={adoption?.undo ? s.undoAdoptionConfirm : s.adoptConfirm}
+        confirmLabel={adoption?.undo ? s.undoAdoption : s.adoptProject}
+        confirmVariant="accent"
+        pending={adoptProject.isPending}
+        onConfirm={handleAdoption}
+        onClose={() => { if (!adoptProject.isPending) setAdoption(null); }}
+      />
 
       <ConfirmDialog
         open={removing !== null}

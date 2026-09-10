@@ -74,6 +74,37 @@ describe('ProjectsView', () => {
     expect(environmentRequested).toBe(false);
   });
 
+  it('lets an administrator convert a host project and undo it before first start', async () => {
+    let project: Record<string, unknown> = { id: 1, slug: 'elowen', path: '/srv/elowen', adoptedPath: null, notes: '', icon: '', executionKind: 'host' };
+    const bodies: unknown[] = [];
+    server.use(
+      http.get('*/api/projects', () => HttpResponse.json([project])),
+      http.get('*/api/plugins/sandbox/api/projects/1/environment', () => HttpResponse.json({ environment: { state: 'unprovisioned' } })),
+      http.post('*/api/projects/1/adopt', async ({ request }) => {
+        const body = await request.json();
+        bodies.push(body);
+        project = body && typeof body === 'object' && 'undo' in body
+          ? { id: 1, slug: 'elowen', path: '/srv/elowen', adoptedPath: null, notes: '', icon: '', executionKind: 'host' }
+          : { id: 1, slug: 'elowen', path: '', adoptedPath: '/srv/elowen', notes: '', icon: '', executionKind: 'managed', guestRoot: '/elowen' };
+        return HttpResponse.json(project);
+      }),
+    );
+    const { wrapper: Wrapper } = createWrapper();
+    render(<Wrapper><ToastProvider><ProjectsView /></ToastProvider></Wrapper>);
+    fireEvent.click(await screen.findByRole('button', { name: 'Open project elowen' }));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Convert to managed environment' }));
+    let dialog = within(await screen.findByRole('alertdialog'));
+    expect(dialog.getByText(/workspace moves into the project volume/i)).toBeInTheDocument();
+    fireEvent.click(dialog.getByRole('button', { name: 'Convert to managed environment' }));
+    await waitFor(() => expect(bodies).toEqual([{}]));
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Undo managed conversion' }));
+    dialog = within(await screen.findByRole('alertdialog'));
+    fireEvent.click(dialog.getByRole('button', { name: 'Undo managed conversion' }));
+    await waitFor(() => expect(bodies).toEqual([{}, { undo: true }]));
+  });
+
   it('lets a granted member create a private managed project without a host path', async () => {
     let body: unknown;
     server.use(

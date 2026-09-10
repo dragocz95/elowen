@@ -367,6 +367,9 @@ export interface ProjectView {
   memoryShared?: boolean;
   pathExists?: boolean;
   executionKind?: 'host' | 'managed';
+  /** Managed projects converted from a host directory retain that original path for the release operation.
+   *  It is null for projects created as managed and after an adoption is released. */
+  adoptedPath?: string | null;
   /** Managed only: the directory the project is mounted at inside its own environment, and therefore the
    *  only location its paths are ever relative to. Served by the daemon so that no client re-derives the
    *  mount rule from the slug — normalisation makes the two differ. */
