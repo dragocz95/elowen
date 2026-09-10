@@ -35,6 +35,8 @@ function setup(config: Record<string, unknown> = {}) {
     stop: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'stopped'; }),
     remove: vi.fn(async (spec: any) => { containers.delete(spec.name); }),
     exec: vi.fn(async () => ({ code: 0, stdout: '', stderr: '', truncated: false })),
+    // A start waits for the guest system bus before anything runs through `systemd-run`.
+    waitForSystemBus: vi.fn(async () => {}),
     cancelExecution: vi.fn(async () => ({ terminated: true })), releaseExecution: vi.fn(),
     prepareExecution: vi.fn(async () => ({ launch: { type: 'argv', file: '/usr/bin/podman', args: ['exec', 'owned'], env: { HOME: '/host-service' } } })),
     removeVolume: vi.fn(), removeStorage: vi.fn(), inspectVolume: vi.fn(),
