@@ -85,6 +85,36 @@ def sync_directory(name):
         os.close(fd)
 
 
+def ensure_ancestors(target):
+    # An upload used to assume its destination directory already existed, so uploading into a new folder
+    # failed later — when the first chunk opened its candidate file in a directory that was not there —
+    # as a raw errno from the middle of a transfer. The ancestry is built here instead, with the SAME
+    # durability the mkdir operation gives it: mode 0700, and each new directory's PARENT fsynced, so the
+    # entry survives a crash rather than merely existing in the page cache.
+    missing = []
+    probe = os.path.dirname(target)
+    while not os.path.isdir(probe):
+        # Something is already there and it is not a directory. That is a conflict the caller can read
+        # and act on, not an errno surfacing from deep inside the transfer.
+        if os.path.lexists(probe):
+            fail('not_directory', 'Upload destination is inside something that is not a directory')
+        missing.append(probe)
+        higher = os.path.dirname(probe)
+        if higher == probe:
+            fail('invalid_path', 'Upload destination has no reachable root')
+        probe = higher
+    for directory in reversed(missing):
+        try:
+            os.mkdir(directory, 0o700)
+        except FileExistsError:
+            # Another writer built the same ancestry first. That is success, not conflict — unless what it
+            # created is not a directory.
+            if not os.path.isdir(directory):
+                fail('not_directory', 'Upload destination is inside something that is not a directory')
+            continue
+        sync_directory(os.path.dirname(directory))
+
+
 def upload(op, name):
     import fcntl
     import shutil
@@ -135,7 +165,11 @@ def upload(op, name):
         elif kind == 'write-begin':
             size = bounded(op.get('size'), 0, SAFE_INT)
             target = os.path.realpath(name)
+            # The compare-and-swap runs FIRST, so a refused upload leaves no directories behind, and the
+            # resolution recorded below is taken after the ancestry exists — which is what the drift check
+            # before every later step compares against.
             expected(target, op.get('expectedVersion'), True)
+            ensure_ancestors(target)
             state = {'scope': scope, 'path': name, 'resolvedPath': target, 'size': size,
                      'expectedVersion': op.get('expectedVersion'), 'prepared': None, 'result': None}
             save(state)

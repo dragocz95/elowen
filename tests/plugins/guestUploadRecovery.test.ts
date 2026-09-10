@@ -1,6 +1,7 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync, symlinkSync, unlinkSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync, symlinkSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { createHash } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { afterEach, expect, it } from 'vitest';
 const helper = readFileSync(new URL('../../plugins/sandbox/lib/guestFiles.py', import.meta.url), 'utf8');
@@ -46,6 +47,69 @@ it('rejects foreign scope, incomplete chunks and final CAS without touching the 
   expect(invoke({ ...op, kind: 'write-commit' }).error.code).toBe('version_conflict');
   expect(readFileSync(path, 'utf8')).toBe('concurrent');
 });
+it('builds the missing destination ancestry at 0700 and commits the exact bytes into it', () => {
+  const { root, invoke, op } = fixture();
+  // Nothing along `reports/2026/september` exists yet. An upload used to accept this destination and then
+  // fail on the FIRST CHUNK with a raw errno, because the candidate file had nowhere to be created.
+  const nested = join(root, 'reports', '2026', 'september', 'summary.bin');
+  const body = Buffer.concat([Buffer.alloc(524288, 88), Buffer.from('tail')]);
+  const nestedOp = { ...op, path: nested, size: body.length };
+
+  expect(invoke({ ...nestedOp, kind: 'write-begin' }).ok).toBe(true);
+  for (const directory of ['reports', 'reports/2026', 'reports/2026/september']) {
+    const info = statSync(join(root, directory));
+    expect(info.isDirectory()).toBe(true);
+    // The same mode the mkdir operation gives a directory it creates: private to the owner.
+    expect(info.mode & 0o777).toBe(0o700);
+  }
+
+  expect(invoke({ ...nestedOp, kind: 'write-chunk', offset: 0, base64: body.subarray(0, 524288).toString('base64') }).ok).toBe(true);
+  expect(invoke({ ...nestedOp, kind: 'write-chunk', offset: 524288, base64: body.subarray(524288).toString('base64') }).ok).toBe(true);
+  expect(invoke({ ...nestedOp, kind: 'write-commit' }).ok).toBe(true);
+
+  const written = readFileSync(nested);
+  expect(written.length).toBe(body.length);
+  expect(createHash('sha256').update(written).digest('hex')).toBe(createHash('sha256').update(body).digest('hex'));
+  // The staging candidate is gone from the directory the upload just built, not merely from the root.
+  expect(readdirSync(join(root, 'reports', '2026', 'september'))).toEqual(['summary.bin']);
+});
+
+it('creates no directories when the compare-and-swap refuses the upload', () => {
+  const { root, invoke, op } = fixture();
+  const nested = join(root, 'never', 'created', 'file.bin');
+  // A version is expected, but nothing is there to match it. The destination must be refused BEFORE any
+  // ancestry is built, or a rejected upload would litter the tree with empty private directories.
+  const refused = invoke({ ...op, kind: 'write-begin', path: nested, expectedVersion: 'sha256:absent' });
+  expect(refused.error.code).toBe('version_conflict');
+  expect(existsSync(join(root, 'never'))).toBe(false);
+});
+
+it('reports a non-directory in the destination path as a conflict, not an errno', () => {
+  const { root, invoke, op } = fixture();
+  writeFileSync(join(root, 'occupied'), 'i am a file');
+  const blocked = invoke({ ...op, kind: 'write-begin', path: join(root, 'occupied', 'child', 'file.bin') });
+  expect(blocked.error.code).toBe('not_directory');
+  // The caller learns the shape of the problem without the staging location or an errno being handed over.
+  expect(JSON.stringify(blocked)).not.toMatch(/elowen-upload|Errno|ENOTDIR|errno/i);
+  expect(readFileSync(join(root, 'occupied'), 'utf8')).toBe('i am a file');
+});
+
+it('still resolves through an existing symlinked ancestor and still catches drift under it', () => {
+  const { root, path, invoke, op } = fixture();
+  // An ancestor that is a symlink TO a directory is a normal destination — it is followed, not rebuilt.
+  const real = join(root, 'real'); mkdirSync(real);
+  symlinkSync(real, join(root, 'link'));
+  const through = { ...op, path: join(root, 'link', 'deep', 'file.bin'), size: 4 };
+  expect(invoke({ ...through, kind: 'write-begin' }).ok).toBe(true);
+  expect(statSync(join(real, 'deep')).isDirectory()).toBe(true);   // built under the link's real target
+
+  // Retargeting the ancestor after the upload was bound is drift, exactly as retargeting the file is.
+  unlinkSync(join(root, 'link')); mkdirSync(join(root, 'elsewhere')); symlinkSync(join(root, 'elsewhere'), join(root, 'link'));
+  expect(invoke({ ...through, kind: 'write-chunk', offset: 0, base64: Buffer.from('abcd').toString('base64') }).error.code).toBe('resolution_drift');
+  expect(existsSync(join(root, 'elsewhere', 'deep'))).toBe(false);
+  void path;
+});
+
 it('refuses retargeted symlinks before committing and supports empty files', () => {
   const { root, path, invoke, op } = fixture();
   const target = join(root, 'actual'); const other = join(root, 'other');

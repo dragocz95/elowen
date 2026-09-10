@@ -4,6 +4,54 @@ import { promisify } from 'node:util';
 
 const execFileP = promisify(execFile);
 const CHUNK_BYTES = 128 * 1024;
+/** A shell reports a program it could not find as 127, and `systemd-run --pipe --wait` passes the unit's
+ *  status straight through, so this is the guest's answer to "that command is not installed here". */
+const COMMAND_NOT_FOUND = 127;
+const GUEST_STDERR_BOUND = 2000;
+
+/** Turn a failed guest command into an error that describes the GUEST.
+ *
+ *  The launcher is a host `podman` invocation carrying its store flags, the container id and the whole
+ *  wrapped argv, and Node puts that entire command line into the message of a non-zero exit. Reporting it
+ *  told whoever asked to read a PDF that `/usr/bin/podman --root … exec <64 hex chars> …` had failed,
+ *  which names none of their concern, cannot be acted on, and writes the container's identity into a
+ *  transcript. What the caller needs is which program failed, in which environment, and why.
+ *
+ *  `code` is stable and is the contract other plugins match on; the guest's own stderr is sanitised and
+ *  bounded, and the host command line never appears in either. */
+function guestCommandFailure(file, error, sanitize) {
+  const clean = (text) => sanitize(String(text ?? '')).replace(/\s+$/, '').slice(0, GUEST_STDERR_BOUND);
+  // What a REAL child-process failure looks like, and nothing else. Node reports a non-zero exit as a
+  // numeric `code`, a launcher that never started as a `syscall`, and a killed process through `killed`
+  // and `signal` — while an aborted run and a revoked execution arrive as typed errors that also happen
+  // to carry `code` and `stderr`. Keying off those two alone rewrote a 403 revocation and a cancellation
+  // into a generic "command failed", throwing away both the reason and the status the caller answers
+  // with. A typed failure this module raised or was handed already means something; it passes through
+  // whole, and only its message is sanitised — which is all that ever happened to it.
+  const exitStatus = Number.isInteger(error?.code) ? error.code : null;
+  const launcherFailed = typeof error?.syscall === 'string';
+  const terminated = error?.killed === true || typeof error?.signal === 'string';
+  if (!error || typeof error !== 'object' || (exitStatus === null && !launcherFailed && !terminated)) {
+    if (error instanceof Error) error.message = clean(error.message);
+    return error;
+  }
+  if (launcherFailed) {
+    // The HOST launcher itself never started. That is a transport fault, not a missing guest program, and
+    // it must not be reported as one — nor may it disclose where the launcher lives.
+    return Object.assign(new Error('The managed execution transport is unavailable'), { code: 'guest_transport_unavailable' });
+  }
+  const stderr = clean(error.stderr);
+  if (exitStatus === COMMAND_NOT_FOUND) {
+    return Object.assign(new Error(`${file} is not available in this project environment`),
+      { code: 'guest_command_missing', command: file, guestStatus: exitStatus });
+  }
+  if (exitStatus !== null) {
+    return Object.assign(new Error(`${file} failed in this project environment with status ${exitStatus}${stderr ? `: ${stderr}` : ''}`),
+      { code: 'guest_command_failed', command: file, guestStatus: exitStatus, stderr });
+  }
+  return Object.assign(new Error(`${file} was terminated in this project environment${error.signal ? ` by ${error.signal}` : ''}`),
+    { code: 'guest_command_terminated', command: file, signal: error.signal ?? null });
+}
 
 /** This adapter only speaks the existing Sandbox project contract. Guest names never enter host fs. */
 export function managedFiles(ctx, signal) {
@@ -171,8 +219,7 @@ export function managedFiles(ctx, signal) {
       if (typeof result.stderr === 'string') result.stderr = prepared.sanitizeOutput(result.stderr);
       return result;
     } catch (error) {
-      failure = leaseError ?? error;
-      if (failure instanceof Error) failure.message = prepared.sanitizeOutput(failure.message);
+      failure = guestCommandFailure(file, leaseError ?? error, (text) => prepared.sanitizeOutput(text));
       if (cancel) {
         try { await cancel(); }
         catch (cleanup) { failure = new AggregateError([failure, cleanup], `Guest cancellation failed: ${prepared.sanitizeOutput(cleanup.message)}`); }

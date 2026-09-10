@@ -1,5 +1,7 @@
-import { describe, expect, it, vi } from 'vitest';
-import { resolve } from 'node:path';
+import { afterAll, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join, resolve } from 'node:path';
 import type { PluginContext, SandboxPreparedExecution, GuestFileResult, GuestFileStat, ProjectEnvironmentControl, SandboxControl } from '../../src/plugins/api.js';
 import { createHash } from 'node:crypto';
 import { posix } from 'node:path';
@@ -144,6 +146,9 @@ function memoryProvider(initial: Record<string, string | Buffer> = {}) {
   }));
   return { projectFiles, prepareExecution, environmentFor, data, release, responses, race: () => { race = true; } };
 }
+
+const launcherDirs: string[] = [];
+afterAll(() => { for (const dir of launcherDirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 
 describe('managed builtin consumer routing', () => {
   it('exercises the real loader/control/currentAccess contract for a managed member', async () => {
@@ -425,6 +430,145 @@ describe('managed builtin consumer routing', () => {
     });
     const { run } = fixture(files, provider);
     expect((await run('Read', { file_path: '/data/doc.pdf' })).details?.ok).toBe(false);
+  });
+
+  /** A launcher that behaves the way the real one does when the guest program is missing.
+   *
+   *  The real launch is a host `podman` invocation carrying its store flags, the container id and the
+   *  wrapped argv, and `systemd-run --pipe --wait` hands the unit's status back — so a program that is not
+   *  installed in the guest arrives as exit 127 from a host command line. Node then puts that ENTIRE
+   *  command line into the error message, which is how the container's identity used to reach the caller. */
+  const fakeLauncher = (script: string) => {
+    const dir = mkdtempSync(join(tmpdir(), 'managed-launcher-'));
+    launcherDirs.push(dir);
+    const podman = join(dir, 'podman');
+    writeFileSync(podman, script, { mode: 0o755 });
+    return {
+      podman,
+      containerId: 'c'.repeat(64),
+      args: ['--root', '/var/lib/containers/storage', 'exec', 'c'.repeat(64), 'systemd-run', '--pipe', '--wait', 'pdfinfo'],
+    };
+  };
+
+  it('reports a PDF tool missing from the GUEST without leaking the host launcher', async () => {
+    const provider = memoryProvider({ '/data/doc.pdf': '%PDF-1.4\nguest fixture' });
+    const launcher = fakeLauncher('#!/bin/sh\necho "pdfinfo: command not found" >&2\nexit 127\n');
+    const prepare = provider.prepareExecution.getMockImplementation()!;
+    provider.prepareExecution.mockImplementation(async (input, options) => ({
+      ...await prepare({ ...input, command: { type: 'argv', file: 'pdfinfo', args: [] } } as never, options),
+      launch: { type: 'argv', file: launcher.podman, args: launcher.args, env: {} },
+    }));
+    provider.responses.set('pdfinfo', '');
+    const { run } = fixture(files, provider);
+    const result = await run('Read', { file_path: '/data/doc.pdf' });
+    const text = result.content[0].text!;
+
+    // The caller is told what is missing and WHERE, so they act on the project environment rather than
+    // going to install a package on a host they may not even be able to reach.
+    expect(text).toMatch(/poppler-utils/);
+    expect(text).toMatch(/not installed in this project environment/);
+    expect(text).not.toMatch(/on this host/);
+    expect(result.details).toMatchObject({ ok: false, pdf: true });
+
+    // None of the transport may appear: not the launcher path, not its store flags, not the container id.
+    expect(text).not.toContain(launcher.podman);
+    expect(text).not.toContain(launcher.containerId);
+    expect(text).not.toContain('podman');
+    expect(text).not.toContain('systemd-run');
+    expect(text).not.toContain('/var/lib/containers');
+    expect(text).not.toMatch(/Command failed/);
+  });
+
+  it('carries the guest stderr for a failing PDF tool, still without the launcher', async () => {
+    const provider = memoryProvider({ '/data/doc.pdf': '%PDF-1.4\nguest fixture' });
+    // Exit 1 is a different answer from 127: the tool IS installed and the document is the problem.
+    const launcher = fakeLauncher('#!/bin/sh\necho "Syntax Error: Couldn\'t read xref table" >&2\nexit 1\n');
+    const prepare = provider.prepareExecution.getMockImplementation()!;
+    provider.prepareExecution.mockImplementation(async (input, options) => ({
+      ...await prepare({ ...input, command: { type: 'argv', file: 'pdfinfo', args: [] } } as never, options),
+      launch: { type: 'argv', file: launcher.podman, args: launcher.args, env: {} },
+    }));
+    provider.responses.set('pdfinfo', '');
+    const { run } = fixture(files, provider);
+    const text = (await run('Read', { file_path: '/data/doc.pdf' })).content[0].text!;
+
+    expect(text).toMatch(/Could not read the PDF/);
+    expect(text).toContain("Syntax Error: Couldn't read xref table"); // the guest's own diagnosis survives
+    expect(text).toMatch(/status 1/);
+    expect(text).not.toMatch(/poppler-utils/);                        // not a missing-tool answer
+    expect(text).not.toContain(launcher.podman);
+    expect(text).not.toContain(launcher.containerId);
+    expect(text).not.toContain('podman');
+  });
+
+  it('bounds guest stderr instead of pasting an unbounded error into the result', async () => {
+    const provider = memoryProvider({ '/data/doc.pdf': '%PDF-1.4\nguest fixture' });
+    const launcher = fakeLauncher('#!/bin/sh\nawk \'BEGIN{while(i++<9000)printf "E"}\' >&2\nexit 1\n');
+    const prepare = provider.prepareExecution.getMockImplementation()!;
+    provider.prepareExecution.mockImplementation(async (input, options) => ({
+      ...await prepare({ ...input, command: { type: 'argv', file: 'pdfinfo', args: [] } } as never, options),
+      launch: { type: 'argv', file: launcher.podman, args: launcher.args, env: {} },
+    }));
+    provider.responses.set('pdfinfo', '');
+    const { run } = fixture(files, provider);
+    const text = (await run('Read', { file_path: '/data/doc.pdf' })).content[0].text!;
+    expect(text).toMatch(/E{2000}/);
+    expect(text).not.toMatch(/E{2001}/);
+  });
+
+  /** A launcher that hangs, so the run is still in flight when something else ends it. */
+  const hangingGuest = (provider: ReturnType<typeof memoryProvider>, lease: Record<string, unknown> = {}) => {
+    const launcher = fakeLauncher('#!/bin/sh\nsleep 10\n');
+    provider.prepareExecution.mockImplementation(async (input: any) => ({
+      mode: 'managed', projectRef: input.projectRef, cwd: '/tmp', displayCwd: '/workspace',
+      home: '/root', roots: ['/'], workspace: null,
+      launch: { type: 'argv', file: launcher.podman, args: launcher.args, env: {} },
+      lease: { id: 'typed', accountUserId: 1, workspaceId: null, homeGeneration: null, heartbeat() {}, release() {}, ...lease },
+      sanitizeOutput: (text: string) => text, cancel: vi.fn(async () => {}),
+    }) as never);
+    return launcher;
+  };
+
+  it('keeps a revoked execution a revocation rather than a failed command', async () => {
+    const provider = memoryProvider({});
+    // A revocation reaches this path through the heartbeat, and it is a typed failure with its own code and
+    // its own status. It also carries `code` and `stderr`-shaped fields, which is how it used to be mistaken
+    // for a process that exited: it came back as a generic command failure with no status at all, so a 403
+    // stopped being answerable as a 403.
+    const revoked = Object.assign(new Error('Execution was revoked for this project'),
+      { code: 'execution_revoked', status: 403 });
+    hangingGuest(provider, { heartbeat() { throw revoked; } });
+    const { ctx } = fixture(files, provider);
+    const guest = managedFiles(ctx as never) as unknown as { exec(file: string, args: string[]): Promise<unknown> };
+
+    vi.useFakeTimers();
+    try {
+      const raised = guest.exec('pdfinfo', ['/data/doc.pdf']).then(() => null, (error: unknown) => error);
+      await vi.advanceTimersByTimeAsync(5000);   // the heartbeat interval
+      const error = await raised as Error & { code?: string; status?: number };
+      expect(error).toBe(revoked);               // the same object, not a replacement wearing its message
+      expect(error.code).toBe('execution_revoked');
+      expect(error.status).toBe(403);
+      expect(error.message).toContain('revoked');
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('keeps a cancellation a cancellation', async () => {
+    const provider = memoryProvider({});
+    hangingGuest(provider);
+    const controller = new AbortController();
+    const { ctx } = fixture(files, provider);
+    const guest = managedFiles(ctx as never, controller.signal) as unknown as { exec(file: string, args: string[]): Promise<unknown> };
+
+    const raised = guest.exec('pdfinfo', ['/data/doc.pdf']).then(() => null, (error: unknown) => error);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    controller.abort();
+    const error = await raised as Error & { code?: string };
+    // An abort arrives from the child process, but it is not a report about the program — it is the answer
+    // to something the caller did, and callers distinguish it by name and code.
+    expect(error.name).toBe('AbortError');
+    expect(error.code).toBe('ABORT_ERR');
+    expect(error.code).not.toBe('guest_command_failed');
   });
 
   it('forces managed admin Bash through prepareExecution before any host path lookup', async () => {
