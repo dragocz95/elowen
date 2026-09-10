@@ -122,7 +122,7 @@ export async function buildApp(opts: BuildOpts) {
     pushSubscriptions, userPrompts, userSettings, prompts, git,
     elowenCli, bus, events,
     avatarsDir, chatImagesDir, pluginDirs, userPluginDir, pluginDataRoot,
-    brainCreds, brainOauth, embeddings,
+    brainRuntime, brainCreds, brainOauth, embeddings,
     brainStore, usageOrigins, memoryStore, searchVectors, memoryCategoryStore, userPluginConfig, pluginSecrets, embedQueue, memoryCategorizer,
     dashDigests, dashDigestInference, memoryModelInference,
     pluginProvider, hookAudit, brain, themes, brand, setPluginHostPush,
@@ -286,7 +286,7 @@ export async function buildApp(opts: BuildOpts) {
   const app = createServer(serverDeps);
 
   const startLoops = createMaintenanceLoops({
-    brain, brainStore, chatImagesDir, config, embedQueue, events,
+    brain, brainAuth: brainCreds, brainRuntime, brainStore, chatImagesDir, config, embedQueue, events,
     memoryStore, users, usageOrigins, pluginReconcile, dbPath: opts.dbPath,
     restartMarker, bootMarker, version: ELOWEN_VERSION, log,
     onShutdownInstalled: (control) => { shutdown = control; },
