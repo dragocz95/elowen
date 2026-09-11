@@ -133,6 +133,8 @@ export interface SiteEnvironmentRegistration {
   sitesDataDir: string;
   brokerDir: string;
   workspaceReadOnly: boolean;
+  /** New registrations use an exploded persistent rootfs; absent preserves legacy image-backed rows. */
+  persistentRootfs?: boolean;
   network: 'shared' | 'isolated';
   limits: EnvironmentLimits;
   /** Copied from the Sites lifecycle checkpoint, not inferred from current container state. */

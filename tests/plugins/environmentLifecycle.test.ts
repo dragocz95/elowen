@@ -11,7 +11,6 @@ import { makePluginDb } from '../../src/store/pluginDb.js';
 import { initSandboxDb } from '../../plugins/sandbox/lib/db.mjs';
 import { environmentPublicationMigration } from '../../plugins/sandbox/lib/environmentDb.mjs';
 import { createEnvironmentRuntime, publicationSocketName } from '../../plugins/sandbox/lib/environmentRuntime.mjs';
-import { createEnvironmentDiskSpec } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import type { PodmanClient } from '../../plugins/sandbox/lib/podman.mjs';
 import type { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
 
@@ -156,21 +155,18 @@ describe('durable managed environment lifecycle', () => {
   });
 
   it('restores a rootfs-backed Site without snapshot data through disk restore while stopped', async () => {
-    const { runtime, root, db, podman, storage, containers } = setup();
+    const { runtime, root, podman, storage, containers } = setup();
     const registration = { siteId: 'shop', projectId: 7, sourceRel: 'sites/shop', image: 'localhost/elowen/site:fixed', network: 'shared',
-      workspaceReadOnly: false, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'sources', 'shop'), brokerDir: join(root, 'brokers'),
+      workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'sources', 'shop'), brokerDir: join(root, 'brokers'),
       limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true };
     mkdirSync(registration.sourcePath, { recursive: true });
     runtime.connectSitesRuntime({ resolve: async () => registration, beforeStart: async () => {}, afterStop: async () => {} });
-    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
-    const stored = db.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='site' AND resource_id='shop'").get() as any;
-    const rootfsBacked = JSON.parse(stored.spec_json);
-    rootfsBacked.input.disk = createEnvironmentDiskSpec({ resource: rootfsBacked.input.resource, image: rootfsBacked.input.image },
-      { sitesDataDir: registration.sitesDataDir }, '8'.repeat(32));
-    db.prepare("UPDATE p_sandbox_runtimes SET spec_json=? WHERE kind='site' AND resource_id='shop'").run(JSON.stringify(rootfsBacked));
+    const registered = await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
+    expect(registered.state).toBe('unprovisioned');
     await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-start', action: { kind: 'start' } });
     await runtime.reconcile();
     const first = podman.create.mock.calls.at(-1)![0];
+    expect(first.disk).toMatchObject({ format: 2, sourceImage: registration.image });
     storage.snapshot.mockImplementation(async (_spec: any, snapshotId: string) => ({ version: 2, snapshotId,
       sourceImage: { reference: first.disk.sourceImage, id: 'sha256:' + 'd'.repeat(64) }, trees: [{ component: 'rootfs' }] }));
     const capture = await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-snapshot',
@@ -902,7 +898,7 @@ describe('adopted workspace rollback', () => {
     let seed = 0;
     runtime.connectSitesRuntime({
       resolve: async () => ({ siteId: 'shop', projectId: 7, sourceRel, image: 'localhost/elowen/site:fixed', network: 'shared',
-        workspaceReadOnly: false, sitesDataDir: join(root, 'sites'), sourcePath: join(await runtime.projectWorkspaceHostPath({ projectId: 7 }), sourceRel),
+        workspaceReadOnly: false, persistentRootfs: true, sitesDataDir: join(root, 'sites'), sourcePath: join(await runtime.projectWorkspaceHostPath({ projectId: 7 }), sourceRel),
         brokerDir: join(root, 'brokers'), limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true }),
       containerSeed: async () => ({ kind: 'data', archivePath: join(root, `seed-${++seed}.tar`) }),
       beforeStart: async () => {}, afterStop: async () => {},
@@ -925,14 +921,12 @@ describe('adopted workspace rollback', () => {
     expect(siteCreates).toHaveLength(2);
     expect(siteCreates[0].mounts.find((mount: any) => mount.target === '/workspace').source).toBe(join(host, sourceRel));
     expect(siteCreates[1].mounts.find((mount: any) => mount.target === '/workspace').source).toBe(movedSource);
-    expect(siteCreates[1].volumes.find((volume: any) => volume.component === 'data').path)
-      .toBe(siteCreates[0].volumes.find((volume: any) => volume.component === 'data').path);
+    expect(siteCreates[1].disk.id).toBe(siteCreates[0].disk.id);
+    expect(siteCreates[1].disk.rootfsPath).toBe(siteCreates[0].disk.rootfsPath);
     expect(podman.siteDataArchive.mock.calls.map(([, mode, archive]: any[]) => [mode, archive])).toEqual([
       ['import', join(root, 'seed-1.tar')],
-      ['import', join(root, 'seed-2.tar')],
     ]);
-    expect(podman.siteDataArchive.mock.invocationCallOrder[1]).toBeLessThan(podman.create.mock.invocationCallOrder.at(-1)!);
-    expect(podman.siteDataArchive.mock.invocationCallOrder[1]).toBeLessThan(podman.start.mock.invocationCallOrder.at(-1)!);
+    expect(podman.siteDataArchive.mock.invocationCallOrder[0]).toBeLessThan(podman.create.mock.invocationCallOrder[0]!);
     expect(podman.removeVolume).not.toHaveBeenCalled();
     expect(await runtime.siteEnvironmentFor({ siteId: 'shop', accountUserId: 1 })).toMatchObject({ state: 'running', generation: 1 });
     expect(ctx.logger.info).toHaveBeenCalledWith(`site shop: source path moved from ${join(host, sourceRel)} to ${movedSource}, rebuilding container`);

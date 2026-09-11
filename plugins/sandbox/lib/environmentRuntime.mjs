@@ -209,7 +209,11 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   }
   function siteRecord(registration, generation) {
     const effective = limits(registration.limits);
-    return { registration, input: { resource: { kind: 'site', id: registration.siteId }, generation, image: registration.image, network: registration.network,
+    const resource = { kind: 'site', id: registration.siteId };
+    const disk = registration.persistentRootfs
+      ? createEnvironmentDiskSpec({ resource, image: registration.image }, { sitesDataDir: registration.sitesDataDir, namespace }, randomUUID().replaceAll('-', ''))
+      : undefined;
+    return { registration, input: { resource, generation, image: registration.image, ...(disk ? { disk } : {}), network: registration.network,
       workspaceReadOnly: registration.workspaceReadOnly, limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } },
       binding: { namespace, sitesDataDir: registration.sitesDataDir, sourcePath: registration.sourcePath, brokerDir: registration.brokerDir } };
   }
@@ -724,12 +728,15 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     if (!current) {
       if (row.kind === 'site') {
         await sites.beforeCreate?.(row.resource_id);
-        const seed = await sites.containerSeed?.(row.resource_id);
-        if (seed) {
-          if (seed.kind !== 'data') throw error('invalid_site_seed', 'Sites returned an invalid container seed');
-          // The archive contains only the disposable bootstrap stage. Import overlays that directory and
-          // leaves every application-owned path already present in the persistent data volume untouched.
-          await podman.siteDataArchive(spec, 'import', seed.archivePath);
+        if (!spec.disk || row.spec.diskSeeded !== true) {
+          const seed = await sites.containerSeed?.(row.resource_id);
+          if (seed) {
+            if (seed.kind !== 'data') throw error('invalid_site_seed', 'Sites returned an invalid container seed');
+            // Legacy rows seed every replacement rootfs. Persistent disks consume the bootstrap once and
+            // retain the installed application and system configuration across envelope replacement.
+            await podman.siteDataArchive(spec, 'import', seed.archivePath);
+          }
+          if (spec.disk) { row.spec.diskSeeded = true; store.save(row); }
         }
       }
       current = await podman.create(spec);
@@ -857,6 +864,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const spec = specFor(row.spec);
     const kind = op.action.kind;
     if (kind === 'provision-image') {
+      if (spec.disk) throw error('legacy_only', 'Persistent rootfs Sites materialize directly from their registered image');
       const image = await siteImages.provision(op.action.imageKind);
       if (image !== row.spec.input.image) throw error('site_image_mismatch', 'The fixed recipe does not match the registered Site image');
       return;
