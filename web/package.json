@@ -77,6 +77,6 @@
   "overrides": {
     "dompurify": "$dompurify",
     "postcss": "^8.5.22",
-    "sharp": "^0.35.3"
+    "sharp": "^0.35.4"
   }
 }
