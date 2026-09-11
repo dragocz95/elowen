@@ -13,8 +13,10 @@ import type {
 } from '../plugins/api.js';
 import { logger, type Logger } from '../shared/logger.js';
 import {
+  encodeHelperRequest,
   SITE_GATEWAY_HELPER_INSTALL_ARGS,
   SITE_GATEWAY_HELPER_INSTALL_SOURCE,
+  SITE_GATEWAY_HELPER_ARGV,
   SITE_GATEWAY_HELPER_PATH,
   SITE_RUNTIME_SOCKET_ROOT,
 } from '../shared/siteGateway.js';
@@ -40,6 +42,7 @@ export type SiteGatewayHelperRequest =
   | { op: 'status' }
   | { op: 'environments-status' }
   | { op: 'environments-provision' }
+  | { domain: 'nspawn'; op: 'provision' }
   | { op: 'prepare-runtime-socket'; siteId: string }
   | { op: 'seal-runtime-socket'; siteId: string }
   | { op: 'remove-runtime-socket'; siteId: string };
@@ -118,6 +121,26 @@ export async function installSiteGatewayHelper(io: SiteGatewayHelperInstallIO = 
   return true;
 }
 
+/** Install the machine runtime's host artefacts: the container tools package, the unit template and the
+ *  polkit rule. The helper does the work and is idempotent, so this converges rather than repeating.
+ *
+ *  It is wired into the install and the update because there is no other way in. The runtime refuses to
+ *  create an environment while any of the three is missing and there is deliberately no fallback, so a
+ *  host that never runs this can create nothing and the only repair would be writing root-owned files by
+ *  hand. Both paths reach it: a fresh install as one of its steps, and an existing instance through the
+ *  same refresh that brings the helper itself forward. */
+export async function provisionMachineRuntime(invoke: SiteGatewayHelperInvoker = defaultInvoker): Promise<boolean> {
+  const response = await invoke({ domain: 'nspawn', op: 'provision' });
+  if (response.ready === false) {
+    const blocking = (response.items ?? []).filter((item): item is { ok: boolean; label?: string; detail?: string } =>
+      typeof item === 'object' && item !== null && (item as { ok?: unknown }).ok === false);
+    // Not every unmet row is this command's to fix: the firewall rules are the operator's and are only
+    // ever reported. Naming them is the point; failing on them would be wrong.
+    throw new Error(`machine runtime support is incomplete — ${blocking.map((item) => `${item.label ?? 'requirement'}: ${item.detail ?? 'not met'}`).join('; ') || response.detail || 'no detail reported'}`);
+  }
+  return response.ready === true;
+}
+
 const defaultHelperMaintenance: SiteGatewayHelperMaintenance = {
   status: () => siteGatewayHelperStatus(),
   install: () => installSiteGatewayHelper(),
@@ -125,7 +148,7 @@ const defaultHelperMaintenance: SiteGatewayHelperMaintenance = {
 
 export function siteGatewayHelperTimeoutMs(request: SiteGatewayHelperRequest): number {
   if (request.op === 'ensure-site') return ISSUE_TIMEOUT_MS;
-  if (request.op === 'environments-provision') return ENVIRONMENT_PROVISION_TIMEOUT_MS;
+  if (request.op === 'environments-provision' || request.op === 'provision') return ENVIRONMENT_PROVISION_TIMEOUT_MS;
   return HELPER_TIMEOUT_MS;
 }
 
@@ -145,7 +168,7 @@ function defaultInvoker(request: SiteGatewayHelperRequest): Promise<HelperRespon
     return Promise.reject(new Error('the site gateway helper is not installed'));
   }
   return new Promise((resolve, reject) => {
-    const child = spawn('sudo', ['-n', SITE_GATEWAY_HELPER_PATH], {
+    const child = spawn('sudo', [...SITE_GATEWAY_HELPER_ARGV], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { PATH: '/usr/sbin:/usr/bin:/sbin:/bin' },
     });
@@ -197,7 +220,9 @@ function defaultInvoker(request: SiteGatewayHelperRequest): Promise<HelperRespon
       finish(new Error('the site gateway helper timed out'));
     }, siteGatewayHelperTimeoutMs(request));
     timer.unref();
-    child.stdin.end(JSON.stringify(request));
+    // The domain is added here rather than in each typed request, so the whole Sites surface keeps its
+    // existing shape while the helper always receives the discriminator explicitly.
+    child.stdin.end(encodeHelperRequest({ domain: 'sites', ...request }));
   });
 }
 
@@ -209,6 +234,7 @@ function environmentsUnavailable(detail: string): PublishedSitesEnvironmentStatu
   return { ready: false, items: [], detail };
 }
 
+/** One readiness row as it crosses the helper boundary. */
 function environmentItem(value: unknown): PublishedSitesEnvironmentItem | null {
   if (!value || typeof value !== 'object') return null;
   const item = value as Record<string, unknown>;

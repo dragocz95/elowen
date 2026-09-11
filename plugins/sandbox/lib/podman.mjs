@@ -2,7 +2,7 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { userInfo } from 'node:os';
 import { lstatSync, mkdirSync, readFileSync, realpathSync, statfsSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { PROJECT_BASE_IMAGE_TAG, PROJECT_CONTAINERFILE } from './containerBaseImage.mjs';
 import { assertContainerSpec, executionUnit, hostPath, publicationUnit, resourceToken, snapshotReference, volumeLabels, withContainerLimits } from './containerSpec.mjs';
 import { checkedHostPath } from './containerPaths.mjs';
@@ -10,9 +10,9 @@ import { COMPLETION_CWD_LIMIT, completionArtifact, completionPrelude, parseCompl
 
 const SYSTEM_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
 const INPUT_LIMIT = 1024 * 1024;
-const OUTPUT_LIMIT = 256 * 1024;
+export const OUTPUT_LIMIT = 256 * 1024;
 /** The socket `systemd-run` connects to inside the guest; its presence is what makes an execution possible. */
-const GUEST_SYSTEM_BUS = '/run/dbus/system_bus_socket';
+export const GUEST_SYSTEM_BUS = '/run/dbus/system_bus_socket';
 const DISK_TREE_INVENTORY_PY = `def inventory(root):
  rows=[]; links={}
  for directory,names,files in os.walk(root,topdown=True,followlinks=False):
@@ -29,11 +29,11 @@ const DISK_TREE_INVENTORY_PY = `def inventory(root):
  return rows`;
 const isolatedStores = new WeakSet();
 
-function positive(value, max, name) {
+export function positive(value, max, name) {
   if (!Number.isSafeInteger(value) || value < 1 || value > max) throw new Error(`Invalid ${name} bound`);
   return value;
 }
-function validateInput(input) {
+export function validateInput(input) {
   if (input !== undefined && typeof input !== 'string' && !Buffer.isBuffer(input)) throw new Error('Invalid command input');
   if (input !== undefined && Buffer.byteLength(input) > INPUT_LIMIT) throw new Error('Command input exceeds limit');
 }
@@ -159,7 +159,7 @@ function oneJson(result) {
   return manyJson(result, 1)[0];
 }
 /** `systemctl show --property=…` output as a plain record; an absent property reads as undefined. */
-function unitProperties(stdout) {
+export function unitProperties(stdout) {
   return Object.fromEntries(String(stdout).trim().split('\n').map((line) => {
     const at = line.indexOf('=');
     return [line.slice(0, at), line.slice(at + 1)];
@@ -642,12 +642,20 @@ export class PodmanClient {
     await this.#run(['unshare', '/usr/bin/rm', '-rf', '--', directory]);
   }
 
-  async materializeRootfs(spec, pendingPath) {
+  /** An image's merged filesystem, written to a host-owned archive, and the id of the image it came from.
+   *
+   *  A seed container is how an image's filesystem is read: `podman export` takes a container, and a
+   *  container created and never started is the image's own tree with nothing added. The archive is left
+   *  for the caller to consume and remove, because the two runtimes do different things with it — Podman
+   *  extracts it in its own user namespace, the machine runtime hands it to the privileged helper, which
+   *  extracts it and shifts its ownership in one pass.
+   *
+   *  @param {object} spec A disk-backed specification; the image is `spec.disk.sourceImage`.
+   *  @param {string} archivePath Host path the archive is written to, replaced if it already exists. */
+  async exportImageRootfs(spec, archivePath) {
     this.#assertScope(spec);
     if (!spec.disk) throw new Error('A rootfs-backed specification is required');
-    const pending = checkedHostPath(pendingPath);
-    const directory = checkedHostPath(dirname(pending));
-    const archive = join(directory, 'rootfs.tar.pending');
+    const archive = join(checkedHostPath(dirname(hostPath(archivePath))), basename(archivePath));
     const seed = `${spec.namespace}-disk-${spec.disk.id.slice(0, 16)}-seed`;
     resourceToken(seed);
     await this.#assertRootless();
@@ -659,6 +667,21 @@ export class PodmanClient {
     try {
       await this.#run(['create', '--name', seed, spec.disk.sourceImage]);
       await this.#run(['export', '--output', archive, seed], { timeoutMs: 15 * 60_000 });
+      await this.#run(['rm', seed]);
+      return await this.imageIdentity(spec.disk.sourceImage);
+    } catch (cause) {
+      if (await this.#exists('container', seed)) await this.#run(['rm', '--force', seed], { allowFailure: true });
+      await this.#run(['unshare', '/usr/bin/rm', '-f', '--', archive], { allowFailure: true });
+      throw cause;
+    }
+  }
+
+  async materializeRootfs(spec, pendingPath) {
+    const pending = checkedHostPath(pendingPath);
+    const directory = checkedHostPath(dirname(pending));
+    const archive = join(directory, 'rootfs.tar.pending');
+    const imageId = await this.exportImageRootfs(spec, archive);
+    try {
       await this.#run(['unshare', '/usr/bin/tar', '--extract', '--file', archive, '--directory', pending,
         '--numeric-owner', '--same-owner', '--xattrs', '--xattrs-include=*', '--sparse'], { timeoutMs: 15 * 60_000 });
       const verifyScript = `set -eu
@@ -677,12 +700,9 @@ if expected != actual:
 PY
 `;
       await this.#run(['unshare', '/bin/bash', '-c', verifyScript, 'elowen-verify-materialization', spec.disk.sourceImage, pending, '/usr/bin/podman', ...this.#prefix], { timeoutMs: 15 * 60_000 });
-      await this.#run(['rm', seed]);
-      const imageId = await this.imageIdentity(spec.disk.sourceImage);
       await this.#run(['unshare', '/usr/bin/rm', '-f', '--', archive]);
       return imageId;
     } catch (cause) {
-      if (await this.#exists('container', seed)) await this.#run(['rm', '--force', seed], { allowFailure: true });
       await this.#run(['unshare', '/usr/bin/rm', '-f', '--', archive], { allowFailure: true });
       throw cause;
     }
@@ -740,7 +760,12 @@ PY
     return row.id;
   }
 
-  async extractRootfsArchive(archivePath, targetPath) {
+  /** `spec` names the disk the tree is being extracted into. Podman does not need it — the rootless
+   *  extraction lands the image's own numeric owners wherever it is pointed — but a runtime whose
+   *  extraction also has to record the disk's identity does, so it is part of the method's contract. */
+  async extractRootfsArchive(spec, archivePath, targetPath) {
+    this.#assertScope(spec);
+    if (!spec.disk) throw new Error('A rootfs-backed candidate specification is required');
     const archive = checkedHostPath(archivePath, { file: true });
     const target = checkedHostPath(targetPath);
     await this.#run(['unshare', '/usr/bin/tar', '--extract', '--file', archive, '--directory', target,

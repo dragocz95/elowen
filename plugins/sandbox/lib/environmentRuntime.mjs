@@ -12,6 +12,8 @@ import { ownerProvablyDead, processIdentity, withRepoLease } from './db.mjs';
 import { createContainerSpec, createEnvironmentDiskSpec, createLegacyProjectSpec, createBoundSiteSpec, withContainerLimits, hostPath, resourceToken, bindContainerIdentity, publicationRuntimeToken } from './containerSpec.mjs';
 import { managedGuestRoot } from './containerPaths.mjs';
 import { PodmanClient } from './podman.mjs';
+import { NspawnClient } from './nspawn.mjs';
+import { selectRuntimeClient } from './runtimeClient.mjs';
 import { ContainerStorage } from './containerStorage.mjs';
 import { PROJECT_BASE_IMAGE_TAG } from './containerBaseImage.mjs';
 
@@ -33,6 +35,9 @@ const STEP_PLANS = {
   restore: [['quiesce', 1], ['stop', 2], ['import', 8], ['container', 2], ['boot', 2], ['switch', 1], ['cleanup', 1]],
   limits: [['apply', 1]],
   'migrate-disk': [['quiesce', 1], ['stop', 2], ['export', 8], ['materialize', 8], ['storage', 1], ['container', 2], ['boot', 2], ['verify', 2], ['switch', 1], ['cleanup', 1]],
+  // A runtime change copies nothing. Its one long step is the ownership pass over the existing tree; the
+  // envelope that replaces the container is a handful of configuration files.
+  'migrate-runtime': [['quiesce', 1], ['stop', 2], ['shift', 8], ['container', 1], ['boot', 2], ['verify', 2], ['switch', 1], ['cleanup', 1]],
   delete: [['stop', 2], ['containers', 2], ['images', 2], ['volumes', 2], ['storage', 2], ['records', 1]],
 };
 /** Every Sites-only action and the image jobs: one step, honestly unlabelled, rather than a fabricated
@@ -98,7 +103,9 @@ function action(value, kind) {
   // files come back with it — which is exactly why it is an explicit action and never an automatic one.
   // `migrate-disk` turns a legacy image-backed environment into a rootfs-backed one. It is the same
   // shape for a project and for a Site because the disk, not the resource kind, is what it changes.
-  const fields = { start: [], stop: [], restart: [], delete: [], snapshot: ['note', 'includeData'], restore: ['snapshotId', 'restoreData'], limits: ['limits'], 'migrate-disk': [],
+  // `migrate-runtime` moves an environment that is ALREADY on a persistent disk from Podman to
+  // systemd-nspawn. It copies nothing: the same disk keeps running under a different envelope.
+  const fields = { start: [], stop: [], restart: [], delete: [], snapshot: ['note', 'includeData'], restore: ['snapshotId', 'restoreData'], limits: ['limits'], 'migrate-disk': [], 'migrate-runtime': [],
     ...(kind === 'project' ? { recreate: [] } : {}),
     ...(kind === 'site' ? { prepare: [], 'cleanup-stage': [], 'provision-image': ['imageKind'], 'import-data': ['artifactId'], 'export-data': ['artifactId'], 'import-snapshot': ['artifactId'], 'remove-artifact': ['artifactId'], 'export-project': ['artifactId'] } : {}) };
   if (value.imageKind !== undefined && !['base', 'static', 'node'].includes(value.imageKind)) throw error('invalid_action', 'Unknown fixed Sites image recipe', 400);
@@ -152,15 +159,61 @@ function fileOperation(op) {
 
 /** One underlying coordinator for projects and Sites. Forks only write durable intents and execute
  * already-running validated targets. Only daemon reconciliation performs container lifecycle changes. */
-export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen', podman = new PodmanClient({ outputLimitBytes: 16 * 1024 * 1024 }), storage = new ContainerStorage(podman), daemon = typeof process.send !== 'function' }) {
+export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen', podman = new PodmanClient({ outputLimitBytes: 16 * 1024 * 1024 }),
+  nspawn = new NspawnClient({ images: podman, namespace, outputLimitBytes: 16 * 1024 * 1024 }),
+  storage = new ContainerStorage(podman, { nspawn }), daemon = typeof process.send !== 'function' }) {
   const store = createEnvironmentStore(db, processIdentity);
+  /** Which runtime drives THIS specification. The disk record is the only discriminator, so an
+   *  environment that has not been migrated keeps running on Podman and a migration can hold both
+   *  envelopes of the same environment at once without either client learning about the other. */
+  const runtimeFor = (spec) => selectRuntimeClient(spec, { podman, nspawn });
+  /** What the host still owes the machine runtime, held briefly because two very different callers ask:
+   *  the overview a browser polls, and the one-time decision below. The answer is a privileged round trip
+   *  and it changes only when an operator changes the host, so a few seconds of staleness costs nothing —
+   *  and the helper re-checks its own gates when an envelope is actually written, so a stale `ready` can
+   *  delay a refusal but never turn one into a success. */
+  const HOST_READINESS_TTL_MS = 15_000;
+  let readinessCache = null;
+  async function machineReadiness() {
+    if (!nspawn || typeof nspawn.hostReadiness !== 'function') {
+      return { ready: false, items: [{ id: 'runtime:machine', label: 'Machine runtime', ok: false, detail: 'this runtime has no machine client' }] };
+    }
+    if (readinessCache && Date.now() - readinessCache.at < HOST_READINESS_TTL_MS) return readinessCache.value;
+    const value = await nspawn.hostReadiness();
+    readinessCache = { at: Date.now(), value };
+    return value;
+  }
+  const readinessRefusal = (readiness) => readiness.items.filter((item) => !item.ok)
+    .map((item) => `${item.label}: ${item.detail ?? 'not satisfied'}`).join('; ');
+  /** Which runtime a NEW environment is built on, decided once, here, and nowhere else.
+   *
+   *  There is no configuration flag and no per-environment choice. A host that can hold a machine holds
+   *  every environment created from now on; a host that cannot refuses the creation and names what is
+   *  missing. Falling back to a container instead would leave two runtimes in service on one host for a
+   *  reason nobody recorded, which is the exact ambiguity `disk.runtime` exists to prevent.
+   *
+   *  It runs at the moment the disk is about to be materialized, not when the row was inserted: a row is
+   *  created by merely LOOKING at a project, and a look must not reach for a privileged round trip. An
+   *  environment that already has a disk never reaches here — its runtime is its disk record's, and no
+   *  readiness answer can move it. */
+  async function decideRuntime(row) {
+    if (!row.spec.runtimePending) return;
+    const readiness = await machineReadiness();
+    if (!readiness.ready) throw error('runtime_not_ready', `This host cannot run an environment yet — ${readinessRefusal(readiness)}`);
+    const disk = row.spec.input.disk;
+    row.spec.input.disk = createEnvironmentDiskSpec({ resource: row.spec.input.resource, image: disk.sourceImage, runtime: 'nspawn' },
+      diskPathsFor(row.spec), disk.id, disk.componentGeneration);
+    delete row.spec.runtimePending;
+    store.save(row);
+    store.log(row.kind, row.resource_id, 'environment will run on the machine runtime');
+  }
   const transfers = createGuestFileTransport({ db, helperSource: FILE_HELPER, runGuest,
     runCleanup: async (row, _userId, argv, options) => {
       const current = store.get(row.kind, row.resource_id);
       if (!current || current.generation !== row.generation) throw error('generation_changed', 'Upload cleanup generation changed');
       const spec = specFor(row.spec);
-      if ((await podman.inspect(spec))?.state !== 'running') throw error('upload_cleanup_pending', 'Start the environment to clean up its unfinished uploads');
-      return await podman.exec(spec, randomUUID().replaceAll('-', ''), argv, { ...options, persistent: true });
+      if ((await runtimeFor(spec).inspect(spec))?.state !== 'running') throw error('upload_cleanup_pending', 'Start the environment to clean up its unfinished uploads');
+      return await runtimeFor(spec).exec(spec, randomUUID().replaceAll('-', ''), argv, { ...options, persistent: true });
     },
   });
   let sites;
@@ -218,7 +271,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       : undefined;
     return { registration, input: { resource, generation, image: registration.image, ...(disk ? { disk } : {}), network: registration.network,
       workspaceReadOnly: registration.workspaceReadOnly, limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } },
-      binding: { namespace, sitesDataDir: registration.sitesDataDir, sourcePath: registration.sourcePath, brokerDir: registration.brokerDir } };
+      binding: { namespace, sitesDataDir: registration.sitesDataDir, sourcePath: registration.sourcePath, brokerDir: registration.brokerDir },
+      // A Site without a persistent disk is a legacy image-backed environment and has no runtime to pick.
+      ...(disk ? { runtimePending: true } : {}) };
   }
   /** Where this project is mounted inside its own container — persisted with the row, so renaming the
    *  project later cannot silently change a running container's identity. */
@@ -262,11 +317,34 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       const paths = { sandboxDataDir: dataDir, namespace };
       const resource = { kind: 'project', id: Number(id) };
       const disk = createEnvironmentDiskSpec({ resource, image: PROJECT_BASE_IMAGE_TAG }, paths, randomUUID().replaceAll('-', ''));
-      const spec = { input: { resource, generation: 1, image: PROJECT_BASE_IMAGE_TAG, disk, previewBroker: true, workspaceTarget: managedGuestRoot(authority.slug, Number(id)), limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } }, paths };
+      // Nothing is materialized yet, so the runtime is still open. `decideRuntime` closes it at the first
+      // start; until then the disk record is the Podman one every existing row already carries, which is
+      // what keeps the serialization of a row that never starts identical to the rows before this change.
+      const spec = { input: { resource, generation: 1, image: PROJECT_BASE_IMAGE_TAG, disk, previewBroker: true, workspaceTarget: managedGuestRoot(authority.slug, Number(id)), limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } }, paths, runtimePending: true };
       row = store.insert(kind, id, Number(id), spec, effective);
     }
     return row;
   }
+  /** Which runtime this environment runs on, and — only while that is still open — what the host would
+   *  have to satisfy before it can be created at all.
+   *
+   *  An environment that already has a disk reports its runtime and nothing else: the readiness rows
+   *  describe a decision that was made once and cannot be revisited, so showing them beside a running
+   *  environment would invite someone to act on them. A probe that fails is REPORTED as an unmet row
+   *  rather than failing the read: this is the overview a browser polls, and the reason the probe failed
+   *  is the same thing the operator needs to see. */
+  async function runtimeView(row) {
+    const decided = row?.spec?.input?.disk;
+    if (decided && !row.spec.runtimePending) return { name: decided.runtime ?? 'podman', pending: false, readiness: null };
+    if (row && !row.spec.runtimePending) return { name: null, pending: false, readiness: null };
+    let readiness;
+    try { readiness = await machineReadiness(); }
+    catch (cause) {
+      readiness = { ready: false, items: [{ id: 'runtime:machine', label: 'Machine runtime', ok: false, detail: cause.message }] };
+    }
+    return { name: readiness.ready ? 'nspawn' : null, pending: true, readiness };
+  }
+
   const view = (row) => ({ [row.kind === 'project' ? 'projectId' : 'siteId']: row.kind === 'project' ? Number(row.resource_id) : row.resource_id,
     generation: row.generation, state: row.state, desiredState: row.desired_state, lastError: row.error ?? null, limits: effectiveLimits(row.limits) });
   const assertGeneration = (row, expected) => { if (expected !== undefined && expected !== row.generation) throw error('generation_changed', 'Environment generation changed'); };
@@ -370,6 +448,13 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           AND json_extract(action_json,'$.kind')='migrate-disk' AND NOT (kind=? AND resource_id=?)`).get(kind, String(id));
         if (elsewhere) throw error('migration_active', 'Another environment disk migration is already under way');
       }
+      if (requested.kind === 'migrate-runtime') {
+        if (!stores().usersRead.isAdmin(input.accountUserId)) throw error('admin_required', 'Only administrators may change an environment runtime', 403);
+        if (!row.spec.input.disk && !prior) throw error('not_rootfs_backed', 'Migrate this environment to a persistent disk before changing its runtime');
+        // A change that has already switched the row still has its Podman envelope to remove, so the
+        // request that carries its own idempotency key stays resumable; anything else is refused.
+        if (row.spec.input.disk?.runtime === 'nspawn' && !prior) throw error('already_nspawn', 'This environment already runs on systemd-nspawn');
+      }
       if (row.state === 'deleted') throw error('environment_deleted', 'The environment has been deleted');
       if (row.desired_state === 'deleted' && requested.kind !== 'delete') throw error('environment_deleting', 'The environment is deleting');
       if (prior) {
@@ -435,7 +520,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     }
     if (store.active(kind, id)) throw error('environment_pending', 'Environment lifecycle work is pending; retry after the operation completes', 503);
     if (row.state !== 'running') throw error('environment_stopped', `Environment is ${row.state}; request an explicit start`);
-    if (verifyRuntime && (await podman.inspect(specFor(row.spec)))?.state !== 'running') throw error('runtime_unavailable', 'The validated container is not running', 503);
+    const current = specFor(row.spec);
+    if (verifyRuntime && (await runtimeFor(current).inspect(current))?.state !== 'running') throw error('runtime_unavailable', 'The validated container is not running', 503);
     return row;
   }
 
@@ -518,8 +604,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         if (cancellation() === VERIFIED) return;
         mark(REQUESTED);
         if (settle && await settled({ cancel: true })) { mark(VERIFIED); return; }
-        const current = await podman.inspect(spec);
-        if (current?.state === 'running') { await podman.cancelExecution(spec, lease.execution_id, { persistent: true }); mark(VERIFIED); return; }
+        const current = await runtimeFor(spec).inspect(spec);
+        if (current?.state === 'running') { await runtimeFor(spec).cancelExecution(spec, lease.execution_id, { persistent: true }); mark(VERIFIED); return; }
         if (current && !['stopped', 'exited', 'created'].includes(current.state)) throw error('cancellation_unverified', 'Guest termination cannot be verified');
         // A container that is gone, stopped or never started cannot be running this execution, so its
         // termination is established just as firmly as by the tombstone above.
@@ -539,8 +625,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         // must not be trusted to summarize, so the fully verified path below takes over and reports
         // properly — which is also what recovery relies on.
         if (!requested && settle && await settled({ cancel: false })) { retire(); return; }
-        const current = await podman.inspect(spec);
-        if (current?.state === 'running') await podman.releaseExecution(spec, lease.execution_id, { persistent: true });
+        const current = await runtimeFor(spec).inspect(spec);
+        if (current?.state === 'running') await runtimeFor(spec).releaseExecution(spec, lease.execution_id, { persistent: true });
         else if (current && !['stopped', 'exited', 'created'].includes(current.state)) throw error('cancellation_unverified', 'Guest termination cannot be verified');
         retire();
       }),
@@ -562,7 +648,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const leased = await mint(row, userId, options.kind ?? 'files');
     const handle = leaseHandle(row, leased);
     let failure;
-    try { return await podman.exec(specFor(row.spec), leased.execution_id, argv, { ...options, persistent: true }); }
+    try { const spec = specFor(row.spec); return await runtimeFor(spec).exec(spec, leased.execution_id, argv, { ...options, persistent: true }); }
     catch (cause) { failure = cause; throw runtimeUnavailable(cause); }
     finally {
       // `exec` has already released or terminated the guest unit on every exit except a cleanup failure,
@@ -586,12 +672,16 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const leased = await mint(row, userId, input.leaseKind);
     let handle = leaseHandle(row, leased);
     try {
-      const prepared = await podman.prepareExecution(specFor(row.spec), leased.execution_id, program.argv, { input: program.input, workdir: cwd, timeoutMs: 900000 });
+      const spec = specFor(row.spec);
+      const prepared = await runtimeFor(spec).prepareExecution(spec, leased.execution_id, program.argv, { input: program.input, workdir: cwd, timeoutMs: 900000 });
       // Preparation has just verified ownership for this execution, so the cleanup after the command
       // settles reuses that verification rather than inspecting the container and every volume again.
       handle = leaseHandle(row, leased, prepared.settle);
       return { mode: 'managed', projectRef: input.projectRef, cwd: dataDir, displayCwd: cwd, home: '/root', roots: ['/'],
-        launch: prepared.launch, stdin: program.input, cancel: () => handle.cancel(), workspace: null, lease: handle,
+        // The client owns what goes on that pipe, not this function: Podman hands back the caller's own
+        // bytes unchanged, while a transport whose privileged request travels ahead of them in the same
+        // pipe hands back both. Returning `program.input` here would silently drop the request half.
+        launch: prepared.launch, stdin: prepared.stdin, cancel: () => handle.cancel(), workspace: null, lease: handle,
         sanitizeOutput: sanitize };
     } catch (cause) { await handle.release(); throw cause; }
   }
@@ -650,14 +740,14 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   }
   async function stopRow(row) {
     const spec = specFor(row.spec);
-    const current = await podman.inspect(spec);
+    const current = await runtimeFor(spec).inspect(spec);
     if (!current) return;
-    if (current.state === 'paused') await podman.unpause(spec);
+    if (current.state === 'paused') await runtimeFor(spec).unpause(spec);
     if (['running', 'paused', 'stopping'].includes(current.state)) {
       await cancelLeases(row);
-      await podman.stop(spec);
+      await runtimeFor(spec).stop(spec);
     }
-    const stopped = await podman.inspect(spec);
+    const stopped = await runtimeFor(spec).inspect(spec);
     if (stopped && !['created', 'configured', 'stopped', 'exited'].includes(stopped.state)) throw error('stop_unverified', 'Container stop could not be verified');
     if (row.kind === 'site') await sites.afterStop(row.resource_id);
   }
@@ -667,7 +757,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
    *  the two explicit operations that exist to take it. The storage volumes are untouched. */
   async function removeLegacyContainer(row) {
     if (!row.spec.legacyWorkspaceLayout) return;
-    await podman.removeByName(specFor(row.spec));
+    const legacy = specFor(row.spec);
+    await runtimeFor(legacy).removeByName(legacy);
     delete row.spec.legacyWorkspaceLayout;
     delete row.spec.containerId;
     store.save(row);
@@ -689,16 +780,16 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     ctx.logger.info(`site ${row.resource_id}: source path moved from ${moved.previousSourcePath} to ${moved.sourcePath}, rebuilding container`);
     const previous = specFor(previousRow.spec);
     await cancelLeases(previousRow);
-    const current = await podman.inspect(previous);
+    const current = await runtimeFor(previous).inspect(previous);
     if (current) {
-      if (current.state === 'paused') await podman.unpause(previous);
+      if (current.state === 'paused') await runtimeFor(previous).unpause(previous);
       if (['running', 'paused', 'stopping'].includes(current.state)) {
-        await podman.stop(previous);
-        const stopped = await podman.inspect(previous);
+        await runtimeFor(previous).stop(previous);
+        const stopped = await runtimeFor(previous).inspect(previous);
         if (stopped && !['created', 'configured', 'stopped', 'exited'].includes(stopped.state)) throw error('stop_unverified', 'Container stop could not be verified');
         await sites.afterStop(row.resource_id);
       }
-      await podman.remove(previous);
+      await runtimeFor(previous).remove(previous);
     }
     delete row.spec.containerId;
     store.save(row);
@@ -710,7 +801,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     // are untouched and remount under the new name, so recreating it preserves the project's files — but
     // removing a container this runtime can no longer verify is an operator decision, not an automatic one.
     if (row.spec.legacyWorkspaceLayout) {
-      if (await podman.containerExists(spec)) {
+      if (await runtimeFor(spec).containerExists(spec)) {
         ctx.logger.warn(`project ${row.resource_id} still has the pre-mount container ${spec.name}; remove it to recreate the environment at ${rootOf(row)}`);
         throw error('legacy_workspace_layout', `This environment predates the named project mount. Recreate it to build a new container (${spec.name}); its files are kept in the storage volumes.`, 409);
       }
@@ -719,7 +810,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       store.save(row);
       spec = specFor(row.spec);
     }
-    let current = await podman.inspect(spec);
+    let current = await runtimeFor(spec).inspect(spec);
     if (row.spec.containerId) {
       if (current) return current;
       if (!row.spec.input.disk && !op.checkpoint.autoRecovery) throw error('persistent_container_missing', 'The persistent root filesystem is missing; restore a snapshot explicitly');
@@ -729,13 +820,13 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       row.spec.creationLimits = { ...row.spec.input.limits };
       store.save(row);
       spec = specFor(row.spec);
-      current = await podman.inspect(spec);
+      current = await runtimeFor(spec).inspect(spec);
     }
     if (!current && row.kind === 'site') {
       await refreshSiteSourceBinding(row, op.user_id);
       store.save(row);
       spec = specFor(row.spec);
-      current = await podman.inspect(spec);
+      current = await runtimeFor(spec).inspect(spec);
     }
     if (current && !op.checkpoint.creating) throw error('container_unclaimed', 'A container exists without this creation checkpoint');
     if (!op.checkpoint.creating) checkpoint(op, { creating: true });
@@ -748,12 +839,12 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
             if (seed.kind !== 'data') throw error('invalid_site_seed', 'Sites returned an invalid container seed');
             // Legacy rows seed every replacement rootfs. Persistent disks consume the bootstrap once and
             // retain the installed application and system configuration across envelope replacement.
-            await podman.siteDataArchive(spec, 'import', seed.archivePath);
+            await runtimeFor(spec).siteDataArchive(spec, 'import', seed.archivePath);
           }
           if (spec.disk) { row.spec.diskSeeded = true; store.save(row); }
         }
       }
-      current = await podman.create(spec);
+      current = await runtimeFor(spec).create(spec);
     }
     row.spec.containerId = current.id;
     store.save(row);
@@ -782,13 +873,14 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         step(op, 'image', buildFraction(line), true);
       });
       if (row.spec.input.disk?.sourceImage === PROJECT_BASE_IMAGE_TAG) {
-        row.spec.input.disk = createEnvironmentDiskSpec({ resource: row.spec.input.resource, image: row.spec.input.image }, row.spec.paths, row.spec.input.disk.id);
+        row.spec.input.disk = createEnvironmentDiskSpec({ resource: row.spec.input.resource, image: row.spec.input.image, runtime: row.spec.input.disk.runtime }, row.spec.paths, row.spec.input.disk.id);
       }
       store.save(row); checkpoint(op, { imageReady: true });
     }
     await rebuildMovedSiteContainer(row, op);
     step(op, 'storage');
     if (!row.spec.containerId) {
+      await decideRuntime(row);
       await storage.prepare(specFor(row.spec));
       await adoptHostWorkspace(row);
     }
@@ -797,9 +889,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const spec = specFor(row.spec);
     step(op, 'boot');
     if (row.kind === 'site') await sites.beforeStart(row.resource_id);
-    if (current.state === 'paused') await podman.unpause(spec);
-    else if (current.state !== 'running') await podman.start(spec);
-    if ((await podman.inspect(spec))?.state !== 'running') throw error('start_unverified', 'Container start could not be verified');
+    if (current.state === 'paused') await runtimeFor(spec).unpause(spec);
+    else if (current.state !== 'running') await runtimeFor(spec).start(spec);
+    if ((await runtimeFor(spec).inspect(spec))?.state !== 'running') throw error('start_unverified', 'Container start could not be verified');
     const root = rootOf(row);
     // A running container is not yet a usable guest: initialization below, and every execution after it,
     // runs through `systemd-run` and therefore needs the guest system bus. Waiting for it here is its own
@@ -807,11 +899,11 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     // finishes is then reported as exactly that instead of a dbus error from the initialize command.
     if (row.kind === 'project') {
       step(op, 'ready', null);
-      await podman.waitForSystemBus(spec);
+      await runtimeFor(spec).waitForSystemBus(spec);
     }
     step(op, 'initialize');
     if (row.kind === 'project' && !op.checkpoint.initialized) {
-      const result = await podman.exec(spec, randomUUID().replaceAll('-', ''), ['/bin/bash', '-s'], { input: `set -eu\nif [ ! -e ${root}/.git ]; then\n git init -b main ${root}\n git -C ${root} -c user.name=Elowen -c user.email=environment@localhost -c core.hooksPath=/dev/null commit --allow-empty -m "Initialize managed project"\nfi\nmkdir -p /worktrees\n`, timeoutMs: 30000, persistent: true });
+      const result = await runtimeFor(spec).exec(spec, randomUUID().replaceAll('-', ''), ['/bin/bash', '-s'], { input: `set -eu\nif [ ! -e ${root}/.git ]; then\n git init -b main ${root}\n git -C ${root} -c user.name=Elowen -c user.email=environment@localhost -c core.hooksPath=/dev/null commit --allow-empty -m "Initialize managed project"\nfi\nmkdir -p /worktrees\n`, timeoutMs: 30000, persistent: true });
       if (result.code !== 0) throw error('initialization_failed', result.stderr || 'Project initialization failed');
       checkpoint(op, { initialized: true });
     }
@@ -852,10 +944,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       if (manifest.retained) {
         const artifact = await sites.resolveArtifact?.({ siteId: row.resource_id, accountUserId: op.user_id, artifactId: manifest.artifactId, action: 'remove-artifact' });
         if (!artifact || artifact.kind !== 'snapshot' || artifact.snapshotId !== saved.id || artifact.imageReference !== manifest.image.reference || artifact.imageId.replace(/^sha256:/, '') !== manifest.image.id.replace(/^sha256:/, '')) throw error('retention_authority_missing', 'Sites must authorize retained release cleanup');
-        await podman.removeRetainedSiteImage(spec, artifact.imageReference, artifact.imageId);
+        await runtimeFor(spec).removeRetainedSiteImage(spec, artifact.imageReference, artifact.imageId);
         if (artifact.archivePath) removeOwnedArtifact(artifact.archivePath);
-      } else await podman.removeSnapshotImage(spec, manifest.snapshotId);
-      await podman.removeSnapshotStorage(spec, manifest.snapshotId);
+      } else await runtimeFor(spec).removeSnapshotImage(spec, manifest.snapshotId);
+      await runtimeFor(spec).removeSnapshotStorage(spec, manifest.snapshotId);
       db.prepare('DELETE FROM p_sandbox_runtime_snapshots WHERE kind=? AND resource_id=? AND id=?').run('site', row.resource_id, saved.id);
     }
   }
@@ -892,9 +984,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     if (kind === 'cleanup-stage') {
       if (!registration.staging) throw error('site_not_staging', 'Only an unpublished conversion binding may be cleaned up as staging');
       await stopRow(row);
-      if (await podman.inspect(spec)) await podman.remove(spec);
-      for (const volume of spec.volumes) await podman.removeVolume(spec, volume.component);
-      await podman.removeGenerationStorage(spec);
+      if (await runtimeFor(spec).inspect(spec)) await runtimeFor(spec).remove(spec);
+      for (const volume of spec.volumes) await runtimeFor(spec).removeVolume(spec, volume.component);
+      await runtimeFor(spec).removeGenerationStorage(spec);
       row.state = 'deleted'; row.desired_state = 'deleted'; store.save(row); return;
     }
     if (!sites.resolveArtifact) throw error('site_artifact_missing', 'Sites did not provide retained artifact resolution');
@@ -915,19 +1007,19 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       if (kind === 'import-data' && !registration.staging) throw error('site_not_staging', 'Data import requires an unpublished conversion binding');
       if (op.checkpoint.archiveCompleted) return;
       await cancelLeases(row);
-      const current = await podman.inspect(spec);
+      const current = await runtimeFor(spec).inspect(spec);
       if (kind === 'import-data' && current?.state === 'running') throw error('site_running', 'Stop the conversion target before seeding its data');
       let paused = false;
       try {
-        if (kind === 'export-data' && current?.state === 'running') { await podman.pause(spec); paused = true; }
-        await podman.siteDataArchive(spec, kind === 'import-data' ? 'import' : 'export', artifact.archivePath);
+        if (kind === 'export-data' && current?.state === 'running') { await runtimeFor(spec).pause(spec); paused = true; }
+        await runtimeFor(spec).siteDataArchive(spec, kind === 'import-data' ? 'import' : 'export', artifact.archivePath);
         checkpoint(op, { archiveCompleted: true });
-      } finally { if (paused || (current?.state === 'running' && (await podman.inspect(spec))?.state === 'paused')) await podman.unpause(spec); }
+      } finally { if (paused || (current?.state === 'running' && (await runtimeFor(spec).inspect(spec))?.state === 'paused')) await runtimeFor(spec).unpause(spec); }
       return;
     }
     if (kind === 'remove-artifact') {
       if (artifact.kind === 'snapshot') {
-        await podman.removeRetainedSiteImage(spec, artifact.imageReference, artifact.imageId);
+        await runtimeFor(spec).removeRetainedSiteImage(spec, artifact.imageReference, artifact.imageId);
         if (artifact.archivePath && !op.checkpoint.archiveRemoved) { removeOwnedArtifact(artifact.archivePath); checkpoint(op, { archiveRemoved: true }); }
         db.prepare('DELETE FROM p_sandbox_runtime_snapshots WHERE kind=? AND resource_id=? AND id=?').run('site', row.resource_id, artifact.snapshotId);
       } else if (artifact.kind === 'data') {
@@ -967,7 +1059,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
    *  side of the broker mount, which is the path a visitor's request actually travels, and Sites itself
    *  has to agree the application answers through it. */
   async function verifySiteReadiness(row, spec) {
-    await podman.systemRunning(spec);
+    await runtimeFor(spec).systemRunning(spec);
     const socket = join(row.spec.binding.brokerDir, 'app.sock');
     const deadline = Date.now() + 120_000;
     while (!forwarderSocketPresent(socket)) {
@@ -1011,7 +1103,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     };
     if (!reached('claimed')) {
       if (!row.spec.containerId) throw error('migration_source_missing', 'Start this environment once before migrating its root filesystem');
-      const observed = await podman.inspect(specFor(row.spec));
+      const source = specFor(row.spec);
+      const observed = await runtimeFor(source).inspect(source);
       if (!observed) throw error('migration_source_missing', 'The legacy container is missing; its root filesystem cannot be exported');
       // A candidate needs a name of its own, and the name carries the generation — so the migration
       // reserves the next one the same way a restore does, and the old envelope keeps its own.
@@ -1037,14 +1130,14 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     if (!reached('quiesced')) {
       // Before anything stops: a host that cannot hold the archive and the extracted tree must refuse
       // the migration while the environment is still running rather than halfway through it.
-      await podman.preflightRootfsMigration(oldSpec, join(oldSpec.storageRoot, 'disks'));
+      await runtimeFor(oldSpec).preflightRootfsMigration(oldSpec, join(oldSpec.storageRoot, 'disks'));
       step(op, 'stop');
       await stopRow(old);
       mark('quiesced');
     }
     if (!reached('exported')) {
       step(op, 'export', null);
-      const stopped = await podman.inspect(oldSpec);
+      const stopped = await runtimeFor(oldSpec).inspect(oldSpec);
       if (!stopped || stopped.id !== state.oldContainerId) throw error('migration_source_changed', 'The legacy container identity changed before its root filesystem was exported');
       if (!['created', 'configured', 'stopped', 'exited'].includes(stopped.state)) throw error('migration_source_running', 'The legacy container is not stopped');
       const capture = await storage.captureRootfsExport(oldSpec, state.migrationId);
@@ -1062,11 +1155,11 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
      *  disk that is already materialized. */
     const rollback = async (cause) => {
       try {
-        if (await podman.containerExists(candidate())) {
-          const observed = await podman.inspect(candidate());
-          if (observed?.state === 'paused') await podman.unpause(candidate());
-          if (observed && ['running', 'paused', 'stopping'].includes(observed.state)) await podman.stop(candidate());
-          await podman.remove(candidate());
+        if (await runtimeFor(candidate()).containerExists(candidate())) {
+          const observed = await runtimeFor(candidate()).inspect(candidate());
+          if (observed?.state === 'paused') await runtimeFor(candidate()).unpause(candidate());
+          if (observed && ['running', 'paused', 'stopping'].includes(observed.state)) await runtimeFor(candidate()).stop(candidate());
+          await runtimeFor(candidate()).remove(candidate());
         }
         for (const name of ['candidate-created', 'candidate-booted']) done.delete(name);
         delete state.candidateSpec.containerId;
@@ -1077,10 +1170,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         store.log(row.kind, row.resource_id, `migrate-disk candidate removed and rolled back: ${cause.message}`);
         if (state.wasRunning) {
           if (row.kind === 'site') await sites.beforeStart(row.resource_id);
-          if ((await podman.inspect(oldSpec))?.state !== 'running') await podman.start(oldSpec);
-          if ((await podman.inspect(oldSpec))?.state !== 'running') throw new Error('the legacy container did not restart');
+          if ((await runtimeFor(oldSpec).inspect(oldSpec))?.state !== 'running') await runtimeFor(oldSpec).start(oldSpec);
+          if ((await runtimeFor(oldSpec).inspect(oldSpec))?.state !== 'running') throw new Error('the legacy container did not restart');
           if (row.kind === 'project') {
-            await podman.waitForSystemBus(oldSpec);
+            await runtimeFor(oldSpec).waitForSystemBus(oldSpec);
             await establishPublications(old);
           }
         }
@@ -1092,11 +1185,11 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         step(op, 'storage');
         await storage.prepare(candidate());
         step(op, 'container');
-        const existing = await podman.containerExists(candidate()) ? await podman.inspect(candidate()) : null;
+        const existing = await runtimeFor(candidate()).containerExists(candidate()) ? await runtimeFor(candidate()).inspect(candidate()) : null;
         if (existing && !state.candidateClaimed) throw error('migration_candidate_unclaimed', 'A candidate container exists without this migration checkpoint');
         if (!state.candidateClaimed) { state.candidateClaimed = true; checkpoint(op, { migration: state }); }
         if (row.kind === 'site' && !existing) await sites.beforeCreate?.(row.resource_id);
-        const created = existing ?? await podman.create(candidate());
+        const created = existing ?? await runtimeFor(candidate()).create(candidate());
         state.candidateSpec.containerId = created.id;
         mark('candidate-created', { candidateContainerId: created.id });
       } catch (cause) { await rollback(cause); }
@@ -1106,12 +1199,12 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         step(op, 'boot');
         if (state.wasRunning) {
           if (row.kind === 'site') await sites.beforeStart(row.resource_id);
-          if ((await podman.inspect(candidate()))?.state !== 'running') await podman.start(candidate());
-          if ((await podman.inspect(candidate()))?.state !== 'running') throw error('migration_start_failed', 'The migrated candidate container did not start');
+          if ((await runtimeFor(candidate()).inspect(candidate()))?.state !== 'running') await runtimeFor(candidate()).start(candidate());
+          if ((await runtimeFor(candidate()).inspect(candidate()))?.state !== 'running') throw error('migration_start_failed', 'The migrated candidate container did not start');
           step(op, 'verify', null);
           if (row.kind === 'project') {
-            await podman.waitForSystemBus(candidate());
-            await podman.systemRunning(candidate());
+            await runtimeFor(candidate()).waitForSystemBus(candidate());
+            await runtimeFor(candidate()).systemRunning(candidate());
           } else await verifySiteReadiness(row, candidate());
         }
         mark('candidate-booted');
@@ -1133,11 +1226,11 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     }
     if (!reached('legacy-removed')) {
       step(op, 'cleanup');
-      const observed = await podman.containerExists(oldSpec) ? await podman.inspect(oldSpec) : null;
+      const observed = await runtimeFor(oldSpec).containerExists(oldSpec) ? await runtimeFor(oldSpec).inspect(oldSpec) : null;
       if (observed) {
-        if (observed.state === 'paused') await podman.unpause(oldSpec);
-        if (['running', 'paused', 'stopping'].includes(observed.state)) await podman.stop(oldSpec);
-        await podman.remove(oldSpec);
+        if (observed.state === 'paused') await runtimeFor(oldSpec).unpause(oldSpec);
+        if (['running', 'paused', 'stopping'].includes(observed.state)) await runtimeFor(oldSpec).stop(oldSpec);
+        await runtimeFor(oldSpec).remove(oldSpec);
       }
       mark('legacy-removed');
     }
@@ -1149,9 +1242,180 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     }
   }
 
+  /** Move an environment that is ALREADY on a persistent disk from Podman to systemd-nspawn, without
+   *  copying its root filesystem.
+   *
+   *  The disk does not move and is not duplicated: the same tree keeps its place, its identity and its
+   *  workspace, HOME and data directories. What changes is who boots it. Each name below is a durable
+   *  receipt on the operation row, in this order:
+   *
+   *    claimed → quiesced → shifted → envelope-written → candidate-booted → switched → legacy-removed
+   *      → complete
+   *
+   *  Only `shifted` touches the disk, and it is the one step that has to be UNDONE rather than merely
+   *  dropped: a tree owned by the machine's range is a tree the Podman envelope can no longer read. The
+   *  range it replaced comes back on the shift receipt, so a rollback reverses it exactly and the
+   *  environment goes back up on Podman. An interrupted shift is resumed, not reversed — it holds no
+   *  receipt, so the retry simply runs it again over a tree whose range is already recorded. */
+  async function migrateRuntime(row, op) {
+    if (!stores().usersRead.isAdmin(op.user_id)) throw error('admin_required', 'Runtime migration authority was revoked', 403);
+    const state = op.checkpoint.migration ?? {};
+    // Read the row's driver only for a migration that has not claimed it yet. Past the switch the row IS
+    // the nspawn one, and this operation is the reason: refusing it there would strand the Podman
+    // envelope it still has to remove.
+    if (!state.done?.length) {
+      if (!row.spec.input.disk) throw error('not_rootfs_backed', 'Migrate this environment to a persistent disk before changing its runtime');
+      if (row.spec.input.disk.runtime === 'nspawn') throw error('already_nspawn', 'This environment already runs on systemd-nspawn');
+      if (row.spec.legacyWorkspaceLayout) throw error('legacy_workspace_layout', 'Recreate this environment at its named project mount before changing its runtime');
+    }
+    const done = new Set(state.done ?? []);
+    const reached = (name) => done.has(name);
+    const mark = (name, values = {}) => {
+      done.add(name);
+      Object.assign(state, values, { done: [...done] });
+      checkpoint(op, { migration: state });
+      store.log(row.kind, row.resource_id, `migrate-runtime reached ${name}`);
+    };
+    if (!reached('claimed')) {
+      if (!row.spec.containerId) throw error('migration_source_missing', 'Start this environment once before changing its runtime');
+      const source = specFor(row.spec);
+      const observed = await runtimeFor(source).inspect(source);
+      if (!observed) throw error('migration_source_missing', 'The Podman envelope is missing; recreate the environment before changing its runtime');
+      // The candidate envelope needs a name of its own, and the name carries the generation, so the
+      // migration reserves the next one exactly as a restore and a disk migration do.
+      const reserved = db.prepare("SELECT MAX(json_extract(checkpoint_json,'$.newSpec.input.generation')) AS generation FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=?").get(row.kind, row.resource_id);
+      const candidateGeneration = Math.max(row.generation, Number(reserved?.generation ?? 0)) + 1;
+      const candidate = JSON.parse(JSON.stringify(row.spec));
+      candidate.input.generation = candidateGeneration;
+      // The SAME disk id, the same rootfs path and the same component paths: this rebuild only adds the
+      // runtime discriminator, which is what makes the change an envelope change and not a data move.
+      candidate.input.disk = createEnvironmentDiskSpec({ resource: candidate.input.resource, image: row.spec.input.disk.sourceImage, runtime: 'nspawn' },
+        diskPathsFor(candidate), row.spec.input.disk.id, row.spec.input.disk.componentGeneration);
+      candidate.creationLimits = candidate.input.limits;
+      delete candidate.containerId;
+      checkpoint(op, { oldSpec: JSON.parse(JSON.stringify(row.spec)), oldGeneration: row.generation });
+      mark('claimed', { oldContainerId: observed.id, oldContainerName: source.name, diskId: row.spec.input.disk.id,
+        candidateGeneration, wasRunning: row.desired_state === 'running', candidateSpec: candidate });
+    }
+    const old = { ...row, spec: op.checkpoint.oldSpec, generation: op.checkpoint.oldGeneration };
+    const oldSpec = specFor(old.spec);
+    const candidate = () => specFor(state.candidateSpec);
+    const target = () => runtimeFor(candidate());
+    if (!reached('quiesced')) {
+      step(op, 'stop');
+      await stopRow(old);
+      mark('quiesced');
+    }
+    if (!reached('shifted')) {
+      step(op, 'shift', null);
+      const stopped = await runtimeFor(oldSpec).inspect(oldSpec);
+      if (!stopped || stopped.id !== state.oldContainerId) throw error('migration_source_changed', 'The Podman envelope identity changed before the disk was handed over');
+      if (!['created', 'configured', 'stopped', 'exited'].includes(stopped.state)) throw error('migration_source_running', 'The Podman envelope is not stopped');
+      const receipt = await target().shiftOwnership(candidate(), { target: 'nspawn' });
+      mark('shifted', { uidBase: receipt.uidBase, previousUidBase: receipt.previousUidBase });
+    }
+    /** The candidate envelope is what this undoes, and the ownership pass with it. The disk keeps every
+     *  byte it had, the runtime row is still the Podman envelope's, and an environment that was running
+     *  goes back up on it. Dropping the candidate receipts is what lets a later retry try again. */
+    const rollback = async (cause) => {
+      try {
+        if (await target().containerExists(candidate())) {
+          const observed = await target().inspect(candidate());
+          if (observed?.state === 'paused') await target().unpause(candidate());
+          if (observed && ['running', 'paused', 'stopping'].includes(observed.state)) await target().stop(candidate());
+          await target().remove(candidate());
+        }
+        // The receipts go BEFORE the ownership pass they describe, and this order is the whole safety of
+        // the rollback. A reverse pass that dies part way leaves a tree split between the two schemes,
+        // which neither rootless Podman nor the machine can read; a `shifted` receipt that survived that
+        // failure would make the retry skip the forward pass at the step above and boot against it. The
+        // forward pass is idempotent, so dropping the receipt early can only cost a redundant pass over
+        // ids that already carry the destination scheme, where keeping it costs the disk.
+        // `quiesced` goes with them: the environment is about to be running again on Podman, so the
+        // retry has to stop it before it may touch the disk's ownership a second time.
+        const reversing = reached('shifted');
+        for (const name of ['quiesced', 'shifted', 'envelope-written', 'candidate-booted']) done.delete(name);
+        delete state.candidateSpec.containerId;
+        delete state.candidateClaimed;
+        delete state.candidateEnvelopeId;
+        state.done = [...done];
+        checkpoint(op, { migration: state });
+        if (reversing) await target().shiftOwnership(candidate(), { target: 'podman', uidBase: state.previousUidBase });
+        store.log(row.kind, row.resource_id, `migrate-runtime candidate removed and rolled back: ${cause.message}`);
+        if (state.wasRunning) {
+          if (row.kind === 'site') await sites.beforeStart(row.resource_id);
+          if ((await runtimeFor(oldSpec).inspect(oldSpec))?.state !== 'running') await runtimeFor(oldSpec).start(oldSpec);
+          if ((await runtimeFor(oldSpec).inspect(oldSpec))?.state !== 'running') throw new Error('the Podman envelope did not restart');
+          if (row.kind === 'project') {
+            await runtimeFor(oldSpec).waitForSystemBus(oldSpec);
+            await establishPublications(old);
+          }
+        }
+      } catch (failure) { throw new AggregateError([cause, failure], `${cause.message}; rollback to the Podman envelope failed: ${failure.message}`); }
+      throw cause;
+    };
+    if (!reached('envelope-written')) {
+      try {
+        step(op, 'container');
+        const existing = await target().containerExists(candidate()) ? await target().inspect(candidate()) : null;
+        if (existing && !state.candidateClaimed) throw error('migration_candidate_unclaimed', 'A candidate envelope exists without this migration checkpoint');
+        if (!state.candidateClaimed) { state.candidateClaimed = true; checkpoint(op, { migration: state }); }
+        const created = existing ?? await target().create(candidate());
+        state.candidateSpec.containerId = created.id;
+        mark('envelope-written', { candidateEnvelopeId: created.id });
+      } catch (cause) { await rollback(cause); }
+    }
+    if (!reached('candidate-booted')) {
+      try {
+        step(op, 'boot');
+        if (state.wasRunning) {
+          if (row.kind === 'site') await sites.beforeStart(row.resource_id);
+          if ((await target().inspect(candidate()))?.state !== 'running') await target().start(candidate());
+          if ((await target().inspect(candidate()))?.state !== 'running') throw error('migration_start_failed', 'The migrated candidate machine did not start');
+          step(op, 'verify', null);
+          if (row.kind === 'project') {
+            await target().waitForSystemBus(candidate());
+            await target().systemRunning(candidate());
+          } else await verifySiteReadiness(row, candidate());
+        }
+        mark('candidate-booted');
+      } catch (cause) { await rollback(cause); }
+    }
+    if (!reached('switched')) {
+      step(op, 'switch');
+      store.transaction(() => {
+        row.spec = state.candidateSpec;
+        row.generation = row.spec.input.generation;
+        row.state = state.wasRunning ? 'running' : 'stopped';
+        row.error = null;
+        store.save(row);
+        checkpoint(op, { switched: true, newSpec: state.candidateSpec });
+        mark('switched');
+      });
+      if (row.kind === 'project' && state.wasRunning) await establishPublications(row);
+    }
+    if (!reached('legacy-removed')) {
+      step(op, 'cleanup');
+      const observed = await runtimeFor(oldSpec).containerExists(oldSpec) ? await runtimeFor(oldSpec).inspect(oldSpec) : null;
+      if (observed) {
+        if (observed.state === 'paused') await runtimeFor(oldSpec).unpause(oldSpec);
+        if (['running', 'paused', 'stopping'].includes(observed.state)) await runtimeFor(oldSpec).stop(oldSpec);
+        await runtimeFor(oldSpec).remove(oldSpec);
+      }
+      mark('legacy-removed');
+    }
+    if (!reached('complete')) {
+      // A runtime change leaves no archive to release, so the last receipt is the proof itself: the
+      // Podman envelope is gone and the machine the row now names still proves its own ownership.
+      if (await runtimeFor(oldSpec).containerExists(oldSpec)) throw error('migration_cleanup_incomplete', 'The Podman envelope is still present after the switch');
+      if (!await target().inspect(candidate())) throw error('migration_target_missing', 'The migrated machine envelope is missing after the switch');
+      mark('complete');
+    }
+  }
+
   async function perform(row, op) {
     const kind = op.action.kind;
-    if (row.kind === 'project' && ['stop', 'restart', 'snapshot', 'restore', 'migrate-disk'].includes(kind)) {
+    if (row.kind === 'project' && ['stop', 'restart', 'snapshot', 'restore', 'migrate-disk', 'migrate-runtime'].includes(kind)) {
       step(op, 'quiesce');
       await cancelLeases(row);
       await transfers.quiesce({ row });
@@ -1173,9 +1437,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         await removeLegacyContainer(row);
         const previous = specFor(row.spec);
         await cancelLeases(row);
-        if (await podman.containerExists(previous)) {
+        if (await runtimeFor(previous).containerExists(previous)) {
           await stopRow(row);
-          await podman.remove(previous);
+          await runtimeFor(previous).remove(previous);
         }
         delete row.spec.containerId;
         // Removing the container ends its creation identity: the replacement is created with the limits
@@ -1212,7 +1476,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         if (manifest.version === 2) {
           if (!old.spec.input.disk) throw error('snapshot_driver_mismatch', 'A disk snapshot requires a rootfs-backed environment');
           next.input.image = manifest.sourceImage.reference;
-          next.input.disk = createEnvironmentDiskSpec({ resource: next.input.resource, image: next.input.image }, diskPathsFor(next), randomUUID().replaceAll('-', ''));
+          // A restore replaces the disk, never the runtime that reads it: the snapshot is a copy of THIS
+          // environment's tree, already owned by whichever uid range its runtime uses.
+          next.input.disk = createEnvironmentDiskSpec({ resource: next.input.resource, image: next.input.image, runtime: old.spec.input.disk.runtime },
+            diskPathsFor(next), randomUUID().replaceAll('-', ''));
         } else {
           if (old.spec.input.disk) throw error('snapshot_driver_mismatch', 'A legacy snapshot requires a legacy environment');
           next.input.image = manifest.image.reference;
@@ -1234,18 +1501,19 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           const backupId = `preserve-${op.id.slice(4)}`;
           await snapshot(old, op, backupId, 'Restore data checkpoint');
           await storage.readSnapshot(specFor(old.spec), backupId);
-          await podman.importSnapshotVolume(specFor(old.spec), backupId, target, 'data', { resume: true });
+          const preserved = specFor(old.spec);
+          await runtimeFor(preserved).importSnapshotVolume(preserved, backupId, target, 'data', { resume: true });
         } else await storage.restoreVolumes(specFor(source), storageId, target);
         checkpoint(op, { imported: true });
       }
       step(op, 'container');
-      let restored = await podman.inspect(target);
+      let restored = await runtimeFor(target).inspect(target);
       if (op.checkpoint.newSpec.containerId && !restored) throw error('restore_target_missing', 'The bound restore target is missing; start a new restore intent');
       if (restored && !op.checkpoint.newSpec.containerId && !op.checkpoint.targetCreating) throw error('restore_target_unclaimed', 'The restore target has no creation checkpoint');
       if (!restored) {
         checkpoint(op, { targetCreating: true });
         if (row.kind === 'site') await sites.beforeCreate?.(row.resource_id);
-        restored = await podman.create(target);
+        restored = await runtimeFor(target).create(target);
       }
       if (!op.checkpoint.newSpec.containerId) {
         op.checkpoint.newSpec.containerId = restored.id;
@@ -1255,8 +1523,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       step(op, 'boot');
       if (op.checkpoint.wasRunning) {
         if (row.kind === 'site') await sites.beforeStart(row.resource_id);
-        if ((await podman.inspect(target))?.state !== 'running') await podman.start(target);
-        if ((await podman.inspect(target))?.state !== 'running') throw error('restore_start_failed', 'Restored container did not start');
+        if ((await runtimeFor(target).inspect(target))?.state !== 'running') await runtimeFor(target).start(target);
+        if ((await runtimeFor(target).inspect(target))?.state !== 'running') throw error('restore_start_failed', 'Restored container did not start');
       }
       step(op, 'switch');
       if (!op.checkpoint.switched) store.transaction(() => {
@@ -1271,15 +1539,18 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         checkpoint(op, { switched: true });
       });
       step(op, 'cleanup');
-      if (await podman.inspect(specFor(old.spec))) await podman.remove(specFor(old.spec));
+      const previousSpec = specFor(old.spec);
+      if (await runtimeFor(previousSpec).inspect(previousSpec)) await runtimeFor(previousSpec).remove(previousSpec);
       // Old volumes are retained until explicit Project deletion, providing a non-destructive rollback checkpoint.
     } else if (kind === 'migrate-disk') {
       await migrateDisk(row, op);
+    } else if (kind === 'migrate-runtime') {
+      await migrateRuntime(row, op);
     } else if (kind === 'limits') {
       step(op, 'apply');
       if (!stores().usersRead.isAdmin(op.user_id)) throw error('admin_required', 'Resource-limit authority was revoked', 403);
       const prior = specFor(row.spec);
-      await podman.update(prior, op.action.limits);
+      await runtimeFor(prior).update(prior, op.action.limits);
       row.spec.creationLimits ??= row.spec.input.limits;
       row.spec.input.limits = { cpus: op.action.limits.cpus, memoryMb: op.action.limits.memoryMb, pidsLimit: op.action.limits.pidsLimit };
       row.limits = op.action.limits; store.save(row);
@@ -1300,9 +1571,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       step(op, 'containers');
       for (const recipe of recipes.values()) {
         const owned = specFor(recipe, true);
-        if (await podman.inspect(owned)) {
+        if (await runtimeFor(owned).inspect(owned)) {
           await stopRow({ ...row, spec: recipe, generation: recipe.input.generation });
-          await podman.remove(owned);
+          await runtimeFor(owned).remove(owned);
         }
       }
       checkpoint(op, { containerRemoved: true });
@@ -1310,20 +1581,23 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       for (const saved of snapshots) {
         const owned = specFor(JSON.parse(saved.spec_json), true);
         const manifest = JSON.parse(saved.manifest_json);
-        if (manifest.retained) await podman.removeRetainedSiteImage(owned, manifest.image.reference, manifest.image.id);
-        else if (manifest.version !== 2) await podman.removeSnapshotImage(owned, manifest.snapshotId);
+        if (manifest.retained) await runtimeFor(owned).removeRetainedSiteImage(owned, manifest.image.reference, manifest.image.id);
+        else if (manifest.version !== 2) await runtimeFor(owned).removeSnapshotImage(owned, manifest.snapshotId);
       }
       step(op, 'volumes');
       for (const recipe of recipes.values()) {
         const owned = specFor(recipe, true);
-        for (const volume of owned.volumes) await podman.removeVolume(owned, volume.component);
+        for (const volume of owned.volumes) await runtimeFor(owned).removeVolume(owned, volume.component);
       }
       step(op, 'storage');
-      for (const saved of snapshots) await podman.removeSnapshotStorage(specFor(JSON.parse(saved.spec_json), true), JSON.parse(saved.manifest_json).snapshotId);
+      for (const saved of snapshots) {
+        const owned = specFor(JSON.parse(saved.spec_json), true);
+        await runtimeFor(owned).removeSnapshotStorage(owned, JSON.parse(saved.manifest_json).snapshotId);
+      }
       const ownedSpecs = [...recipes.values()].map((recipe) => specFor(recipe, true));
       const disks = new Map(ownedSpecs.filter((owned) => owned.disk).map((owned) => [owned.disk.id, owned]));
       for (const disk of disks.values()) await storage.removeDisk(disk, ownedSpecs);
-      await podman.removeStorage(spec);
+      await runtimeFor(spec).removeStorage(spec);
       checkpoint(op, { storageRemoved: true });
       step(op, 'records');
       store.transaction(() => {
@@ -1427,7 +1701,13 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     if (!daemon || disposed || reconciling) return;
     reconciling = true;
     try {
-      const inventory = await podman.containerInventory(namespace);
+      // Both runtimes answer the same question about the same namespace, each by its own means: an
+      // ownership label for Podman, a machine-name prefix for nspawn. The sweep below needs one map of
+      // every envelope that is up, whichever runtime is holding it — and a host where nothing has been
+      // migrated has no machines to ask about, so it is not asked.
+      const migrated = store.all().some((row) => row.spec?.input?.disk?.runtime === 'nspawn');
+      const inventory = new Map([...await podman.containerInventory(namespace),
+        ...(migrated ? await nspawn.containerInventory(namespace) : [])]);
       const runningContainers = new Set([...inventory.entries()].filter(([, state]) => state === 'running').map(([name]) => name));
       for (const row of store.all()) {
         if (!['project', 'site'].includes(row.kind) || row.desired_state !== 'running' || store.active(row.kind, row.resource_id)) continue;
@@ -1439,7 +1719,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         // A container this runtime cannot verify (a mismatched specification, a Podman error) is not a
         // recovery candidate, and it must not stop the sweep for every other environment either.
         try {
-          const observed = await podman.inspect(spec);
+          const observed = await runtimeFor(spec).inspect(spec);
           if (observed?.state === 'running') { runningContainers.add(spec.name); continue; }
           await queueAutomaticRecovery(row, observed);
         } catch (cause) {
@@ -1528,7 +1808,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           publicationRecoveryStates.delete(row.resource_id);
         }
         const present = publications.filter((publication) => forwarderSocketPresent(join(spec.storageRoot, 'broker', publicationSocketName(publication.publicationId))));
-        const active = new Set(present.length ? await podman.activePublications(spec, present.map((publication) => publication.publicationId)) : []);
+        const active = new Set(present.length ? await runtimeFor(spec).activePublications(spec, present.map((publication) => publication.publicationId)) : []);
         for (const publication of publications) {
           if (active.has(publication.publicationId)) continue;
           try { await establishPublication(row, publication.publicationId, publication.port); }
@@ -1596,7 +1876,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const active = publicationEstablishments.get(publicationId);
     if (active) return await active;
     const establishing = startForwarder(row, publicationSocketName(publicationId), port, 'publication',
-      (spec, argv) => podman.startPublication(spec, publicationId, argv));
+      (spec, argv) => runtimeFor(spec).startPublication(spec, publicationId, argv));
     publicationEstablishments.set(publicationId, establishing);
     try { return await establishing; }
     finally { if (publicationEstablishments.get(publicationId) === establishing) publicationEstablishments.delete(publicationId); }
@@ -1625,7 +1905,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       if (!existing || existing.port !== input.port) throw error('publication_identity_required', 'An account is required to create or change a publication binding', 403);
       row = store.get('project', id);
       if (!row || row.state !== 'running' || store.active('project', id)) throw error('environment_stopped', 'The publication project environment is not running');
-      if ((await podman.inspect(specFor(row.spec)))?.state !== 'running') throw error('runtime_unavailable', 'The validated container is not running', 503);
+      const running = specFor(row.spec);
+      if ((await runtimeFor(running).inspect(running))?.state !== 'running') throw error('runtime_unavailable', 'The validated container is not running', 503);
     } else {
       account(input.accountUserId, true);
       row = await ready('project', id, input.accountUserId);
@@ -1647,7 +1928,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     const row = store.get('project', id);
     if (row) {
       const spec = specFor(row.spec);
-      if ((await podman.inspect(spec))?.state === 'running') await podman.stopPublication(spec, publicationId);
+      if ((await runtimeFor(spec).inspect(spec))?.state === 'running') await runtimeFor(spec).stopPublication(spec, publicationId);
       removeForwarderSocket(join(spec.storageRoot, 'broker', publicationSocketName(publicationId)), 'publication');
     }
     store.removePublication(id, publicationId);
@@ -1675,22 +1956,22 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       }
       for (const recipe of recipes.values()) {
         const owned = specFor(recipe, true);
-        if (await podman.inspect(owned)) {
+        if (await runtimeFor(owned).inspect(owned)) {
           await stopRow({ ...row, spec: recipe, generation: recipe.input.generation });
-          await podman.remove(owned);
+          await runtimeFor(owned).remove(owned);
         }
       }
       const spec = specFor(row.spec);
       await storage.releaseWorkspace(spec, project.adoptedPath);
       for (const saved of snapshots) {
         const owned = specFor(JSON.parse(saved.spec_json), true);
-        await podman.removeSnapshotImage(owned, JSON.parse(saved.manifest_json).snapshotId);
+        await runtimeFor(owned).removeSnapshotImage(owned, JSON.parse(saved.manifest_json).snapshotId);
       }
       for (const recipe of recipes.values()) {
         const owned = specFor(recipe, true);
-        for (const volume of owned.volumes) await podman.removeVolume(owned, volume.component);
+        for (const volume of owned.volumes) await runtimeFor(owned).removeVolume(owned, volume.component);
       }
-      await podman.removeStorage(spec);
+      await runtimeFor(spec).removeStorage(spec);
       store.transaction(() => {
         db.prepare('DELETE FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=?').run('project', String(id));
         db.prepare('DELETE FROM p_sandbox_runtime_snapshots WHERE kind=? AND resource_id=?').run('project', String(id));
@@ -1727,7 +2008,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     };
     previews.add(release);
     try {
-      await startForwarder(row, name, input.port, 'preview', (owned, argv) => podman.startPreview(owned, leased.execution_id, argv));
+      await startForwarder(row, name, input.port, 'preview', (owned, argv) => runtimeFor(owned).startPreview(owned, leased.execution_id, argv));
       await handle.heartbeat();
       timer = setInterval(() => { handle.heartbeat().catch(() => release().catch((cause) => store.log(row.kind, row.resource_id, `Preview cleanup failed: ${cause.message}`))); }, 5000);
       timer.unref?.();
@@ -1774,7 +2055,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       const environment = await control.environmentFor(input);
       const id = projectId(input.project);
       const operations = store.recentOperations('project', id, OPERATION_HISTORY).map(operationView);
-      return { environment, snapshots: await snapshots('project', id, input.accountUserId), operations };
+      return { environment, runtime: await runtimeView(store.get('project', id)),
+        snapshots: await snapshots('project', id, input.accountUserId), operations };
     },
     requestEnvironment: (input) => request('project', projectId(input.project), input),
     environmentOperation: (input) => getOperation('project', input), projectFiles, revokeProjectAccess,

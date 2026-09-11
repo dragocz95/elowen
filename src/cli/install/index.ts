@@ -16,11 +16,13 @@ import { runOnboarding } from '../setup/wizard.js';
 import { ELOWEN_CLI_VERSION } from '../version.js';
 import { INSTALL_INFO_PATH, buildInstallInfo, serializeInstallInfo, type InstallArtifacts, type InstallUnit } from '../installInfo.js';
 import {
+  SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE,
   SITE_GATEWAY_DEPLOYMENT_PATH,
   SITE_GATEWAY_HELPER_INSTALL_ARGS,
   SITE_GATEWAY_HELPER_INSTALL_SOURCE,
   SITE_GATEWAY_HELPER_PATH,
 } from '../../shared/siteGateway.js';
+import { provisionMachineRuntime } from '../../privileged/publishedSitesGateway.js';
 import { must, aptInstall, step } from '../provision/exec.js';
 import { type Deployment, isIpAddress, publicUrl, localhostDeploy, ipDeploy, chooseDeployment, provisionProxy } from '../provision/deployment.js';
 import { beginInstaller } from '../ui/installer.js';
@@ -196,19 +198,27 @@ async function provisionSystemd(r: Runner, user: string, home: string, deploy: D
 
 /** Install the root-owned helper and its immutable deployment facts. The service user can later invoke
  * the helper, but cannot modify either file; the helper accepts no arguments and validates the bounded
- * JSON request arriving on stdin. Domain-independent paths and upstreams remain inside the helper. */
-async function provisionSiteGatewayHelper(r: Runner, deploy: Deployment): Promise<boolean> {
-  if (deploy.mode !== 'domain' || !deploy.domain) return false;
+ * JSON request arriving on stdin. Domain-independent paths and upstreams remain inside the helper.
+ *
+ * The install is deliberately NOT gated on a published-sites domain deployment: the same executable also
+ * serves the machine runtime, whose readiness cannot depend on a Sites deployment mode. The domain half
+ * of the record is written only when there is a domain, and stays required only by the operations that
+ * read it. The storage roots are written always, because every environment operation derives its host
+ * paths from them and from nothing the request carries. */
+export async function provisionSiteGatewayHelper(r: Runner, deploy: Deployment): Promise<boolean> {
   const source = await readFile(SITE_GATEWAY_HELPER_SOURCE, 'utf8');
-  const deploymentTmp = '/tmp/elowen-site-gateway.json';
   await r.writeFile(SITE_GATEWAY_HELPER_INSTALL_SOURCE, source);
-  await r.writeFile(deploymentTmp, `${JSON.stringify({ appHost: deploy.domain.toLowerCase(), daemonPort: DAEMON_PORT }, null, 2)}\n`);
+  await r.writeFile(SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE, `${JSON.stringify({
+    ...(deploy.mode === 'domain' && deploy.domain ? { appHost: deploy.domain.toLowerCase() } : {}),
+    daemonPort: DAEMON_PORT,
+  }, null, 2)}\n`);
   await must(r, 'mkdir', ['-p', dirname(SITE_GATEWAY_HELPER_PATH), dirname(SITE_GATEWAY_DEPLOYMENT_PATH)]);
   await must(r, 'install', [...SITE_GATEWAY_HELPER_INSTALL_ARGS]);
-  await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', '0644', deploymentTmp, SITE_GATEWAY_DEPLOYMENT_PATH]);
-  await r.exec('rm', ['-f', SITE_GATEWAY_HELPER_INSTALL_SOURCE, deploymentTmp]);
+  await must(r, 'install', ['-o', 'root', '-g', 'root', '-m', '0644', SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE, SITE_GATEWAY_DEPLOYMENT_PATH]);
+  await r.exec('rm', ['-f', SITE_GATEWAY_HELPER_INSTALL_SOURCE, SITE_GATEWAY_DEPLOYMENT_INSTALL_SOURCE]);
   return true;
 }
+
 
 /** Grant the service user passwordless systemctl for its own units, so the auto-update timer (and a
  *  manual `elowen update`) can take a freshly-installed binary live. Validated in a temp file with
@@ -277,9 +287,19 @@ async function execute(r: Runner, plan: InstallPlan): Promise<{ tls: boolean }> 
   } else {
     units = await step('Configuring systemd services', () => provisionSystemd(r, plan.user.username, home, plan.deploy));
 
-    await step('Installing published-sites gateway helper', () => provisionSiteGatewayHelper(r, plan.deploy))
+    await step('Installing privileged host helper', () => provisionSiteGatewayHelper(r, plan.deploy))
       .then((created) => { siteGatewayHelperCreated = created; })
-      .catch((e) => p.log.warn(`Published-sites gateway helper unavailable: ${(e as Error).message}`));
+      .catch((e) => p.log.warn(`Privileged host helper unavailable: ${(e as Error).message}`));
+
+    // The machine runtime refuses to create an environment until the container tools, the unit template
+    // and the polkit rule are all on the host, and there is deliberately no fallback runtime. Without a
+    // step here, a freshly installed box could create no environment at all and the only repair would be
+    // writing root-owned files by hand. Non-fatal like the grants below: the instance still runs, and the
+    // same provisioning is reachable again from `elowen update`.
+    if (siteGatewayHelperCreated) {
+      await step('Provisioning machine runtime', () => provisionMachineRuntime())
+        .catch((e) => p.log.warn(`Machine runtime not provisioned (environments cannot be created until it is): ${(e as Error).message}`));
+    }
 
     // Non-fatal: without the sudoers drop-in the services still run — self-updates cannot restart units,
     // and a sites plugin cannot ask the root-owned gateway helper to apply its wildcard vhost.

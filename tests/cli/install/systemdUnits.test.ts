@@ -154,5 +154,11 @@ describe('install/systemdUnits.elowenSudoers', () => {
   it('allows refreshing and invoking only the fixed site gateway helper path', () => {
     expect(s).toMatch(/^elowen ALL=\(root\) NOPASSWD: \/usr\/bin\/install -o root -g root -m 0755 \/tmp\/elowen-site-gateway \/usr\/local\/libexec\/elowen-site-gateway$/m);
     expect(s).toMatch(/^elowen ALL=\(root\) NOPASSWD: \/usr\/local\/libexec\/elowen-site-gateway ""$/m);
+    // No grant may install a file whose SOURCE the service user can write, beyond the helper itself,
+    // whose bytes are compared against the packaged copy first. Pinning the argv fixes the words, not the
+    // bytes behind them, and a grant binds to a user rather than to the code path it was written for: a
+    // grant for the deployment record would have let that user choose what the root helper treats as a
+    // trusted storage root.
+    expect(s).not.toContain('/etc/elowen/site-gateway.json');
   });
 });

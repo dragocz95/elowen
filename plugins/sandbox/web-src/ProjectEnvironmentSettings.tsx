@@ -5,8 +5,16 @@ import type { EnvironmentAction, EnvironmentOperation, ProjectEnvironment } from
 import { localizedError, runtime, type Project } from './runtime';
 
 /** The plugin owns this projection; core environment identity and operations remain the shared contract. */
+export interface EnvironmentRuntimeReadiness {
+  ready: boolean;
+  items: { id: string; label: string; ok: boolean; detail?: string }[];
+}
+
 export interface ProjectEnvironmentDetail {
   environment: ProjectEnvironment;
+  /** Which runtime this environment runs on, and while that is still open, what the host is missing.
+   *  `name` is null when the host cannot hold an environment at all, which is when `readiness` says why. */
+  runtime: { name: 'podman' | 'nspawn' | null; pending: boolean; readiness: EnvironmentRuntimeReadiness | null };
   snapshots: { id: string; generation: number; createdAt: string; consistency: 'crash-consistent'; note: string; completeProject: boolean }[];
   operations: (EnvironmentOperation & { requestId: string })[];
 }
@@ -140,6 +148,8 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   // snapshotting are confirmed where they are now offered, in the project's row menu.
   const confirmation = s.restoreWarning;
   const actionLabel = s.restoreEnvironment;
+  // An overview written before this field still parses; it simply has no runtime to report.
+  const runtimeDetail = query.data.runtime ?? { name: null, pending: false, readiness: null };
   const glyph = STATE_GLYPH[environment.state] ?? STATE_GLYPH.unprovisioned;
   const StateIcon = glyph.icon;
   const stateLabel = s[`state_${environment.state}`] || environment.state;
@@ -148,9 +158,26 @@ export function ProjectEnvironmentSettings({ project }: { project: Project }) {
   const state = <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground" role="status" aria-label={stateLabel}>
     <StateIcon aria-hidden className={`h-3.5 w-3.5 ${glyph.className}${glyph.spin ? ' animate-spin' : ''}`} />
     {stateLabel}
+    {runtimeDetail.name ? <C.Badge tone="muted">{runtimeDetail.name === 'nspawn' ? s.runtimeMachine : s.runtimeContainer}</C.Badge> : null}
   </span>;
+  // Every row the host has not satisfied, with the command the helper itself names. The ids are the
+  // helper's and have already moved once, so nothing here is keyed off them: a row is drawn because it
+  // is unmet, and its label and detail are what it says about itself.
+  const unmet = runtimeDetail.readiness && !runtimeDetail.readiness.ready
+    ? runtimeDetail.readiness.items.filter((item) => !item.ok)
+    : [];
+
   return <section className="flex flex-col gap-4 border-b border-border py-4">
     {requestError ? <p role="alert" className="text-sm text-destructive">{requestError}</p> : null}
+    {unmet.length ? <div role="alert" className="flex flex-col gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-3">
+      <p className="text-sm font-medium text-destructive">{s.runtimeNotReady}</p>
+      <ul className="flex flex-col gap-1.5">
+        {unmet.map((item) => <li key={item.id} className="text-xs text-muted-foreground">
+          <span className="font-medium text-foreground">{item.label}</span>
+          {item.detail ? <span className="break-words"> — {item.detail}</span> : null}
+        </li>)}
+      </ul>
+    </div> : null}
     {environment.lastError ? <p role="alert" className="break-words text-sm text-destructive">{environment.lastError}</p> : null}
 
     <C.SettingsGroup
