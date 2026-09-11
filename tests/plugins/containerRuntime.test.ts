@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
 import { cpSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -168,6 +169,24 @@ describe('clean and confined Podman client', () => {
     expect(script).toContain('st_uid');
     expect(script).toContain('st_mtime_ns');
     expect(script).not.toContain('diff -qr');
+    const materializeScript = calls.find((args) => args[0] === 'unshare' && args.includes('elowen-verify-materialization'))?.[3] ?? '';
+    expect(materializeScript).toContain('os.listxattr');
+    expect(calls.some((args) => args.includes('--compare'))).toBe(false);
+  });
+
+  it('syncs regular files and directories without opening a fifo', async () => {
+    const { root } = fixture();
+    const tree = join(root, 'sync-tree');
+    mkdirSync(tree);
+    writeFileSync(join(tree, 'regular'), 'data');
+    const fifo = spawnSync('/usr/bin/mkfifo', [join(tree, 'pipe')]);
+    expect(fifo.status).toBe(0);
+    const executor = { run: vi.fn(async (_file: string, args: string[], options: any) => {
+      const result = spawnSync(args[1]!, args.slice(2), { encoding: 'utf8', env: options.env, timeout: 5000 });
+      if (result.error) throw result.error;
+      return { code: result.status ?? 1, stdout: result.stdout, stderr: result.stderr };
+    }) };
+    await expect(new PodmanClient({ executor }).syncDiskTree(tree)).resolves.toBeUndefined();
   });
 
   it('provides a deterministic project recipe with usable Git and systemd execution', () => {
@@ -760,6 +779,20 @@ describe('project container storage and crash-consistent snapshots', () => {
       sourceImageId: 'sha256:' + 'd'.repeat(64), rootfsPath: disk.rootfsPath, components: disk.components, materialized: true }));
     const materializeRootfs = vi.fn();
     await expect(new ContainerStorage({ materializeRootfs, ensureVolume: vi.fn() }).prepare(spec)).rejects.toMatchObject({ code: 'disk_missing' });
+    expect(materializeRootfs).not.toHaveBeenCalled();
+  });
+
+  it('refuses an activated rootfs whose durable disk record is missing', async () => {
+    const { paths } = fixture();
+    const resource = { kind: 'project' as const, id: 7 };
+    const image = 'localhost/elowen-project-base:test';
+    const disk = createEnvironmentDiskSpec({ resource, image }, paths, '7'.repeat(32));
+    const spec = createContainerSpec({ resource, workspaceTarget: '/demo', generation: 2, image, disk }, paths);
+    mkdirSync(disk.rootfsPath, { recursive: true });
+    for (const component of disk.components) mkdirSync(component.path, { recursive: true });
+    const materializeRootfs = vi.fn();
+    await expect(new ContainerStorage({ materializeRootfs, ensureVolume: vi.fn() }).prepare(spec))
+      .rejects.toMatchObject({ code: 'disk_record_missing' });
     expect(materializeRootfs).not.toHaveBeenCalled();
   });
 

@@ -151,7 +151,12 @@ export class ContainerStorage {
       try { checkedHostPath(pending); await this.#podman.removeDiskPath(pending); }
       catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
     }
-    absent(spec.disk.rootfsPath);
+    try {
+      checkedHostPath(spec.disk.rootfsPath);
+      const missing = new Error('The persistent rootfs exists without its durable disk record; restore a snapshot explicitly');
+      missing.code = 'disk_record_missing';
+      throw missing;
+    } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
     try { checkedHostPath(pending); await this.#podman.removeDiskPath(pending); }
     catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
     mkdirSync(pending, { mode: 0o700 });

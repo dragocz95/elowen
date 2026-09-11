@@ -994,7 +994,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         if (manifest.version === 2) {
           if (!old.spec.input.disk) throw error('snapshot_driver_mismatch', 'A disk snapshot requires a rootfs-backed environment');
           next.input.image = manifest.sourceImage.reference;
-          next.input.disk = createEnvironmentDiskSpec({ resource: next.input.resource, image: next.input.image }, next.paths, randomUUID().replaceAll('-', ''));
+          const diskPaths = next.input.resource.kind === 'site'
+            ? { sitesDataDir: next.binding.sitesDataDir, namespace: next.binding.namespace }
+            : next.paths;
+          next.input.disk = createEnvironmentDiskSpec({ resource: next.input.resource, image: next.input.image }, diskPaths, randomUUID().replaceAll('-', ''));
         } else {
           if (old.spec.input.disk) throw error('snapshot_driver_mismatch', 'A legacy snapshot requires a legacy environment');
           next.input.image = manifest.image.reference;
@@ -1012,7 +1015,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       let target = specFor(op.checkpoint.newSpec);
       step(op, 'import');
       if (!op.checkpoint.imported) {
-        if (row.kind === 'site' && op.action.restoreData === false) {
+        if (row.kind === 'site' && op.action.restoreData === false && !target.disk) {
           const backupId = `preserve-${op.id.slice(4)}`;
           await snapshot(old, op, backupId, 'Restore data checkpoint');
           await storage.readSnapshot(specFor(old.spec), backupId);

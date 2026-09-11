@@ -13,6 +13,20 @@ const INPUT_LIMIT = 1024 * 1024;
 const OUTPUT_LIMIT = 256 * 1024;
 /** The socket `systemd-run` connects to inside the guest; its presence is what makes an execution possible. */
 const GUEST_SYSTEM_BUS = '/run/dbus/system_bus_socket';
+const DISK_TREE_INVENTORY_PY = `def inventory(root):
+ rows=[]; links={}
+ for directory,names,files in os.walk(root,topdown=True,followlinks=False):
+  names.sort(); files.sort()
+  for name in names+files:
+   path=os.path.join(directory,name); st=os.lstat(path); rel=os.path.relpath(path,root)
+   hardlink=''
+   if stat.S_ISREG(st.st_mode) and st.st_nlink>1:
+    key=(st.st_dev,st.st_ino)
+    if key not in links: links[key]=len(links)
+    hardlink=links[key]
+   attrs=[[key,os.getxattr(path,key,follow_symlinks=False).hex()] for key in sorted(os.listxattr(path,follow_symlinks=False))]
+   rows.append([rel,stat.S_IFMT(st.st_mode),st.st_size if stat.S_ISREG(st.st_mode) else 0,st.st_uid,st.st_gid,stat.S_IMODE(st.st_mode),st.st_mtime_ns,hardlink,attrs,os.readlink(path) if stat.S_ISLNK(st.st_mode) else ''])
+ return rows`;
 const isolatedStores = new WeakSet();
 
 function positive(value, max, name) {
@@ -643,11 +657,25 @@ export class PodmanClient {
     try {
       await this.#run(['create', '--name', seed, spec.disk.sourceImage]);
       await this.#run(['export', '--output', archive, seed], { timeoutMs: 15 * 60_000 });
-      await this.#run(['rm', seed]);
       await this.#run(['unshare', '/usr/bin/tar', '--extract', '--file', archive, '--directory', pending,
         '--numeric-owner', '--same-owner', '--xattrs', '--xattrs-include=*', '--sparse'], { timeoutMs: 15 * 60_000 });
-      await this.#run(['unshare', '/usr/bin/tar', '--compare', '--file', archive, '--directory', pending,
-        '--numeric-owner', '--same-owner', '--xattrs', '--xattrs-include=*', '--sparse'], { timeoutMs: 15 * 60_000 });
+      const verifyScript = `set -eu
+image=$1; target=$2; shift 2
+engine=("$@")
+source=$("${'${engine[@]}'}" image mount "$image")
+trap '"${'${engine[@]}'}" image unmount "$image" >/dev/null' EXIT
+/usr/bin/python3 - "$source" "$target" <<'PY'
+import os,stat,sys
+from itertools import zip_longest
+${DISK_TREE_INVENTORY_PY}
+expected=inventory(sys.argv[1]); actual=inventory(sys.argv[2])
+if expected != actual:
+ mismatch=next((pair for pair in zip_longest(expected,actual) if pair[0] != pair[1]),(None,None))
+ print(f'Materialized rootfs metadata inventory differs from source image: expected={mismatch[0]!r} actual={mismatch[1]!r}'[:2000],file=sys.stderr); sys.exit(1)
+PY
+`;
+      await this.#run(['unshare', '/bin/bash', '-c', verifyScript, 'elowen-verify-materialization', spec.disk.sourceImage, pending, '/usr/bin/podman', ...this.#prefix], { timeoutMs: 15 * 60_000 });
+      await this.#run(['rm', seed]);
       const image = oneJson(await this.#run(['image', 'inspect', spec.disk.sourceImage]));
       if (!/^(sha256:)?[a-f0-9]{64}$/.test(image.Id)) throw new Error('Invalid source image identity');
       await this.#run(['unshare', '/usr/bin/rm', '-f', '--', archive]);
@@ -666,21 +694,8 @@ export class PodmanClient {
 source=$1; target=$2
 cp -a --reflink=auto --sparse=always -- "$source"/. "$target"/
 /usr/bin/python3 - "$source" "$target" <<'PY'
-import json,os,stat,sys
-def inventory(root):
- rows=[]; links={}
- for directory,names,files in os.walk(root,topdown=True,followlinks=False):
-  names.sort(); files.sort()
-  for name in names+files:
-   path=os.path.join(directory,name); st=os.lstat(path); rel=os.path.relpath(path,root)
-   hardlink=''
-   if stat.S_ISREG(st.st_mode) and st.st_nlink>1:
-    key=(st.st_dev,st.st_ino)
-    if key not in links: links[key]=len(links)
-    hardlink=links[key]
-   attrs=[[key,os.getxattr(path,key,follow_symlinks=False).hex()] for key in sorted(os.listxattr(path,follow_symlinks=False))]
-   rows.append([rel,stat.S_IFMT(st.st_mode),st.st_size,st.st_uid,st.st_gid,stat.S_IMODE(st.st_mode),st.st_mtime_ns,hardlink,attrs,os.readlink(path) if stat.S_ISLNK(st.st_mode) else ''])
- return rows
+import os,stat,sys
+${DISK_TREE_INVENTORY_PY}
 source_rows=inventory(sys.argv[1]); target_rows=inventory(sys.argv[2])
 if source_rows != target_rows:
  print('Copied disk tree metadata inventory differs from source',file=sys.stderr); sys.exit(1)
@@ -741,7 +756,7 @@ root=sys.argv[1]
 for directory,names,files in os.walk(root,topdown=False,followlinks=False):
  for name in files:
   path=os.path.join(directory,name); st=os.lstat(path)
-  if not stat.S_ISLNK(st.st_mode):
+  if stat.S_ISREG(st.st_mode):
    fd=os.open(path,os.O_RDONLY); os.fsync(fd); os.close(fd)
  fd=os.open(directory,os.O_RDONLY|os.O_DIRECTORY); os.fsync(fd); os.close(fd)`;
     await this.#run(['unshare', '/usr/bin/python3', '-c', script, root], { timeoutMs: 15 * 60_000 });

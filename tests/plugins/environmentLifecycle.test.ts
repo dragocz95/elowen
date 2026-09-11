@@ -11,6 +11,7 @@ import { makePluginDb } from '../../src/store/pluginDb.js';
 import { initSandboxDb } from '../../plugins/sandbox/lib/db.mjs';
 import { environmentPublicationMigration } from '../../plugins/sandbox/lib/environmentDb.mjs';
 import { createEnvironmentRuntime, publicationSocketName } from '../../plugins/sandbox/lib/environmentRuntime.mjs';
+import { createEnvironmentDiskSpec } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import type { PodmanClient } from '../../plugins/sandbox/lib/podman.mjs';
 import type { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
 
@@ -86,7 +87,7 @@ function setup(config: Record<string, unknown> = {}) {
     waitForSystemBus: vi.fn(async () => {}),
     cancelExecution: vi.fn(async () => ({ terminated: true })), releaseExecution: vi.fn(),
     prepareExecution: vi.fn(async () => ({ launch: { type: 'argv', file: '/usr/bin/podman', args: ['exec', 'owned'], env: { HOME: '/host-service' } } })),
-    removeVolume: vi.fn(), removeStorage: vi.fn(), inspectVolume: vi.fn(), siteDataArchive: vi.fn(),
+    removeVolume: vi.fn(), removeStorage: vi.fn(), inspectVolume: vi.fn(), importSnapshotVolume: vi.fn(), siteDataArchive: vi.fn(),
     containerExists: vi.fn(async (spec: any) => containers.has(spec.name)),
   };
   const storage = { prepare: vi.fn(), adoptWorkspace: vi.fn(), snapshot: vi.fn(), readSnapshot: vi.fn(), restoreVolumes: vi.fn(), releaseWorkspace: vi.fn(),
@@ -152,6 +153,45 @@ describe('durable managed environment lifecycle', () => {
     const third = podman.create.mock.calls.at(-1)![0];
     expect(third.disk.id).not.toBe(second.disk.id);
     expect(diskFiles.has(second.disk.id)).toBe(true);
+  });
+
+  it('restores a rootfs-backed Site without snapshot data through disk restore while stopped', async () => {
+    const { runtime, root, db, podman, storage, containers } = setup();
+    const registration = { siteId: 'shop', projectId: 7, sourceRel: 'sites/shop', image: 'localhost/elowen/site:fixed', network: 'shared',
+      workspaceReadOnly: false, sitesDataDir: join(root, 'sites'), sourcePath: join(root, 'sources', 'shop'), brokerDir: join(root, 'brokers'),
+      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true };
+    mkdirSync(registration.sourcePath, { recursive: true });
+    runtime.connectSitesRuntime({ resolve: async () => registration, beforeStart: async () => {}, afterStop: async () => {} });
+    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
+    const stored = db.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='site' AND resource_id='shop'").get() as any;
+    const rootfsBacked = JSON.parse(stored.spec_json);
+    rootfsBacked.input.disk = createEnvironmentDiskSpec({ resource: rootfsBacked.input.resource, image: rootfsBacked.input.image },
+      { sitesDataDir: registration.sitesDataDir }, '8'.repeat(32));
+    db.prepare("UPDATE p_sandbox_runtimes SET spec_json=? WHERE kind='site' AND resource_id='shop'").run(JSON.stringify(rootfsBacked));
+    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    const first = podman.create.mock.calls.at(-1)![0];
+    storage.snapshot.mockImplementation(async (_spec: any, snapshotId: string) => ({ version: 2, snapshotId,
+      sourceImage: { reference: first.disk.sourceImage, id: 'sha256:' + 'd'.repeat(64) }, trees: [{ component: 'rootfs' }] }));
+    const capture = await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-snapshot',
+      action: { kind: 'snapshot', includeData: false } });
+    await runtime.reconcile();
+    const saved = await runtime.siteEnvironmentOperation({ operationId: capture.id, accountUserId: 1 });
+    storage.readSnapshot.mockResolvedValue({ version: 2, snapshotId: saved!.snapshotId,
+      sourceImage: { reference: first.disk.sourceImage, id: 'sha256:' + 'd'.repeat(64) }, trees: [{ component: 'rootfs' }] });
+    storage.restoreVolumes.mockImplementation(async () => { expect(containers.get(first.name)?.state).toBe('stopped'); });
+    storage.restoreVolumes.mockClear();
+    podman.importSnapshotVolume.mockClear();
+
+    const restore = await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-restore-no-data',
+      action: { kind: 'restore', snapshotId: saved!.snapshotId, restoreData: false } });
+    await runtime.reconcile();
+    const completed = await runtime.siteEnvironmentOperation({ operationId: restore.id, accountUserId: 1 });
+    expect(completed, JSON.stringify(completed)).toMatchObject({ status: 'succeeded' });
+
+    expect(storage.restoreVolumes).toHaveBeenCalledOnce();
+    expect(podman.importSnapshotVolume).not.toHaveBeenCalled();
+    expect(podman.stop.mock.invocationCallOrder.at(-1)).toBeLessThan(storage.restoreVolumes.mock.invocationCallOrder[0]!);
   });
 
   it('keeps the immutable disk source image when rebuilding only the envelope image', async () => {
