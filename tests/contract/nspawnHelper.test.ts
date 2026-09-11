@@ -10,6 +10,9 @@ import { afterAll, describe, expect, it } from 'vitest';
 // @ts-expect-error the standalone privileged helper intentionally has no TypeScript declaration file
 import {
   DISK_TREE_SCRIPTS,
+  DISK_TREE_TIMEOUT_MS,
+  commandOptionsFor,
+  defaultCommandRunner,
   MACHINE_UNIT_PATH,
   MACHINE_FIREWALL_UNIT,
   MACHINE_FIREWALL_UNIT_NAME,
@@ -32,6 +35,7 @@ import {
   safeGuestMountTarget,
   storageRootsFor,
   trustedPath,
+  UID_RANGE_BASE,
 } from '../../scripts/elowen-site-gateway.mjs';
 // @ts-expect-error the bundled Sandbox plugin is plain ESM without declarations
 import { createBoundSiteSpec, createEnvironmentDiskSpec } from '../../plugins/sandbox/lib/containerSpec.mjs';
@@ -642,6 +646,31 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(fixture.calls.slice(before.calls).some((call) => call.file === '/usr/bin/apt-get')).toBe(false);
   });
 
+  it('provisions from an operator root shell for the account it is told, and from nowhere else', async () => {
+    // `sudo elowen update` is the documented operator path. It reaches this executable from a root shell,
+    // where the inner sudo reports root as the invoking account: the service user could not be derived at
+    // all, so the command printed that it could not be determined and provisioned nothing.
+    const rootShell = { SUDO_USER: 'root', SUDO_UID: '0', SUDO_GID: '0' };
+    const fixture = runnerFixture({ installed: false });
+    const provisioned = await applyRequest({ domain: 'nspawn', op: 'provision', user: 'azureuser' }, undefined,
+      { ...fixture.options, env: rootShell }) as Readiness;
+
+    expect(provisioned.ready).toBe(true);
+    expect(fixture.writes.map((write) => write.path)).toEqual([MACHINE_UNIT_PATH, MACHINE_FIREWALL_UNIT_PATH, POLKIT_RULE_PATH]);
+    expect(rowFor(provisioned, 'polkit:machines').detail).toBe('scoped to elowen-machine units for azureuser');
+
+    // Root still has to say which account it means; nothing is guessed from the host.
+    await expect(applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, { ...fixture.options, env: rootShell }))
+      .rejects.toThrow(/requires naming the service account/);
+    // The service account may not name one: sudo already says who it is, and the rule this writes is a
+    // grant over machine units that it must not be able to hand to another account.
+    await expect(applyRequest({ domain: 'nspawn', op: 'status', user: 'somebody-else' }, undefined, fixture.options))
+      .rejects.toThrow(/does not match the invoking account/);
+    // And the storage roots keep coming from the account sudo reports, from nothing a request carries.
+    expect(helperRequestNeedsDeployment({ domain: 'nspawn', op: 'provision', user: 'azureuser' })).toBe(false);
+    expect(storageRootsFor('/home/azureuser')).toEqual(siteGatewayStorageRoots('/home/azureuser'));
+  });
+
   it('restores the one artefact that drifted, and reloads only when the reload is what makes it take effect', async () => {
     const fixture = runnerFixture();
     await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options);
@@ -804,6 +833,10 @@ describe('privileged helper: the disk identity record', () => {
       options: {
         storage,
         env: environment,
+        // The tree a real machine runs on belongs to its own uid range, which a test cannot give a file
+        // away to. An empty range registry allocates the first slot, so this is the range every envelope
+        // written through this fixture declares.
+        readOwner: () => UID_RANGE_BASE,
         readText: (path: string) => (path === '/etc/subuid' ? 'azureuser:100000:65536\n' : ''),
         writeAtomic: (path: string, content: Buffer, mode: number) => {
           writes.push({ path, content: content.toString('utf8'), mode });
@@ -921,6 +954,71 @@ describe('privileged helper: the disk identity record', () => {
     });
   });
 
+  it('keeps one uid range per environment, so a restored disk declares the range its files carry', async () => {
+    // A restore mints a new disk id and copies the trees across byte for byte, ownership included. Keyed
+    // on the disk, the restored generation was handed a range of its own and booted with a root filesystem
+    // its own root could not write, while /data stayed writable through its :rootidmap bind and hid it.
+    const RANGES = '/var/lib/elowen/nspawn-uid-ranges.json';
+    // The range this environment's files already carry, recorded the way the earlier per-disk key wrote it.
+    const registry: Record<string, number> = { [`project:54:${diskRef.diskId}`]: UID_RANGE_BASE + 7 * 65_536 };
+    const restored = { ...diskRef, diskId: 'b'.repeat(32), generation: 4, machine: 'elowen-project-54-g4' };
+    const envelope = async (ref: typeof diskRef) => {
+      mkdirSync(nspawnDiskPaths(storage, ref).rootfs, { recursive: true });
+      return await applyRequest({
+        domain: 'nspawn',
+        op: 'write-envelope',
+        ...ref,
+        limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 },
+        binds: [],
+        dropCapabilities: [],
+        privateNetwork: true,
+      }, undefined, {
+        storage,
+        env: environment,
+        readOwner: () => registry[`project:54:${diskRef.diskId}`],
+        readText: (path: string) => {
+          if (path === '/etc/subuid') return 'azureuser:100000:65536\n';
+          return path === RANGES ? JSON.stringify(registry) : '';
+        },
+        writeAtomic: (path: string, content: Buffer, mode: number) => {
+          if (path === RANGES) Object.assign(registry, JSON.parse(content.toString('utf8')));
+          else if (path.startsWith(scratch)) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content, { mode }); }
+        },
+        runner: (file: string) => (file === '/usr/bin/getent'
+          ? { ok: true, stdout: 'azureuser:x:1000:1000::/home/azureuser:/bin/bash\n' }
+          : { ok: true, stdout: '' }),
+      }) as { uidBase: number };
+    };
+
+    const original = await envelope(diskRef);
+    const next = await envelope(restored);
+
+    expect(original.uidBase).toBe(UID_RANGE_BASE + 7 * 65_536);
+    expect(next.uidBase).toBe(original.uidBase);
+    // Adopted under the environment key, so the disk id it was allocated against stops deciding anything.
+    expect(registry['project:54']).toBe(original.uidBase);
+  });
+
+  it('refuses an envelope over a root filesystem some other range owns', async () => {
+    // Nothing at boot chowns the tree: PrivateUsersOwnership is off on purpose. An envelope written over a
+    // tree of another range therefore reports a running machine whose own root owns none of its files, so
+    // the disagreement has to stop the operation that would otherwise succeed.
+    const fixture = diskFixture();
+    fixture.options.readOwner = () => UID_RANGE_BASE + 3 * 65_536;
+    await expect(applyRequest({
+      domain: 'nspawn',
+      op: 'write-envelope',
+      ...diskRef,
+      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 },
+      binds: [],
+      dropCapabilities: [],
+      privateNetwork: true,
+    }, undefined, fixture.options)).rejects.toThrow(/root filesystem is owned by 1073938432 and this envelope declares the range at 1073741824/);
+    // No envelope and no identity record: the refusal comes before anything a machine could be started from.
+    expect(fixture.writes.map((write) => write.path).filter((path) => path.endsWith('.nspawn')
+      || path.endsWith('10-elowen.conf') || path === fixture.paths.identity)).toEqual([]);
+  });
+
   it('refuses a machine name that does not spell out the resource it claims', async () => {
     const fixture = diskFixture();
     await expect(applyRequest({
@@ -1033,6 +1131,7 @@ describe('privileged helper: the disk identity record', () => {
     }, undefined, {
       storage,
       env: environment,
+      readOwner: () => UID_RANGE_BASE,
       writeAtomic: (path: string, content: Buffer, mode: number) => {
         writes.push({ path, content: content.toString('utf8'), mode });
         if (path.startsWith(scratch)) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content, { mode }); }
@@ -1071,7 +1170,7 @@ describe('privileged helper: the disk identity record', () => {
       binds,
       dropCapabilities: [],
       privateNetwork: true,
-    }, undefined, { storage, env: environment, writeAtomic: () => {}, runner: () => ({ ok: true, stdout: '' }) })).resolves.toMatchObject({ ok: true });
+    }, undefined, { storage, env: environment, readOwner: () => UID_RANGE_BASE, writeAtomic: () => {}, runner: () => ({ ok: true, stdout: '' }) })).resolves.toMatchObject({ ok: true });
 
     // A real repository already at that path is data, not a mount point to overwrite, and a file bound
     // over a directory fails the mount with a message that explains nothing.
@@ -1091,7 +1190,7 @@ describe('privileged helper: the disk identity record', () => {
       binds,
       dropCapabilities: [],
       privateNetwork: true,
-    }, undefined, { storage, env: environment, writeAtomic: () => {}, runner: () => ({ ok: true, stdout: '' }) }))
+    }, undefined, { storage, env: environment, readOwner: () => UID_RANGE_BASE, writeAtomic: () => {}, runner: () => ({ ok: true, stdout: '' }) }))
       .rejects.toThrow(/mount point is of the wrong kind/);
   });
 
@@ -1264,6 +1363,39 @@ describe('privileged helper: disk tree primitives', () => {
     await expect(applyRequest({ domain: 'nspawn', op: 'tree-fingerprint', path }, undefined, {
       storage, runner: () => ({ ok: true, stdout: JSON.stringify({ logicalBytes: 10, allocatedBytes: 4096, digest: 'nope' }) }),
     })).rejects.toThrow(/fingerprint is invalid/);
+  });
+
+  it('runs a whole-tree pass on the disk budget rather than the default command timeout', async () => {
+    // Measured on a 1.4 GB Project tree: the fsync pass over a freshly copied tree does not finish inside
+    // the 30s default, while the same pass over a warm tree takes eight seconds. Under the default every
+    // first start of a new environment failed and only the automatic retry rescued it.
+    const path = join(nspawnDiskPaths(storage, diskRef).directory, 'home');
+    mkdirSync(path, { recursive: true });
+    const budgets: (number | undefined)[] = [];
+    const runner = (_file: string, _args: string[], options: { timeoutMs?: number } = {}) => {
+      budgets.push(options.timeoutMs);
+      return { ok: true, stdout: JSON.stringify({ logicalBytes: 10, allocatedBytes: 4096, digest: 'f'.repeat(64) }) };
+    };
+    await applyRequest({ domain: 'nspawn', op: 'tree-sync', path }, undefined, { storage, runner });
+    await applyRequest({ domain: 'nspawn', op: 'tree-fingerprint', path }, undefined, { storage, runner });
+
+    expect(budgets).toEqual([DISK_TREE_TIMEOUT_MS, DISK_TREE_TIMEOUT_MS]);
+    expect(DISK_TREE_TIMEOUT_MS).toBe(15 * 60_000);
+    expect(commandOptionsFor('/usr/bin/python3', ['-c', ''], DISK_TREE_TIMEOUT_MS).timeout).toBe(DISK_TREE_TIMEOUT_MS);
+    // Everything that is not tree work keeps the short bound that catches a command which has hung.
+    expect(commandOptionsFor('/usr/bin/systemctl', ['daemon-reload']).timeout).toBe(30_000);
+  });
+
+  it('carries the cause of a command that printed nothing, instead of a message ending in a colon', () => {
+    // A command killed for outrunning its budget is terminated before it writes a byte, so `stderr` is
+    // empty and the caller's message used to read `the disk tree sync failed:` with nothing after it.
+    expect(defaultCommandRunner('/bin/sh', ['-c', 'sleep 30'], { timeoutMs: 1_000 }))
+      .toEqual({ ok: false, stderr: 'the command printed nothing and was killed after its 1s budget' });
+    expect(defaultCommandRunner('/bin/sh', ['-c', 'exit 3']))
+      .toEqual({ ok: false, stderr: 'the command printed nothing and exited with status 3' });
+    // A command that did say something still speaks for itself.
+    expect(defaultCommandRunner('/bin/sh', ['-c', 'echo refused >&2; exit 1']))
+      .toEqual({ ok: false, stderr: 'refused' });
   });
 });
 

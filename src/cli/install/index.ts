@@ -297,7 +297,7 @@ async function execute(r: Runner, plan: InstallPlan): Promise<{ tls: boolean }> 
     // writing root-owned files by hand. Non-fatal like the grants below: the instance still runs, and the
     // same provisioning is reachable again from `elowen update`.
     if (siteGatewayHelperCreated) {
-      await step('Provisioning machine runtime', () => provisionMachineRuntime())
+      await step('Provisioning machine runtime', () => provisionMachineRuntime(username))
         .catch((e) => p.log.warn(`Machine runtime not provisioned (environments cannot be created until it is): ${(e as Error).message}`));
     }
 

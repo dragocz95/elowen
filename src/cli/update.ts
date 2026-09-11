@@ -142,14 +142,17 @@ export interface UpdateResult { updated: boolean; from: string; to: string }
  *  executable also serves the machine runtime, which does not depend on a published-sites domain, and a
  *  stale helper is reported as a readiness failure rather than quietly kept. */
 async function refreshSiteGatewayHelper(): Promise<boolean> {
-  if (process.platform !== 'linux' || readInstallInfo() === null) return false;
+  const info = readInstallInfo();
+  if (process.platform !== 'linux' || info === null) return false;
   const installed = await installSiteGatewayHelper();
   // The machine runtime's host artefacts come forward with the executable, because an instance that
   // upgrades into this runtime has never had them and nothing else installs them. Provisioning converges,
   // so this is a no-op on a host that already carries them. Reported and not fatal: an update that cannot
   // reach apt must still land the release it was run for.
   try {
-    await provisionMachineRuntime();
+    // `sudo elowen update` is the documented operator path and reaches the helper from a root shell, where
+    // sudo names root and the service account has to come from the root-owned install record instead.
+    await provisionMachineRuntime(info.serviceUser ?? null);
   } catch (error) {
     process.stderr.write(`machine runtime provisioning was not completed: ${(error as Error).message}\n`);
   }

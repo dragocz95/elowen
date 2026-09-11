@@ -393,18 +393,21 @@ describe('privileged/provisionMachineRuntime', () => {
   // environment while the container tools, the unit template or the polkit rule are missing, and there is
   // deliberately no fallback runtime, so a host that never runs this can create nothing at all and the
   // only repair is writing root-owned files by hand. Both ways in are pinned below.
-  it('asks the root helper to converge the host artefacts', async () => {
+  it('asks the root helper to converge the host artefacts for a named service account', async () => {
     const sent: unknown[] = [];
-    const ready = await provisionMachineRuntime(async (request) => {
-      sent.push(request);
-      return { ok: true, ready: true, items: [] };
-    });
-    expect(sent).toEqual([{ domain: 'nspawn', op: 'provision' }]);
-    expect(ready).toBe(true);
+    const invoke = async (request: unknown) => { sent.push(request); return { ok: true, ready: true, items: [] }; };
+    expect(await provisionMachineRuntime('www-data', invoke)).toBe(true);
+    // Both callers run as root, where the inner sudo names root and the helper cannot derive the account
+    // the environments belong to. Without the name the documented operator path provisions nothing.
+    await provisionMachineRuntime(null, invoke);
+    expect(sent).toEqual([
+      { domain: 'nspawn', op: 'provision', user: 'www-data' },
+      { domain: 'nspawn', op: 'provision' },
+    ]);
   });
 
   it('names what is still missing rather than reporting a success it did not get', async () => {
-    await expect(provisionMachineRuntime(async () => ({
+    await expect(provisionMachineRuntime('www-data', async () => ({
       ok: true,
       ready: false,
       items: [
@@ -418,7 +421,9 @@ describe('privileged/provisionMachineRuntime', () => {
     const here = dirname(fileURLToPath(import.meta.url));
     const installer = readFileSync(join(here, '../../../src/cli/install/index.ts'), 'utf8');
     const updater = readFileSync(join(here, '../../../src/cli/update.ts'), 'utf8');
-    expect(installer, 'a fresh install must provision the machine runtime').toContain('provisionMachineRuntime()');
-    expect(updater, 'an instance that upgrades into this runtime has never had the artefacts').toContain('provisionMachineRuntime()');
+    // Both run as root and both must say which account: the installer from the plan it just applied, the
+    // updater from the root-owned install record.
+    expect(installer, 'a fresh install must provision the machine runtime').toContain('provisionMachineRuntime(username)');
+    expect(updater, 'an instance that upgrades into this runtime has never had the artefacts').toContain('provisionMachineRuntime(info.serviceUser ?? null)');
   });
 });
