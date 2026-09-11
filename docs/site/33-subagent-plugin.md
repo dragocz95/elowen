@@ -22,13 +22,13 @@ The plugin registers no slash command. The `/workflow` prompt command and the ke
 
 | Tool | What it does |
 | --- | --- |
-| `Delegate` | Hands one self-contained task to a fresh sub-agent and returns its final result. |
-| `DelegateStatus` | Reports a one-off live snapshot of a background delegation: status, tool count, token spend and current activity. It never waits and does not collect a result. |
-| `DelegateResult` | Returns the final text of a finished background delegation, or its error, read back from the durable store. |
+| `Delegate` | Hands one self-contained task to a fresh sub-agent. It returns a job id and the result is delivered in a later turn, unless the call asks to wait with `background: false`. |
+| `DelegateStatus` | Reports a one-off live snapshot of a running delegation: status, tool count, token spend and current activity. It never waits and does not collect a result. |
+| `DelegateResult` | Returns the final text of a finished delegation, or its error, read back from the durable store. |
 | `DelegateModels` | Lists the configured `provider/model` values a sub-agent may run on, with the reasoning levels each accepts. |
 | `DelegateList` | Lists the sub-agents this conversation has already run, newest first, so a follow-up can be sent to one of them. |
 | `DelegateRead` | Reads the final stored assistant text of a listed sub-agent, paged with offset and limit. |
-| `DelegateContinue` | Sends a follow-up to a sub-agent that already ran, so it resumes with its full context; it can also lift a read-only child back into write mode. |
+| `DelegateContinue` | Sends a follow-up to a sub-agent that already ran, so it resumes with its full context; it can also lift a read-only child back into write mode. An idle sub-agent's reply is delivered in a later turn unless the call passes `background: false`. |
 | `DelegateStop` | Stops a direct sub-agent of this conversation, together with whatever that child delegated itself. |
 | `WorkflowStart` | Runs a workflow: a DAG of sub-agent nodes whose complete definition is a JSON file. |
 | `WorkflowAddNodes` | Extends a running workflow with new nodes as the work reveals follow-up steps. |
@@ -36,9 +36,11 @@ The plugin registers no slash command. The `/workflow` prompt command and the ke
 | `WorkflowResume` | Re-runs only the unfinished nodes of a stopped workflow; completed nodes are kept exactly as they finished. |
 | `WorkflowStop` | Stops a running workflow, aborts its running nodes and keeps the results of finished nodes. |
 
-### Foreground and background delegation
+### Background and blocking delegation
 
-By default a `Delegate` call blocks until the child settles and returns its final result. With `background: true` the call returns a stable job id immediately and Elowen delivers the result in a new turn. A running foreground delegation can also be moved to the background from the chat interface without cancelling it. A background result arrives on its own, so `DelegateStatus` and `DelegateResult` exist for a direct question about a job or a missed delivery; polling them in a loop is never the intended use. Live progress is kept in memory: after a daemon restart a job is no longer tracked live, but its durable result is still readable by job or session id and `DelegateContinue` still works.
+A `Delegate` call is asynchronous by default: it returns a stable job id immediately and Elowen delivers the result in a new turn once the child settles. `background: false` is the explicit request to wait, and the call then blocks and returns the child's final text as its own result. A running blocking delegation can also be moved to the background from the chat interface without cancelling it. A delivered result arrives on its own, so `DelegateStatus` and `DelegateResult` exist for a direct question about a job or a missed delivery; polling them in a loop is never the intended use. Where a delegation runs outside a conversation that could be woken, a call that names no mode waits instead, so its result is never left undelivered. Live progress is kept in memory: after a daemon restart a job is no longer tracked live, but its durable result is still readable by job or session id and `DelegateContinue` still works.
+
+The same rule covers a follow-up. `DelegateContinue` on an idle sub-agent returns once that sub-agent has started its turn and the reply is delivered later; `background: false` waits for the reply instead. A sub-agent that is still mid-turn is steered rather than restarted: that message has no reply of its own, so the call answers immediately and the updated conclusion arrives through the original delegation.
 
 Every delegation can carry a short name that labels the child in the progress rail, the agents table and the running-subagents reminder. Without one the label is derived from the opening words of the task.
 
@@ -64,7 +66,7 @@ A workflow definition is a JSON file the delegating conversation writes first an
 
 A node whose task needs an earlier result must be reachable through the dependency chain, because a dependent node receives only a short handover from each direct dependency, at most 4,000 characters, and nothing from further upstream. The handover is the section the node wrote under a `## Handover` heading, or the tail of its result when it wrote none.
 
-`WorkflowStart` blocks and returns every node's result, or runs in the background when `background: true` is set. `WorkflowStatus` reads the live per-node snapshot, `WorkflowAddNodes` extends a running DAG, `WorkflowResume` re-runs only unfinished nodes, and `WorkflowStop` ends a run early. Resume and stop work only from the conversation that started the workflow. A workflow lives in memory on the daemon, so a finished one can be inspected or resumed only while it is still held there.
+`WorkflowStart` starts the DAG and delivers its summary in a later turn; `background: false`, as an argument or in the file, makes it block and return every node's result instead. The argument wins over the file, and the choice governs delivery only: independent nodes still run in parallel and a dependent node still waits for the nodes it depends on. `WorkflowStatus` reads the live per-node snapshot, `WorkflowAddNodes` extends a running DAG, `WorkflowResume` re-runs only unfinished nodes and keeps the delivery the run already had unless it is given its own `background`, and `WorkflowStop` ends a run early. Resume and stop work only from the conversation that started the workflow. A workflow lives in memory on the daemon, so a finished one can be inspected or resumed only while it is still held there.
 
 ## Enabling the plugin
 

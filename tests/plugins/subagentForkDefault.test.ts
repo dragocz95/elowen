@@ -53,8 +53,10 @@ describe('Delegate fork — the instance default applies only where a fork is po
     return found as unknown as Executable;
   };
 
-  /** Run one blocking delegation and report what the HOST was asked for: the refusal text, or the `fork`
-   *  flag on the immutable access the spawn would carry. */
+  /** Run one delegation and report what the HOST was asked for: the refusal text, or the `fork` flag on
+   *  the immutable access the spawn would carry. Delegation delivers asynchronously by default, so the
+   *  blocking mode is asked for explicitly — what this suite asserts is the child's own conclusion, not
+   *  how the result reaches the parent. */
   const delegate = async (
     reg: PluginRegistry,
     identity: TurnIdentity,
@@ -70,7 +72,7 @@ describe('Delegate fork — the instance default applies only where a fork is po
     });
     const res = await runWithPolicy(
       adminPolicy,
-      () => tool(reg, 'Delegate').execute('call-fork', { task: 'a delegated task', ...params }),
+      () => tool(reg, 'Delegate').execute('call-fork', { task: 'a delegated task', background: false, ...params }),
       { identity, sessionId: 'brain-1', emitSubagent: () => {}, emitSubagentCompletion: () => {} },
     );
     return { text: res.content[0]?.text ?? '', ...(forked === undefined ? {} : { forked }) };

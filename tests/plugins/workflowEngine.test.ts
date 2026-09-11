@@ -286,8 +286,9 @@ describe('workflow engine', () => {
     expect(start.description).toContain(resolve(workflowFilesDir, 'workflows'));
     expect(start.parameters?.properties.nodesFile?.description).toContain(resolve(workflowFilesDir, 'workflows'));
 
-    await start.execute('shape-array', { nodesFile: workflowFile([{ id: 'array', task: 'array' }]) });
+    await start.execute('shape-array', { background: false, nodesFile: workflowFile([{ id: 'array', task: 'array' }]) });
     await start.execute('shape-object', {
+      background: false,
       nodesFile: workflowFile({ title: 'From file', nodes: [{ id: 'object', task: 'object' }] }),
     });
     expect(launched).toEqual(['array', 'object']);
@@ -298,6 +299,7 @@ describe('workflow engine', () => {
     const start = tools.get('WorkflowStart');
     if (!start) throw new Error('WorkflowStart was not registered');
     await start.execute('workspace-default', {
+      background: false,
       nodesFile: workflowFile([
         { id: 'default', task: 'default' },
         { id: 'explicit', task: 'explicit', workspaceId: 'ws_root' },
@@ -307,6 +309,7 @@ describe('workflow engine', () => {
     expect(runs.find((run) => run.task === 'default')?.workspaceRef).toEqual({ workspaceId: 'ws_root', projectId: 1 });
     expect(runs.find((run) => run.task === 'explicit')?.workspaceRef).toEqual({ workspaceId: 'ws_root', projectId: 1 });
     const rejected = await start.execute('workspace-sibling', {
+      background: false,
       nodesFile: workflowFile([{ id: 'sibling', task: 'sibling', workspaceId: 'ws_node' }]),
       workspaceId: 'ws_root',
     });
@@ -327,6 +330,7 @@ describe('workflow engine', () => {
     const start = tools.get('WorkflowStart');
     if (!start) throw new Error('WorkflowStart was not registered');
     const result = await start.execute('workspace-account', {
+      background: false,
       nodesFile: workflowFile([{ id: 'node', task: 'account-node' }]),
       workspaceId: 'ws_root',
     });
@@ -343,6 +347,7 @@ describe('workflow engine', () => {
     const start = tools.get('WorkflowStart');
     if (!start) throw new Error('WorkflowStart was not registered');
     const result = await start.execute('workspace-no-control', {
+      background: false,
       nodesFile: workflowFile([{ id: 'node', task: 'no-control-node' }]),
       workspaceId: 'ws_root',
     });
@@ -361,6 +366,7 @@ describe('workflow engine', () => {
     const start = tools.get('WorkflowStart');
     if (!start) throw new Error('WorkflowStart was not registered');
     const result = await start.execute('workspace-anonymous', {
+      background: false,
       nodesFile: workflowFile([{ id: 'node', task: 'anonymous-node' }]),
       workspaceId: 'ws_root',
     });
@@ -376,6 +382,7 @@ describe('workflow engine', () => {
     let release!: () => void;
     gate = { task: 'root', promise: new Promise<void>((resolveGate) => { release = resolveGate; }) };
     const start = h.tools.get('WorkflowStart')!.execute('ws-expand', {
+      background: false,
       nodesFile: workflowFile([{ id: 'root', task: 'root' }]),
       workspaceId: 'ws_root',
     });
@@ -397,6 +404,7 @@ describe('workflow engine', () => {
   it('throws when the workflow has already finished instead of reporting the refusal as success', async () => {
     const h = harness();
     await h.tools.get('WorkflowStart')!.execute('finished-wf', {
+      background: false,
       nodesFile: workflowFile([{ id: 'only', task: 'only' }]),
     });
     const workflowId = h.snapshots[0]!.id;
@@ -443,7 +451,7 @@ describe('workflow engine', () => {
     const start = tools.get('WorkflowStart');
     if (!start) throw new Error('WorkflowStart was not registered');
     const outside = resolve(repoRoot, '..', 'outside-workflow.json');
-    const res = await start.execute('outside', { nodesFile: outside });
+    const res = await start.execute('outside', { background: false, nodesFile: outside });
 
     expect(res.content[0]?.text).toBe(`Error: cannot read workflow file "${outside}": path not allowed: "${outside}" is outside your accessible repositories. Create or correct the file inside an accessible repository, then call WorkflowStart again.`);
     expect(launched).toEqual([]);
@@ -460,7 +468,7 @@ describe('workflow engine', () => {
     if (!start) throw new Error('WorkflowStart was not registered');
     const nodesFile = guestWorkflowFile([{ id: 'guest', task: 'guest-node' }]);
 
-    const res = await start.execute('managed', { nodesFile });
+    const res = await start.execute('managed', { background: false, nodesFile });
 
     expect(res.content[0]?.text).toMatch(/status: done/);
     expect(res.content[0]?.text).toContain('done:guest-node');
@@ -478,7 +486,7 @@ describe('workflow engine', () => {
     if (!start) throw new Error('WorkflowStart was not registered');
     const nodesFile = guestWorkflowFile({ title: 'File title', nodes: [{ id: 'guest', task: 'guest-node' }] });
 
-    const res = await start.execute('managed-object', { nodesFile, title: 'Argument title' });
+    const res = await start.execute('managed-object', { background: false, nodesFile, title: 'Argument title' });
 
     expect(res.content[0]?.text).toMatch(/status: done/);
     expect(snapshots[0]?.title).toBe('Argument title');
@@ -492,7 +500,7 @@ describe('workflow engine', () => {
 
     // A real host path on a managed turn: it exists on disk, and must STILL not be read.
     const hostPath = workflowFile([{ id: 'host', task: 'host-node' }]);
-    const res = await start.execute('managed-missing', { nodesFile: hostPath });
+    const res = await start.execute('managed-missing', { background: false, nodesFile: hostPath });
 
     // The remedy names the filesystem the caller is actually on, and the directory it is standing in —
     // pointing a managed caller at "an accessible repository", or at a fixed guest root no project is
@@ -530,7 +538,7 @@ describe('workflow engine', () => {
     if (!start) throw new Error('WorkflowStart was not registered');
     const nodesFile = rawGuestWorkflowFile('{');
 
-    expect((await start.execute('managed-json', { nodesFile })).content[0]?.text)
+    expect((await start.execute('managed-json', { background: false, nodesFile })).content[0]?.text)
       .toMatch(/^Error: workflow file .* contains invalid JSON .* Fix the JSON syntax in the file, then call WorkflowStart again\.$/);
   });
 
@@ -540,23 +548,23 @@ describe('workflow engine', () => {
     if (!start) throw new Error('WorkflowStart was not registered');
 
     const missing = resolve(workflowFilesDir, 'missing.json');
-    expect((await start.execute('missing', { nodesFile: missing })).content[0]?.text)
+    expect((await start.execute('missing', { background: false, nodesFile: missing })).content[0]?.text)
       .toMatch(/^Error: cannot read workflow file .* Create or correct the file inside an accessible repository, then call WorkflowStart again\.$/);
 
     const invalidJson = rawWorkflowFile('{');
-    expect((await start.execute('json', { nodesFile: invalidJson })).content[0]?.text)
+    expect((await start.execute('json', { background: false, nodesFile: invalidJson })).content[0]?.text)
       .toMatch(/^Error: workflow file .* contains invalid JSON .* Fix the JSON syntax in the file, then call WorkflowStart again\.$/);
 
     const wrongShape = workflowFile({ title: 'No nodes' });
-    expect((await start.execute('shape', { nodesFile: wrongShape })).content[0]?.text)
+    expect((await start.execute('shape', { background: false, nodesFile: wrongShape })).content[0]?.text)
       .toBe(`Error: workflow file "${wrongShape}" must contain a JSON array of nodes or an object with a "nodes" array. Rewrite the file in one of those two forms, then call WorkflowStart again.`);
 
     const empty = workflowFile([]);
-    expect((await start.execute('empty', { nodesFile: empty })).content[0]?.text)
+    expect((await start.execute('empty', { background: false, nodesFile: empty })).content[0]?.text)
       .toBe(`Error: workflow file "${empty}": field "nodes" is empty; add at least one node object with required fields "id" and "task".`);
 
     const nonObject = workflowFile([{ id: 'valid', task: 'valid' }, null]);
-    expect((await start.execute('object', { nodesFile: nonObject })).content[0]?.text)
+    expect((await start.execute('object', { background: false, nodesFile: nonObject })).content[0]?.text)
       .toBe(`Error: workflow file "${nonObject}": node 2: must be an object with required fields "id" and "task"; replace this value with a node object.`);
 
     const missingTask = workflowFile([
@@ -564,13 +572,13 @@ describe('workflow engine', () => {
       { id: 'api', task: 'api' },
       { id: 'web-settings' },
     ]);
-    expect((await start.execute('task', { nodesFile: missingTask })).content[0]?.text)
+    expect((await start.execute('task', { background: false, nodesFile: missingTask })).content[0]?.text)
       .toBe(`Error: workflow file "${missingTask}": node 3 ("web-settings"): missing required field "task"; add a complete, non-empty string "task" to this node.`);
 
     // A reusable file carries the run's options too, so a mistyped one has to be named as precisely as a
     // mistyped node — otherwise the only clue is an option that silently did nothing.
     const badOption = workflowFile({ title: 42, nodes: [{ id: 'a', task: 'a' }] });
-    expect((await start.execute('option', { nodesFile: badOption })).content[0]?.text)
+    expect((await start.execute('option', { background: false, nodesFile: badOption })).content[0]?.text)
       .toBe(`Error: workflow file "${badOption}" field "title" must be a string. Fix or remove that field, then call WorkflowStart again.`);
     expect(launched).toEqual([]);
   });
@@ -588,14 +596,14 @@ describe('workflow engine', () => {
       { id: 'research', task: 'research' },
       { id: 'research' },
     ]);
-    expect((await start.execute('twin-task', { nodesFile: twinMissingTask })).content[0]?.text)
+    expect((await start.execute('twin-task', { background: false, nodesFile: twinMissingTask })).content[0]?.text)
       .toBe(`Error: workflow file "${twinMissingTask}": node 2 ("research"): missing required field "task"; add a complete, non-empty string "task" to this node.`);
 
     const twinBadDeps = workflowFile([
       { id: 'research', task: 'research' },
       { id: 'research', task: 'again', deps: ['ghost'] },
     ]);
-    expect((await start.execute('twin-deps', { nodesFile: twinBadDeps })).content[0]?.text)
+    expect((await start.execute('twin-deps', { background: false, nodesFile: twinBadDeps })).content[0]?.text)
       .toBe(`Error: workflow file "${twinBadDeps}": node 2 ("research"): depends on unknown node "ghost"; fix this node in the workflow file.`);
     expect(launched).toEqual([]);
   });
@@ -603,6 +611,7 @@ describe('workflow engine', () => {
   it('runs a linear DAG in dependency order and returns every node result', async () => {
     const { tools, launched } = harness();
     const res = await tools.get('WorkflowStart')!.execute('t1', {
+      background: false,
       nodesFile: workflowFile([
         { id: 'a', task: 'a' },
         { id: 'b', task: 'b', deps: ['a'] },
@@ -619,6 +628,7 @@ describe('workflow engine', () => {
   it('runs independent nodes that share one dependency in parallel after it', async () => {
     const { tools, launched } = harness();
     await tools.get('WorkflowStart')!.execute('t2', {
+      background: false,
       nodesFile: workflowFile([
         { id: 'root', task: 'root' },
         { id: 'x', task: 'x', deps: ['root'] },
@@ -632,6 +642,7 @@ describe('workflow engine', () => {
   it('marks the workflow errored and skips dependents of a failed node', async () => {
     const { tools, launched } = harness();
     const res = await tools.get('WorkflowStart')!.execute('t3', {
+      background: false,
       nodesFile: workflowFile([
         { id: 'a', task: 'a FAIL' },
         { id: 'b', task: 'b', deps: ['a'] },
@@ -645,7 +656,7 @@ describe('workflow engine', () => {
 
   it('emits a live snapshot stream ending in a terminal status', async () => {
     const { tools, snapshots } = harness();
-    await tools.get('WorkflowStart')!.execute('t4', { nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
+    await tools.get('WorkflowStart')!.execute('t4', { background: false, nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
     expect(snapshots.length).toBeGreaterThan(1);
     expect(snapshots[0]!.status).toBe('running');
     const last = snapshots.at(-1)!;
@@ -660,6 +671,7 @@ describe('workflow engine', () => {
   it('hands a node what the dependencies it waited for handed over', async () => {
     const { tools, contextOf } = harness();
     await tools.get('WorkflowStart')!.execute('t-deps', {
+      background: false,
       nodesFile: workflowFile([
         { id: 'gather', task: 'gather' },
         { id: 'other', task: 'other' },
@@ -681,6 +693,7 @@ describe('workflow engine', () => {
   it('carries only the handover a node wrote, not its result', async () => {
     const { tools, contextOf } = harness();
     await tools.get('WorkflowStart')!.execute('t-handover', {
+      background: false,
       nodesFile: workflowFile([
         { id: 'gather', task: 'gather WITH_HANDOVER BULK:6000' },
         { id: 'write', task: 'write', deps: ['gather'] },
@@ -700,6 +713,7 @@ describe('workflow engine', () => {
   it('reads the real handover, not a quoted example inside a fence', async () => {
     const { tools, contextOf } = harness();
     await tools.get('WorkflowStart')!.execute('t-fenced', {
+      background: false,
       nodesFile: workflowFile([
         { id: 'gather', task: 'gather FENCED_HANDOVER' },
         { id: 'write', task: 'write', deps: ['gather'] },
@@ -720,6 +734,7 @@ describe('workflow engine', () => {
   it('derives a bounded handover when a node wrote none, and names it as derived', async () => {
     const { tools, contextOf } = harness();
     await tools.get('WorkflowStart')!.execute('t-derived', {
+      background: false,
       nodesFile: workflowFile([
         { id: 'gather', task: 'gather BULK:9000' },
         { id: 'write', task: 'write', deps: ['gather'] },
@@ -740,6 +755,7 @@ describe('workflow engine', () => {
   it('never passes a transitive dependency down the chain', async () => {
     const { tools, contextOf } = harness();
     await tools.get('WorkflowStart')!.execute('t-transitive', {
+      background: false,
       nodesFile: workflowFile([
         { id: 'a', task: 'a WITH_HANDOVER' },
         { id: 'b', task: 'b WITH_HANDOVER', deps: ['a'] },
@@ -760,6 +776,7 @@ describe('workflow engine', () => {
   it('gives a fork node its dependency handovers in the directive and appends nothing to the prefix', async () => {
     const { tools, runs, contexts } = harness();
     const res = await tools.get('WorkflowStart')!.execute('t-fork-deps', {
+      background: false,
       nodesFile: workflowFile({
         fork: true,
         nodes: [
@@ -788,6 +805,7 @@ describe('workflow engine', () => {
   it('asks a node with successors for a handover and leaves a leaf alone', async () => {
     const { tools, contextOf } = harness();
     await tools.get('WorkflowStart')!.execute('t-instruction', {
+      background: false,
       nodesFile: workflowFile([
         { id: 'gather', task: 'gather' },
         { id: 'write', task: 'write', deps: ['gather'] },
@@ -810,6 +828,7 @@ describe('workflow engine', () => {
     // Each branch reports far more than its slice can hold, the way a real review section does.
     const longTask = (id: string) => `${id} BULK:8000`;
     await tools.get('WorkflowStart')!.execute('t-fanin', {
+      background: false,
       nodesFile: workflowFile([
         ...branches.map((id) => ({ id, task: longTask(id) })),
         { id: 'synthesis', task: 'synthesise', deps: branches },
@@ -831,6 +850,7 @@ describe('workflow engine', () => {
     const { tools, launched, contextOf } = harness();
     const branches = Array.from({ length: 63 }, (_, i) => `n${i}`);
     const res = await tools.get('WorkflowStart')!.execute('t-wide', {
+      background: false,
       nodesFile: workflowFile([
         ...branches.map((id) => ({ id, task: `${id} BULK:600` })),
         { id: 'synthesis', task: 'synthesise', deps: branches },
@@ -851,6 +871,7 @@ describe('workflow engine', () => {
     const { tools, contexts } = harness();
     const branches = Array.from({ length: 24 }, (_, i) => `n${i}`);
     await tools.get('WorkflowStart')!.execute('t-wide-ok', {
+      background: false,
       nodesFile: workflowFile([
         ...branches.map((id) => ({ id, task: `${id} BULK:8000` })),
         { id: 'synthesis', task: 'synthesise', deps: branches },
@@ -888,6 +909,7 @@ describe('workflow engine', () => {
     const branches = ['a', 'b', 'c', 'd', 'e'];
     const report = (id: string) => `${id}:${'x'.repeat(3_000)}`;
     await tools.get('WorkflowStart')!.execute('t-five', {
+      background: false,
       nodesFile: workflowFile([
         ...branches.map((id) => ({ id, task: report(id) })),
         { id: 'synthesis', task: 'synthesise', deps: branches },
@@ -908,6 +930,7 @@ describe('workflow engine', () => {
     const { tools, contextOf } = harness();
     const branches = ['a', 'b', 'c', 'd', 'e'];
     await tools.get('WorkflowStart')!.execute('t-five-big', {
+      background: false,
       nodesFile: workflowFile([
         ...branches.map((id) => ({ id, task: `${id} BULK:8000` })),
         { id: 'synthesis', task: 'synthesise', deps: branches },
@@ -927,6 +950,7 @@ describe('workflow engine', () => {
   it('keeps the END of an over-cap node result, in the summary and in what a dependent reads', async () => {
     const { tools, contextOf } = harness();
     const res = await tools.get('WorkflowStart')!.execute('t-tail', {
+      background: false,
       nodesFile: workflowFile([
         { id: 'a', task: 'a BULK:9000' },
         { id: 'b', task: 'b', deps: ['a'] },
@@ -951,6 +975,7 @@ describe('workflow engine', () => {
     const run = async (branches: string[], id: string) => {
       const h = harness();
       await h.tools.get('WorkflowStart')!.execute(id, {
+        background: false,
         nodesFile: workflowFile([
           ...branches.map((n) => ({ id: n, task: `${n} BULK:20000` })),
           { id: 'synthesis', task: 'synthesise', deps: branches },
@@ -978,7 +1003,7 @@ describe('workflow engine', () => {
   // silently run on the wrong model).
   it('reports the EFFECTIVE model of a node that inherits, not just an explicit override', async () => {
     const { tools, snapshots } = harness();
-    await tools.get('WorkflowStart')!.execute('t-model', { nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
+    await tools.get('WorkflowStart')!.execute('t-model', { background: false, nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
     const node = snapshots.at(-1)!.nodes[0]!;
     expect(node.model).toBe('p/m'); // the parent's model, which the node inherited
   });
@@ -997,6 +1022,7 @@ describe('workflow engine', () => {
       const { tools, runs, model } = harness({ models });
       model.current = { provider: 'p', model: 'm', thinkingLevel: 'high' };
       await tools.get('WorkflowStart')!.execute('t-level', {
+        background: false,
         nodesFile: workflowFile([
           { id: 'cheap', task: 'cheap', thinkingLevel: 'low' },
           { id: 'inherit', task: 'inherit' },
@@ -1012,6 +1038,7 @@ describe('workflow engine', () => {
       const { tools, snapshots, model } = harness({ models });
       model.current = { provider: 'p', model: 'm', thinkingLevel: 'high' };
       await tools.get('WorkflowStart')!.execute('t-level-snap', {
+        background: false,
         nodesFile: workflowFile([
           { id: 'cheap', task: 'cheap', thinkingLevel: 'low' },
           { id: 'inherit', task: 'inherit' },
@@ -1025,6 +1052,7 @@ describe('workflow engine', () => {
     it('fails the node loudly when its model has no such level, naming the ones it has', async () => {
       const { tools, snapshots, launched } = harness({ models });
       await tools.get('WorkflowStart')!.execute('t-level-bad', {
+        background: false,
         nodesFile: workflowFile([{ id: 'a', task: 'a', thinkingLevel: 'xhigh' }]),
       });
       const node = snapshots.at(-1)!.nodes[0]!;
@@ -1043,6 +1071,7 @@ describe('workflow engine', () => {
       let release!: () => void;
       gate = { task: 'root', promise: new Promise<void>((resolveGate) => { release = resolveGate; }) };
       const started = h.tools.get('WorkflowStart')!.execute('t-level-add', {
+        background: false,
         nodesFile: workflowFile([{ id: 'root', task: 'root' }]),
       });
       await new Promise((r) => setTimeout(r, 5));
@@ -1064,6 +1093,7 @@ describe('workflow engine', () => {
   it('decodes double-escaped unicode sequences in the model-authored title', async () => {
     const { tools, snapshots } = harness();
     await tools.get('WorkflowStart')!.execute('t-esc', {
+      background: false,
       title: 'Docs \\u2014 p\\u0159epis',
       nodesFile: workflowFile([{ id: 'a', task: 'a' }]),
     });
@@ -1075,6 +1105,7 @@ describe('workflow engine', () => {
   it('carries startedAt plus clipped result and error previews in snapshots', async () => {
     const { tools, snapshots } = harness();
     await tools.get('WorkflowStart')!.execute('t-prev', {
+      background: false,
       nodesFile: workflowFile([
         { id: 'good', task: `g${'x'.repeat(600)}` },
         { id: 'bad', task: 'bad FAIL' },
@@ -1094,7 +1125,7 @@ describe('workflow engine', () => {
   // to the parent's transcript row, so the host can persist it and the marker survives a reconnect.
   it('stamps every snapshot with the originating WorkflowStart tool call id', async () => {
     const { tools, snapshots } = harness();
-    await tools.get('WorkflowStart')!.execute('call-42', { nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
+    await tools.get('WorkflowStart')!.execute('call-42', { background: false, nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
     expect(snapshots.length).toBeGreaterThan(1);
     expect(snapshots.every((s) => s.toolCallId === 'call-42')).toBe(true);
   });
@@ -1130,7 +1161,7 @@ describe('workflow engine', () => {
       principalOf: () => 'elowen:1',
       dependencyContextChunks,
     });
-    const startP = tools.get('WorkflowStart')!.execute('t6', { title: 'dyn', nodesFile: workflowFile([{ id: 'root', task: 'root' }]) });
+    const startP = tools.get('WorkflowStart')!.execute('t6', { background: false, title: 'dyn', nodesFile: workflowFile([{ id: 'root', task: 'root' }]) });
     await new Promise((r) => setTimeout(r, 5)); // let root launch and park on the gate
     const wfId = snapshots[0]!.id; // learn the generated workflow id from the first live snapshot
     const added = await tools.get('WorkflowAddNodes')!.execute('a1', {
@@ -1188,7 +1219,7 @@ describe('workflow engine', () => {
       principalOf,
       dependencyContextChunks,
     });
-    const startP = tools.get('WorkflowStart')!.execute('t7', { nodesFile: workflowFile([{ id: 'root', task: 'root' }]) });
+    const startP = tools.get('WorkflowStart')!.execute('t7', { background: false, nodesFile: workflowFile([{ id: 'root', task: 'root' }]) });
     await new Promise((r) => setTimeout(r, 5));
     const wfId = snapshots[0]!.id;
     // Now the RUNNING node calls WorkflowAddNodes from its own subagent turn.
@@ -1216,6 +1247,7 @@ describe('workflow engine', () => {
     let release!: () => void;
     gate = { task: 'root', promise: new Promise<void>((resolveGate) => { release = resolveGate; }) };
     const start = h.tools.get('WorkflowStart')!.execute('rpc-origin', {
+      background: false,
       nodesFile: workflowFile([{ id: 'root', task: 'root' }]),
     });
     await new Promise((resolveWait) => setTimeout(resolveWait, 5));
@@ -1246,6 +1278,7 @@ describe('workflow engine', () => {
     let release!: () => void;
     gate = { task: 'root', promise: new Promise<void>((resolveGate) => { release = resolveGate; }) };
     const start = h.tools.get('WorkflowStart')!.execute('bounded-origin', {
+      background: false,
       nodesFile: workflowFile([{ id: 'root', task: 'root', tools: ['WorkflowAddNodes'] }]),
     });
     await new Promise((resolveWait) => setTimeout(resolveWait, 5));
@@ -1271,24 +1304,26 @@ describe('workflow engine', () => {
   // lie, so the invite is extended only when delegated turns stay in this process.
   it('invites a full-access node to self-expand only when its turn stays in this process', async () => {
     const local = harness();
-    await local.tools.get('WorkflowStart')!.execute('t-invite', { nodesFile: workflowFile([{ id: 'n', task: 'invite-me' }]) });
+    await local.tools.get('WorkflowStart')!.execute('t-invite', { background: false, nodesFile: workflowFile([{ id: 'n', task: 'invite-me' }]) });
     expect(local.contextOf('invite-me')).toContain('WorkflowAddNodes');
     // In-process the tool is real, so the node keeps it: no deny is minted.
     expect(local.runs[0]?.toolPolicy?.deny ?? []).not.toContain('WorkflowAddNodes');
 
     const remote = harness({ delegatedRemote: true });
-    await remote.tools.get('WorkflowStart')!.execute('t-remote', { nodesFile: workflowFile([{ id: 'n', task: 'invite-me' }]) });
+    await remote.tools.get('WorkflowStart')!.execute('t-remote', { background: false, nodesFile: workflowFile([{ id: 'n', task: 'invite-me' }]) });
     expect(remote.contextOf('invite-me')).not.toContain('WorkflowAddNodes');
 
     const denied = harness();
     denied.access.current = { ...TEST_ACCESS, toolPolicy: { deny: ['Workflow*'] } };
     await denied.tools.get('WorkflowStart')!.execute('t-policy-denied', {
+      background: false,
       nodesFile: workflowFile([{ id: 'n', task: 'invite-me' }]),
     });
     expect(denied.contextOf('invite-me')).not.toContain('WorkflowAddNodes');
 
     const typed = harness({ subagentTypes: [{ name: 'explore', description: 'read-only explorer' }] });
     await typed.tools.get('WorkflowStart')!.execute('t-typed', {
+      background: false,
       nodesFile: workflowFile([{ id: 'n', task: 'invite-me', subagent_type: 'explore' }]),
     });
     expect(typed.contextOf('invite-me')).not.toContain('WorkflowAddNodes');
@@ -1304,6 +1339,7 @@ describe('workflow engine', () => {
     let release!: () => void;
     gate = { task: 'root', promise: new Promise<void>((resolveGate) => { release = resolveGate; }) };
     const start = runner.tools.get('WorkflowStart')!.execute('nested-origin', {
+      background: false,
       nodesFile: workflowFile([{ id: 'root', task: 'root' }]),
     });
     await new Promise((resolveWait) => setTimeout(resolveWait, 5));
@@ -1342,13 +1378,14 @@ describe('workflow engine', () => {
   // remote that ends up in-process is conservatively narrowed, never briefed-one-way-armed-another.
   it('denies WorkflowAddNodes in the tool policy of a node predicted to run remotely', async () => {
     const remote = harness({ delegatedRemote: true });
-    await remote.tools.get('WorkflowStart')!.execute('t-remote-deny', { nodesFile: workflowFile([{ id: 'n', task: 'invite-me' }]) });
+    await remote.tools.get('WorkflowStart')!.execute('t-remote-deny', { background: false, nodesFile: workflowFile([{ id: 'n', task: 'invite-me' }]) });
     expect(remote.runs[0]?.toolPolicy?.deny).toContain('WorkflowAddNodes');
 
     // An explicitly narrowed node gets the same deny on top of its allow-list: an explicit
     // tools:['WorkflowAddNodes'] must not smuggle the broken tool into a remote turn either.
     const narrowed = harness({ delegatedRemote: true });
     await narrowed.tools.get('WorkflowStart')!.execute('t-remote-narrow', {
+      background: false,
       nodesFile: workflowFile([{ id: 'n', task: 'narrow-me', tools: ['Read'] }]),
     });
     expect(narrowed.runs[0]?.toolPolicy).toEqual({ allow: ['Read'], deny: ['WorkflowAddNodes'] });
@@ -1361,7 +1398,7 @@ describe('workflow engine', () => {
     const { tools, controls, snapshots } = harness();
     let releaseRoot!: () => void;
     gate = { task: 'root', promise: new Promise<void>((r) => { releaseRoot = r; }) };
-    const startP = tools.get('WorkflowStart')!.execute('t-live', { nodesFile: workflowFile([{ id: 'root', task: 'root' }]) });
+    const startP = tools.get('WorkflowStart')!.execute('t-live', { background: false, nodesFile: workflowFile([{ id: 'root', task: 'root' }]) });
     await new Promise((r) => setTimeout(r, 5)); // root launches and parks on the gate
     const wfId = snapshots[0]!.id;
     const control = controls.get('workflow')!;
@@ -1378,7 +1415,7 @@ describe('workflow engine', () => {
     const { tools, controls, snapshots } = harness();
     let releaseRoot!: () => void;
     gate = { task: 'root', promise: new Promise<void>((r) => { releaseRoot = r; }) };
-    const startP = tools.get('WorkflowStart')!.execute('t-live-cancel', { nodesFile: workflowFile([{ id: 'root', task: 'root' }]) });
+    const startP = tools.get('WorkflowStart')!.execute('t-live-cancel', { background: false, nodesFile: workflowFile([{ id: 'root', task: 'root' }]) });
     await new Promise((r) => setTimeout(r, 5));
     const wfId = snapshots[0]!.id;
     const control = controls.get('workflow')!;
@@ -1397,6 +1434,7 @@ describe('workflow engine', () => {
     const rootGate = new Promise<void>((r) => { releaseRoot = r; });
     gate = { task: 'root', promise: rootGate };
     const startP = tools.get('WorkflowStart')!.execute('t-cancel', {
+      background: false,
       nodesFile: workflowFile([
         { id: 'root', task: 'root' },
         { id: 'leaf', task: 'leaf', deps: ['root'] },
@@ -1431,6 +1469,7 @@ describe('workflow engine', () => {
     let releaseRoot!: () => void;
     gate = { task: 'root', promise: new Promise<void>((r) => { releaseRoot = r; }) };
     const startP = tools.get('WorkflowStart')!.execute('t-cancel-partial', {
+      background: false,
       nodesFile: workflowFile([
         { id: 'root', task: 'root' },
         { id: 'leaf', task: 'leaf', deps: ['root'] },
@@ -1456,6 +1495,7 @@ describe('workflow engine', () => {
     const { tools, snapshots } = harness();
     const longFailure = `400 invalid_request_error ${'y'.repeat(600)}\nsecond line`;
     await tools.get('WorkflowStart')!.execute('t-status-error', {
+      background: false,
       nodesFile: workflowFile([
         { id: 'ok', task: 'ok' },
         { id: 'bad', task: `bad FAIL ${longFailure}` },
@@ -1474,6 +1514,7 @@ describe('workflow engine', () => {
   it('rejects an invalid DAG without launching anything', async () => {
     const { tools, launched } = harness();
     const res = await tools.get('WorkflowStart')!.execute('t5', {
+      background: false,
       nodesFile: workflowFile([{ id: 'a', task: 'a', deps: ['ghost'] }]),
     });
     expect(res.content[0]!.text).toMatch(/Error:/);
@@ -1525,10 +1566,10 @@ describe('workflow start limit', () => {
   it('sixteen finished workflows do not block a seventeenth from starting', async () => {
     const { tools } = limitHarness();
     for (let i = 0; i < MAX_WORKFLOWS; i += 1) {
-      const res = await tools.get('WorkflowStart')!.execute(`f${i}`, { nodesFile: workflowFile([{ id: 'a', task: `quick${i}` }]) });
+      const res = await tools.get('WorkflowStart')!.execute(`f${i}`, { background: false, nodesFile: workflowFile([{ id: 'a', task: `quick${i}` }]) });
       expect(res.content[0]!.text).toMatch(/status: done/);
     }
-    const res17 = await tools.get('WorkflowStart')!.execute('f17', { nodesFile: workflowFile([{ id: 'a', task: 'quick17' }]) });
+    const res17 = await tools.get('WorkflowStart')!.execute('f17', { background: false, nodesFile: workflowFile([{ id: 'a', task: 'quick17' }]) });
     expect(res17.content[0]!.text).toMatch(/status: done/);
     expect(res17.content[0]!.text).not.toMatch(/too many workflows/);
   });
@@ -1540,7 +1581,7 @@ describe('workflow start limit', () => {
       starts.push(tools.get('WorkflowStart')!.execute(`r${i}`, { background: true, nodesFile: workflowFile([{ id: 'a', task: 'hold' }]) }));
     }
     await Promise.all(starts); // background handle returns immediately; every node is parked, none finished
-    const blocked = await tools.get('WorkflowStart')!.execute('r17', { nodesFile: workflowFile([{ id: 'a', task: 'nope' }]) });
+    const blocked = await tools.get('WorkflowStart')!.execute('r17', { background: false, nodesFile: workflowFile([{ id: 'a', task: 'nope' }]) });
     expect(blocked.content[0]!.text).toMatch(/too many workflows \(16\) are running; wait for one to finish\./);
     release();
     await new Promise((r) => setTimeout(r, 5)); // let the sixteen parked nodes settle before the test ends
@@ -1631,9 +1672,89 @@ describe('workflow background + detach', () => {
     expect(completions).toHaveLength(1);
   });
 
+  // Delivery is asynchronous unless the caller says otherwise, so a definition that mentions `background`
+  // nowhere must come back as a handle. The blocking mode is the explicit `background: false`.
+  it('delivers asynchronously when neither the argument nor the file names a mode', async () => {
+    const { tools, completions, release } = bgHarness();
+    const res = await tools.get('WorkflowStart')!.execute('bg-default', {
+      nodesFile: workflowFile([{ id: 'a', task: 'a' }]),
+    });
+
+    expect(res.details).toMatchObject({ status: 'running' });
+    expect(res.content[0]!.text).toMatch(/Started background workflow/);
+    expect(completions).toEqual([]);
+    release();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(completions).toHaveLength(1);
+    expect(completions[0]).toMatchObject({ toolCallId: 'bg-default', status: 'done' });
+    expect(completions[0]!.result).toContain('done:a');
+  });
+
+  it('blocks for an explicit background=false and returns the summary instead of delivering it', async () => {
+    const { tools, completions, release } = bgHarness();
+    const startP = tools.get('WorkflowStart')!.execute('fg-explicit', {
+      background: false, nodesFile: workflowFile([{ id: 'a', task: 'a' }]),
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(completions).toEqual([]);
+    release();
+    const res = await startP;
+    expect(res.content[0]!.text).toContain('done:a');
+    expect(res.details).not.toMatchObject({ status: 'running' });
+    // The summary was RETURNED, so delivering it as well would give the parent the same answer twice.
+    await new Promise((r) => setTimeout(r, 5));
+    expect(completions).toEqual([]);
+  });
+
+  it('honours a background=false in the file, and lets the argument override it either way', async () => {
+    const fileSaysBlocking = bgHarness();
+    const blocked = fileSaysBlocking.tools.get('WorkflowStart')!.execute('file-false', {
+      nodesFile: workflowFile({ background: false, nodes: [{ id: 'a', task: 'a' }] }),
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(fileSaysBlocking.completions).toEqual([]);
+    fileSaysBlocking.release();
+    expect((await blocked).content[0]!.text).toContain('done:a');
+
+    // The argument is authoritative in both directions.
+    const argWins = bgHarness();
+    const handle = await argWins.tools.get('WorkflowStart')!.execute('arg-true', {
+      background: true, nodesFile: workflowFile({ background: false, nodes: [{ id: 'a', task: 'a' }] }),
+    });
+    expect(handle.content[0]!.text).toMatch(/Started background workflow/);
+    argWins.release();
+
+    const argFalse = bgHarness();
+    const blockedByArg = argFalse.tools.get('WorkflowStart')!.execute('arg-false', {
+      background: false, nodesFile: workflowFile({ background: true, nodes: [{ id: 'a', task: 'a' }] }),
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    argFalse.release();
+    expect((await blockedByArg).content[0]!.text).toContain('done:a');
+    expect(argFalse.completions).toEqual([]);
+  });
+
+  // Asynchronous DELIVERY is not a change to the DAG: a dependent node still waits for the node it
+  // depends on, exactly as it does in a blocking run.
+  it('keeps a dependent node waiting for its dependency in a default background run', async () => {
+    const { tools, launched, finished, release, completions } = bgHarness();
+    const res = await tools.get('WorkflowStart')!.execute('bg-deps', {
+      nodesFile: workflowFile([{ id: 'a', task: 'a' }, { id: 'b', task: 'b', deps: ['a'] }]),
+    });
+    expect(res.content[0]!.text).toMatch(/Started background workflow/);
+    await new Promise((r) => setTimeout(r, 5));
+    // Only the root is running: `b` has not been launched, let alone finished.
+    expect(launched).toEqual(['a']);
+    release();
+    await new Promise((r) => setTimeout(r, 5));
+    expect(launched).toEqual(['a', 'b']);
+    expect(finished).toEqual(['a', 'b']);
+    expect(completions).toHaveLength(1);
+  });
+
   it('Ctrl+B detach resolves the parent wait without aborting the running node, then delivers', async () => {
     const { tools, controls, completions, launched, finished, release } = bgHarness();
-    const startP = tools.get('WorkflowStart')!.execute('fg1', { nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
+    const startP = tools.get('WorkflowStart')!.execute('fg1', { background: false, nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
     await new Promise((r) => setTimeout(r, 5)); // node launches and parks
     expect(launched).toEqual(['a']);
     // Exactly one workflow detaches; the node is NOT aborted — the run keeps going.
@@ -1669,7 +1790,7 @@ describe('workflow background + detach', () => {
 
   it('publishes `background` on the snapshot so the host can spare its nodes and the CLI can count', async () => {
     const { tools, controls, snapshots, release } = bgHarness();
-    const startP = tools.get('WorkflowStart')!.execute('fg-flag', { nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
+    const startP = tools.get('WorkflowStart')!.execute('fg-flag', { background: false, nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
     await new Promise((r) => setTimeout(r, 5));
     expect(snapshots.at(-1)!.background).toBeUndefined(); // a blocking call is not background
     controls.get('workflow')!.detachForeground({ sessionId: 'brain-parent', principal: 'elowen:1' });
@@ -1681,7 +1802,7 @@ describe('workflow background + detach', () => {
 
   it('does not re-detach an already-background workflow and ignores a foreign origin', async () => {
     const { tools, controls, release } = bgHarness();
-    const startP = tools.get('WorkflowStart')!.execute('fg2', { nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
+    const startP = tools.get('WorkflowStart')!.execute('fg2', { background: false, nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
     await new Promise((r) => setTimeout(r, 5));
     // A different session or principal never detaches this workflow.
     expect(controls.get('workflow')!.detachForeground({ sessionId: 'someone-else', principal: 'elowen:1' })).toEqual({ detached: 0 });
@@ -1761,7 +1882,7 @@ describe('WorkflowStop guards', () => {
     const unknown = await tools.get('WorkflowStop')!.execute('st0', { workflowId: 'wf-does-not-exist' });
     expect(unknown.content[0]!.text).toMatch(/^Error: no workflow/);
 
-    await tools.get('WorkflowStart')!.execute('st1', { nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
+    await tools.get('WorkflowStart')!.execute('st1', { background: false, nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
     const done = await tools.get('WorkflowStop')!.execute('st1-stop', { workflowId: snapshots[0]!.id });
     expect(done.content[0]!.text).toMatch(/^Nothing to stop/);
   });
@@ -1772,7 +1893,7 @@ describe('WorkflowStop guards', () => {
     const { tools, snapshots, sessionId, stoppedSessions } = harness();
     let releaseA!: () => void;
     gate = { task: 'a', promise: new Promise<void>((r) => { releaseA = r; }) };
-    const startP = tools.get('WorkflowStart')!.execute('st2', { nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
+    const startP = tools.get('WorkflowStart')!.execute('st2', { background: false, nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
     await new Promise((r) => setTimeout(r, 5));
 
     sessionId.current = 's-a'; // the child session running node a
@@ -1793,6 +1914,7 @@ describe('WorkflowStop guards', () => {
     let releaseA!: () => void;
     gate = { task: 'a', promise: new Promise<void>((r) => { releaseA = r; }) };
     const startP = tools.get('WorkflowStart')!.execute('sr1', {
+      background: false,
       nodesFile: workflowFile([{ id: 'a', task: 'a' }, { id: 'b', task: 'b', deps: ['a'] }]),
     });
     await new Promise((r) => setTimeout(r, 5));
@@ -1825,6 +1947,7 @@ describe('WorkflowResume', () => {
   it('fails a node that ends its turn without a result, and a resume re-runs it', async () => {
     const { tools, launched, snapshots } = harness();
     const first = await tools.get('WorkflowStart')!.execute('empty1', {
+      background: false,
       nodesFile: workflowFile([{ id: 'a', task: 'a EMPTY_ONCE' }, { id: 'b', task: 'b', deps: ['a'] }]),
     });
     const text = first.content[0]!.text;
@@ -1856,9 +1979,50 @@ describe('WorkflowResume', () => {
     expect(completions[1]!.result).toContain('done:a');
   });
 
+  // A resume keeps the delivery the run already had — for a run that never named one, that is the
+  // asynchronous default. An explicit argument overrides it in either direction.
+  it('keeps the run\'s own delivery mode and lets an explicit argument override it', async () => {
+    const inherited = harness();
+    await inherited.tools.get('WorkflowStart')!.execute('inherit-bg', {
+      nodesFile: workflowFile([{ id: 'a', task: 'a FAIL_ONCE' }]),
+    });
+    await new Promise((r) => setTimeout(r, 5));
+    expect(inherited.completions).toHaveLength(1);
+    const handle = await inherited.tools.get('WorkflowResume')!.execute('inherit-bg-resume', {
+      workflowId: inherited.snapshots[0]!.id,
+    });
+    expect(handle.content[0]!.text).toMatch(/Started background workflow/);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(inherited.completions).toHaveLength(2);
+
+    // Started blocking: the resume inherits that, and an explicit `true` flips it back to delivery.
+    const blocking = harness();
+    await blocking.tools.get('WorkflowStart')!.execute('inherit-fg', {
+      background: false, nodesFile: workflowFile([{ id: 'a', task: 'a FAIL_ONCE' }]),
+    });
+    expect(blocking.completions).toEqual([]);
+    const resumedInline = await blocking.tools.get('WorkflowResume')!.execute('inherit-fg-resume', {
+      workflowId: blocking.snapshots[0]!.id,
+    });
+    expect(resumedInline.content[0]!.text).toContain('done:a');
+    expect(blocking.completions).toEqual([]);
+
+    const flipped = harness();
+    await flipped.tools.get('WorkflowStart')!.execute('flip-fg', {
+      background: false, nodesFile: workflowFile([{ id: 'a', task: 'a FAIL_ONCE' }]),
+    });
+    const flippedResume = await flipped.tools.get('WorkflowResume')!.execute('flip-fg-resume', {
+      workflowId: flipped.snapshots[0]!.id, background: true,
+    });
+    expect(flippedResume.content[0]!.text).toMatch(/Started background workflow/);
+    await new Promise((r) => setTimeout(r, 5));
+    expect(flipped.completions).toHaveLength(1);
+  });
+
   it('re-runs only the failed/pending nodes, leaves DONE nodes untouched, and frees their dependents', async () => {
     const { tools, launched, snapshots } = harness();
     const first = await tools.get('WorkflowStart')!.execute('r1', {
+      background: false,
       nodesFile: workflowFile([
         { id: 'a', task: 'a' },
         { id: 'b', task: 'b FAIL_ONCE', deps: ['a'] },
@@ -1881,6 +2045,7 @@ describe('WorkflowResume', () => {
   it('puts a failed node back into its own session, and starts a never-launched one clean', async () => {
     const { tools, snapshots, runs } = harness();
     await tools.get('WorkflowStart')!.execute('r5', {
+      background: false,
       nodesFile: workflowFile([
         { id: 'a', task: 'a FAIL_ONCE' },
         { id: 'b', task: 'b', deps: ['a'] },
@@ -1911,6 +2076,7 @@ describe('WorkflowResume', () => {
   it('starts an unfinished node in a fresh channel when the access boundary was narrowed since the start', async () => {
     const { tools, snapshots, runs, access } = harness();
     await tools.get('WorkflowStart')!.execute('r-scope', {
+      background: false,
       nodesFile: workflowFile([{ id: 'a', task: 'a FAIL_ONCE' }, { id: 'b', task: 'b', deps: ['a'] }]),
     });
     const wfId = snapshots[0]!.id;
@@ -2091,7 +2257,7 @@ describe('WorkflowResume', () => {
 
   it('reports nothing to resume once every node has already finished', async () => {
     const { tools, snapshots } = harness();
-    await tools.get('WorkflowStart')!.execute('r2', { nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
+    await tools.get('WorkflowStart')!.execute('r2', { background: false, nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
     const wfId = snapshots[0]!.id;
 
     const res = await tools.get('WorkflowResume')!.execute('r2-resume', { workflowId: wfId });
@@ -2102,7 +2268,7 @@ describe('WorkflowResume', () => {
     const { tools, snapshots } = harness();
     let releaseA!: () => void;
     gate = { task: 'a', promise: new Promise<void>((r) => { releaseA = r; }) };
-    const startP = tools.get('WorkflowStart')!.execute('r3', { nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
+    const startP = tools.get('WorkflowStart')!.execute('r3', { background: false, nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
     await new Promise((r) => setTimeout(r, 5));
     const wfId = snapshots[0]!.id;
 
@@ -2118,6 +2284,7 @@ describe('WorkflowResume', () => {
   it('refuses a resume from one of the workflow\'s own node sessions', async () => {
     const { tools, snapshots, sessionId } = harness();
     await tools.get('WorkflowStart')!.execute('sec1', {
+      background: false,
       nodesFile: workflowFile([{ id: 'a', task: 'a' }, { id: 'b', task: 'b FAIL', deps: ['a'] }]),
     });
     const wfId = snapshots[0]!.id;
@@ -2161,6 +2328,7 @@ describe('workflow recovery journal + boot resume', () => {
     const h1 = harness();
     gate = { task: 'b', promise: new Promise<void>(() => { /* never released — the crash */ }) };
     void h1.tools.get('WorkflowStart')!.execute('call-resume', {
+      background: false,
       nodesFile: workflowFile([{ id: 'a', task: 'a' }, { id: 'b', task: 'b', deps: ['a'] }, { id: 'c', task: 'c', deps: ['b'] }]),
     });
     await until(() => h1.runs.some((r) => r.task === 'b'));
@@ -2185,7 +2353,7 @@ describe('workflow recovery journal + boot resume', () => {
     const h = harness();
     let release!: () => void;
     gate = { task: 'a', promise: new Promise<void>((r) => { release = r; }) };
-    const pending = h.tools.get('WorkflowStart')!.execute('j1', { nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
+    const pending = h.tools.get('WorkflowStart')!.execute('j1', { background: false, nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
     await until(() => h.snapshots.length > 0);
     const wfId = h.snapshots[0]!.id;
     // The journal is on disk while the run can still be interrupted — this file IS the boot-resume input.
@@ -2202,6 +2370,7 @@ describe('workflow recovery journal + boot resume', () => {
     const h1 = harness();
     gate = { task: 'b', promise: new Promise<void>(() => { /* never released — the crash */ }) };
     void h1.tools.get('WorkflowStart')!.execute('call-resume', {
+      background: false,
       nodesFile: workflowFile([{ id: 'a', task: 'a' }, { id: 'b', task: 'b', deps: ['a'] }]),
     });
     await until(() => h1.runs.some((r) => r.task === 'b'));
@@ -2291,6 +2460,7 @@ describe('workflow recovery journal + boot resume', () => {
     const h1 = harness();
     gate = { task: 'b-par', promise: new Promise<void>(() => { /* never released — the crash */ }) };
     void h1.tools.get('WorkflowStart')!.execute('call-par', {
+      background: false,
       nodesFile: workflowFile([{ id: 'a', task: 'a-par' }, { id: 'b', task: 'b-par' }]),
     });
     await until(() => h1.snapshots.some((s) => s.nodes.find((n) => n.id === 'a')?.status === 'done'));
@@ -2320,6 +2490,7 @@ describe('workflow recovery journal + boot resume', () => {
     const h1 = harness();
     gate = { task: 'b-old', promise: new Promise<void>(() => { /* never released — the crash */ }) };
     void h1.tools.get('WorkflowStart')!.execute('call-old-journal', {
+      background: false,
       nodesFile: workflowFile([
         { id: 'a', task: 'a-old' },
         { id: 'b', task: 'b-old' },
@@ -2359,7 +2530,7 @@ describe('workflow recovery journal + boot resume', () => {
     const h1 = harness();
     h1.access.current.workspaceRef = { workspaceId: 'ws-trusted', projectId: 1 };
     gate = { task: 'a-anchor', promise: new Promise<void>(() => { /* interrupted */ }) };
-    void h1.tools.get('WorkflowStart')!.execute('call-anchor', { nodesFile: workflowFile([{ id: 'a', task: 'a-anchor' }]) });
+    void h1.tools.get('WorkflowStart')!.execute('call-anchor', { background: false, nodesFile: workflowFile([{ id: 'a', task: 'a-anchor' }]) });
     await until(() => h1.snapshots.length > 0);
     const trusted = h1.snapshots[0]!;
     expect(trusted.workspaceRef).toEqual({ workspaceId: 'ws-trusted', projectId: 1 });
@@ -2394,7 +2565,7 @@ describe('workflow recovery journal + boot resume', () => {
     // BEFORE any node launches, and the dead journal is disposed of.
     const h1 = harness();
     gate = { task: 'a-sec', promise: new Promise<void>(() => { /* never released — the crash */ }) };
-    void h1.tools.get('WorkflowStart')!.execute('call-sec', { nodesFile: workflowFile([{ id: 'a', task: 'a-sec' }]) });
+    void h1.tools.get('WorkflowStart')!.execute('call-sec', { background: false, nodesFile: workflowFile([{ id: 'a', task: 'a-sec' }]) });
     await until(() => h1.snapshots.length > 0);
     const wfId = h1.snapshots[0]!.id;
     expect(existsSync(journalPathOf(wfId))).toBe(true);
@@ -2420,7 +2591,7 @@ describe('workflow recovery journal + boot resume', () => {
   it('refuses a claim its journal does not match, so core terminalizes instead', async () => {
     const h1 = harness();
     gate = { task: 'a', promise: new Promise<void>(() => { /* never released */ }) };
-    void h1.tools.get('WorkflowStart')!.execute('call-mismatch', { nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
+    void h1.tools.get('WorkflowStart')!.execute('call-mismatch', { background: false, nodesFile: workflowFile([{ id: 'a', task: 'a' }]) });
     await until(() => h1.snapshots.length > 0);
     const wfId = h1.snapshots[0]!.id;
 

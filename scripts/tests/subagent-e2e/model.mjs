@@ -76,13 +76,13 @@ const PARENT_MODES = {
   // Hand one self-contained task to a fresh sub-agent, then report what it said.
   delegate: ({ say, callTool, awaitingTool }) => (awaitingTool
     ? say(`The sub-agent reported back: ${MARKERS.firstAnswer}.`)
-    : callTool('Delegate', { task: `Size the widget and report the number. Task marker: ${MARKERS.task}.` })),
+    : callTool('Delegate', { task: `Size the widget and report the number. Task marker: ${MARKERS.task}.`, background: false })),
   // Unrelated delegations, one after another inside a single turn, purely to push the target child out of
   // the live-session LRU.
   fillers: ({ say, callTool, messages }) => {
     const done = messages.filter((m) => m?.role === 'tool' && contentText(m).includes(MARKERS.fillerAnswer)).length;
     return done < FILLER_DELEGATIONS
-      ? callTool('Delegate', { task: `Unrelated side task. Task marker: ${MARKERS.fillerTask}-${done + 1}.` })
+      ? callTool('Delegate', { task: `Unrelated side task. Task marker: ${MARKERS.fillerTask}-${done + 1}.`, background: false })
       : say(`All ${FILLER_DELEGATIONS} side tasks are done.`);
   },
   // List this conversation's past sub-agents, find the target in that listing, and send it a follow-up —
@@ -92,7 +92,7 @@ const PARENT_MODES = {
     if (lastTool.includes(LISTING_HEADER)) {
       const id = childIdFromListing(lastTool);
       return id
-        ? callTool('DelegateContinue', { id, message: `Add the unit to that number. Follow-up marker: ${MARKERS.followUp}.` })
+        ? callTool('DelegateContinue', { id, message: `Add the unit to that number. Follow-up marker: ${MARKERS.followUp}.`, background: false })
         : say(MARKERS.noChildId);
     }
     return say(`The sub-agent answered the follow-up. ${MARKERS.parentDone}`);

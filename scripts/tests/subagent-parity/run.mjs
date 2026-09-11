@@ -132,7 +132,7 @@ function startModel(onChildRequest) {
       // A toolless completion is housekeeping (conversation titling), never an agent turn.
       else if (!Array.isArray(body?.tools) || body.tools.length === 0) say('Parity run');
       else if (messages.at(-1)?.role === 'tool') say('parent done');
-      else callTool('Delegate', { task: `${TASK_MARKER} — answer with anything` });
+      else callTool('Delegate', { task: `${TASK_MARKER} — answer with anything`, background: false });
 
       res.write('data: [DONE]\n\n');
       res.end();
