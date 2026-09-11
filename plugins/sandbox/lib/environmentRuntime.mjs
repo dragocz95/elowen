@@ -1178,6 +1178,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           await podman.remove(previous);
         }
         delete row.spec.containerId;
+        // Removing the container ends its creation identity: the replacement is created with the limits
+        // currently effective, and ownership checks must compare against those, not the old baseline.
+        row.spec.creationLimits = { ...row.spec.input.limits };
         store.save(row);
         checkpoint(op, { removed: true });
       }
