@@ -719,7 +719,16 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     if (current && !op.checkpoint.creating) throw error('container_unclaimed', 'A container exists without this creation checkpoint');
     if (!op.checkpoint.creating) checkpoint(op, { creating: true });
     if (!current) {
-      if (row.kind === 'site') await sites.beforeCreate?.(row.resource_id);
+      if (row.kind === 'site') {
+        await sites.beforeCreate?.(row.resource_id);
+        const seed = await sites.containerSeed?.(row.resource_id);
+        if (seed) {
+          if (seed.kind !== 'data') throw error('invalid_site_seed', 'Sites returned an invalid container seed');
+          // The archive contains only the disposable bootstrap stage. Import overlays that directory and
+          // leaves every application-owned path already present in the persistent data volume untouched.
+          await podman.siteDataArchive(spec, 'import', seed.archivePath);
+        }
+      }
       current = await podman.create(spec);
     }
     row.spec.containerId = current.id;

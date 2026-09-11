@@ -184,6 +184,8 @@ export interface SiteRuntimeAuthority {
   projectDependents?(projectId: number): Promise<{ siteId: string }[]>;
   /** Prepare the existing Sites env-file/git-stub contract without starting a container or ingress. */
   beforeCreate?(siteId: string): Promise<void>;
+  /** Return a fresh bootstrap-only archive for every new container rootfs; Sandbox imports it before create. */
+  containerSeed?(siteId: string): Promise<Extract<SiteRuntimeArtifact, { kind: 'data' }> | null>;
   /** Sites owns privileged ingress preparation and application readiness, never the Podman lifecycle. */
   beforeStart(siteId: string): Promise<void>;
   afterStop(siteId: string): Promise<void>;

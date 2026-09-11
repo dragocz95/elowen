@@ -81,7 +81,7 @@ function setup(config: Record<string, unknown> = {}) {
     waitForSystemBus: vi.fn(async () => {}),
     cancelExecution: vi.fn(async () => ({ terminated: true })), releaseExecution: vi.fn(),
     prepareExecution: vi.fn(async () => ({ launch: { type: 'argv', file: '/usr/bin/podman', args: ['exec', 'owned'], env: { HOME: '/host-service' } } })),
-    removeVolume: vi.fn(), removeStorage: vi.fn(), inspectVolume: vi.fn(),
+    removeVolume: vi.fn(), removeStorage: vi.fn(), inspectVolume: vi.fn(), siteDataArchive: vi.fn(),
     containerExists: vi.fn(async (spec: any) => containers.has(spec.name)),
   };
   const storage = { prepare: vi.fn(), adoptWorkspace: vi.fn(), snapshot: vi.fn(), readSnapshot: vi.fn(), restoreVolumes: vi.fn(), releaseWorkspace: vi.fn() };
@@ -764,10 +764,12 @@ describe('adopted workspace rollback', () => {
     const sourceRel = 'sites/shop';
     mkdirSync(join(host, sourceRel), { recursive: true });
     project.executionKind = 'host'; project.path = host;
+    let seed = 0;
     runtime.connectSitesRuntime({
       resolve: async () => ({ siteId: 'shop', projectId: 7, sourceRel, image: 'localhost/elowen/site:fixed', network: 'shared',
         workspaceReadOnly: false, sitesDataDir: join(root, 'sites'), sourcePath: join(await runtime.projectWorkspaceHostPath({ projectId: 7 }), sourceRel),
         brokerDir: join(root, 'brokers'), limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true }),
+      containerSeed: async () => ({ kind: 'data', archivePath: join(root, `seed-${++seed}.tar`) }),
       beforeStart: async () => {}, afterStop: async () => {},
     });
     await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
@@ -790,6 +792,12 @@ describe('adopted workspace rollback', () => {
     expect(siteCreates[1].mounts.find((mount: any) => mount.target === '/workspace').source).toBe(movedSource);
     expect(siteCreates[1].volumes.find((volume: any) => volume.component === 'data').path)
       .toBe(siteCreates[0].volumes.find((volume: any) => volume.component === 'data').path);
+    expect(podman.siteDataArchive.mock.calls.map(([, mode, archive]: any[]) => [mode, archive])).toEqual([
+      ['import', join(root, 'seed-1.tar')],
+      ['import', join(root, 'seed-2.tar')],
+    ]);
+    expect(podman.siteDataArchive.mock.invocationCallOrder[1]).toBeLessThan(podman.create.mock.invocationCallOrder.at(-1)!);
+    expect(podman.siteDataArchive.mock.invocationCallOrder[1]).toBeLessThan(podman.start.mock.invocationCallOrder.at(-1)!);
     expect(podman.removeVolume).not.toHaveBeenCalled();
     expect(await runtime.siteEnvironmentFor({ siteId: 'shop', accountUserId: 1 })).toMatchObject({ state: 'running', generation: 1 });
     expect(ctx.logger.info).toHaveBeenCalledWith(`site shop: source path moved from ${join(host, sourceRel)} to ${movedSource}, rebuilding container`);
