@@ -154,6 +154,29 @@ describe('durable managed environment lifecycle', () => {
     expect(diskFiles.has(second.disk.id)).toBe(true);
   });
 
+  it('keeps the immutable disk source image when rebuilding only the envelope image', async () => {
+    const { runtime, sql, podman, containers } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'source-initial', action: { kind: 'start' } });
+    await runtime.reconcile();
+    const row = sql.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
+    const stored = JSON.parse(row.spec_json);
+    const materializedFrom = 'localhost/elowen-project-base:materialized';
+    stored.input.image = PROJECT_BASE_IMAGE_TAG;
+    stored.input.disk.sourceImage = materializedFrom;
+    delete stored.containerId;
+    sql.prepare("UPDATE p_sandbox_runtimes SET spec_json=?, state='stopped' WHERE kind='project' AND resource_id='7'").run(JSON.stringify(stored));
+    containers.clear();
+    podman.ensureProjectImage.mockResolvedValueOnce('localhost/elowen-project-base:rebuilt');
+    podman.create.mockClear();
+
+    await runtime.requestEnvironment({ ...input, requestId: 'source-rebuild', action: { kind: 'start' } });
+    await runtime.reconcile();
+
+    const updated = JSON.parse((sql.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any).spec_json);
+    expect(updated.input.image).toBe('localhost/elowen-project-base:rebuilt');
+    expect(updated.input.disk.sourceImage).toBe(materializedFrom);
+  });
+
   it('keeps a stored specification without disk on the legacy image-backed driver', async () => {
     const { runtime, sql, podman } = setup();
     await runtime.requestEnvironment({ ...input, requestId: 'legacy-start', action: { kind: 'start' } });

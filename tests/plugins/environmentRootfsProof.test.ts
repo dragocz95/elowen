@@ -193,8 +193,8 @@ it.skipIf(!podmanAvailable)('boots and recreates a systemd envelope over one dur
 
 it.skipIf(!podmanAvailable)('runs the production disk, envelope, snapshot and restore path', async () => {
   const token = randomBytes(6).toString('hex');
-  const root = mkdtempSync(join(tmpdir(), `elowen-p1-${token}-`));
-  const namespace = `elowen-p1-${token}`;
+  const root = mkdtempSync(join(tmpdir(), `elowen-p2-${token}-`));
+  const namespace = `elowen-p2-${token}`;
   const projectId = Number.parseInt(token.slice(0, 6), 16) + 1;
   const paths = { sandboxDataDir: root, namespace };
   const resource = { kind: 'project', id: projectId } as const;
@@ -210,17 +210,17 @@ it.skipIf(!podmanAvailable)('runs the production disk, envelope, snapshot and re
     await client.create(source);
     await client.start(source);
     await client.waitForSystemBus(source);
-    expect(podman(['exec', source.name, '/bin/bash', '-lc', 'printf before >/etc/elowen-p1-marker']).code).toBe(0);
+    expect(podman(['exec', source.name, '/bin/bash', '-lc', 'printf before >/etc/elowen-p2-marker']).code).toBe(0);
     await client.stop(source); await client.remove(source);
     await client.create(source); await client.start(source); await client.waitForSystemBus(source);
-    expect(podman(['exec', source.name, '/bin/cat', '/etc/elowen-p1-marker']).stdout).toBe('before');
-    await storage.snapshot(source, 'elowen-p1-snapshot');
+    expect(podman(['exec', source.name, '/bin/cat', '/etc/elowen-p2-marker']).stdout).toBe('before');
+    await storage.snapshot(source, 'elowen-p2-snapshot');
 
     const targetDisk = createEnvironmentDiskSpec({ resource, image }, paths, `${token}${'b'.repeat(20)}`);
     target = createContainerSpec({ resource, workspaceTarget: '/proof', generation: 2, image, disk: targetDisk, network: 'isolated' }, paths);
-    await storage.restoreVolumes(source, 'elowen-p1-snapshot', target);
+    await storage.restoreVolumes(source, 'elowen-p2-snapshot', target);
     await client.create(target); await client.start(target); await client.waitForSystemBus(target);
-    expect(podman(['exec', target.name, '/bin/cat', '/etc/elowen-p1-marker']).stdout).toBe('before');
+    expect(podman(['exec', target.name, '/bin/cat', '/etc/elowen-p2-marker']).stdout).toBe('before');
   } finally {
     for (const spec of [target, source].filter(Boolean)) {
       try { const row = await client.inspect(spec); if (row?.state === 'running' || row?.state === 'paused') await client.stop(spec); } catch {}

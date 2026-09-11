@@ -112,6 +112,10 @@ describe('trusted container specifications', () => {
     const otherDisk = createEnvironmentDiskSpec({ resource, image }, paths, 'b'.repeat(32));
     const other = createContainerSpec({ resource, workspaceTarget: '/demo', generation: 2, image, disk: otherDisk }, paths);
     expect(other.specHash).not.toBe(spec.specHash);
+    const rebuiltEnvelope = createContainerSpec({ resource, workspaceTarget: '/demo', generation: 2,
+      image: 'localhost/elowen-project-base:rebuilt', disk }, paths);
+    expect(rebuiltEnvelope.image).toBe('localhost/elowen-project-base:rebuilt');
+    expect(rebuiltEnvelope.disk.sourceImage).toBe(image);
   });
 
   it('binds the specification hash to generation, image, limits and paths', () => {
@@ -131,6 +135,41 @@ describe('clean and confined Podman client', () => {
     await expect(new PodmanClient({ executor }).info()).resolves.toEqual({ version: '4.9.3', rootless: true,
       graphRoot: '/isolated/storage', runRoot: '/isolated/runroot', cgroupManager: 'cgroupfs' });
   });
+  it('recovers stale materialization helpers and verifies copied metadata inventory', async () => {
+    const { paths } = fixture();
+    const resource = { kind: 'project' as const, id: 7 };
+    const image = 'localhost/elowen-project-base:test';
+    const disk = createEnvironmentDiskSpec({ resource, image }, paths, '9'.repeat(32));
+    const spec = createContainerSpec({ resource, workspaceTarget: '/demo', generation: 2, image, disk }, paths);
+    const pending = join(disk.rootfsPath, '..', 'rootfs.pending');
+    mkdirSync(pending, { recursive: true });
+    const calls: string[][] = [];
+    let seedExists = true;
+    const executor = { run: vi.fn(async (_file: string, args: string[]) => {
+      calls.push(args);
+      if (args[0] === 'info') return { code: 0, stdout: 'true', stderr: '' };
+      if (args[0] === 'container' && args[1] === 'exists') return { code: seedExists ? 0 : 1, stdout: '', stderr: '' };
+      if (args[0] === 'rm' && args.includes('--force')) seedExists = false;
+      if (args[0] === 'image') return { code: 0, stdout: JSON.stringify([{ Id: 'sha256:' + 'd'.repeat(64) }]), stderr: '' };
+      return { code: 0, stdout: '', stderr: '' };
+    }) };
+    const client = new PodmanClient({ executor });
+    await client.materializeRootfs(spec, pending);
+    const seed = `${spec.namespace}-disk-${disk.id.slice(0, 16)}-seed`;
+    expect(calls.findIndex((args) => args[0] === 'rm' && args.includes('--force') && args.includes(seed)))
+      .toBeLessThan(calls.findIndex((args) => args[0] === 'create' && args.includes(seed)));
+
+    const source = join(paths.sandboxDataDir, 'copy-source');
+    const target = join(paths.sandboxDataDir, 'copy-target');
+    mkdirSync(source); mkdirSync(target); writeFileSync(join(source, 'file'), 'data');
+    await client.copyDiskTree(source, target);
+    const script = calls.find((args) => args[0] === 'unshare' && args.includes('elowen-copy-tree'))?.[3] ?? '';
+    expect(script).toContain('os.listxattr');
+    expect(script).toContain('st_uid');
+    expect(script).toContain('st_mtime_ns');
+    expect(script).not.toContain('diff -qr');
+  });
+
   it('provides a deterministic project recipe with usable Git and systemd execution', () => {
     expect(PROJECT_CONTAINERFILE).toContain('git openssh-client python3');
     expect(PROJECT_CONTAINERFILE).toContain('systemd systemd-sysv');
@@ -631,7 +670,7 @@ describe('project container storage and crash-consistent snapshots', () => {
       return { logicalBytes, allocatedBytes: 0, digest: createHash('sha256').update(JSON.stringify(rows)).digest('hex') };
     });
     const client = { inspect: vi.fn(async () => ({ state: 'running' })), pause: vi.fn(), unpause: vi.fn(), copyDiskTree,
-      syncDiskTree: vi.fn(), fingerprintDiskTree, ensureVolume: vi.fn(), inspectSnapshotImage: vi.fn(), inspectRetainedSiteImage: vi.fn() };
+      preflightDiskCopy: vi.fn(), syncDiskTree: vi.fn(), fingerprintDiskTree, ensureVolume: vi.fn(), inspectSnapshotImage: vi.fn(), inspectRetainedSiteImage: vi.fn() };
     const storage = new ContainerStorage(client);
     const manifest: any = await storage.snapshot(spec, 'disk-snapshot');
     expect(manifest.version).toBe(2);
@@ -709,6 +748,138 @@ describe('project container storage and crash-consistent snapshots', () => {
     writeFileSync(join(spec.storageRoot, 'snapshots/restore-1/data.tar'), 'changed');
     await expect(storage.readSnapshot(spec, 'restore-1')).rejects.toThrow(/integrity/);
   });
+  it('refuses a manifest-owned disk whose rootfs disappeared without rematerializing it', async () => {
+    const { paths } = fixture();
+    const resource = { kind: 'project' as const, id: 7 };
+    const image = 'localhost/elowen-project-base:test';
+    const disk = createEnvironmentDiskSpec({ resource, image }, paths, 'e'.repeat(32));
+    const spec = createContainerSpec({ resource, workspaceTarget: '/demo', generation: 2, image, disk }, paths);
+    mkdirSync(join(disk.rootfsPath, '..'), { recursive: true });
+    for (const component of disk.components) mkdirSync(component.path, { recursive: true });
+    writeFileSync(join(disk.rootfsPath, '..', 'disk.json'), JSON.stringify({ resource, diskId: disk.id, format: 2, sourceImage: image,
+      sourceImageId: 'sha256:' + 'd'.repeat(64), rootfsPath: disk.rootfsPath, components: disk.components, materialized: true }));
+    const materializeRootfs = vi.fn();
+    await expect(new ContainerStorage({ materializeRootfs, ensureVolume: vi.fn() }).prepare(spec)).rejects.toMatchObject({ code: 'disk_missing' });
+    expect(materializeRootfs).not.toHaveBeenCalled();
+  });
+
+  it('discards incomplete materialization and finishes a published rootfs from disk.pending', async () => {
+    const { paths } = fixture();
+    const resource = { kind: 'project' as const, id: 7 };
+    const image = 'localhost/elowen-project-base:test';
+    const make = (id: string) => {
+      const disk = createEnvironmentDiskSpec({ resource, image }, paths, id);
+      return { disk, spec: createContainerSpec({ resource, workspaceTarget: '/demo', generation: 2, image, disk }, paths) };
+    };
+    const first = make('f'.repeat(32));
+    mkdirSync(join(first.disk.rootfsPath, '..', 'rootfs.pending'), { recursive: true });
+    writeFileSync(join(first.disk.rootfsPath, '..', 'rootfs.pending', 'stale'), 'partial');
+    const client = { materializeRootfs: vi.fn(async (_spec: any, pending: string) => {
+      expect(() => lstatSync(join(pending, 'stale'))).toThrow();
+      writeFileSync(join(pending, 'complete'), 'yes');
+      return 'sha256:' + 'd'.repeat(64);
+    }), removeDiskPath: vi.fn(async (path: string) => rmSync(path, { recursive: true, force: true })), syncDiskTree: vi.fn(), ensureVolume: vi.fn() };
+    await new ContainerStorage(client).prepare(first.spec);
+    expect(readFileSync(join(first.disk.rootfsPath, 'complete'), 'utf8')).toBe('yes');
+
+    const interrupted = make('0'.repeat(32));
+    const interruptedDirectory = join(interrupted.disk.rootfsPath, '..');
+    mkdirSync(join(interruptedDirectory, 'rootfs.pending'), { recursive: true });
+    writeFileSync(join(interruptedDirectory, 'rootfs.pending', 'stale'), 'partial');
+    for (const component of interrupted.disk.components) mkdirSync(component.path, { recursive: true });
+    writeFileSync(join(interruptedDirectory, 'disk.pending'), JSON.stringify({ resource, diskId: interrupted.disk.id, format: 2, sourceImage: image,
+      sourceImageId: 'sha256:' + 'd'.repeat(64), rootfsPath: interrupted.disk.rootfsPath, components: interrupted.disk.components,
+      createdAt: new Date().toISOString(), materialized: true }));
+    await new ContainerStorage(client).prepare(interrupted.spec);
+    expect(readFileSync(join(interrupted.disk.rootfsPath, 'complete'), 'utf8')).toBe('yes');
+
+    const cleaned = make('6'.repeat(32));
+    const cleanedDirectory = join(cleaned.disk.rootfsPath, '..');
+    mkdirSync(cleanedDirectory, { recursive: true });
+    for (const component of cleaned.disk.components) mkdirSync(component.path, { recursive: true });
+    writeFileSync(join(cleanedDirectory, 'disk.pending'), JSON.stringify({ resource, diskId: cleaned.disk.id, format: 2, sourceImage: image,
+      sourceImageId: 'sha256:' + 'd'.repeat(64), rootfsPath: cleaned.disk.rootfsPath, components: cleaned.disk.components,
+      createdAt: new Date().toISOString(), materialized: true }));
+    await new ContainerStorage(client).prepare(cleaned.spec);
+    expect(readFileSync(join(cleaned.disk.rootfsPath, 'complete'), 'utf8')).toBe('yes');
+
+    const second = make('1'.repeat(32));
+    mkdirSync(second.disk.rootfsPath, { recursive: true });
+    for (const component of second.disk.components) mkdirSync(component.path, { recursive: true });
+    const pendingManifest = { resource, diskId: second.disk.id, format: 2, sourceImage: image, sourceImageId: 'sha256:' + 'e'.repeat(64),
+      rootfsPath: second.disk.rootfsPath, components: second.disk.components, createdAt: new Date().toISOString(), materialized: true };
+    writeFileSync(join(second.disk.rootfsPath, '..', 'disk.pending'), JSON.stringify(pendingManifest));
+    await new ContainerStorage({ ensureVolume: vi.fn() }).prepare(second.spec);
+    expect(JSON.parse(readFileSync(join(second.disk.rootfsPath, '..', 'disk.json'), 'utf8'))).toEqual(pendingManifest);
+  });
+
+  it('finishes a disk snapshot whose manifest was published before pending cleanup', async () => {
+    const { paths } = fixture();
+    const resource = { kind: 'site' as const, id: 'resume-site' };
+    const image = 'localhost/site:test';
+    const disk = createEnvironmentDiskSpec({ resource, image }, paths, '2'.repeat(32));
+    const spec = createContainerSpec({ resource, generation: 2, image, disk }, paths);
+    const directory = join(spec.storageRoot, 'snapshots/resume-complete');
+    mkdirSync(directory, { recursive: true });
+    const manifest = { version: 2, snapshotId: 'resume-complete', resource, generation: 2, diskId: disk.id, specHash: spec.specHash,
+      consistency: 'crash-consistent', completeProject: false, treeFormat: 'inventory-v1:path,type,size,uid,gid,mode,mtimeNs,hardlink,xattrs,linkTarget',
+      sourceImage: { reference: image, id: 'sha256:' + 'd'.repeat(64) }, trees: [] };
+    writeFileSync(join(directory, 'manifest.json'), JSON.stringify(manifest));
+    writeFileSync(join(directory, 'pending.json'), JSON.stringify({ snapshotId: 'resume-complete', resource, generation: 2, specHash: spec.specHash, resumeRunning: false }));
+    const removeDiskPath = vi.fn();
+    const storage = new ContainerStorage({ inspect: vi.fn(), removeDiskPath, fingerprintDiskTree: vi.fn() });
+    await expect(storage.snapshot(spec, 'resume-complete')).resolves.toEqual(manifest);
+    expect(removeDiskPath).not.toHaveBeenCalled();
+    expect(() => lstatSync(join(directory, 'pending.json'))).toThrow();
+  });
+
+  it('restores a Site snapshot without data while carrying the current data into the new disk', async () => {
+    const { paths } = fixture();
+    const resource = { kind: 'site' as const, id: 'shop' };
+    const image = 'localhost/site:test';
+    const disk = createEnvironmentDiskSpec({ resource, image }, paths, '3'.repeat(32));
+    const spec = createContainerSpec({ resource, generation: 1, image, disk }, paths);
+    mkdirSync(disk.rootfsPath, { recursive: true });
+    for (const component of disk.components) mkdirSync(component.path, { recursive: true });
+    writeFileSync(join(disk.rootfsPath, 'root'), 'snapshot');
+    writeFileSync(join(disk.components[0]!.path, 'data'), 'at-snapshot');
+    writeFileSync(join(disk.rootfsPath, '..', 'disk.json'), JSON.stringify({ sourceImageId: 'sha256:' + 'd'.repeat(64) }));
+    const copyDiskTree = vi.fn(async (source: string, target: string) => { for (const name of readdirSync(source)) cpSync(join(source, name), join(target, name), { recursive: true, preserveTimestamps: true }); });
+    const fingerprintDiskTree = vi.fn(async (root: string) => ({ logicalBytes: readdirSync(root).length, allocatedBytes: 0,
+      digest: createHash('sha256').update(readdirSync(root).sort().map((name) => `${name}:${readFileSync(join(root, name), 'utf8')}`).join('|')).digest('hex') }));
+    const client = { inspect: vi.fn(async () => ({ state: 'stopped' })), copyDiskTree, syncDiskTree: vi.fn(), fingerprintDiskTree,
+      preflightDiskCopy: vi.fn(), ensureVolume: vi.fn(), inspectRetainedSiteImage: vi.fn(), inspectSnapshotImage: vi.fn() };
+    const storage = new ContainerStorage(client);
+    const manifest: any = await storage.snapshot(spec, 'without-data', { includeData: false });
+    expect(manifest.trees.map((tree: any) => tree.component)).toEqual(['rootfs']);
+    writeFileSync(join(disk.components[0]!.path, 'data'), 'current');
+    const targetDisk = createEnvironmentDiskSpec({ resource, image }, paths, '4'.repeat(32));
+    const target = createContainerSpec({ resource, generation: 2, image, disk: targetDisk }, paths);
+    await storage.restoreVolumes(spec, 'without-data', target);
+    expect(readFileSync(join(targetDisk.components[0]!.path, 'data'), 'utf8')).toBe('current');
+  });
+
+  it('preflights disk snapshot capacity before pausing and reads its published digest without walking trees', async () => {
+    const { paths } = fixture();
+    const resource = { kind: 'project' as const, id: 7 };
+    const image = 'localhost/elowen-project-base:test';
+    const disk = createEnvironmentDiskSpec({ resource, image }, paths, '5'.repeat(32));
+    const spec = createContainerSpec({ resource, workspaceTarget: '/demo', generation: 2, image, disk }, paths);
+    mkdirSync(disk.rootfsPath, { recursive: true });
+    for (const component of disk.components) mkdirSync(component.path, { recursive: true });
+    writeFileSync(join(disk.rootfsPath, '..', 'disk.json'), JSON.stringify({ sourceImageId: 'sha256:' + 'd'.repeat(64) }));
+    const calls: string[] = [];
+    const client = { inspect: vi.fn(async () => ({ state: 'running' })), preflightDiskCopy: vi.fn(async () => { calls.push('preflight'); }),
+      pause: vi.fn(async () => { calls.push('pause'); }), unpause: vi.fn(), copyDiskTree: vi.fn(), syncDiskTree: vi.fn(),
+      fingerprintDiskTree: vi.fn(async () => ({ logicalBytes: 0, allocatedBytes: 0, digest: 'd'.repeat(64) })) };
+    const storage = new ContainerStorage(client);
+    await storage.snapshot(spec, 'preflight');
+    expect(calls.slice(0, 2)).toEqual(['preflight', 'pause']);
+    client.fingerprintDiskTree.mockClear();
+    await storage.readSnapshot(spec, 'preflight');
+    expect(client.fingerprintDiskTree).not.toHaveBeenCalled();
+  });
+
   it('labels volumes by exact resource, storage generation and component', () => {
     const { spec } = fixture();
     expect(volumeLabels(spec, 'workspace')).toMatchObject({ 'io.elowen.resource': 'project:7', 'io.elowen.generation': '2', 'io.elowen.component': 'workspace' });

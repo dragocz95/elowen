@@ -635,7 +635,11 @@ export class PodmanClient {
     const seed = `${spec.namespace}-disk-${spec.disk.id.slice(0, 16)}-seed`;
     resourceToken(seed);
     await this.#assertRootless();
-    if (await this.#exists('container', seed)) throw new Error('Rootfs materialization seed already exists');
+    if (await this.#exists('container', seed)) {
+      await this.#run(['rm', '--force', seed]);
+      if (await this.#exists('container', seed)) throw new Error('Rootfs materialization seed removal was not verified');
+    }
+    await this.#run(['unshare', '/usr/bin/rm', '-f', '--', archive]);
     try {
       await this.#run(['create', '--name', seed, spec.disk.sourceImage]);
       await this.#run(['export', '--output', archive, seed], { timeoutMs: 15 * 60_000 });
@@ -650,6 +654,7 @@ export class PodmanClient {
       return image.Id;
     } catch (cause) {
       if (await this.#exists('container', seed)) await this.#run(['rm', '--force', seed], { allowFailure: true });
+      await this.#run(['unshare', '/usr/bin/rm', '-f', '--', archive], { allowFailure: true });
       throw cause;
     }
   }
@@ -657,7 +662,30 @@ export class PodmanClient {
   async copyDiskTree(sourcePath, targetPath) {
     const source = checkedHostPath(sourcePath);
     const target = checkedHostPath(targetPath);
-    const script = 'set -eu\nsource=$1; target=$2\ncp -a --reflink=auto --sparse=always -- "$source"/. "$target"/\ndiff -qr --no-dereference -- "$source" "$target"\n';
+    const script = `set -eu
+source=$1; target=$2
+cp -a --reflink=auto --sparse=always -- "$source"/. "$target"/
+/usr/bin/python3 - "$source" "$target" <<'PY'
+import json,os,stat,sys
+def inventory(root):
+ rows=[]; links={}
+ for directory,names,files in os.walk(root,topdown=True,followlinks=False):
+  names.sort(); files.sort()
+  for name in names+files:
+   path=os.path.join(directory,name); st=os.lstat(path); rel=os.path.relpath(path,root)
+   hardlink=''
+   if stat.S_ISREG(st.st_mode) and st.st_nlink>1:
+    key=(st.st_dev,st.st_ino)
+    if key not in links: links[key]=len(links)
+    hardlink=links[key]
+   attrs=[[key,os.getxattr(path,key,follow_symlinks=False).hex()] for key in sorted(os.listxattr(path,follow_symlinks=False))]
+   rows.append([rel,stat.S_IFMT(st.st_mode),st.st_size,st.st_uid,st.st_gid,stat.S_IMODE(st.st_mode),st.st_mtime_ns,hardlink,attrs,os.readlink(path) if stat.S_ISLNK(st.st_mode) else ''])
+ return rows
+source_rows=inventory(sys.argv[1]); target_rows=inventory(sys.argv[2])
+if source_rows != target_rows:
+ print('Copied disk tree metadata inventory differs from source',file=sys.stderr); sys.exit(1)
+PY
+`;
     await this.#run(['unshare', '/bin/bash', '-c', script, 'elowen-copy-tree', source, target], { timeoutMs: 15 * 60_000 });
   }
 
@@ -665,36 +693,44 @@ export class PodmanClient {
     const root = checkedHostPath(path);
     const script = `import hashlib,json,os,stat,sys
 root=sys.argv[1]
-h=hashlib.sha256(); logical=0; allocated=0; links={}; next_link=0
-for directory, names, files in os.walk(root, topdown=True, followlinks=False):
+h=hashlib.sha256(); logical=0; allocated=0; links={}
+for directory,names,files in os.walk(root,topdown=True,followlinks=False):
  names.sort(); files.sort()
  for name in names+files:
   path=os.path.join(directory,name); rel=os.path.relpath(path,root); st=os.lstat(path)
-  logical+=st.st_size; allocated+=st.st_blocks*512
-  link=''
+  logical+=st.st_size; allocated+=st.st_blocks*512; hardlink=''
   if stat.S_ISREG(st.st_mode) and st.st_nlink>1:
    key=(st.st_dev,st.st_ino)
    if key not in links: links[key]=len(links)
-   link=str(links[key])
-  attrs=[]
-  for key in sorted(os.listxattr(path,follow_symlinks=False)):
-   attrs.append([key,os.getxattr(path,key,follow_symlinks=False).hex()])
-  row=[rel,st.st_mode,st.st_uid,st.st_gid,st.st_size,link,attrs]
-  if stat.S_ISLNK(st.st_mode): row.append(os.readlink(path))
-  elif stat.S_ISREG(st.st_mode):
-   content=hashlib.sha256()
-   with open(path,'rb',buffering=0) as handle:
-    while True:
-     chunk=handle.read(1024*1024)
-     if not chunk: break
-     content.update(chunk)
-   row.append(content.hexdigest())
+   hardlink=links[key]
+  attrs=[[key,os.getxattr(path,key,follow_symlinks=False).hex()] for key in sorted(os.listxattr(path,follow_symlinks=False))]
+  row=[rel,stat.S_IFMT(st.st_mode),st.st_size,st.st_uid,st.st_gid,stat.S_IMODE(st.st_mode),st.st_mtime_ns,hardlink,attrs,os.readlink(path) if stat.S_ISLNK(st.st_mode) else '']
   h.update(json.dumps(row,separators=(',',':')).encode()); h.update(b'\\n')
 print(json.dumps({'logicalBytes':logical,'allocatedBytes':allocated,'digest':h.hexdigest()}))`;
     const result = await this.#run(['unshare', '/usr/bin/python3', '-c', script, root], { timeoutMs: 15 * 60_000 });
     if (result.truncated) throw new Error('Disk tree fingerprint exceeded its bound');
     const value = JSON.parse(result.stdout);
     if (!Number.isSafeInteger(value.logicalBytes) || !Number.isSafeInteger(value.allocatedBytes) || !/^[a-f0-9]{64}$/.test(value.digest)) throw new Error('Invalid disk tree fingerprint');
+    return value;
+  }
+
+  async preflightDiskCopy(sourcePaths, destinationPath) {
+    if (!Array.isArray(sourcePaths) || sourcePaths.length < 1) throw new Error('Disk copy preflight requires source trees');
+    const sources = sourcePaths.map((path) => checkedHostPath(path));
+    const destination = checkedHostPath(destinationPath);
+    const script = `import json,os,sys
+sources=json.loads(sys.argv[1]); destination=sys.argv[2]; required=0
+for root in sources:
+ for directory,names,files in os.walk(root,topdown=True,followlinks=False):
+  for name in names+files: required+=os.lstat(os.path.join(directory,name)).st_size
+margin=max(64*1024*1024,required//10); fs=os.statvfs(destination); free=fs.f_bavail*fs.f_frsize
+if free < required+margin:
+ print(f'Insufficient free space for disk copy: need {required+margin} bytes including margin, have {free}',file=sys.stderr); sys.exit(1)
+print(json.dumps({'requiredBytes':required,'marginBytes':margin,'freeBytes':free}))`;
+    const result = await this.#run(['unshare', '/usr/bin/python3', '-c', script, JSON.stringify(sources), destination], { timeoutMs: 15 * 60_000 });
+    if (result.truncated) throw new Error('Disk copy preflight output exceeded its bound');
+    const value = JSON.parse(result.stdout);
+    if (!Number.isSafeInteger(value.requiredBytes) || !Number.isSafeInteger(value.marginBytes) || !Number.isSafeInteger(value.freeBytes)) throw new Error('Invalid disk copy preflight');
     return value;
   }
 

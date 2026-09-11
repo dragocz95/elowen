@@ -128,8 +128,8 @@ function buildSpec(input, paths, binding = null, legacyProjectWorkspace = false)
   if (input.disk !== undefined) {
     closed(input.disk, ['id', 'format', 'rootfsPath', 'components', 'sourceImage']);
     resourceToken(input.disk.id);
-    if (input.disk.format !== 2 || input.disk.sourceImage !== input.image || !Array.isArray(input.disk.components)) throw new Error('Invalid environment disk specification');
-    const expected = createEnvironmentDiskSpec({ resource, image: input.image }, paths, input.disk.id);
+    if (input.disk.format !== 2 || !Array.isArray(input.disk.components)) throw new Error('Invalid environment disk specification');
+    const expected = createEnvironmentDiskSpec({ resource, image: input.disk.sourceImage }, paths, input.disk.id);
     if (input.disk.rootfsPath !== expected.rootfsPath || JSON.stringify(input.disk.components) !== JSON.stringify(expected.components)) throw new Error('Environment disk paths differ from their trusted resource root');
     disk = expected;
   }

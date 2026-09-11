@@ -103,27 +103,67 @@ export class ContainerStorage {
   async #prepareDisk(spec) {
     const directory = checkedHostPath(dirname(spec.disk.rootfsPath), { create: true });
     const manifestPath = join(directory, 'disk.json');
-    try {
-      checkedHostPath(manifestPath, { file: true });
-      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+    const pendingManifestPath = join(directory, 'disk.pending');
+    const validateManifest = (manifest) => {
       if (manifest.diskId !== spec.disk.id || manifest.format !== 2 || manifest.resource?.kind !== spec.resource.kind
         || manifest.resource?.id !== spec.resource.id || manifest.rootfsPath !== spec.disk.rootfsPath
-        || JSON.stringify(manifest.components) !== JSON.stringify(spec.disk.components) || !manifest.materialized) throw new Error('Environment disk manifest ownership mismatch');
-      checkedHostPath(spec.disk.rootfsPath);
-      for (const component of spec.disk.components) checkedHostPath(component.path);
+        || manifest.sourceImage !== spec.disk.sourceImage || JSON.stringify(manifest.components) !== JSON.stringify(spec.disk.components)
+        || !manifest.materialized) throw new Error('Environment disk manifest ownership mismatch');
+      return manifest;
+    };
+    const readManifest = (path) => {
+      try { return validateManifest(JSON.parse(readFileSync(checkedHostPath(path, { file: true }), 'utf8'))); }
+      catch (cause) { if (cause.code === 'ENOENT') return null; throw cause; }
+    };
+    const manifest = readManifest(manifestPath);
+    if (manifest) {
+      try {
+        checkedHostPath(spec.disk.rootfsPath);
+        for (const component of spec.disk.components) checkedHostPath(component.path);
+      } catch (cause) {
+        if (cause.code !== 'ENOENT') throw cause;
+        const missing = new Error('The persistent environment disk is missing; restore a snapshot explicitly');
+        missing.code = 'disk_missing';
+        throw missing;
+      }
       return;
-    } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
-    absent(spec.disk.rootfsPath);
+    }
     const pending = join(directory, 'rootfs.pending');
-    absent(pending);
+    const pendingManifest = readManifest(pendingManifestPath);
+    if (pendingManifest) {
+      let rootfsExists = true;
+      try { checkedHostPath(spec.disk.rootfsPath); }
+      catch (cause) { if (cause.code === 'ENOENT') rootfsExists = false; else throw cause; }
+      if (rootfsExists) {
+        try { for (const component of spec.disk.components) checkedHostPath(component.path); }
+        catch (cause) {
+          if (cause.code !== 'ENOENT') throw cause;
+          const missing = new Error('The persistent environment disk is missing; restore a snapshot explicitly');
+          missing.code = 'disk_missing';
+          throw missing;
+        }
+        renameSync(pendingManifestPath, manifestPath);
+        syncPath(directory);
+        return;
+      }
+      unlinkSync(pendingManifestPath);
+      syncPath(directory);
+      try { checkedHostPath(pending); await this.#podman.removeDiskPath(pending); }
+      catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
+    }
+    absent(spec.disk.rootfsPath);
+    try { checkedHostPath(pending); await this.#podman.removeDiskPath(pending); }
+    catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
     mkdirSync(pending, { mode: 0o700 });
     for (const component of spec.disk.components) checkedHostPath(component.path, { create: true });
     const imageId = await this.#podman.materializeRootfs(spec, pending);
     await this.#podman.syncDiskTree(pending);
+    writeDurable(pendingManifestPath, { resource: spec.resource, diskId: spec.disk.id, format: 2, sourceImage: spec.disk.sourceImage,
+      sourceImageId: imageId, rootfsPath: spec.disk.rootfsPath, components: spec.disk.components, createdAt: new Date().toISOString(), materialized: true });
+    syncPath(directory);
     renameSync(pending, spec.disk.rootfsPath);
     syncPath(directory);
-    writeDurable(manifestPath, { resource: spec.resource, diskId: spec.disk.id, format: 2, sourceImage: spec.disk.sourceImage,
-      sourceImageId: imageId, rootfsPath: spec.disk.rootfsPath, components: spec.disk.components, createdAt: new Date().toISOString(), materialized: true });
+    renameSync(pendingManifestPath, manifestPath);
     syncPath(directory);
   }
 
@@ -314,6 +354,13 @@ export class ContainerStorage {
     const parent = checkedHostPath(join(spec.storageRoot, 'snapshots'), { create: true });
     const directory = join(parent, snapshotId);
     try {
+      checkedHostPath(join(directory, 'manifest.json'), { file: true });
+      const manifest = await this.readSnapshot(spec, snapshotId);
+      try { unlinkSync(join(directory, 'pending.json')); syncPath(directory); }
+      catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
+      return manifest;
+    } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
+    try {
       checkedHostPath(directory);
       const pending = JSON.parse(readFileSync(checkedHostPath(join(directory, 'pending.json'), { file: true }), 'utf8'));
       if (pending.resumeRunning && (await this.#podman.inspect(spec))?.state === 'paused') await this.#podman.unpause(spec);
@@ -327,8 +374,10 @@ export class ContainerStorage {
     syncPath(directory); syncPath(parent);
     const diskManifest = JSON.parse(readFileSync(checkedHostPath(join(dirname(spec.disk.rootfsPath), 'disk.json'), { file: true }), 'utf8'));
     const sources = [{ component: 'rootfs', path: spec.disk.rootfsPath }, ...spec.disk.components.filter((entry) => includeData || entry.component !== 'data')];
+    await this.#podman.preflightDiskCopy(sources.map((entry) => entry.path), parent);
     const manifest = { version: 2, snapshotId, resource: spec.resource, generation: spec.generation, diskId: spec.disk.id,
       specHash: spec.specHash, consistency: 'crash-consistent', completeProject: spec.resource.kind === 'project',
+      treeFormat: 'inventory-v1:path,type,size,uid,gid,mode,mtimeNs,hardlink,xattrs,linkTarget',
       sourceImage: { reference: spec.disk.sourceImage, id: diskManifest.sourceImageId }, trees: [] };
     const failures = [];
     let paused = false;
@@ -416,9 +465,18 @@ export class ContainerStorage {
     const diskDirectory = checkedHostPath(dirname(targetSpec.disk.rootfsPath), { create: true });
     if (!previous) { writeDurable(journal, expected); syncPath(directory); }
     const targets = new Map([['rootfs', targetSpec.disk.rootfsPath], ...targetSpec.disk.components.map((entry) => [entry.component, entry.path])]);
-    for (const tree of manifest.trees) {
+    const trees = [...manifest.trees];
+    const missing = [...targets.keys()].filter((component) => !trees.some((tree) => tree.component === component));
+    if (missing.length) {
+      if (sourceSpec.resource.kind !== 'site' || missing.length !== 1 || missing[0] !== 'data') throw new Error('Restore requires every disk tree');
+      const currentData = sourceSpec.disk.components.find((entry) => entry.component === 'data');
+      if (!currentData) throw new Error('Current Site data is missing from the source disk');
+      trees.push({ component: 'data', path: currentData.path, current: true, ...await this.#podman.fingerprintDiskTree(currentData.path) });
+    }
+    if (trees.length !== targets.size || trees.some((tree) => !targets.has(tree.component))) throw new Error('Snapshot tree does not belong to the restore target');
+    await this.#podman.preflightDiskCopy(trees.map((tree) => tree.path), diskDirectory);
+    for (const tree of trees) {
       const target = targets.get(tree.component);
-      if (!target) throw new Error('Snapshot tree does not belong to the restore target');
       const receiptPath = join(directory, `${tree.component}.json`);
       const receipt = read(receiptPath);
       if (receipt) {
@@ -426,19 +484,32 @@ export class ContainerStorage {
         checkedHostPath(target);
         continue;
       }
-      absent(target);
+      try {
+        checkedHostPath(target);
+        const copied = await this.#podman.fingerprintDiskTree(target);
+        if (copied.digest !== tree.digest || copied.logicalBytes !== tree.logicalBytes) throw new Error('Restored snapshot tree differs from its manifest');
+        writeDurable(receiptPath, tree); syncPath(directory);
+        continue;
+      } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
       const pending = `${target}.pending`;
-      absent(pending); mkdirSync(pending, { mode: 0o700 });
+      try { checkedHostPath(pending); await this.#podman.removeDiskPath(pending); }
+      catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
+      mkdirSync(pending, { mode: 0o700 });
       await this.#podman.copyDiskTree(tree.path, pending);
       const copied = await this.#podman.fingerprintDiskTree(pending);
       if (copied.digest !== tree.digest || copied.logicalBytes !== tree.logicalBytes) throw new Error('Restored snapshot tree differs from its manifest');
       await this.#podman.syncDiskTree(pending); renameSync(pending, target); syncPath(diskDirectory);
       writeDurable(receiptPath, tree); syncPath(directory);
     }
-    if ([...targets.keys()].some((component) => !manifest.trees.some((tree) => tree.component === component))) throw new Error('Restore requires every disk tree');
-    writeDurable(join(diskDirectory, 'disk.json'), { resource: targetSpec.resource, diskId: targetSpec.disk.id, format: 2,
+    const diskRecord = { resource: targetSpec.resource, diskId: targetSpec.disk.id, format: 2,
       sourceImage: manifest.sourceImage.reference, sourceImageId: manifest.sourceImage.id, rootfsPath: targetSpec.disk.rootfsPath,
-      components: targetSpec.disk.components, createdAt: new Date().toISOString(), restoredFrom: snapshotId, materialized: true });
+      components: targetSpec.disk.components, createdAt: new Date().toISOString(), restoredFrom: snapshotId, materialized: true };
+    const existingDisk = read(join(diskDirectory, 'disk.json'));
+    if (existingDisk) {
+      const { createdAt: _existingCreatedAt, ...actual } = existingDisk;
+      const { createdAt: _newCreatedAt, ...wanted } = diskRecord;
+      if (JSON.stringify(actual) !== JSON.stringify(wanted)) throw new Error('Restored disk manifest ownership mismatch');
+    } else writeDurable(join(diskDirectory, 'disk.json'), diskRecord);
     syncPath(diskDirectory);
     for (const volume of targetSpec.volumes) await this.#podman.ensureVolume(targetSpec, volume.component);
     writeDurable(join(directory, 'complete.json'), { ...expected, sourceImage: manifest.sourceImage });
@@ -480,15 +551,16 @@ export class ContainerStorage {
     if (manifest.version === 2) {
       if (!spec.disk || manifest.snapshotId !== snapshotId || manifest.resource?.kind !== spec.resource.kind || manifest.resource?.id !== spec.resource.id
         || manifest.generation !== spec.generation || manifest.diskId !== spec.disk.id || manifest.specHash !== spec.specHash
-        || manifest.consistency !== 'crash-consistent' || manifest.completeProject !== (spec.resource.kind === 'project') || !Array.isArray(manifest.trees)) throw new Error('Snapshot manifest ownership mismatch');
+        || manifest.consistency !== 'crash-consistent' || manifest.completeProject !== (spec.resource.kind === 'project') || !Array.isArray(manifest.trees)
+        || manifest.treeFormat !== 'inventory-v1:path,type,size,uid,gid,mode,mtimeNs,hardlink,xattrs,linkTarget') throw new Error('Snapshot manifest ownership mismatch');
       const expected = ['rootfs', ...spec.disk.components.map((entry) => entry.component)];
       const components = manifest.trees.map((entry) => entry?.component);
       if (new Set(components).size !== components.length || components.some((component) => !expected.includes(component))
         || (manifest.completeProject && JSON.stringify(components) !== JSON.stringify(expected))) throw new Error('Snapshot storage components mismatch');
       for (const tree of manifest.trees) {
-        if (tree.path !== join(directory, tree.component)) throw new Error('Snapshot tree path mismatch');
-        const digest = await this.#podman.fingerprintDiskTree(checkedHostPath(tree.path));
-        if (digest.digest !== tree.digest || digest.logicalBytes !== tree.logicalBytes || digest.allocatedBytes !== tree.allocatedBytes) throw new Error('Snapshot tree integrity mismatch');
+        if (tree.path !== join(directory, tree.component) || !Number.isSafeInteger(tree.logicalBytes) || tree.logicalBytes < 0
+          || !Number.isSafeInteger(tree.allocatedBytes) || tree.allocatedBytes < 0 || !/^[a-f0-9]{64}$/.test(tree.digest)) throw new Error('Snapshot tree manifest is invalid');
+        checkedHostPath(tree.path);
       }
       return manifest;
     }
@@ -529,13 +601,4 @@ export class ContainerStorage {
     throw new Error('Environment disk removal was not verified');
   }
 
-  async diskUsage(spec, diskSoftMb = null) {
-    assertContainerSpec(spec);
-    if (!spec.disk) return null;
-    const usage = await this.#podman.fingerprintDiskTree(dirname(spec.disk.rootfsPath));
-    const soft = diskSoftMb === null ? null : Number(diskSoftMb);
-    if (soft !== null && (!Number.isFinite(soft) || soft < 0)) throw new Error('Invalid disk soft limit');
-    return { diskSoftMb: soft, ...usage, snapshotBytes: 0, retainedDiskBytes: 0, pendingBytes: 0,
-      exceeded: soft !== null && usage.logicalBytes > soft * 1024 * 1024, measuredAt: new Date().toISOString(), truncated: false };
-  }
 }

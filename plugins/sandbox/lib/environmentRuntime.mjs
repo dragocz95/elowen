@@ -760,7 +760,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         store.log(row.kind, row.resource_id, sanitize(line));
         step(op, 'image', buildFraction(line), true);
       });
-      if (row.spec.input.disk) row.spec.input.disk = createEnvironmentDiskSpec({ resource: row.spec.input.resource, image: row.spec.input.image }, row.spec.paths, row.spec.input.disk.id);
+      if (row.spec.input.disk?.sourceImage === PROJECT_BASE_IMAGE_TAG) {
+        row.spec.input.disk = createEnvironmentDiskSpec({ resource: row.spec.input.resource, image: row.spec.input.image }, row.spec.paths, row.spec.input.disk.id);
+      }
       store.save(row); checkpoint(op, { imageReady: true });
     }
     await rebuildMovedSiteContainer(row, op);
