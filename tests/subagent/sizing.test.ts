@@ -91,11 +91,20 @@ describe('pool sizing — the cap is measured, never hard-coded', () => {
       expect(poolSizing(lyingCgroup, { operatorMax: null }).operatorCapped).toBe(false);
     });
 
-    // A knob that could RAISE the cap would just be a slower way to run out of memory.
-    it('can only ever narrow — never raise above what the machine allows', () => {
+    it('lets an explicit operator cap oversubscribe CPU but never memory', () => {
       const s = poolSizing(machine(2, 4), { operatorMax: 99 });
-      expect(s.cap).toBe(1);
+      expect(s.cpuCap).toBe(1);
+      expect(s.cap).toBe(s.memCap);
+      expect(s.cap).toBeGreaterThan(s.cpuCap);
       expect(s.operatorCapped).toBe(false);
+    });
+
+    it('uses an explicit cap above the CPU ceiling when memory can hold it', () => {
+      const s = poolSizing(machine(16, 64), { operatorMax: 50 });
+      expect(s.cpuCap).toBe(15);
+      expect(s.memCap).toBeGreaterThanOrEqual(50);
+      expect(s.cap).toBe(50);
+      expect(s.operatorCapped).toBe(true);
     });
   });
 

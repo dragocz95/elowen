@@ -130,7 +130,7 @@ export function resolvePoolMax(setting: number | null | undefined, env: string |
 }
 
 export interface PoolSizing {
-  /** The effective cap: the LOWER of what the CPUs and the memory allow, then the operator's knob. */
+  /** The effective cap: automatic mode uses CPU and memory; an explicit operator cap may exceed CPU but never memory. */
   cap: number;
   cpuCap: number;
   memCap: number;
@@ -157,23 +157,25 @@ export interface SizingOpts {
  *  runner size. Not floored at 1: a box that genuinely cannot hold one runner must spawn zero and stay
  *  in-process, rather than fork itself into the OOM killer.
  *
- *  The operator's knob only ever NARROWS. It cannot raise the cap above what the machine says, because a
- *  knob that could would just be a slower way to OOM. */
+ *  An explicit operator cap may exceed the automatic CPU ceiling. Runners spend much of their lifetime
+ *  waiting on providers, so a deliberate high-concurrency audit can profitably oversubscribe CPU. Memory
+ *  remains a hard ceiling because exceeding it would invite the OOM killer. */
 export function poolSizing(inputs: MachineInputs, opts: SizingOpts = {}): PoolSizing {
   const runnerRssBytes = opts.measuredRunnerRssBytes && opts.measuredRunnerRssBytes > 0
     ? opts.measuredRunnerRssBytes
     : ESTIMATED_RUNNER_RSS_BYTES;
   const cpuCap = Math.max(1, Math.floor(inputs.cpus()) - 1);
   const memCap = Math.max(0, Math.floor((inputs.totalMemBytes() * MEM_BUDGET_FRACTION) / runnerRssBytes));
-  const machineCap = Math.min(cpuCap, memCap);
+  const automaticCap = Math.min(cpuCap, memCap);
   const knob = opts.operatorMax;
-  const operatorCapped = typeof knob === 'number' && Number.isFinite(knob) && knob >= 0 && knob < machineCap;
+  const hasOperatorCap = typeof knob === 'number' && Number.isFinite(knob) && knob >= 0;
+  const cap = hasOperatorCap ? Math.min(Math.floor(knob), memCap) : automaticCap;
   return {
-    cap: operatorCapped ? Math.floor(knob) : machineCap,
+    cap,
     cpuCap,
     memCap,
     runnerRssBytes,
-    operatorCapped,
+    operatorCapped: hasOperatorCap && Math.floor(knob) < memCap,
   };
 }
 
