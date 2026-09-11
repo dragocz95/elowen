@@ -70,6 +70,9 @@
  * @property {(spec: object, snapshotId: string) => Promise<void>} discardIncompleteSnapshot
  *
  * Images. A runtime without an image store delegates these to one that has one; it never pretends.
+ * @property {(spec: object, archivePath: string) => Promise<string>} exportImageRootfs Writes an image's
+ *   merged filesystem to a host-owned archive and returns the image identity. A runtime with no image
+ *   store delegates it and then extracts the archive its own way.
  * @property {(dataDir: string, onOutput?: (line: string) => void) => Promise<string>} ensureProjectImage
  * @property {(dataDir: string, recipe: object) => Promise<string>} ensureSiteImage
  * @property {(reference: string) => Promise<{ present: boolean, imageId: string | null }>} imageStatus
@@ -84,6 +87,10 @@
  * Legacy image-backed migration sources. A disk-backed specification is refused by both clients.
  * @property {(spec: object, destinationPath: string) => Promise<object>} preflightRootfsMigration
  * @property {(spec: object, archivePath: string) => Promise<string>} exportContainerRootfs
+ * Host readiness. Present only on a runtime whose host needs preparing before it can hold an
+ * environment at all; Podman has no such gate and does not answer it.
+ * @property {() => Promise<{ ready: boolean, items: { id: string, label: string, ok: boolean, detail?: string }[] }>} [hostReadiness]
+ *
  * @property {(spec: object, options?: { target?: string, uidBase?: number | null }) => Promise<object>} [shiftOwnership]
  *   The one-time ownership pass a RUNTIME change needs, and the only way back from it. Provided by the
  *   target of `migrate-runtime` alone; nothing else on this interface reaches for it.

@@ -49,7 +49,12 @@ const REQUEST_LIMIT = 256 * 1024;
  *  rather than the command's bytes. */
 const HELPER_RESPONSE_LIMIT = 16 * 1024 * 1024;
 const GUEST_COMMAND_TIMEOUT_MS = 30_000;
-const HELPER_OPERATIONS = new Set(['materialize', 'write-envelope', 'shift-ownership', 'exec', 'freeze', 'thaw',
+/** How long one readiness probe may take. Short, because a probe that cannot answer is the answer. */
+const PROBE_TIMEOUT_MS = 5_000;
+/** `provision` is deliberately absent. The daemon reports what a host is missing and never installs it:
+ *  an operation that writes root-owned files and runs a package manager belongs to an operator at a
+ *  terminal, not to a request a browser can cause. */
+const HELPER_OPERATIONS = new Set(['status', 'materialize', 'write-envelope', 'shift-ownership', 'exec', 'freeze', 'thaw',
   'tree-copy', 'tree-fingerprint', 'tree-preflight', 'tree-remove', 'tree-sync', 'tree-verify', 'destroy']);
 
 /** Every privileged request is built here and nowhere else, so the daemon side of the contract has one
@@ -96,9 +101,12 @@ export function timespanMicroseconds(value) {
   let total = 0;
   let matched = false;
   for (const part of text.split(/\s+/).filter(Boolean)) {
-    const token = /^([0-9]+)(us|ms|min|s|h|d)$/.exec(part);
+    // The fraction is not decoration: systemd renders a CPU quota of 150% as `1.500000s`, and a whole
+    // second is the only case that comes back without one. An integer-only parser reads that as
+    // unparseable and every environment with more than one CPU fails its own limit check.
+    const token = /^([0-9]+(?:\.[0-9]+)?)(us|ms|min|s|h|d)$/.exec(part);
     if (!token) return null;
-    total += Number(token[1]) * units[token[2]];
+    total += Math.round(Number(token[1]) * units[token[2]]);
     matched = true;
   }
   return matched ? total : null;
@@ -169,6 +177,14 @@ export class NspawnClient {
   #timeoutMs;
   #outputLimit;
   #namespace;
+  /** Guest executions this client is currently running, by leased unit. `cancelExecution` marks the
+   *  record it finds here, and `exec` reads its own record to decide what verdict it owes the caller.
+   *  The launcher exits zero whether its command finished or its unit was stopped under it, and asking
+   *  the guest afterwards cannot tell the two apart: `--collect` retires the transient unit as it
+   *  deactivates, so a lookup races the reaper and answers "masked" or "already gone" depending only on
+   *  which ran first. The fact is known here without asking anyone. Entries live exactly as long as the
+   *  `exec` that created them. */
+  #running = new Map();
 
   constructor(options = {}) {
     if (!options.images) throw new Error('An image builder client is required; nspawn has no image store');
@@ -278,6 +294,29 @@ export class NspawnClient {
     return [`CPUQuota=${limits.cpus * 100}%`, `MemoryMax=${limits.memoryMb}M`, `TasksMax=${limits.pidsLimit}`];
   }
 
+  /** What the host still owes this runtime, in the item shape the other readiness surfaces already use:
+   *  `{ ready, items: [{ id, label, ok, detail }] }`. Each unmet row's detail carries the exact command an
+   *  operator runs, so a caller shows the rows rather than translating them into advice of its own — the
+   *  ids are the helper's to name and have moved once already.
+   *
+   *  Read-only. Provisioning is a separate privileged operation and the daemon never performs it on its
+   *  own; a host that is not ready is reported, not repaired. */
+  /** `veth` asks the privileged side to include what a virtual ethernet needs: forwarding, the link
+   *  configuration service and the five firewall rules. It defaults to on because that is what an
+   *  ordinary environment now requests, and a readiness report that omits the rows it will be refused on
+   *  would tell a person the runtime is ready right up until the first environment fails to be created. */
+  async hostReadiness({ veth = true } = {}) {
+    const reply = await this.#helper('status', { veth });
+    if (typeof reply.ready !== 'boolean' || !Array.isArray(reply.items)) throw new Error('Invalid machine runtime readiness report');
+    return {
+      ready: reply.ready,
+      items: reply.items.map((item) => {
+        if (typeof item?.id !== 'string' || typeof item?.label !== 'string' || typeof item?.ok !== 'boolean') throw new Error('Invalid machine runtime readiness item');
+        return { id: item.id, label: item.label, ok: item.ok, ...(typeof item.detail === 'string' ? { detail: item.detail } : {}) };
+      }),
+    };
+  }
+
   async containerExists(spec) {
     const paths = this.#envelopePaths(this.#machine(spec));
     return !absent(paths.nspawn) && !absent(paths.dropIn);
@@ -329,7 +368,10 @@ export class NspawnClient {
     if (quota === null || Math.abs(quota - spec.limits.cpus * 1_000_000) > 10_000) mismatches.push('cpus');
     const state = mismatches.length ? null : machineState(unit);
     if (state === 'running' || state === 'paused') {
-      const machineShown = await this.#machinectl(['show', machine, '-p', 'Unit,RootDirectory'], { allowFailure: true });
+      // One `-p` per property: `machinectl` takes no comma-separated list, which `systemctl` does, and
+      // asking it for `Unit,RootDirectory` gets a property by that literal name and therefore no output
+      // at all — so every running machine would fail its own ownership proof.
+      const machineShown = await this.#machinectl(['show', machine, '-p', 'Unit', '-p', 'RootDirectory'], { allowFailure: true });
       const registered = unitProperties(machineShown.stdout);
       if (machineShown.code !== 0 || registered.Unit !== unitFor(machine) || registered.RootDirectory !== rootfs) mismatches.push('machine');
     }
@@ -368,7 +410,15 @@ export class NspawnClient {
     return { machine, namespace: spec.namespace, kind: spec.resource.kind, resource: String(spec.resource.id),
       generation: spec.generation, diskId: spec.disk.id, specHash: spec.labels['io.elowen.spec'],
       limits: { cpus: spec.limits.cpus, memoryMb: spec.limits.memoryMb, pidsLimit: spec.limits.pidsLimit },
-      binds: this.#binds(spec), dropCapabilities: [...DROPPED_CAPABILITIES], privateNetwork: true };
+      binds: this.#binds(spec), dropCapabilities: [...DROPPED_CAPABILITIES],
+      // The specification's own network policy, carried across rather than decided here. Everything but an
+      // explicitly isolated environment gets a virtual ethernet, because that is what the container
+      // runtime gives the same specification today: without it a guest has its own loopback and nothing
+      // else, so no name resolves, nothing installs, and a user's first `apt` or `npm install` fails.
+      // `privateNetwork` is the privileged side's word for the loopback-only shape, so an environment that
+      // wants a link asks for `false`. The host guard is not this client's to check: `write-envelope`
+      // refuses a link the firewall is not ready to isolate, which is the only place no caller can skip.
+      privateNetwork: spec.network === 'none' };
   }
 
   async create(spec) {
@@ -387,6 +437,23 @@ export class NspawnClient {
     const machine = this.#machine(spec);
     await this.#owned(spec);
     await this.#systemctl(['start', unitFor(machine)]);
+    await this.#awaitRegistration(machine);
+  }
+
+  /** A started unit is not yet a registered machine. `systemctl start` returns once nspawn has signalled
+   *  readiness, and the machine manager finishes registering a moment later; between the two, the unit is
+   *  active while `machinectl show` still knows nothing. Every ownership proof reads that registration, so
+   *  a caller that inspected immediately after a start would be told the envelope does not match itself.
+   *  Waiting here rather than loosening `inspect` keeps the proof strict: an envelope that never registers
+   *  is a failure to report, not a state to tolerate. */
+  async #awaitRegistration(machine, timeoutMs = 60_000) {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      const shown = await this.#machinectl(['show', machine, '-p', 'Unit'], { allowFailure: true });
+      if (shown.code === 0 && unitProperties(shown.stdout).Unit === unitFor(machine)) return;
+      if (Date.now() >= deadline) throw new Error('The machine did not register with the machine manager');
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
   }
 
   /** The unit's own `TimeoutStopSec` governs how long the guest gets; nspawn translates the unit's
@@ -452,11 +519,16 @@ export class NspawnClient {
   async waitForSystemBus(spec, { timeoutMs = 120_000 } = {}) {
     await this.#owned(spec);
     const deadline = Date.now() + positive(timeoutMs, 15 * 60_000, 'system bus timeout');
+    // Each probe is itself a guest command, and a guest command needs the very bus being waited for, so a
+    // machine whose bus never comes up answers each probe only when the launcher's own activation timeout
+    // expires. Bounding the probe by the time that is actually left keeps the wait as long as the caller
+    // asked for and no longer, instead of overrunning it by a whole probe.
+    const probeMs = () => Math.max(1000, Math.min(PROBE_TIMEOUT_MS, deadline - Date.now()));
     for (;;) {
-      const probe = await this.#guest(spec, ['/usr/bin/test', '-S', GUEST_SYSTEM_BUS], { allowFailure: true });
+      const probe = await this.#guest(spec, ['/usr/bin/test', '-S', GUEST_SYSTEM_BUS], { allowFailure: true, timeoutMs: probeMs() });
       if (probe.code === 0) return;
       if (Date.now() >= deadline) {
-        const status = await this.#guest(spec, ['/usr/bin/systemctl', 'is-system-running'], { allowFailure: true });
+        const status = await this.#guest(spec, ['/usr/bin/systemctl', 'is-system-running'], { allowFailure: true, timeoutMs: PROBE_TIMEOUT_MS });
         throw new Error(`Guest system bus did not become available within ${Math.round(timeoutMs / 1000)}s (systemd reports ${status.stdout.trim() || 'nothing'})`);
       }
       await new Promise((resolve) => { setTimeout(resolve, 250); });
@@ -528,7 +600,15 @@ export class NspawnClient {
 
   /** Public cancellation. ALWAYS performs its own full ownership verification. */
   async cancelExecution(spec, executionId, { persistent = false } = {}) {
-    return await this.#tombstone(spec, executionId, await this.#owned(spec), persistent);
+    const row = await this.#owned(spec);
+    // Recorded BEFORE the termination, not after it. The tombstone below stops the unit half way through,
+    // and stopping the unit is exactly what makes the launcher return, so an execution marked afterwards
+    // would already have read its record and reported the kill as a success. The intent is the fact `exec`
+    // needs and it is known here; it is not withdrawn if the verification then fails, because a caller
+    // whose cancellation could not be confirmed still cannot trust the verdict it would otherwise get.
+    const record = this.#running.get(executionUnit(spec, executionId));
+    if (record) record.cancelled = true;
+    return await this.#tombstone(spec, executionId, row, persistent);
   }
 
   /** The termination tombstone, against a row this call stack has already verified. The guest stays
@@ -579,21 +659,35 @@ export class NspawnClient {
   async exec(spec, executionId, argv, options = {}) {
     const persistent = options.persistent === true;
     const prepared = await this.#prepareGuest(spec, executionId, argv, options);
-    let result;
-    let failure;
+    const key = executionUnit(spec, executionId);
+    const record = { cancelled: false };
+    // The record has to outlive the launcher: a cancellation lands while the command is running, and the
+    // answer is read after it returns. It is dropped in the `finally` at the end of this method.
+    this.#running.set(key, record);
     try {
-      result = await this.#execute(prepared.request,
-        { input: options.input, timeoutMs: prepared.timeoutMs, signal: options.signal, allowFailure: true });
-    } catch (error) { failure = error; }
-    try {
-      const row = await this.#reusableRow(spec, prepared.container);
-      if (failure) await this.#tombstone(spec, executionId, row, persistent);
-      else await this.#release(spec, executionId, row, persistent);
-    } catch (error) {
-      throw Object.assign(new AggregateError([...(failure ? [failure] : []), error], `Guest command cleanup failed: ${error.message}`), { guestSettled: false });
-    }
-    if (failure) throw failure;
-    return result;
+      let result;
+      let failure;
+      try {
+        result = await this.#execute(prepared.request,
+          { input: options.input, timeoutMs: prepared.timeoutMs, signal: options.signal, allowFailure: true });
+      } catch (error) { failure = error; }
+      try {
+        const row = await this.#reusableRow(spec, prepared.container);
+        if (failure) await this.#tombstone(spec, executionId, row, persistent);
+        // A cancellation already ran the full tombstone against this unit and the mask has to stand: it is
+        // what stops a launch still in flight from bringing the unit back. There is nothing left to settle.
+        else if (!record.cancelled) await this.#release(spec, executionId, row, persistent);
+      } catch (error) {
+        throw Object.assign(new AggregateError([...(failure ? [failure] : []), error], `Guest command cleanup failed: ${error.message}`), { guestSettled: false });
+      }
+      if (failure) throw failure;
+      // A launcher whose unit was stopped out from under it still exits zero, so the verdict alone cannot
+      // tell a cancelled command from one that ran to completion — and reporting a killed command as a
+      // success with no output is how a caller comes to act on work that never happened. A cancellation is
+      // reported the way the deadline above is: as the execution not having run to completion.
+      if (record.cancelled) throw Object.assign(new Error('Guest command was cancelled'), { cancelled: true });
+      return result;
+    } finally { this.#running.delete(key); }
   }
 
   /** The launch descriptor the daemon spawns and streams itself. The privileged request travels ahead of
@@ -684,9 +778,30 @@ export class NspawnClient {
     return receipt;
   }
 
-  async materializeRootfs(spec) {
+  /** A fresh disk for a new environment. The image is still the template and this client has no image
+   *  store, so the merged filesystem is exported by the client that has one and the privileged helper
+   *  extracts it. Only the helper can preserve the archive's ownership and then shift the whole tree into
+   *  the machine's uid range, which is the step that makes the tree a machine's rather than a container's.
+   *
+   *  The archive is written beside the pending tree, inside the disk directory `containerStorage` removes
+   *  wholesale when materialization fails, so a crash between the export and the removal cannot strand it
+   *  anywhere the disk's own cleanup does not already reach. Removing it is the image client's job for the
+   *  same reason writing it was: it is a FILE the service account owns, not a tree in the machine's uid
+   *  range, and the privileged tree operations deliberately take directories only. */
+  async materializeRootfs(spec, pendingPath) {
     this.#assertScope(spec);
-    throw new Error('A fresh nspawn disk is materialized from an export archive; direct image materialization arrives with nspawn environment creation');
+    const pending = checkedHostPath(pendingPath);
+    const archive = join(checkedHostPath(dirname(pending)), 'rootfs.tar.pending');
+    const imageId = await this.#images.exportImageRootfs(spec, archive);
+    try {
+      await this.extractRootfsArchive(spec, archive, pending);
+    } catch (cause) {
+      try { await this.#images.removeDiskPath(archive); }
+      catch (cleanup) { throw new AggregateError([cause, cleanup], `${cause.message}; export archive cleanup failed: ${cleanup.message}`); }
+      throw cause;
+    }
+    await this.#images.removeDiskPath(archive);
+    return imageId;
   }
 
   async extractRootfsArchive(spec, archivePath, targetPath) {

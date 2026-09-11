@@ -1,6 +1,11 @@
 import { createHash } from 'node:crypto';
 
 // Keep the Node toolchain on the same distribution as systemd and Chromium.
+// `systemd-networkd` is installed by the systemd package but ships disabled, and a machine given a
+// virtual ethernet has nothing else to configure its `host0`: the interface stays down, so the host side
+// of the pair stays without carrier and the machine has no network at all. Enabling it is the one service
+// the runtime depends on; nothing else general-purpose belongs in a development image. The resolver needs
+// nothing here — `systemd-resolved` is not installed and the image already carries a static resolver.
 // Both registry inputs are pinned; distro security updates are resolved when the recipe is built.
 export const PROJECT_CONTAINERFILE = `FROM docker.io/library/debian:bookworm-slim@sha256:88200866dfff7ea7f5cbcb6ec7c8a701889efe6fe859fe64d6990e4b07ea4171
 ENV container=podman
@@ -14,7 +19,8 @@ RUN apt-get update \\
  && apt-get clean \\
  && rm -rf /var/lib/apt/lists/* \\
  && mkdir -p /workspace /data /run/elowen \\
- && systemctl mask systemd-remount-fs.service getty.target
+ && systemctl mask systemd-remount-fs.service getty.target \\
+ && systemctl enable systemd-networkd.service systemd-networkd.socket
 WORKDIR /workspace
 STOPSIGNAL SIGRTMIN+3
 ENTRYPOINT ["/sbin/init"]

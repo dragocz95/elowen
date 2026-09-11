@@ -126,10 +126,15 @@ WantedBy=timers.target
 }
 
 /** sudoers drop-in letting the unprivileged service user run — without a password — only the
- *  privileged operations Elowen owns: restart its units, reinstall itself, and invoke the root-owned
- *  published-sites gateway helper with NO arguments (its bounded JSON request arrives on stdin). The
- *  helper grant is not a shell and accepts no path or command. Every command is pinned literally and the
- *  completed file is validated with `visudo -c` before it is trusted. */
+ *  privileged operations Elowen owns: restart its units, reinstall itself, refresh the root-owned
+ *  published-sites gateway helper, and invoke that helper with NO arguments (its bounded JSON request
+ *  arrives on stdin). The helper grant is not a shell and accepts no path or command. Every command is
+ *  pinned literally and the completed file is validated with `visudo -c` before it is trusted.
+ *
+ *  Nothing here grants an install whose SOURCE the service user can write. Pinning the argv fixes the
+ *  words, not the bytes behind them, and a grant binds to a user rather than to the code path it was
+ *  written for: the helper source is compared against the packaged copy before it is installed, and the
+ *  deployment record is written by the installer while it is already root. */
 export function elowenSudoers(user: string, reinstallCmd: string): string {
   // Built from SERVICES so the pinned restart commands can't drift from restartServices() (sudo matches
   // arguments positionally). The combined form serves update/`restart all`; the individual forms serve

@@ -16,7 +16,16 @@ import type { ContainerStorage } from '../../plugins/sandbox/lib/containerStorag
 
 const cleanup: (() => void)[] = [];
 afterEach(() => { for (const fn of cleanup.splice(0)) fn(); });
-function setup(config: Record<string, unknown> = {}) {
+/** `machineHost` is which world this fixture is in.
+ *
+ *  `null`, the default, is a host whose environments PREDATE the machine runtime: rows that already have
+ *  a materialized Podman disk, which is the population the runtime has to keep driving byte for byte and
+ *  what almost every test below is about. Rows are inserted lazily by the first request, so the marker
+ *  saying the runtime is still open is cleared as soon as one appears.
+ *
+ *  `'ready'` and `'unready'` leave the decision where production makes it, and answer the readiness probe
+ *  the way a provisioned or an unprovisioned host answers it. */
+function setup(config: Record<string, unknown> = {}, machineHost: 'ready' | 'unready' | null = null) {
   const root = mkdtempSync(join(tmpdir(), 'env-test-'));
   const sql = openDb(':memory:');
   const db = makePluginDb(sql, 'sandbox', { canMigrate: true });
@@ -125,6 +134,9 @@ function setup(config: Record<string, unknown> = {}) {
     inspect: vi.fn(async (spec: any) => machines.get(spec.name) ?? null),
     create: vi.fn(async (spec: any) => {
       if (!spec.disk || spec.disk.runtime !== 'nspawn') throw new Error('systemd-nspawn runs only rootfs-backed environments');
+      // The disk outlives the envelope, so an envelope written over one that already exists finds
+      // everything the last one left there.
+      diskFiles.set(spec.disk.id, diskFiles.get(spec.disk.id) ?? new Map());
       const row = { id: 'c'.repeat(64), state: 'stopped' };
       machines.set(spec.name, row);
       return row;
@@ -147,13 +159,48 @@ function setup(config: Record<string, unknown> = {}) {
       disk.owner = target;
       return target === 'nspawn' ? { uidBase: 1073741824, uidSize: 65536, previousUidBase: 100000 } : { uidBase: options.uidBase };
     }),
-    exec: vi.fn(async () => ({ code: 0, stdout: '', stderr: '', truncated: false })),
+    // Keyed by disk id, like the container fake: what a guest writes lands on the DISK, which is the
+    // whole reason an envelope can be thrown away and rebuilt without the environment losing anything.
+    exec: vi.fn(async (spec: any, _executionId: string, _argv: string[], options: any = {}) => {
+      const write = /elowen-guest-write:([^\s]+):([^\s]+)/.exec(String(options.input ?? ''));
+      if (write && spec.disk) diskFiles.get(spec.disk.id)?.set(write[1], write[2]);
+      const read = /elowen-guest-read:([^\s]+)/.exec(String(options.input ?? ''));
+      if (read && spec.disk) return { code: 0, stdout: diskFiles.get(spec.disk.id)?.get(read[1]) ?? '', stderr: '', truncated: false };
+      return { code: 0, stdout: '', stderr: '', truncated: false };
+    }),
     startPublication: vi.fn(), stopPublication: vi.fn(), activePublications: vi.fn(async () => []),
+    update: vi.fn(async () => {}), pause: vi.fn(async (spec: any) => { machines.get(spec.name).state = 'paused'; }),
+    cancelExecution: vi.fn(async () => ({ terminated: true })), releaseExecution: vi.fn(),
+    removeByName: vi.fn(async (spec: any) => { machines.delete(spec.name); }),
+    removeStorage: vi.fn(), removeSnapshotStorage: vi.fn(),
+    prepareExecution: vi.fn(async (_spec: any, _executionId: string, _argv: string[], options: any = {}) => ({
+      launch: { type: 'argv', file: '/usr/bin/sudo', args: ['-n', '/usr/local/libexec/elowen-site-gateway', ''], env: { HOME: '/host-service' } }, stdin: options.input })),
+    // The rows the helper reports, in the helper's own shape. `unready` carries the details a real host
+    // returns, because what the runtime does with them — quoting them back in its refusal — is the thing
+    // worth proving, and an empty detail would prove nothing.
+    hostReadiness: vi.fn(async () => (machineHost === 'ready'
+      ? { ready: true, items: [
+        { id: 'os:supported', label: 'Supported operating system', ok: true, detail: 'Ubuntu 24.04' },
+        { id: 'unit:elowen-machine', label: 'Machine unit template', ok: true, detail: 'installed and loaded' },
+      ] }
+      : { ready: false, items: [
+        { id: 'os:supported', label: 'Supported operating system', ok: true, detail: 'Ubuntu 24.04' },
+        { id: 'package:systemd-container', label: 'systemd container tools', ok: false, detail: 'not installed — run environment provisioning to install it' },
+        { id: 'unit:elowen-machine', label: 'Machine unit template', ok: false, detail: 'on disk but the manager has not read it — run: systemctl daemon-reload' },
+      ] })),
   };
   const dependencies = { ctx, db, dataDir: root, podman: podman as unknown as PodmanClient,
     nspawn: nspawn as unknown as PodmanClient, storage: storage as unknown as ContainerStorage };
-  const runtime = createEnvironmentRuntime({ ...dependencies, daemon: true });
-  const fork = createEnvironmentRuntime({ ...dependencies, daemon: false });
+  // Clearing the marker on the row rather than never writing it: the row has to be inserted by the
+  // runtime's own path, so this is the state a pre-existing environment is in, reached the way it is
+  // actually reached.
+  const predate = () => { if (!machineHost) db.prepare("UPDATE p_sandbox_runtimes SET spec_json=json_remove(spec_json,'$.runtimePending')").run(); };
+  const existing = (target: any) => (machineHost ? target : { ...target,
+    requestEnvironment: async (value: any) => { const result = await target.requestEnvironment(value); predate(); return result; },
+    registerSiteEnvironment: async (value: any) => { const result = await target.registerSiteEnvironment(value); predate(); return result; },
+    reconcile: async (...args: any[]) => { predate(); return await target.reconcile(...args); } });
+  const runtime = existing(createEnvironmentRuntime({ ...dependencies, daemon: true }));
+  const fork = existing(createEnvironmentRuntime({ ...dependencies, daemon: false }));
   cleanup.push(() => { endForwarders(); runtime.dispose(); fork.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
   return { runtime, fork, db, sql, ctx, podman, nspawn, machines, ownership, disk, storage, members, users, project, stores, root, containers, diskFiles, legacyRootfs, archives, warn, forwarders, publicationSocket, staleSocket, endForwarders };
 }
@@ -1689,5 +1736,140 @@ describe('environment runtime migration', () => {
     expect(specOf(sql).input.generation).toBe(2);
     expect(containers.has('elowen-project-7-g1')).toBe(false);
     expect(machines.get('elowen-project-7-g2')?.state).toBe('running');
+  });
+});
+
+/** A host that has been provisioned for the machine runtime, which is the only host a NEW environment is
+ *  built on. There is no flag and no per-environment choice: the readiness answer decides, once, and a
+ *  host that answers no refuses the creation instead of quietly building a container instead. */
+describe('a new environment on a machine host', () => {
+  const guestWrite = (path: string, value: string) => `elowen-guest-write:${path}:${value}\n`;
+  const guestRead = (path: string) => `elowen-guest-read:${path}\n`;
+  const specOf = (sql: any) => JSON.parse((sql.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any).spec_json);
+
+  async function machineProject() {
+    const context = setup({}, 'ready');
+    await context.runtime.requestEnvironment({ ...input, requestId: 'machine-start', action: { kind: 'start' } });
+    await context.runtime.reconcile();
+    return context;
+  }
+
+  it('builds a new environment on the machine runtime and records the choice on its disk', async () => {
+    const { runtime, sql, podman, nspawn, machines } = await machineProject();
+    const created = nspawn.create.mock.calls.at(-1)![0] as any;
+
+    expect(created.name).toBe('elowen-project-7-g1');
+    expect(created.disk.runtime).toBe('nspawn');
+    expect(machines.get('elowen-project-7-g1')?.state).toBe('running');
+    // The container runtime is not a fallback and was never asked to build anything.
+    expect(podman.create).not.toHaveBeenCalled();
+    // The choice is durable: it is on the disk record, which is the only discriminator the runtime reads.
+    expect(specOf(sql).input.disk.runtime).toBe('nspawn');
+    expect(specOf(sql).runtimePending).toBeUndefined();
+    const environment = await runtime.environmentFor(input);
+    expect(environment.state).toBe('running');
+  });
+
+  it('refuses to create anything on a host that is not ready and says what the host is missing', async () => {
+    const { runtime, podman, nspawn } = setup({}, 'unready');
+
+    const queued = await runtime.requestEnvironment({ ...input, requestId: 'machine-refused', action: { kind: 'start' } });
+    await runtime.reconcile();
+
+    const failed = await runtime.environmentOperation({ operationId: queued.id, accountUserId: 1 });
+    expect(failed!.status).toBe('failed');
+    // Every unmet row, with the command the helper named, rather than a generic "not ready".
+    expect(failed!.error).toContain('systemd container tools');
+    expect(failed!.error).toContain('run environment provisioning to install it');
+    expect(failed!.error).toContain('Machine unit template');
+    expect(failed!.error).toContain('systemctl daemon-reload');
+    // A satisfied row is not noise the refusal has to carry.
+    expect(failed!.error).not.toContain('Supported operating system');
+    // Nothing was built on either runtime, and no disk was materialized behind the refusal.
+    expect(nspawn.create).not.toHaveBeenCalled();
+    expect(podman.create).not.toHaveBeenCalled();
+  });
+
+  it('carries an installed package and an /etc change across envelope recreation', async () => {
+    const { runtime, nspawn, machines, diskFiles } = await machineProject();
+    const first = nspawn.create.mock.calls.at(-1)![0] as any;
+    // What a guest actually leaves behind: a package's files under the root filesystem, and an edited
+    // configuration file. Both are disk state, and the envelope holds neither.
+    await nspawn.exec(first, 'a'.repeat(32), ['/bin/bash', '-s'], { input: guestWrite('/usr/bin/ripgrep', 'installed') });
+    await nspawn.exec(first, 'b'.repeat(32), ['/bin/bash', '-s'], { input: guestWrite('/etc/elowen-machine.conf', 'tuned') });
+
+    await runtime.requestEnvironment({ ...input, requestId: 'machine-recreate', action: { kind: 'recreate' } });
+    await runtime.reconcile();
+
+    const second = nspawn.create.mock.calls.at(-1)![0] as any;
+    expect(nspawn.create).toHaveBeenCalledTimes(2);
+    expect(machines.get('elowen-project-7-g1')?.state).toBe('running');
+    // The SAME disk, and both writes still on it, read back through the rebuilt envelope.
+    expect(second.disk.id).toBe(first.disk.id);
+    expect((await nspawn.exec(second, 'c'.repeat(32), ['/bin/bash', '-s'], { input: guestRead('/usr/bin/ripgrep') })).stdout).toBe('installed');
+    expect((await nspawn.exec(second, 'd'.repeat(32), ['/bin/bash', '-s'], { input: guestRead('/etc/elowen-machine.conf') })).stdout).toBe('tuned');
+    expect(diskFiles.get(first.disk.id)!.size).toBe(2);
+  });
+
+  it('runs a command, a cancellation and a long-running service against the machine envelope', async () => {
+    const { runtime, nspawn } = await machineProject();
+    const spec = nspawn.create.mock.calls.at(-1)![0] as any;
+    nspawn.exec.mockImplementationOnce(async () => ({ code: 7, stdout: 'out', stderr: 'err', truncated: false }));
+
+    const result = await nspawn.exec(spec, 'e'.repeat(32), ['/bin/false']);
+    expect(result).toMatchObject({ code: 7, stdout: 'out', stderr: 'err' });
+
+    await runtime.projectPublicationBinding?.({ project: { kind: 'managed', projectId: 7 }, accountUserId: 1 }).catch(() => {});
+    await nspawn.cancelExecution?.(spec, 'e'.repeat(32));
+    // A stop is what ends a long-running guest service, and the envelope reports it as stopped rather
+    // than leaving the row to guess.
+    await runtime.requestEnvironment({ ...input, requestId: 'machine-stop', action: { kind: 'stop' } });
+    await runtime.reconcile();
+    expect((await runtime.environmentFor(input)).state).toBe('stopped');
+  });
+
+  it('changes limits, snapshots and restores without ever leaving the machine runtime', async () => {
+    const { runtime, sql, nspawn, storage } = await machineProject();
+    const first = nspawn.create.mock.calls.at(-1)![0] as any;
+
+    await runtime.requestEnvironment({ ...input, accountUserId: 3, requestId: 'machine-limits', action: { kind: 'limits', limits: { cpus: 2, memoryMb: 2048, pidsLimit: 1024 } } });
+    await runtime.reconcile();
+    expect((nspawn.update.mock.calls.at(-1) as any[])[0].disk.id).toBe(first.disk.id);
+
+    storage.snapshot.mockImplementation(async (_spec: any, snapshotId: string) => ({ version: 2, snapshotId,
+      sourceImage: { reference: first.image, id: 'sha256:' + 'd'.repeat(64) }, trees: [], worktrees: [] }));
+    const capture = await runtime.requestEnvironment({ ...input, requestId: 'machine-snapshot', action: { kind: 'snapshot' } });
+    await runtime.reconcile();
+    const saved = await runtime.environmentOperation({ operationId: capture.id, accountUserId: 1 });
+    storage.readSnapshot.mockResolvedValue({ version: 2, snapshotId: saved!.snapshotId,
+      sourceImage: { reference: first.image, id: 'sha256:' + 'd'.repeat(64) }, trees: [] });
+
+    await runtime.requestEnvironment({ ...input, requestId: 'machine-restore', action: { kind: 'restore', snapshotId: saved!.snapshotId } });
+    await runtime.reconcile();
+
+    const restored = nspawn.create.mock.calls.at(-1)![0] as any;
+    expect(restored.disk.id).not.toBe(first.disk.id);
+    // A restore replaces the disk and NOT the runtime. A fresh disk record built without the marker would
+    // hand a tree owned by the machine's uid range back to the container runtime, which cannot read it.
+    expect(restored.disk.runtime).toBe('nspawn');
+    expect(specOf(sql).input.disk.runtime).toBe('nspawn');
+  });
+
+  it('reports the missing rows through the project overview, and the runtime once it is decided', async () => {
+    const unready = setup({}, 'unready');
+    const overview = await unready.runtime.projectOverview(input);
+    expect(overview.runtime.pending).toBe(true);
+    expect(overview.runtime.name).toBeNull();
+    expect(overview.runtime.readiness.ready).toBe(false);
+    // The rows travel to the surface as the helper wrote them: nothing is keyed off an id, and every
+    // detail with its command survives the trip.
+    expect(overview.runtime.readiness.items.map((item: any) => item.id))
+      .toEqual(['os:supported', 'package:systemd-container', 'unit:elowen-machine']);
+    expect(overview.runtime.readiness.items.find((item: any) => item.id === 'unit:elowen-machine').detail)
+      .toContain('systemctl daemon-reload');
+
+    const ready = await machineProject();
+    const decided = await ready.runtime.projectOverview(input);
+    expect(decided.runtime).toEqual({ name: 'nspawn', pending: false, readiness: null });
   });
 });

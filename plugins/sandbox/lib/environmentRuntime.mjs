@@ -167,6 +167,46 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
    *  environment that has not been migrated keeps running on Podman and a migration can hold both
    *  envelopes of the same environment at once without either client learning about the other. */
   const runtimeFor = (spec) => selectRuntimeClient(spec, { podman, nspawn });
+  /** What the host still owes the machine runtime, held briefly because two very different callers ask:
+   *  the overview a browser polls, and the one-time decision below. The answer is a privileged round trip
+   *  and it changes only when an operator changes the host, so a few seconds of staleness costs nothing —
+   *  and the helper re-checks its own gates when an envelope is actually written, so a stale `ready` can
+   *  delay a refusal but never turn one into a success. */
+  const HOST_READINESS_TTL_MS = 15_000;
+  let readinessCache = null;
+  async function machineReadiness() {
+    if (!nspawn || typeof nspawn.hostReadiness !== 'function') {
+      return { ready: false, items: [{ id: 'runtime:machine', label: 'Machine runtime', ok: false, detail: 'this runtime has no machine client' }] };
+    }
+    if (readinessCache && Date.now() - readinessCache.at < HOST_READINESS_TTL_MS) return readinessCache.value;
+    const value = await nspawn.hostReadiness();
+    readinessCache = { at: Date.now(), value };
+    return value;
+  }
+  const readinessRefusal = (readiness) => readiness.items.filter((item) => !item.ok)
+    .map((item) => `${item.label}: ${item.detail ?? 'not satisfied'}`).join('; ');
+  /** Which runtime a NEW environment is built on, decided once, here, and nowhere else.
+   *
+   *  There is no configuration flag and no per-environment choice. A host that can hold a machine holds
+   *  every environment created from now on; a host that cannot refuses the creation and names what is
+   *  missing. Falling back to a container instead would leave two runtimes in service on one host for a
+   *  reason nobody recorded, which is the exact ambiguity `disk.runtime` exists to prevent.
+   *
+   *  It runs at the moment the disk is about to be materialized, not when the row was inserted: a row is
+   *  created by merely LOOKING at a project, and a look must not reach for a privileged round trip. An
+   *  environment that already has a disk never reaches here — its runtime is its disk record's, and no
+   *  readiness answer can move it. */
+  async function decideRuntime(row) {
+    if (!row.spec.runtimePending) return;
+    const readiness = await machineReadiness();
+    if (!readiness.ready) throw error('runtime_not_ready', `This host cannot run an environment yet — ${readinessRefusal(readiness)}`);
+    const disk = row.spec.input.disk;
+    row.spec.input.disk = createEnvironmentDiskSpec({ resource: row.spec.input.resource, image: disk.sourceImage, runtime: 'nspawn' },
+      diskPathsFor(row.spec), disk.id, disk.componentGeneration);
+    delete row.spec.runtimePending;
+    store.save(row);
+    store.log(row.kind, row.resource_id, 'environment will run on the machine runtime');
+  }
   const transfers = createGuestFileTransport({ db, helperSource: FILE_HELPER, runGuest,
     runCleanup: async (row, _userId, argv, options) => {
       const current = store.get(row.kind, row.resource_id);
@@ -231,7 +271,9 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       : undefined;
     return { registration, input: { resource, generation, image: registration.image, ...(disk ? { disk } : {}), network: registration.network,
       workspaceReadOnly: registration.workspaceReadOnly, limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } },
-      binding: { namespace, sitesDataDir: registration.sitesDataDir, sourcePath: registration.sourcePath, brokerDir: registration.brokerDir } };
+      binding: { namespace, sitesDataDir: registration.sitesDataDir, sourcePath: registration.sourcePath, brokerDir: registration.brokerDir },
+      // A Site without a persistent disk is a legacy image-backed environment and has no runtime to pick.
+      ...(disk ? { runtimePending: true } : {}) };
   }
   /** Where this project is mounted inside its own container — persisted with the row, so renaming the
    *  project later cannot silently change a running container's identity. */
@@ -275,11 +317,34 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       const paths = { sandboxDataDir: dataDir, namespace };
       const resource = { kind: 'project', id: Number(id) };
       const disk = createEnvironmentDiskSpec({ resource, image: PROJECT_BASE_IMAGE_TAG }, paths, randomUUID().replaceAll('-', ''));
-      const spec = { input: { resource, generation: 1, image: PROJECT_BASE_IMAGE_TAG, disk, previewBroker: true, workspaceTarget: managedGuestRoot(authority.slug, Number(id)), limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } }, paths };
+      // Nothing is materialized yet, so the runtime is still open. `decideRuntime` closes it at the first
+      // start; until then the disk record is the Podman one every existing row already carries, which is
+      // what keeps the serialization of a row that never starts identical to the rows before this change.
+      const spec = { input: { resource, generation: 1, image: PROJECT_BASE_IMAGE_TAG, disk, previewBroker: true, workspaceTarget: managedGuestRoot(authority.slug, Number(id)), limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } }, paths, runtimePending: true };
       row = store.insert(kind, id, Number(id), spec, effective);
     }
     return row;
   }
+  /** Which runtime this environment runs on, and — only while that is still open — what the host would
+   *  have to satisfy before it can be created at all.
+   *
+   *  An environment that already has a disk reports its runtime and nothing else: the readiness rows
+   *  describe a decision that was made once and cannot be revisited, so showing them beside a running
+   *  environment would invite someone to act on them. A probe that fails is REPORTED as an unmet row
+   *  rather than failing the read: this is the overview a browser polls, and the reason the probe failed
+   *  is the same thing the operator needs to see. */
+  async function runtimeView(row) {
+    const decided = row?.spec?.input?.disk;
+    if (decided && !row.spec.runtimePending) return { name: decided.runtime ?? 'podman', pending: false, readiness: null };
+    if (row && !row.spec.runtimePending) return { name: null, pending: false, readiness: null };
+    let readiness;
+    try { readiness = await machineReadiness(); }
+    catch (cause) {
+      readiness = { ready: false, items: [{ id: 'runtime:machine', label: 'Machine runtime', ok: false, detail: cause.message }] };
+    }
+    return { name: readiness.ready ? 'nspawn' : null, pending: true, readiness };
+  }
+
   const view = (row) => ({ [row.kind === 'project' ? 'projectId' : 'siteId']: row.kind === 'project' ? Number(row.resource_id) : row.resource_id,
     generation: row.generation, state: row.state, desiredState: row.desired_state, lastError: row.error ?? null, limits: effectiveLimits(row.limits) });
   const assertGeneration = (row, expected) => { if (expected !== undefined && expected !== row.generation) throw error('generation_changed', 'Environment generation changed'); };
@@ -808,13 +873,14 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         step(op, 'image', buildFraction(line), true);
       });
       if (row.spec.input.disk?.sourceImage === PROJECT_BASE_IMAGE_TAG) {
-        row.spec.input.disk = createEnvironmentDiskSpec({ resource: row.spec.input.resource, image: row.spec.input.image }, row.spec.paths, row.spec.input.disk.id);
+        row.spec.input.disk = createEnvironmentDiskSpec({ resource: row.spec.input.resource, image: row.spec.input.image, runtime: row.spec.input.disk.runtime }, row.spec.paths, row.spec.input.disk.id);
       }
       store.save(row); checkpoint(op, { imageReady: true });
     }
     await rebuildMovedSiteContainer(row, op);
     step(op, 'storage');
     if (!row.spec.containerId) {
+      await decideRuntime(row);
       await storage.prepare(specFor(row.spec));
       await adoptHostWorkspace(row);
     }
@@ -1410,7 +1476,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         if (manifest.version === 2) {
           if (!old.spec.input.disk) throw error('snapshot_driver_mismatch', 'A disk snapshot requires a rootfs-backed environment');
           next.input.image = manifest.sourceImage.reference;
-          next.input.disk = createEnvironmentDiskSpec({ resource: next.input.resource, image: next.input.image }, diskPathsFor(next), randomUUID().replaceAll('-', ''));
+          // A restore replaces the disk, never the runtime that reads it: the snapshot is a copy of THIS
+          // environment's tree, already owned by whichever uid range its runtime uses.
+          next.input.disk = createEnvironmentDiskSpec({ resource: next.input.resource, image: next.input.image, runtime: old.spec.input.disk.runtime },
+            diskPathsFor(next), randomUUID().replaceAll('-', ''));
         } else {
           if (old.spec.input.disk) throw error('snapshot_driver_mismatch', 'A legacy snapshot requires a legacy environment');
           next.input.image = manifest.image.reference;
@@ -1986,7 +2055,8 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       const environment = await control.environmentFor(input);
       const id = projectId(input.project);
       const operations = store.recentOperations('project', id, OPERATION_HISTORY).map(operationView);
-      return { environment, snapshots: await snapshots('project', id, input.accountUserId), operations };
+      return { environment, runtime: await runtimeView(store.get('project', id)),
+        snapshots: await snapshots('project', id, input.accountUserId), operations };
     },
     requestEnvironment: (input) => request('project', projectId(input.project), input),
     environmentOperation: (input) => getOperation('project', input), projectFiles, revokeProjectAccess,

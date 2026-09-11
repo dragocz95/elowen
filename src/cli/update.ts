@@ -7,7 +7,7 @@ import { dirname, basename, join } from 'node:path';
 import { isNewer } from './version.js';
 import { start, stop, isAlive } from './launcher.js';
 import { readInstallInfo } from './installInfo.js';
-import { installSiteGatewayHelper } from '../privileged/publishedSitesGateway.js';
+import { installSiteGatewayHelper, provisionMachineRuntime } from '../privileged/publishedSitesGateway.js';
 import { restartServices } from './systemd.js';
 import { launchdRestart } from './launchd.js';
 import { dataDir } from '../shared/paths.js';
@@ -143,7 +143,17 @@ export interface UpdateResult { updated: boolean; from: string; to: string }
  *  stale helper is reported as a readiness failure rather than quietly kept. */
 async function refreshSiteGatewayHelper(): Promise<boolean> {
   if (process.platform !== 'linux' || readInstallInfo() === null) return false;
-  return await installSiteGatewayHelper();
+  const installed = await installSiteGatewayHelper();
+  // The machine runtime's host artefacts come forward with the executable, because an instance that
+  // upgrades into this runtime has never had them and nothing else installs them. Provisioning converges,
+  // so this is a no-op on a host that already carries them. Reported and not fatal: an update that cannot
+  // reach apt must still land the release it was run for.
+  try {
+    await provisionMachineRuntime();
+  } catch (error) {
+    process.stderr.write(`machine runtime provisioning was not completed: ${(error as Error).message}\n`);
+  }
+  return installed;
 }
 
 /** The systemd half of an update restart. Exactly one canonical non-blocking attempt is allowed: falling

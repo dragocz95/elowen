@@ -1,9 +1,12 @@
 #!/usr/bin/node
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
-  chmodSync, chownSync, closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readSync,
-  readdirSync, realpathSync, renameSync, rmSync, writeFileSync,
+  chmodSync, chownSync, closeSync, constants, existsSync, fchmodSync, fchownSync, fstatSync, fsyncSync,
+  lstatSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync,
+  statSync, writeFileSync,
 } from 'node:fs';
+
+const { O_DIRECTORY, O_NOFOLLOW, O_RDONLY } = constants;
 import { dirname, join, normalize } from 'node:path';
 
 export const DEPLOYMENT_PATH = '/etc/elowen/site-gateway.json';
@@ -460,6 +463,13 @@ function defaultReadText(path) {
   try { return readFileSync(path, 'utf8'); } catch { return ''; }
 }
 
+/** The permission bits of a managed artefact, or -1 when it is not there at all. Content alone does not
+ *  settle whether a root-owned artefact is intact: a polkit rule left group-writable is a rule anyone in
+ *  that group can rewrite, so provisioning treats the mode as part of the artefact. */
+function defaultReadMode(path) {
+  try { return statSync(path).mode & 0o7777; } catch { return -1; }
+}
+
 export function supportedEnvironmentOs(raw) {
   if (typeof raw !== 'string' || !raw.trim()) return { ok: false, detail: 'operating system information is unavailable' };
   const values = new Map();
@@ -770,7 +780,28 @@ const EXEC_MAX_SECONDS = 15 * 60;
 const EXEC_GRACE_SECONDS = 10;
 
 /** Denied to the guest on top of nspawn's default bound. Every one of these is also denied by rootless
- *  Podman's default set, so this is the capability parity the Podman runtime already provides. */
+ *  Podman's default set, so this is the capability parity the Podman runtime already provides.
+ *
+ *  This set, `DevicePolicy=closed` in the unit template, `PrivateUsers` shifting and the read-only binds
+ *  are what stands in for Podman's `containers-default` AppArmor profile, and no profile ships alongside
+ *  them. That is a deliberate, measured gap rather than an oversight:
+ *
+ *    - systemd-nspawn 255.4 has no AppArmor integration at all. It exposes `-Z` and `-L` for SELinux
+ *      contexts and nothing equivalent for AppArmor, and `systemd.nspawn(5)` has no AppArmor setting, so
+ *      there is no hook through which a profile could be applied to the guest payload the way Podman
+ *      applies `containers-default` to a container process.
+ *    - AppArmor 4.0.1 ships no nspawn profile to start from. The profiles present for comparable tools
+ *      are either LXC's, which confine a different supervisor, or the Ubuntu 24.04 `flags=(unconfined)`
+ *      shells around `crun` and `bwrap`, which grant `userns` and confine nothing.
+ *    - A profile attached to `/usr/bin/systemd-nspawn` is inherited by everything the supervisor execs,
+ *      including the guest's init and every process under it, because nspawn performs no profile
+ *      transition and AppArmor does not reset a profile at a mount-namespace boundary. A machine here is
+ *      a general-purpose development environment running arbitrary commands, so any profile tight enough
+ *      to constrain the supervisor also constrains the payload it exists to run.
+ *
+ *  Closing the gap would mean a complain-mode learning pass against a booting guest and a profile whose
+ *  failure mode is every machine refusing to boot. Until that can be done against a real machine, the
+ *  honest position is the documented delta rather than a profile that only renames `unconfined`. */
 const NSPAWN_DROP_CAPABILITIES = Object.freeze([
   'CAP_AUDIT_CONTROL', 'CAP_AUDIT_READ', 'CAP_SYS_PTRACE', 'CAP_SYS_TTY_CONFIG', 'CAP_LEASE',
   'CAP_LINUX_IMMUTABLE', 'CAP_IPC_LOCK', 'CAP_IPC_OWNER', 'CAP_BLOCK_SUSPEND', 'CAP_WAKE_ALARM',
@@ -828,25 +859,118 @@ polkit.addRule(function(action, subject) {
 `;
 }
 
-/** veth is off by default: a veth machine can address the host at the gateway address, which the Podman
- *  runtime's `allow_host_loopback=false` does not expose. These two rules are the condition for enabling
- *  it, they are reported and never applied — the daemon does not mutate the firewall. */
+/** nspawn names the host side of the link `ve-<machine>` and truncates it to the interface name limit, so
+ *  a per-machine rule is not expressible and every rule below is written against the whole family. */
+const MACHINE_INTERFACE = 've-+';
+
+/** veth is off by default: a veth machine can address the host directly, which the Podman runtime's
+ *  `allow_host_loopback=false` does not expose. These rules are the condition for enabling it. They are
+ *  reported and never applied — the daemon does not mutate the firewall, it refuses until they exist.
+ *
+ *  The guard rules sit in INPUT rather than FORWARD, which is where the plan first placed them. A packet
+ *  from a machine to an address the host itself holds is delivered locally, so the routing decision sends
+ *  it to INPUT and it never reaches FORWARD; a FORWARD rule would have matched nothing and the isolation
+ *  it promised would have been imaginary. The DHCP exception has to precede the guard, because the host
+ *  runs the address server for the link.
+ *
+ *  Forwarding needs both directions named. Measured on a Docker host against a bare IP: with the outbound
+ *  accept alone the request left and the connection timed out after ten seconds, and with the return-path
+ *  rule beside it the same request answered 200. A reply arrives as `-i eth0 -o ve-+`, which matches
+ *  neither the outbound accept nor anything in Docker's own chains, and falls through to the FORWARD DROP
+ *  policy Docker installs. A machine that can send and never receive looks like a name-resolution fault
+ *  and is not one. The two DOCKER-USER rules do not overlap, so their order relative to each other is
+ *  free; the DHCP exception still has to precede the INPUT guard.
+ *
+ *  IPv6 needs only the guard, and that is a statement about this host rather than about IPv6. Measured:
+ *  the host carries no global IPv6 address, the `ip6tables` FORWARD policy is ACCEPT, and a guest gets
+ *  nothing but a link-local address on its side of the link. There is no v6 path off the box to keep
+ *  open, and the one v6 reach that does exist is the guest to the host's link-local address, which the
+ *  guard closes. If the host ever gains IPv6 connectivity this needs measuring again, because a global
+ *  address would put v6 forwarding in play and the set above would no longer be complete. */
 export const NSPAWN_FIREWALL_RULES = Object.freeze([
   Object.freeze({
-    id: 'firewall:docker-user',
-    label: 'Container forwarding rule',
+    id: 'firewall:forward-out',
+    label: 'Machine forwarding',
+    binary: '/usr/sbin/iptables',
     chain: 'DOCKER-USER',
-    rule: '-i ve-+ -j ACCEPT',
-    detail: "without it Docker's FORWARD DROP silently kills all machine networking",
+    insert: true,
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'ACCEPT']),
+    why: 'Docker sets the FORWARD policy to DROP, so without it a machine reaches nothing',
+  }),
+  Object.freeze({
+    id: 'firewall:forward-back',
+    label: 'Machine return path',
+    binary: '/usr/sbin/iptables',
+    chain: 'DOCKER-USER',
+    insert: true,
+    spec: Object.freeze(['-o', MACHINE_INTERFACE, '-m', 'conntrack', '--ctstate', 'RELATED,ESTABLISHED', '-j', 'ACCEPT']),
+    why: 'a reply comes back the other way round and matches neither the rule above nor any chain Docker owns, so a machine sends and never receives',
+  }),
+  Object.freeze({
+    id: 'firewall:machine-dhcp',
+    label: 'Machine address lease',
+    binary: '/usr/sbin/iptables',
+    chain: 'INPUT',
+    insert: true,
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-p', 'udp', '--dport', '67', '-j', 'ACCEPT']),
+    why: 'the host runs the address server for the link, so the guard below must not cover it',
   }),
   Object.freeze({
     id: 'firewall:host-guard',
-    label: 'Machine-to-host forwarding guard',
-    chain: 'FORWARD',
-    rule: '-i ve-+ -d 127.0.0.0/8 -j DROP',
-    detail: 'without it a veth machine can address the host at the gateway address',
+    label: 'Machine-to-host guard',
+    binary: '/usr/sbin/iptables',
+    insert: false,
+    chain: 'INPUT',
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'DROP']),
+    why: 'everything else a machine addresses to the host arrives here, not on FORWARD',
+  }),
+  Object.freeze({
+    id: 'firewall:host-guard6',
+    label: 'Machine-to-host guard (IPv6)',
+    binary: '/usr/sbin/ip6tables',
+    chain: 'INPUT',
+    insert: false,
+    spec: Object.freeze(['-i', MACHINE_INTERFACE, '-j', 'DROP']),
+    why: 'the link carries IPv6 link-local addressing, which the IPv4 table does not see',
   }),
 ]);
+
+/** The exact command an operator runs, in the order the rules are listed: the lease exception is inserted
+ *  at the head of INPUT and the guard is appended, so the guard cannot shadow it. */
+export function firewallRuleCommand(rule) {
+  return `${rule.binary} ${rule.insert ? `-I ${rule.chain} 1` : `-A ${rule.chain}`} ${rule.spec.join(' ')}`;
+}
+
+export const MACHINE_FIREWALL_UNIT_NAME = 'elowen-machine-firewall.service';
+export const MACHINE_FIREWALL_UNIT_PATH = `/etc/systemd/system/${MACHINE_FIREWALL_UNIT_NAME}`;
+
+/** The rules above, applied by the host itself at every boot.
+ *
+ *  A packet filter keeps nothing across a reboot on its own, and this host has no persistence package
+ *  installed. Leaving that to the operator meant that after any restart no environment could be created
+ *  until somebody remembered five commands, and reporting it loudly does not make the host less broken.
+ *
+ *  Ordering is the whole design. Docker rebuilds its chains when it starts, so a unit that ran before it
+ *  would leave the guard missing while machines are running; this one is ordered after `docker.service`
+ *  and is also pulled in BY it, so a Docker restart re-applies the rules rather than silently dropping
+ *  them. Each line checks before it acts, which is what makes a second boot, a re-run and a hand-applied
+ *  rule all end in the same state. The condition keeps a host without a packet filter from failing the
+ *  unit: the readiness rows then report the rules as missing, which is the truth. */
+export const MACHINE_FIREWALL_UNIT = `# Managed by Elowen. Do not edit: the root-owned helper rewrites this file.
+[Unit]
+Description=Elowen machine firewall rules
+Documentation=man:iptables(8)
+After=network-online.target docker.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecCondition=/usr/bin/test -x /usr/sbin/iptables -a -x /usr/sbin/ip6tables
+${NSPAWN_FIREWALL_RULES.map((rule) => `ExecStart=/bin/sh -c '${rule.binary} -C ${rule.chain} ${rule.spec.join(' ')} 2>/dev/null || ${firewallRuleCommand(rule)}'`).join('\n')}
+
+[Install]
+WantedBy=multi-user.target docker.service
+`;
 
 export function machineUnitFor(machine) {
   if (typeof machine !== 'string' || !NSPAWN_MACHINE.test(machine)) fail('the machine name is invalid');
@@ -859,25 +983,36 @@ function trustedStorageRoot(value) {
   return value;
 }
 
-/** The storage roots the nspawn operations derive every path from. They live in the same root-owned
- *  record as the Sites deployment and are never accepted from a request. Reading them is deliberately
- *  independent of the Sites half of that record: an instance with no published-sites domain still runs
- *  environments. */
-export function storageRootsFrom(raw) {
-  const storage = raw && typeof raw === 'object' ? raw.storage : null;
-  if (!storage || typeof storage !== 'object') fail('the deployment record carries no trusted storage roots');
+/** The storage roots every machine path is held against, COMPUTED HERE from the passwd home of the
+ *  account sudo says invoked this helper, and read from nowhere.
+ *
+ *  They used to be read out of the deployment record, and that was a hole rather than a shortcut. The
+ *  record is installed through a sudoers-pinned command whose source path is fixed and writable by the
+ *  service user, and a sudoers grant binds to a USER, not to the code path that was meant to use it. So
+ *  anything running as the service account could stage a record naming `/etc/systemd` as a storage root,
+ *  run the pinned install, and from the very next request every path check in this file would agree that
+ *  `/etc/systemd` is a legitimate place to unpack a tar as root or to delete a tree. The roots decide what
+ *  root will touch, so they cannot come from anything the caller can reach.
+ *
+ *  `serviceUser` already resolves the name sudo reports through getent and refuses unless the passwd uid
+ *  and gid match `SUDO_UID` and `SUDO_GID`, so the home below is the home of the account that actually
+ *  invoked this process. `src/shared/siteGateway.ts` makes the same derivation for the installer; the two
+ *  are held together by `tests/contract/nspawnHelper.test.ts`. */
+export function storageRootsFor(home) {
+  if (typeof home !== 'string' || !home.startsWith('/')) fail('the invoking service user has no home directory');
+  const pluginData = join(home, '.config', 'elowen', 'plugins-data');
   return Object.freeze({
-    sandboxDataDir: trustedStorageRoot(storage.sandboxDataDir),
-    sitesDataDir: trustedStorageRoot(storage.sitesDataDir),
+    sandboxDataDir: trustedStorageRoot(join(pluginData, 'sandbox')),
+    sitesDataDir: trustedStorageRoot(join(pluginData, 'sites')),
   });
 }
 
-function readStorageRoots() {
-  return storageRootsFrom(JSON.parse(readFileSync(DEPLOYMENT_PATH, 'utf8')));
+function readStorageRoots(options) {
+  return storageRootsFor(serviceUser(options.runner ?? defaultCommandRunner, options.env ?? process.env).home);
 }
 
-/** Every root a machine path may resolve under. The first two come from the root-owned deployment
- *  record; the third is the Sites ingress directory this helper already owns and binds into a machine. */
+/** Every root a machine path may resolve under. The first two are the service account's own storage; the
+ *  third is the Sites ingress directory this helper already owns and binds into a machine. */
 function trustedRoots(storage) {
   return [storage.sandboxDataDir, storage.sitesDataDir, RUNTIME_SOCKET_ROOT];
 }
@@ -950,7 +1085,17 @@ export function nspawnDiskPaths(storage, request) {
 /** The `systemd-run` command line, built here and never taken from the request. The guest argv is opaque
  *  payload: it is placed after `--`, where it can no longer be read as an option, and passed through
  *  untouched. The bounds below are transport hygiene — they protect the command line and the pipe, not
- *  the guest — and are the same ones the Podman runtime applies today. */
+ *  the guest — and are the same ones the Podman runtime applies today.
+ *
+ *  `--expand-environment=no` is what makes "untouched" true. A transient unit's command line is a systemd
+ *  command line, and by default the manager substitutes `${VAR}` and `$VAR` in it at exec time. Measured
+ *  on this host: `-f=${Status}` arrives as `-f=`, `$HOME` disappears as a whole argument because an unset
+ *  `$VAR` word-splits into nothing, and `$$` collapses to `$`. Any guest command carrying a variable
+ *  reference — a build script, a make invocation, anything a person types with `$HOME` in it — would run
+ *  as something other than what was asked for, with no error anywhere. The flag sets the command through
+ *  the property that carries the no-expansion flag, and all six probe cases then arrive byte for byte.
+ *  Percent specifiers were measured to pass through untouched either way: they are resolved when a unit
+ *  FILE is parsed, and a transient unit has none. */
 export function nspawnExecArgs(request) {
   const machine = typeof request.machine === 'string' && NSPAWN_MACHINE.test(request.machine) ? request.machine : fail('the machine name is invalid');
   const unit = typeof request.unit === 'string' && NSPAWN_EXECUTION_UNIT.test(request.unit) ? request.unit : fail('the execution unit name is invalid');
@@ -975,8 +1120,9 @@ export function nspawnExecArgs(request) {
   const detached = request.detached === true;
   return [
     '-M', machine, '--quiet', ...(detached ? [] : ['--pipe', '--wait']), '--collect', `--unit=${unit}`,
-    '--service-type=exec', '--property=KillMode=control-group', '--property=TimeoutStopSec=5s',
-    '--property=TasksMax=infinity', ...(detached ? [] : [`--property=RuntimeMaxSec=${seconds}s`]),
+    '--service-type=exec', '--expand-environment=no', '--property=KillMode=control-group',
+    '--property=TimeoutStopSec=5s', '--property=TasksMax=infinity',
+    ...(detached ? [] : [`--property=RuntimeMaxSec=${seconds}s`]),
     `--working-directory=${cwd}`, '--', ...argv,
   ];
 }
@@ -1146,26 +1292,65 @@ function writeIdentity(paths, storage, fields, options) {
   // symlink pointing out of the storage roots would have root create directories and a file at the other
   // end of it — the atomic write creates missing parents.
   const directory = trustedPath(storage, paths.directory);
-  ensureIdentityDirectory(join(directory, '.elowen'));
-  const identity = { ...(nspawnIdentity(paths, storage) ?? {}), ...fields, updatedAt: new Date().toISOString() };
+  // The chown is skipped exactly where the write is faked: a test seam runs unprivileged and cannot give
+  // a file away, and the two must not disagree about who owns the record.
+  const privileged = options.writeAtomic === undefined;
+  const gid = privileged ? serviceGroupId(options.env ?? process.env) : -1;
+  ensureIdentityDirectory(join(directory, '.elowen'), gid);
+  // Written whole, never merged over what is already there. The record is composed from fields this
+  // helper derived and validated itself, and a previous file is the service user's to replace: merging
+  // would carry whatever keys it planted into a root-owned record, and the day something reads a key it
+  // did not put there, that is where it came from.
+  const identity = { ...fields, updatedAt: new Date().toISOString() };
   writeAtomic(paths.identity, Buffer.from(`${JSON.stringify(identity, null, 2)}\n`), 0o640);
-  if (options.writeAtomic === undefined) chownSync(paths.identity, 0, serviceGroupId(options.env ?? process.env));
+  // Safe by containment rather than by descriptor: `.elowen` is root-owned and not group-writable, so the
+  // account that owns the disk directory around it cannot unlink this file and put a link in its place.
+  if (privileged) chownSync(paths.identity, 0, gid);
   return identity;
 }
 
 /** Create the identity directory explicitly rather than letting a recursive mkdir do it: an existing
  *  entry has to BE a directory and must not be a symlink, and that is a question a recursive mkdir never
- *  asks. */
-function ensureIdentityDirectory(path) {
-  let stat;
+ *  asks.
+ *
+ *  It gets the same root-owned, service-group treatment as the record inside it. A group that cannot
+ *  traverse the directory cannot open the file, so a root:root directory made every ownership check fail
+ *  with EACCES and left the whole runtime unusable even though the record itself was readable. 0750 grants
+ *  the traverse and nothing else: the group still cannot create, remove or replace anything here.
+ *
+ *  An existing directory is converged rather than trusted, because the directories the earlier helper
+ *  created are all root:root and would otherwise stay broken until their disk was rebuilt. */
+function ensureIdentityDirectory(path, gid) {
+  // The disk directory around this one belongs to the service user, so both the existence check and the
+  // repair happen through one descriptor rather than through the name twice. `O_DIRECTORY|O_NOFOLLOW`
+  // refuses a symlink and cannot open a regular file, which is the same refusal the lstat made, done in
+  // the only way that leaves no gap for the entry to be swapped underneath it.
+  let fd;
   try {
-    stat = lstatSync(path);
+    fd = openDirectory(path);
   } catch (error) {
-    if (!error || error.code !== 'ENOENT') throw error;
+    if (!error || error.code !== 'ENOENT') {
+      if (error && (error.code === 'ELOOP' || error.code === 'ENOTDIR')) fail('the disk identity directory is not a directory');
+      throw error;
+    }
     mkdirSync(path, { mode: 0o750 });
-    return;
+    fd = openDirectory(path);
   }
-  if (stat.isSymbolicLink() || !stat.isDirectory()) fail('the disk identity directory is not a directory');
+  try {
+    const stat = fstatSync(fd);
+    fchmodSync(fd, 0o750);
+    // Converged rather than trusted: every directory an earlier helper made is root:root, which left the
+    // service group without the traverse permission the record inside it depends on.
+    if (gid >= 0 && (stat.uid !== 0 || stat.gid !== gid)) fchownSync(fd, 0, gid);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+/** A directory opened as itself: never a symlink, never a regular file, and the same object for every
+ *  operation that follows on the descriptor. */
+function openDirectory(path) {
+  return openSync(path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW);
 }
 
 /** The identity fields the runtime holds against its own specification, field by field, on every
@@ -1213,6 +1398,25 @@ function nspawnMaterialize(request, storage, options) {
     '--extract', '--file', archive, '--directory', target, '--numeric-owner', '--preserve-permissions', '--same-owner',
   ]);
   if (!extracted.ok) fail(`the root filesystem could not be extracted: ${String(extracted.stderr || '').slice(-400)}`);
+  // The machine's `/` has to be traversable by every process in the guest, not only by its root, and this
+  // is the operation that establishes the tree, so this is where that is made true.
+  //
+  // Two things can leave it otherwise. The caller creates the directory and may create it narrow. And an
+  // archive that carries its own root member rewrites the mode of the directory it is extracted into:
+  // measured with exactly the flags above, an archive whose `./` entry is 0700 turns a 0755 target into
+  // 0700, while an archive without a root member leaves it alone. So a tree exported from a disk whose
+  // root was once narrow reproduces that mode here on every restore, for as long as the archive exists.
+  //
+  // What that costs inside the machine is worth stating, because nothing about it looks like a permission
+  // problem: root traverses anyway, so the boot gets far. dbus-daemon starts as root, opens its socket,
+  // drops to `messagebus`, and from then on cannot resolve a single path. Its readiness notification never
+  // arrives, the unit times out after 90 seconds with a live process and a live socket the whole time, and
+  // it restarts forever. Every image ships `/` at 0755 and nothing about a machine root wants less.
+  // Through a descriptor, and one that can only ever be this directory: the tree was just unpacked into a
+  // place the service user owns, so a chmod by name could be pointed at something else between the check
+  // and the call.
+  const rootfsFd = openDirectory(target);
+  try { fchmodSync(rootfsFd, 0o755); } finally { closeSync(rootfsFd); }
   // A machine id copied from the template would make every machine built from it the same host to
   // systemd, journald and D-Bus. Truncated, systemd generates one on first boot.
   const etc = join(target, 'etc');
@@ -1297,8 +1501,67 @@ function nspawnBinds(storage, raw) {
       source: trustedPath(storage, entry.source, { file }),
       target: entry.target,
       readOnly: entry.readOnly === true,
+      file,
     };
   });
+}
+
+/** nspawn applies the binds parent first, so by the time it reaches `/workspace/.git` that path already
+ *  resolves INTO the source of the `/workspace` bind rather than into the root filesystem. When the parent
+ *  bind is read-only — which every Site's workspace bind is — nspawn cannot create the mount point there
+ *  and the machine never boots, with `Failed to create mount point <rootfs>/workspace/.git: Read-only file
+ *  system`. The mount point therefore has to exist where the path actually lands: in the parent bind's
+ *  source. Placing an empty file in the root filesystem instead was measured against a real machine and
+ *  changes nothing, because the parent bind covers it.
+ *
+ *  A top-level target needs nothing: it lands in the root filesystem, which is writable, and nspawn
+ *  creates it itself. The mount point matches the kind of what is bound over it and is then invisible,
+ *  because a mount covers it for the whole life of the machine. It is created once and survives every
+ *  later envelope, which is what the root filesystem outliving the envelope requires. */
+function ensureNestedMountPoints(binds, privileged) {
+  for (const bind of binds) {
+    const segments = bind.target.slice(1).split('/');
+    if (segments.length < 2) continue;
+    const parent = binds.find((candidate) => candidate.target === `/${segments[0]}`);
+    if (!parent) continue;
+    ensureMountPoint(join(parent.source, segments[1]), bind.file, privileged);
+  }
+}
+
+/** The mount point is created inside a directory the service user owns, and it is created by root. That
+ *  makes the gap between naming the entry and changing it the whole problem: the owner of the surrounding
+ *  directory can unlink what root just made and put a link to a system file in its place, and a chown by
+ *  PATH would then hand that file to the service account. `write-envelope` can be called as often as the
+ *  caller likes, so the window can be spun until it is hit.
+ *
+ *  So nothing here touches the entry by name twice. The file is created and chowned through the same
+ *  descriptor `openSync` returns, which is the entry that was created and can be no other. The directory
+ *  is reopened with `O_DIRECTORY|O_NOFOLLOW`, which refuses a symlink outright and cannot resolve to a
+ *  regular file at all, and is changed through that descriptor. */
+function ensureMountPoint(path, wantFile, privileged) {
+  let stat;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    if (!error || error.code !== 'ENOENT') throw error;
+    // It carries the ownership of the directory it sits in rather than root's. While the machine runs the
+    // mount hides it either way; what this buys is that a bind dropped from a later specification does not
+    // leave a root-owned entry behind in a tree its owner has to be able to clean up.
+    const owner = privileged ? statSync(dirname(path)) : null;
+    if (!wantFile) mkdirSync(path, { mode: 0o755 });
+    const fd = wantFile ? openSync(path, 'wx', 0o644) : openDirectory(path);
+    try {
+      if (owner) fchownSync(fd, owner.uid, owner.gid);
+    } finally {
+      closeSync(fd);
+    }
+    return;
+  }
+  // Whatever is already there is used as it is, but it has to be a plain entry of the right kind: a
+  // symlink would move the mount somewhere else, and a real directory under a file bind fails the mount
+  // with a message that says nothing. Neither is something to overwrite — both hold someone's data.
+  if (stat.isSymbolicLink()) fail(`a machine bind mount point is a symbolic link: ${path}`);
+  if (wantFile ? !stat.isFile() : !stat.isDirectory()) fail(`a machine bind mount point is of the wrong kind: ${path}`);
 }
 
 /** At least the capabilities this helper knows to drop, plus any further ones the runtime names. A
@@ -1320,21 +1583,24 @@ export function renderMachineSettings(binds, { privateNetwork = true, uidBase, d
   const lines = [
     '# Managed by Elowen. Do not edit: the root-owned helper rewrites this file.',
     '[Exec]',
-    // Ownership was applied once when the disk was materialized, so the boot does not repeat a chown
-    // over the whole tree.
     `PrivateUsers=${uidBase}:${UID_RANGE_SIZE}`,
-    'PrivateUsersOwnership=off',
     'NoNewPrivileges=yes',
     `DropCapability=${[...dropCapabilities].join(' ')}`,
     'LinkJournal=no',
+    '',
+    '[Files]',
+    // Ownership was applied once when the disk was materialized, so the boot must not repeat a chown over
+    // the whole tree. 255.4 reads this key in [Files]; in [Exec] it parses as an unknown name, logs that
+    // it is ignoring it and leaves the intent resting on nspawn's default instead of stating it.
+    'PrivateUsersOwnership=off',
   ];
-  if (binds.length > 0) {
-    lines.push('', '[Files]');
-    for (const bind of binds) {
-      lines.push(`${bind.readOnly ? 'BindReadOnly' : 'Bind'}=${bind.source}:${bind.target}:rootidmap`);
-    }
+  for (const bind of binds) {
+    lines.push(`${bind.readOnly ? 'BindReadOnly' : 'Bind'}=${bind.source}:${bind.target}:rootidmap`);
   }
-  lines.push('', '[Network]', privateNetwork ? 'Private=yes' : 'VirtualEthernet=yes');
+  // Both keys are always written. `VirtualEthernet=` implies a private network namespace on its own, but
+  // the failure mode of relying on that implication is a machine sharing the host's namespace outright,
+  // so the namespace is stated rather than inferred.
+  lines.push('', '[Network]', 'Private=yes', `VirtualEthernet=${privateNetwork ? 'no' : 'yes'}`);
   return `${lines.join('\n')}\n`;
 }
 
@@ -1354,13 +1620,21 @@ TasksMax=${limits.pidsLimit}
  *  allocated here when the disk does not carry one yet. */
 function nspawnWriteEnvelope(request, storage, options) {
   const runner = options.runner ?? defaultCommandRunner;
+  const readText = options.readText ?? defaultReadText;
   const writeAtomic = options.writeAtomic ?? atomicWrite;
   const machine = nspawnMachineName(request.machine);
   const paths = nspawnDiskPaths(storage, request);
   const rootfs = realpathSync(trustedPath(storage, paths.rootfs));
   if (typeof request.privateNetwork !== 'boolean') fail('the machine network request is invalid');
+  // The envelope is what turns veth on, so this is where the gate belongs: a machine cannot be started
+  // with a link the host is not ready to isolate, and no client can skip the check by not asking for it.
+  if (request.privateNetwork === false) {
+    const unmet = vethReadiness(runner, readText).filter((item) => !item.ok);
+    if (unmet.length > 0) fail(`the host is not ready for machine networking — ${unmet.map((item) => item.detail).join('; ')}`);
+  }
   const limits = nspawnLimits(request.limits);
   const binds = nspawnBinds(storage, request.binds ?? []);
+  ensureNestedMountPoints(binds, options.writeAtomic === undefined);
   const dropCapabilities = nspawnDropCapabilities(request.dropCapabilities);
   const uidBase = uidRangeFor(paths, writeAtomic);
   const settings = renderMachineSettings(binds, { privateNetwork: request.privateNetwork, uidBase, dropCapabilities });
@@ -1586,62 +1860,188 @@ function nspawnDestroy(request, options) {
 }
 
 function firewallRulePresent(runner, rule) {
-  const result = runner('/usr/sbin/iptables', ['-C', rule.chain, ...rule.rule.split(' ')]);
-  return result.ok;
+  return runner(rule.binary, ['-C', rule.chain, ...rule.spec]).ok;
+}
+
+/** systemd cannot be asked about a template by its own name, only through an instance of it, so the
+ *  question "has the manager picked this file up" is asked about an instance that will never be started.
+ *  `show` does not start, enable or reference anything; an unreferenced unit is collected again. */
+const UNIT_LOAD_PROBE = 'elowen-machine@elowen-project-readiness-probe-g0.service';
+
+/** Enabled, so it runs at the next boot, AND every rule actually in place, so a flushed chain is repaired
+ *  rather than reported. Provisioning is the operator-invoked path and the only one that may act on the
+ *  packet filter; serving a request still only ever reports it. */
+function firewallUnitApplied(runner) {
+  if (!runner('/usr/bin/systemctl', ['is-enabled', MACHINE_FIREWALL_UNIT_NAME]).ok) return false;
+  return NSPAWN_FIREWALL_RULES.every((rule) => firewallRulePresent(runner, rule));
+}
+
+function unitTemplateLoaded(runner) {
+  const result = runner('/usr/bin/systemctl', ['show', '-p', 'LoadState', '--value', UNIT_LOAD_PROBE]);
+  return result.ok && String(result.stdout || '').trim() === 'loaded';
+}
+
+/** Every root-owned file the machine runtime needs, each with the content that defines it and the reload
+ *  that makes it take effect. Provisioning walks this list and writes a file only when what is on disk
+ *  differs, so a run against a converged host writes nothing and reloads nothing, and a run against a
+ *  hand-edited host restores exactly the artefact that drifted.
+ *
+ *  The polkit rule carries no reload because polkitd watches its rules directories and reloads a changed
+ *  rule by itself; there is no reload command to run and so nothing to check afterwards. The unit
+ *  template carries one, because systemd reads unit files only when it is told to. */
+function nspawnArtefacts(user) {
+  return [
+    {
+      id: 'unit:elowen-machine',
+      label: 'Machine unit template',
+      path: MACHINE_UNIT_PATH,
+      mode: 0o644,
+      content: MACHINE_UNIT_TEMPLATE,
+      ready: 'installed and loaded',
+      effect: {
+        loaded: unitTemplateLoaded,
+        detail: 'on disk but the manager has not read it — run: systemctl daemon-reload',
+        reload: [['/usr/bin/systemctl', ['daemon-reload'], 'systemd daemon reload failed']],
+      },
+    },
+    {
+      id: 'unit:elowen-machine-firewall',
+      label: 'Machine firewall rules',
+      path: MACHINE_FIREWALL_UNIT_PATH,
+      mode: 0o644,
+      content: MACHINE_FIREWALL_UNIT,
+      ready: 'installed, enabled and applied',
+      effect: {
+        // Applied is asked of the packet filter, not of the unit: a oneshot that has already run is
+        // inactive either way, and a rule someone flushed by hand is exactly the state worth repairing.
+        loaded: firewallUnitApplied,
+        detail: `installed but the rules are not all in place — run: systemctl enable --now ${MACHINE_FIREWALL_UNIT_NAME}`,
+        reload: [
+          ['/usr/bin/systemctl', ['daemon-reload'], 'systemd daemon reload failed'],
+          ['/usr/bin/systemctl', ['enable', '--now', MACHINE_FIREWALL_UNIT_NAME], 'the machine firewall rules could not be applied'],
+        ],
+      },
+    },
+    {
+      id: 'polkit:machines',
+      label: 'Machine lifecycle authorization',
+      path: POLKIT_RULE_PATH,
+      mode: 0o644,
+      content: renderPolkitRule(user.name),
+      ready: `scoped to elowen-machine units for ${user.name}`,
+      effect: null,
+    },
+  ];
+}
+
+function artefactRow(artefact, runner, readText, readMode) {
+  const mode = readMode(artefact.path);
+  const provision = 'run environment provisioning to restore it';
+  if (mode < 0) return { id: artefact.id, label: artefact.label, ok: false, detail: `missing — ${provision}` };
+  if (readText(artefact.path) !== artefact.content) {
+    return { id: artefact.id, label: artefact.label, ok: false, detail: `differs from the managed content — ${provision}` };
+  }
+  if (mode !== artefact.mode) {
+    return {
+      id: artefact.id,
+      label: artefact.label,
+      ok: false,
+      detail: `mode is 0${mode.toString(8)} where 0${artefact.mode.toString(8)} is required — ${provision}`,
+    };
+  }
+  if (artefact.effect && !artefact.effect.loaded(runner)) {
+    return { id: artefact.id, label: artefact.label, ok: false, detail: artefact.effect.detail };
+  }
+  return { id: artefact.id, label: artefact.label, ok: true, detail: artefact.ready };
+}
+
+/** What a veth machine needs beyond its own settings file. Every row here is the operator's to satisfy:
+ *  the helper reports the exact command and refuses veth until the answer is yes.
+ *
+ *  None of the firewall rules survive a reboot on their own. That is deliberate rather than unfortunate:
+ *  the check runs before every envelope, so a rebooted host fails loudly and refuses veth instead of
+ *  quietly running a machine with the guard gone. */
+function vethReadiness(runner, readText) {
+  const items = [];
+  const forwarding = readText('/proc/sys/net/ipv4/ip_forward').trim() === '1';
+  items.push({
+    id: 'net:ip-forward',
+    label: 'IPv4 forwarding',
+    ok: forwarding,
+    detail: forwarding ? 'enabled' : 'a machine cannot route without it — run: sysctl -w net.ipv4.ip_forward=1, and record it under /etc/sysctl.d to survive a reboot',
+  });
+  const active = runner('/usr/bin/systemctl', ['is-active', 'systemd-networkd']).ok;
+  const enabled = runner('/usr/bin/systemctl', ['is-enabled', 'systemd-networkd']).ok;
+  items.push({
+    id: 'service:systemd-networkd',
+    label: 'Machine link configuration',
+    ok: active && enabled,
+    detail: active && enabled
+      ? 'active and enabled'
+      : `it configures the host side of the link, leases the machine its address and masquerades the traffic — run: systemctl enable --now systemd-networkd${active ? ' (running, but it would not come back after a reboot)' : ''}`,
+  });
+  for (const rule of NSPAWN_FIREWALL_RULES) {
+    const ok = firewallRulePresent(runner, rule);
+    items.push({
+      id: rule.id,
+      label: rule.label,
+      ok,
+      detail: ok ? `present in ${rule.chain}` : `${rule.why} — run: ${firewallRuleCommand(rule)}`,
+    });
+  }
+  return items;
+}
+
+/** The one accepted regression against the Podman runtime's `containers-default`, said out loud where the
+ *  person deploying will see it rather than only in a plan document. It is reported as met because there
+ *  is nothing to install and nothing an operator can do about it, and the detail says plainly that the
+ *  profile is absent and what stands in its place. See the comment on the dropped capability set for the
+ *  measurements behind it. */
+function apparmorRow(readText) {
+  const enabled = readText('/sys/module/apparmor/parameters/enabled').trim() === 'Y';
+  return {
+    id: 'apparmor:machine-profile',
+    label: 'Machine AppArmor profile',
+    ok: true,
+    detail: `known gap, nothing to install: systemd-nspawn has no AppArmor integration, and a profile on the supervisor is inherited by the guest payload, so the dropped capability set, DevicePolicy=closed and the uid shift stand in for it — AppArmor itself is ${enabled ? 'enabled on this host and confines other services as usual' : 'not enabled on this host'}`,
+  };
 }
 
 /** The same readiness shape the Podman environment rows use, reported through the same item contract.
- *  The firewall rows appear only when veth is requested, and they are only ever REPORTED: the daemon
- *  never mutates the firewall. */
+ *  The veth rows appear only when veth is requested, and they are only ever REPORTED: the daemon never
+ *  mutates the firewall, it names the rule and refuses. */
 function nspawnStatus(request, options = {}) {
   const runner = options.runner ?? defaultCommandRunner;
   const readText = options.readText ?? defaultReadText;
+  const readMode = options.readMode ?? defaultReadMode;
   const env = options.env ?? process.env;
   if (request.veth !== undefined && typeof request.veth !== 'boolean') fail('the machine network request is invalid');
   const user = serviceUser(runner, env);
   const os = supportedEnvironmentOs(readText('/etc/os-release'));
   const installed = packageInstalled(runner, NSPAWN_PACKAGE);
-  const polkit = renderPolkitRule(user.name);
-  const polkitInstalled = readText(POLKIT_RULE_PATH) === polkit;
-  const unitInstalled = readText(MACHINE_UNIT_PATH) === MACHINE_UNIT_TEMPLATE;
   const items = [
     { id: 'os:supported', label: 'Supported operating system', ok: os.ok, detail: os.detail },
     {
       id: `package:${NSPAWN_PACKAGE}`,
       label: 'systemd container tools',
       ok: installed,
-      detail: installed ? 'installed' : 'not installed',
+      detail: installed ? 'installed' : 'not installed — run environment provisioning to install it',
     },
-    {
-      id: 'polkit:machines',
-      label: 'Machine lifecycle authorization',
-      ok: polkitInstalled,
-      detail: polkitInstalled ? `scoped to elowen-machine units for ${user.name}` : 'the polkit rule is missing or differs',
-    },
-    {
-      id: 'unit:elowen-machine',
-      label: 'Machine unit template',
-      ok: unitInstalled,
-      detail: unitInstalled ? 'installed' : 'the unit template is missing or differs',
-    },
+    apparmorRow(readText),
+    ...nspawnArtefacts(user).map((artefact) => artefactRow(artefact, runner, readText, readMode)),
   ];
-  if (request.veth === true) {
-    for (const rule of NSPAWN_FIREWALL_RULES) {
-      const ok = firewallRulePresent(runner, rule);
-      items.push({
-        id: rule.id,
-        label: rule.label,
-        ok,
-        detail: ok ? `present in ${rule.chain}` : `add manually: iptables -I ${rule.chain} ${rule.rule} — ${rule.detail}`,
-      });
-    }
-  }
+  if (request.veth === true) items.push(...vethReadiness(runner, readText));
   return { ok: true, ready: items.every((item) => item.ok), items };
 }
 
+/** Convergent by construction: every step asks the host what it already has and acts only on the answer,
+ *  so provisioning a fresh host, re-provisioning a finished one and repairing a half-done or hand-edited
+ *  one are the same code path. Nothing here is a veth prerequisite: those belong to the operator and
+ *  provisioning reports them without touching them. */
 function nspawnProvision(request, options = {}) {
   const runner = options.runner ?? defaultCommandRunner;
   const readText = options.readText ?? defaultReadText;
+  const readMode = options.readMode ?? defaultReadMode;
   const writeAtomic = options.writeAtomic ?? atomicWrite;
   const env = options.env ?? process.env;
   const os = supportedEnvironmentOs(readText('/etc/os-release'));
@@ -1651,13 +2051,17 @@ function nspawnProvision(request, options = {}) {
     runRequired(runner, '/usr/bin/apt-get', ['update'], 'apt package metadata update failed');
     runRequired(runner, '/usr/bin/apt-get', ['install', '--yes', '--no-install-recommends', NSPAWN_PACKAGE], 'machine runtime package installation failed');
   }
-  const polkit = renderPolkitRule(user.name);
-  if (readText(POLKIT_RULE_PATH) !== polkit) writeAtomic(POLKIT_RULE_PATH, Buffer.from(polkit), 0o644);
-  if (readText(MACHINE_UNIT_PATH) !== MACHINE_UNIT_TEMPLATE) {
-    writeAtomic(MACHINE_UNIT_PATH, Buffer.from(MACHINE_UNIT_TEMPLATE), 0o644);
-    runRequired(runner, '/usr/bin/systemctl', ['daemon-reload'], 'systemd daemon reload failed');
+  for (const artefact of nspawnArtefacts(user)) {
+    if (readText(artefact.path) !== artefact.content || readMode(artefact.path) !== artefact.mode) {
+      writeAtomic(artefact.path, Buffer.from(artefact.content), artefact.mode);
+    }
+    // Asked after the write rather than derived from it: a file that was already correct but had never
+    // been read by the manager is exactly the state a half-finished provisioning leaves behind.
+    if (artefact.effect && !artefact.effect.loaded(runner)) {
+      for (const command of artefact.effect.reload) runRequired(runner, ...command);
+    }
   }
-  const status = nspawnStatus(request, { runner, readText, env });
+  const status = nspawnStatus(request, { runner, readText, readMode, env });
   return {
     ...status,
     ...(status.ready ? {} : { detail: 'machine runtime support remains incomplete' }),
@@ -1699,7 +2103,7 @@ export function applyNspawnRequest(request, options = {}) {
   if (!handler) fail('machine operation is not supported');
   const storage = NSPAWN_RECORD_FREE_OPERATIONS.includes(request.op)
     ? null
-    : options.storage ?? readStorageRoots();
+    : options.storage ?? readStorageRoots(options);
   return handler(request, storage, options);
 }
 

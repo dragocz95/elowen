@@ -42,6 +42,7 @@ export type SiteGatewayHelperRequest =
   | { op: 'status' }
   | { op: 'environments-status' }
   | { op: 'environments-provision' }
+  | { domain: 'nspawn'; op: 'provision' }
   | { op: 'prepare-runtime-socket'; siteId: string }
   | { op: 'seal-runtime-socket'; siteId: string }
   | { op: 'remove-runtime-socket'; siteId: string };
@@ -120,6 +121,26 @@ export async function installSiteGatewayHelper(io: SiteGatewayHelperInstallIO = 
   return true;
 }
 
+/** Install the machine runtime's host artefacts: the container tools package, the unit template and the
+ *  polkit rule. The helper does the work and is idempotent, so this converges rather than repeating.
+ *
+ *  It is wired into the install and the update because there is no other way in. The runtime refuses to
+ *  create an environment while any of the three is missing and there is deliberately no fallback, so a
+ *  host that never runs this can create nothing and the only repair would be writing root-owned files by
+ *  hand. Both paths reach it: a fresh install as one of its steps, and an existing instance through the
+ *  same refresh that brings the helper itself forward. */
+export async function provisionMachineRuntime(invoke: SiteGatewayHelperInvoker = defaultInvoker): Promise<boolean> {
+  const response = await invoke({ domain: 'nspawn', op: 'provision' });
+  if (response.ready === false) {
+    const blocking = (response.items ?? []).filter((item): item is { ok: boolean; label?: string; detail?: string } =>
+      typeof item === 'object' && item !== null && (item as { ok?: unknown }).ok === false);
+    // Not every unmet row is this command's to fix: the firewall rules are the operator's and are only
+    // ever reported. Naming them is the point; failing on them would be wrong.
+    throw new Error(`machine runtime support is incomplete — ${blocking.map((item) => `${item.label ?? 'requirement'}: ${item.detail ?? 'not met'}`).join('; ') || response.detail || 'no detail reported'}`);
+  }
+  return response.ready === true;
+}
+
 const defaultHelperMaintenance: SiteGatewayHelperMaintenance = {
   status: () => siteGatewayHelperStatus(),
   install: () => installSiteGatewayHelper(),
@@ -127,7 +148,7 @@ const defaultHelperMaintenance: SiteGatewayHelperMaintenance = {
 
 export function siteGatewayHelperTimeoutMs(request: SiteGatewayHelperRequest): number {
   if (request.op === 'ensure-site') return ISSUE_TIMEOUT_MS;
-  if (request.op === 'environments-provision') return ENVIRONMENT_PROVISION_TIMEOUT_MS;
+  if (request.op === 'environments-provision' || request.op === 'provision') return ENVIRONMENT_PROVISION_TIMEOUT_MS;
   return HELPER_TIMEOUT_MS;
 }
 

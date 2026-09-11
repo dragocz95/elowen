@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -11,7 +11,11 @@ import { afterAll, describe, expect, it } from 'vitest';
 import {
   DISK_TREE_SCRIPTS,
   MACHINE_UNIT_PATH,
+  MACHINE_FIREWALL_UNIT,
+  MACHINE_FIREWALL_UNIT_NAME,
+  MACHINE_FIREWALL_UNIT_PATH,
   MACHINE_UNIT_TEMPLATE,
+  firewallRuleCommand,
   NSPAWN_FIREWALL_RULES,
   POLKIT_RULE_PATH,
   applyNspawnRequest,
@@ -26,7 +30,7 @@ import {
   renderMachineSettings,
   renderPolkitRule,
   safeGuestMountTarget,
-  storageRootsFrom,
+  storageRootsFor,
   trustedPath,
 } from '../../scripts/elowen-site-gateway.mjs';
 // @ts-expect-error the bundled Sandbox plugin is plain ESM without declarations
@@ -34,6 +38,7 @@ import { createBoundSiteSpec, createEnvironmentDiskSpec } from '../../plugins/sa
 // @ts-expect-error the bundled machine runtime is plain ESM without declarations
 import { HELPER_PATH as PLUGIN_HELPER_PATH, MACHINE_PATTERN as PLUGIN_MACHINE_PATTERN, helperRequest } from '../../plugins/sandbox/lib/nspawn.mjs';
 import {
+  siteGatewayStorageRoots,
   encodeHelperRequest, HELPER_FRAME_HEADER_BYTES, SITE_GATEWAY_HELPER_ARGV, SITE_GATEWAY_HELPER_PATH,
 } from '../../src/shared/siteGateway.js';
 
@@ -45,9 +50,9 @@ const MACHINE = 'elowen-project-54-g3';
 const UNIT = `elowen-exec-g3-${'a'.repeat(32)}.service`;
 const environment = { SUDO_USER: 'azureuser', SUDO_UID: '1000', SUDO_GID: '1000' };
 const scratch = mkdtempSync(join(tmpdir(), 'elowen-nspawn-contract-'));
-const storage = storageRootsFrom({
-  storage: { sandboxDataDir: join(scratch, 'sandbox'), sitesDataDir: join(scratch, 'sites') },
-});
+// Exactly as the helper derives them in production: from the passwd home of the account sudo reports,
+// and from nothing a caller can reach.
+const storage = storageRootsFor(scratch);
 /** How the runtime names an environment on the wire: the resource kind and its id in the string form
  *  the disk layout uses as a path segment. */
 const diskRef = {
@@ -64,38 +69,90 @@ afterAll(() => { rmSync(scratch, { recursive: true, force: true }); });
 
 type Call = { file: string; args: string[] };
 
-function runnerFixture(options: { installed?: boolean; polkit?: string; unit?: string; firewall?: boolean } = {}) {
+/** A host model rather than a stub: the artefacts have content AND permission bits, the manager remembers
+ *  whether it has read the unit template, and the network prerequisites can be moved one at a time. That
+ *  is what makes a convergence claim testable — provisioning is run twice against the same host. */
+function runnerFixture(options: {
+  installed?: boolean; polkit?: string; polkitMode?: number; unit?: string; unitMode?: number;
+  unitLoaded?: boolean; firewall?: boolean; forwarding?: boolean; networkd?: boolean; deployment?: string;
+  firewallUnit?: string; firewallEnabled?: boolean;
+} = {}) {
   const calls: Call[] = [];
   const writes: { path: string; content: string; mode: number }[] = [];
   const state = {
     installed: options.installed ?? true,
     polkit: options.polkit ?? '',
+    polkitMode: options.polkitMode ?? 0o644,
     unit: options.unit ?? '',
+    unitMode: options.unitMode ?? 0o644,
+    unitLoaded: options.unitLoaded ?? false,
     firewall: options.firewall ?? false,
+    firewallUnit: options.firewallUnit ?? '',
+    firewallUnitMode: 0o644,
+    firewallEnabled: options.firewallEnabled ?? false,
+    forwarding: options.forwarding ?? true,
+    networkd: options.networkd ?? true,
+    deployment: options.deployment ?? JSON.stringify({ storage: { sandboxDataDir: '/srv/sandbox', sitesDataDir: '/srv/sites' } }),
   };
   const readText = (path: string) => {
+    if (path === '/etc/elowen/site-gateway.json') return state.deployment;
     if (path === '/etc/os-release') return 'ID=ubuntu\n';
     if (path === POLKIT_RULE_PATH) return state.polkit;
     if (path === MACHINE_UNIT_PATH) return state.unit;
+    if (path === MACHINE_FIREWALL_UNIT_PATH) return state.firewallUnit;
+    if (path === '/proc/sys/net/ipv4/ip_forward') return state.forwarding ? '1\n' : '0\n';
     return '';
+  };
+  const readMode = (path: string) => {
+    if (path === POLKIT_RULE_PATH) return state.polkit === '' ? -1 : state.polkitMode;
+    if (path === MACHINE_UNIT_PATH) return state.unit === '' ? -1 : state.unitMode;
+    if (path === MACHINE_FIREWALL_UNIT_PATH) return state.firewallUnit === '' ? -1 : state.firewallUnitMode;
+    return -1;
   };
   const writeAtomic = (path: string, content: Buffer, mode: number) => {
     const value = content.toString('utf8');
     writes.push({ path, content: value, mode });
-    if (path === POLKIT_RULE_PATH) state.polkit = value;
-    if (path === MACHINE_UNIT_PATH) state.unit = value;
+    if (path === POLKIT_RULE_PATH) { state.polkit = value; state.polkitMode = mode; }
+    // A file the manager has never read is exactly what a fresh write leaves behind.
+    if (path === MACHINE_UNIT_PATH) { state.unit = value; state.unitMode = mode; state.unitLoaded = false; }
+    if (path === MACHINE_FIREWALL_UNIT_PATH) { state.firewallUnit = value; state.firewallUnitMode = mode; }
   };
   const runner = (file: string, args: string[]) => {
     calls.push({ file, args: [...args] });
     if (file === '/usr/bin/getent') return { ok: true, stdout: 'azureuser:x:1000:1000::/home/azureuser:/bin/bash\n' };
     if (file === '/usr/bin/dpkg-query') return state.installed ? { ok: true, stdout: 'install ok installed\n' } : { ok: false, stderr: 'not installed' };
-    if (file === '/usr/sbin/iptables') return state.firewall ? { ok: true, stdout: '' } : { ok: false, stderr: 'No chain/target/match' };
+    if (file === '/usr/sbin/iptables' || file === '/usr/sbin/ip6tables') {
+      return state.firewall ? { ok: true, stdout: '' } : { ok: false, stderr: 'No chain/target/match by that name' };
+    }
     if (file === '/usr/bin/apt-get') { state.installed = true; return { ok: true, stdout: '' }; }
-    if (file === '/usr/bin/systemctl') return { ok: true, stdout: '' };
+    if (file === '/usr/bin/systemctl') {
+      if (args[0] === 'show') return { ok: true, stdout: `${state.unitLoaded ? 'loaded' : 'not-found'}\n` };
+      if (args[0] === 'daemon-reload') { state.unitLoaded = state.unit !== ''; return { ok: true, stdout: '' }; }
+      if (args[0] === 'enable') {
+        // What the unit does when it runs: every rule checked, then applied when it is not there.
+        state.firewallEnabled = true;
+        state.firewall = true;
+        return { ok: true, stdout: '' };
+      }
+      if (args[0] === 'is-enabled' && args[1] === MACHINE_FIREWALL_UNIT_NAME) {
+        return state.firewallEnabled ? { ok: true, stdout: 'enabled\n' } : { ok: false, stderr: 'disabled' };
+      }
+      if (args[0] === 'is-active' || args[0] === 'is-enabled') {
+        return state.networkd ? { ok: true, stdout: 'active\n' } : { ok: false, stderr: 'inactive' };
+      }
+    }
     return { ok: false, stderr: `unexpected command: ${file} ${args.join(' ')}` };
   };
-  return { calls, writes, runner, readText, writeAtomic, options: { runner, readText, writeAtomic, env: environment } };
+  return { calls, writes, state, runner, readText, readMode, writeAtomic, options: { runner, readText, readMode, writeAtomic, env: environment } };
 }
+
+function reloads(calls: Call[]) {
+  return calls.filter((call) => call.file === '/usr/bin/systemctl' && call.args[0] === 'daemon-reload').length;
+}
+
+type Row = { id: string; label: string; ok: boolean; detail: string };
+type Readiness = { ready: boolean; items: Row[] };
+const rowFor = (readiness: Readiness, id: string) => readiness.items.find((item) => item.id === id)!;
 
 describe('privileged helper: two typed domains, one executable', () => {
   it('keeps an absent domain meaning sites, so an older daemon still reaches the gateway', async () => {
@@ -139,10 +196,30 @@ describe('privileged helper: execution', () => {
     const args = nspawnExecArgs({ machine: MACHINE, unit: UNIT, argv: ['/bin/sh', '-c', 'echo hi'], cwd: '/workspace', timeoutSeconds: 120 });
     expect(args).toEqual([
       '-M', MACHINE, '--quiet', '--pipe', '--wait', '--collect', `--unit=${UNIT}`,
-      '--service-type=exec', '--property=KillMode=control-group', '--property=TimeoutStopSec=5s',
-      '--property=TasksMax=infinity', '--property=RuntimeMaxSec=120s', '--working-directory=/workspace',
-      '--', '/bin/sh', '-c', 'echo hi',
+      '--service-type=exec', '--expand-environment=no', '--property=KillMode=control-group',
+      '--property=TimeoutStopSec=5s', '--property=TasksMax=infinity', '--property=RuntimeMaxSec=120s',
+      '--working-directory=/workspace', '--', '/bin/sh', '-c', 'echo hi',
     ]);
+  });
+
+  it('delivers the guest argv byte for byte, without systemd rewriting a variable reference out of it', () => {
+    // A transient unit's command line is a systemd command line, and the manager substitutes into it at
+    // exec time unless told not to. Measured against systemd 255.4 on this host, with the flag absent:
+    //   `-f=${Status}` arrives as `-f=`            an unset ${VAR} becomes the empty string
+    //   `$HOME` arrives as nothing at all           an unset $VAR word-splits into zero arguments
+    //   `$$` arrives as `$`                         the escape is consumed
+    // So `dpkg-query -W -f=${Status} <pkg>` ran as `dpkg-query -W -f= <pkg>` and failed on a format it was
+    // never given. Anything a person types with a variable in it was quietly turned into something else.
+    // Percent specifiers were measured to pass through untouched either way: they are resolved when a unit
+    // FILE is parsed, and there is no file here. They are pinned anyway, because the day that changes the
+    // failure is silent again.
+    const argv = ['/usr/bin/dpkg-query', '-W', '-f=${Status}', '$HOME', '$$', '%H', '%%', 'a${X}b', 'PATH=$PATH:/opt'];
+    const args = nspawnExecArgs({ machine: MACHINE, unit: UNIT, argv, cwd: '/workspace', timeoutSeconds: 30 });
+    const separator = args.indexOf('--');
+    expect(args.slice(separator + 1)).toEqual(argv);
+    expect(args).toContain('--expand-environment=no');
+    // Before the separator, or systemd-run would read it as part of the guest command.
+    expect(args.indexOf('--expand-environment=no')).toBeLessThan(separator);
   });
 
   it('treats the guest command as opaque payload that can never be read as an option', () => {
@@ -275,10 +352,58 @@ describe('privileged helper: host path derivation', () => {
     expect(paths.rootfs).toBe(join(storage.sitesDataDir, siteId, 'environment', 'disks', 'b'.repeat(32), 'rootfs'));
   });
 
+  it('derives the storage roots from the invoking account, so a planted record cannot move them', async () => {
+    // They used to be read out of the deployment record, and that was a hole. The record is installed
+    // through a sudoers-pinned command whose source path is fixed and writable by the service user, and a
+    // sudoers grant binds to a USER, not to the code path it was written for. Anything running as the
+    // service account could therefore stage a record naming `/etc/systemd` as a storage root, run the
+    // pinned install, and every path check here would agree from the next request onwards — which is a
+    // tar unpacked as root, or a tree deleted as root, anywhere it liked.
+    const home = join(scratch, 'derived-home');
+    const derived = storageRootsFor(home);
+    expect(derived).toEqual({
+      sandboxDataDir: `${home}/.config/elowen/plugins-data/sandbox`,
+      sitesDataDir: `${home}/.config/elowen/plugins-data/sites`,
+    });
+    // The installer makes the same derivation for its own purposes, in a file that cannot import this one.
+    expect(derived).toEqual(siteGatewayStorageRoots(home));
+
+    // End to end, with no storage handed in: the roots follow the passwd home sudo reports and nothing
+    // else, and a path a record might have blessed is still refused.
+    const runner = (file: string) => (file === '/usr/bin/getent'
+      ? { ok: true, stdout: `azureuser:x:1000:1000::${home}:/bin/bash\n` }
+      : { ok: true, stdout: '' });
+    const doomed = join(derived.sandboxDataDir, 'projects', '54', 'stale');
+    mkdirSync(doomed, { recursive: true });
+    await applyRequest({ domain: 'nspawn', op: 'tree-remove', path: doomed }, undefined, { runner, env: environment });
+    expect(existsSync(doomed)).toBe(false);
+    await expect(applyRequest({ domain: 'nspawn', op: 'tree-remove', path: '/etc/systemd/nspawn' }, undefined, { runner, env: environment }))
+      .rejects.toThrow(/outside the trusted storage roots/);
+  });
+
+  it('changes a mount point it just created through the descriptor, never through the name again', () => {
+    // The mount point is created by root inside a directory the service user owns, so between naming the
+    // entry and changing it the owner can unlink it and leave a link to a system file in its place. A
+    // chown by path would then hand that file over, and `write-envelope` can be called until the window
+    // is hit. `O_DIRECTORY|O_NOFOLLOW` refuses a symlink and cannot resolve to a regular file at all.
+    const source = readFileSync(HELPER_SOURCE, 'utf8');
+    for (const [name, end] of [
+      ['function ensureMountPoint', 'function nspawnDropCapabilities'],
+      ['function ensureIdentityDirectory', 'function openDirectory'],
+    ]) {
+      const body = source.slice(source.indexOf(name), source.indexOf(end));
+      expect(body, name).toMatch(/fchownSync|fchmodSync/);
+      expect(body, name).not.toMatch(/\bchownSync\(|\bchmodSync\(/);
+    }
+    expect(source).toContain('O_RDONLY | O_DIRECTORY | O_NOFOLLOW');
+  });
+
   it('refuses a request that tries to name a root or an id of its own', () => {
-    expect(() => storageRootsFrom({ appHost: 'agent.example.com' })).toThrow(/no trusted storage roots/);
-    expect(() => storageRootsFrom({ storage: { sandboxDataDir: 'relative', sitesDataDir: '/srv/sites' } })).toThrow(/storage root is invalid/);
-    expect(() => storageRootsFrom({ storage: { sandboxDataDir: '/srv/../etc', sitesDataDir: '/srv/sites' } })).toThrow(/storage root is invalid/);
+    expect(() => storageRootsFor('relative')).toThrow(/no home directory/);
+    expect(() => storageRootsFor(undefined)).toThrow(/no home directory/);
+    // A home a passwd record could still spell that the path rules refuse, so the derivation is checked
+    // rather than assumed once it leaves getent.
+    expect(() => storageRootsFor('/home/colon:in:name')).toThrow(/storage root is invalid/);
     expect(() => nspawnDiskPaths(storage, { ...diskRef, diskId: '../../etc' })).toThrow(/disk id is invalid/);
     expect(() => nspawnDiskPaths(storage, { ...diskRef, resource: '54; rm' })).toThrow(/resource id is invalid/);
     expect(() => nspawnDiskPaths(storage, { ...diskRef, resource: '../etc' })).toThrow(/resource id is invalid/);
@@ -470,8 +595,11 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(settings).toContain('CAP_SYS_PTRACE');
     expect(settings).toContain('Bind=/srv/sandbox/projects/54/disks/x/workspace:/demo:rootidmap');
     expect(settings).toContain('BindReadOnly=/srv/sandbox/projects/54/disks/x/home:/root:rootidmap');
-    expect(settings).toContain('[Network]\nPrivate=yes');
-    expect(renderMachineSettings([], { uidBase: 1_073_741_824, privateNetwork: false })).toContain('VirtualEthernet=yes');
+    // The namespace is stated in both shapes rather than inferred from VirtualEthernet=, because the
+    // failure mode of a lost implication is a machine sharing the host's network namespace outright.
+    expect(settings).toContain('[Network]\nPrivate=yes\nVirtualEthernet=no');
+    expect(renderMachineSettings([], { uidBase: 1_073_741_824, privateNetwork: false }))
+      .toContain('[Network]\nPrivate=yes\nVirtualEthernet=yes');
     expect(() => renderMachineSettings([], { uidBase: 1000 })).toThrow(/uid range is invalid/);
 
     const dropIn = renderMachineDropIn('/srv/sandbox/projects/54/disks/x/rootfs', { cpus: 0.75, memoryMb: 384, pidsLimit: 300 }, 1_073_741_824);
@@ -481,39 +609,185 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(dropIn).toContain('TasksMax=300');
   });
 
-  it('reports the host artefacts it installs, and reports the firewall without ever touching it', async () => {
+  it('installs every host artefact on a bare host and converges to a no-op on the next run', async () => {
     const fixture = runnerFixture({ installed: false });
-    const missing = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, fixture.options) as { ready: boolean; items: { id: string; ok: boolean }[] };
+    const missing = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, fixture.options) as Readiness;
     expect(missing.ready).toBe(false);
-    expect(missing.items.map((item) => item.id)).toEqual(['os:supported', 'package:systemd-container', 'polkit:machines', 'unit:elowen-machine']);
+    expect(missing.items.map((item) => item.id))
+      .toEqual(['os:supported', 'package:systemd-container', 'apparmor:machine-profile',
+        'unit:elowen-machine', 'unit:elowen-machine-firewall', 'polkit:machines']);
+    expect(rowFor(missing, 'unit:elowen-machine').detail).toBe('missing — run environment provisioning to restore it');
+    // Status only ever reads.
     expect(fixture.writes).toEqual([]);
 
-    const provisioned = await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options) as { ready: boolean };
+    const provisioned = await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options) as Readiness;
     expect(provisioned.ready).toBe(true);
-    expect(fixture.writes.map((write) => write.path)).toEqual([POLKIT_RULE_PATH, MACHINE_UNIT_PATH]);
+    expect(fixture.writes.map((write) => write.path)).toEqual([MACHINE_UNIT_PATH, MACHINE_FIREWALL_UNIT_PATH, POLKIT_RULE_PATH]);
+    expect(fixture.writes.every((write) => write.mode === 0o644)).toBe(true);
+    expect(fixture.calls).toContainEqual({ file: '/usr/bin/apt-get', args: ['update'] });
     expect(fixture.calls).toContainEqual({ file: '/usr/bin/apt-get', args: ['install', '--yes', '--no-install-recommends', 'systemd-container'] });
-    expect(fixture.calls).toContainEqual({ file: '/usr/bin/systemctl', args: ['daemon-reload'] });
+    // One reload for the unit template and one for the firewall unit written after it: a reload that ran
+    // before a file existed cannot have read it.
+    expect(reloads(fixture.calls)).toBe(2);
+    expect(rowFor(provisioned, 'unit:elowen-machine').detail).toBe('installed and loaded');
+    expect(rowFor(provisioned, 'polkit:machines').detail).toBe('scoped to elowen-machine units for azureuser');
 
-    // Converges: a second provision writes nothing more.
-    const writesBefore = fixture.writes.length;
-    await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options);
-    expect(fixture.writes).toHaveLength(writesBefore);
+    // Converging means the second run is not a cheaper version of the first, it is nothing at all: no
+    // write, no package install, no reload.
+    const before = { writes: fixture.writes.length, calls: fixture.calls.length };
+    const again = await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options) as Readiness;
+    expect(again.ready).toBe(true);
+    expect(fixture.writes).toHaveLength(before.writes);
+    expect(reloads(fixture.calls)).toBe(2);
+    expect(fixture.calls.slice(before.calls).some((call) => call.file === '/usr/bin/apt-get')).toBe(false);
   });
 
-  it('adds the two named firewall rows only when veth is requested, and refuses rather than applying them', async () => {
-    const fixture = runnerFixture({ firewall: false });
-    const without = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, fixture.options) as { items: { id: string }[] };
-    expect(without.items.some((item) => item.id.startsWith('firewall:'))).toBe(false);
+  it('restores the one artefact that drifted, and reloads only when the reload is what makes it take effect', async () => {
+    const fixture = runnerFixture();
+    await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options);
+    const baseline = reloads(fixture.calls);
 
-    const withVeth = await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, fixture.options) as { ready: boolean; items: { id: string; ok: boolean; detail: string }[] };
-    expect(withVeth.ready).toBe(false);
-    expect(withVeth.items.filter((item) => item.id.startsWith('firewall:')).map((item) => item.id))
-      .toEqual(NSPAWN_FIREWALL_RULES.map((rule: { id: string }) => rule.id));
-    expect(withVeth.items.find((item) => item.id === 'firewall:docker-user')?.detail).toContain('iptables -I DOCKER-USER -i ve-+ -j ACCEPT');
-    // The daemon never mutates the firewall: the only iptables calls are the `-C` existence checks.
-    const iptables = fixture.calls.filter((call) => call.file === '/usr/sbin/iptables');
-    expect(iptables.length).toBeGreaterThan(0);
-    expect(iptables.every((call) => call.args[0] === '-C')).toBe(true);
+    // Someone edits the polkit rule by hand. polkitd watches its own rules directory, so restoring the
+    // file is the whole repair; asking systemd to reload would be theatre.
+    fixture.state.polkit = `${fixture.state.polkit}// widened by hand\n`;
+    const edited = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, fixture.options) as Readiness;
+    expect(rowFor(edited, 'polkit:machines')).toMatchObject({ ok: false, detail: 'differs from the managed content — run environment provisioning to restore it' });
+    expect(rowFor(edited, 'unit:elowen-machine').ok).toBe(true);
+
+    let repaired = await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options) as Readiness;
+    expect(repaired.ready).toBe(true);
+    expect(fixture.state.polkit).toBe(renderPolkitRule('azureuser'));
+    expect(reloads(fixture.calls)).toBe(baseline);
+
+    // An upgrade over an older unit template is the same path, and this one does need the manager told.
+    fixture.state.unit = '[Unit]\nDescription=Elowen machine %i\n[Service]\nExecStart=systemd-nspawn --boot\n';
+    repaired = await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options) as Readiness;
+    expect(repaired.ready).toBe(true);
+    expect(fixture.state.unit).toBe(MACHINE_UNIT_TEMPLATE);
+    expect(reloads(fixture.calls)).toBe(baseline + 1);
+  });
+
+  it('treats the permission bits as part of the artefact, not as decoration', async () => {
+    const fixture = runnerFixture();
+    await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options);
+    // A group-writable polkit rule is a rule that whole group can rewrite, and its content still matches.
+    fixture.state.polkitMode = 0o664;
+    const loose = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, fixture.options) as Readiness;
+    expect(rowFor(loose, 'polkit:machines')).toMatchObject({ ok: false, detail: 'mode is 0664 where 0644 is required — run environment provisioning to restore it' });
+
+    const repaired = await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options) as Readiness;
+    expect(repaired.ready).toBe(true);
+    expect(fixture.state.polkitMode).toBe(0o644);
+  });
+
+  it('reloads a unit template the manager has never read, even when the file on disk is already right', async () => {
+    // The state a provisioning run interrupted between the write and the reload leaves behind, and the
+    // state a restored backup leaves behind. The file compares equal, and the machine still cannot start.
+    const fixture = runnerFixture({
+      unit: MACHINE_UNIT_TEMPLATE, unitLoaded: false, polkit: renderPolkitRule('azureuser'),
+      firewallUnit: MACHINE_FIREWALL_UNIT, firewallEnabled: true, firewall: true,
+    });
+    const stale = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, fixture.options) as Readiness;
+    expect(rowFor(stale, 'unit:elowen-machine')).toMatchObject({ ok: false, detail: 'on disk but the manager has not read it — run: systemctl daemon-reload' });
+
+    const repaired = await applyRequest({ domain: 'nspawn', op: 'provision' }, undefined, fixture.options) as Readiness;
+    expect(repaired.ready).toBe(true);
+    expect(fixture.writes).toEqual([]);
+    expect(reloads(fixture.calls)).toBe(1);
+  });
+
+  it('reports the veth rules while serving, and applies them from provisioning', async () => {
+    const fixture = runnerFixture({ firewall: false, networkd: false, forwarding: false });
+    const without = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, fixture.options) as Readiness;
+    expect(without.items.some((item) => item.id.startsWith('firewall:') || item.id.startsWith('net:'))).toBe(false);
+
+    const reported = await applyRequest({ domain: 'nspawn', op: 'status', veth: true }, undefined, fixture.options) as Readiness;
+    expect(reported.ready).toBe(false);
+    expect(reported.items.map((item) => item.id)).toEqual([
+      'os:supported', 'package:systemd-container', 'apparmor:machine-profile',
+      'unit:elowen-machine', 'unit:elowen-machine-firewall', 'polkit:machines',
+      'net:ip-forward', 'service:systemd-networkd', ...NSPAWN_FIREWALL_RULES.map((rule: { id: string }) => rule.id),
+    ]);
+
+    // Every detail has to carry the command, because nobody reading a false row has the rule memorized.
+    expect(rowFor(reported, 'net:ip-forward').detail).toContain('sysctl -w net.ipv4.ip_forward=1');
+    expect(rowFor(reported, 'service:systemd-networkd').detail).toContain('systemctl enable --now systemd-networkd');
+    expect(rowFor(reported, 'firewall:forward-out').detail).toContain('/usr/sbin/iptables -I DOCKER-USER 1 -i ve-+ -j ACCEPT');
+    expect(rowFor(reported, 'firewall:forward-back').detail)
+      .toContain('/usr/sbin/iptables -I DOCKER-USER 1 -o ve-+ -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT');
+    expect(rowFor(reported, 'firewall:machine-dhcp').detail).toContain('/usr/sbin/iptables -I INPUT 1 -i ve-+ -p udp --dport 67 -j ACCEPT');
+    expect(rowFor(reported, 'firewall:host-guard').detail).toContain('/usr/sbin/iptables -A INPUT -i ve-+ -j DROP');
+    expect(rowFor(reported, 'firewall:host-guard6').detail).toContain('/usr/sbin/ip6tables -A INPUT -i ve-+ -j DROP');
+
+    // Serving a request never mutates the packet filter: every call into either table is an existence
+    // check, whatever the answer turns out to be.
+    const served = fixture.calls.filter((call) => call.file.endsWith('tables'));
+    expect(served.length).toBeGreaterThan(0);
+    expect(served.every((call) => call.args[0] === '-C')).toBe(true);
+
+    // Provisioning is the operator-invoked path, and it does act: the unit is installed, enabled so the
+    // rules come back after a reboot, and started so they are in place now. It still touches the tables
+    // only through that unit.
+    const applied = await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, fixture.options) as Readiness;
+    expect(fixture.state.firewallUnit).toBe(MACHINE_FIREWALL_UNIT);
+    expect(fixture.calls).toContainEqual({ file: '/usr/bin/systemctl', args: ['enable', '--now', MACHINE_FIREWALL_UNIT_NAME] });
+    expect(fixture.calls.filter((call) => call.file.endsWith('tables')).every((call) => call.args[0] === '-C')).toBe(true);
+    for (const rule of NSPAWN_FIREWALL_RULES) expect(rowFor(applied, rule.id).ok, rule.id).toBe(true);
+    expect(rowFor(applied, 'unit:elowen-machine-firewall')).toMatchObject({ ok: true, detail: 'installed, enabled and applied' });
+
+    // Someone flushes the chains. Re-provisioning puts them back rather than reporting them.
+    fixture.state.firewall = false;
+    const repaired = await applyRequest({ domain: 'nspawn', op: 'provision', veth: true }, undefined, fixture.options) as Readiness;
+    expect(rowFor(repaired, 'unit:elowen-machine-firewall').ok).toBe(true);
+    for (const rule of NSPAWN_FIREWALL_RULES) expect(rowFor(repaired, rule.id).ok, rule.id).toBe(true);
+    // And nothing was rewritten to do it: the unit on disk was already right.
+    expect(fixture.writes.filter((write) => write.path === MACHINE_FIREWALL_UNIT_PATH)).toHaveLength(1);
+  });
+
+  it('says out loud that the machine AppArmor profile is a known gap', async () => {
+    // A delta recorded only in a plan document is not documented for the person deploying. It is reported
+    // as met because there is nothing to install and nothing an operator can act on, and the detail is
+    // what carries the truth.
+    const fixture = runnerFixture();
+    const status = await applyRequest({ domain: 'nspawn', op: 'status' }, undefined, fixture.options) as Readiness;
+    const row = rowFor(status, 'apparmor:machine-profile');
+    expect(row.ok).toBe(true);
+    expect(row.detail).toContain('known gap, nothing to install');
+    expect(row.detail).toContain('inherited by the guest payload');
+    expect(row.detail).toContain('dropped capability set');
+  });
+
+
+  it('names both directions of forwarding, because a machine that only sends looks like a DNS fault', () => {
+    // Measured on a Docker host against a bare IP: with the outbound accept alone the connection timed
+    // out after ten seconds; with the return-path rule beside it the same request answered 200. A reply
+    // arrives as `-i eth0 -o ve-+`, matches neither the outbound accept nor any chain Docker owns, and
+    // dies on the FORWARD DROP policy Docker installs.
+    const forwarding = NSPAWN_FIREWALL_RULES.filter((rule: { chain: string }) => rule.chain === 'DOCKER-USER');
+    expect(forwarding.map((rule: { id: string }) => rule.id)).toEqual(['firewall:forward-out', 'firewall:forward-back']);
+    expect(forwarding.map((rule) => firewallRuleCommand(rule))).toEqual([
+      '/usr/sbin/iptables -I DOCKER-USER 1 -i ve-+ -j ACCEPT',
+      '/usr/sbin/iptables -I DOCKER-USER 1 -o ve-+ -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT',
+    ]);
+    // The return path is conntrack-scoped, so it opens nothing a machine did not ask for first.
+    expect(forwarding[1]!.spec).toContain('RELATED,ESTABLISHED');
+  });
+
+  it('puts the host guard where a machine-to-host packet actually arrives', () => {
+    // The plan first placed this guard in FORWARD. A packet a machine sends to an address the host holds
+    // is delivered locally, so the routing decision hands it to INPUT and a FORWARD rule never sees it.
+    //
+    // IPv6 gets the guard and nothing else, and that is a fact about this host rather than about IPv6:
+    // measured, it carries no global IPv6 address and the ip6tables FORWARD policy is ACCEPT, so there is
+    // no v6 path off the box to hold open. It needs measuring again if the host ever gains v6 reach.
+    const guards = NSPAWN_FIREWALL_RULES.filter((rule: { spec: string[] }) => rule.spec.includes('DROP'));
+    expect(guards).toHaveLength(2);
+    expect(guards.every((rule: { chain: string }) => rule.chain === 'INPUT')).toBe(true);
+    expect(guards.map((rule: { binary: string }) => rule.binary)).toEqual(['/usr/sbin/iptables', '/usr/sbin/ip6tables']);
+    // The lease exception is inserted at the head, the guard is appended, so the guard cannot shadow it.
+    const lease = NSPAWN_FIREWALL_RULES.find((rule: { id: string }) => rule.id === 'firewall:machine-dhcp')!;
+    expect(firewallRuleCommand(lease)).toContain('-I INPUT 1');
+    expect(guards.every((rule) => firewallRuleCommand(rule).includes('-A INPUT'))).toBe(true);
   });
 });
 
@@ -550,6 +824,66 @@ describe('privileged helper: the disk identity record', () => {
     };
   }
 
+  it('leaves the machine root traversable, whatever mode the caller or the archive asked for', async () => {
+    // Root traverses a 0700 directory it does not own, so a narrow machine root looks like a healthy boot
+    // right up to the point where dbus-daemon drops from root to `messagebus` and can no longer resolve a
+    // path. Its readiness never arrives, the unit times out after 90 seconds with a live process and a
+    // live socket, and it restarts forever. Nothing in that picture looks like a permission problem.
+    //
+    // Two ways in, and both are closed here rather than at either source. The caller creates the
+    // directory, as it is created at 0700 below. And an archive carrying its own root member rewrites the
+    // mode of the directory it is extracted into: measured with the flags this operation uses, a `./`
+    // entry at 0700 turns a 0755 target into 0700, so a tree exported from a disk that was once narrow
+    // carries the fault forward into every later restore.
+    const fixture = diskFixture();
+    const archive = join(fixture.paths.directory, 'image.tar');
+    writeFileSync(archive, '');
+    chmodSync(fixture.paths.rootfs, 0o700);
+    const response = await applyRequest({
+      domain: 'nspawn',
+      op: 'materialize',
+      ...diskRef,
+      archivePath: archive,
+      targetPath: fixture.paths.rootfs,
+    }, undefined, fixture.options) as { ok: boolean; uidBase: number };
+
+    expect(response.ok).toBe(true);
+    expect(statSync(fixture.paths.rootfs).mode & 0o7777).toBe(0o755);
+    // The ownership pass that follows the extraction only ever chowns, so the mode it finds is the mode it
+    // leaves; the tree walk is what moves the ids onto the machine's range.
+    const shift = fixture.calls.find((call) => call.file === '/usr/bin/python3');
+    expect(shift?.args[1]).toContain('os.lchown');
+    expect(shift?.args[1]).not.toContain('chmod');
+    rmSync(archive, { force: true });
+  });
+
+  it('refuses to write a veth envelope until the host can isolate the link', async () => {
+    // The envelope is what turns veth on, so the gate lives here rather than in a status row a client is
+    // free not to read. Nothing is written and no uid range is allocated on the way to the refusal.
+    const request = {
+      domain: 'nspawn',
+      op: 'write-envelope',
+      ...diskRef,
+      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 },
+      binds: [],
+      dropCapabilities: [],
+      privateNetwork: false,
+    };
+    const unready = diskFixture();
+    await expect(applyRequest(request, undefined, unready.options))
+      .rejects.toThrow(/not ready for machine networking.*sysctl -w net\.ipv4\.ip_forward=1/s);
+    expect(unready.writes).toEqual([]);
+
+    const ready = diskFixture();
+    ready.options.readText = (path: string) => {
+      if (path === '/proc/sys/net/ipv4/ip_forward') return '1\n';
+      return path === '/etc/subuid' ? 'azureuser:100000:65536\n' : '';
+    };
+    await applyRequest(request, undefined, ready.options);
+    const settings = ready.writes.find((write) => write.path.endsWith('.nspawn'))!.content;
+    expect(settings).toContain('[Network]\nPrivate=yes\nVirtualEthernet=yes');
+  });
+
   it('writes the record the runtime reads on every ownership check, root-owned and group-readable', async () => {
     const fixture = diskFixture();
     const response = await applyRequest({
@@ -568,6 +902,11 @@ describe('privileged helper: the disk identity record', () => {
     // there would cost more than the state poll this runtime exists to make cheap — and only root writes
     // it. Its authority is its location, outside the root filesystem, where the guest cannot reach it.
     expect(identityWrite?.mode).toBe(0o640);
+    // The directory has to carry the group too. A group-readable record inside a root:root directory is a
+    // record nobody can open: without the traverse permission every ownership check failed with EACCES and
+    // the whole runtime was unusable. 0750 grants exactly the traverse and nothing more — the group still
+    // cannot create, remove or replace anything here.
+    expect(statSync(dirname(fixture.paths.identity)).mode & 0o7777).toBe(0o750);
     expect(JSON.parse(identityWrite!.content)).toMatchObject({
       namespace: 'elowen',
       kind: 'project',
@@ -705,6 +1044,55 @@ describe('privileged helper: the disk identity record', () => {
     for (const bind of binds) {
       expect(settings).toContain(`${bind.readOnly ? 'BindReadOnly' : 'Bind'}=${bind.source}:${bind.target}:rootidmap`);
     }
+
+    // The mount point for the nested bind has to exist in the SOURCE of the bind above it. nspawn applies
+    // the binds parent first, so by the time it reaches /workspace/.git the path already resolves into the
+    // workspace source; the workspace bind is read-only, and nspawn cannot create anything there. Measured
+    // against a real machine: without this the boot fails with
+    // `Failed to create mount point <rootfs>/workspace/.git: Read-only file system`, and an empty file put
+    // in the root filesystem instead changes nothing, because the parent bind covers it.
+    const workspace = binds.find((bind: { target: string }) => bind.target === '/workspace')!;
+    const stub = join(workspace.source, '.git');
+    expect(lstatSync(stub).isFile(), 'the git stub mount point must be a file, matching what is bound over it').toBe(true);
+    expect(statSync(stub).size).toBe(0);
+
+    // It is created once and outlives the envelope, so a second write is content with what is there.
+    await expect(applyRequest({
+      domain: 'nspawn',
+      op: 'write-envelope',
+      namespace: 'elowen',
+      kind: 'site',
+      resource: siteId,
+      generation: 4,
+      diskId: 'e'.repeat(32),
+      machine: spec.name,
+      specHash: spec.labels['io.elowen.spec'],
+      limits: { cpus: 1, memoryMb: 512, pidsLimit: 256 },
+      binds,
+      dropCapabilities: [],
+      privateNetwork: true,
+    }, undefined, { storage, env: environment, writeAtomic: () => {}, runner: () => ({ ok: true, stdout: '' }) })).resolves.toMatchObject({ ok: true });
+
+    // A real repository already at that path is data, not a mount point to overwrite, and a file bound
+    // over a directory fails the mount with a message that explains nothing.
+    rmSync(stub);
+    mkdirSync(stub);
+    await expect(applyRequest({
+      domain: 'nspawn',
+      op: 'write-envelope',
+      namespace: 'elowen',
+      kind: 'site',
+      resource: siteId,
+      generation: 4,
+      diskId: 'e'.repeat(32),
+      machine: spec.name,
+      specHash: spec.labels['io.elowen.spec'],
+      limits: { cpus: 1, memoryMb: 512, pidsLimit: 256 },
+      binds,
+      dropCapabilities: [],
+      privateNetwork: true,
+    }, undefined, { storage, env: environment, writeAtomic: () => {}, runner: () => ({ ok: true, stdout: '' }) }))
+      .rejects.toThrow(/mount point is of the wrong kind/);
   });
 
   it('still refuses a target that would climb out of its mount point', () => {

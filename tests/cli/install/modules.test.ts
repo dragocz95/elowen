@@ -1,9 +1,13 @@
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { AGENT_CLIS, detectAgentClis, installCommand } from '../../../src/cli/install/agentClis.js';
 import { preflight, preflightBlockers } from '../../../src/cli/install/preflight.js';
 import { currentUser, userHome, ensureServiceUser } from '../../../src/cli/install/serviceUser.js';
 import { ensureRipgrep, ensureSandboxSupport, ensureTerminalStreaming, planFromArgs, provisionSiteGatewayHelper } from '../../../src/cli/install/index.js';
 import { isIpAddress } from '../../../src/cli/provision/deployment.js';
+import { provisionMachineRuntime } from '../../../src/privileged/publishedSitesGateway.js';
 import type { Runner, ExecResult } from '../../../src/cli/install/runner.js';
 
 function runner(over: Partial<Runner> = {}): Runner {
@@ -366,21 +370,55 @@ describe('install/provisionSiteGatewayHelper', () => {
   // unconditional; only the domain half of the record is conditional.
   it('installs the helper even without a published-sites domain deployment', async () => {
     const { r, writes, calls } = recordingRunner();
-    expect(await provisionSiteGatewayHelper(r, { mode: 'localhost', webHost: '127.0.0.1' }, '/var/lib/elowen')).toBe(true);
+    expect(await provisionSiteGatewayHelper(r, { mode: 'localhost', webHost: '127.0.0.1' })).toBe(true);
     expect(calls.some(({ cmd, args }) => cmd === 'install' && args.includes('/usr/local/libexec/elowen-site-gateway'))).toBe(true);
     const record = JSON.parse(writes.find(({ path }) => path.endsWith('.json'))!.content);
     expect(record.appHost).toBeUndefined();
-    expect(record.storage).toEqual({
-      sandboxDataDir: '/var/lib/elowen/.config/elowen/plugins-data/sandbox',
-      sitesDataDir: '/var/lib/elowen/.config/elowen/plugins-data/sites',
-    });
+    // The record carries what Sites needs and nothing the root helper decides with. The storage roots
+    // used to live here, and the helper trusting them was how a record staged under a writable path could
+    // move what root would touch; the helper derives them from the invoking account instead.
+    expect(record.storage).toBeUndefined();
   });
 
-  it('adds the domain record only when the deployment has one, and always the storage roots', async () => {
+  it('adds the domain record only when the deployment has one', async () => {
     const { r, writes } = recordingRunner();
-    await provisionSiteGatewayHelper(r, { mode: 'domain', domain: 'Agent.Example.com', webHost: '127.0.0.1' }, '/var/lib/elowen');
+    await provisionSiteGatewayHelper(r, { mode: 'domain', domain: 'Agent.Example.com', webHost: '127.0.0.1' });
     const record = JSON.parse(writes.find(({ path }) => path.endsWith('.json'))!.content);
-    expect(record).toMatchObject({ appHost: 'agent.example.com', daemonPort: 4400 });
-    expect(record.storage.sandboxDataDir).toBe('/var/lib/elowen/.config/elowen/plugins-data/sandbox');
+    expect(record).toEqual({ appHost: 'agent.example.com', daemonPort: 4400 });
+  });
+});
+
+describe('privileged/provisionMachineRuntime', () => {
+  // Nothing else installs the machine runtime's host artefacts. `decideRuntime` refuses to create an
+  // environment while the container tools, the unit template or the polkit rule are missing, and there is
+  // deliberately no fallback runtime, so a host that never runs this can create nothing at all and the
+  // only repair is writing root-owned files by hand. Both ways in are pinned below.
+  it('asks the root helper to converge the host artefacts', async () => {
+    const sent: unknown[] = [];
+    const ready = await provisionMachineRuntime(async (request) => {
+      sent.push(request);
+      return { ok: true, ready: true, items: [] };
+    });
+    expect(sent).toEqual([{ domain: 'nspawn', op: 'provision' }]);
+    expect(ready).toBe(true);
+  });
+
+  it('names what is still missing rather than reporting a success it did not get', async () => {
+    await expect(provisionMachineRuntime(async () => ({
+      ok: true,
+      ready: false,
+      items: [
+        { id: 'package:systemd-container', label: 'systemd container tools', ok: false, detail: 'not installed' },
+        { id: 'polkit:machines', label: 'Machine lifecycle authorization', ok: true, detail: 'installed' },
+      ],
+    }))).rejects.toThrow(/systemd container tools: not installed/);
+  });
+
+  it('is reached by a fresh install and by an upgrade', () => {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const installer = readFileSync(join(here, '../../../src/cli/install/index.ts'), 'utf8');
+    const updater = readFileSync(join(here, '../../../src/cli/update.ts'), 'utf8');
+    expect(installer, 'a fresh install must provision the machine runtime').toContain('provisionMachineRuntime()');
+    expect(updater, 'an instance that upgrades into this runtime has never had the artefacts').toContain('provisionMachineRuntime()');
   });
 });

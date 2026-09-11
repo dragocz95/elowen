@@ -4,7 +4,7 @@ import { realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { fileURLToPath } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { bindContainerIdentity, createContainerSpec, createEnvironmentDiskSpec, executionUnit } from '../../plugins/sandbox/lib/containerSpec.mjs';
+import { bindContainerIdentity, createBoundSiteSpec, createContainerSpec, createEnvironmentDiskSpec, executionUnit } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import { selectRuntimeClient } from '../../plugins/sandbox/lib/runtimeClient.mjs';
 import { DROPPED_CAPABILITIES, envelopePaths, HELPER_PATH, helperFrame, machineState, MACHINE_PATTERN,
   NspawnClient, timespanMicroseconds, UID_RANGE_SIZE, unitFor } from '../../plugins/sandbox/lib/nspawn.mjs';
@@ -77,18 +77,30 @@ function fixture(options: { limits?: Record<string, number>, generation?: number
         const request = JSON.parse(frame.subarray(9, 9 + length).toString('utf8'));
         requests.push(request);
         guestInput.push(frame.subarray(9 + length));
-        const reply = typeof helperReply[request.op] === 'function' ? helperReply[request.op](request) : helperReply[request.op];
+        const reply = typeof helperReply[request.op] === 'function' ? await helperReply[request.op](request) : helperReply[request.op];
         return { code: 0, stdout: JSON.stringify(reply ?? { ok: true }), stderr: '' };
       }
       return { code: 0, stdout: '', stderr: '' };
     }),
   };
-  const images = { imageIdentity: vi.fn(async () => `sha256:${'d'.repeat(64)}`), ensureProjectImage: vi.fn(async () => image) };
+  const images = { imageIdentity: vi.fn(async () => `sha256:${'d'.repeat(64)}`), ensureProjectImage: vi.fn(async () => image),
+    // The one image operation a fresh disk needs: the merged filesystem, written where the machine
+    // client asked for it. The file has to exist, because the client validates the archive path before
+    // it hands it to the helper.
+    exportImageRootfs: vi.fn(async (_spec: any, archivePath: string) => {
+      writeFileSync(archivePath, 'rootfs archive');
+      return `sha256:${'d'.repeat(64)}`;
+    }),
+    removeDiskPath: vi.fn(async (path: string) => { rmSync(path, { force: true }); }) };
   const client = new NspawnClient({ executor, images, configRoot, namespace: spec.namespace,
     ...(options.outputLimitBytes === undefined ? {} : { outputLimitBytes: options.outputLimitBytes }) });
   return { root, configRoot, paths, spec, disk: spec.disk, diskDirectory, identityPath, identity, writeIdentity,
     envelope, writeEnvelope, unit, machine, requests, guestInput, calls, helperReply, executor, images, client, rootfs };
 }
+
+/** The shape the systemd guest protocol answers with; the tombstone reads exactly these four fields. */
+const collectedUnit = { ok: true, exitCode: 0, signal: null, timedOut: false, truncated: false,
+  stdout: Buffer.from('LoadState=not-found\nActiveState=inactive\nSubState=dead\nControlGroup=\n').toString('base64'), stderr: '' };
 
 /** The shape the systemd guest protocol answers with; the tombstone reads exactly these four fields. */
 const maskedUnit = { ok: true, exitCode: 0, signal: null, timedOut: false, truncated: false,
@@ -187,6 +199,11 @@ describe('nspawn state vocabulary', () => {
     expect(timespanMicroseconds('1s')).toBe(1_000_000);
     expect(timespanMicroseconds('750ms')).toBe(750_000);
     expect(timespanMicroseconds('1s 500ms')).toBe(1_500_000);
+    // What systemd actually prints for a CPU quota above one core. `systemd-analyze timespan 1500000us`
+    // renders it `1.500000s`, and reading that as unparseable fails the limit check of every environment
+    // with more than a single CPU.
+    expect(timespanMicroseconds('1.500000s')).toBe(1_500_000);
+    expect(timespanMicroseconds('2.250000s')).toBe(2_250_000);
     expect(timespanMicroseconds('infinity')).toBe(Infinity);
     expect(timespanMicroseconds('not-a-timespan')).toBeNull();
   });
@@ -221,9 +238,85 @@ describe('nspawn privileged transport', () => {
     expect(frame.subarray(9 + length).toString('utf8')).toBe('guest bytes');
   });
 
-  it('refuses to build a request for an operation the privileged domain does not have', async () => {
-    const { client, spec } = fixture();
-    await expect(client.materializeRootfs(spec)).rejects.toThrow(/materialized from an export archive/);
+  it('asks the machine manager for one property per flag, which is the only form it accepts', async () => {
+    const { client, spec, calls } = fixture();
+    await client.inspect(spec);
+    const shown = calls.filter((call) => call.file === '/usr/bin/machinectl' && call.args[0] === 'show');
+    expect(shown.length).toBeGreaterThan(0);
+    for (const call of shown) {
+      // `systemctl` splits a comma-separated property list and `machinectl` does not: it looks for a
+      // property whose name contains the comma, finds none and prints nothing, so the ownership proof
+      // reads an empty record and refuses a machine that is perfectly correct.
+      for (const argument of call.args) expect(argument, call.args.join(' ')).not.toContain(',');
+      // One flag per property, so a second property is asked for rather than appended to the first.
+      const flags = call.args.filter((argument) => argument === '-p').length;
+      expect(call.args.slice(call.args.indexOf('-p'))).toHaveLength(flags * 2);
+    }
+    expect(shown.at(-1)!.args).toEqual(['show', spec.name, '-p', 'Unit', '-p', 'RootDirectory']);
+  });
+
+  it('materializes a fresh disk by delegating the image and handing the archive to the privileged side', async () => {
+    const { client, spec, images, requests, diskDirectory } = fixture();
+    const pending = join(diskDirectory, 'rootfs.pending');
+    mkdirSync(pending, { recursive: true });
+    const archive = join(diskDirectory, 'rootfs.tar.pending');
+
+    const imageId = await client.materializeRootfs(spec, pending);
+
+    // The image half goes to the client that HAS an image store, written beside the tree it fills.
+    expect(imageId).toBe(`sha256:${'d'.repeat(64)}`);
+    expect(images.exportImageRootfs).toHaveBeenCalledWith(spec, archive);
+    // The extraction is privileged, because only the helper can preserve the archive's ownership and
+    // then shift the whole tree into the machine's range. Both facts travel in one request.
+    const materialize = requests.filter((request) => request.op === 'materialize');
+    expect(materialize).toHaveLength(1);
+    expect(materialize[0]).toMatchObject({ domain: 'nspawn', op: 'materialize', machine: spec.name,
+      namespace: spec.namespace, kind: 'project', resource: '7', generation: spec.generation,
+      diskId: spec.disk.id, specHash: spec.labels['io.elowen.spec'], archivePath: archive, targetPath: pending });
+    // The archive is a file the service account owns, so it goes back to the client that wrote it. The
+    // privileged tree operations take directories, and handing one a file is how this was found.
+    expect(images.removeDiskPath).toHaveBeenCalledWith(archive);
+    expect(requests.some((request) => request.op === 'tree-remove')).toBe(false);
+  });
+
+  it('keeps the export archive out of the way when the privileged extraction fails', async () => {
+    const { client, spec, helperReply, images, diskDirectory } = fixture();
+    const pending = join(diskDirectory, 'rootfs.pending');
+    mkdirSync(pending, { recursive: true });
+    helperReply.materialize = { ok: false, detail: 'the extraction target is not empty' };
+
+    await expect(client.materializeRootfs(spec, pending)).rejects.toThrow(/the extraction target is not empty/);
+
+    // The failure is the caller's to see, and the megabytes the export left behind are gone either way.
+    expect(images.removeDiskPath).toHaveBeenCalledTimes(1);
+  });
+
+  it('reports what the host still owes the machine runtime, in the rows the privileged side named', async () => {
+    const { client, helperReply, requests } = fixture();
+    helperReply.status = { ok: true, ready: false, items: [
+      { id: 'os:supported', label: 'Supported operating system', ok: true, detail: 'Ubuntu 24.04' },
+      { id: 'firewall:host-guard', label: 'Machine-to-host guard', ok: false, detail: 'everything else a machine addresses to the host arrives here — run: /usr/sbin/iptables -A INPUT -i ve-+ -j DROP' },
+    ] };
+
+    const readiness = await client.hostReadiness();
+
+    // The veth rows are asked for, because an ordinary environment asks for a virtual ethernet and a
+    // report that leaves out the rows it will be refused on would read as ready until the first create.
+    expect(requests.at(-1)).toEqual({ domain: 'nspawn', op: 'status', veth: true });
+    // Passed through as written: the ids move, the labels and details are what an operator acts on, and
+    // the client invents none of them.
+    expect(readiness).toEqual({ ready: false, items: [
+      { id: 'os:supported', label: 'Supported operating system', ok: true, detail: 'Ubuntu 24.04' },
+      { id: 'firewall:host-guard', label: 'Machine-to-host guard', ok: false, detail: 'everything else a machine addresses to the host arrives here — run: /usr/sbin/iptables -A INPUT -i ve-+ -j DROP' },
+    ] });
+  });
+
+  it('refuses a readiness report it cannot trust rather than reporting a host as ready', async () => {
+    const { client, helperReply } = fixture();
+    helperReply.status = { ok: true, ready: true };
+    await expect(client.hostReadiness()).rejects.toThrow(/Invalid machine runtime readiness report/);
+    helperReply.status = { ok: true, ready: true, items: [{ id: 'os:supported', label: 'Supported operating system' }] };
+    await expect(client.hostReadiness()).rejects.toThrow(/Invalid machine runtime readiness item/);
   });
 
   it('mirrors the helper path the installer pins', () => {
@@ -238,14 +331,14 @@ describe('nspawn guest execution', () => {
     state.helperReply.exec = (request: any) => (request.argv[0] === '/bin/sh'
       ? { ok: true, exitCode: 42, signal: null, timedOut: false, truncated: false,
         stdout: Buffer.from('out\r\nbytes').toString('base64'), stderr: Buffer.from('err').toString('base64') }
-      : maskedUnit);
+      : collectedUnit);
     const result = await state.client.exec(state.spec, EXECUTION_ID, ['/bin/sh', '-c', 'exit 42']);
     expect(result).toMatchObject({ code: 42, stdout: 'out\r\nbytes', stderr: 'err', truncated: false });
   });
 
   it('carries the guest argv through untouched and names the leased unit', async () => {
     const state = fixture();
-    state.helperReply.exec = (request: any) => (request.unit.startsWith('elowen-exec-') ? { ok: true, exitCode: 0, stdout: '', stderr: '' } : maskedUnit);
+    state.helperReply.exec = (request: any) => (request.unit.startsWith('elowen-exec-') ? { ok: true, exitCode: 0, stdout: '', stderr: '' } : collectedUnit);
     // Running an arbitrary command inside the environment is what the environment is FOR: the client
     // bounds the transport and never inspects, rewrites or allow-lists what the guest is asked to run.
     const argv = ['/usr/bin/sudo', '--property=ExecStart=/bin/false', '-M', 'other-machine', '--pipe'];
@@ -273,7 +366,7 @@ describe('nspawn guest execution', () => {
     state.helperReply.exec = (request: any) => (request.argv[0] === '/bin/sh'
       ? { ok: true, exitCode: 0, signal: null, timedOut: false, truncated: false,
         stdout: Buffer.from(`head${'x'.repeat(4000)}tail`).toString('base64'), stderr: '' }
-      : maskedUnit);
+      : collectedUnit);
     const result = await state.client.exec(state.spec, EXECUTION_ID, ['/bin/sh', '-c', 'yes']);
     // The bound is the caller's figure over the DECODED bytes, and what survives is the tail, which is
     // the half of a long output anyone reads. A command that writes too much is shortened, not failed.
@@ -287,7 +380,7 @@ describe('nspawn guest execution', () => {
     state.helperReply.exec = (request: any) => (request.argv[0] === '/bin/sh'
       ? { ok: true, exitCode: 0, signal: null, timedOut: false, truncated: true,
         stdout: Buffer.from('short').toString('base64'), stderr: '' }
-      : maskedUnit);
+      : collectedUnit);
     const result = await state.client.exec(state.spec, EXECUTION_ID, ['/bin/sh', '-c', 'yes']);
     expect(result).toMatchObject({ stdout: 'short', truncated: true });
   });
@@ -327,9 +420,35 @@ describe('nspawn guest execution', () => {
     expect(request.detached).toBeUndefined();
   });
 
+  it('reports an execution cancelled under it as cancelled even when the reaper won the race', async () => {
+    const state = fixture();
+    // The losing half of the race, driven rather than waited for. The cancellation lands while the
+    // launcher is still in flight; the launcher then exits zero, because its unit was stopped rather than
+    // its command failed. By the time anything could look the unit up, `--collect` has retired it, so
+    // every lookup answers "already gone" — which reads exactly like a command that ran and printed
+    // nothing. Inferring the verdict from that lookup is what made this intermittent.
+    let cancelling = false;
+    state.helperReply.exec = async (request: any) => {
+      if (request.argv[0] === '/bin/sleep') {
+        cancelling = true;
+        await state.client.cancelExecution(state.spec, EXECUTION_ID);
+        cancelling = false;
+        return { ok: true, exitCode: 0, signal: null, timedOut: false, truncated: false, stdout: '', stderr: '' };
+      }
+      return cancelling ? maskedUnit : collectedUnit;
+    };
+    await expect(state.client.exec(state.spec, EXECUTION_ID, ['/bin/sleep', '600']))
+      .rejects.toThrow(/Guest command was cancelled/);
+    // And the tombstone stands: unmasking here would reopen the race it was placed to close.
+    expect(state.requests.filter((entry) => entry.op === 'exec' && entry.argv.includes('unmask'))).toHaveLength(0);
+    // The record is not left behind either, so a later execution under the same lease is its own.
+    state.helperReply.exec = () => collectedUnit;
+    await expect(state.client.exec(state.spec, EXECUTION_ID, ['/bin/true'])).resolves.toMatchObject({ code: 0 });
+  });
+
   it('keeps the verdict transport for an execution this client reads itself', async () => {
     const state = fixture();
-    state.helperReply.exec = () => maskedUnit;
+    state.helperReply.exec = () => collectedUnit;
     await state.client.exec(state.spec, EXECUTION_ID, ['/bin/true']);
     for (const request of state.requests.filter((entry) => entry.op === 'exec')) {
       expect(request.raw).toBeUndefined();
@@ -395,7 +514,10 @@ describe('nspawn limits', () => {
     expect(created.state).toBe('stopped');
     const request = state.requests.find((entry) => entry.op === 'write-envelope');
     expect(request).toMatchObject({ machine: state.spec.name, diskId: state.spec.disk.id,
-      limits: { cpus: 2, memoryMb: 2048, pidsLimit: 1024 }, dropCapabilities: [...DROPPED_CAPABILITIES], privateNetwork: true });
+      limits: { cpus: 2, memoryMb: 2048, pidsLimit: 1024 }, dropCapabilities: [...DROPPED_CAPABILITIES], privateNetwork: false });
+    // `false` is the privileged side's word for "give this machine a virtual ethernet". An ordinary
+    // environment asks for one, because the container runtime gives the same specification outbound
+    // traffic today and a guest with only its own loopback cannot install anything.
     expect(request.binds.map((bind: any) => bind.target)).toEqual(['/demo', '/root', '/data']);
   });
 
@@ -496,5 +618,67 @@ describe('runtime client selection', () => {
   it('refuses an nspawn row on a runtime that has no machine client rather than falling back', () => {
     const { spec } = fixture();
     expect(() => selectRuntimeClient(spec, { podman: {} as any, nspawn: null })).toThrow(/systemd-nspawn, which is unavailable/);
+  });
+});
+
+/** A published Site, built the way the runtime builds one: `createBoundSiteSpec` from a trusted binding,
+ *  not a hand-written mount list. The bind set of a Site is the part of the envelope with the most host
+ *  paths in it and the least resemblance to a project's, and an invented path proves nothing about it. */
+describe('nspawn site envelope', () => {
+  function siteFixture() {
+    const root = mkdtempSync(join(tmpdir(), 'elowen-nspawn-site-'));
+    roots.push(root);
+    const configRoot = join(root, 'config');
+    const binding = { namespace: 'elowen', sitesDataDir: join(root, 'sites'),
+      sourcePath: join(root, 'sources', 'shop'), brokerDir: join(root, 'brokers', 'shop') };
+    for (const path of [binding.sitesDataDir, binding.sourcePath, binding.brokerDir]) mkdirSync(path, { recursive: true });
+    const resource = { kind: 'site' as const, id: 'shop' };
+    const image = 'localhost/elowen/site:fixed';
+    const disk = createEnvironmentDiskSpec({ resource, image, runtime: 'nspawn' },
+      { sitesDataDir: binding.sitesDataDir, namespace: binding.namespace }, 'f'.repeat(32));
+    const spec: any = createBoundSiteSpec({ resource, generation: 3, image, disk, network: 'shared',
+      workspaceReadOnly: true, limits: { cpus: 1, memoryMb: 512, pidsLimit: 256 } }, binding);
+    mkdirSync(spec.disk.rootfsPath, { recursive: true, mode: 0o755 });
+    for (const component of spec.disk.components) mkdirSync(component.path, { recursive: true });
+    // The git stub a Site mounts over `/workspace/.git` is a FILE, and the client validates it as one.
+    // Creating every bind source as a directory is the kind of invented path that hides a real defect.
+    for (const mount of spec.mounts.filter((entry: any) => entry.type === 'bind')) {
+      if (mount.target === '/workspace/.git') { mkdirSync(dirname(mount.source), { recursive: true }); writeFileSync(mount.source, 'gitdir: /dev/null\n'); }
+      else mkdirSync(mount.source, { recursive: true });
+    }
+    const requests: any[] = [];
+    const executor = { run: vi.fn(async (file: string, args: string[], options: any = {}) => {
+      if (file === '/usr/bin/sudo') {
+        const frame: Buffer = Buffer.isBuffer(options.input) ? options.input : Buffer.from(String(options.input ?? ''));
+        const length = Number(frame.subarray(0, 8).toString('latin1'));
+        requests.push(JSON.parse(frame.subarray(9, 9 + length).toString('utf8')));
+        return { code: 0, stdout: JSON.stringify({ ok: true }), stderr: '' };
+      }
+      if (file === '/usr/bin/machinectl' && args[0] === 'list') return { code: 0, stdout: '', stderr: '' };
+      return { code: 0, stdout: '', stderr: '' };
+    }) };
+    const images = { imageIdentity: vi.fn(), exportImageRootfs: vi.fn() };
+    const client = new NspawnClient({ executor, images, configRoot, namespace: binding.namespace });
+    return { spec, binding, requests, client, root };
+  }
+
+  it('writes a Site envelope with the binds the specification itself declares', async () => {
+    const { spec, requests, client, root } = siteFixture();
+    // `create` proves the envelope was written by looking for it, which this executor cannot fake;
+    // the request it sent first is the subject and is already recorded by then.
+    const outcome = await client.create(spec).catch((cause: Error) => cause.message);
+
+    const envelope = requests.find((request) => request.op === 'write-envelope');
+    expect(envelope, String(outcome)).toBeDefined();
+    expect(envelope).toMatchObject({ machine: spec.name, kind: 'site', resource: 'shop', generation: 3,
+      diskId: spec.disk.id, specHash: spec.labels['io.elowen.spec'], privateNetwork: false });
+    // Every bind, in the specification's own order, with the specification's own read-only flags. A Site
+    // mounts its source read-only and its broker writable, and those are not the same decision.
+    expect(envelope.binds).toEqual(spec.mounts.filter((mount: any) => mount.type === 'bind')
+      .map((mount: any) => ({ source: realpathSync(mount.source), target: mount.target, readOnly: mount.readOnly === true })));
+    expect(envelope.binds.length).toBeGreaterThan(0);
+    expect(envelope.binds.some((bind: any) => bind.readOnly)).toBe(true);
+    // No path the binding did not produce reaches the helper.
+    for (const bind of envelope.binds) expect(bind.source.startsWith(realpathSync(root))).toBe(true);
   });
 });

@@ -61,9 +61,15 @@ function setup() {
     containerExists: vi.fn(async (spec: any) => containers.has(spec.name)),
   };
   const storage = { prepare: vi.fn(), snapshot: vi.fn(), readSnapshot: vi.fn(), restoreVolumes: vi.fn(), removeDisk: vi.fn() };
-  const runtime = createEnvironmentRuntime({ ctx, db, dataDir: root, podman: podman as unknown as PodmanClient,
+  const built = createEnvironmentRuntime({ ctx, db, dataDir: root, podman: podman as unknown as PodmanClient,
     storage: storage as unknown as ContainerStorage, daemon: true });
-  cleanup.push(() => { runtime.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
+  // Every environment here predates the machine runtime, which is what makes it a Podman row: this suite
+  // is about the step list an operation publishes, and the runtime it publishes it for is not the subject.
+  const predate = () => db.prepare("UPDATE p_sandbox_runtimes SET spec_json=json_remove(spec_json,'$.runtimePending')").run();
+  const runtime = { ...built,
+    requestEnvironment: async (value: any) => { const result = await built.requestEnvironment(value); predate(); return result; },
+    reconcile: async (...args: any[]) => { predate(); return await built.reconcile(...args); } };
+  cleanup.push(() => { built.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
   return { runtime, db, ctx, podman, containers, published, project, root,
     setBuildOutput: (lines: string[]) => { buildLines = lines; },
     // A guest whose boot never finishes: the container runs, the bus never listens. That is what a host
