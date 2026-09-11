@@ -6,7 +6,7 @@ import { dirname, join } from 'node:path';
 import { afterAll, describe, expect, it } from 'vitest';
 import { createBoundSiteSpec, createEnvironmentDiskSpec } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import { PROJECT_BASE_IMAGE_TAG } from '../../plugins/sandbox/lib/containerBaseImage.mjs';
-import { PodmanClient } from '../../plugins/sandbox/lib/podman.mjs';
+import { cleanPodmanEnv, PodmanClient } from '../../plugins/sandbox/lib/podman.mjs';
 import { EXPECTED_CAPABILITY_BOUND, EXPECTED_SECCOMP_FILTERS, EXPECTED_SECCOMP_MODE, envelopePaths,
   HELPER_PATH, NspawnClient, unitFor } from '../../plugins/sandbox/lib/nspawn.mjs';
 
@@ -14,16 +14,23 @@ import { EXPECTED_CAPABILITY_BOUND, EXPECTED_SECCOMP_FILTERS, EXPECTED_SECCOMP_M
  *  machine — its capability bound, its seccomp mode, what its binds do to file ownership, what its cgroup
  *  actually holds — and none of them can be established against a fake. So the suite refuses to run
  *  rather than to pretend, and says why. */
-const POLKIT_RULE_PATH = '/etc/polkit-1/rules.d/49-elowen-nspawn.rules';
+const MACHINE_UNIT_TEMPLATE = '/etc/systemd/system/elowen-machine@.service';
 const blockers: string[] = [];
 if (process.platform !== 'linux') blockers.push('the host is not Linux');
 if (!existsSync('/usr/bin/systemd-nspawn')) blockers.push('systemd-container is not installed');
 if (!existsSync(HELPER_PATH)) blockers.push('the privileged helper is not installed');
-if (!existsSync(POLKIT_RULE_PATH)) blockers.push('the polkit rule is not present');
+// The unit template is what says the machine runtime has been provisioned at all: the helper writes it,
+// the polkit rule is scoped to it, and it sits where the service account can read it. The polkit rule
+// itself is deliberately NOT checked as a path — `/etc/polkit-1/rules.d` is root-only, so a permission
+// denial and a missing file are the same answer from this account, and treating that as a skip would
+// hide the runtime being unusable. A rule that is absent surfaces as an access denial on the first
+// `systemctl start`, which this test then reports as the failure it is.
+if (!existsSync(MACHINE_UNIT_TEMPLATE)) blockers.push('the machine unit template is not installed');
 if (!blockers.length) {
-  // The machine is built from the same image every environment is, so an unbuilt one is a reason to
-  // skip rather than a fifteen-minute build inside a test.
-  try { execFileSync('/usr/bin/podman', ['image', 'exists', PROJECT_BASE_IMAGE_TAG], { timeout: 60_000 }); }
+  // The machine is built from the same image every environment is, so an unbuilt one is a reason to skip
+  // rather than a fifteen-minute build inside a test. The store is the SERVICE account's rootless one,
+  // reachable only with that account's own environment.
+  try { execFileSync('/usr/bin/podman', ['image', 'exists', PROJECT_BASE_IMAGE_TAG], { timeout: 60_000, env: cleanPodmanEnv() }); }
   catch { blockers.push('the project base image is not built'); }
 }
 if (blockers.length) console.log(`nspawn machine proof skipped: ${blockers.join('; ')}`);
@@ -31,7 +38,7 @@ if (blockers.length) console.log(`nspawn machine proof skipped: ${blockers.join(
 const cleanup: (() => void)[] = [];
 afterAll(() => { for (const step of cleanup.splice(0)) step(); });
 
-const podmanRun = (args: string[], timeout = 15 * 60_000) => execFileSync('/usr/bin/podman', args, { encoding: 'utf8', timeout });
+const podmanRun = (args: string[], timeout = 15 * 60_000) => execFileSync('/usr/bin/podman', args, { encoding: 'utf8', timeout, env: cleanPodmanEnv() });
 const systemctlShow = (unit: string, property: string) =>
   execFileSync('/usr/bin/systemctl', ['show', unit, '-p', property, '--value'], { encoding: 'utf8', timeout: 30_000 }).trim();
 const machineList = () => execFileSync('/usr/bin/machinectl', ['list', '--no-legend', '--no-pager'], { encoding: 'utf8', timeout: 30_000 });

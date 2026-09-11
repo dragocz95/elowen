@@ -8,8 +8,9 @@ import { cleanPodmanEnv, GUEST_SYSTEM_BUS, OUTPUT_LIMIT, positive, SpawnExecutor
 /** The one privileged executable, shared with the published-sites gateway: two typed domains behind one
  *  root-owned binary and one pinned sudoers line, because two executables reachable by the same service
  *  account are not a privilege boundary. Every root-only operation arrives on its stdin as a bounded JSON
- *  request. This mirrors `SITE_GATEWAY_HELPER_PATH` in `src/shared/siteGateway.ts`, which a bundled
- *  plugin cannot import at runtime; `tests/plugins/nspawnRuntime.test.ts` holds the two in step. */
+ *  request. This mirrors `NSPAWN_HELPER_PATH` in `src/shared/nspawnRuntime.ts`, which a bundled plugin
+ *  cannot import at runtime; `tests/contract/nspawnHelper.test.ts` holds this constant, the argv below,
+ *  the daemon-side control and the sudoers line against each other. */
 export const HELPER_PATH = '/usr/local/libexec/elowen-site-gateway';
 const SUDO = '/usr/bin/sudo';
 const SYSTEMCTL = '/usr/bin/systemctl';
@@ -128,14 +129,14 @@ function readEnvelope(paths) {
   return { nspawn: read(paths.nspawn), dropIn: read(paths.dropIn) };
 }
 
-/** The disk's own record of which environment it belongs to, written by the helper. It is read directly
- *  rather than through a privileged round trip because `inspect` is on the execution path and a round
- *  trip there would cost more than the whole state poll.
+/** The disk's own record of which environment it belongs to. The helper writes it as root at 0640 with
+ *  the service group, which is what lets this run as a plain read: `inspect` is on the execution path, and
+ *  a privileged round trip there would cost more than the entire state poll it belongs to.
  *
- *  Its authority is its PLACE, not its owner: it sits in the disk directory, outside the root filesystem,
- *  where the guest has no path to it at all — a marker inside the tree would prove nothing, because the
- *  guest is root over that tree. What it defends against is a disk directory that belongs to another
- *  environment, generation or uid range, and every field in it is held against the specification below. */
+ *  It sits in the disk directory, outside the root filesystem, where the guest has no path to it at all —
+ *  a marker inside the tree would prove nothing, because the guest is root over that tree. What it
+ *  establishes is that this directory belongs to this environment, generation and uid range, and every
+ *  field in it is held against the specification below. */
 function readIdentity(diskDirectory) {
   const path = join(diskDirectory, IDENTITY_RELATIVE);
   const stat = lstatSync(path);
@@ -469,18 +470,21 @@ export class NspawnClient {
     return { timeoutMs, unit, workdir };
   }
 
-  async #preparedRequest(spec, unit, argv, options = {}) {
+  /** `mode` is the execution's transport, and it is part of the REQUEST because the two callers below
+   *  want different answers from the same command line. This client reads a verdict; the daemon, which
+   *  spawns the helper itself, reads the guest's own bytes. */
+  async #preparedRequest(spec, unit, argv, options = {}, mode = {}) {
     const prepared = this.#prepareUnit(spec, unit, argv, options);
     const machine = this.#machine(spec);
     const row = await this.#owned(spec);
     if (row.state !== 'running') throw new Error('Container is not running');
     return { ...prepared, container: row,
       request: helperRequest('exec', { machine, unit, argv: [...argv], cwd: prepared.workdir,
-        timeoutSeconds: Math.ceil(prepared.timeoutMs / 1000) }) };
+        timeoutSeconds: Math.ceil(prepared.timeoutMs / 1000), ...mode }) };
   }
 
-  async #prepareGuest(spec, executionId, argv, options = {}) {
-    return await this.#preparedRequest(spec, executionUnit(spec, executionId), argv, options);
+  async #prepareGuest(spec, executionId, argv, options = {}, mode = {}) {
+    return await this.#preparedRequest(spec, executionUnit(spec, executionId), argv, options, mode);
   }
 
   /** The row an in-call cleanup may reuse instead of proving ownership a second time. Private, and it
@@ -569,13 +573,13 @@ export class NspawnClient {
    *  the caller's own stdin in the SAME pipe, which is why the frame is returned as `stdin` rather than
    *  hidden inside the argv the sudoers drop-in pins.
    *
-   *  This path is the one place the helper's JSON verdict is not what the caller wants: the daemon reads
-   *  the child's stdout and stderr straight through to a terminal, so for a LAUNCHED execution the helper
-   *  has to pass the guest's own streams and exit status through instead of encoding them. Until it does,
-   *  a launched execution on this runtime renders the verdict rather than the command's output. */
+   *  `raw` is what makes this a launch rather than a call. The daemon spawns the helper itself and streams
+   *  its stdout and stderr to a terminal, so a base64 verdict on stdout is not the answer anyone here
+   *  wants: in raw mode the helper inherits the child's streams and exits with the child's own status,
+   *  which is exactly how `podman exec` behaves for the same descriptor. */
   async prepareExecution(spec, executionId, argv, options = {}) {
     if (options.completionCwd === true) throw new Error('Completion cwd capture is not carried by the nspawn transport');
-    const prepared = await this.#prepareGuest(spec, executionId, argv, options);
+    const prepared = await this.#prepareGuest(spec, executionId, argv, options, { raw: true });
     return {
       launch: { type: 'argv', file: SUDO, args: this.#helperArgv(), env: { ...this.#env } },
       stdin: helperFrame(prepared.request, options.input),

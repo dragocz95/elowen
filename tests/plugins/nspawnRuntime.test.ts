@@ -17,7 +17,7 @@ afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: 
 /** A complete host-side envelope for one machine: the disk with its identity record, the two root-owned
  *  configuration files, and a `systemctl show` answer that matches all of them. Each test then breaks
  *  exactly one of those facts and asserts that the ownership proof refuses. */
-function fixture(options: { limits?: Record<string, number>, generation?: number } = {}) {
+function fixture(options: { limits?: Record<string, number>, generation?: number, previewBroker?: boolean } = {}) {
   const root = mkdtempSync(join(tmpdir(), 'elowen-nspawn-test-'));
   roots.push(root);
   const configRoot = join(root, 'config');
@@ -27,7 +27,8 @@ function fixture(options: { limits?: Record<string, number>, generation?: number
   const image = 'localhost/elowen-project-base:test';
   const generation = options.generation ?? 2;
   const disk = createEnvironmentDiskSpec({ resource, image, runtime: 'nspawn' }, paths, 'a'.repeat(32));
-  const spec: any = createContainerSpec({ resource, workspaceTarget: '/demo', generation, image, disk, limits: options.limits }, paths);
+  const spec: any = createContainerSpec({ resource, workspaceTarget: '/demo', generation, image, disk, limits: options.limits,
+    ...(options.previewBroker ? { previewBroker: true } : {}) }, paths);
   mkdirSync(spec.disk.rootfsPath, { recursive: true, mode: 0o755 });
   for (const component of spec.disk.components) mkdirSync(component.path, { recursive: true });
   const diskDirectory = dirname(spec.disk.rootfsPath);
@@ -279,10 +280,52 @@ describe('nspawn guest execution', () => {
   it('hands the daemon a launch descriptor whose stdin carries the request ahead of the guest bytes', async () => {
     const state = fixture();
     const prepared = await state.client.prepareExecution(state.spec, EXECUTION_ID, ['/bin/bash', '-s'], { input: 'echo hi' });
-    expect(prepared.launch).toMatchObject({ type: 'argv', file: '/usr/bin/sudo', args: ['-n', HELPER_PATH, ''] });
+    // The same descriptor shape the daemon spawns for Podman: an argv launch with an explicit file, its
+    // arguments and a clean environment, so nothing downstream has to know which runtime produced it.
+    expect(prepared.launch).toEqual({ type: 'argv', file: '/usr/bin/sudo', args: ['-n', HELPER_PATH, ''],
+      env: expect.objectContaining({ PATH: expect.any(String), HOME: expect.any(String) }) });
     const length = Number(prepared.stdin.subarray(0, 8).toString('latin1'));
     expect(JSON.parse(prepared.stdin.subarray(9, 9 + length).toString('utf8'))).toMatchObject({ domain: 'nspawn', op: 'exec', argv: ['/bin/bash', '-s'] });
     expect(prepared.stdin.subarray(9 + length).toString('utf8')).toBe('echo hi');
+  });
+
+  it('launches in raw mode, because the daemon streams that descriptor to a terminal', async () => {
+    const state = fixture();
+    const prepared = await state.client.prepareExecution(state.spec, EXECUTION_ID, ['/bin/bash', '-s'], { input: 'echo hi' });
+    const length = Number(prepared.stdin.subarray(0, 8).toString('latin1'));
+    const request = JSON.parse(prepared.stdin.subarray(9, 9 + length).toString('utf8'));
+    // Without the discriminator the helper answers with a base64 verdict on its stdout, and the terminal
+    // renders that verdict instead of the command's own output. A well-formed request is not enough.
+    expect(request.raw).toBe(true);
+    expect(request.detached).toBeUndefined();
+  });
+
+  it('keeps the verdict transport for an execution this client reads itself', async () => {
+    const state = fixture();
+    state.helperReply.exec = () => maskedUnit;
+    await state.client.exec(state.spec, EXECUTION_ID, ['/bin/true']);
+    for (const request of state.requests.filter((entry) => entry.op === 'exec')) {
+      expect(request.raw).toBeUndefined();
+      expect(request.detached).toBeUndefined();
+    }
+  });
+
+  it('starts a publication detached and refuses an acknowledgement that does not say so', async () => {
+    const state = fixture({ previewBroker: true });
+    const active = { ok: true, exitCode: 0, timedOut: false, truncated: false, stdout: Buffer.from('active\n').toString('base64'), stderr: '' };
+    state.helperReply.exec = (request: any) => (request.detached === true
+      ? { ok: true, detached: true, unit: request.unit, machine: request.machine, state: 'active', exitCode: 0 }
+      : active);
+    await state.client.startPublication(state.spec, 'pub-one', ['/usr/bin/python3', '-c', 'forward']);
+    const started = state.requests.find((entry) => entry.op === 'exec' && entry.detached === true);
+    // A detached unit has no streams to pass through, which the privileged side refuses outright.
+    expect(started).toMatchObject({ detached: true, cwd: '/demo', timeoutSeconds: 30 });
+    expect(started.raw).toBeUndefined();
+    expect(started.unit).toMatch(/^elowen-pub-[a-f0-9]{16}\.service$/);
+
+    state.helperReply.exec = (request: any) => (request.detached === true ? { ok: true } : active);
+    await expect(state.client.startPublication(state.spec, 'pub-one', ['/usr/bin/python3', '-c', 'forward']))
+      .rejects.toThrow(/did not start the guest unit detached/);
   });
 
   it('refuses completion cwd capture rather than reporting a working directory it never captured', async () => {
