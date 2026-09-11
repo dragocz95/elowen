@@ -1,3 +1,4 @@
+import { closeOpenAICodexWebSocketSessions } from '@earendil-works/pi-ai/api/openai-codex-responses';
 import { sendLockKey } from '../session/liveRegistry.js';
 import type { KnownControls } from '../../plugins/api.js';
 import type { PluginRegistry } from '../../plugins/registry.js';
@@ -29,7 +30,7 @@ import { cacheTtlMs } from '../session/cacheTiming.js';
 import { maybeColdStartCompaction, type ColdStartCompactionDeps } from '../session/coldStartCompaction.js';
 import { clearColdToolResults, type ColdToolResultClearingDeps } from '../session/coldToolResultClearing.js';
 import { openTurn, settleTurn, type TurnActivityFeed, type TurnOriginPin } from '../session/turnSettled.js';
-import type { SubagentCompletion, WorkflowCompletion } from '../events.js';
+import type { SubagentCompletion, SubagentUpdate, WorkflowCompletion } from '../events.js';
 import { randomUUID } from 'node:crypto';
 import { isNonUserSession } from '../sessionId.js';
 import { xmlEscape } from '../../shared/xml.js';
@@ -137,6 +138,8 @@ interface TurnRunnerDeps {
   recordActivity?: TurnActivityFeed;
   /** Notify user-scoped conversation-list subscribers after durable activity changes. */
   onConversationActivityChanged?: (sessionId: string) => void;
+  /** Test seam for the pi-ai session-scoped Codex WebSocket cache. */
+  closeCodexWebSocketSession?: (sessionId: string) => void;
 }
 
 /** The owner-chat turn pipeline: mid-run steering, vision hop (delegated to the
@@ -186,10 +189,13 @@ export class BrainTurnRunner {
    *  because PI's queue does not survive it — from then on the transcript is the only truth, and holding
    *  an id back any longer would strand a result instead of merely duplicating it. */
   private readonly steeredInFlight = new Map<string, Set<string>>();
+  /** Foreground children whose first running update already released the parent's cached transport. */
+  private readonly parkedSubagents = new Set<string>();
 
   constructor(private d: TurnRunnerDeps) {
     this.contextBuilder = new TurnContextBuilder({
       ...d,
+      onSubagentUpdate: (live, update) => this.onSubagentUpdate(live, update),
       completeSubagent: (parentSessionId, userId, completion) => {
         this.acceptSubagentCompletion(parentSessionId, userId, completion);
       },
@@ -197,6 +203,30 @@ export class BrainTurnRunner {
         this.acceptWorkflowCompletion(parentSessionId, userId, completion);
       },
     });
+  }
+
+  private releaseTurnTransport(sessionId: string): void {
+    const live = this.d.sessions.get(sessionId);
+    if (live?.provider !== 'openai-codex') return;
+    (this.d.closeCodexWebSocketSession ?? closeOpenAICodexWebSocketSessions)(sessionId);
+  }
+
+  private finishTurnTransport(sessionId: string): void {
+    this.releaseTurnTransport(sessionId);
+    for (const key of this.parkedSubagents) {
+      if (key.startsWith(`${sessionId}:`)) this.parkedSubagents.delete(key);
+    }
+  }
+
+  private onSubagentUpdate(live: LiveBrain, update: SubagentUpdate): void {
+    const key = `${live.sessionId}:${update.id}`;
+    if (update.status !== 'running') {
+      this.parkedSubagents.delete(key);
+      return;
+    }
+    if (update.background || this.parkedSubagents.has(key)) return;
+    this.parkedSubagents.add(key);
+    this.releaseTurnTransport(live.sessionId);
   }
 
   private serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -985,6 +1015,7 @@ export class BrainTurnRunner {
       // live context. That message is the explicit parent turn which may choose DelegateContinue; only now is
       // it safe to release the durable gate and let later ordinary results wake autonomously again.
       const completedLive = this.d.sessions.get(completedSessionId);
+      this.finishTurnTransport(completedSessionId);
       if (!internal && completedLive) {
         for (const result of this.d.store.pendingSubagentResults(completedSessionId)) {
           if (!result.requiresUserAction

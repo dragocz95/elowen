@@ -167,4 +167,14 @@ describe('loop lag watchdog', () => {
     const lines = await collect([busy, busy, quiet, quiet, busy], 60);
     expect(lines.map((l) => l.split(' ')[0])).toEqual(['WARN', 'INFO', 'WARN']);
   });
+
+  it('warns for rare severe stalls even when p99 stays low', async () => {
+    const below = { ...quiet, max: 2000, severeStalledMs: 2000 };
+    const severe = { ...quiet, max: 2700, severeStalledMs: 2001 };
+    const lines = await collect([below, severe, severe], 40);
+
+    expect(lines.filter((l) => l.startsWith('WARN'))).toHaveLength(1);
+    expect(lines[0]).toContain('max 2700ms');
+    expect(lines[0]).toContain('severe stalls 2001ms of the last 45s');
+  });
 });

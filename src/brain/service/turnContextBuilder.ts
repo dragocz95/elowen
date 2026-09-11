@@ -55,6 +55,7 @@ interface TurnContextBuilderDeps {
   projectPath?: () => string | undefined;
   completeSubagent?(parentSessionId: string, userId: number, completion: SubagentCompletion): void;
   completeWorkflow?(parentSessionId: string, userId: number, completion: WorkflowCompletion): void;
+  onSubagentUpdate?(live: LiveBrain, update: SubagentUpdate): void;
 }
 
 /** Tools plan mode admits even though they are NOT declared plan-safe, because a clamp elsewhere makes
@@ -291,12 +292,14 @@ export class TurnContextBuilder {
       const enriched: SubagentUpdate = childLevel
         ? { ...update, thinkingLevel: childLevel, thinkingLabel: childBrain?.thinkingLabels?.[childLevel] ?? childLevel }
         : update;
-      return recordSubagentProgress({
+      const recorded = recordSubagentProgress({
         store: this.d.store,
         claims: this.d.sessions,
         sessionId: live.sessionId,
         publish: (event) => { live.replay.publish(event); },
       }, enriched);
+      if (recorded) this.d.onSubagentUpdate?.(live, enriched);
+      return recorded;
     };
     const emitSubagentCompletion = (completion: SubagentCompletion): void => {
       this.d.completeSubagent?.(live.sessionId, userId, completion);
