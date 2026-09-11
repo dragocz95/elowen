@@ -757,6 +757,43 @@ describe('adopted workspace rollback', () => {
     expect(podman.removeStorage).toHaveBeenCalledOnce();
     expect(sql.prepare("SELECT * FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get()).toBeUndefined();
   });
+
+  it('rebuilds a Site container when project adoption moves its source path', async () => {
+    const { runtime, podman, project, root, ctx } = setup();
+    const host = join(root, 'host-project');
+    const sourceRel = 'sites/shop';
+    mkdirSync(join(host, sourceRel), { recursive: true });
+    project.executionKind = 'host'; project.path = host;
+    runtime.connectSitesRuntime({
+      resolve: async () => ({ siteId: 'shop', projectId: 7, sourceRel, image: 'localhost/elowen/site:fixed', network: 'shared',
+        workspaceReadOnly: false, sitesDataDir: join(root, 'sites'), sourcePath: join(await runtime.projectWorkspaceHostPath({ projectId: 7 }), sourceRel),
+        brokerDir: join(root, 'brokers'), limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 }, staging: true }),
+      beforeStart: async () => {}, afterStop: async () => {},
+    });
+    await runtime.registerSiteEnvironment({ siteId: 'shop', accountUserId: 1 });
+    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-host-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-host-stop', action: { kind: 'stop' } });
+    await runtime.reconcile();
+
+    project.executionKind = 'managed'; project.path = ''; project.adoptedPath = host;
+    await runtime.requestEnvironment({ ...input, requestId: 'adopt-project-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    const movedSource = join(await runtime.projectWorkspaceHostPath({ projectId: 7 }), sourceRel);
+
+    await runtime.requestSiteEnvironment({ siteId: 'shop', accountUserId: 1, requestId: 'site-moved-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+
+    const siteCreates = podman.create.mock.calls.map(([spec]: any[]) => spec).filter((spec: any) => spec.mounts.some((mount: any) => mount.target === '/workspace'));
+    expect(siteCreates).toHaveLength(2);
+    expect(siteCreates[0].mounts.find((mount: any) => mount.target === '/workspace').source).toBe(join(host, sourceRel));
+    expect(siteCreates[1].mounts.find((mount: any) => mount.target === '/workspace').source).toBe(movedSource);
+    expect(siteCreates[1].volumes.find((volume: any) => volume.component === 'data').path)
+      .toBe(siteCreates[0].volumes.find((volume: any) => volume.component === 'data').path);
+    expect(podman.removeVolume).not.toHaveBeenCalled();
+    expect(await runtime.siteEnvironmentFor({ siteId: 'shop', accountUserId: 1 })).toMatchObject({ state: 'running', generation: 1 });
+    expect(ctx.logger.info).toHaveBeenCalledWith(`site shop: source path moved from ${join(host, sourceRel)} to ${movedSource}, rebuilding container`);
+  });
 });
 
 describe('site environment tombstones', () => {
