@@ -734,7 +734,18 @@ const NSPAWN_MACHINE = /^elowen-(project|site)-[a-z0-9-]{1,64}-g[0-9]{1,9}$/;
 const NSPAWN_EXECUTION_UNIT = /^[a-zA-Z0-9][a-zA-Z0-9:_.-]{0,190}\.service$/;
 const SAFE_RESOURCE_TOKEN = /^[a-z0-9][a-z0-9-]{0,63}$/;
 const SAFE_SHA256 = /^[a-f0-9]{64}$/;
-const SAFE_GUEST_MOUNT = /^\/[a-z0-9][a-z0-9-]{0,63}(?:\/[a-z0-9][a-z0-9-]{0,63})?$/;
+const SAFE_GUEST_SEGMENT = /^[a-z0-9.][a-z0-9._-]{0,63}$/;
+
+/** A bind's target INSIDE the machine: one or two lowercase path segments. A dot is legitimate at any
+ *  position, including the first — every Site binds a read-only git stub over `/workspace/.git` — so what
+ *  is refused is `.` and `..` themselves, which is what keeps a target from climbing out of its mount
+ *  point. The bind SOURCE is a host path and is validated separately against the trusted storage roots. */
+export function safeGuestMountTarget(value) {
+  if (typeof value !== 'string' || !value.startsWith('/') || value.length > 130) return false;
+  const segments = value.slice(1).split('/');
+  if (segments.length > 2) return false;
+  return segments.every((segment) => segment !== '.' && segment !== '..' && SAFE_GUEST_SEGMENT.test(segment));
+}
 
 export const NSPAWN_PACKAGE = 'systemd-container';
 export const MACHINE_UNIT_PATH = '/etc/systemd/system/elowen-machine@.service';
@@ -797,8 +808,9 @@ DeviceAllow=/dev/net/tun rwm
 `;
 
 /** The lifecycle runs as the service user with no sudo, over this rule. It is scoped to units named
- *  `elowen-machine@elowen-*` and to the four verbs the runtime issues; every other unit and verb falls
- *  through to the system default, so restarting an unrelated service stays refused. */
+ *  `elowen-machine@elowen-*` and to the three verbs the runtime actually issues — start, stop and
+ *  set-property; a restart is a stop and a start, and nothing asks for one. Every other unit and verb
+ *  falls through to the system default, so restarting an unrelated service stays refused. */
 export function renderPolkitRule(user) {
   if (!SAFE_USER.test(user) || user === 'root') fail('the invoking service user cannot be determined');
   return `// Managed by Elowen. Do not edit: the root-owned helper rewrites this file.
@@ -808,7 +820,7 @@ polkit.addRule(function(action, subject) {
     var unit = action.lookup("unit");
     var verb = action.lookup("verb");
     if (!unit || unit.indexOf("elowen-machine@elowen-") !== 0) return polkit.Result.NOT_HANDLED;
-    if (verb === "start" || verb === "stop" || verb === "restart" || verb === "set-property") {
+    if (verb === "start" || verb === "stop" || verb === "set-property") {
         return polkit.Result.YES;
     }
     return polkit.Result.NOT_HANDLED;
@@ -1104,9 +1116,9 @@ function subordinateRangeFor(readText, user) {
   return { serviceId: user.uid, subStart: entry.start };
 }
 
-function nspawnIdentity(paths) {
+function nspawnIdentity(paths, storage) {
   try {
-    const value = JSON.parse(readFileSync(paths.identity, 'utf8'));
+    const value = JSON.parse(readFileSync(trustedPath(storage, paths.identity, { file: true }), 'utf8'));
     return value && typeof value === 'object' ? value : null;
   } catch {
     return null;
@@ -1127,12 +1139,33 @@ function serviceGroupId(env) {
  *  state poll this runtime exists to make cheap. Its authority is its LOCATION — the disk directory,
  *  outside the root filesystem, where the guest has no path to it at all — not its mode. It holds a
  *  specification hash and a uid range and no secret, and only root can write it. */
-function writeIdentity(paths, fields, options) {
+function writeIdentity(paths, storage, fields, options) {
   const writeAtomic = options.writeAtomic ?? atomicWrite;
-  const identity = { ...(nspawnIdentity(paths) ?? {}), ...fields, updatedAt: new Date().toISOString() };
+  // The disk directory belongs to the service user, so the directory root is about to write INTO is held
+  // against the trusted roots exactly like every other path here. Without it, `.elowen` planted as a
+  // symlink pointing out of the storage roots would have root create directories and a file at the other
+  // end of it — the atomic write creates missing parents.
+  const directory = trustedPath(storage, paths.directory);
+  ensureIdentityDirectory(join(directory, '.elowen'));
+  const identity = { ...(nspawnIdentity(paths, storage) ?? {}), ...fields, updatedAt: new Date().toISOString() };
   writeAtomic(paths.identity, Buffer.from(`${JSON.stringify(identity, null, 2)}\n`), 0o640);
   if (options.writeAtomic === undefined) chownSync(paths.identity, 0, serviceGroupId(options.env ?? process.env));
   return identity;
+}
+
+/** Create the identity directory explicitly rather than letting a recursive mkdir do it: an existing
+ *  entry has to BE a directory and must not be a symlink, and that is a question a recursive mkdir never
+ *  asks. */
+function ensureIdentityDirectory(path) {
+  let stat;
+  try {
+    stat = lstatSync(path);
+  } catch (error) {
+    if (!error || error.code !== 'ENOENT') throw error;
+    mkdirSync(path, { mode: 0o750 });
+    return;
+  }
+  if (stat.isSymbolicLink() || !stat.isDirectory()) fail('the disk identity directory is not a directory');
 }
 
 /** The identity fields the runtime holds against its own specification, field by field, on every
@@ -1193,7 +1226,7 @@ function nspawnMaterialize(request, storage, options) {
   const shifted = shiftOwnership(runner, target, {
     mode: 'offset', target: 'nspawn', base, size: UID_RANGE_SIZE, serviceId: podman.serviceId, previousBase: podman.subStart,
   });
-  const identity = writeIdentity(paths, identityFields(request, paths, base), options);
+  const identity = writeIdentity(paths, storage, identityFields(request, paths, base), options);
   return { ok: true, targetPath: target, uidBase: base, uidSize: UID_RANGE_SIZE, entries: shifted.entries, identity };
 }
 
@@ -1210,7 +1243,7 @@ function nspawnShiftOwnership(request, storage, options) {
   const rootfs = trustedPath(storage, paths.rootfs);
   const user = serviceUser(runner, env);
   const podman = subordinateRangeFor(readText, user);
-  const recorded = nspawnIdentity(paths);
+  const recorded = nspawnIdentity(paths, storage);
   let base;
   if (target === 'podman') {
     // Reversing is only ever asked for with the range the forward pass reported, and it must be the range
@@ -1224,7 +1257,7 @@ function nspawnShiftOwnership(request, storage, options) {
   const shifted = shiftOwnership(runner, rootfs, {
     mode: 'subid', target, base, size: UID_RANGE_SIZE, serviceId: podman.serviceId, previousBase: podman.subStart,
   });
-  writeIdentity(paths, {
+  writeIdentity(paths, storage, {
     ...identityFields(request, paths, base),
     ownershipTarget: target,
     previousUidBase: podman.subStart,
@@ -1256,7 +1289,7 @@ function nspawnBinds(storage, raw) {
   if (!Array.isArray(raw) || raw.length > 8) fail('the machine binds are invalid');
   return raw.map((entry) => {
     if (!entry || typeof entry !== 'object') fail('the machine binds are invalid');
-    if (typeof entry.target !== 'string' || !SAFE_GUEST_MOUNT.test(entry.target)) fail('the machine binds are invalid');
+    if (!safeGuestMountTarget(entry.target)) fail('the machine binds are invalid');
     if (entry.readOnly !== undefined && typeof entry.readOnly !== 'boolean') fail('the machine binds are invalid');
     if (typeof entry.source !== 'string') fail('the machine binds are invalid');
     const file = !existsSync(entry.source) ? false : lstatSync(entry.source).isFile();
@@ -1337,7 +1370,7 @@ function nspawnWriteEnvelope(request, storage, options) {
   writeAtomic(settingsPath, Buffer.from(settings), 0o644);
   writeAtomic(dropInPath, Buffer.from(dropIn), 0o644);
   runRequired(runner, '/usr/bin/systemctl', ['daemon-reload'], 'systemd daemon reload failed');
-  writeIdentity(paths, identityFields(request, paths, uidBase), options);
+  writeIdentity(paths, storage, identityFields(request, paths, uidBase), options);
   return { ok: true, machine, unit: machineUnitFor(machine), settingsPath, dropInPath, uidBase, uidSize: UID_RANGE_SIZE };
 }
 

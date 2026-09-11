@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -25,15 +25,17 @@ import {
   renderMachineDropIn,
   renderMachineSettings,
   renderPolkitRule,
+  safeGuestMountTarget,
   storageRootsFrom,
   trustedPath,
 } from '../../scripts/elowen-site-gateway.mjs';
 // @ts-expect-error the bundled Sandbox plugin is plain ESM without declarations
-import { createEnvironmentDiskSpec } from '../../plugins/sandbox/lib/containerSpec.mjs';
+import { createBoundSiteSpec, createEnvironmentDiskSpec } from '../../plugins/sandbox/lib/containerSpec.mjs';
 // @ts-expect-error the bundled machine runtime is plain ESM without declarations
-import { HELPER_PATH as PLUGIN_HELPER_PATH, helperRequest } from '../../plugins/sandbox/lib/nspawn.mjs';
-import { NSPAWN_HELPER_ARGV, NSPAWN_HELPER_PATH, NSPAWN_MACHINE_PATTERN, nspawnMachineUnit } from '../../src/shared/nspawnRuntime.js';
-import { encodeHelperRequest, HELPER_FRAME_HEADER_BYTES } from '../../src/shared/siteGateway.js';
+import { HELPER_PATH as PLUGIN_HELPER_PATH, MACHINE_PATTERN as PLUGIN_MACHINE_PATTERN, helperRequest } from '../../plugins/sandbox/lib/nspawn.mjs';
+import {
+  encodeHelperRequest, HELPER_FRAME_HEADER_BYTES, SITE_GATEWAY_HELPER_ARGV, SITE_GATEWAY_HELPER_PATH,
+} from '../../src/shared/siteGateway.js';
 
 const HELPER_SOURCE = fileURLToPath(new URL('../../scripts/elowen-site-gateway.mjs', import.meta.url));
 const PODMAN_SOURCE = fileURLToPath(new URL('../../plugins/sandbox/lib/podman.mjs', import.meta.url));
@@ -120,13 +122,15 @@ describe('privileged helper: two typed domains, one executable', () => {
 describe('privileged helper: machine identity', () => {
   it('accepts only a runtime-shaped machine name and always derives the unit from it', () => {
     expect(machineUnitFor(MACHINE)).toBe(`elowen-machine@${MACHINE}.service`);
-    expect(nspawnMachineUnit(MACHINE)).toBe(machineUnitFor(MACHINE));
     expect(machineUnitFor('elowen-site-1e5b2c-g12')).toBe('elowen-machine@elowen-site-1e5b2c-g12.service');
     for (const bad of ['../etc/passwd', 'elowen-project-54', 'other-project-54-g1', 'elowen-project-54-g3/x',
       'elowen-project-54-g3.service', 'elowen-project-UPPER-g1', `elowen-project-${'a'.repeat(65)}-g1`]) {
       expect(() => machineUnitFor(bad)).toThrow(/machine name is invalid/);
-      expect(NSPAWN_MACHINE_PATTERN.test(bad)).toBe(false);
+      // The bundled runtime refuses the same names before it ever reaches sudo; the two patterns live in
+      // files that cannot import each other, so they are held together here.
+      expect(PLUGIN_MACHINE_PATTERN.test(bad), bad).toBe(false);
     }
+    expect(PLUGIN_MACHINE_PATTERN.test(MACHINE)).toBe(true);
   });
 });
 
@@ -254,7 +258,7 @@ describe('privileged helper: host path derivation', () => {
   it('derives the root filesystem and the identity record, and mirrors the runtime disk layout', () => {
     const paths = nspawnDiskPaths(storage, diskRef);
     const spec = createEnvironmentDiskSpec(
-      { resource: { kind: 'project', id: Number(diskRef.resource) }, image: 'localhost/elowen-project-base:1' },
+      { resource: { kind: 'project', id: Number(diskRef.resource) }, image: 'localhost/elowen-project-base:1', runtime: 'nspawn' },
       { sandboxDataDir: storage.sandboxDataDir, namespace: 'elowen' },
       diskRef.diskId,
     );
@@ -424,7 +428,7 @@ process.stdout.write(JSON.stringify(readFramedRequest(0)));`;
     const grants = sudoers.split('\n').filter((line) => line.includes('SITE_GATEWAY_HELPER_PATH}') && line.includes('NOPASSWD'));
     expect(grants).toHaveLength(1);
     expect(grants[0]).toContain('${SITE_GATEWAY_HELPER_PATH} ""');
-    expect(NSPAWN_HELPER_PATH).toBe('/usr/local/libexec/elowen-site-gateway');
+    expect(SITE_GATEWAY_HELPER_PATH).toBe('/usr/local/libexec/elowen-site-gateway');
   });
 });
 
@@ -434,7 +438,10 @@ describe('privileged helper: host artefacts and readiness', () => {
     expect(rule).toContain('subject.user !== "azureuser"');
     expect(rule).toContain('action.id !== "org.freedesktop.systemd1.manage-units"');
     expect(rule).toContain('unit.indexOf("elowen-machine@elowen-") !== 0');
-    for (const verb of ['start', 'stop', 'restart', 'set-property']) expect(rule).toContain(`verb === "${verb}"`);
+    // Exactly the three verbs the runtime issues. A restart is a stop and a start, and nothing asks for
+    // one, so granting it would widen the rule past its own privilege model.
+    for (const verb of ['start', 'stop', 'set-property']) expect(rule).toContain(`verb === "${verb}"`);
+    expect(rule).not.toContain('"restart"');
     // Everything else falls through to the system default, so an unrelated unit stays refused.
     expect(rule).toContain('return polkit.Result.NOT_HANDLED;');
     expect(rule).not.toMatch(/daemon-reload|nginx|cron/);
@@ -629,6 +636,107 @@ describe('privileged helper: the disk identity record', () => {
       .rejects.toThrow(/binds are invalid/);
   });
 
+  // Built from the specification builder itself rather than from hand-written targets, because a
+  // hand-written `/demo` is exactly what let this through: every Site binds a read-only git stub over
+  // `/workspace/.git`, the helper refused the whole envelope, and the migration rolled back by
+  // reverse-chowning the rootfs it had just shifted. Half the feature was dead and nothing caught it.
+  it('accepts the bind set a real Site specification produces, git stub and all', async () => {
+    const siteId = randomUUID();
+    const image = 'localhost/elowen-site-base:1';
+    const disk = createEnvironmentDiskSpec(
+      { resource: { kind: 'site', id: siteId }, image, runtime: 'nspawn' },
+      { sitesDataDir: storage.sitesDataDir, namespace: 'elowen' },
+      'e'.repeat(32),
+    );
+    const binding = {
+      namespace: 'elowen',
+      sitesDataDir: storage.sitesDataDir,
+      sourcePath: join(storage.sitesDataDir, siteId, 'source'),
+      brokerDir: join(storage.sitesDataDir, siteId, 'brokers', siteId),
+    };
+    const spec = createBoundSiteSpec({
+      resource: { kind: 'site', id: siteId },
+      generation: 4,
+      image,
+      disk,
+      limits: { cpus: 1, memoryMb: 512, pidsLimit: 256 },
+    }, binding);
+
+    const binds = spec.mounts.filter((mount: { type: string }) => mount.type === 'bind')
+      .map((mount: { source: string; target: string; readOnly: boolean }) => ({ source: mount.source, target: mount.target, readOnly: mount.readOnly === true }));
+    expect(binds.map((bind: { target: string }) => bind.target)).toContain('/workspace/.git');
+    for (const bind of binds) {
+      // The git stub is a FILE bound over one path inside the workspace; everything else is a directory.
+      if (bind.target === '/workspace/.git') {
+        mkdirSync(dirname(bind.source), { recursive: true });
+        writeFileSync(bind.source, '');
+      } else {
+        mkdirSync(bind.source, { recursive: true });
+      }
+    }
+    mkdirSync(join(storage.sitesDataDir, siteId, 'environment', 'disks', 'e'.repeat(32), 'rootfs'), { recursive: true });
+
+    const writes: { path: string; content: string; mode: number }[] = [];
+    await applyRequest({
+      domain: 'nspawn',
+      op: 'write-envelope',
+      namespace: 'elowen',
+      kind: 'site',
+      resource: siteId,
+      generation: 4,
+      diskId: 'e'.repeat(32),
+      machine: spec.name,
+      specHash: spec.labels['io.elowen.spec'],
+      limits: { cpus: 1, memoryMb: 512, pidsLimit: 256 },
+      binds,
+      dropCapabilities: [],
+      privateNetwork: true,
+    }, undefined, {
+      storage,
+      env: environment,
+      writeAtomic: (path: string, content: Buffer, mode: number) => {
+        writes.push({ path, content: content.toString('utf8'), mode });
+        if (path.startsWith(scratch)) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, content, { mode }); }
+      },
+      runner: () => ({ ok: true, stdout: '' }),
+    });
+
+    const settings = writes.find((write) => write.path.endsWith('.nspawn'))!.content;
+    for (const bind of binds) {
+      expect(settings).toContain(`${bind.readOnly ? 'BindReadOnly' : 'Bind'}=${bind.source}:${bind.target}:rootidmap`);
+    }
+  });
+
+  it('still refuses a target that would climb out of its mount point', () => {
+    expect(safeGuestMountTarget('/workspace/.git')).toBe(true);
+    expect(safeGuestMountTarget('/run/elowen')).toBe(true);
+    expect(safeGuestMountTarget('/workspace')).toBe(true);
+    for (const bad of ['workspace', '/..', '/workspace/..', '/./etc', '/workspace/.git/objects', '/Workspace', '/work space', '/etc\u0000']) {
+      expect(safeGuestMountTarget(bad), bad).toBe(false);
+    }
+  });
+
+  it('refuses to write the identity through a planted symlink', async () => {
+    const fixture = diskFixture();
+    const outside = join(scratch, 'outside-the-roots');
+    mkdirSync(outside, { recursive: true });
+    rmSync(join(fixture.paths.directory, '.elowen'), { recursive: true, force: true });
+    symlinkSync(outside, join(fixture.paths.directory, '.elowen'));
+    // The service user owns the disk directory. Without the explicit check, the atomic write's recursive
+    // mkdir would have root create directories and a file at the far end of this link.
+    await expect(applyRequest({
+      domain: 'nspawn',
+      op: 'write-envelope',
+      ...diskRef,
+      limits: { cpus: 1, memoryMb: 1024, pidsLimit: 512 },
+      binds: [],
+      dropCapabilities: [],
+      privateNetwork: true,
+    }, undefined, fixture.options)).rejects.toThrow(/identity directory is not a directory/);
+    expect(readdirSync(outside)).toEqual([]);
+    rmSync(join(fixture.paths.directory, '.elowen'), { force: true });
+  });
+
   it('shifts ownership in both directions and reports the receipt a rollback reverses with', async () => {
     const fixture = diskFixture();
     const forward = await applyRequest({ domain: 'nspawn', op: 'shift-ownership', ...diskRef, target: 'nspawn', uidBase: null },
@@ -772,22 +880,22 @@ describe('privileged helper: disk tree primitives', () => {
 });
 
 describe('privileged helper: the invocation the sudoers drop-in pins', () => {
-  // sudo matches arguments positionally, so the argv the daemon spawns, the argv the bundled runtime
-  // spawns and the argv the drop-in pins have to be one thing. They live in three files that cannot
-  // import each other, which is exactly why this pin exists.
-  it('holds the daemon, the bundled runtime and the sudoers line to the same argv', () => {
+  // sudo matches arguments positionally, so the argv the bundled runtime spawns, the argv the shared
+  // constant states and the argv the drop-in pins have to be one thing. They live in three files that
+  // cannot import each other, which is exactly why this pin exists.
+  it('holds the bundled runtime, the shared constant and the sudoers line to the same argv', () => {
     const sudoers = readFileSync(fileURLToPath(new URL('../../src/cli/install/systemdUnits.ts', import.meta.url)), 'utf8');
     const grant = sudoers.split('\n').filter((line) => line.includes('SITE_GATEWAY_HELPER_PATH}') && line.includes('NOPASSWD'));
     expect(grant).toHaveLength(1);
     expect(grant[0]).toContain('${SITE_GATEWAY_HELPER_PATH} ""');
 
-    expect(NSPAWN_HELPER_ARGV).toEqual(['-n', NSPAWN_HELPER_PATH, '']);
-    expect(PLUGIN_HELPER_PATH).toBe(NSPAWN_HELPER_PATH);
+    expect(SITE_GATEWAY_HELPER_ARGV).toEqual(['-n', SITE_GATEWAY_HELPER_PATH, '']);
+    expect(PLUGIN_HELPER_PATH).toBe(SITE_GATEWAY_HELPER_PATH);
     expect(readFileSync(PLUGIN_RUNTIME, 'utf8'), 'the bundled machine runtime must spawn the pinned argv')
       .toContain("['-n', this.#helperPath, '']");
-    expect(readFileSync(fileURLToPath(new URL('../../src/privileged/nspawnRuntime.ts', import.meta.url)), 'utf8'),
-      'the daemon-side control must spawn the pinned argv rather than composing its own')
-      .toContain("spawn('sudo', [...NSPAWN_HELPER_ARGV]");
+    expect(readFileSync(fileURLToPath(new URL('../../src/privileged/publishedSitesGateway.ts', import.meta.url)), 'utf8'),
+      'the published-sites invoker must spawn the pinned argv rather than composing its own')
+      .toContain("spawn('sudo', [...SITE_GATEWAY_HELPER_ARGV]");
   });
 
   it('accepts the pinned empty argument and nothing else on its own command line', async () => {
@@ -807,7 +915,7 @@ describe('privileged helper: the invocation the sudoers drop-in pins', () => {
   }, 30_000);
 
   it('states the request contract the bundled machine runtime must satisfy', () => {
-    expect(NSPAWN_HELPER_PATH).toBe('/usr/local/libexec/elowen-site-gateway');
+    expect(SITE_GATEWAY_HELPER_PATH).toBe('/usr/local/libexec/elowen-site-gateway');
     expect(HELPER_FRAME_HEADER_BYTES).toBe(9);
     expect(encodeHelperRequest({ domain: 'nspawn', op: 'status' }).toString())
       .toBe('00000033\n{"domain":"nspawn","op":"status"}');

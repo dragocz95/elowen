@@ -3,6 +3,12 @@ export const SITE_GATEWAY_HELPER_INSTALL_SOURCE = '/tmp/elowen-site-gateway';
 export const SITE_GATEWAY_HELPER_INSTALL_ARGS = [
   '-o', 'root', '-g', 'root', '-m', '0755', SITE_GATEWAY_HELPER_INSTALL_SOURCE, SITE_GATEWAY_HELPER_PATH,
 ] as const;
+/** Exactly the argv the sudoers drop-in pins as `<helper> ""`, in the form sudo is handed it. The empty
+ *  final argument is part of the pin: the helper is left no argv of its own to be steered by, and the
+ *  operation arrives on stdin instead. The bundled machine runtime hardcodes the same argv, because a
+ *  bundled plugin cannot import this module at runtime; `tests/contract/nspawnHelper.test.ts` holds the
+ *  sudoers renderer, this constant and the plugin against each other. */
+export const SITE_GATEWAY_HELPER_ARGV = ['-n', SITE_GATEWAY_HELPER_PATH, ''] as const;
 export const SITE_GATEWAY_DEPLOYMENT_PATH = '/etc/elowen/site-gateway.json';
 export const SITE_GATEWAY_SUDOERS_PATH = '/etc/sudoers.d/elowen-site-gateway';
 export const SITE_RUNTIME_SOCKET_ROOT = '/var/lib/elowen/site-runtime-sockets';

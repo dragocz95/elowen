@@ -16,6 +16,7 @@ import {
   encodeHelperRequest,
   SITE_GATEWAY_HELPER_INSTALL_ARGS,
   SITE_GATEWAY_HELPER_INSTALL_SOURCE,
+  SITE_GATEWAY_HELPER_ARGV,
   SITE_GATEWAY_HELPER_PATH,
   SITE_RUNTIME_SOCKET_ROOT,
 } from '../shared/siteGateway.js';
@@ -146,7 +147,7 @@ function defaultInvoker(request: SiteGatewayHelperRequest): Promise<HelperRespon
     return Promise.reject(new Error('the site gateway helper is not installed'));
   }
   return new Promise((resolve, reject) => {
-    const child = spawn('sudo', ['-n', SITE_GATEWAY_HELPER_PATH], {
+    const child = spawn('sudo', [...SITE_GATEWAY_HELPER_ARGV], {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: { PATH: '/usr/sbin:/usr/bin:/sbin:/bin' },
     });
@@ -212,9 +213,8 @@ function environmentsUnavailable(detail: string): PublishedSitesEnvironmentStatu
   return { ready: false, items: [], detail };
 }
 
-/** One readiness row as it crosses the helper boundary. Shared with the nspawn domain, which reports its
- *  host artefacts through the same item contract rather than inventing a second one. */
-export function environmentItem(value: unknown): PublishedSitesEnvironmentItem | null {
+/** One readiness row as it crosses the helper boundary. */
+function environmentItem(value: unknown): PublishedSitesEnvironmentItem | null {
   if (!value || typeof value !== 'object') return null;
   const item = value as Record<string, unknown>;
   if (typeof item.id !== 'string' || !item.id || item.id.length > 80) return null;
