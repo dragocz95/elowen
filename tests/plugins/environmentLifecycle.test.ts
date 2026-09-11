@@ -88,7 +88,11 @@ function setup(config: Record<string, unknown> = {}) {
     preflightRootfsMigration: vi.fn(async () => ({ requiredBytes: 1024, freeBytes: 1024 * 1024 })),
     unpause: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'running'; }),
     cancelExecution: vi.fn(async () => ({ terminated: true })), releaseExecution: vi.fn(),
-    prepareExecution: vi.fn(async () => ({ launch: { type: 'argv', file: '/usr/bin/podman', args: ['exec', 'owned'], env: { HOME: '/host-service' } } })),
+    // The real client owns what goes on the launcher's stdin and hands it back: for Podman that is the
+    // caller's own bytes, for a transport whose privileged request precedes them it is both. A fake that
+    // dropped the field would let the runtime stop forwarding it without a test noticing.
+    prepareExecution: vi.fn(async (_spec: any, _executionId: string, _argv: string[], options: any = {}) => ({
+      launch: { type: 'argv', file: '/usr/bin/podman', args: ['exec', 'owned'], env: { HOME: '/host-service' } }, stdin: options.input })),
     removeVolume: vi.fn(), removeStorage: vi.fn(), inspectVolume: vi.fn(), importSnapshotVolume: vi.fn(), siteDataArchive: vi.fn(),
     containerExists: vi.fn(async (spec: any) => containers.has(spec.name)),
   };
