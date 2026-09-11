@@ -567,7 +567,12 @@ export class NspawnClient {
 
   /** The launch descriptor the daemon spawns and streams itself. The privileged request travels ahead of
    *  the caller's own stdin in the SAME pipe, which is why the frame is returned as `stdin` rather than
-   *  hidden inside the argv the sudoers drop-in pins. */
+   *  hidden inside the argv the sudoers drop-in pins.
+   *
+   *  This path is the one place the helper's JSON verdict is not what the caller wants: the daemon reads
+   *  the child's stdout and stderr straight through to a terminal, so for a LAUNCHED execution the helper
+   *  has to pass the guest's own streams and exit status through instead of encoding them. Until it does,
+   *  a launched execution on this runtime renders the verdict rather than the command's output. */
   async prepareExecution(spec, executionId, argv, options = {}) {
     if (options.completionCwd === true) throw new Error('Completion cwd capture is not carried by the nspawn transport');
     const prepared = await this.#prepareGuest(spec, executionId, argv, options);
