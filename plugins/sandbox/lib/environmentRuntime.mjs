@@ -1670,7 +1670,11 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       store.log(row.kind, row.resource_id, 'Automatic recovery could not find an account that still manages this environment');
       return;
     }
-    const reason = observed ? `container not running after host reboot (${observed.state})` : 'container missing after host reboot';
+    // What the sweep SAW, never why. This runs on a timer, and an envelope is down after a host reboot,
+    // after a start that failed, and after anything outside Elowen stopped it; the reason is written into
+    // the lifecycle log an operator reads, and naming a reboot that never happened sent readers looking
+    // for one that was not there.
+    const reason = observed ? `container not running (${observed.state})` : 'container missing';
     store.transaction(() => {
       const current = store.get(row.kind, row.resource_id);
       if (!current || current.desired_state !== 'running' || current.state === 'deleted' || store.active(row.kind, row.resource_id)) return;

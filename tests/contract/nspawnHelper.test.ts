@@ -10,6 +10,9 @@ import { afterAll, describe, expect, it } from 'vitest';
 // @ts-expect-error the standalone privileged helper intentionally has no TypeScript declaration file
 import {
   DISK_TREE_SCRIPTS,
+  DISK_TREE_TIMEOUT_MS,
+  commandOptionsFor,
+  defaultCommandRunner,
   MACHINE_UNIT_PATH,
   MACHINE_FIREWALL_UNIT,
   MACHINE_FIREWALL_UNIT_NAME,
@@ -1264,6 +1267,39 @@ describe('privileged helper: disk tree primitives', () => {
     await expect(applyRequest({ domain: 'nspawn', op: 'tree-fingerprint', path }, undefined, {
       storage, runner: () => ({ ok: true, stdout: JSON.stringify({ logicalBytes: 10, allocatedBytes: 4096, digest: 'nope' }) }),
     })).rejects.toThrow(/fingerprint is invalid/);
+  });
+
+  it('runs a whole-tree pass on the disk budget rather than the default command timeout', async () => {
+    // Measured on a 1.4 GB Project tree: the fsync pass over a freshly copied tree does not finish inside
+    // the 30s default, while the same pass over a warm tree takes eight seconds. Under the default every
+    // first start of a new environment failed and only the automatic retry rescued it.
+    const path = join(nspawnDiskPaths(storage, diskRef).directory, 'home');
+    mkdirSync(path, { recursive: true });
+    const budgets: (number | undefined)[] = [];
+    const runner = (_file: string, _args: string[], options: { timeoutMs?: number } = {}) => {
+      budgets.push(options.timeoutMs);
+      return { ok: true, stdout: JSON.stringify({ logicalBytes: 10, allocatedBytes: 4096, digest: 'f'.repeat(64) }) };
+    };
+    await applyRequest({ domain: 'nspawn', op: 'tree-sync', path }, undefined, { storage, runner });
+    await applyRequest({ domain: 'nspawn', op: 'tree-fingerprint', path }, undefined, { storage, runner });
+
+    expect(budgets).toEqual([DISK_TREE_TIMEOUT_MS, DISK_TREE_TIMEOUT_MS]);
+    expect(DISK_TREE_TIMEOUT_MS).toBe(15 * 60_000);
+    expect(commandOptionsFor('/usr/bin/python3', ['-c', ''], DISK_TREE_TIMEOUT_MS).timeout).toBe(DISK_TREE_TIMEOUT_MS);
+    // Everything that is not tree work keeps the short bound that catches a command which has hung.
+    expect(commandOptionsFor('/usr/bin/systemctl', ['daemon-reload']).timeout).toBe(30_000);
+  });
+
+  it('carries the cause of a command that printed nothing, instead of a message ending in a colon', () => {
+    // A command killed for outrunning its budget is terminated before it writes a byte, so `stderr` is
+    // empty and the caller's message used to read `the disk tree sync failed:` with nothing after it.
+    expect(defaultCommandRunner('/bin/sh', ['-c', 'sleep 30'], { timeoutMs: 1_000 }))
+      .toEqual({ ok: false, stderr: 'the command printed nothing and was killed after its 1s budget' });
+    expect(defaultCommandRunner('/bin/sh', ['-c', 'exit 3']))
+      .toEqual({ ok: false, stderr: 'the command printed nothing and exited with status 3' });
+    // A command that did say something still speaks for itself.
+    expect(defaultCommandRunner('/bin/sh', ['-c', 'echo refused >&2; exit 1']))
+      .toEqual({ ok: false, stderr: 'refused' });
   });
 });
 

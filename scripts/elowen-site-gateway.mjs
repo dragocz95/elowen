@@ -367,18 +367,36 @@ function removeSite(request, deployment) {
   return { ok: true, active: true, hostnameBase: deployment.hostnameBase, slugs: remaining };
 }
 
-function commandErrorText(error) {
-  if (!error || typeof error !== 'object') return '';
+/** How long a privileged command may take. The default bounds a command that has hung; a package
+ *  transaction and a pass over a whole environment root filesystem are bounded by the work they do
+ *  instead. Measured on a 1.4 GB Project tree: an fsync pass over a freshly copied tree does not finish
+ *  within the default at all, while the same pass over a warm tree takes eight seconds — so the default
+ *  turned every first start into a failure the retry then rescued. The disk budget matches the one the
+ *  runtime already applies to these operations on its own side. */
+const COMMAND_TIMEOUT_MS = 30_000;
+const APT_TIMEOUT_MS = 5 * 60_000;
+export const DISK_TREE_TIMEOUT_MS = 15 * 60_000;
+
+/** What a failed command has to say for itself. `stderr` is the answer whenever there is one, and often
+ *  there is not: a command killed by its own timeout is terminated before it writes a byte, and a command
+ *  that simply exits non-zero need not print anything either. The empty string used to travel all the way
+ *  into the caller's message and leave it ending in a colon, naming a failure with no cause at all. */
+export function commandErrorText(error, timeoutMs = COMMAND_TIMEOUT_MS) {
+  if (!error || typeof error !== 'object') return 'the command failed without reporting an error';
   const stderr = 'stderr' in error ? String(error.stderr || '').trim() : '';
-  return stderr.slice(-1_000);
+  if (stderr) return stderr.slice(-1_000);
+  if (error.code === 'ETIMEDOUT') return `the command printed nothing and was killed after its ${Math.round(timeoutMs / 1000)}s budget`;
+  if (Number.isInteger(error.status)) return `the command printed nothing and exited with status ${error.status}`;
+  if (error.signal) return `the command printed nothing and was killed by ${error.signal}`;
+  return `the command printed nothing: ${String(error.message || 'no error message')}`.slice(0, 1_000);
 }
 
-export function commandOptionsFor(file, _args = []) {
+export function commandOptionsFor(file, _args = [], timeoutMs = COMMAND_TIMEOUT_MS) {
   const apt = file === '/usr/bin/apt-get';
   return {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
-    timeout: apt ? 5 * 60_000 : 30_000,
+    timeout: apt ? APT_TIMEOUT_MS : timeoutMs,
     maxBuffer: 2 * 1024 * 1024,
     env: {
       PATH: SYSTEM_PATH,
@@ -387,12 +405,13 @@ export function commandOptionsFor(file, _args = []) {
   };
 }
 
-function defaultCommandRunner(file, args) {
+export function defaultCommandRunner(file, args, { timeoutMs } = {}) {
+  const options = commandOptionsFor(file, args, timeoutMs);
   try {
-    const stdout = execFileSync(file, args, commandOptionsFor(file, args));
+    const stdout = execFileSync(file, args, options);
     return { ok: true, stdout: String(stdout) };
   } catch (error) {
-    return { ok: false, stderr: commandErrorText(error) };
+    return { ok: false, stderr: commandErrorText(error, options.timeout) };
   }
 }
 
@@ -1250,7 +1269,7 @@ for directory,names,files in os.walk(root,topdown=True,followlinks=False):
 print(json.dumps({'entries':shifted}))`;
 
 function shiftOwnership(runner, root, spec) {
-  const result = runner(PYTHON, ['-c', OWNERSHIP_SHIFT_PY, JSON.stringify(spec), root]);
+  const result = runner(PYTHON, ['-c', OWNERSHIP_SHIFT_PY, JSON.stringify(spec), root], { timeoutMs: DISK_TREE_TIMEOUT_MS });
   if (!result.ok) fail(`the machine ownership pass failed: ${String(result.stderr || '').slice(-400)}`);
   return JSON.parse(String(result.stdout || '{}'));
 }
@@ -1396,7 +1415,7 @@ function nspawnMaterialize(request, storage, options) {
   if (readdirSync(target).length > 0) fail('the extraction target is not empty');
   const extracted = runner('/usr/bin/tar', [
     '--extract', '--file', archive, '--directory', target, '--numeric-owner', '--preserve-permissions', '--same-owner',
-  ]);
+  ], { timeoutMs: DISK_TREE_TIMEOUT_MS });
   if (!extracted.ok) fail(`the root filesystem could not be extracted: ${String(extracted.stderr || '').slice(-400)}`);
   // The machine's `/` has to be traversable by every process in the guest, not only by its root, and this
   // is the operation that establishes the tree, so this is where that is made true.
@@ -1774,8 +1793,11 @@ export const DISK_TREE_SCRIPTS = Object.freeze({
  * directory, a migration archive — and teaching it to describe them as components instead would mean
  * teaching it to name something other than the path it actually uses. */
 
+/** Every operation below walks or syncs a whole environment root filesystem, so all of them run on the
+ *  disk budget rather than on the default command timeout. */
 function treeRunner(options) {
-  return options.runner ?? defaultCommandRunner;
+  const runner = options.runner ?? defaultCommandRunner;
+  return (file, args) => runner(file, args, { timeoutMs: DISK_TREE_TIMEOUT_MS });
 }
 
 function nspawnTreeCopy(request, storage, options) {

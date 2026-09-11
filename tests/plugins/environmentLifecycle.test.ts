@@ -437,7 +437,24 @@ describe('durable managed environment lifecycle', () => {
     expect(podman.start).toHaveBeenCalledOnce();
     expect((await runtime.environmentFor(input)).state).toBe('running');
     expect(db.prepare("SELECT message FROM p_sandbox_runtime_logs WHERE kind='project' AND resource_id='7' ORDER BY id").all()
-      .map((entry: any) => entry.message).join('\n')).toMatch(/container not running after host reboot/);
+      .map((entry: any) => entry.message).join('\n')).toMatch(/container not running \(created\)/);
+  });
+
+  it('names what the sweep observed when a start failed, instead of claiming a host reboot', async () => {
+    // The sweep runs on a timer and cannot tell why an envelope is down. Here nothing rebooted: the first
+    // start failed, so the retry has to say what it saw rather than name a cause it never established.
+    const { runtime, podman, db } = setup();
+    podman.create.mockRejectedValueOnce(new Error('the disk tree sync failed'));
+    await runtime.requestEnvironment({ ...input, requestId: 'failed-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    expect((await runtime.environmentFor(input)).state).toBe('failed');
+
+    await runtime.reconcile();
+
+    const log = db.prepare("SELECT message FROM p_sandbox_runtime_logs WHERE kind='project' AND resource_id='7' ORDER BY id").all()
+      .map((entry: any) => entry.message).join('\n');
+    expect(log).toMatch(/start queued automatically: container missing \(attempt 1\/4\)/);
+    expect(log).not.toMatch(/reboot/);
   });
 
   // A container that fails the ownership check (a pre-batch site container, say) is not ours to restart,
