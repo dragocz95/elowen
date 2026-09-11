@@ -570,8 +570,28 @@ export class BrainService {
       channelService: this.channelService, lifecycle: this.lifecycle, idleClock: this.idleClock,
       resolvePlugins: () => this.resolvePlugins(),
       onConversationActivityChanged: d.onConversationActivityChanged,
+      // A runner-hosted child's processes are invisible to the local sweep; the rows are about to go,
+      // so this is the last moment ownership can still be resolved.
+      ...(d.subagentRunner ? {
+        // Awaitable and rejection-preserving: session teardown refuses to delete while the runner sweep
+        // is unconfirmed, so a failed remote kill must REJECT here, not degrade to a log line.
+        killRunnerSessionProcesses: async (sessionId: string): Promise<void> => {
+          await d.subagentRunner?.killSessionProcesses?.(sessionId);
+        },
+      } : {}),
     });
-    this.processSvc = new SessionProcessService({ store: d.store, attachments: this.attachments, identity: this.identity });
+    this.processSvc = new SessionProcessService({
+      store: d.store, attachments: this.attachments, identity: this.identity,
+      // A child hosted in the sub-agent runner registers its background processes in the RUNNER's own
+      // registry; these readers are the one seam that reaches across, so list/output/kill treat both
+      // registries identically (ownership stays here, per account/session; the runner re-checks the
+      // owning session against its live handle before acting).
+      ...(d.subagentRunner ? {
+        remoteProcesses: () => d.subagentRunner?.listProcesses?.() ?? Promise.resolve([]),
+        remoteProcessOutput: (id, sessionId) => d.subagentRunner?.processOutput?.(id, sessionId) ?? Promise.resolve(null),
+        killRemoteProcess: (id, sessionId) => d.subagentRunner?.killProcess?.(id, sessionId) ?? Promise.resolve(false),
+      } : {}),
+    });
     this.queue = new SessionQueueService({ sessions: this.sessions, lifecycle: this.lifecycle });
     // Schedule persisted expiries immediately, before any plugin is loaded. A disabled or crashed publisher
     // therefore cannot leave a stale artifact alive until its own boot reconcile happens.
@@ -2001,13 +2021,13 @@ export class BrainService {
 
   /** Delete ANY of the owner's brain sessions by id (admin panel) — see
    *  SessionTeardownService.deleteManagedSession. */
-  deleteManagedSession(userId: number, id: string, scope: 'own' | 'any' = 'own'): number {
+  async deleteManagedSession(userId: number, id: string, scope: 'own' | 'any' = 'own'): Promise<number> {
     return this.teardown.deleteManagedSession(userId, id, scope);
   }
 
   /** Delete ALL of the owner's brain sessions (the panel's "delete everything" — the client confirms) —
    *  see SessionTeardownService.deleteAllManagedSessions. */
-  deleteAllManagedSessions(userId: number, scope: 'own' | 'any' = 'own'): number {
+  async deleteAllManagedSessions(userId: number, scope: 'own' | 'any' = 'own'): Promise<number> {
     return this.teardown.deleteAllManagedSessions(userId, scope);
   }
 
@@ -2275,16 +2295,17 @@ export class BrainService {
   }
 
   /** The user's background processes — sessionless spans their whole tree, session-scoped is one
-   *  conversation. See SessionProcessService.processes. */
-  processes(userId: number, sessionId?: string): ProcessInfo[] {
+   *  conversation. Async because a runner-hosted child's half is read live from the runner. See
+   *  SessionProcessService.processes. */
+  async processes(userId: number, sessionId?: string): Promise<ProcessInfo[]> {
     return this.processSvc.processes(userId, sessionId);
   }
 
-  processOutput(userId: number, processId: string, sessionId?: string): string | null {
+  async processOutput(userId: number, processId: string, sessionId?: string): Promise<string | null> {
     return this.processSvc.processOutput(userId, processId, sessionId);
   }
 
-  killProcess(userId: number, processId: string, sessionId?: string): boolean {
+  async killProcess(userId: number, processId: string, sessionId?: string): Promise<boolean> {
     return this.processSvc.killProcess(userId, processId, sessionId);
   }
 

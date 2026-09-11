@@ -38,6 +38,11 @@ export interface ProcessHandle {
    *  `foreground` handle it is work the user's Ctrl+B can release, so the clients count it as foreground
    *  work — but the process itself stays an ordinary background job throughout. */
   blockedRead?: boolean;
+  /** Opaque per-run token stamped into the child's environment (the terminal plugin's direct-run
+   *  tracking): the ONE handle on this process that survives this process dying, because the token
+   *  lives in the child's own /proc environ and covers descendants that escaped into new groups.
+   *  Reported upward so a daemon-side sweep can still stop the tree after an abrupt runner death. */
+  killToken?: string | null;
   running: () => boolean;
   exitCode: () => number | null;
   readAll: () => string;
@@ -63,6 +68,10 @@ export interface ProcessInfo {
   completionMode?: 'job' | 'service' | 'foreground';
   /** A blocking `ProcessOutput` read is waiting on this process — foreground work a client can release. */
   blockedRead?: boolean;
+  /** NO `killToken` here, deliberately: this shape is serialized into `GET /brain/processes` and into the
+   *  `process` event pushed to client streams, and the token is the secret the terminal plugin redacts out
+   *  of command output for exactly that reason. It stays on {@link ProcessHandle}, which never leaves the
+   *  process that owns it; the post-mortem sweep reads it from the runner heartbeat instead. */
   workspaceId?: string | null;
   homeGeneration?: number | null;
   projectRef?: ProjectExecutionRef;
@@ -89,6 +98,43 @@ export const processHandleAccount = (handle: ProcessHandle): number | null | und
     : typeof handle.userId === 'number'
       ? handle.userId
       : undefined;
+
+/** Whether ONE account may act on a handle: an explicit contribution account wins, else the originating
+ *  session's row owner decides — the rule that reaches a delegated child's null-account handle through its
+ *  session. Shared by the daemon and the runner teardown sweeps, so the two cannot drift apart. */
+export const processHandleOwnedByAccount = (
+  handle: ProcessHandle,
+  accountUserId: number,
+  sessionOwnerOf: (sessionId: string) => number | null | undefined,
+): boolean => {
+  const explicit = processHandleAccount(handle);
+  if (explicit !== undefined && explicit !== null) return explicit === accountUserId;
+  const sessionId = handle.sessionId;
+  return sessionId != null && sessionOwnerOf(sessionId) === accountUserId;
+};
+
+/** How long ONE local kill may take before it is reported as unconfirmed. The same bound the runner-side
+ *  process RPC uses (`PROCESS_REQUEST_TIMEOUT_MS` in src/subagent/runnerHost.ts), for the same reason: the
+ *  terminal plugin's kill chains guest cancellation, which can wedge, and an unbounded wait here blocks
+ *  `killSession`, then the conversation teardown sweep, then the DELETE route — holding the session lock
+ *  for as long as the guest stays stuck. The timeout REJECTS: the handle is retained and the caller learns
+ *  the stop was never confirmed, which is the same answer a refusing handle already gives. */
+const LOCAL_KILL_TIMEOUT_MS = 2_000;
+
+const withKillTimeout = async (killed: void | Promise<void>, id: string): Promise<void> => {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      Promise.resolve(killed),
+      new Promise<never>((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`process ${id} did not confirm its stop in time`)), LOCAL_KILL_TIMEOUT_MS);
+        timer.unref?.();
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+};
 
 /** One pending waiter on a session's background JOBS becoming idle. `settle` fires exactly once — either
  *  from notifySession when the last running job exits ('idle') or from an optional timeout timer
@@ -215,11 +261,20 @@ export class ProcessRegistry {
       : null;
   }
 
-  /** Kill a process and drop it from the registry. Returns false when the id is unknown. */
-  kill(id: string): boolean {
+  /** Kill a process and drop it from the registry ONLY once the stop is confirmed. The terminal
+   *  plugin's kill awaits guest cancellation (workspace/managed children can take moments), so
+   *  returning before it settles reported a stopped process that was still running — with its handle
+   *  already gone, leaving nothing to retry. On failure the handle is RETAINED (it stays listed and
+   *  stoppable) and the error propagates to every caller. Returns false when the id is unknown. */
+  async kill(id: string): Promise<boolean> {
     const h = this.handles.get(id);
     if (!h) return false;
-    h.kill();
+    try {
+      await withKillTimeout(h.kill(), id);
+    } catch (e) {
+      this.notifySession(h.sessionId, processHandleAccount(h));
+      throw e;
+    }
     this.handles.delete(id);
     this.exited.delete(id);
     this.settleExitWaiters(id);
@@ -227,34 +282,48 @@ export class ProcessRegistry {
     return true;
   }
 
-  killForSession(sessionId: string, id: string): boolean {
+  async killForSession(sessionId: string, id: string): Promise<boolean> {
     const handle = this.handles.get(id);
     return handle?.sessionId === sessionId ? this.kill(id) : false;
   }
 
-  killForSessionAccount(sessionId: string, accountUserId: number | null, id: string): boolean {
+  async killForSessionAccount(sessionId: string, accountUserId: number | null, id: string): Promise<boolean> {
     const handle = this.handles.get(id);
     return handle?.sessionId === sessionId && processHandleAccount(handle) === accountUserId
       ? this.kill(id)
       : false;
   }
 
-  killSession(sessionId: string): number {
-    const handles = [...this.handles.values()].filter((handle) => handle.sessionId === sessionId);
+  /** Stop every process matching the predicate — running ones killed, exited ones dropped. The one
+   *  teardown primitive: the session, account and runner-shutdown sweeps must agree on semantics, so
+   *  they all route through here. A kill that cannot be CONFIRMED is reported in `failed` with its
+   *  handle retained, never folded into a silent success count. */
+  async killWhere(predicate: (handle: ProcessHandle) => boolean): Promise<{ killed: number; failed: string[] }> {
+    const handles = [...this.handles.values()].filter(predicate);
+    let killed = 0;
+    const failed: string[] = [];
     for (const handle of handles) {
-      if (handle.running()) this.kill(handle.id);
-      else this.remove(handle.id);
+      if (!handle.running()) { this.remove(handle.id); continue; }
+      try { if (await this.kill(handle.id)) killed += 1; }
+      catch { failed.push(handle.id); }
     }
-    return handles.length;
+    return { killed, failed };
   }
 
-  killAccount(accountUserId: number): number {
-    const handles = [...this.handles.values()].filter((handle) => processHandleAccount(handle) === accountUserId);
-    for (const handle of handles) {
-      if (handle.running()) this.kill(handle.id);
-      else this.remove(handle.id);
-    }
-    return handles.length;
+  async killSession(sessionId: string): Promise<{ killed: number; failed: string[] }> {
+    return this.killWhere((handle) => handle.sessionId === sessionId);
+  }
+
+  async killAccount(accountUserId: number): Promise<{ killed: number; failed: string[] }> {
+    return this.killWhere((handle) => processHandleAccount(handle) === accountUserId);
+  }
+
+  /** The kill tokens of every RUNNING handle — what a daemon-side sweep can still stop after this
+   *  process dies abruptly and its registry (these closures included) dies with it. */
+  killTokens(): string[] {
+    return [...this.handles.values()]
+      .filter((handle) => handle.running() && handle.killToken)
+      .map((handle) => handle.killToken!);
   }
 
   /** Drop an entry without killing (e.g. an already-exited process cleared from the panel). */

@@ -10,7 +10,8 @@ import { buildTurnDone } from '../push/messages.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import { logger, setLogSink } from '../shared/logger.js';
 import { PluginLogBuffer } from '../shared/logBuffer.js';
-import { processRegistry } from '../brain/processRegistry.js';
+import { processHandleOwnedByAccount, processRegistry } from '../brain/processRegistry.js';
+import { killTokenProcesses } from '../brain/processTokens.js';
 import { isSubagentSession } from '../brain/sessionId.js';
 import { discoverPlugins } from '../plugins/loader.js';
 import { MarketplaceService } from '../plugins/marketplace.js';
@@ -166,6 +167,29 @@ export async function buildApp(opts: BuildOpts) {
   if (brain && subagentRunner) {
     subagentRunner.attachChildEdgeSink((parentSessionId, childSessionId, running) =>
       brain.mirrorRemoteChildEdge(parentSessionId, childSessionId, running));
+    // A runner-local background process start/exit/kill must reach the live process panels the same way
+    // a daemon-local one does. The frame carries the runner's own session snapshot, so this re-projects
+    // exactly what exists — no re-query that could read a wedged round trip as a false empty. Fire and
+    // forget — a slow projection must not stall the IPC pump. The local half is scoped to the SAME
+    // account the registry's own change listener below uses: one session projection, one visibility rule.
+    subagentRunner.attachProcessChangedSink((sessionId, runnerSnapshot) => {
+      const account = brainStore.getSession(sessionId)?.user_id ?? null;
+      if (account === null) return;
+      void Promise.resolve().then(() => {
+        brain.broadcastProcesses(sessionId, account, [
+          ...processRegistry.listForSessionAccount(sessionId, account),
+          ...runnerSnapshot,
+        ]);
+      }).catch((e) => log.warn(`process panel projection for session ${sessionId} failed: ${e instanceof Error ? e.message : String(e)}`));
+    });
+    // If a runner dies ABRUPTLY (SIGKILL, crash), its graceful in-process sweep never runs and its
+    // detached children survive it. The last heartbeat's kill tokens are the only handle left: sweep
+    // those trees by token — the terminal plugin's per-run env stamp, which survives new groups and
+    // escaped descendants and cannot be confused by pid reuse.
+    subagentRunner.attachRunnerExitTokensSink((killTokens) => {
+      const pids = killTokenProcesses(killTokens);
+      if (pids.length) log.warn(`runner died with ${pids.length} detached process(es); swept by kill token (${pids.join(', ')})`);
+    });
   }
   // Wake the operator's conversation when a background command they started finishes ON ITS OWN (a killed
   // one is dropped before its close fires, so it never wakes). Delivered as an INTERNAL turn — no 'you'
@@ -280,7 +304,17 @@ export async function buildApp(opts: BuildOpts) {
     // would be a second way for the feature to be silently off.
     searchVectors, searchAskInference: memoryModelInference,
     embeddings, plugins: pluginProvider, marketplace, pluginLogs, hookAudit, themes,
-    killAccountProcesses: async (userId) => processRegistry.killAccount(userId) + (subagentRunner ? await subagentRunner.killAccountProcesses(userId) : 0),
+    killAccountProcesses: async (userId) => {
+      // Explicit contribution account first, then the session row for a delegated child's null-account
+      // handle — the same rule the runner sweep applies, so one account delete cannot leave either
+      // registry holding its processes. Both sweeps are AWAITED and failures propagate: the caller
+      // refuses the delete unless every stop was confirmed.
+      const local = await processRegistry.killWhere((handle) =>
+        processHandleOwnedByAccount(handle, userId, (sessionId) => brainStore.getSession(sessionId)?.user_id));
+      const remote = subagentRunner ? await subagentRunner.killAccountProcesses(userId) : 0;
+      if (local.failed.length) throw new Error(`account ${userId} has ${local.failed.length} unconfirmed local process(es): ${local.failed.join(', ')}`);
+      return local.killed + remote;
+    },
     ...(subagentRunner ? { subagentPool: () => subagentRunner.stats() } : {}),
   } satisfies ServerDeps;
   const app = createServer(serverDeps);

@@ -1,6 +1,8 @@
 import { beforeAll, describe, it, expect, vi } from 'vitest';
 import type { ModelRuntime } from '@earendil-works/pi-coding-agent';
 import { BrainService } from '../../src/brain/brainService.js';
+import { processRegistry, type ProcessHandle } from '../../src/brain/processRegistry.js';
+import { IDLE_LIVE_SESSION_TTL_MS } from '../../src/brain/service/liveSessionReaper.js';
 import { openDb } from '../../src/store/db.js';
 import { BrainStore } from '../../src/store/brainStore.js';
 import { PluginRegistry } from '../../src/plugins/registry.js';
@@ -122,6 +124,57 @@ describe('stopSession — a failed abort must not dispose the parent anyway', ()
 });
 
 describe('deleting a conversation releases everything it owns', () => {
+  it('a FAILED delete leaves the live session collectable instead of pinning it forever', async () => {
+    // deleteSession fences the conversation with markDisposing before it queues on the session lock, and
+    // the teardown inside that lock now refuses on an unconfirmed process kill. A marker nothing clears
+    // makes reapableNow() false for the rest of the daemon's life: one live session pinned per failed
+    // delete, in a process that runs for weeks.
+    const t0 = 1_800_000_000_000;
+    const d = fakeDeps();
+    // A wedged runner never answers the sweep, so the teardown refuses rather than drop rows whose
+    // processes may still be running. Nothing local is left behind, so the session itself is quiet.
+    d.subagentRunner = {
+      killSessionProcesses: () => Promise.reject(new Error('the sub-agent runner did not answer the process request in time')),
+    };
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    await svc.send({ userId: 1, text: 'hello' }); // a spoken conversation the reaper is allowed to collect
+
+    await expect(svc.deleteSession(1, sessionId)).rejects.toThrow('did not answer the process request in time');
+    expect(internalsOf(svc).sessions.has(sessionId)).toBe(true);
+    expect(internalsOf(svc).sessions.isDisposing(sessionId)).toBe(false);
+    // The observable consequence of a stranded marker: reapableNow() reads it, so the idle reaper would
+    // skip this unwatched, idle session for the rest of the daemon's life.
+    expect(await svc.reapIdleLiveSessions(t0)).toEqual([]);
+    expect(await svc.reapIdleLiveSessions(t0 + IDLE_LIVE_SESSION_TTL_MS)).toEqual([sessionId]);
+  });
+
+  it('REFUSES the delete while a process kill is unconfirmed — the rows stay retryable', async () => {
+    const d = fakeDeps();
+    const svc = new BrainService(d as never);
+    const created = await svc.start(1);
+    // A local handle the sweep cannot stop: the registry must retain it and the delete must abort
+    // while the session row (and its ownership) still exists.
+    const stubborn: ProcessHandle = {
+      id: 'bg-stubborn', command: 'sleep 30', cwd: '/w', startedAt: '2026-01-01T00:00:00.000Z',
+      accountUserId: 1, sessionId: created.sessionId, completionMode: 'job',
+      running: () => true, exitCode: () => null, readAll: () => '',
+      kill: () => Promise.reject(new Error('guest cancellation failed')),
+    };
+    processRegistry.register(stubborn);
+    try {
+      await expect(svc.deleteManagedSession(1, created.sessionId)).rejects.toThrow('unconfirmed local process');
+      // Nothing was deleted: the row survives and the delete can simply be repeated once the process
+      // stops cooperating or is stopped by other means.
+      expect(d.store.getSession(created.sessionId)).not.toBeUndefined();
+      expect(processRegistry.get('bg-stubborn')).toBeDefined();
+      // Once the kill lands, the SAME delete goes through.
+      stubborn.kill = () => Promise.resolve();
+      await expect(svc.deleteManagedSession(1, created.sessionId)).resolves.toBe(1);
+      expect(processRegistry.get('bg-stubborn')).toBeUndefined();
+    } finally { processRegistry.remove('bg-stubborn'); }
+  });
+
   it('clears the active pointer when the admin panel deletes the active conversation', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
@@ -130,7 +183,7 @@ describe('deleting a conversation releases everything it owns', () => {
     const second = await svc.start(1, { fresh: true });
     await svc.send({ userId: 1, text: 'second' });
 
-    expect(svc.deleteManagedSession(1, second.sessionId)).toBe(1);
+    await expect(svc.deleteManagedSession(1, second.sessionId)).resolves.toBe(1);
 
     // The pointer must not survive the row it names: every pointer-based call (the web dock, a platform
     // turn) resolves through it, and the next one RESURRECTED the deleted conversation as an empty shell.
@@ -148,7 +201,7 @@ describe('deleting a conversation releases everything it owns', () => {
     internalsOf(svc).cards.set(sessionId, { id: 'todo', items: [{ text: 'step one', status: 'pending' }] });
     expect(internalsOf(svc).cards.forSession(sessionId)).toHaveLength(1);
 
-    expect(svc.deleteManagedSession(1, sessionId)).toBe(1);
+    await expect(svc.deleteManagedSession(1, sessionId)).resolves.toBe(1);
 
     // The store rows went with the conversation; a stale cache would re-serve them to whatever conversation
     // next lands on this id (the default `brain-<uid>` is minted again on the very next start).
@@ -187,6 +240,26 @@ describe('deleting a conversation releases everything it owns', () => {
       expect(internalsOf(svc).sessions.hasActiveChildren(sessionId)).toBe(false);
     });
     expect(d.session.abort).toHaveBeenCalled();
+  });
+
+  it('sweeps runner-held background processes for every session of the deleted tree', async () => {
+    // A child hosted in the runner keeps its Bash handles in the RUNNER's registry; the local sweep
+    // cannot reach them, and the session rows (ownership) disappear right after — so the runner sweep
+    // must fire for each tree node BEFORE the rows go.
+    const d = fakeDeps();
+    const swept: string[] = [];
+    d.subagentRunner = {
+      killSessionProcesses: async (sessionId: string) => { swept.push(sessionId); return 1; },
+    };
+    const svc = new BrainService(d as never);
+    const { sessionId } = await svc.start(1);
+    const child = 'brain-ch-subagent-sub-dlg-1';
+    d.store.createSession({ id: child, userId: 1, model: 'm', parentSessionId: sessionId });
+    d.store.upsertSubagentRun(sessionId, { id: 'call-1', sessionId: child, status: 'running', task: 'dig', tools: 0, seconds: 0 });
+
+    await svc.deleteSession(1, sessionId);
+
+    expect(swept).toEqual(expect.arrayContaining([sessionId, child]));
   });
 
   it('does not race a turn that is already in flight on the deleted conversation', async () => {
@@ -264,10 +337,10 @@ describe('admin oversight register', () => {
     const foreign = await svc.start(2); await svc.send({ userId: 2, text: 'theirs' });
 
     // The default stays owner-scoped, so no existing caller silently gained reach.
-    expect(svc.deleteManagedSession(1, foreign.sessionId)).toBe(0);
+    await expect(svc.deleteManagedSession(1, foreign.sessionId)).resolves.toBe(0);
     expect(d.store.getSession(foreign.sessionId)).toBeTruthy();
 
-    expect(svc.deleteManagedSession(1, foreign.sessionId, 'any')).toBe(1);
+    await expect(svc.deleteManagedSession(1, foreign.sessionId, 'any')).resolves.toBe(1);
     expect(d.store.getSession(foreign.sessionId)).toBeUndefined();
   });
 
@@ -282,12 +355,12 @@ describe('admin oversight register', () => {
     const own = await svc.start(1); await svc.send({ userId: 1, text: 'mine' });
     const foreign = await svc.start(2); await svc.send({ userId: 2, text: 'theirs' });
 
-    expect(svc.deleteAllManagedSessions(1)).toBe(1);
+    await expect(svc.deleteAllManagedSessions(1)).resolves.toBe(1);
     expect(d.store.getSession(own.sessionId)).toBeUndefined();
     expect(d.store.getSession(foreign.sessionId)).toBeTruthy();
 
     // The cross-account register's own button, which the route only reaches for an admin.
-    expect(svc.deleteAllManagedSessions(1, 'any')).toBe(1);
+    await expect(svc.deleteAllManagedSessions(1, 'any')).resolves.toBe(1);
     expect(d.store.getSession(foreign.sessionId)).toBeUndefined();
   });
 

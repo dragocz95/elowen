@@ -3,6 +3,7 @@ import type { Policy } from '../plugins/policy.js';
 import type { TurnIdentity } from '../plugins/policyContext.js';
 import type { ChannelSendOpts } from './channels.js';
 import type { BrainEvent, BrainUsage } from './events.js';
+import type { ProcessInfo } from './processRegistry.js';
 import { delegatedToolPolicy, normalizeDelegatedExecutionScope, type DelegatedExecutionScope } from './delegatedScope.js';
 import type { HostRpcMethod } from '../subagent/hostRpc.js';
 import { parseSpawnOrigin, type SpawnOrigin } from './spawnOrigin.js';
@@ -130,6 +131,16 @@ export interface DelegatedTurnRunner {
   /** Count work owned by runner-local plugin closures, including gaps between delegated turns. A hot plugin
    *  reload must drain this before replacing those closures. Absent means the runner predates this seam. */
   activeCount?(): Promise<number>;
+  /** THIS runner's background-process registry — what its delegated children started with
+   *  `Bash(run_in_background:true)`. The daemon's process list/output/kill surfaces project from these the
+   *  same way they project the local registry, so ownership checks stay in ONE place. Absent (or an empty
+   *  answer) means the runner holds nothing. */
+  listProcesses?(): Promise<ProcessInfo[]>;
+  processOutput?(processId: string, sessionId: string): Promise<string | null>;
+  killProcess?(processId: string, sessionId: string): Promise<boolean>;
+  /** Stop every background process ONE session owns across the runners — the remote half of the
+   *  conversation-teardown sweep, fired before the session rows disappear. */
+  killSessionProcesses?(sessionId: string): Promise<number>;
   /** Tear the runner down (plugin reload, shutdown). In-flight turns settle as interrupted. */
   reset(reason: string): void;
   /** Can this runner take work AT ALL right now? The pool answers false when the operator has sized it to

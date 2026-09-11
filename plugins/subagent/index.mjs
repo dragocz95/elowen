@@ -1097,7 +1097,12 @@ export function register(ctx) {
       };
       const push = (status) => pushJob(state, status);
       const onEvent = (e) => {
-        if (e.type === 'tool' && e.name) {
+        // Same as Delegate: the host emits `session` once the child's turn is placed — for an idle
+        // continuation that is AFTER the respawn, so the row re-published here carries the identity the
+        // child ACTUALLY runs on (an explicitly switched model, a clamped or ladder-less effort) instead
+        // of the pre-spawn snapshot this call started with, and it lands before any generated text.
+        if (e.type === 'session' && e.sessionId) push('running');
+        else if (e.type === 'tool' && e.name) {
           state.tools += 1;
           ({ reason: state.reason, detail: state.detail } = foldToolDetail(e, state.reason));
           push('running');

@@ -179,3 +179,77 @@ describe('steer verb — daemon → runner and back', () => {
     expect(parseRunnerMessage({ type: 'steered', outcome: 'delivered' })).toBeUndefined();
   });
 });
+
+describe('runner process verbs — daemon → runner and back', () => {
+  const validProcess = {
+    id: 'p-1', command: 'npm run build', cwd: '/w', startedAt: '2026-09-11T10:00:00Z',
+    sessionId: 'brain-ch-subagent-sub-dlg-1', running: true, exitCode: null,
+  };
+
+  it('parses the daemon verbs; the act verbs REQUIRE the authorized owning session', () => {
+    expect(parseDaemonMessage({ type: 'processList', requestId: 'r-1' }))
+      .toEqual({ type: 'processList', requestId: 'r-1' });
+    expect(parseDaemonMessage({ type: 'processOutput', requestId: 'r-1', processId: 'p-1', sessionId: 's-1' }))
+      .toEqual({ type: 'processOutput', requestId: 'r-1', processId: 'p-1', sessionId: 's-1' });
+    expect(parseDaemonMessage({ type: 'killProcess', requestId: 'r-1', processId: 'p-1', sessionId: 's-1' }))
+      .toEqual({ type: 'killProcess', requestId: 'r-1', processId: 'p-1', sessionId: 's-1' });
+    expect(parseDaemonMessage({ type: 'killSessionProcesses', requestId: 'r-1', sessionId: 's-1' }))
+      .toEqual({ type: 'killSessionProcesses', requestId: 'r-1', sessionId: 's-1' });
+    expect(parseDaemonMessage({ type: 'processList' })).toBeUndefined();
+    // A frame without the owning session would have to act unguarded — dropped, never coerced.
+    expect(parseDaemonMessage({ type: 'killProcess', requestId: 'r-1', processId: 'p-1' })).toBeUndefined();
+    expect(parseDaemonMessage({ type: 'processOutput', requestId: 'r-1', processId: 'p-1' })).toBeUndefined();
+  });
+
+  it('parses the answers and rejects a malformed snapshot whole', () => {
+    expect(parseRunnerMessage({ type: 'processListResult', requestId: 'r-1', processes: [validProcess] }))
+      .toEqual({ type: 'processListResult', requestId: 'r-1', processes: [validProcess] });
+    expect(parseRunnerMessage({ type: 'processOutputResult', requestId: 'r-1', output: null }))
+      .toEqual({ type: 'processOutputResult', requestId: 'r-1', output: null });
+    expect(parseRunnerMessage({ type: 'processKilled', requestId: 'r-1', killed: true }))
+      .toEqual({ type: 'processKilled', requestId: 'r-1', killed: true });
+    // One malformed row poisons the snapshot's authorization story — dropped whole, never repaired.
+    expect(parseRunnerMessage({ type: 'processListResult', requestId: 'r-1', processes: [{ id: 'x' }] })).toBeUndefined();
+    expect(parseRunnerMessage({ type: 'processListResult', requestId: 'r-1', processes: 'all' })).toBeUndefined();
+    expect(parseRunnerMessage({ type: 'processOutputResult', requestId: 'r-1', output: 5 })).toBeUndefined();
+    expect(parseRunnerMessage({ type: 'processKilled', requestId: 'r-1', killed: 'yes' })).toBeUndefined();
+  });
+
+  it('parses the change frame (snapshot required) and the session sweep answer', () => {
+    expect(parseRunnerMessage({ type: 'processesChanged', sessionId: 's-1', processes: [validProcess] }))
+      .toEqual({ type: 'processesChanged', sessionId: 's-1', processes: [validProcess] });
+    // The snapshot rides the frame; a frame without one is dropped rather than read as a false empty.
+    expect(parseRunnerMessage({ type: 'processesChanged', sessionId: 's-1' })).toBeUndefined();
+    expect(parseRunnerMessage({ type: 'processesChanged' })).toBeUndefined();
+    expect(parseRunnerMessage({ type: 'sessionProcessesKilled', requestId: 'r-1', killed: 3 }))
+      .toEqual({ type: 'sessionProcessesKilled', requestId: 'r-1', killed: 3 });
+    expect(parseRunnerMessage({ type: 'sessionProcessesKilled', requestId: 'r-1', killed: -1 })).toBeUndefined();
+  });
+
+  it('parses heartbeat kill tokens and rejects malformed ones', () => {
+    expect(parseRunnerMessage({ type: 'heartbeat', loopP99Ms: 1, activeTurns: 0, sessions: 0, rssBytes: 5, killTokens: ['tok-1'] }))
+      .toEqual({ type: 'heartbeat', loopP99Ms: 1, activeTurns: 0, sessions: 0, rssBytes: 5, killTokens: ['tok-1'] });
+    expect(parseRunnerMessage({ type: 'heartbeat', loopP99Ms: 1, activeTurns: 0, sessions: 0, rssBytes: 5 }))
+      .toEqual({ type: 'heartbeat', loopP99Ms: 1, activeTurns: 0, sessions: 0, rssBytes: 5 });
+    expect(parseRunnerMessage({ type: 'heartbeat', loopP99Ms: 1, activeTurns: 0, sessions: 0, rssBytes: 5, killTokens: [''] })).toBeUndefined();
+    expect(parseRunnerMessage({ type: 'heartbeat', loopP99Ms: 1, activeTurns: 0, sessions: 0, rssBytes: 5, killTokens: 'tok' })).toBeUndefined();
+  });
+
+  it('carries completion mode, blockedRead and a project ref; rejects a bad one', () => {
+    expect(parseRunnerMessage({
+      type: 'processListResult', requestId: 'r-1',
+      processes: [{ ...validProcess, completionMode: 'service', blockedRead: true, projectRef: { kind: 'managed', projectId: 3 } }],
+    })).toEqual({
+      type: 'processListResult', requestId: 'r-1',
+      processes: [{ ...validProcess, completionMode: 'service', blockedRead: true, projectRef: { kind: 'managed', projectId: 3 } }],
+    });
+    expect(parseRunnerMessage({
+      type: 'processListResult', requestId: 'r-1',
+      processes: [{ ...validProcess, completionMode: 'zombie' }],
+    })).toBeUndefined();
+    expect(parseRunnerMessage({
+      type: 'processListResult', requestId: 'r-1',
+      processes: [{ ...validProcess, projectRef: { kind: 'galactic', projectId: 3 } }],
+    })).toBeUndefined();
+  });
+});

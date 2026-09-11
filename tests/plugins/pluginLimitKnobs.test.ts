@@ -108,8 +108,10 @@ describe('files — pdfMaxPages', () => {
 describe('terminal — maxBackgroundProcesses', () => {
   // The registry is a module-level singleton shared across the whole run; a background sleep left behind
   // would leak into other files. Kill everything, then drop the dirs those processes ran in.
-  afterEach(() => {
-    for (const p of processRegistry.list()) processRegistry.kill(p.id);
+  // Awaited: the kill confirms the plugin's teardown asynchronously, and the dirs below are those
+  // processes' working directories.
+  afterEach(async () => {
+    await processRegistry.killWhere(() => true);
     for (const p of dirs) rmSync(p, { recursive: true, force: true });
     dirs = [];
   });

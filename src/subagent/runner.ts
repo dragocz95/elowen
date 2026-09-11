@@ -28,7 +28,8 @@ import { buildBrainCore } from '../daemon/brainCore.js';
 import type { TmuxDriver } from '../tmux/types.js';
 import type { BrainService } from '../brain/brainService.js';
 import { DelegationAbortedError } from '../brain/session/liveRegistry.js';
-import { processRegistry } from '../brain/processRegistry.js';
+import { processHandleOwnedByAccount, processRegistry } from '../brain/processRegistry.js';
+import type { BrainStore } from '../store/brainStore.js';
 import { parseDelegatedTurnRequest, toDelegatedProgress } from '../brain/delegatedTurn.js';
 import { SUBAGENT_PLATFORM, channelSessionId } from '../brain/sessionId.js';
 import { parseDaemonMessage, subagentBuildId, type RunnerToDaemon } from './protocol.js';
@@ -128,12 +129,19 @@ const heartbeat = setInterval(() => {
     activeTurns: runningChannels.size,
     sessions: heldChannels.size,
     rssBytes: process.memoryUsage.rss(),
+    // Kill tokens of THIS registry's running children: if the process dies abruptly (SIGKILL, crash),
+    // these are what the daemon can still sweep by — the token lives in the child's own /proc environ,
+    // immune to PID reuse and covering escaped descendants.
+    killTokens: processRegistry.killTokens(),
   });
 }, HEARTBEAT_INTERVAL_MS);
 // A metric must never be the reason this process outlives the work it was forked for.
 heartbeat.unref();
 
 let brain: BrainService | undefined;
+/** The core's store, for the ONE cross-check a runner makes on its own: whose session a null-account
+ *  (delegated) process handle belongs to when an account is being torn down. */
+let brainStore: BrainStore | undefined;
 /** Turns accepted before the core finished booting. Node delivers IPC messages as soon as the channel is
  *  up, which is well before plugins are loaded. */
 let booting: Promise<void> | undefined;
@@ -174,6 +182,15 @@ async function boot(
     ? `${bridged} bridged MCP tool(s) declared from the daemon's snapshot — no MCP server connected`
     : undefined);
   brain = core.brain;
+  brainStore = core.brainStore;
+  // Registry changes here would otherwise never reach the daemon's live process panels (the CLI drill-in
+  // hydrates once, then rides `process` events). Report the affected session; the daemon re-projects it.
+  // The listener dies with this process — there is nothing to unregister.
+  processRegistry.setChangeListener((sessionId) => {
+    // The snapshot rides the frame: the daemon re-projects exactly what this registry holds for the
+    // session at change time, instead of re-asking and mistaking a wedged round trip for "empty".
+    if (sessionId) send({ type: 'processesChanged', sessionId, processes: processRegistry.listForSession(sessionId) });
+  });
   // Report NESTED delegated edges upward. The daemon's LiveSessionRegistry is the authoritative abort
   // tree, so it has to see work happening over here — but never the edge of the dispatched turn itself,
   // which it registered on its own before forwarding.
@@ -320,7 +337,54 @@ process.on('message', (raw: unknown) => {
       return;
     }
     case 'killAccountProcesses':
-      send({ type: 'accountProcessesKilled', requestId: msg.requestId, killed: processRegistry.killAccount(msg.userId) });
+      // Explicit account ownership first, then the session row for a delegated child's null-account
+      // handle — the same rule the daemon's own sweep applies, or an account delete would leave its
+      // children's processes running and unreachable. Awaited: the answer must not claim a stop the
+      // guest cancellation has not confirmed yet.
+      void (async (): Promise<void> => {
+        const { killed, failed } = await processRegistry.killWhere((handle) =>
+          processHandleOwnedByAccount(handle, msg.userId, (sessionId) => brainStore?.getSession(sessionId)?.user_id));
+        if (failed.length) log.warn(`account ${msg.userId} teardown could not confirm ${failed.length} process(es): ${failed.join(', ')}`);
+        send({ type: 'accountProcessesKilled', requestId: msg.requestId, killed });
+      })().catch((e: unknown) => {
+        log.warn(`account process teardown failed: ${errorText(e)}`);
+        send({ type: 'accountProcessesKilled', requestId: msg.requestId, killed: 0 });
+      });
+      return;
+    // The daemon's process list/output/kill surfaces project from THIS registry for the children this
+    // process hosts, exactly as they do from its own for in-process ones. Ownership stays daemon-side:
+    // these verbs answer only what this registry holds, and the daemon filters it per account.
+    case 'processList':
+      send({ type: 'processListResult', requestId: msg.requestId, processes: processRegistry.list() });
+      return;
+    case 'processOutput':
+      // The daemon authorizes against its snapshot and passes the owning session: the guard is checked
+      // against the LIVE handle here, so a snapshot that went stale between list and act can neither act
+      // on a process that already exited nor on a same-id process of another session.
+      send({ type: 'processOutputResult', requestId: msg.requestId, output: processRegistry.outputForSession(msg.sessionId, msg.processId) });
+      return;
+    case 'killProcess':
+      // Awaited: the kill must be CONFIRMED (guest cancellation can take moments) before the daemon is
+      // told it landed; a failure leaves the handle in place and is reported as not-stopped.
+      void (async (): Promise<void> => {
+        try { send({ type: 'processKilled', requestId: msg.requestId, killed: await processRegistry.killForSession(msg.sessionId, msg.processId) }); }
+        catch (e) {
+          log.warn(`process ${msg.processId} kill failed: ${errorText(e)}`);
+          send({ type: 'processKilled', requestId: msg.requestId, killed: false });
+        }
+      })();
+      return;
+    case 'killSessionProcesses':
+      void (async (): Promise<void> => {
+        try {
+          const { killed, failed } = await processRegistry.killSession(msg.sessionId);
+          if (failed.length) log.warn(`session ${msg.sessionId} sweep could not confirm ${failed.length} process(es): ${failed.join(', ')}`);
+          send({ type: 'sessionProcessesKilled', requestId: msg.requestId, killed });
+        } catch (e) {
+          log.warn(`session ${msg.sessionId} process sweep failed: ${errorText(e)}`);
+          send({ type: 'sessionProcessesKilled', requestId: msg.requestId, killed: 0 });
+        }
+      })();
       return;
     case 'hostResult':
       hostRpc.settle(msg.callId, msg.result);
@@ -339,11 +403,21 @@ const leave = (reason: string): void => {
   log.warn(`sub-agent runner shutting down: ${reason}`);
   for (const off of liveTaps.values()) off();
   liveTaps.clear();
-  const channels = [...runningChannels];
-  runningChannels.clear();
-  void Promise.allSettled(channels.map((channelId) => brain?.abortChannel(channelId, { origin: 'parent_teardown', reason })))
-    .finally(() => process.exit(0));
-  // A wedged abort must not keep the orphan alive either.
+  // The registry dies with this process: anything still running in it would survive as a DETACHED
+  // orphan no panel can list or stop. The work is being rejected, so its background processes go too —
+  // awaited, because each kill confirms the group is really gone before the registry disappears.
+  void (async (): Promise<void> => {
+    const { killed, failed } = await processRegistry.killWhere(() => true);
+    if (killed || failed.length) {
+      log.warn(`sub-agent runner stopped ${killed} background process(es) on shutdown${failed.length ? `, ${failed.length} UNCONFIRMED: ${failed.join(', ')}` : ''}`);
+    }
+  })().finally(() => {
+    const channels = [...runningChannels];
+    runningChannels.clear();
+    void Promise.allSettled(channels.map((channelId) => brain?.abortChannel(channelId, { origin: 'parent_teardown', reason })))
+      .finally(() => process.exit(0));
+  });
+  // A wedged abort (or sweep) must not keep the orphan alive either.
   setTimeout(() => process.exit(0), 5_000).unref();
 };
 /** The daemon is GONE (a pause-for-restart, or a crash): leave at once, WITHOUT aborting. The turns
@@ -351,13 +425,22 @@ const leave = (reason: string): void => {
  *  unwind through the delegation tree first — a nested Delegate call errors, its child's run row is
  *  terminalized as failed before the cgroup takes this process down — and the boot would find finished
  *  failures where it expects interrupted work to resume (a grandchild lost that way is not recoverable).
- *  Nothing here is worth waiting for: the daemon's cgroup kill follows in milliseconds anyway. */
+ *  Nothing here is worth waiting for: the daemon's cgroup kill follows in milliseconds anyway.
+ *
+ *  The registry is still torn down: it lives only in this process, so its running children would outlive
+ *  it as detached orphans no registry can ever list or stop again — worse than a killed job, whose loss
+ *  the resumed turn reports as interrupted work. */
 process.on('disconnect', () => {
   hostRpc.close();
   log.warn('sub-agent runner leaving: the daemon closed the IPC channel — turns are left for the boot to continue');
   for (const off of liveTaps.values()) off();
   liveTaps.clear();
-  process.exit(0);
+  void (async (): Promise<void> => {
+    const { killed, failed } = await processRegistry.killWhere(() => true);
+    if (killed || failed.length) {
+      log.warn(`sub-agent runner stopped ${killed} background process(es) on daemon disconnect${failed.length ? `, ${failed.length} UNCONFIRMED: ${failed.join(', ')}` : ''}`);
+    }
+  })().finally(() => process.exit(0));
 });
 process.on('SIGTERM', () => leave('SIGTERM'));
 

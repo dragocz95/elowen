@@ -34,6 +34,10 @@ interface SessionTeardownDeps {
   /** The chat-terminal teardown is attached to BrainService AFTER construction, so it is read through a
    *  getter each time — capturing it by value here would freeze in the unwired `undefined`. */
   onConversationActivityChanged?: (sessionId: string) => void;
+  /** Stop every background process the sub-agent runners hold for ONE session. A runner-hosted child's
+   *  handles live in the RUNNER's registry, which the local sweep cannot reach; the sweep fires before
+   *  the session rows disappear, because ownership resolution dies with them. */
+  killRunnerSessionProcesses?: (sessionId: string) => Promise<void>;
 }
 
 /** The destructive session lifecycle, split out of BrainService: interrupting a running turn (Esc/Stop),
@@ -55,6 +59,7 @@ export class SessionTeardownService {
   private readonly idleClock: IdleSessionClock;
   private readonly resolvePlugins: () => Promise<PluginRegistry | undefined>;
   private readonly onConversationActivityChanged?: (sessionId: string) => void;
+  private readonly killRunnerSessionProcesses?: (sessionId: string) => Promise<void>;
   constructor(deps: SessionTeardownDeps) {
     this.store = deps.store;
     this.sessions = deps.sessions;
@@ -68,6 +73,7 @@ export class SessionTeardownService {
     this.idleClock = deps.idleClock;
     this.resolvePlugins = deps.resolvePlugins;
     this.onConversationActivityChanged = deps.onConversationActivityChanged;
+    this.killRunnerSessionProcesses = deps.killRunnerSessionProcesses;
   }
 
   private serial<T>(key: string, fn: () => Promise<T>): Promise<T> {
@@ -381,7 +387,18 @@ export class SessionTeardownService {
         this.sessions.clearDisposing(sessionId); // teardown abandoned — don't pin a live record on the slow path
         return;
       }
-      this.teardownDeletedSession(userId, sessionId);
+      // teardownDeletedSession REFUSES a delete whose processes it could not confirm stopped (an
+      // unconfirmed local kill, a runner that never answered), so this body can throw with the record
+      // still live and still marked by fenceDeletedSession. Clear the marker before the error leaves:
+      // reapableNow() reads it, so a marker nothing clears makes the idle reaper skip that session
+      // forever — one pinned live session per failed delete, in a daemon that runs for weeks. The
+      // success path needs no clearing: dispose() drops the entry and its marker with it.
+      try {
+        await this.teardownDeletedSession(userId, sessionId);
+      } catch (e) {
+        this.sessions.clearDisposing(sessionId);
+        throw e;
+      }
       this.store.deleteSession(sessionId);
     });
   }
@@ -412,8 +429,11 @@ export class SessionTeardownService {
    *
    *  A delete spares nothing, unlike a stop: a detached delegate or a background workflow keeps burning
    *  tokens for an inbox that has ceased to exist. */
-  private teardownDeletedSession(userId: number, id: string): void {
-    this.cleanupProcessesForTree(id);
+  private async teardownDeletedSession(userId: number, id: string): Promise<void> {
+    // Processes FIRST and awaited: a sweep that cannot confirm its kills must abort the delete while
+    // every ownership row still exists — a silently-half-deleted conversation is unrecoverable, a
+    // refused one is retryable (every step below is idempotent).
+    await this.cleanupProcessesForTree(id);
     this.cancelDelegatedWorkFor(id);
     this.elicitation.cancelForSession(id, 'conversation deleted'); // release a parked turn before dropping its session
     this.goals.cancelGoalContinuation(id);
@@ -448,24 +468,31 @@ export class SessionTeardownService {
   /** Delete ANY of the owner's brain sessions by id (admin panel) — disposing a live conversation or
    *  channel session first. Deliberately bypasses the isNonUserSession guard: this IS the management
    *  surface. Returns how many were deleted (0 or 1). */
-  deleteManagedSession(userId: number, id: string, scope: 'own' | 'any' = 'own'): number {
+  async deleteManagedSession(userId: number, id: string, scope: 'own' | 'any' = 'own'): Promise<number> {
     const row = this.store.getSession(id);
     if (!row) return 0;
     // `any` is the admin oversight register, which spans every account; `own` stays the default so a
     // caller reaches across accounts only by saying so. Teardown runs as the session's REAL owner --
     // passing the admin here would clean up the wrong user's terminals and processes.
     if (scope === 'own' && row.user_id !== userId) return 0;
-    this.teardownDeletedSession(row.user_id, id);
+    await this.teardownDeletedSession(row.user_id, id);
     this.store.deleteSession(id);
     return 1;
   }
 
-  private cleanupProcessesForTree(id: string): void {
+  /** Stop the background processes of `id` and its whole delegated subtree, BOTH halves awaited: the
+   *  local registry kill must be confirmed (it awaits guest cancellation) and the runner sweep must
+   *  answer (a wedged runner rejects — this teardown refuses instead of deleting rows whose processes
+   *  may still be running). The tree is collected from the run rows BEFORE any of it is torn down. */
+  private async cleanupProcessesForTree(id: string): Promise<void> {
     const stack = [id];
     for (let index = 0; index < stack.length; index += 1) {
-      const sessionId = stack[index]!;
-      processRegistry.killSession(sessionId);
-      for (const child of this.store.getSubagentRuns(sessionId)) stack.push(child.sessionId);
+      for (const child of this.store.getSubagentRuns(stack[index]!)) stack.push(child.sessionId);
+    }
+    for (const sessionId of stack) {
+      const { failed } = await processRegistry.killSession(sessionId);
+      if (failed.length) throw new Error(`session ${sessionId} has ${failed.length} unconfirmed local process(es): ${failed.join(', ')}`);
+      await this.killRunnerSessionProcesses?.(sessionId);
     }
   }
 
@@ -484,14 +511,14 @@ export class SessionTeardownService {
 
   /** Delete ALL of the owner's brain sessions (the panel's "delete everything" — the client confirms).
    *  Returns the count removed. */
-  deleteAllManagedSessions(userId: number, scope: 'own' | 'any' = 'own'): number {
+  async deleteAllManagedSessions(userId: number, scope: 'own' | 'any' = 'own'): Promise<number> {
     // The rows deleted are exactly the rows the caller was looking at: `own` walks their own list, `any`
     // walks the cross-account register. Anything else makes "delete all" delete some. `own` stays the
     // DEFAULT because the other caller is account deletion (routes/auth.ts), where reaching across
     // accounts would wipe the instance instead of one person's history.
     const rows = scope === 'any' ? this.store.listAllSessionsWithOwner() : this.store.listSessions(userId);
     let n = 0;
-    for (const s of rows) n += this.deleteManagedSession(userId, s.id, scope);
+    for (const s of rows) n += await this.deleteManagedSession(userId, s.id, scope);
     return n;
   }
 
@@ -521,8 +548,8 @@ export class SessionTeardownService {
       // conversation it belongs to is not idle history yet, whichever depth it sits at.
       const descendants = this.descendantSessionIds(id);
       if ([id, ...descendants].some((treeId) => this.store.hasUnfinishedSubagentRuns(treeId))) continue;
-      for (const descId of descendants) n += this.deleteManagedSession(userId, descId);
-      n += this.deleteManagedSession(userId, id);
+      for (const descId of descendants) n += await this.deleteManagedSession(userId, descId);
+      n += await this.deleteManagedSession(userId, id);
     }
     return n;
   }

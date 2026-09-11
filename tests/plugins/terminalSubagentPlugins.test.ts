@@ -22,10 +22,10 @@ function freshDataRoot(): string { const p = mkdtempSync(join(tmpdir(), 'elowen-
 
 // The process registry is a module-level singleton shared across every test in this run. Any handle a
 // test registers (even fake ones) survives into later tests and other files, so clear it after each test.
-// kill() is idempotent and safe on both fake and real handles. The per-test data roots are removed only
-// after the kill so no still-running background process is left with its working directory deleted.
-afterEach(() => {
-  for (const p of processRegistry.list()) processRegistry.kill(p.id);
+// The sweep is AWAITED (a kill confirms the handle's own teardown asynchronously) and the per-test data
+// roots are removed only after it, so no still-running background process is left with its cwd deleted.
+afterEach(async () => {
+  await processRegistry.killWhere(() => true);
   for (const p of dirs) rmSync(p, { recursive: true, force: true });
   dirs = [];
 });
@@ -42,7 +42,7 @@ describe('terminal plugin background processes', () => {
 
     await runWithPolicy(ADMIN, async () => {
       const started = asText(await run.execute('t', { command: 'echo hello-bg', cwd: '/tmp', background: true }, undefined as never, undefined as never));
-      const id = /background process (\w+):/.exec(started)![1]!;
+      const id = /background process ([0-9a-f-]+):/.exec(started)![1]!;
       expect(asText(await list.execute('t', {}, undefined as never, undefined as never))).toContain(id);
       // give the child a moment to flush + exit
       await new Promise((r) => setTimeout(r, 300));
@@ -62,8 +62,8 @@ describe('terminal plugin background processes', () => {
 
     const parentText = await scoped('brain-parent', async () => asText(await run.execute('p', { command: 'sleep 5', cwd: '/tmp', background: true }, undefined as never, undefined as never)));
     const childText = await scoped('brain-child', async () => asText(await run.execute('c', { command: 'sleep 5', cwd: '/tmp', background: true }, undefined as never, undefined as never)));
-    const parentId = /background process (\w+):/.exec(parentText)![1]!;
-    const childId = /background process (\w+):/.exec(childText)![1]!;
+    const parentId = /background process ([0-9a-f-]+):/.exec(parentText)![1]!;
+    const childId = /background process ([0-9a-f-]+):/.exec(childText)![1]!;
     expect(await scoped('brain-parent', async () => asText(await list.execute('l', {}, undefined as never, undefined as never)))).toContain(parentId);
     expect(await scoped('brain-parent', async () => asText(await list.execute('l', {}, undefined as never, undefined as never)))).not.toContain(childId);
     expect(await scoped('brain-parent', async () => asText(await read.execute('r', { id: childId }, undefined as never, undefined as never)))).toMatch(/no background process/);
@@ -219,7 +219,7 @@ describe('subagent plugin', () => {
         id: 'killed-proc', command: 'watch', cwd: '/tmp', startedAt: new Date().toISOString(), sessionId,
         running: () => running, exitCode: () => running ? null : 0, readAll: () => '', kill: () => { running = false; },
       });
-      processRegistry.kill('killed-proc');
+      await processRegistry.kill('killed-proc');
       return 'started and killed';
     });
     const completions: Record<string, unknown>[] = [];
