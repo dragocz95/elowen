@@ -15,7 +15,7 @@
     },
     "showSpeed": {
       "label": "Rychlost",
-      "hint": "Zobrazí naměřenou rychlost generování v tokenech za sekundu."
+      "hint": "Zobrazí efektivní rychlost poslední dokončené generace v tokenech za sekundu — zahrnuje čekání na poskytovatele i reasoning, není to čisté dekódování."
     },
     "showCost": {
       "label": "Náklady",

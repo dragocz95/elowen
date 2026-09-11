@@ -580,7 +580,9 @@ export function createChatComposition(
       modelArg,
       level,
       // Speed follows the same focus as the seconds beside it: drilled in, both describe the CHILD.
-      activityChip(activity, seconds, opts.tps === false ? null : focusedUsage()?.outputTps),
+      // The effective rate of the LATEST completed model call — header waits, prompt processing,
+      // reasoning and retries included; not a pure decode figure.
+      activityChip(activity, seconds, opts.tps === false ? null : focusedUsage()?.effectiveTps),
       rt.yoloOn,
       opts.fast === false ? false : rt.fastOn,
       trimmedGoal,

@@ -16,7 +16,7 @@ export function statusline(
   cfg: { showModel?: boolean; showContext?: boolean; showTokens?: boolean; showCost?: boolean; showSpeed?: boolean } | null,
   usage: {
     tokens: number | null; contextWindow: number; percent: number | null; totalTokens: number; cost: number;
-    outputTps?: number | null;
+    effectiveTps?: number | null;
   } | null,
   model: string,
 ): string {
@@ -27,10 +27,13 @@ export function statusline(
     parts.push(`context ${Math.round(usage.percent)}% (${formatK(usage.tokens ?? 0)}/${formatK(usage.contextWindow)})`);
   }
   if (cfg.showTokens && usage) parts.push(`Σ ${formatK(usage.totalTokens)} tok`);
-  // Measured generation speed, so it stays absent until something has been timed — and below 1 t/s the
-  // rounded figure would read as a stall rather than as too few samples.
-  if (cfg.showSpeed && typeof usage?.outputTps === 'number' && usage.outputTps >= 1) {
-    parts.push(`${Math.round(usage.outputTps)} tok/s`);
+  // EFFECTIVE speed of the conversation's latest completed model call: provider-reported output tokens
+  // (reasoning and tool-call tokens included) over the whole logical request, measured from its
+  // initiation — header waits, prompt processing, retries and backoff included, tool execution
+  // excluded. Absent until something has been measured — and below 1 t/s the rounded figure would read
+  // as a stall rather than as too few samples.
+  if (cfg.showSpeed && typeof usage?.effectiveTps === 'number' && usage.effectiveTps >= 1) {
+    parts.push(`${Math.round(usage.effectiveTps)} tok/s`);
   }
   if (cfg.showCost && usage) parts.push(`$${usage.cost.toFixed(2)}`);
   return parts.join('  ·  ');
@@ -45,10 +48,11 @@ export function settledTurnMeta(durationMs: number): string {
 /** One stable composer activity chip. Compaction is named explicitly because the agent run may already
  * be idle while its summary request is still busy; ordinary generation keeps the compact spinner/time.
  *
- * `tps` is the session's measured output speed, so it answers a different question from the seconds
- * beside it: the duration is wall-clock for this turn (mostly time spent in tools), while this is how
- * fast the model actually writes. Measured generations only — a turn that never carried a timing stamp
- * reports nothing rather than a rate divided by guessed seconds. */
+ * `tps` is the effective speed of the LATEST completed model call, so it answers a different question
+ * from the seconds beside it: the duration is wall-clock for this turn (mostly time spent in tools),
+ * while this is how fast the model actually wrote, waiting for the provider included. Measured
+ * generations only — a turn that never carried an effective timing stamp reports nothing rather than a
+ * rate divided by guessed seconds. */
 export function activityChip(
   activity: 'agent' | 'compaction' | null,
   seconds: number,

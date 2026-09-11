@@ -68,8 +68,11 @@ const producingProvider = (src: string, path: string, modelPath: string, fallbac
 // rolled-up bucket's `at` (newest dropped row of that model) — so compaction NEVER moves spend to the
 // compaction moment. `model` is the row's own producing model, falling back to the session's model only
 // for legacy rows that predate per-message model capture. `measured_output` is the slice of `output` that
-// `duration_ms` actually timed (see {@link UsageRollupBucket}) — the tok/s numerator, kept separate so
-// untimed history can never be read as measured. Purely static SQL (no user input) → safe to
+// `duration_ms` actually timed (see {@link UsageRollupBucket}) — the legacy tok/s numerator, kept separate so
+// untimed history can never be read as measured. `effective_ms`/`effective_output` are the end-to-end
+// counterpart: the recorder stamps `$.effectiveMs` (whole logical request from initiation, retries
+// included) on new messages, and the same measured-pair rule keeps rows without it (all history written
+// before effective timing existed) out of the effective figures. Purely static SQL (no user input) → safe to
 // interpolate. Callers add the user/window/day filters + GROUP BY.
 //
 // The `json_valid` guards are load-bearing: `json_extract` and `json_each` THROW on malformed JSON, so a
@@ -99,6 +102,10 @@ const USAGE_ROWS = `
          CASE WHEN ${numeric('m.content', '$.durationMs')} > 0
                AND ${numeric('m.content', '$.usage.output')} > 0
               THEN ${numeric('m.content', '$.usage.output')} ELSE 0 END AS measured_output,
+         ${numeric('m.content', '$.effectiveMs')} AS effective_ms,
+         CASE WHEN ${numeric('m.content', '$.effectiveMs')} > 0
+               AND ${numeric('m.content', '$.usage.output')} > 0
+              THEN ${numeric('m.content', '$.usage.output')} ELSE 0 END AS effective_output,
          ${numeric('m.content', '$.usage.cost.total', 'NULL')} AS cost
     FROM brain_messages m JOIN brain_sessions s ON s.id = m.session_id
          LEFT JOIN sm ON sm.session_id = m.session_id AND sm.usage_epoch = m.usage_epoch
@@ -119,6 +126,8 @@ const USAGE_ROWS = `
          ${numeric('je.value', '$.reasoning')} AS reasoning,
          ${numeric('je.value', '$.durationMs')} AS duration_ms,
          ${numeric('je.value', '$.measuredOutput')} AS measured_output,
+         ${numeric('je.value', '$.effectiveMs')} AS effective_ms,
+         ${numeric('je.value', '$.effectiveOutput')} AS effective_output,
          ${numeric('je.value', '$.cost.total', 'NULL')} AS cost
     FROM brain_messages m JOIN brain_sessions s ON s.id = m.session_id,
          json_each(CASE WHEN json_valid(m.content)
@@ -198,6 +207,11 @@ export interface UsageRollupBucket {
    *  remain unknown (0) rather than being presented as one call when they may contain thousands. */
   calls?: number;
   durationMs?: number; measuredOutput?: number; cost?: { total: number };
+  /** The end-to-end measured pair (see {@link EffectiveRequestTiming}): wall time and output tokens of the
+   *  dropped generations that carried the recorder's effective stamp. Same subset rule as the legacy
+   *  pair — untimed rows (everything written before effective timing existed) contribute to neither
+   *  side, so a bucket never presents an effective rate its samples never covered. */
+  effectiveMs?: number; effectiveOutput?: number;
 }
 
 /** Fold the usage of the rows a compaction is about to delete into per-identity, per-UTC-day rollup
@@ -219,13 +233,14 @@ export function rollupDroppedUsage(dropped: readonly { content: string; usage_ep
       b = {
         usageEpoch, ...(provider ? { provider } : {}), ...(providerIdentity ? { providerIdentity: 'config' as const } : {}), model,
         input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, reasoning: 0,
-        at: 0, calls: 0, durationMs: 0, measuredOutput: 0,
+        at: 0, calls: 0, durationMs: 0, measuredOutput: 0, effectiveMs: 0, effectiveOutput: 0,
       };
       byIdentityAndDay.set(key, b);
     }
     return b;
   };
-  const fold = (b: UsageRollupBucket, u: Record<string, unknown>, at: number, calls: number, measured: { durationMs: number; output: number }): void => {
+  const fold = (b: UsageRollupBucket, u: Record<string, unknown>, at: number, calls: number,
+    measured: { durationMs: number; output: number }, effective: { effectiveMs: number; output: number }): void => {
     b.input += num(u.input); b.output += num(u.output);
     b.cacheRead += num(u.cacheRead); b.cacheWrite += num(u.cacheWrite);
     b.reasoning += num(u.reasoning); b.totalTokens += num(u.totalTokens);
@@ -239,6 +254,12 @@ export function rollupDroppedUsage(dropped: readonly { content: string; usage_ep
       b.durationMs = (b.durationMs ?? 0) + measured.durationMs;
       b.measuredOutput = (b.measuredOutput ?? 0) + measured.output;
     }
+    // Same rule for the end-to-end pair, so an effective rate survives compaction exactly as far as its
+    // samples do: rows written before effective timing existed contribute to neither side.
+    if (effective.effectiveMs > 0 && effective.output > 0) {
+      b.effectiveMs = (b.effectiveMs ?? 0) + effective.effectiveMs;
+      b.effectiveOutput = (b.effectiveOutput ?? 0) + effective.output;
+    }
     const cost = (u as { cost?: { total?: unknown } }).cost;
     if (cost && typeof cost === 'object' && typeof cost.total === 'number') b.cost = { total: (b.cost?.total ?? 0) + cost.total };
     if (at > (b.at ?? 0)) b.at = at; // newest dropped row of this model wins as its attribution point
@@ -247,7 +268,7 @@ export function rollupDroppedUsage(dropped: readonly { content: string; usage_ep
     let content: unknown;
     try { content = JSON.parse(row.content); } catch { continue; }
     if (typeof content !== 'object' || content === null) continue;
-    const c = content as { usage?: Record<string, unknown>; usageRollup?: unknown; provider?: unknown; providerIdentity?: unknown; model?: unknown; timestamp?: unknown; durationMs?: unknown };
+    const c = content as { usage?: Record<string, unknown>; usageRollup?: unknown; provider?: unknown; providerIdentity?: unknown; model?: unknown; timestamp?: unknown; durationMs?: unknown; effectiveMs?: unknown };
     if (Array.isArray(c.usageRollup)) {
       // A prior divider — merge each of its per-identity buckets (chained compaction). Legacy buckets have
       // no provider, so they remain separate and unresolved rather than being guessed from newer state.
@@ -260,7 +281,9 @@ export function rollupDroppedUsage(dropped: readonly { content: string; usage_ep
           typeof pb.provider === 'string' ? pb.provider : '',
           typeof pb.model === 'string' ? pb.model : '',
           pb.providerIdentity === 'config', at,
-        ), pb, at, num(pb.calls), { durationMs: num(pb.durationMs), output: num(pb.measuredOutput) });
+        ), pb, at, num(pb.calls),
+          { durationMs: num(pb.durationMs), output: num(pb.measuredOutput) },
+          { effectiveMs: num(pb.effectiveMs), output: num(pb.effectiveOutput) });
       }
     } else if (c.usage && typeof c.usage === 'object') {
       // An assistant message — attribute to the identity it recorded. Empty fields are resolved from the
@@ -271,7 +294,9 @@ export function rollupDroppedUsage(dropped: readonly { content: string; usage_ep
         typeof c.provider === 'string' ? c.provider : '',
         typeof c.model === 'string' ? c.model : '',
         c.providerIdentity === 'config', at,
-      ), c.usage, at, 1, { durationMs: num(c.durationMs), output: num(c.usage.output) });
+      ), c.usage, at, 1,
+        { durationMs: num(c.durationMs), output: num(c.usage.output) },
+        { effectiveMs: num(c.effectiveMs), output: num(c.usage.output) });
     }
   }
   const buckets = [...byIdentityAndDay.values()]
@@ -392,7 +417,7 @@ export class BrainUsageStore {
       const params: (string | number)[] = [userId, usageEpoch];
       if (Number.isFinite(fromMs)) { clauses.push(`ts >= ?`); params.push(fromMs); }
       if (Number.isFinite(toMs)) { clauses.push(`ts <= ?`); params.push(toMs); }
-      interface Row { provider: string | null; model: string; input: number; output: number; cache_read: number; cache_write: number; total: number; reasoning: number; measured_output: number; duration_ms: number; cost: number | null }
+      interface Row { provider: string | null; model: string; input: number; output: number; cache_read: number; cache_write: number; total: number; reasoning: number; measured_output: number; duration_ms: number; effective_output: number; effective_ms: number; cost: number | null }
       const source = this.hasUsageRollup() ? 'brain_usage_rows' : 'usage_rows';
       const prefix = this.hasUsageRollup() ? '' : `WITH ${SAME_MODEL_CTE}, usage_rows AS (${USAGE_ROWS})`;
       const rows = this.db.prepare(
@@ -406,6 +431,8 @@ export class BrainUsageStore {
                 COALESCE(SUM(reasoning), 0) AS reasoning,
                 COALESCE(SUM(measured_output), 0) AS measured_output,
                 COALESCE(SUM(CASE WHEN measured_output > 0 THEN duration_ms ELSE 0 END), 0) AS duration_ms,
+                COALESCE(SUM(effective_output), 0) AS effective_output,
+                COALESCE(SUM(CASE WHEN effective_output > 0 THEN effective_ms ELSE 0 END), 0) AS effective_ms,
                 CASE WHEN COUNT(cost) = 0 THEN NULL ELSE SUM(cost) END AS cost
            FROM ${source}
           WHERE ${clauses.join(' AND ')}
@@ -425,6 +452,12 @@ export class BrainUsageStore {
             // needs the measured seconds, which are measuredOutput / outputTps.
             measuredOutput: r.measured_output,
             outputTps: r.duration_ms > 0 ? (r.measured_output / (r.duration_ms / 1000)) : null,
+            // The effective counterpart over the SAME rows: only generations carrying the recorder's
+            // end-to-end stamp count, so history written before effective timing existed never leaks its
+            // post-header window into the effective figure. `effectiveMeasuredOutput` ships for the same
+            // cross-bucket weighting reason as `measuredOutput`.
+            effectiveMeasuredOutput: r.effective_output,
+            effectiveTps: r.effective_ms > 0 ? (r.effective_output / (r.effective_ms / 1000)) : null,
           };
           const exec = r.provider
             ? execRefSpec({ program: 'elowen', provider: r.provider, model: r.model })

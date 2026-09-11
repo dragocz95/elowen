@@ -4,7 +4,8 @@ import { isDownKey, isEscapeKey, isKeyRelease, isLeftKey, isPageDownKey, isPageU
 import { color } from './theme.js';
 import { FRAME_COLS, framed, hintRow, sectionRule, sectionTabs, titleRow } from './modalFrame.js';
 import { openCenteredModal } from './openCenteredModal.js';
-import { formatK } from '../ui/text.js';
+import { formatK, formatDuration } from '../ui/text.js';
+import { weightedSpeedFromPairs } from '../../shared/effectiveSpeed.js';
 import type { ModelUsageView, BrainUsageView } from './brainClient.js';
 import type { BrainContextBreakdown, BrainContextCategoryId } from '../../shared/wireContract.js';
 
@@ -175,8 +176,15 @@ class StatsOverlay implements Component, Focusable {
       }
     }
     body.push(kv('cost', color.bold(color.text(`$${u.cost.toFixed(2)}`))));
-    if (u.outputTps != null && u.outputTps > 0) {
-      body.push(kv('speed', color.text(`${Math.round(u.outputTps)} tok/s`)));
+    // The LATEST completed model call's effective rate: output tokens (reasoning and tool-call tokens
+    // included) over the whole logical request from initiation — header waits, prompt processing,
+    // retries and backoff included. The legacy post-header `outputTps` blends the whole session, so the
+    // conversation card shows the call the user just watched instead.
+    if (u.effectiveTps != null && u.effectiveTps > 0) {
+      body.push(kv('speed', color.text(`${Math.round(u.effectiveTps)} tok/s`)));
+    }
+    if (u.firstContentMs != null && u.firstContentMs > 0) {
+      body.push(kv('first content', color.faint(`after ${formatDuration(u.firstContentMs / 1000)} — every wait before the first streamed content`)));
     }
   }
 
@@ -196,7 +204,10 @@ class StatsOverlay implements Component, Focusable {
     for (const m of sorted) {
       const exec = m.exec.length > execW - 2 ? `${m.exec.slice(0, execW - 4)}…` : m.exec;
       const costStr = m.usage.costUsd != null ? `$${m.usage.costUsd.toFixed(2)}` : '—';
-      const tpsStr = m.usage.outputTps != null && m.usage.outputTps > 0 ? `${Math.round(m.usage.outputTps)}` : '—';
+      // Effective rate when the model measured one (end-to-end window); the legacy post-header rate
+      // still answers for history written before effective timing existed.
+      const tps = m.usage.effectiveTps ?? m.usage.outputTps;
+      const tpsStr = tps != null && tps > 0 ? `${Math.round(tps)}` : '—';
       body.push(`${pad}${color.text(exec.padEnd(execW))}${color.text(formatK(m.usage.total).padStart(tokW))}${color.faint(formatK(m.usage.cacheRead + m.usage.cacheWrite).padStart(cacheW))}${color.faint(tpsStr.padStart(tpsW))}${color.text(costStr.padStart(costW))}`);
     }
 
@@ -205,16 +216,15 @@ class StatsOverlay implements Component, Focusable {
     const costs = models.map((m) => m.usage.costUsd).filter((c): c is number => c != null);
     const totalCost = costs.length ? costs.reduce((sum, c) => sum + c, 0) : null;
     // Duration-weighted average speed across the models that measured one — a model's seconds are its
-    // MEASURED output over its rate; total `output` would overweight untimed history.
-    let measuredOutput = 0, measuredSeconds = 0;
-    for (const m of models) {
-      const tps = m.usage.outputTps;
-      const measured = m.usage.measuredOutput ?? 0;
-      if (tps != null && tps > 0 && measured > 0) { measuredOutput += measured; measuredSeconds += measured / tps; }
-    }
-    const avgTps = measuredSeconds > 0 ? `${Math.round(measuredOutput / measuredSeconds)}` : '—';
+    // MEASURED output over its rate; total `output` would overweight untimed history. The effective
+    // window wins when any model measured one end-to-end; the legacy post-header window answers only
+    // when nothing effective was measured (all history predating the stamp).
+    const pairs = (pick: (m: ModelUsageView) => { tps?: number | null; measuredOutput?: number }) => weightedSpeedFromPairs(models.map(pick));
+    const avgTps = pairs((m) => ({ tps: m.usage.effectiveTps, measuredOutput: m.usage.effectiveMeasuredOutput }))
+      ?? pairs((m) => ({ tps: m.usage.outputTps, measuredOutput: m.usage.measuredOutput }));
+    const avgTpsStr = avgTps != null ? `${Math.round(avgTps)}` : '—';
     body.push(`${pad}${color.faint('─'.repeat(execW + tokW + cacheW + tpsW + costW))}`);
-    body.push(`${pad}${color.accent('Σ'.padEnd(execW))}${color.text(formatK(totalTokens).padStart(tokW))}${color.faint(formatK(totalCache).padStart(cacheW))}${color.faint(avgTps.padStart(tpsW))}${color.bold(color.text((totalCost != null ? `$${totalCost.toFixed(2)}` : '—').padStart(costW)))}`);
+    body.push(`${pad}${color.accent('Σ'.padEnd(execW))}${color.text(formatK(totalTokens).padStart(tokW))}${color.faint(formatK(totalCache).padStart(cacheW))}${color.faint(avgTpsStr.padStart(tpsW))}${color.bold(color.text((totalCost != null ? `$${totalCost.toFixed(2)}` : '—').padStart(costW)))}`);
   }
 
   /** "What is filling the window": the resident count used by status/compaction, one bar per measured

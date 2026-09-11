@@ -13,7 +13,8 @@ const markedProvider = (src: string, path: string): string => `NULLIF(CASE WHEN 
 END, '')`;
 
 const columns = `source_message_id, bucket_index, session_id, user_id, usage_epoch, provider, model, ts,
-  input, output, cache_read, cache_write, total, reasoning, calls, duration_ms, measured_output, cost`;
+  input, output, cache_read, cache_write, total, reasoning, calls, duration_ms, measured_output,
+  effective_ms, effective_output, cost`;
 
 const liveSelect = (message: string, recoverProvider = 'NULL'): string => `
 SELECT ${message}.id, -1, ${message}.session_id, s.user_id, ${message}.usage_epoch,
@@ -30,6 +31,10 @@ SELECT ${message}.id, -1, ${message}.session_id, s.user_id, ${message}.usage_epo
        1,
        ${numeric(`${message}.content`, '$.durationMs')},
        CASE WHEN ${numeric(`${message}.content`, '$.durationMs')} > 0
+                  AND ${numeric(`${message}.content`, '$.usage.output')} > 0
+            THEN ${numeric(`${message}.content`, '$.usage.output')} ELSE 0 END,
+       ${numeric(`${message}.content`, '$.effectiveMs')},
+       CASE WHEN ${numeric(`${message}.content`, '$.effectiveMs')} > 0
                   AND ${numeric(`${message}.content`, '$.usage.output')} > 0
             THEN ${numeric(`${message}.content`, '$.usage.output')} ELSE 0 END,
        ${numeric(`${message}.content`, '$.usage.cost.total', 'NULL')}
@@ -50,6 +55,7 @@ SELECT ${message}.id, CAST(je.key AS INTEGER), ${message}.session_id, s.user_id,
        ${numeric('je.value', '$.totalTokens')}, ${numeric('je.value', '$.reasoning')},
        ${numeric('je.value', '$.calls')},
        ${numeric('je.value', '$.durationMs')}, ${numeric('je.value', '$.measuredOutput')},
+       ${numeric('je.value', '$.effectiveMs')}, ${numeric('je.value', '$.effectiveOutput')},
        ${numeric('je.value', '$.cost.total', 'NULL')}
   FROM brain_sessions s,
        json_each(CASE WHEN json_valid(${message}.content)
@@ -108,6 +114,13 @@ export function installBrainUsageRollup(db: Db): void {
   if (!columns.some((column) => column.name === 'usage_epoch')) {
     // Constant-default metadata only: no historical projection rebuild and no large index creation at boot.
     db.exec('ALTER TABLE brain_usage_rows ADD COLUMN usage_epoch INTEGER NOT NULL DEFAULT 0');
+  }
+  if (!columns.some((column) => column.name === 'effective_ms')) {
+    // Effective-speed timing postdates the projection: rows written before it existed never carried an
+    // end-to-end window, so they read as unmeasured (0) rather than being reinterpreted. New writes
+    // populate the columns through the recreated triggers below; no historical scan is owed.
+    db.exec('ALTER TABLE brain_usage_rows ADD COLUMN effective_ms REAL NOT NULL DEFAULT 0');
+    db.exec('ALTER TABLE brain_usage_rows ADD COLUMN effective_output REAL NOT NULL DEFAULT 0');
   }
   // Trigger SQL is versioned with the projection shape. Recreate it on every boot so an additive column is
   // populated immediately without rewriting the historical projection or scanning brain_messages.

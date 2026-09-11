@@ -792,8 +792,19 @@ export interface BrainUsage {
   cacheWrite?: number;
   /** Reasoning tokens (a SUBSET of `output`, display only). */
   reasoning?: number;
-  /** Average output tokens/sec across the session's measured generations; null when none measured yet. */
+  /** Average output tokens/sec across the session's measured generations (post-header window);
+   *  null when none measured yet. Legacy figure — the statusline shows `effectiveTps` instead. */
   outputTps?: number | null;
+  /** EFFECTIVE tokens/sec of the conversation's latest COMPLETED measured model call: provider-reported
+   *  output tokens (reasoning and tool-call tokens included) over the whole logical request measured
+   *  from its initiation — before the provider's response headers — to the complete response, PI-level
+   *  retries and backoff included, tool execution excluded. An effective end-to-end rate, not a pure
+   *  decode rate; null (or absent) while nothing has been measured. */
+  effectiveTps?: number | null;
+  /** Wait, in ms, from that call's initiation to its FIRST streamed content (thinking, text, or a tool
+   *  call). For a buffered delivery this spans the whole generation — it is what the client waited,
+   *  not a time-to-first-hidden-token. Present only on single-attempt calls. */
+  firstContentMs?: number | null;
 }
 
 /** One measured slice of a conversation's context window. The id set is closed because every surface

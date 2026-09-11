@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { toBrainEvent } from '../../src/brain/events.js';
+import { sessionUsageSnapshot, toBrainEvent } from '../../src/brain/events.js';
 import { composingLabel } from '../../src/cli/chat/composeLabels.js';
 import { isContextOverflow } from '@earendil-works/pi-ai';
 import type { AgentSessionEvent } from '@earendil-works/pi-coding-agent';
@@ -316,5 +316,56 @@ describe('tool_execution_end → lifecycle-only event', () => {
   it('preserves an output-less failure state', () => {
     expect(ev({ type: 'tool_execution_end', toolName: 'Read', toolCallId: 'r2', isError: true, result: { content: [], details: {} } }))
       .toMatchObject({ type: 'tool_end', id: 'r2', isError: true });
+  });
+});
+
+/** The statusline's speed figures. `usageOf` keeps the legacy session-wide post-header average for the
+ *  wire contract, while `effectiveTps` is the conversation's LATEST COMPLETED measured model call — the
+ *  figure the approved proposal put on the statusline instead of a blend of every model it ever ran. */
+describe('sessionUsageSnapshot — effective speed', () => {
+  const store = { descendantUsage: () => ({ totalTokens: 0, cost: 0 }) };
+  const snapshot = (messages: unknown[]) => sessionUsageSnapshot({ messages } as never, store, 's1');
+  const msg = (over: Record<string, unknown> = {}) => ({
+    role: 'assistant', stopReason: 'stop',
+    usage: { input: 10, output: 100, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 110, cost: { total: 0 } },
+    ...over,
+  });
+
+  it('shows the LATEST completed call, not a session-wide blend', () => {
+    const usage = snapshot([
+      msg({ effectiveMs: 1000, firstContentMs: 120 }),           // 100 tok/s
+      msg({ effectiveMs: 8000, firstContentMs: 2500, usage: { input: 10, output: 200, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 210, cost: { total: 0 } } }),
+    ]);
+    expect(usage.effectiveTps).toBeCloseTo(25); // the LATEST call: 200 / 8 s
+    expect(usage.firstContentMs).toBe(2500);    // its first-content wait, carried verbatim
+  });
+
+  it('skips failed and aborted attempts — the previous completed call still answers', () => {
+    const usage = snapshot([
+      msg({ effectiveMs: 1000 }),
+      msg({ effectiveMs: 90_000, stopReason: 'aborted', usage: { input: 5, output: 3, cacheRead: 0, cacheWrite: 0, reasoning: 0, totalTokens: 8, cost: { total: 0 } } }),
+    ]);
+    expect(usage.effectiveTps).toBeCloseTo(100); // the completed 100/1s call, not the aborted tail
+  });
+
+  it('reports nothing effective while only legacy-window generations exist', () => {
+    const usage = snapshot([msg({ durationMs: 2000 })]);
+    expect(usage.effectiveTps).toBeUndefined();  // never reinterpreted as an end-to-end sample
+    expect(usage.outputTps).toBeCloseTo(50);     // the legacy window keeps its own meaning
+  });
+
+  it('blends nothing when a legacy history sits beside one effective sample', () => {
+    const usage = snapshot([
+      msg({ durationMs: 1000 }),                                        // legacy only
+      msg({ effectiveMs: 2000, durationMs: 1000 }),                     // both stamps, like a new row
+    ]);
+    expect(usage.effectiveTps).toBeCloseTo(50);  // 100 / 2 s — effective from the new sample only
+    expect(usage.outputTps).toBeCloseTo(100);    // 200 / 2 s — legacy window over every stamp
+  });
+
+  it('reports nothing at all before anything was measured', () => {
+    const usage = snapshot([]);
+    expect(usage.outputTps).toBeNull();
+    expect(usage.effectiveTps).toBeUndefined();
   });
 });

@@ -1,4 +1,5 @@
 import { formatTokens, formatCost, formatSpeed } from './format';
+import { weightedSpeedFromPairs } from './effectiveSpeed';
 import type { ModelUsage } from './types';
 
 /** One model's row on the stats page: figures plus a max-normalized bar width (by tokens). */
@@ -22,7 +23,9 @@ export interface UsageSummary {
   totalCacheTokens: number;   // cacheRead + cacheWrite across all models
   totalCacheLabel: string;
   modelsUsed: number;
-  /** Duration-weighted average output speed across every row that measured one ('—' when none did). */
+  /** Duration-weighted average output speed across every row that measured one ('—' when none did).
+   *  The effective (end-to-end) window wins when any row measured one; the legacy post-header window
+   *  answers only when nothing effective was measured (all history predating the effective stamp). */
   avgSpeedLabel: string;
   hasAnyUsage: boolean;
 }
@@ -49,7 +52,9 @@ export function buildUsageSummary(data: ModelUsage[] | undefined): UsageSummary 
       pct: (m.usage.total / maxTokens) * 100,
       tokensLabel: formatTokens(m.usage.total),
       costLabel: m.usage.costUsd == null ? DASH : formatCost(m.usage.costUsd),
-      speedLabel: formatSpeed(m.usage.outputTps),
+      // The effective (end-to-end) rate when the model measured one; the legacy post-header rate still
+      // answers for history written before effective timing existed.
+      speedLabel: formatSpeed(m.usage.effectiveTps ?? m.usage.outputTps),
       cacheHitPct: cacheHitPct(m.usage),
     }))
     .sort((a, b) => b.totalTokens - a.totalTokens);
@@ -61,14 +66,11 @@ export function buildUsageSummary(data: ModelUsage[] | undefined): UsageSummary 
   // Average speed is duration-weighted: recover each row's generation seconds from its MEASURED output
   // over its rate, sum, re-divide — an arithmetic mean of per-model tps would overweight small runs, and
   // weighting by total `output` would credit a row for untimed history its rate never covered. A row
-  // without the measured pair (older daemon) is unweightable, so it stays out of the average.
-  let measuredOutput = 0;
-  let measuredSeconds = 0;
-  for (const m of items) {
-    const tps = m.usage.outputTps;
-    const measured = m.usage.measuredOutput ?? 0;
-    if (tps != null && tps > 0 && measured > 0) { measuredOutput += measured; measuredSeconds += measured / tps; }
-  }
+  // without the measured pair (older daemon) is unweightable, so it stays out of the average. The
+  // effective pair wins when any row measured end-to-end; the legacy pair answers only otherwise.
+  const pairs = (pick: (m: ModelUsage) => { tps?: number | null; measuredOutput?: number }) => weightedSpeedFromPairs(items.map(pick));
+  const avg = pairs((m) => ({ tps: m.usage.effectiveTps, measuredOutput: m.usage.effectiveMeasuredOutput }))
+    ?? pairs((m) => ({ tps: m.usage.outputTps, measuredOutput: m.usage.measuredOutput }));
 
   return {
     rows,
@@ -79,7 +81,7 @@ export function buildUsageSummary(data: ModelUsage[] | undefined): UsageSummary 
     totalCacheTokens,
     totalCacheLabel: formatTokens(totalCacheTokens),
     modelsUsed: rows.length,
-    avgSpeedLabel: measuredSeconds > 0 ? formatSpeed(measuredOutput / measuredSeconds) : DASH,
+    avgSpeedLabel: avg == null ? DASH : formatSpeed(avg),
     // A provider may report a settled cost without token detail. Keep that row visible instead of
     // incorrectly replacing the ledger with the empty state.
     hasAnyUsage: totalTokens > 0 || costs.some((cost) => cost > 0),

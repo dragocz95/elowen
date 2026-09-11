@@ -15,7 +15,7 @@
     },
     "showSpeed": {
       "label": "Rýchlosť",
-      "hint": "Zobrazí nameranú rýchlosť generovania v tokenoch za sekundu."
+      "hint": "Zobrazí efektívnu rýchlosť poslednej dokončenej generácie v tokenoch za sekundu — zahŕňa čakanie na poskytovateľa aj reasoning, nie je to čisté dekódovanie."
     },
     "showCost": {
       "label": "Náklady",
