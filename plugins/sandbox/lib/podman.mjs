@@ -1,7 +1,7 @@
 import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { userInfo } from 'node:os';
-import { lstatSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { lstatSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { PROJECT_BASE_IMAGE_TAG, PROJECT_CONTAINERFILE } from './containerBaseImage.mjs';
 import { assertContainerSpec, executionUnit, hostPath, publicationUnit, resourceToken, snapshotReference, volumeLabels, withContainerLimits } from './containerSpec.mjs';
@@ -289,7 +289,10 @@ export class PodmanClient {
     if (spec.expectedId && row.Id !== spec.expectedId) mismatches.push('expectedId');
     if (row.Name?.replace(/^\//, '') !== spec.name) mismatches.push('name');
     if (!labelsMatch(row.Config?.Labels, spec.labels)) mismatches.push('labels');
-    if (row.ImageName !== spec.image) mismatches.push('image');
+    if (spec.disk) {
+      if (row.Image !== '' || row.ImageName !== '' || row.Rootfs !== realpathSync(spec.disk.rootfsPath)) mismatches.push('rootfs');
+      if (row.Path !== '/sbin/init' || row.Config?.SystemdMode !== true || row.Config?.StopSignal !== 37) mismatches.push('rootfsConfig');
+    } else if (row.ImageName !== spec.image) mismatches.push('image');
     if (!mountsMatch) mismatches.push('mounts');
     if (!networkMatches) mismatches.push('network');
     if (host.Privileged !== false) mismatches.push('privileged');
@@ -328,13 +331,14 @@ export class PodmanClient {
     for (const volume of spec.volumes) await this.inspectVolume(spec, volume.component);
     for (const mount of spec.mounts.filter((entry) => entry.type === 'bind')) checkedHostPath(mount.source, { file: mount.target === '/workspace/.git' });
     if (spec.envFile) checkedHostPath(spec.envFile, { file: true });
-    const args = ['create', '--name', spec.name];
+    const args = ['create', ...(spec.disk ? ['--rootfs'] : []), '--name', spec.name];
     for (const [key, value] of Object.entries(spec.labels)) args.push('--label', `${key}=${value}`);
-    args.push('--cgroups=split', '--systemd=always', `--ipc=${spec.ipcMode}`, `--memory=${spec.limits.memoryMb}m`, `--memory-swap=${spec.limits.memoryMb}m`,
-      `--cpus=${spec.limits.cpus}`, `--pids-limit=${spec.limits.pidsLimit}`, `--network=${spec.network}`, `--workdir=${spec.workdir}`, '--env=HOME=/root');
+    args.push('--cgroups=split', '--systemd=always', ...(spec.disk ? ['--stop-signal', 'SIGRTMIN+3'] : []), `--ipc=${spec.ipcMode}`, `--memory=${spec.limits.memoryMb}m`, `--memory-swap=${spec.limits.memoryMb}m`,
+      `--cpus=${spec.limits.cpus}`, `--pids-limit=${spec.limits.pidsLimit}`, `--network=${spec.network}`, `--workdir=${spec.workdir}`, '--env=HOME=/root', ...(spec.disk ? ['--env=container=podman'] : []));
     if (spec.envFile) args.push('--env-file', spec.envFile);
     for (const mount of spec.mounts) args.push('--mount', `type=${mount.type},src=${mount.source},dst=${mount.target}${mount.readOnly ? ',ro' : ''}`);
-    args.push(spec.image);
+    if (spec.disk) args.push(spec.disk.rootfsPath, '/sbin/init');
+    else args.push(spec.image);
     await this.#run(args);
     return await this.#owned(spec);
   }
@@ -510,7 +514,7 @@ export class PodmanClient {
     if (record.snapshotId !== snapshotId || record.resource?.kind !== spec.resource.kind || record.resource?.id !== spec.resource.id || record.generation !== spec.generation || record.specHash !== spec.specHash) throw new Error('Incomplete snapshot ownership mismatch');
     try { lstatSync(join(directory, 'manifest.json')); throw new Error('A completed snapshot cannot be discarded as incomplete'); }
     catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
-    await this.removeSnapshotImage(spec, snapshotId);
+    if (!spec.disk) await this.removeSnapshotImage(spec, snapshotId);
     await this.#run(['unshare', '/usr/bin/rm', '-rf', '--', directory]);
   }
 
@@ -620,6 +624,46 @@ export class PodmanClient {
     const directory = join(spec.storageRoot, 'storage', String(spec.generation));
     try { checkedHostPath(directory); } catch (cause) { if (cause.code === 'ENOENT') return; throw cause; }
     await this.#run(['unshare', '/usr/bin/rm', '-rf', '--', directory]);
+  }
+
+  async materializeRootfs(spec, pendingPath) {
+    this.#assertScope(spec);
+    if (!spec.disk) throw new Error('A rootfs-backed specification is required');
+    const pending = checkedHostPath(pendingPath);
+    const directory = checkedHostPath(dirname(pending));
+    const archive = join(directory, 'rootfs.tar.pending');
+    const seed = `${spec.namespace}-disk-${spec.disk.id.slice(0, 16)}-seed`;
+    resourceToken(seed);
+    await this.#assertRootless();
+    if (await this.#exists('container', seed)) throw new Error('Rootfs materialization seed already exists');
+    try {
+      await this.#run(['create', '--name', seed, spec.disk.sourceImage]);
+      await this.#run(['export', '--output', archive, seed], { timeoutMs: 15 * 60_000 });
+      await this.#run(['rm', seed]);
+      await this.#run(['unshare', '/usr/bin/tar', '--extract', '--file', archive, '--directory', pending,
+        '--numeric-owner', '--same-owner', '--xattrs', '--xattrs-include=*', '--sparse'], { timeoutMs: 15 * 60_000 });
+      await this.#run(['unshare', '/usr/bin/tar', '--compare', '--file', archive, '--directory', pending,
+        '--numeric-owner', '--same-owner', '--xattrs', '--xattrs-include=*', '--sparse'], { timeoutMs: 15 * 60_000 });
+      const image = oneJson(await this.#run(['image', 'inspect', spec.disk.sourceImage]));
+      if (!/^(sha256:)?[a-f0-9]{64}$/.test(image.Id)) throw new Error('Invalid source image identity');
+      await this.#run(['unshare', '/usr/bin/rm', '-f', '--', archive]);
+      return image.Id;
+    } catch (cause) {
+      if (await this.#exists('container', seed)) await this.#run(['rm', '--force', seed], { allowFailure: true });
+      throw cause;
+    }
+  }
+
+  async copyDiskTree(sourcePath, targetPath) {
+    const source = checkedHostPath(sourcePath);
+    const target = checkedHostPath(targetPath);
+    const script = 'set -eu\nsource=$1; target=$2\ncp -a --reflink=auto --sparse=always -- "$source"/. "$target"/\ndiff -qr --no-dereference -- "$source" "$target"\n';
+    await this.#run(['unshare', '/bin/bash', '-c', script, 'elowen-copy-tree', source, target], { timeoutMs: 15 * 60_000 });
+  }
+
+  async removeDiskPath(path) {
+    const target = hostPath(path);
+    await this.#run(['unshare', '/usr/bin/rm', '-rf', '--', target], { timeoutMs: 15 * 60_000 });
   }
 
   /** `onOutput` receives each line the build writes, so the caller can show what a fifteen-minute image

@@ -30,6 +30,7 @@ function setup(config: Record<string, unknown> = {}) {
   const ctx: any = { db: () => db, host: { stores: () => stores }, currentAccountUserId: () => null, currentAccess: () => ({ readOnly: false }), config, logger: { info: vi.fn(), warn, error: vi.fn() } };
   initSandboxDb(ctx);
   const containers = new Map<string, any>();
+  const diskFiles = new Map<string, Map<string, string>>();
   // A publication's forwarder is a real listening unix socket in the guest; here it is a real one on the
   // host side of the same path, so the runtime's readiness probe and its socket-file checks are exercised
   // against the operating system rather than against a stub that always agrees.
@@ -49,6 +50,7 @@ function setup(config: Record<string, unknown> = {}) {
     inspect: vi.fn(async (spec: any) => containers.get(spec.name) ?? null), inspectBinding: vi.fn(async (spec: any) => containers.get(spec.name)),
     create: vi.fn(async (spec: any) => {
       if (spec.expectedId) throw new Error('An immutable container binding cannot be recreated');
+      if (spec.disk) diskFiles.set(spec.disk.id, diskFiles.get(spec.disk.id) ?? new Map());
       const row = { id: 'a'.repeat(64), state: 'created' }; containers.set(spec.name, row); return row;
     }),
     start: vi.fn(async (spec: any) => { containers.get(spec.name).state = 'running'; }),
@@ -75,8 +77,11 @@ function setup(config: Record<string, unknown> = {}) {
     update: vi.fn(async () => {}),
     remove: vi.fn(async (spec: any) => { containers.delete(spec.name); }),
     removeByName: vi.fn(async (spec: any) => { containers.delete(spec.name); }),
-    removeSnapshotImage: vi.fn(), removeRetainedSiteImage: vi.fn(),
-    exec: vi.fn(async () => ({ code: 0, stdout: '', stderr: '', truncated: false })),
+    removeSnapshotImage: vi.fn(), removeSnapshotStorage: vi.fn(), removeRetainedSiteImage: vi.fn(),
+    exec: vi.fn(async (spec: any, _executionId: string, _argv: string[], options: any = {}) => {
+      if (spec.disk && options.input?.includes('/etc/elowen-rootfs-marker')) diskFiles.get(spec.disk.id)?.set('/etc/elowen-rootfs-marker', 'marker');
+      return { code: 0, stdout: '', stderr: '', truncated: false };
+    }),
     // A start waits for the guest system bus before anything runs through `systemd-run`.
     waitForSystemBus: vi.fn(async () => {}),
     cancelExecution: vi.fn(async () => ({ terminated: true })), releaseExecution: vi.fn(),
@@ -84,16 +89,54 @@ function setup(config: Record<string, unknown> = {}) {
     removeVolume: vi.fn(), removeStorage: vi.fn(), inspectVolume: vi.fn(), siteDataArchive: vi.fn(),
     containerExists: vi.fn(async (spec: any) => containers.has(spec.name)),
   };
-  const storage = { prepare: vi.fn(), adoptWorkspace: vi.fn(), snapshot: vi.fn(), readSnapshot: vi.fn(), restoreVolumes: vi.fn(), releaseWorkspace: vi.fn() };
+  const storage = { prepare: vi.fn(), adoptWorkspace: vi.fn(), snapshot: vi.fn(), readSnapshot: vi.fn(), restoreVolumes: vi.fn(), releaseWorkspace: vi.fn(),
+    removeDisk: vi.fn(async (spec: any) => { diskFiles.delete(spec.disk.id); }) };
   const dependencies = { ctx, db, dataDir: root, podman: podman as unknown as PodmanClient, storage: storage as unknown as ContainerStorage };
   const runtime = createEnvironmentRuntime({ ...dependencies, daemon: true });
   const fork = createEnvironmentRuntime({ ...dependencies, daemon: false });
   cleanup.push(() => { endForwarders(); runtime.dispose(); fork.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
-  return { runtime, fork, db, sql, ctx, podman, storage, members, users, project, stores, root, containers, warn, forwarders, publicationSocket, staleSocket, endForwarders };
+  return { runtime, fork, db, sql, ctx, podman, storage, members, users, project, stores, root, containers, diskFiles, warn, forwarders, publicationSocket, staleSocket, endForwarders };
 }
 const input = { project: { kind: 'managed', projectId: 7 }, accountUserId: 1 };
 
 describe('durable managed environment lifecycle', () => {
+  it('keeps one rootfs disk across envelope recreation and limit changes, then deletes it after handles', async () => {
+    const { runtime, podman, storage, containers, diskFiles } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'disk-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    const initial = podman.create.mock.calls[0]![0];
+    expect(initial.disk).toMatchObject({ format: 2, sourceImage: 'localhost/elowen-project-base:test' });
+    await podman.exec(initial, 'f'.repeat(32), ['/bin/bash', '-s'], { input: 'printf marker >/etc/elowen-rootfs-marker' });
+    const diskId = initial.disk.id;
+    containers.delete(initial.name);
+
+    await runtime.requestEnvironment({ ...input, requestId: 'disk-recreate', action: { kind: 'recreate' } });
+    await runtime.reconcile();
+    const recreated = podman.create.mock.calls.at(-1)![0];
+    expect(recreated.disk.id).toBe(diskId);
+    expect(diskFiles.get(diskId)?.get('/etc/elowen-rootfs-marker')).toBe('marker');
+
+    await runtime.requestEnvironment({ ...input, accountUserId: 3, requestId: 'disk-limits', action: { kind: 'limits', limits: { cpus: 2, memoryMb: 2048, pidsLimit: 1024 } } });
+    await runtime.reconcile();
+    expect((podman.update.mock.calls.at(-1) as any[])[0].disk.id).toBe(diskId);
+
+    await runtime.requestEnvironment({ ...input, requestId: 'disk-delete', action: { kind: 'delete' } });
+    await runtime.reconcile();
+    expect(storage.removeDisk).toHaveBeenCalledWith(expect.objectContaining({ disk: expect.objectContaining({ id: diskId }) }), expect.any(Array));
+    expect(diskFiles.has(diskId)).toBe(false);
+  });
+
+  it('keeps a stored specification without disk on the legacy image-backed driver', async () => {
+    const { runtime, sql, podman } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'legacy-start', action: { kind: 'start' } });
+    const row = sql.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
+    const legacy = JSON.parse(row.spec_json);
+    delete legacy.input.disk;
+    sql.prepare("UPDATE p_sandbox_runtimes SET spec_json=? WHERE kind='project' AND resource_id='7'").run(JSON.stringify(legacy));
+    await runtime.reconcile();
+    expect(podman.create.mock.calls.at(-1)![0].disk).toBeUndefined();
+  });
+
   // The project is mounted under its own name, and a container created before that must never be adopted:
   // its specification identity changed, so adopting it would run the turn against an unverified container.
   it('mounts the project at its own name and refuses to adopt a container from the previous layout', async () => {
@@ -693,6 +736,7 @@ describe('project base image binding', () => {
     const row = sql.prepare('SELECT kind, resource_id, spec_json FROM p_sandbox_runtimes').get() as any;
     const spec = JSON.parse(row.spec_json);
     spec.input.image = stale;
+    spec.input.disk.sourceImage = stale;
     sql.prepare('UPDATE p_sandbox_runtimes SET spec_json=? WHERE kind=? AND resource_id=?')
       .run(JSON.stringify(spec), row.kind, row.resource_id);
 
@@ -731,7 +775,7 @@ describe('adopted workspace rollback', () => {
     await runtime.requestEnvironment({ ...input, requestId: 'adopted-path-start', action: { kind: 'start' } });
     await runtime.reconcile();
     const adopted = await runtime.projectWorkspaceHostPath({ projectId: 7 });
-    expect(adopted).toMatch(/projects\/7\/storage\/1\/workspace$/);
+    expect(adopted).toMatch(/projects\/7\/disks\/[a-f0-9]{32}\/workspace$/);
 
     await runtime.requestEnvironment({ ...input, requestId: 'adopted-path-recreate', action: { kind: 'recreate' } });
     await runtime.reconcile();

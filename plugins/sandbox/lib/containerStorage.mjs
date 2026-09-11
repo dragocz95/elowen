@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { createReadStream } from 'node:fs';
-import { closeSync, copyFileSync, constants, cpSync, fsyncSync, lstatSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, rmdirSync, statfsSync, unlinkSync, writeFileSync } from 'node:fs';
+import { closeSync, copyFileSync, constants, cpSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, readlinkSync, renameSync, rmSync, rmdirSync, statfsSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { assertContainerSpec, hostPath, resourceToken, snapshotReference } from './containerSpec.mjs';
 import { checkedHostPath } from './containerPaths.mjs';
@@ -64,6 +64,23 @@ function absent(path) {
   catch (error) { if (error.code === 'ENOENT') return; throw error; }
   throw new Error('Storage destination already exists; resume through lifecycle recovery');
 }
+async function treeFingerprint(path) {
+  const entries = await inventoryOf(path);
+  let logicalBytes = 0;
+  let allocatedBytes = 0;
+  const walk = (directory) => {
+    for (const name of readdirSync(directory)) {
+      const item = join(directory, name);
+      const stat = lstatSync(item);
+      logicalBytes += stat.size;
+      allocatedBytes += stat.blocks * 512;
+      if (stat.isDirectory()) walk(item);
+    }
+  };
+  walk(path);
+  return { logicalBytes, allocatedBytes, digest: createHash('sha256').update(JSON.stringify(entries)).digest('hex') };
+}
+
 async function fingerprint(path, maxBytes) {
   checkedHostPath(path, { file: true });
   const stat = lstatSync(path);
@@ -95,8 +112,36 @@ export class ContainerStorage {
     assertContainerSpec(spec);
     checkedHostPath(spec.storageRoot, { create: true });
     if (spec.resource.kind === 'project') for (const mount of spec.mounts.filter((entry) => entry.type === 'bind')) checkedHostPath(mount.source, { create: true });
-    for (const volume of spec.volumes) checkedHostPath(volume.path, { create: true });
+    if (spec.disk) await this.#prepareDisk(spec);
+    else for (const volume of spec.volumes) checkedHostPath(volume.path, { create: true });
     for (const volume of spec.volumes) await this.#podman.ensureVolume(spec, volume.component);
+  }
+
+  async #prepareDisk(spec) {
+    const directory = checkedHostPath(dirname(spec.disk.rootfsPath), { create: true });
+    const manifestPath = join(directory, 'disk.json');
+    try {
+      checkedHostPath(manifestPath, { file: true });
+      const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'));
+      if (manifest.diskId !== spec.disk.id || manifest.format !== 2 || manifest.resource?.kind !== spec.resource.kind
+        || manifest.resource?.id !== spec.resource.id || manifest.rootfsPath !== spec.disk.rootfsPath
+        || JSON.stringify(manifest.components) !== JSON.stringify(spec.disk.components) || !manifest.materialized) throw new Error('Environment disk manifest ownership mismatch');
+      checkedHostPath(spec.disk.rootfsPath);
+      for (const component of spec.disk.components) checkedHostPath(component.path);
+      return;
+    } catch (cause) { if (cause.code !== 'ENOENT') throw cause; }
+    absent(spec.disk.rootfsPath);
+    const pending = join(directory, 'rootfs.pending');
+    absent(pending);
+    mkdirSync(pending, { mode: 0o700 });
+    for (const component of spec.disk.components) checkedHostPath(component.path, { create: true });
+    const imageId = await this.#podman.materializeRootfs(spec, pending);
+    syncTree(pending);
+    renameSync(pending, spec.disk.rootfsPath);
+    syncPath(directory);
+    writeDurable(manifestPath, { resource: spec.resource, diskId: spec.disk.id, format: 2, sourceImage: spec.disk.sourceImage,
+      sourceImageId: imageId, rootfsPath: spec.disk.rootfsPath, components: spec.disk.components, createdAt: new Date().toISOString(), materialized: true });
+    syncPath(directory);
   }
 
   /** Bring a HOST project's directory into the project's own workspace volume, once. Core's
@@ -352,7 +397,22 @@ export class ContainerStorage {
     const path = checkedHostPath(join(directory, 'manifest.json'), { file: true });
     if (lstatSync(path).size > 256 * 1024) throw new Error('Snapshot manifest exceeds limit');
     const manifest = JSON.parse(readFileSync(path, 'utf8'));
-    if (manifest.version !== 1 || manifest.snapshotId !== snapshotId || manifest.resource?.kind !== spec.resource.kind
+    if (manifest.version === 2) {
+      if (!spec.disk || manifest.snapshotId !== snapshotId || manifest.resource?.kind !== spec.resource.kind || manifest.resource?.id !== spec.resource.id
+        || manifest.generation !== spec.generation || manifest.diskId !== spec.disk.id || manifest.specHash !== spec.specHash
+        || manifest.consistency !== 'crash-consistent' || manifest.completeProject !== (spec.resource.kind === 'project') || !Array.isArray(manifest.trees)) throw new Error('Snapshot manifest ownership mismatch');
+      const expected = ['rootfs', ...spec.disk.components.map((entry) => entry.component)];
+      const components = manifest.trees.map((entry) => entry?.component);
+      if (new Set(components).size !== components.length || components.some((component) => !expected.includes(component))
+        || (manifest.completeProject && JSON.stringify(components) !== JSON.stringify(expected))) throw new Error('Snapshot storage components mismatch');
+      for (const tree of manifest.trees) {
+        if (tree.path !== join(directory, tree.component)) throw new Error('Snapshot tree path mismatch');
+        const digest = await treeFingerprint(checkedHostPath(tree.path));
+        if (digest.digest !== tree.digest || digest.logicalBytes !== tree.logicalBytes || digest.allocatedBytes !== tree.allocatedBytes) throw new Error('Snapshot tree integrity mismatch');
+      }
+      return manifest;
+    }
+    if (spec.disk || manifest.version !== 1 || manifest.snapshotId !== snapshotId || manifest.resource?.kind !== spec.resource.kind
       || manifest.resource?.id !== spec.resource.id || manifest.generation !== spec.generation || manifest.specHash !== spec.specHash
       || manifest.consistency !== 'crash-consistent' || manifest.completeProject !== (spec.resource.kind === 'project')
       || (manifest.retained ? spec.resource.kind !== 'site' : manifest.image?.reference !== snapshotReference(spec, snapshotId)) || !Array.isArray(manifest.components)) throw new Error('Snapshot manifest ownership mismatch');
@@ -369,5 +429,33 @@ export class ContainerStorage {
       if (digest.sizeBytes !== entry.sizeBytes || digest.sha256 !== entry.sha256) throw new Error('Snapshot archive integrity mismatch');
     }
     return manifest;
+  }
+
+  async removeDisk(spec, owningSpecs) {
+    assertContainerSpec(spec);
+    if (!spec.disk || !Array.isArray(owningSpecs) || owningSpecs.length < 1) throw new Error('A complete disk cleanup ownership set is required');
+    for (const owner of owningSpecs) {
+      assertContainerSpec(owner);
+      if (owner.disk?.id !== spec.disk.id) continue;
+      if (await this.#podman.inspect(owner)) throw new Error('An envelope still owns environment disk');
+      for (const volume of owner.volumes) {
+        try { await this.#podman.inspectVolume(owner, volume.component); throw new Error('A volume still owns environment disk'); }
+        catch (cause) { if (!/missing/i.test(cause.message)) throw cause; }
+      }
+    }
+    const directory = dirname(spec.disk.rootfsPath);
+    await this.#podman.removeDiskPath(directory);
+    try { lstatSync(directory); } catch (cause) { if (cause.code === 'ENOENT') return; throw cause; }
+    throw new Error('Environment disk removal was not verified');
+  }
+
+  async diskUsage(spec, diskSoftMb = null) {
+    assertContainerSpec(spec);
+    if (!spec.disk) return null;
+    const usage = await treeFingerprint(dirname(spec.disk.rootfsPath));
+    const soft = diskSoftMb === null ? null : Number(diskSoftMb);
+    if (soft !== null && (!Number.isFinite(soft) || soft < 0)) throw new Error('Invalid disk soft limit');
+    return { diskSoftMb: soft, ...usage, snapshotBytes: 0, retainedDiskBytes: 0, pendingBytes: 0,
+      exceeded: soft !== null && usage.logicalBytes > soft * 1024 * 1024, measuredAt: new Date().toISOString(), truncated: false };
   }
 }

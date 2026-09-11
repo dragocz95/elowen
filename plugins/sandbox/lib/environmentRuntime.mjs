@@ -9,7 +9,7 @@ import { createGuestFileTransport, validateUploadOperation, UPLOAD_KINDS } from 
 import { managedShellFrame, synchronousShellFrame } from './managedBootstrap.mjs';
 import { createEnvironmentStore, isRequestId, operationView, OPERATION_HISTORY } from './environmentDb.mjs';
 import { ownerProvablyDead, processIdentity, withRepoLease } from './db.mjs';
-import { createContainerSpec, createLegacyProjectSpec, createBoundSiteSpec, withContainerLimits, hostPath, resourceToken, bindContainerIdentity, publicationRuntimeToken } from './containerSpec.mjs';
+import { createContainerSpec, createEnvironmentDiskSpec, createLegacyProjectSpec, createBoundSiteSpec, withContainerLimits, hostPath, resourceToken, bindContainerIdentity, publicationRuntimeToken } from './containerSpec.mjs';
 import { managedGuestRoot } from './containerPaths.mjs';
 import { PodmanClient } from './podman.mjs';
 import { ContainerStorage } from './containerStorage.mjs';
@@ -252,7 +252,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     }
     if (!row) {
       const effective = configuredDefaults(ctx.config);
-      const spec = { input: { resource: { kind: 'project', id: Number(id) }, generation: 1, image: PROJECT_BASE_IMAGE_TAG, previewBroker: true, workspaceTarget: managedGuestRoot(authority.slug, Number(id)), limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } }, paths: { sandboxDataDir: dataDir, namespace } };
+      const paths = { sandboxDataDir: dataDir, namespace };
+      const resource = { kind: 'project', id: Number(id) };
+      const disk = createEnvironmentDiskSpec({ resource, image: PROJECT_BASE_IMAGE_TAG }, paths, randomUUID().replaceAll('-', ''));
+      const spec = { input: { resource, generation: 1, image: PROJECT_BASE_IMAGE_TAG, disk, previewBroker: true, workspaceTarget: managedGuestRoot(authority.slug, Number(id)), limits: { cpus: effective.cpus, memoryMb: effective.memoryMb, pidsLimit: effective.pidsLimit } }, paths };
       row = store.insert(kind, id, Number(id), spec, effective);
     }
     return row;
@@ -701,7 +704,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
     let current = await podman.inspect(spec);
     if (row.spec.containerId) {
       if (current) return current;
-      if (!op.checkpoint.autoRecovery) throw error('persistent_container_missing', 'The persistent root filesystem is missing; restore a snapshot explicitly');
+      if (!row.spec.input.disk && !op.checkpoint.autoRecovery) throw error('persistent_container_missing', 'The persistent root filesystem is missing; restore a snapshot explicitly');
       delete row.spec.containerId;
       // The missing container ended the old creation identity. A replacement is created with the limits
       // currently effective for the environment, then future live updates preserve those as its baseline.
@@ -757,6 +760,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         store.log(row.kind, row.resource_id, sanitize(line));
         step(op, 'image', buildFraction(line), true);
       });
+      if (row.spec.input.disk) row.spec.input.disk = createEnvironmentDiskSpec({ resource: row.spec.input.resource, image: row.spec.input.image }, row.spec.paths, row.spec.input.disk.id);
       store.save(row); checkpoint(op, { imageReady: true });
     }
     await rebuildMovedSiteContainer(row, op);
@@ -1085,6 +1089,10 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         for (const volume of owned.volumes) await podman.removeVolume(owned, volume.component);
       }
       step(op, 'storage');
+      for (const saved of snapshots) await podman.removeSnapshotStorage(specFor(JSON.parse(saved.spec_json), true), JSON.parse(saved.manifest_json).snapshotId);
+      const ownedSpecs = [...recipes.values()].map((recipe) => specFor(recipe, true));
+      const disks = new Map(ownedSpecs.filter((owned) => owned.disk).map((owned) => [owned.disk.id, owned]));
+      for (const disk of disks.values()) await storage.removeDisk(disk, ownedSpecs);
       await podman.removeStorage(spec);
       checkpoint(op, { storageRemoved: true });
       step(op, 'records');

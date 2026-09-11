@@ -48,6 +48,25 @@ export function createContainerSpec(input, paths) {
   return buildSpec(input, paths);
 }
 
+/** Create the complete persisted disk record for a new environment. Presence of this record is the sole
+ * driver discriminator: specifications without it keep the legacy image-backed behavior. */
+export function createEnvironmentDiskSpec({ resource, image }, paths, diskId) {
+  closed(resource, ['kind', 'id']);
+  const { kind, id } = resource;
+  if (kind !== 'project' && kind !== 'site') throw new Error('Invalid container resource kind');
+  if (kind === 'project' && (!Number.isSafeInteger(id) || id < 1)) throw new Error('Invalid project ID');
+  if (kind === 'site') resourceToken(id);
+  if (typeof image !== 'string' || !/^[a-z0-9][a-zA-Z0-9._/@:-]{0,255}$/.test(image)) throw new Error('Invalid container image');
+  resourceToken(diskId);
+  const storageRoot = kind === 'project'
+    ? join(hostPath(paths.sandboxDataDir), 'projects', String(id))
+    : join(hostPath(paths.sitesDataDir), id, 'environment');
+  const directory = join(storageRoot, 'disks', diskId);
+  const components = (kind === 'project' ? ['workspace', 'home', 'data'] : ['data'])
+    .map((component) => ({ component, path: join(directory, component) }));
+  return freeze({ id: diskId, format: 2, rootfsPath: join(directory, 'rootfs'), components, sourceImage: image });
+}
+
 /** Reconstruct the trusted identity persisted by project records from before named guest mounts. This is
  * cleanup-only: current project specifications must still carry and validate their workspace target. */
 export function createLegacyProjectSpec(input, paths) {
@@ -77,7 +96,7 @@ export function withContainerLimits(spec, requested) {
 }
 
 function buildSpec(input, paths, binding = null, legacyProjectWorkspace = false) {
-  closed(input, ['resource', 'generation', 'image', 'limits', 'network', 'workspaceReadOnly', 'previewBroker', 'workspaceTarget']);
+  closed(input, ['resource', 'generation', 'image', 'limits', 'network', 'workspaceReadOnly', 'previewBroker', 'workspaceTarget', 'disk']);
   if (input.previewBroker !== undefined && (input.resource?.kind !== 'project' || typeof input.previewBroker !== 'boolean')) throw new Error('Invalid preview broker policy');
   closed(input.resource, ['kind', 'id']);
   const { kind, id } = input.resource;
@@ -105,8 +124,17 @@ function buildSpec(input, paths, binding = null, legacyProjectWorkspace = false)
     ? join(hostPath(paths.sandboxDataDir), 'projects', String(id))
     : join(hostPath(paths.sitesDataDir), id, 'environment');
   const components = kind === 'project' ? ['workspace', 'home', 'data'] : ['data'];
+  let disk;
+  if (input.disk !== undefined) {
+    closed(input.disk, ['id', 'format', 'rootfsPath', 'components', 'sourceImage']);
+    resourceToken(input.disk.id);
+    if (input.disk.format !== 2 || input.disk.sourceImage !== input.image || !Array.isArray(input.disk.components)) throw new Error('Invalid environment disk specification');
+    const expected = createEnvironmentDiskSpec({ resource, image: input.image }, paths, input.disk.id);
+    if (input.disk.rootfsPath !== expected.rootfsPath || JSON.stringify(input.disk.components) !== JSON.stringify(expected.components)) throw new Error('Environment disk paths differ from their trusted resource root');
+    disk = expected;
+  }
   const volumes = components.map((component) => ({
-    component, name: `${name}-${component}`, path: join(storageRoot, 'storage', String(generation), component),
+    component, name: `${name}-${component}`, path: disk?.components.find((entry) => entry.component === component)?.path ?? join(storageRoot, 'storage', String(generation), component),
   }));
   // A project is mounted under its own name; a Site and a historical project cleanup keep `/workspace`.
   const workdir = kind === 'project' && !legacyProjectWorkspace ? guestMountTarget(input.workspaceTarget) : '/workspace';
@@ -120,7 +148,7 @@ function buildSpec(input, paths, binding = null, legacyProjectWorkspace = false)
     ];
   if (input.previewBroker) mounts.push({ type: 'bind', source: join(storageRoot, 'broker'), target: '/run/elowen', readOnly: false });
   const settings = {
-    resource, generation, namespace, name, image: input.image, limits,
+    resource, generation, namespace, name, image: input.image, limits, ...(disk ? { disk } : {}),
     workdir,
     ipcMode: 'private',
     network: network === 'isolated' ? 'none' : 'slirp4netns:allow_host_loopback=false',
@@ -140,6 +168,7 @@ function buildSpec(input, paths, binding = null, legacyProjectWorkspace = false)
   const labels = {
     'io.elowen.runtime': 'sandbox', 'io.elowen.namespace': namespace,
     'io.elowen.resource': `${kind}:${id}`, 'io.elowen.generation': String(generation), 'io.elowen.spec': hash,
+    ...(disk ? { 'io.elowen.disk': disk.id } : {}),
     ...(kind === 'site' ? { 'io.elowen.site': id } : {}),
   };
   const spec = { ...settings, specHash: hash, labels };
