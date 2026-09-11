@@ -365,7 +365,12 @@ test('the phone task overlay scrolls to its last task under a pinned header', as
 
     const header = dialog.locator('h2').locator('..').locator('..');
     const body = dialog.locator('.overflow-y-auto');
-    await expect(body.getByText('Task 1', { exact: true })).toBeVisible();
+    // The list's first row, which is also what says the fixture has arrived: every measurement below is
+    // of a rendered list, and the modal is on screen before its query resolves. It is `Task 2` and not
+    // `Task 1` because the fixture makes every fifth task completed, and completed work is folded behind
+    // its own group (`tasks-completed-group`, TasksModal.tsx) whose content is unmounted while closed —
+    // so `Task 1` is not in the document at all until someone opens that group.
+    await expect(body.getByText('Task 2', { exact: true })).toBeVisible();
 
     // The body genuinely overflows. This is the assertion the defect failed: it reported equal heights,
     // so no amount of scrolling could ever reach the rows below the fold.
