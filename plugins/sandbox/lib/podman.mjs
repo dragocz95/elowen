@@ -661,6 +661,56 @@ export class PodmanClient {
     await this.#run(['unshare', '/bin/bash', '-c', script, 'elowen-copy-tree', source, target], { timeoutMs: 15 * 60_000 });
   }
 
+  async fingerprintDiskTree(path) {
+    const root = checkedHostPath(path);
+    const script = `import hashlib,json,os,stat,sys
+root=sys.argv[1]
+h=hashlib.sha256(); logical=0; allocated=0; links={}; next_link=0
+for directory, names, files in os.walk(root, topdown=True, followlinks=False):
+ names.sort(); files.sort()
+ for name in names+files:
+  path=os.path.join(directory,name); rel=os.path.relpath(path,root); st=os.lstat(path)
+  logical+=st.st_size; allocated+=st.st_blocks*512
+  link=''
+  if stat.S_ISREG(st.st_mode) and st.st_nlink>1:
+   key=(st.st_dev,st.st_ino)
+   if key not in links: links[key]=len(links)
+   link=str(links[key])
+  attrs=[]
+  for key in sorted(os.listxattr(path,follow_symlinks=False)):
+   attrs.append([key,os.getxattr(path,key,follow_symlinks=False).hex()])
+  row=[rel,st.st_mode,st.st_uid,st.st_gid,st.st_size,link,attrs]
+  if stat.S_ISLNK(st.st_mode): row.append(os.readlink(path))
+  elif stat.S_ISREG(st.st_mode):
+   content=hashlib.sha256()
+   with open(path,'rb',buffering=0) as handle:
+    while True:
+     chunk=handle.read(1024*1024)
+     if not chunk: break
+     content.update(chunk)
+   row.append(content.hexdigest())
+  h.update(json.dumps(row,separators=(',',':')).encode()); h.update(b'\\n')
+print(json.dumps({'logicalBytes':logical,'allocatedBytes':allocated,'digest':h.hexdigest()}))`;
+    const result = await this.#run(['unshare', '/usr/bin/python3', '-c', script, root], { timeoutMs: 15 * 60_000 });
+    if (result.truncated) throw new Error('Disk tree fingerprint exceeded its bound');
+    const value = JSON.parse(result.stdout);
+    if (!Number.isSafeInteger(value.logicalBytes) || !Number.isSafeInteger(value.allocatedBytes) || !/^[a-f0-9]{64}$/.test(value.digest)) throw new Error('Invalid disk tree fingerprint');
+    return value;
+  }
+
+  async syncDiskTree(path) {
+    const root = checkedHostPath(path);
+    const script = `import os,stat,sys
+root=sys.argv[1]
+for directory,names,files in os.walk(root,topdown=False,followlinks=False):
+ for name in files:
+  path=os.path.join(directory,name); st=os.lstat(path)
+  if not stat.S_ISLNK(st.st_mode):
+   fd=os.open(path,os.O_RDONLY); os.fsync(fd); os.close(fd)
+ fd=os.open(directory,os.O_RDONLY|os.O_DIRECTORY); os.fsync(fd); os.close(fd)`;
+    await this.#run(['unshare', '/usr/bin/python3', '-c', script, root], { timeoutMs: 15 * 60_000 });
+  }
+
   async removeDiskPath(path) {
     const target = hostPath(path);
     await this.#run(['unshare', '/usr/bin/rm', '-rf', '--', target], { timeoutMs: 15 * 60_000 });

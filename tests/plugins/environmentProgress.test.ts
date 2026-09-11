@@ -57,10 +57,10 @@ function setup() {
       : { code: 1, stdout: '', stderr: 'Failed to connect to bus: No such file or directory', truncated: false }),
     waitForSystemBus: vi.fn(async () => { if (busFails) throw new Error('Guest system bus did not become available within 120s (systemd reports initializing)'); busReady = true; }),
     cancelExecution: vi.fn(async () => ({ terminated: true })), releaseExecution: vi.fn(),
-    removeVolume: vi.fn(), removeStorage: vi.fn(), inspectVolume: vi.fn(),
+    removeVolume: vi.fn(), removeStorage: vi.fn(), removeSnapshotStorage: vi.fn(), inspectVolume: vi.fn(),
     containerExists: vi.fn(async (spec: any) => containers.has(spec.name)),
   };
-  const storage = { prepare: vi.fn(), snapshot: vi.fn(), readSnapshot: vi.fn(), restoreVolumes: vi.fn() };
+  const storage = { prepare: vi.fn(), snapshot: vi.fn(), readSnapshot: vi.fn(), restoreVolumes: vi.fn(), removeDisk: vi.fn() };
   const runtime = createEnvironmentRuntime({ ctx, db, dataDir: root, podman: podman as unknown as PodmanClient,
     storage: storage as unknown as ContainerStorage, daemon: true });
   cleanup.push(() => { runtime.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });

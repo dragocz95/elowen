@@ -126,6 +126,34 @@ describe('durable managed environment lifecycle', () => {
     expect(diskFiles.has(diskId)).toBe(false);
   });
 
+  it('restores a format 2 snapshot into new disks and retains prior disks for rollback', async () => {
+    const { runtime, podman, storage, diskFiles } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'snapshot-start', action: { kind: 'start' } });
+    await runtime.reconcile();
+    const first = podman.create.mock.calls.at(-1)![0];
+    storage.snapshot.mockImplementation(async (_spec: any, snapshotId: string) => ({ version: 2, snapshotId,
+      sourceImage: { reference: first.image, id: 'sha256:' + 'd'.repeat(64) }, trees: [], worktrees: [] }));
+    const capture = await runtime.requestEnvironment({ ...input, requestId: 'snapshot-v2', action: { kind: 'snapshot' } });
+    await runtime.reconcile();
+    const saved = await runtime.environmentOperation({ operationId: capture.id, accountUserId: 1 });
+    storage.readSnapshot.mockResolvedValue({ version: 2, snapshotId: saved.snapshotId,
+      sourceImage: { reference: first.image, id: 'sha256:' + 'd'.repeat(64) }, trees: [] });
+
+    await runtime.requestEnvironment({ ...input, requestId: 'restore-v2', action: { kind: 'restore', snapshotId: saved.snapshotId } });
+    await runtime.reconcile();
+    const second = podman.create.mock.calls.at(-1)![0];
+    expect(second.disk.id).not.toBe(first.disk.id);
+    expect(storage.restoreVolumes).toHaveBeenCalledWith(expect.objectContaining({ disk: expect.objectContaining({ id: first.disk.id }) }), saved.snapshotId,
+      expect.objectContaining({ disk: expect.objectContaining({ id: second.disk.id }) }));
+    expect(diskFiles.has(first.disk.id)).toBe(true);
+
+    await runtime.requestEnvironment({ ...input, requestId: 'rollback-v2', action: { kind: 'restore', snapshotId: saved.snapshotId } });
+    await runtime.reconcile();
+    const third = podman.create.mock.calls.at(-1)![0];
+    expect(third.disk.id).not.toBe(second.disk.id);
+    expect(diskFiles.has(second.disk.id)).toBe(true);
+  });
+
   it('keeps a stored specification without disk on the legacy image-backed driver', async () => {
     const { runtime, sql, podman } = setup();
     await runtime.requestEnvironment({ ...input, requestId: 'legacy-start', action: { kind: 'start' } });

@@ -989,7 +989,15 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         const next = JSON.parse(JSON.stringify(old.spec));
         const reserved = db.prepare("SELECT MAX(json_extract(checkpoint_json,'$.newSpec.input.generation')) AS generation FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=?").get(row.kind, row.resource_id);
         next.input.generation = Math.max(old.generation, Number(reserved?.generation ?? 0)) + 1;
-        next.input.image = manifest.image.reference; next.creationLimits = next.input.limits;
+        if (manifest.version === 2) {
+          if (!old.spec.input.disk) throw error('snapshot_driver_mismatch', 'A disk snapshot requires a rootfs-backed environment');
+          next.input.image = manifest.sourceImage.reference;
+          next.input.disk = createEnvironmentDiskSpec({ resource: next.input.resource, image: next.input.image }, next.paths, randomUUID().replaceAll('-', ''));
+        } else {
+          if (old.spec.input.disk) throw error('snapshot_driver_mismatch', 'A legacy snapshot requires a legacy environment');
+          next.input.image = manifest.image.reference;
+        }
+        next.creationLimits = next.input.limits;
         delete next.containerId;
         checkpoint(op, { newSpec: next });
       }
@@ -1081,7 +1089,7 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
         const owned = specFor(JSON.parse(saved.spec_json), true);
         const manifest = JSON.parse(saved.manifest_json);
         if (manifest.retained) await podman.removeRetainedSiteImage(owned, manifest.image.reference, manifest.image.id);
-        else await podman.removeSnapshotImage(owned, manifest.snapshotId);
+        else if (manifest.version !== 2) await podman.removeSnapshotImage(owned, manifest.snapshotId);
       }
       step(op, 'volumes');
       for (const recipe of recipes.values()) {

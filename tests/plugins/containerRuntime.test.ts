@@ -1,8 +1,9 @@
-import { lstatSync, mkdtempSync, mkdirSync, readFileSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { cpSync, lstatSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, readlinkSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { bindContainerIdentity, createContainerSpec, executionUnit, publicationUnit, volumeLabels } from '../../plugins/sandbox/lib/containerSpec.mjs';
+import { bindContainerIdentity, createContainerSpec, createEnvironmentDiskSpec, executionUnit, publicationUnit, volumeLabels } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import { cleanPodmanEnv, PodmanClient, SpawnExecutor, isolatedPodmanOptions } from '../../plugins/sandbox/lib/podman.mjs';
 import { PROJECT_CONTAINERFILE } from '../../plugins/sandbox/lib/containerBaseImage.mjs';
 import { ContainerStorage } from '../../plugins/sandbox/lib/containerStorage.mjs';
@@ -99,6 +100,20 @@ describe('trusted container specifications', () => {
     const { paths } = fixture();
     expect(() => createContainerSpec({ resource: { kind: 'project', id: 1 }, workspaceTarget: '/demo', generation: 1, image: 'localhost/test:v1', ...override }, paths)).toThrow();
   });
+  it('binds rootfs disk identity and component paths into a new Project specification', () => {
+    const { paths } = fixture();
+    const resource = { kind: 'project' as const, id: 7 };
+    const image = 'localhost/elowen-project-base:test';
+    const disk = createEnvironmentDiskSpec({ resource, image }, paths, 'a'.repeat(32));
+    const spec = createContainerSpec({ resource, workspaceTarget: '/demo', generation: 2, image, disk }, paths);
+    expect(spec.disk.rootfsPath).toBe(join(paths.sandboxDataDir, 'projects/7/disks', 'a'.repeat(32), 'rootfs'));
+    expect(spec.volumes.map((volume: any) => volume.path)).toEqual(disk.components.map((entry: any) => entry.path));
+    expect(spec.labels['io.elowen.disk']).toBe(disk.id);
+    const otherDisk = createEnvironmentDiskSpec({ resource, image }, paths, 'b'.repeat(32));
+    const other = createContainerSpec({ resource, workspaceTarget: '/demo', generation: 2, image, disk: otherDisk }, paths);
+    expect(other.specHash).not.toBe(spec.specHash);
+  });
+
   it('binds the specification hash to generation, image, limits and paths', () => {
     const { spec, paths } = fixture();
     const other = createContainerSpec({ resource: spec.resource, workspaceTarget: '/demo', generation: 3, image: spec.image }, paths);
@@ -587,6 +602,50 @@ describe('durable publication transport', () => {
 });
 
 describe('project container storage and crash-consistent snapshots', () => {
+  it('captures and restores format 2 rootfs and components into a new disk', async () => {
+    const { paths } = fixture();
+    const resource = { kind: 'project' as const, id: 7 };
+    const image = 'localhost/elowen-project-base:test';
+    const disk = createEnvironmentDiskSpec({ resource, image }, paths, 'c'.repeat(32));
+    const spec = createContainerSpec({ resource, workspaceTarget: '/demo', generation: 2, image, disk }, paths);
+    mkdirSync(disk.rootfsPath, { recursive: true });
+    for (const component of disk.components) mkdirSync(component.path, { recursive: true });
+    writeFileSync(join(disk.rootfsPath, 'etc-marker'), 'before');
+    for (const component of disk.components) writeFileSync(join(component.path, 'marker'), component.component);
+    writeFileSync(join(disk.rootfsPath, '..', 'disk.json'), JSON.stringify({ sourceImageId: 'sha256:' + 'd'.repeat(64) }));
+    const copyDiskTree = vi.fn(async (source: string, target: string) => {
+      for (const name of readdirSync(source)) cpSync(join(source, name), join(target, name), { recursive: true, preserveTimestamps: true });
+    });
+    const fingerprintDiskTree = vi.fn(async (root: string) => {
+      const rows: string[] = [];
+      let logicalBytes = 0;
+      const walk = (directory: string, prefix = '') => {
+        for (const name of readdirSync(directory).sort()) {
+          const path = join(directory, name); const stat = lstatSync(path); const relative = prefix ? `${prefix}/${name}` : name;
+          logicalBytes += stat.size;
+          if (stat.isDirectory()) { rows.push(`${relative}/`); walk(path, relative); }
+          else rows.push(`${relative}:${readFileSync(path, 'hex')}`);
+        }
+      };
+      walk(root);
+      return { logicalBytes, allocatedBytes: 0, digest: createHash('sha256').update(JSON.stringify(rows)).digest('hex') };
+    });
+    const client = { inspect: vi.fn(async () => ({ state: 'running' })), pause: vi.fn(), unpause: vi.fn(), copyDiskTree,
+      syncDiskTree: vi.fn(), fingerprintDiskTree, ensureVolume: vi.fn(), inspectSnapshotImage: vi.fn(), inspectRetainedSiteImage: vi.fn() };
+    const storage = new ContainerStorage(client);
+    const manifest: any = await storage.snapshot(spec, 'disk-snapshot');
+    expect(manifest.version).toBe(2);
+    expect(manifest.trees.map((tree: any) => tree.component)).toEqual(['rootfs', 'workspace', 'home', 'data']);
+    writeFileSync(join(disk.rootfsPath, 'etc-marker'), 'after');
+
+    const targetDisk = createEnvironmentDiskSpec({ resource, image }, paths, 'd'.repeat(32));
+    const target = createContainerSpec({ resource, workspaceTarget: '/demo', generation: 3, image, disk: targetDisk }, paths);
+    await storage.restoreVolumes(spec, 'disk-snapshot', target);
+    expect(readFileSync(join(targetDisk.rootfsPath, 'etc-marker'), 'utf8')).toBe('before');
+    expect(readFileSync(join(targetDisk.components[0]!.path, 'marker'), 'utf8')).toBe('workspace');
+    expect(readFileSync(join(disk.rootfsPath, 'etc-marker'), 'utf8')).toBe('after');
+  });
+
   it('rejects symlinked storage ancestors before creating a volume', async () => {
     const { spec, paths, root } = fixture();
     symlinkSync(root, join(paths.sandboxDataDir, 'projects'));
@@ -610,7 +669,7 @@ describe('project container storage and crash-consistent snapshots', () => {
       snapshotImage: vi.fn(async () => { calls.push('rootfs'); return 'sha256:' + 'd'.repeat(64); }),
       exportVolume: vi.fn(async (spec: any, component: string, snapshotId: string) => { calls.push(component); writeFileSync(join(spec.storageRoot, 'snapshots', snapshotId, `${component}.tar`), component); }),
     };
-    const manifest = await new ContainerStorage(client).snapshot(spec, 'snap-1');
+    const manifest: any = await new ContainerStorage(client).snapshot(spec, 'snap-1');
     expect(calls).toEqual(['pause', 'rootfs', 'workspace', 'home', 'data', 'unpause']);
     expect(manifest.completeProject).toBe(true);
     expect(manifest.consistency).toBe('crash-consistent');
