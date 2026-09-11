@@ -257,11 +257,11 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
   // the button must delete exactly the rows under it, or "delete all" quietly deletes some. Reaching
   // across accounts is admin-only, which this whole route already is; no second gate is added here,
   // because a second place to ask would be a second place to get it wrong.
-  app.delete('/brain/managed-sessions', withBrain((c, brain) =>
-    c.json({ deleted: brain.deleteAllManagedSessions(c.get('user').id, c.req.query('scope') === 'all' ? 'any' : 'own') }), { admin: true }));
+  app.delete('/brain/managed-sessions', withBrain(async (c, brain) =>
+    c.json({ deleted: await brain.deleteAllManagedSessions(c.get('user').id, c.req.query('scope') === 'all' ? 'any' : 'own') }), { admin: true }));
   // The register spans every account, so its per-row delete does too ('any').
-  app.delete('/brain/managed-sessions/:id', withBrain((c, brain) =>
-    c.json({ deleted: brain.deleteManagedSession(c.get('user').id, c.req.param('id')!, 'any') }), { admin: true }));
+  app.delete('/brain/managed-sessions/:id', withBrain(async (c, brain) =>
+    c.json({ deleted: await brain.deleteManagedSession(c.get('user').id, c.req.param('id')!, 'any') }), { admin: true }));
 
   /** The branches under a conversation listing: the schedules filed under each conversation, and the
    *  sub-agents that ran under it. ONE read per listing, never per row.
@@ -347,22 +347,35 @@ export function registerBrainRoutes(app: ElowenApp, ctx: RouteContext): void {
     const u = c.get('user') as { id: number } | undefined; // absent during setup mode (0 users) — fail closed
     return !u || !d.brain?.isOwner(u.id);
   };
-  app.get('/brain/processes', c => {
+  // Process routes distinguish three failure shapes: an unknown/foreign session is 404, an UNAVAILABLE
+  // half (wedged runner, unconfirmed stop) is 503 — retryable, and reporting it as "gone" would hide a
+  // live process — and anything else is an honest 500.
+  const processRouteError = (e: unknown): { status: 404 | 503 | 500; body: { error: string } } => {
+    const message = e instanceof Error ? e.message : String(e);
+    if (message === 'unknown session') return { status: 404, body: { error: 'unknown session' } };
+    if (message.startsWith('process list unavailable') || message.startsWith('process stop unconfirmed')) {
+      return { status: 503, body: { error: message } };
+    }
+    return { status: 500, body: { error: message } };
+  };
+  // Async because a runner-hosted child's half is read live from the sub-agent runner (same ownership
+  // rules; the runner is only asked for what the caller may see or stop).
+  app.get('/brain/processes', async c => {
     if (denyNonOwner(c)) return c.json({ error: 'forbidden' }, 403);
-    try { return c.json(d.brain!.processes(c.get('user').id, c.req.query('session'))); }
-    catch { return c.json({ error: 'unknown session' }, 404); }
+    try { return c.json(await d.brain!.processes(c.get('user').id, c.req.query('session'))); }
+    catch (e) { const m = processRouteError(e); return c.json(m.body, m.status); }
   });
-  app.get('/brain/processes/:id/output', c => {
+  app.get('/brain/processes/:id/output', async c => {
     if (denyNonOwner(c)) return c.json({ error: 'forbidden' }, 403);
     let out: string | null;
-    try { out = d.brain!.processOutput(c.get('user').id, c.req.param('id'), c.req.query('session')); }
-    catch { return c.json({ error: 'unknown session' }, 404); }
+    try { out = await d.brain!.processOutput(c.get('user').id, c.req.param('id'), c.req.query('session')); }
+    catch (e) { const m = processRouteError(e); return c.json(m.body, m.status); }
     return out === null ? c.json({ error: 'unknown process' }, 404) : c.json({ output: out });
   });
-  app.delete('/brain/processes/:id', c => {
+  app.delete('/brain/processes/:id', async c => {
     if (denyNonOwner(c)) return c.json({ error: 'forbidden' }, 403);
-    try { return c.json({ killed: d.brain!.killProcess(c.get('user').id, c.req.param('id'), c.req.query('session')) }); }
-    catch { return c.json({ error: 'unknown session' }, 404); }
+    try { return c.json({ killed: await d.brain!.killProcess(c.get('user').id, c.req.param('id'), c.req.query('session')) }); }
+    catch (e) { const m = processRouteError(e); return c.json(m.body, m.status); }
   });
 
   // Fulltext search across the caller's own conversations (newest first). Queries under 2 chars

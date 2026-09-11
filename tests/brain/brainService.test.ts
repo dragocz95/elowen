@@ -8161,17 +8161,17 @@ describe('BrainService — background processes', () => {
     processRegistry.register(fakeHandle('2', child)); // delegated turn → handle.userId is null
     processRegistry.register(fakeHandle('3', 'brain-2', 2)); // someone else's
 
-    expect(svc.processes(1).map((p) => ({ id: p.id, sessionId: p.sessionId }))).toEqual([
+    expect((await svc.processes(1)).map((p) => ({ id: p.id, sessionId: p.sessionId }))).toEqual([
       { id: '2', sessionId: child },
       { id: '1', sessionId },
     ]);
-    expect(svc.processes(2).map((p) => p.id)).toEqual(['3']);
+    expect((await svc.processes(2)).map((p) => p.id)).toEqual(['3']);
   });
 
-  it('a user with no conversations gets an empty list, not a thrown "unknown session"', () => {
+  it('a user with no conversations gets an empty list, not a thrown "unknown session"', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
-    expect(svc.processes(7)).toEqual([]);
+    expect(await svc.processes(7)).toEqual([]);
   });
 
   it('shields an in-flight foreground command from the web panel: hidden cross-session, not killable, but visible to its own CLI session', async () => {
@@ -8184,17 +8184,17 @@ describe('BrainService — background processes', () => {
     processRegistry.register(fg);
 
     // The cross-conversation (web panel) view hides the foreground command…
-    expect(svc.processes(1).map((p) => p.id)).toEqual(['job']);
+    expect((await svc.processes(1)).map((p) => p.id)).toEqual(['job']);
     // …but the session-scoped (CLI) view keeps it, so Ctrl+B's gate can see it.
-    expect(svc.processes(1, sessionId).map((p) => p.id).sort()).toEqual(['fg', 'job']);
+    expect((await svc.processes(1, sessionId)).map((p) => p.id).sort()).toEqual(['fg', 'job']);
     // …and the process API refuses to kill it (its live turn owns it), while a real job is still killable.
-    expect(svc.killProcess(1, 'fg')).toBe(false);
+    expect(await svc.killProcess(1, 'fg')).toBe(false);
     expect((fg as unknown as { killed: boolean }).killed).toBe(false);
-    expect(svc.killProcess(1, 'job')).toBe(true);
+    expect(await svc.killProcess(1, 'job')).toBe(true);
     expect((job as unknown as { killed: boolean }).killed).toBe(true);
   });
 
-  it('prefers explicit contribution ownership over the shared room session owner', () => {
+  it('prefers explicit contribution ownership over the shared room session owner', async () => {
     const d = fakeDeps();
     const svc = new BrainService(d as never);
     const room = 'brain-ch-shared-processes';
@@ -8206,12 +8206,12 @@ describe('BrainService — background processes', () => {
     processRegistry.register(amy);
     processRegistry.register(bob);
 
-    expect(svc.processes(1)).toEqual([]);
-    expect(svc.processes(2).map((p) => p.id)).toEqual(['amy']);
-    expect(svc.processOutput(2, 'bob')).toBeNull();
-    expect(svc.killProcess(2, 'bob')).toBe(false);
+    expect(await svc.processes(1)).toEqual([]);
+    expect((await svc.processes(2)).map((p) => p.id)).toEqual(['amy']);
+    expect(await svc.processOutput(2, 'bob')).toBeNull();
+    expect(await svc.killProcess(2, 'bob')).toBe(false);
     expect(bob.killed).toBe(false);
-    expect(svc.killProcess(2, 'amy')).toBe(true);
+    expect(await svc.killProcess(2, 'amy')).toBe(true);
     expect(amy.killed).toBe(true);
   });
 
@@ -8225,12 +8225,12 @@ describe('BrainService — background processes', () => {
     processRegistry.register(mine);
     processRegistry.register(theirs);
 
-    expect(svc.processOutput(1, '1')).toBe('out-1');
-    expect(svc.processOutput(1, '2')).toBeNull();      // not the caller's process
-    expect(svc.processOutput(1, 'nope')).toBeNull();
-    expect(svc.killProcess(1, '2')).toBe(false);
+    expect(await svc.processOutput(1, '1')).toBe('out-1');
+    expect(await svc.processOutput(1, '2')).toBeNull();      // not the caller's process
+    expect(await svc.processOutput(1, 'nope')).toBeNull();
+    expect(await svc.killProcess(1, '2')).toBe(false);
     expect(theirs.killed).toBe(false);
-    expect(svc.killProcess(1, '1')).toBe(true);
+    expect(await svc.killProcess(1, '1')).toBe(true);
     expect(mine.killed).toBe(true);
   });
 
@@ -8241,11 +8241,11 @@ describe('BrainService — background processes', () => {
     d.store.createSession({ id: 'brain-2', userId: 2, model: 'm' });
     processRegistry.register(fakeHandle('1', sessionId, 1));
 
-    expect(svc.processes(1, sessionId).map((p) => p.id)).toEqual(['1']);
-    expect(() => svc.processes(1, 'brain-2')).toThrow('unknown session');
-    expect(() => svc.processes(1, 'brain-nope')).toThrow('unknown session');
-    expect(() => svc.killProcess(1, '1', 'brain-2')).toThrow('unknown session');
-    expect(() => svc.processOutput(1, '1', 'brain-2')).toThrow('unknown session');
+    expect((await svc.processes(1, sessionId)).map((p) => p.id)).toEqual(['1']);
+    await expect(svc.processes(1, 'brain-2')).rejects.toThrow('unknown session');
+    await expect(svc.processes(1, 'brain-nope')).rejects.toThrow('unknown session');
+    await expect(svc.killProcess(1, '1', 'brain-2')).rejects.toThrow('unknown session');
+    await expect(svc.processOutput(1, '1', 'brain-2')).rejects.toThrow('unknown session');
   });
 });
 

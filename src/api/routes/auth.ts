@@ -474,14 +474,23 @@ export function registerAuthRoutes(app: ElowenApp, ctx: RouteContext): void {
     // the user row LAST.
     // Deleting the user row last also makes a failed cleanup safely retryable: every step below is
     // idempotent, and while the row still exists the admin can simply repeat the request.
-    // Dispose any live conversations (+ their terminals/processes) for the user, then hard-delete ALL of
-    // their brain data and push devices. Without this a deleted user's private transcripts and browser
-    // subscriptions survive.
-    d.brain?.deleteAllManagedSessions(id);
+    // Dispose the user's live terminals/processes FIRST (while their session rows still exist), then
+    // their conversations, then hard-delete ALL of their brain data and push devices. Without this a
+    // deleted user's private transcripts and browser subscriptions survive.
+    // Order is load-bearing: processes are swept FIRST while every session
+    // row still exists — a delegated child's handle carries no explicit account, so its owner is resolved
+    // through the session row, and deleting those rows first would strand exactly the processes this
+    // sweep exists to stop. Both halves are awaited and a sweep that cannot CONFIRM its kills refuses
+    // the delete (409): the rows survive, the admin can simply repeat, nothing is half-removed.
     try { await d.killAccountProcesses?.(id); }
     catch (e) {
       log.warn(`account ${id} process teardown could not be verified: ${e instanceof Error ? e.message : String(e)}`);
       return c.json({ error: 'account processes are still active' }, 409);
+    }
+    try { await d.brain?.deleteAllManagedSessions(id); }
+    catch (e) {
+      log.warn(`account ${id} session teardown failed: ${e instanceof Error ? e.message : String(e)}`);
+      return c.json({ error: 'account sessions could not be cleaned up' }, 500);
     }
     // Per-user state a PLUGIN owns sits outside this store (its data-dir folders, its JSON schedules),
     // so the core cascade cannot reach it. Run every handler while the user row still exists, but do not

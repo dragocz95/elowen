@@ -5,6 +5,8 @@ import { ELOWEN_VERSION } from '../api/version.js';
 import type { BrainEvent, BrainUsage } from '../brain/events.js';
 import type { BrainStreamSnapshot } from '../brain/session/liveEventReplay.js';
 import type { DelegatedProgressEvent, DelegatedTurnRequest } from '../brain/delegatedTurn.js';
+import type { ProcessInfo } from '../brain/processRegistry.js';
+import { projectExecutionRefSchema } from '../shared/projectExecution.js';
 import { parseMcpBridgeSnapshot, type McpBridgeSnapshot } from '../plugins/mcpSnapshot.js';
 import { parseHostRpcRequest, parseHostRpcResult, type HostRpcRequest, type HostRpcResult } from './hostRpc.js';
 
@@ -78,6 +80,18 @@ export type DaemonToRunner =
   | { type: 'activity'; activityId: string }
   /** Stop every terminal process owned by one account before core deletes that account. */
   | { type: 'killAccountProcesses'; requestId: string; userId: number }
+  /** Read THIS runner's background-process registry — the daemon-side list/output/kill surfaces project
+   *  from it, exactly as they do from the daemon's own registry for in-process children. */
+  | { type: 'processList'; requestId: string }
+  /** Stop every background process ONE session owns in this runner — the conversation-teardown sweep's
+   *  remote half; the session rows are about to disappear, so ownership resolution dies with them. */
+  | { type: 'killSessionProcesses'; requestId: string; sessionId: string }
+  /** Read/stop ONE runner-local process. `sessionId` names the owning session the daemon authorized
+   *  against; the runner re-checks it against the LIVE handle, so a snapshot that went stale between
+   *  list and act can neither touch a process that already exited nor a same-id process of another
+   *  session. Required, never optional: only the guard makes cross-runner ids safe to act on. */
+  | { type: 'processOutput'; requestId: string; processId: string; sessionId: string }
+  | { type: 'killProcess'; requestId: string; processId: string; sessionId: string }
   /** The daemon's answer to a runner-originated host call. Errors are data so a rejected workflow
    *  expansion settles the tool call without crashing either IPC peer. */
   | { type: 'hostResult'; callId: string; result: HostRpcResult }
@@ -104,6 +118,17 @@ export type RunnerToDaemon =
   | { type: 'released'; releaseId: string; busy: boolean }
   | { type: 'activity'; activityId: string; activeCount: number }
   | { type: 'accountProcessesKilled'; requestId: string; killed: number }
+  /** The answers to the daemon's process verbs. A list the runner cannot vouch for is dropped whole:
+   *  the daemon would otherwise project handles it cannot authorize on. */
+  | { type: 'processListResult'; requestId: string; processes: ProcessInfo[] }
+  | { type: 'processOutputResult'; requestId: string; output: string | null }
+  | { type: 'processKilled'; requestId: string; killed: boolean }
+  | { type: 'sessionProcessesKilled'; requestId: string; killed: number }
+  /** A background process of session `sessionId` spawned, exited, was killed or was dropped here. The
+   *  snapshot of THIS registry's rows for the session rides the frame, so the daemon re-projects exactly
+   *  what exists — without it the CLI drill-in, hydrated once, would never see a runner-local process
+   *  start or go away, and a wedged re-query would read as a false empty. */
+  | { type: 'processesChanged'; sessionId: string; processes: ProcessInfo[] }
   /** The answer to a `steer` frame. `delivered` only once the message is confirmed in the child's
    *  context; `idle` when no streaming turn holds this channel here (the daemon then delivers the text
    *  itself); `aborted` when the delegation's abort fences fired while the steer waited. */
@@ -120,9 +145,47 @@ export type RunnerToDaemon =
    *  turn and session counts are the runner's own view, reported so a divergence from what the daemon
    *  believes is VISIBLE in /health rather than silent; the pool routes and admits from its own exact
    *  bookkeeping, never from a value that is one beat stale. */
-  | { type: 'heartbeat'; loopP99Ms: number; activeTurns: number; sessions: number; rssBytes: number };
+  | { type: 'heartbeat'; loopP99Ms: number; activeTurns: number; sessions: number; rssBytes: number; killTokens?: string[] };
 
 const str = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
+
+/** Validate ONE background-process snapshot crossing the runner boundary. Same reject-don't-coerce rule as
+ *  the store's row normalizers: the daemon projects these into owner-facing panels and authorization checks
+ *  read the session id off them, so a malformed snapshot is dropped, never repaired. */
+function parseProcessInfo(raw: unknown): ProcessInfo | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const v = raw as Record<string, unknown>;
+  const id = str(v.id);
+  const command = str(v.command);
+  const cwd = str(v.cwd);
+  const startedAt = str(v.startedAt);
+  const sessionId = v.sessionId === null ? null : str(v.sessionId);
+  if (!id || !command || !cwd || !startedAt || sessionId === undefined) return undefined;
+  if (typeof v.running !== 'boolean') return undefined;
+  const exitCode = v.exitCode;
+  if (exitCode !== null && (typeof exitCode !== 'number' || !Number.isSafeInteger(exitCode))) return undefined;
+  const completionMode = v.completionMode === undefined ? undefined : v.completionMode;
+  if (completionMode !== undefined && completionMode !== 'job' && completionMode !== 'service' && completionMode !== 'foreground') return undefined;
+  let projectRef: ProcessInfo['projectRef'];
+  if (v.projectRef !== undefined) {
+    const parsed = projectExecutionRefSchema.safeParse(v.projectRef);
+    if (!parsed.success) return undefined;
+    projectRef = parsed.data;
+  }
+  return {
+    id, command, cwd, startedAt, sessionId,
+    running: v.running,
+    exitCode,
+    ...(completionMode !== undefined ? { completionMode } : {}),
+    ...(v.blockedRead === true ? { blockedRead: true } : {}),
+    ...(v.workspaceId === null || typeof v.workspaceId === 'string' ? { workspaceId: v.workspaceId } : {}),
+    ...(v.homeGeneration === null || (typeof v.homeGeneration === 'number' && Number.isSafeInteger(v.homeGeneration))
+      ? { homeGeneration: v.homeGeneration } : {}),
+    ...(projectRef ? { projectRef } : {}),
+    ...(v.runtimeGeneration === undefined || (typeof v.runtimeGeneration === 'number' && Number.isSafeInteger(v.runtimeGeneration))
+      ? { runtimeGeneration: v.runtimeGeneration } : {}),
+  };
+}
 
 /** Parse a message from the daemon. A child never trusts its channel blindly — a malformed frame is
  *  dropped, not coerced. */
@@ -213,6 +276,25 @@ export function parseDaemonMessage(raw: unknown): DaemonToRunner | undefined {
       ? { type: 'killAccountProcesses', requestId, userId: v.userId as number }
       : undefined;
   }
+  if (v.type === 'killSessionProcesses') {
+    const requestId = str(v.requestId);
+    const sessionId = str(v.sessionId);
+    return requestId && sessionId ? { type: 'killSessionProcesses', requestId, sessionId } : undefined;
+  }
+  if (v.type === 'processList' || v.type === 'processOutput' || v.type === 'killProcess') {
+    const requestId = str(v.requestId);
+    if (!requestId) return undefined;
+    if (v.type === 'processList') return { type: 'processList', requestId };
+    const processId = str(v.processId);
+    if (!processId) return undefined;
+    // The owning session is not optional: without it the on-runner guard could not hold, so the frame
+    // is dropped rather than acted on unguarded.
+    const sessionId = str(v.sessionId);
+    if (!sessionId) return undefined;
+    return v.type === 'processOutput'
+      ? { type: 'processOutput', requestId, processId, sessionId }
+      : { type: 'killProcess', requestId, processId, sessionId };
+  }
   if (v.type === 'hostResult') {
     const callId = str(v.callId);
     const result = parseHostRpcResult(v.result);
@@ -273,6 +355,41 @@ export function parseRunnerMessage(raw: unknown): RunnerToDaemon | undefined {
         ? { type: 'accountProcessesKilled', requestId, killed: v.killed as number }
         : undefined;
     }
+    case 'processListResult': {
+      const requestId = str(v.requestId);
+      if (!requestId || !Array.isArray(v.processes)) return undefined;
+      const processes = v.processes.map(parseProcessInfo);
+      // One malformed row poisons the snapshot's authorization story: drop the whole list, not the row.
+      return processes.every(Boolean)
+        ? { type: 'processListResult', requestId, processes: processes as ProcessInfo[] }
+        : undefined;
+    }
+    case 'processOutputResult': {
+      const requestId = str(v.requestId);
+      const output = v.output;
+      if (!requestId || (output !== null && typeof output !== 'string')) return undefined;
+      return { type: 'processOutputResult', requestId, output };
+    }
+    case 'processKilled': {
+      const requestId = str(v.requestId);
+      return requestId && typeof v.killed === 'boolean'
+        ? { type: 'processKilled', requestId, killed: v.killed }
+        : undefined;
+    }
+    case 'processesChanged': {
+      const sessionId = str(v.sessionId);
+      if (!sessionId || !Array.isArray(v.processes)) return undefined;
+      const processes = v.processes.map(parseProcessInfo);
+      return processes.every(Boolean)
+        ? { type: 'processesChanged', sessionId, processes: processes as ProcessInfo[] }
+        : undefined;
+    }
+    case 'sessionProcessesKilled': {
+      const requestId = str(v.requestId);
+      return requestId && Number.isSafeInteger(v.killed) && (v.killed as number) >= 0
+        ? { type: 'sessionProcessesKilled', requestId, killed: v.killed as number }
+        : undefined;
+    }
     case 'steered': {
       const steerId = str(v.steerId);
       // An unknown outcome is a dropped frame, not a coerced one: the daemon acts on this verdict
@@ -308,12 +425,18 @@ export function parseRunnerMessage(raw: unknown): RunnerToDaemon | undefined {
       // in would make every comparison false and quietly disable growth for the life of the daemon.
       const nums = [v.loopP99Ms, v.activeTurns, v.sessions, v.rssBytes];
       if (nums.some((n) => typeof n !== 'number' || !Number.isFinite(n) || n < 0)) return undefined;
+      let killTokens: string[] | undefined;
+      if (v.killTokens !== undefined) {
+        if (!Array.isArray(v.killTokens) || !v.killTokens.every((t) => typeof t === 'string' && t.length > 0)) return undefined;
+        killTokens = v.killTokens as string[];
+      }
       return {
         type: 'heartbeat',
         loopP99Ms: v.loopP99Ms as number,
         activeTurns: v.activeTurns as number,
         sessions: v.sessions as number,
         rssBytes: v.rssBytes as number,
+        ...(killTokens ? { killTokens } : {}),
       };
     }
     default: return undefined;

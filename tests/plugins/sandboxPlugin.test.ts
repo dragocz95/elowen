@@ -31,7 +31,9 @@ const adminPolicy: Policy = { allowedProjectIds: 'all', allowedPaths: () => [] }
 
 let roots: string[] = [];
 const temp = (tag: string) => { const path = mkdtempSync(join(tmpdir(), `elowen-sandbox-${tag}-`)); roots.push(path); return path; };
-afterEach(() => { for (const proc of processRegistry.list()) processRegistry.kill(proc.id); });
+// Awaited: the registry kill confirms the plugin's own teardown asynchronously, so a hook that returns
+// first would let a still-dying process run into the next test.
+afterEach(async () => { await processRegistry.killWhere(() => true); });
 afterAll(() => { for (const path of roots) rmSync(path, { recursive: true, force: true }); roots = []; });
 
 function git(cwd: string, ...args: string[]): string {

@@ -469,3 +469,189 @@ describe('SubagentRunnerHost — the forked runner as seen from the daemon', () 
     await expect(run).rejects.toThrow('interrupted');
   });
 });
+
+describe('SubagentRunnerHost — the background-process verbs', () => {
+  const processSnapshot = {
+    id: 'bg-1', command: 'npm run build', cwd: '/w', startedAt: '2026-09-11T10:00:00Z',
+    sessionId: 'brain-ch-subagent-sub-dlg-1', running: true, exitCode: null,
+    completionMode: 'job',
+  };
+
+  it('lists the runner registry and settles empty when no runner exists', async () => {
+    const child = new FakeChild();
+    const host = hostWith(child);
+    // Nothing forked yet: an absent runner holds nothing, it does not throw.
+    expect(await host.listProcesses()).toEqual([]);
+
+    const run = host.run(request, 'do it');
+    await tick();
+    ready(child);
+    await tick();
+    const turn = child.received.find((m) => m.type === 'turn') as { turnId: string };
+    child.reply({ type: 'result', turnId: turn.turnId, reply: 'child done' });
+    await run;
+
+    const listed = host.listProcesses();
+    await tick();
+    const ask = child.received.filter((m) => m.type === 'processList').at(-1) as { requestId: string };
+    child.reply({ type: 'processListResult', requestId: ask.requestId, processes: [processSnapshot] });
+    expect(await listed).toEqual([processSnapshot]);
+  });
+
+  it('carries output and kill to the owning runner', async () => {
+    const child = new FakeChild();
+    const host = hostWith(child);
+    const run = host.run(request, 'do it');
+    await tick();
+    ready(child);
+    await tick();
+    const turn = child.received.find((m) => m.type === 'turn') as { turnId: string };
+    child.reply({ type: 'result', turnId: turn.turnId, reply: 'child done' });
+    await run;
+
+    const output = host.processOutput('bg-1', 'brain-ch-subagent-sub-dlg-1');
+    await tick();
+    const outputAsk = child.received.filter((m) => m.type === 'processOutput').at(-1) as { requestId: string; processId: string; sessionId: string };
+    expect(outputAsk.processId).toBe('bg-1');
+    // The authorized owning session rides the frame: the runner re-checks it against the live handle.
+    expect(outputAsk.sessionId).toBe('brain-ch-subagent-sub-dlg-1');
+    child.reply({ type: 'processOutputResult', requestId: outputAsk.requestId, output: 'built' });
+    expect(await output).toBe('built');
+
+    const kill = host.killProcess('bg-1', 'brain-ch-subagent-sub-dlg-1');
+    await tick();
+    const killAsk = child.received.filter((m) => m.type === 'killProcess').at(-1) as { requestId: string; processId: string; sessionId: string };
+    expect(killAsk.processId).toBe('bg-1');
+    expect(killAsk.sessionId).toBe('brain-ch-subagent-sub-dlg-1');
+    child.reply({ type: 'processKilled', requestId: killAsk.requestId, killed: true });
+    expect(await kill).toBe(true);
+  });
+
+  it('REJECTS on a wedged child instead of faking a confirmed kill or an empty list', async () => {
+    // Fake ONLY the timers: setImmediate must stay real or the handshake ticks never run.
+    vi.useFakeTimers({ toFake: ['setTimeout'] });
+    try {
+      const child = new FakeChild();
+      const host = hostWith(child);
+      const run = host.run(request, 'do it');
+      await tick();
+      ready(child);
+      await tick();
+      const turn = child.received.find((m) => m.type === 'turn') as { turnId: string };
+      child.reply({ type: 'result', turnId: turn.turnId, reply: 'child done' });
+      await run;
+
+      // A wedged runner must never read as "killed" or "nothing running": both would hide live
+      // processes (the teardown would then delete rows it could not clean). It rejects. The
+      // expectations attach BEFORE the timers advance, so the rejections always have handlers.
+      const killAssertion = expect(host.killProcess('bg-1', 'brain-ch-subagent-sub-dlg-1')).rejects.toThrow('did not answer the process request in time');
+      const listAssertion = expect(host.listProcesses()).rejects.toThrow('did not answer the process request in time');
+      await vi.advanceTimersByTimeAsync(2_100);
+      await killAssertion;
+      await listAssertion;
+    } finally { vi.useRealTimers(); }
+  });
+
+  it('a DEAD runner still settles honestly: its registry died with it, so gone is the truth', async () => {
+    const child = new FakeChild();
+    const host = hostWith(child);
+    const run = host.run(request, 'do it');
+    await tick();
+    ready(child);
+    await tick();
+    const turn = child.received.find((m) => m.type === 'turn') as { turnId: string };
+    child.reply({ type: 'result', turnId: turn.turnId, reply: 'child done' });
+    await run;
+
+    const list = host.listProcesses();
+    await tick();
+    child.die(1);
+    expect(await list).toEqual([]);
+  });
+
+  it('hands the last heartbeat’s kill tokens to onRunnerExited before the host is dropped', async () => {
+    const child = new FakeChild();
+    const events: Array<{ kind: string; tokens?: string[] }> = [];
+    const host = new SubagentRunnerHost({
+      dbPath: '/tmp/elowen-test.db',
+      project: { id: 1, slug: 'e2e', path: '/tmp/project' },
+      cwd: '/tmp/project',
+      fork: () => child.asChild(),
+      onHeartbeat: () => { events.push({ kind: 'beat' }); },
+      onRunnerExited: (tokens) => { events.push({ kind: 'exited', tokens }); },
+      onExit: () => { events.push({ kind: 'dropped' }); },
+    });
+    const run = host.run(request, 'do it');
+    await tick();
+    ready(child);
+    await tick();
+    const turn = child.received.find((m) => m.type === 'turn') as { turnId: string };
+    child.reply({ type: 'result', turnId: turn.turnId, reply: 'child done' });
+    await run;
+
+    child.reply({ type: 'heartbeat', loopP99Ms: 1, activeTurns: 0, sessions: 0, rssBytes: 10, killTokens: ['tok-a', 'tok-b'] });
+    child.die(1);
+    // The tokens captured BEFORE death reach the sweep, and in order: sweep first, drop last.
+    expect(events).toEqual([
+      { kind: 'beat' },
+      { kind: 'exited', tokens: ['tok-a', 'tok-b'] },
+      { kind: 'dropped' },
+    ]);
+  });
+
+  it('settles every open process request when the runner dies', async () => {
+    const child = new FakeChild();
+    const host = hostWith(child);
+    const run = host.run(request, 'do it');
+    await tick();
+    ready(child);
+    await tick();
+    const turn = child.received.find((m) => m.type === 'turn') as { turnId: string };
+    child.reply({ type: 'result', turnId: turn.turnId, reply: 'child done' });
+    await run;
+
+    const kill = host.killProcess('bg-1', 'brain-ch-subagent-sub-dlg-1');
+    const sweep = host.killSessionProcesses('brain-ch-subagent-sub-dlg-1');
+    await tick();
+    child.die(1);
+    expect(await kill).toBe(false);
+    // Each verb settles to ITS OWN shape. A session sweep answers with a COUNT: the boolean the death
+    // path handed every non-list, non-output request reached the pool's sum as a coerced 0 and only
+    // looked right.
+    const swept = await sweep;
+    expect(swept).toBe(0);
+    expect(typeof swept).toBe('number');
+  });
+
+  it('forwards a runner registry change to the sink and settles the killSession sweep', async () => {
+    const child = new FakeChild();
+    const seen: Array<{ sessionId: string; processes: unknown[] }> = [];
+    const host = new SubagentRunnerHost({
+      dbPath: '/tmp/elowen-test.db',
+      project: { id: 1, slug: 'e2e', path: '/tmp/project' },
+      cwd: '/tmp/project',
+      fork: () => child.asChild(),
+      onProcessesChanged: (sessionId, processes) => { seen.push({ sessionId, processes }); },
+    });
+    const run = host.run(request, 'do it');
+    await tick();
+    ready(child);
+    await tick();
+    const turn = child.received.find((m) => m.type === 'turn') as { turnId: string };
+    child.reply({ type: 'result', turnId: turn.turnId, reply: 'child done' });
+    await run;
+
+    child.reply({
+      type: 'processesChanged', sessionId: 'brain-ch-subagent-sub-dlg-1',
+      processes: [{ id: 'bg-1', command: 'sleep 5', cwd: '/tmp', startedAt: '2026-01-01T00:00:00.000Z', sessionId: 'brain-ch-subagent-sub-dlg-1', running: true, exitCode: null, workspaceId: null }],
+    });
+    expect(seen).toEqual([{ sessionId: 'brain-ch-subagent-sub-dlg-1', processes: [expect.objectContaining({ id: 'bg-1' })] }]);
+
+    const sweep = host.killSessionProcesses('brain-ch-subagent-sub-dlg-1');
+    await tick();
+    const ask = child.received.filter((m) => m.type === 'killSessionProcesses').at(-1) as { requestId: string; sessionId: string };
+    expect(ask.sessionId).toBe('brain-ch-subagent-sub-dlg-1');
+    child.reply({ type: 'sessionProcessesKilled', requestId: ask.requestId, killed: 2 });
+    expect(await sweep).toBe(2);
+  });
+});

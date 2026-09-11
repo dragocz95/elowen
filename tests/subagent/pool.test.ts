@@ -641,3 +641,69 @@ describe('SubagentRunnerPool — the bridged MCP snapshot the fork carries', () 
     h.pool.reset('test over');
   });
 });
+
+describe('SubagentRunnerPool — the background-process verbs across runners', () => {
+  it('reads the runner registry through the pool and reports a kill only from a runner that landed one', async () => {
+    const h = poolWith();
+    const run = fire(h.pool.run(request('subagent-sub-dlg-a'), 'one'));
+    await settle();
+    h.children[0]?.boot();
+    await settle();
+
+    const listed = h.pool.listProcesses();
+    await settle();
+    const ask = h.children[0]!.received.filter((m): m is Extract<DaemonToRunner, { type: 'processList' }> => m.type === 'processList').at(-1)!;
+    h.children[0]!.reply({ type: 'processListResult', requestId: ask.requestId, processes: [{ id: 'p-a', command: 'c', cwd: '/w', startedAt: 's', sessionId: 'brain-ch-subagent-sub-dlg-a', running: true, exitCode: null }] });
+    expect(await listed).toEqual([{ id: 'p-a', command: 'c', cwd: '/w', startedAt: 's', sessionId: 'brain-ch-subagent-sub-dlg-a', running: true, exitCode: null }]);
+
+    // The authorized owning session rides the frame; the runner answers "not mine" (its live handle
+    // did not match, or the process already exited), so the pool reports an honest miss.
+    const kill = h.pool.killProcess('p-a', 'brain-ch-subagent-sub-dlg-a');
+    await settle();
+    const killAsk = h.children[0]!.received.filter((m): m is Extract<DaemonToRunner, { type: 'killProcess' }> => m.type === 'killProcess').at(-1)!;
+    expect(killAsk.sessionId).toBe('brain-ch-subagent-sub-dlg-a');
+    h.children[0]!.reply({ type: 'processKilled', requestId: killAsk.requestId, killed: false });
+    expect(await kill).toBe(false);
+
+    // A registry change on the runner reaches the attached sink WITH the runner's snapshot — the
+    // CLI's live process event re-projects exactly what the runner holds, no lossy re-query.
+    const seen: Array<{ sessionId: string; processes: unknown[] }> = [];
+    h.pool.attachProcessChangedSink((sessionId, processes) => { seen.push({ sessionId, processes }); });
+    h.children[0]!.reply({
+      type: 'processesChanged', sessionId: 'brain-ch-subagent-sub-dlg-a',
+      processes: [{ id: 'p-a', command: 'c', cwd: '/w', startedAt: 's', sessionId: 'brain-ch-subagent-sub-dlg-a', running: true, exitCode: null, workspaceId: null }],
+    });
+    expect(seen).toEqual([{ sessionId: 'brain-ch-subagent-sub-dlg-a', processes: [expect.objectContaining({ id: 'p-a' })] }]);
+
+    h.children[0]!.finish(h.children[0]!.turns()[0]!.turnId);
+    await run;
+  });
+
+  it('a wedged runner REJECTS the pool verbs instead of faking an answer', { timeout: 15_000 }, async () => {
+    const h = poolWith();
+    const run = fire(h.pool.run(request('subagent-sub-dlg-a'), 'one'));
+    await settle();
+    h.children[0]?.boot();
+    await settle();
+
+    // The child never answers: the host's strict timeout rejects and the pool propagates —
+    // a silent []/false here would hide live processes or fake a confirmed sweep. The three
+    // verbs share one bounded round (parallel, like the pool itself issues them).
+    await Promise.all([
+      expect(h.pool.listProcesses()).rejects.toThrow('did not answer the process request in time'),
+      expect(h.pool.killSessionProcesses('brain-ch-subagent-sub-dlg-a')).rejects.toThrow('did not answer the process request in time'),
+      expect(h.pool.killProcess('p-a', 'brain-ch-subagent-sub-dlg-a')).rejects.toThrow('did not answer the process request in time'),
+    ]);
+
+    h.children[0]!.finish(h.children[0]!.turns()[0]!.turnId);
+    await run;
+  });
+
+  it('answers empty for the process list when the pool has never forked', async () => {
+    const h = poolWith();
+    expect(await h.pool.listProcesses()).toEqual([]);
+    expect(await h.pool.killProcess('p-x', 'brain-ch-subagent-sub-dlg-x')).toBe(false);
+    expect(await h.pool.processOutput('p-x', 'brain-ch-subagent-sub-dlg-x')).toBeNull();
+    expect(await h.pool.killSessionProcesses('brain-ch-subagent-sub-dlg-x')).toBe(0);
+  });
+});

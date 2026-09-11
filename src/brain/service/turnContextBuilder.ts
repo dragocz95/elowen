@@ -3,7 +3,7 @@ import type { PluginRegistry } from '../../plugins/registry.js';
 import { runWithPolicy } from '../../plugins/policyContext.js';
 import type { ToolPolicy, TurnAutomation } from '../../plugins/policyContext.js';
 import { drainSessionNotices, recordWorkflowFinishMarker, workDirReorientation } from './sessionEvents.js';
-import { recordSubagentProgress } from '../subagentRuns.js';
+import { delegatedChildIdentity, recordSubagentProgress } from '../subagentRuns.js';
 import type { HookAuditBuffer } from '../../shared/hookAudit.js';
 import type { BrainStore } from '../../store/brainStore.js';
 import type { BrainDeps } from '../brainDeps.js';
@@ -285,20 +285,18 @@ export class TurnContextBuilder {
       if (card) live.replay.publish({ type: 'card', card });
     };
     const emitSubagent = (update: SubagentUpdate): boolean => {
-      // The plugin's update has no reasoning effort — read the child's OWN effective level from its live
-      // session so the drilled-in child status bar shows it (a delegated child may differ from the parent).
-      const childBrain = this.d.sessions.get(update.sessionId);
-      const childLevel = (childBrain?.session as { thinkingLevel?: string } | undefined)?.thinkingLevel ?? childBrain?.thinkingLevel;
-      const enriched: SubagentUpdate = childLevel
-        ? { ...update, thinkingLevel: childLevel, thinkingLabel: childBrain?.thinkingLabels?.[childLevel] ?? childLevel }
-        : update;
+      // The child's own model + effective reasoning effort are read in ONE place, shared with the channel
+      // surface — see delegatedChildIdentity. A delegated child is a channel session, so the read must
+      // cover the registry's channel map; a `.get()`-only lookup (the previous inline attempt) never found
+      // one, and a continuation row then reported neither model nor level.
       const recorded = recordSubagentProgress({
         store: this.d.store,
         claims: this.d.sessions,
         sessionId: live.sessionId,
+        identityOf: (childSessionId, dispatch) => delegatedChildIdentity(this.d.store, this.d.sessions, childSessionId, dispatch),
         publish: (event) => { live.replay.publish(event); },
-      }, enriched);
-      if (recorded) this.d.onSubagentUpdate?.(live, enriched);
+      }, update);
+      if (recorded) this.d.onSubagentUpdate?.(live, update);
       return recorded;
     };
     const emitSubagentCompletion = (completion: SubagentCompletion): void => {

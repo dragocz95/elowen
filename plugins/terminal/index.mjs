@@ -7,7 +7,7 @@
 import { defineTool, formatSize } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
+import { randomBytes, randomUUID } from 'node:crypto';
 import { readdirSync, readFileSync } from 'node:fs';
 import { StringDecoder } from 'node:string_decoder';
 import { isAbsolute, join, posix } from 'node:path';
@@ -337,8 +337,11 @@ const blockedSleepSeconds = (command) => {
   return seconds >= MIN_BLOCKED_SLEEP_S ? seconds : null;
 };
 
-/** Short process id shared by the foreground-detach and background spawn paths. */
-const newProcessId = () => `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 5)}`;
+/** Process id shared by the foreground-detach and background spawn paths. A full UUID: the id is the
+ *  ONLY handle every kill/list surface keys on, across two registries (daemon + sub-agent runner) whose
+ *  clocks and randomness are independent — a timestamp-plus-three-chars id could collide across them,
+ *  and a collision would let one session's kill land on another's process. */
+export const newProcessId = () => randomUUID();
 
 const processGroupAlive = (pid) => {
   if (!Number.isInteger(pid) || pid <= 0) return false;
@@ -911,6 +914,9 @@ export function register(ctx) {
     id, command: bg.command, cwd: bg.cwd, startedAt: bg.startedAt,
     accountUserId, sessionId, workspaceId, homeGeneration, completionMode,
     projectRef: bg.projectRef, runtimeGeneration: bg.runtimeGeneration,
+    // The per-run env token: upward-reported so a daemon-side sweep can still stop this tree if this
+    // process (or the runner holding it) dies abruptly and the graceful kill never runs.
+    killToken: bg.directToken ?? null,
     running: () => bg.running, exitCode: () => bg.exitCode,
     readAll: () => withDropNotice(bg, bg.sanitizeOutput(bg.output)),
     readNew: (all) => {

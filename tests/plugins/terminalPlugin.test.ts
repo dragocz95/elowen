@@ -34,8 +34,11 @@ const runTool = (reg: PluginRegistry, name: string, params: Record<string, unkno
 
 // The process registry is a module-level singleton shared across every test in this run. Background
 // commands (and any handle a test registers) survive into later tests and other files, so clear it after
-// each test. kill() is idempotent and safe on both fake and real handles.
-afterEach(() => { for (const p of processRegistry.list()) processRegistry.kill(p.id); });
+// each test. The sweep is AWAITED: a kill confirms the plugin's own teardown asynchronously, so a hook
+// that returns first lets a still-dying process run into the next test. `killWhere` also drops handles
+// that already exited and reports an unconfirmed kill instead of throwing out of the hook.
+const sweepRegistry = () => processRegistry.killWhere(() => true);
+afterEach(async () => { await sweepRegistry(); });
 
 // Every describe's beforeAll creates ONE shared dir for all its tests, so the dirs must survive until the
 // whole file is done — and they must outlive the afterEach that kills the registry's background processes:
@@ -44,11 +47,14 @@ afterEach(() => { for (const p of processRegistry.list()) processRegistry.kill(p
 // the only safe point.
 let dirs: string[] = [];
 const allDirs = new Set<string>();
-const cleanupDirs = () => {
-  for (const process of processRegistry.list()) processRegistry.kill(process.id);
+const removeDirs = () => {
   for (const p of dirs) rmSync(p, { recursive: true, force: true });
   dirs = [];
 };
+const cleanupDirs = async () => { await sweepRegistry(); removeDirs(); };
+// On `exit` nothing asynchronous can still run, so the sweep's synchronous half (the process-group kill)
+// is all that lands and the dirs must go in the same tick.
+const cleanupDirsOnExit = () => { void sweepRegistry(); removeDirs(); };
 const tmpDir = (tag: string): string => {
   const p = mkdtempSync(join(tmpdir(), `elowen-${tag}-`));
   dirs.push(p);
@@ -65,10 +71,10 @@ const markerExecutable = (dir: string, name: string, marker: string): string => 
   chmodSync(executable, 0o755);
   return executable;
 };
-process.once('exit', cleanupDirs);
-afterAll(() => {
-  process.off('exit', cleanupDirs);
-  cleanupDirs();
+process.once('exit', cleanupDirsOnExit);
+afterAll(async () => {
+  process.off('exit', cleanupDirsOnExit);
+  await cleanupDirs();
   expect([...allDirs].filter(existsSync), 'terminal plugin tests left temporary directories behind').toEqual([]);
 });
 
@@ -837,7 +843,8 @@ describe('terminal plugin — the process registry is the single source of truth
     const refused = await inSession(a, 'Bash', { command: 'sleep 30', run_in_background: true });
     expect(refused.content[0].text).toMatch(/too many background processes/);
 
-    expect(processRegistry.killSession(a)).toBe(16);
+    // killSession is async and reports the sweep: every one of the 16 stops CONFIRMED, none unresolved.
+    await expect(processRegistry.killSession(a)).resolves.toEqual({ killed: 16, failed: [] });
 
     // No ghost rows and no ghost output buffers left behind for the killed session…
     expect((await inSession(a, 'ListProcesses', {})).content[0].text).toBe('No background processes.');
@@ -1405,7 +1412,7 @@ describe('terminal plugin — ProcessOutput(block)', () => {
     const started = Date.now();
     const read = inSession(session, 'ProcessOutput', { id, block: true, timeout: 120 });
     await new Promise((r) => setTimeout(r, 300));
-    processRegistry.kill(id); // the web panel's ✕, or the conversation being deleted
+    await processRegistry.kill(id); // the web panel's ✕, or the conversation being deleted
 
     await read;
     expect(Date.now() - started).toBeLessThan(10_000); // released on the kill, not after 120s
@@ -1574,4 +1581,16 @@ describe('terminal plugin — foreground deadline and sleep polling', () => {
     expect(childText).toContain('[exit 0]');
     expect(processRegistry.listForSession(child)).toHaveLength(0);
   }, 30_000);
+});
+
+describe('process ids — collision safety across registries', () => {
+  it('mints full UUIDs, unique across calls', async () => {
+    // The id is the only handle every kill/list surface keys on, across the daemon AND sub-agent runner
+    // registries whose clocks are independent — a timestamp+3-char id could collide and route one
+    // session's kill onto another's process.
+    const { newProcessId } = await import('../../plugins/terminal/index.mjs');
+    const ids = new Set(Array.from({ length: 5_000 }, () => newProcessId()));
+    expect(ids.size).toBe(5_000);
+    for (const id of ids) expect(id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/u);
+  });
 });

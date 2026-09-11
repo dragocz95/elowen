@@ -1133,16 +1133,20 @@ export function register(ctx) {
       const turnStarted = new Promise((resolve) => { markTurnStarted = resolve; });
       const push = (status) => pushJob(state, status);
       const onEvent = (e) => {
-        // The host emits this at the start of every turn it runs, so it arrives only on the IDLE path and
-        // always before the reply. Flip the call to background delivery HERE, synchronously, so the mode is
-        // settled before `runContinuation` can reach its terminal `deliverCompletion` — deciding it after
-        // the await would let a fast turn finish as a foreground call whose result nobody returns.
         if (e.type === 'session') {
-          if (wantsBackground && !state.background) {
+          // Two things ride on this event, and both have to happen before the reply. The host emits it at
+          // the start of every turn it runs, so it arrives only on the IDLE path: flip the call to
+          // background delivery HERE, synchronously, because deciding it after the await would let a fast
+          // turn finish as a foreground call whose result nobody returns. And republish the row, because
+          // for an idle continuation this event lands AFTER the respawn, so the row then carries the
+          // identity the child actually runs on — an explicitly switched model, a clamped or ladder-less
+          // effort — instead of the pre-spawn snapshot this call started with.
+          const flipped = wantsBackground && !state.background;
+          if (flipped) {
             state.background = true;
             state.autoDeliver = true;
-            push('running');
           }
+          if (flipped || e.sessionId) push('running');
           markTurnStarted();
         }
         else if (e.type === 'tool' && e.name) {

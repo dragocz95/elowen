@@ -1,5 +1,5 @@
-import { describe, it, expect, vi } from 'vitest';
-import { ProcessRegistry, type ProcessHandle } from '../../src/brain/processRegistry.js';
+import { describe, it, expect, onTestFinished, vi } from 'vitest';
+import { ProcessRegistry, processHandleOwnedByAccount, type ProcessHandle, type ProcessInfo } from '../../src/brain/processRegistry.js';
 
 /** Build a fake handle whose running/exit/output are driven by a small mutable state object, so tests can
  *  flip a process to "exited" or capture kill() without spawning anything real. */
@@ -35,7 +35,7 @@ describe('ProcessRegistry', () => {
     expect(reg.output('nope')).toBeNull();
   });
 
-  it('isolates list, output, and kill operations by originating brain session', () => {
+  it('isolates list, output, and kill operations by originating brain session', async () => {
     const reg = new ProcessRegistry();
     const parent = fakeHandle('parent'); parent.handle.sessionId = 'brain-parent';
     const child = fakeHandle('child'); child.handle.sessionId = 'brain-child';
@@ -44,13 +44,13 @@ describe('ProcessRegistry', () => {
     expect(reg.listForSession('brain-parent').map((p) => p.id)).toEqual(['parent']);
     expect(reg.listForSession('brain-child').map((p) => p.id)).toEqual(['child']);
     expect(reg.outputForSession('brain-parent', 'child')).toBeNull();
-    expect(reg.killForSession('brain-parent', 'child')).toBe(false);
+    await expect(reg.killForSession('brain-parent', 'child')).resolves.toBe(false);
     expect(child.state.killed).toBe(false);
-    expect(reg.killForSession('brain-child', 'child')).toBe(true);
+    await expect(reg.killForSession('brain-child', 'child')).resolves.toBe(true);
     expect(child.state.killed).toBe(true);
   });
 
-  it('isolates two contribution accounts inside the same shared-room session', () => {
+  it('isolates two contribution accounts inside the same shared-room session', async () => {
     const reg = new ProcessRegistry();
     const amy = fakeHandle('amy');
     amy.handle.sessionId = 'brain-ch-room';
@@ -66,7 +66,7 @@ describe('ProcessRegistry', () => {
     expect(reg.listForSessionAccount('brain-ch-room', 2).map((p) => p.id)).toEqual(['amy']);
     expect(reg.listForSessionAccount('brain-ch-room', 3).map((p) => p.id)).toEqual(['bob']);
     expect(reg.outputForSessionAccount('brain-ch-room', 2, 'bob')).toBeNull();
-    expect(reg.killForSessionAccount('brain-ch-room', 2, 'bob')).toBe(false);
+    await expect(reg.killForSessionAccount('brain-ch-room', 2, 'bob')).resolves.toBe(false);
     expect(bob.state.killed).toBe(false);
     expect(reg.listForSessionAccount('brain-ch-room', 2)[0]).toMatchObject({ workspaceId: 'ws-amy', homeGeneration: 4 });
   });
@@ -90,14 +90,14 @@ describe('ProcessRegistry', () => {
     expect(reg.listWhere((h) => h.userId === 1).map((p) => p.id)).toEqual(['mine']);
   });
 
-  it('kill() invokes the handle kill, drops it, and returns false for unknown ids', () => {
+  it('kill() invokes the handle kill, drops it, and returns false for unknown ids', async () => {
     const reg = new ProcessRegistry();
     const a = fakeHandle('1');
     reg.register(a.handle);
-    expect(reg.kill('1')).toBe(true);
+    await expect(reg.kill('1')).resolves.toBe(true);
     expect(a.state.killed).toBe(true);
     expect(reg.list()).toHaveLength(0);
-    expect(reg.kill('1')).toBe(false); // already gone
+    await expect(reg.kill('1')).resolves.toBe(false); // already gone
   });
 
   it('remove() drops without killing', () => {
@@ -125,13 +125,13 @@ describe('ProcessRegistry', () => {
     expect(events).toEqual([{ id: '1', running: false, userId: 42, sessionId: 'brain-42' }]);
   });
 
-  it('does NOT fire the exit listener for a killed (removed) process', () => {
+  it('does NOT fire the exit listener for a killed (removed) process', async () => {
     const reg = new ProcessRegistry();
     let fired = 0;
     reg.setExitListener(() => { fired++; });
     const a = fakeHandle('1');
     reg.register(a.handle);
-    reg.kill('1');          // killed → dropped from the registry
+    await reg.kill('1');    // killed → dropped from the registry
     reg.markExited('1');    // its subsequent close finds nothing → no wake
     expect(fired).toBe(0);
   });
@@ -188,13 +188,13 @@ describe('ProcessRegistry', () => {
     });
   });
 
-  it('fires the change listener on register/kill/remove', () => {
+  it('fires the change listener on register/kill/remove', async () => {
     const reg = new ProcessRegistry();
     let ticks = 0;
     reg.setChangeListener(() => { ticks++; });
     const a = fakeHandle('1');
     reg.register(a.handle);   // 1
-    reg.kill('1');            // 2
+    await reg.kill('1');      // 2
     reg.register(fakeHandle('2').handle); // 3
     reg.remove('2');          // 4
     expect(ticks).toBe(4);
@@ -297,7 +297,7 @@ describe('ProcessRegistry', () => {
       const reg = new ProcessRegistry();
       reg.register(fakeHandle('1').handle);
       const killed = reg.waitForExit('1', 60_000);
-      reg.kill('1');
+      await reg.kill('1');
       await expect(killed).resolves.toBe('exited');
 
       reg.register(fakeHandle('2').handle);
@@ -322,5 +322,148 @@ describe('ProcessRegistry', () => {
         vi.useRealTimers();
       }
     });
+  });
+});
+
+describe('ProcessRegistry — teardown sweeps', () => {
+  it('killWhere stops running processes, drops exited ones, and reports unconfirmed kills', async () => {
+    const reg = new ProcessRegistry();
+    const a = fakeHandle('a'); const b = fakeHandle('b'); const dead = fakeHandle('dead');
+    reg.register(a.handle); reg.register(b.handle); reg.register(dead.handle);
+    dead.state.running = false;
+    // `killed` counts CONFIRMED kills; the exited handle is dropped as cleanup, not counted as killed.
+    await expect(reg.killWhere((handle) => handle.id !== 'b')).resolves.toEqual({ killed: 1, failed: [] });
+    expect(a.state.killed).toBe(true);
+    expect(b.state.killed).toBe(false);
+    expect(reg.get('b')).toBeDefined();
+    expect(reg.get('a')).toBeUndefined();
+    expect(reg.get('dead')).toBeUndefined();
+  });
+
+  it('a kill whose handle refuses is RETAINED and reported, never folded into success', async () => {
+    const reg = new ProcessRegistry();
+    const stubborn = fakeHandle('stubborn');
+    stubborn.handle.kill = () => Promise.reject(new Error('guest cancellation failed'));
+    reg.register(stubborn.handle);
+    await expect(reg.kill('stubborn')).rejects.toThrow('guest cancellation failed');
+    // The handle stays: still listed, still stoppable — the next sweep can retry it.
+    expect(reg.get('stubborn')).toBeDefined();
+    expect(reg.list().map((p) => p.id)).toContain('stubborn');
+    await expect(reg.killWhere(() => true)).resolves.toEqual({ killed: 0, failed: ['stubborn'] });
+    expect(reg.get('stubborn')).toBeDefined();
+    // And a later kill that lands settles it for real.
+    stubborn.handle.kill = () => { stubborn.state.killed = true; return Promise.resolve(); };
+    await expect(reg.kill('stubborn')).resolves.toBe(true);
+    expect(reg.get('stubborn')).toBeUndefined();
+  });
+
+  it('never lets the per-run kill token reach the OUTWARD snapshot', async () => {
+    // The token is a secret: the terminal plugin redacts it out of command output so that an `env` run
+    // cannot publish it. Every shape produced by toInfo is serialized straight into GET /brain/processes
+    // and into the `process` event pushed to client streams, so the token must not be on it. Its one
+    // consumer (the post-mortem sweep) reads the HANDLE, which never leaves this process.
+    const reg = new ProcessRegistry();
+    const tokened = fakeHandle('tokened');
+    tokened.handle.sessionId = 'brain-1';
+    tokened.handle.killToken = 'per-run-secret-token';
+    const exited: ProcessInfo[] = [];
+    reg.setExitListener((info) => { exited.push(info); });
+    reg.register(tokened.handle);
+
+    const outward: ProcessInfo[] = [
+      ...reg.list(),
+      ...reg.listForSession('brain-1'),
+      ...reg.listWhere(() => true),
+    ];
+    tokened.state.running = false; tokened.state.exit = 0;
+    reg.markExited('tokened');
+    outward.push(...exited);
+
+    expect(outward).toHaveLength(4);
+    for (const snapshot of outward) {
+      expect(Object.keys(snapshot)).not.toContain('killToken');
+      expect(JSON.stringify(snapshot)).not.toContain('per-run-secret-token');
+    }
+    // …while the handle still carries it, which is what killTokens() reads.
+    expect(reg.get('tokened')?.killToken).toBe('per-run-secret-token');
+  });
+
+  it('bounds a local kill that never confirms instead of holding the teardown forever', async () => {
+    // The plugin's kill chains guest cancellation with no timeout of its own. Unbounded, one stuck guest
+    // blocks killSession → the conversation teardown sweep → the DELETE route, holding the session lock.
+    vi.useFakeTimers();
+    // Restored even if this test times out — a leaked fake clock would break the next test instead of
+    // just failing this one.
+    onTestFinished(() => { vi.useRealTimers(); });
+    const reg = new ProcessRegistry();
+    const wedged = fakeHandle('wedged');
+    wedged.handle.kill = () => new Promise<void>(() => { /* a guest cancellation that never returns */ });
+    reg.register(wedged.handle);
+
+    const settled = expect(reg.kill('wedged')).rejects.toThrow('did not confirm its stop in time');
+    await vi.advanceTimersByTimeAsync(2_000); // the same bound the runner-side process RPC uses
+    await settled;
+    // Reported like any other unconfirmed kill: the handle is RETAINED, listed and retryable.
+    expect(reg.get('wedged')).toBeDefined();
+    expect(reg.list().map((p) => p.id)).toContain('wedged');
+  });
+
+  it('killTokens() lists the running handles’ tokens so a post-mortem sweep can reach them', async () => {
+    const reg = new ProcessRegistry();
+    const tokened = fakeHandle('tokened'); const bare = fakeHandle('bare'); const dead = fakeHandle('dead');
+    tokened.handle.killToken = 'tok-1';
+    bare.handle.killToken = null;
+    dead.handle.killToken = 'tok-dead';
+    reg.register(tokened.handle); reg.register(bare.handle); reg.register(dead.handle);
+    dead.state.running = false;
+    expect(reg.killTokens()).toEqual(['tok-1']);
+    await reg.kill('tokened');
+    expect(reg.killTokens()).toEqual([]);
+  });
+
+  it('the account predicate reaches a delegated child through its session row', () => {
+    const childHandle = fakeHandle('child').handle;
+    childHandle.sessionId = 'brain-ch-subagent-sub-dlg-1'; // delegated turn: no explicit account
+    const explicit = fakeHandle('explicit').handle;
+    explicit.accountUserId = 7;
+    const foreignChild = fakeHandle('foreign').handle;
+    foreignChild.sessionId = 'brain-ch-subagent-sub-dlg-2';
+    const owners = (sessionId: string) => (sessionId === 'brain-ch-subagent-sub-dlg-1' ? 1
+      : sessionId === 'brain-ch-subagent-sub-dlg-2' ? 2 : undefined);
+
+    expect(processHandleOwnedByAccount(childHandle, 1, owners)).toBe(true);
+    expect(processHandleOwnedByAccount(childHandle, 2, owners)).toBe(false);
+    expect(processHandleOwnedByAccount(explicit, 7, owners)).toBe(true);
+    // An explicit account is authoritative: the session row must not widen it.
+    expect(processHandleOwnedByAccount(explicit, 1, owners)).toBe(false);
+    expect(processHandleOwnedByAccount(foreignChild, 1, owners)).toBe(false);
+    // A sessionless handle resolves no owner and stays unreachable.
+    const loose = fakeHandle('loose').handle;
+    expect(processHandleOwnedByAccount(loose, 1, owners)).toBe(false);
+  });
+
+  it('stops a REAL detached process tree through the sweep (test-owned child)', async () => {
+    if (process.platform === 'win32') return; // `sleep` and detached groups are POSIX shapes
+    const { spawn } = await import('node:child_process');
+    const child = spawn('sleep', ['30'], { detached: true, stdio: 'ignore' });
+    const reg = new ProcessRegistry();
+    const alive = () => {
+      try { process.kill(-child.pid!, 0); return true; } catch { return false; }
+    };
+    expect(alive()).toBe(true);
+    const handle: ProcessHandle = {
+      id: 'real-1', command: 'sleep 30', cwd: process.cwd(), startedAt: new Date().toISOString(),
+      accountUserId: null, sessionId: 'brain-ch-subagent-sub-dlg-real',
+      running: alive,
+      exitCode: () => child.exitCode,
+      readAll: () => '',
+      kill: () => { try { process.kill(-child.pid!, 'SIGKILL'); } catch { /* already gone */ } },
+    };
+    reg.register(handle);
+    await expect(reg.killWhere((h) => h.sessionId === 'brain-ch-subagent-sub-dlg-real')).resolves.toEqual({ killed: 1, failed: [] });
+    // The process GROUP is really gone, not just the registry row.
+    for (let i = 0; i < 50 && alive(); i += 1) await new Promise((r) => setTimeout(r, 20));
+    expect(alive()).toBe(false);
+    child.kill('SIGKILL');
   });
 });

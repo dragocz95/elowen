@@ -9,8 +9,10 @@ import type { Policy } from '../../src/plugins/policy.js';
 import { processRegistry } from '../../src/brain/processRegistry.js';
 
 const roots: string[] = [];
-afterEach(() => {
-  for (const process of processRegistry.list()) processRegistry.kill(process.id);
+// The registry sweep is AWAITED: a kill confirms the plugin's own teardown asynchronously, and the roots
+// below are the working directories of those very processes — removing them first breaks the run.
+afterEach(async () => {
+  await processRegistry.killWhere(() => true);
   for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
 });
 

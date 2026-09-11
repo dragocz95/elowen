@@ -37,7 +37,8 @@ import type { PendingAbort } from '../brain/session/liveRegistry.js';
 import { logger } from '../shared/logger.js';
 import type { BrainEvent } from '../brain/events.js';
 import type { BrainStreamSnapshot } from '../brain/session/liveEventReplay.js';
-import { channelIdOf } from '../brain/sessionId.js';
+import type { ProcessInfo } from '../brain/processRegistry.js';
+import { channelSessionId, channelIdOf } from '../brain/sessionId.js';
 import { SubagentRunnerUnavailable, type DelegatedTurnRequest, type DelegatedTurnRunner } from '../brain/delegatedTurn.js';
 import { SubagentRunnerHost, type RunnerHeartbeat, type SubagentRunnerHostDeps } from './runnerHost.js';
 import { FairQueue } from './fairQueue.js';
@@ -134,6 +135,9 @@ export class SubagentRunnerPool implements DelegatedTurnRunner {
   private readonly queue = new FairQueue<QueuedTurn>();
   private readonly machine: MachineInputs;
   private childEdgeSink?: (parentSessionId: string, childSessionId: string, running: boolean) => void;
+  /** Live-process change sink, attached once by the daemon after the brain exists. */
+  private processChangedSink?: (sessionId: string, processes: ProcessInfo[]) => void;
+  private runnerExitTokensSink?: (killTokens: string[]) => void;
   /** Largest RSS any live runner has reported. Replaces the conservative estimate in sizing once real —
    *  the MAXIMUM rather than the first, because the memory ceiling must hold for the next runner too and
    *  a pool sized off its smallest member is a pool that overcommits. */
@@ -168,6 +172,20 @@ export class SubagentRunnerPool implements DelegatedTurnRunner {
   attachChildEdgeSink(sink: (parentSessionId: string, childSessionId: string, running: boolean) => void): void {
     this.childEdgeSink = sink;
     for (const r of this.runners) r.host.attachChildEdgeSink(sink);
+  }
+
+  /** Attach the live-process change sink. A runner-local spawn/exit/kill/drop reaches the daemon's
+   *  process panels only through this — the CLI drill-in hydrates once and then rides pushed events.
+   *  The frame carries the runner's own session snapshot, so the sink re-projects exactly what exists
+   *  instead of re-asking (a wedged re-query would read as a false empty). */
+  attachProcessChangedSink(sink: (sessionId: string, processes: ProcessInfo[]) => void): void {
+    this.processChangedSink = sink;
+  }
+
+  /** Attach the post-mortem containment sink: the kill tokens of children that were running when a
+   *  runner died abruptly. The daemon sweeps those trees by token (`killTokenProcesses`). */
+  attachRunnerExitTokensSink(sink: (killTokens: string[]) => void): void {
+    this.runnerExitTokensSink = sink;
   }
 
   /** The operator's knob resolved to a cap, or 0 when the pool is switched off. `SubagentDispatch` asks
@@ -340,6 +358,12 @@ export class SubagentRunnerPool implements DelegatedTurnRunner {
         ...(this.d.hostRpc ? { hostRpc: this.d.hostRpc } : {}),
         onHeartbeat: (beat) => this.onHeartbeat(entry, beat),
         onExit: () => this.onRunnerExit(entry),
+        onProcessesChanged: (sessionId, processes) => { try { this.processChangedSink?.(sessionId, processes); } catch { /* a sink of ours threw */ } },
+        onRunnerExited: (killTokens) => {
+          // A runner that died without sweeping leaves its detached children behind; the daemon gets
+          // their pre-captured kill tokens here and stops the trees itself.
+          try { this.runnerExitTokensSink?.(killTokens); } catch { /* a sink of ours threw */ }
+        },
       });
       entry = { host, inFlight: 0, saturatedBeats: 0, lastActivityAt: Date.now() };
       if (this.childEdgeSink) host.attachChildEdgeSink(this.childEdgeSink);
@@ -387,12 +411,20 @@ export class SubagentRunnerPool implements DelegatedTurnRunner {
   private onRunnerExit(entry: PooledRunner): void {
     const at = this.runners.indexOf(entry);
     if (at >= 0) this.runners.splice(at, 1);
+    const orphanedSessions: string[] = [];
     for (const [channelId, r] of [...this.routes]) {
       if (r !== entry) continue;
       this.routes.delete(channelId);
       this.routeTouched.delete(channelId);
+      orphanedSessions.push(channelSessionId(channelId));
     }
     entry.inFlight = 0;
+    // Its registry died with the process: re-project every session it hosted with an EMPTY snapshot —
+    // the authoritative "this runner holds nothing now" — so the panels drop the rows they cannot act
+    // on any more, instead of showing zombies until the next full poll.
+    for (const sessionId of orphanedSessions) {
+      try { this.processChangedSink?.(sessionId, []); } catch { /* a sink of ours threw */ }
+    }
     // A later continuation for one of those sessions may now be placed ANYWHERE and rehydrates from
     // SQLite, which is exactly what the daemon does for a child it has never seen.
     this.drain();
@@ -511,6 +543,41 @@ export class SubagentRunnerPool implements DelegatedTurnRunner {
 
   async killAccountProcesses(userId: number): Promise<number> {
     const killed = await Promise.all(this.runners.map((entry) => entry.host.killAccountProcesses(userId)));
+    return killed.reduce((sum, count) => sum + count, 0);
+  }
+
+  /** Every runner's background processes, concatenated. Each host either answers or rejects — a wedged
+   *  one rejects, and that rejection PROPAGATES: a broadcast that silently dropped a wedged runner would
+   *  present a partial list as the whole truth and hide live processes. */
+  async listProcesses(): Promise<ProcessInfo[]> {
+    const lists = await Promise.all(this.runners.map((entry) => entry.host.listProcesses()));
+    return lists.flat();
+  }
+
+  /** Output of ONE runner-local process, guarded by the owning session the caller authorized against.
+   *  Every runner is asked IN PARALLEL — one bounded round, not one 2s timeout per runner — and only a
+   *  runner holding the process under exactly that session can answer, so a stale authorization can
+   *  never cross sessions or accounts, however ids collide across runners. A wedged runner rejects and
+   *  that rejection propagates: "no output" and "could not ask" are different answers. */
+  async processOutput(processId: string, sessionId: string): Promise<string | null> {
+    const answers = await Promise.all(this.runners.map((entry) => entry.host.processOutput(processId, sessionId)));
+    return answers.find((output) => output !== null) ?? null;
+  }
+
+  /** Stop ONE runner-local process under the same session guard, asked in parallel. `false` across
+   *  every runner is the honest "already finished" the caller reports; a wedged runner rejects and
+   *  that rejection propagates — a kill must never read as landed when it was never confirmed. */
+  async killProcess(processId: string, sessionId: string): Promise<boolean> {
+    const answers = await Promise.all(this.runners.map((entry) => entry.host.killProcess(processId, sessionId)));
+    return answers.some((killed) => killed);
+  }
+
+  /** Stop every background process ONE session owns across the runners — the conversation-teardown
+   *  sweep's remote half, matching what `ProcessRegistry.killSession` does for the daemon's own. A
+   *  wedged runner rejects and that rejection propagates: the caller must learn the sweep is
+   *  UNCONFIRMED, not mistake it for zero. */
+  async killSessionProcesses(sessionId: string): Promise<number> {
+    const killed = await Promise.all(this.runners.map((entry) => entry.host.killSessionProcesses(sessionId)));
     return killed.reduce((sum, count) => sum + count, 0);
   }
 

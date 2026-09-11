@@ -16,7 +16,7 @@ import {
 import type { ProjectExecutionRef } from '../shared/projectExecution.js';
 import type { AskQuestion, BrainEvent, BrainUsage, CompactResult, SubagentCompletion, SubagentUpdate, WorkflowCompletion, WorkflowUpdate } from './events.js';
 import { recordWorkflowFinishMarker, drainSessionNotices, workDirReorientation } from './service/sessionEvents.js';
-import { recordSubagentProgress } from './subagentRuns.js';
+import { delegatedChildIdentity, recordSubagentProgress } from './subagentRuns.js';
 import type { SpawnOrigin } from './spawnOrigin.js';
 import { runCompaction, withDescendantUsage, sessionUsageSnapshot } from './events.js';
 import type { ElicitationRegistry } from './elicitation.js';
@@ -1074,10 +1074,13 @@ export class ChannelSessionService {
         const emitCard = (raw: unknown) => { const card = this.d.cards.set(sessionId, raw); if (card) ch.replay.publish({ type: 'card', card }); };
         // Mirror owner-chat delegation tracking: the progress event is both the live UI seam and the
         // abort tree. A channel can delegate recursively, so every channel node owns its direct children.
+        // The identity read is the same one the owner chat wires — one authoritative source for what a
+        // child runs on, so a nested delegation's row reports model + level like a top-level one.
         const emitSubagent = (u: SubagentUpdate) => recordSubagentProgress({
           store: this.d.store,
           claims: this.d.registry,
           sessionId: ch.sessionId,
+          identityOf: (childSessionId, dispatch) => delegatedChildIdentity(this.d.store, this.d.registry, childSessionId, dispatch),
           publish: (event) => { ch.replay.publish(event); },
         }, u);
         const emitSubagentCompletion = parentSessionId && this.d.completeSubagent
