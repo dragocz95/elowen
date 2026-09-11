@@ -117,6 +117,9 @@ export function createSpawnEventReducer(deps: SpawnEventReducerDeps): (e: AgentS
   const shownImages = new Set<string>();
   return (e: AgentSessionEvent): void => {
     const live = getLive();
+    if (e.type === 'auto_retry_start') {
+      logger('brain-provider').warn(`provider retry on ${providerId ?? model.provider}/${model.id} (${sessionId}), attempt ${e.attempt}/${e.maxAttempts}: ${e.errorMessage}`);
+    }
     const raw = (e as { type?: string }).type;
     // Retry/overflow agent_end is intermediate; every ordinary terminal agent_end keeps the established
     // lifecycle contract and publishes idle immediately. `agent_settled` remains only the fallback for PI

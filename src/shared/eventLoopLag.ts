@@ -70,6 +70,9 @@ const toMs = (nanos: number): number => (Number.isFinite(nanos) ? Math.round(nan
  *  for their turn, which is already visible as a sluggish CLI and web UI. */
 const SUSTAINED_P99_MS = 150;
 
+/** Rare multi-second stalls barely move p99 but can still make provider reads miss their deadline. */
+const SEVERE_STALLED_MS = 2_000;
+
 /** Log when the loop starts and stops keeping up. Only the TRANSITIONS are logged — a fan-out that
  *  saturates the daemon for ten minutes should leave two lines, not one per check, or the signal drowns
  *  in the noise it generates. Returns a stop function. */
@@ -80,10 +83,16 @@ export function watchLoopLag(
 ): () => void {
   const threshold = opts.thresholdMs ?? SUSTAINED_P99_MS;
   let saturated = false;
+  let lastSevereWarningAt = Number.NEGATIVE_INFINITY;
   const timer = setInterval(() => {
     const { p50, p99, max, severeStalledMs, windowMs } = monitor.lag();
-    if (p99 > threshold && !saturated) {
-      saturated = true;
+    const now = Date.now();
+    const p99Started = p99 > threshold && !saturated;
+    const severeWarningDue = severeStalledMs > SEVERE_STALLED_MS
+      && now - lastSevereWarningAt >= windowMs;
+    if (p99Started || severeWarningDue) {
+      if (p99Started) saturated = true;
+      if (severeStalledMs > SEVERE_STALLED_MS) lastSevereWarningAt = now;
       log.warn(`event loop is not keeping up — p50 ${p50}ms, p99 ${p99}ms, max ${max}ms, severe stalls ${severeStalledMs}ms of the last ${Math.round(windowMs / 1000)}s (a queued request can wait through the SUM of stalls, not just the worst one)`);
     } else if (p99 <= threshold && saturated) {
       saturated = false;
