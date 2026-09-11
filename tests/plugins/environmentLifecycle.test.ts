@@ -115,6 +115,10 @@ function setup(config: Record<string, unknown> = {}) {
    *  and a fake that shared one map could not tell which of them a step actually addressed. */
   const machines = new Map<string, any>();
   const ownership: string[] = [];
+  /** Who the root filesystem's ids actually belong to right now, which is the state that decides whether
+   *  anything can read the disk at all. `mixed` is the tree an ownership pass left half converted: the
+   *  outcome neither runtime can boot, and the one a failed rollback must never be able to strand. */
+  const disk = { owner: 'podman', failReverse: false };
   const nspawn = {
     containerInventory: vi.fn(async () => new Map([...machines].map(([name, row]) => [name, row.state]))),
     containerExists: vi.fn(async (spec: any) => machines.has(spec.name)),
@@ -136,6 +140,11 @@ function setup(config: Record<string, unknown> = {}) {
     shiftOwnership: vi.fn(async (_spec: any, options: any = {}) => {
       const target = options.target ?? 'nspawn';
       ownership.push(target);
+      // A pass that dies part way has already rewritten some of the tree, so it leaves neither scheme
+      // whole. Modelling that is the only way a test can tell a rollback that recovered the disk from one
+      // that merely stopped touching it.
+      if (target === 'podman' && disk.failReverse) { disk.owner = 'mixed'; throw new Error('ownership reversal interrupted'); }
+      disk.owner = target;
       return target === 'nspawn' ? { uidBase: 1073741824, uidSize: 65536, previousUidBase: 100000 } : { uidBase: options.uidBase };
     }),
     exec: vi.fn(async () => ({ code: 0, stdout: '', stderr: '', truncated: false })),
@@ -146,7 +155,7 @@ function setup(config: Record<string, unknown> = {}) {
   const runtime = createEnvironmentRuntime({ ...dependencies, daemon: true });
   const fork = createEnvironmentRuntime({ ...dependencies, daemon: false });
   cleanup.push(() => { endForwarders(); runtime.dispose(); fork.dispose(); sql.close(); rmSync(root, { recursive: true, force: true }); });
-  return { runtime, fork, db, sql, ctx, podman, nspawn, machines, ownership, storage, members, users, project, stores, root, containers, diskFiles, legacyRootfs, archives, warn, forwarders, publicationSocket, staleSocket, endForwarders };
+  return { runtime, fork, db, sql, ctx, podman, nspawn, machines, ownership, disk, storage, members, users, project, stores, root, containers, diskFiles, legacyRootfs, archives, warn, forwarders, publicationSocket, staleSocket, endForwarders };
 }
 const input = { project: { kind: 'managed', projectId: 7 }, accountUserId: 1 };
 
@@ -1611,6 +1620,38 @@ describe('environment runtime migration', () => {
     expect(migrationOf(sql).done).toEqual(RUNTIME_CHECKPOINTS);
     expect(ownership).toEqual(['nspawn', 'podman', 'nspawn']);
     expect(specOf(sql).input.disk.runtime).toBe('nspawn');
+  });
+
+  it('never leaves a half-converted disk behind a rollback whose own ownership pass fails', async () => {
+    const { runtime, sql, nspawn, disk, ownership, containers, machines } = await diskBackedProject();
+    nspawn.start.mockImplementationOnce(async () => { throw new Error('machine init refused to start'); });
+    disk.failReverse = true;
+
+    const queued = await runtime.requestEnvironment({ ...admin, requestId: 'runtime-reverse', action: { kind: 'migrate-runtime' } });
+    await runtime.reconcile();
+
+    const failed = await runtime.environmentOperation({ operationId: queued.id, accountUserId: 3 });
+    expect(failed!.status).toBe('failed');
+    expect(failed!.error).toContain('ownership reversal interrupted');
+    // The tree is now split between the two schemes, so nothing can boot it. What must NOT have survived
+    // that failure is the receipt saying the forward pass is already done: with it, the retry skips the
+    // shift step and boots the machine against a disk neither runtime can read.
+    expect(disk.owner).toBe('mixed');
+    expect(migrationOf(sql).done).not.toContain('shifted');
+    expect(migrationOf(sql).done).toEqual(['claimed']);
+
+    disk.failReverse = false;
+    await runtime.requestEnvironment({ ...admin, requestId: 'runtime-reverse', action: { kind: 'migrate-runtime' } });
+    await runtime.reconcile();
+
+    // The retry ran the forward pass again over the split tree, so the disk belongs to one scheme again
+    // and the machine the row now names can read it.
+    expect(ownership).toEqual(['nspawn', 'podman', 'nspawn']);
+    expect(disk.owner).toBe('nspawn');
+    expect(migrationOf(sql).done).toEqual(RUNTIME_CHECKPOINTS);
+    expect(specOf(sql).input.disk.runtime).toBe('nspawn');
+    expect(containers.has('elowen-project-7-g1')).toBe(false);
+    expect(machines.get('elowen-project-7-g2')?.state).toBe('running');
   });
 
   // Every step is interrupted in turn, which is what a daemon restart looks like from the durable row,

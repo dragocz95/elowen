@@ -1259,15 +1259,22 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
           if (observed && ['running', 'paused', 'stopping'].includes(observed.state)) await target().stop(candidate());
           await target().remove(candidate());
         }
-        if (reached('shifted')) await target().shiftOwnership(candidate(), { target: 'podman', uidBase: state.previousUidBase });
+        // The receipts go BEFORE the ownership pass they describe, and this order is the whole safety of
+        // the rollback. A reverse pass that dies part way leaves a tree split between the two schemes,
+        // which neither rootless Podman nor the machine can read; a `shifted` receipt that survived that
+        // failure would make the retry skip the forward pass at the step above and boot against it. The
+        // forward pass is idempotent, so dropping the receipt early can only cost a redundant pass over
+        // ids that already carry the destination scheme, where keeping it costs the disk.
         // `quiesced` goes with them: the environment is about to be running again on Podman, so the
         // retry has to stop it before it may touch the disk's ownership a second time.
+        const reversing = reached('shifted');
         for (const name of ['quiesced', 'shifted', 'envelope-written', 'candidate-booted']) done.delete(name);
         delete state.candidateSpec.containerId;
         delete state.candidateClaimed;
         delete state.candidateEnvelopeId;
         state.done = [...done];
         checkpoint(op, { migration: state });
+        if (reversing) await target().shiftOwnership(candidate(), { target: 'podman', uidBase: state.previousUidBase });
         store.log(row.kind, row.resource_id, `migrate-runtime candidate removed and rolled back: ${cause.message}`);
         if (state.wasRunning) {
           if (row.kind === 'site') await sites.beforeStart(row.resource_id);
