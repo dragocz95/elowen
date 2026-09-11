@@ -9,7 +9,7 @@ import { createGuestFileTransport, validateUploadOperation, UPLOAD_KINDS } from 
 import { managedShellFrame, synchronousShellFrame } from './managedBootstrap.mjs';
 import { createEnvironmentStore, isRequestId, operationView, OPERATION_HISTORY } from './environmentDb.mjs';
 import { ownerProvablyDead, processIdentity, withRepoLease } from './db.mjs';
-import { createContainerSpec, createBoundSiteSpec, withContainerLimits, resourceToken, bindContainerIdentity, publicationRuntimeToken } from './containerSpec.mjs';
+import { createContainerSpec, createLegacyProjectSpec, createBoundSiteSpec, withContainerLimits, resourceToken, bindContainerIdentity, publicationRuntimeToken } from './containerSpec.mjs';
 import { managedGuestRoot } from './containerPaths.mjs';
 import { PodmanClient } from './podman.mjs';
 import { ContainerStorage } from './containerStorage.mjs';
@@ -216,9 +216,13 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
   /** Where this project is mounted inside its own container — persisted with the row, so renaming the
    *  project later cannot silently change a running container's identity. */
   const rootOf = (row) => row.spec.input.workspaceTarget;
-  function specFor(record) {
+  function specFor(record, cleanup = false) {
     const input = { ...record.input, limits: record.creationLimits ?? record.input.limits };
-    const base = input.resource.kind === 'site' ? createBoundSiteSpec(input, record.binding) : createContainerSpec(input, record.paths);
+    const base = input.resource.kind === 'site'
+      ? createBoundSiteSpec(input, record.binding)
+      : cleanup && input.workspaceTarget === undefined
+        ? createLegacyProjectSpec(input, record.paths)
+        : createContainerSpec(input, record.paths);
     const spec = same(input.limits, record.input.limits) ? base : withContainerLimits(base, record.input.limits);
     return record.containerId ? bindContainerIdentity(spec, record.containerId) : spec;
   }
@@ -993,15 +997,15 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       const spec = specFor(row.spec);
       const snapshots = store.snapshots(row.kind, row.resource_id);
       const recipes = new Map([[spec.name, row.spec]]);
-      for (const saved of snapshots) { const recipe = JSON.parse(saved.spec_json); recipes.set(specFor(recipe).name, recipe); }
+      for (const saved of snapshots) { const recipe = JSON.parse(saved.spec_json); recipes.set(specFor(recipe, true).name, recipe); }
       for (const entry of db.prepare('SELECT checkpoint_json FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=?').all(row.kind, row.resource_id)) {
         const previous = JSON.parse(entry.checkpoint_json);
-        for (const key of ['oldSpec', 'newSpec']) if (previous[key]) recipes.set(specFor(previous[key]).name, previous[key]);
+        for (const key of ['oldSpec', 'newSpec']) if (previous[key]) recipes.set(specFor(previous[key], true).name, previous[key]);
       }
       recipes.set(spec.name, row.spec);
       step(op, 'containers');
       for (const recipe of recipes.values()) {
-        const owned = specFor(recipe);
+        const owned = specFor(recipe, true);
         if (await podman.inspect(owned)) {
           await stopRow({ ...row, spec: recipe, generation: recipe.input.generation });
           await podman.remove(owned);
@@ -1010,14 +1014,14 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       checkpoint(op, { containerRemoved: true });
       step(op, 'images');
       for (const saved of snapshots) {
-        const owned = specFor(JSON.parse(saved.spec_json));
+        const owned = specFor(JSON.parse(saved.spec_json), true);
         const manifest = JSON.parse(saved.manifest_json);
         if (manifest.retained) await podman.removeRetainedSiteImage(owned, manifest.image.reference, manifest.image.id);
         else await podman.removeSnapshotImage(owned, manifest.snapshotId);
       }
       step(op, 'volumes');
       for (const recipe of recipes.values()) {
-        const owned = specFor(recipe);
+        const owned = specFor(recipe, true);
         for (const volume of owned.volumes) await podman.removeVolume(owned, volume.component);
       }
       step(op, 'storage');
@@ -1366,13 +1370,13 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       if (store.publications(id).length) throw error('published_sites_exist', 'Transfer or delete this Project\'s published Sites before releasing the Project');
       const snapshots = store.snapshots('project', id);
       const recipes = new Map([[specFor(row.spec).name, row.spec]]);
-      for (const saved of snapshots) { const recipe = JSON.parse(saved.spec_json); recipes.set(specFor(recipe).name, recipe); }
+      for (const saved of snapshots) { const recipe = JSON.parse(saved.spec_json); recipes.set(specFor(recipe, true).name, recipe); }
       for (const entry of db.prepare('SELECT checkpoint_json FROM p_sandbox_runtime_operations WHERE kind=? AND resource_id=?').all('project', String(id))) {
         const checkpoint = JSON.parse(entry.checkpoint_json);
-        for (const key of ['oldSpec', 'newSpec']) if (checkpoint[key]) recipes.set(specFor(checkpoint[key]).name, checkpoint[key]);
+        for (const key of ['oldSpec', 'newSpec']) if (checkpoint[key]) recipes.set(specFor(checkpoint[key], true).name, checkpoint[key]);
       }
       for (const recipe of recipes.values()) {
-        const owned = specFor(recipe);
+        const owned = specFor(recipe, true);
         if (await podman.inspect(owned)) {
           await stopRow({ ...row, spec: recipe, generation: recipe.input.generation });
           await podman.remove(owned);
@@ -1381,11 +1385,11 @@ export function createEnvironmentRuntime({ ctx, db, dataDir, namespace = 'elowen
       const spec = specFor(row.spec);
       await storage.releaseWorkspace(spec, project.adoptedPath);
       for (const saved of snapshots) {
-        const owned = specFor(JSON.parse(saved.spec_json));
+        const owned = specFor(JSON.parse(saved.spec_json), true);
         await podman.removeSnapshotImage(owned, JSON.parse(saved.manifest_json).snapshotId);
       }
       for (const recipe of recipes.values()) {
-        const owned = specFor(recipe);
+        const owned = specFor(recipe, true);
         for (const volume of owned.volumes) await podman.removeVolume(owned, volume.component);
       }
       await podman.removeStorage(spec);

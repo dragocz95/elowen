@@ -25,7 +25,7 @@ function setup(config: Record<string, unknown> = {}) {
   const project: any = { id: 7, slug: 'sales-dashboard', executionKind: 'managed', lifecycle: 'active', path: '/not-a-host-path' };
   const stores = { usersRead: { list: () => [...users].map((id) => ({ id })), isAdmin: (id: number) => id === 3, mayUsePlugin: () => true },
     userProjects: { canAccess: (id: number) => project.lifecycle === 'active' && (members.has(id) || id === 3), canManage: (id: number) => members.has(id) || id === 3 },
-    projects: { get: (id: number) => id === 7 ? project : null, list: () => [project], beginDeletion: () => { project.lifecycle = 'deleting'; return true; }, finishDeletion: vi.fn(() => true) } };
+    projects: { get: (id: number) => id === 7 ? project : null, list: () => [project], beginDeletion: () => { project.lifecycle = 'deleting'; return true; }, finishDeletion: vi.fn(() => { project.lifecycle = 'deleted'; return true; }) } };
   const warn = vi.fn();
   const ctx: any = { db: () => db, host: { stores: () => stores }, currentAccountUserId: () => null, currentAccess: () => ({ readOnly: false }), config, logger: { info: vi.fn(), warn, error: vi.fn() } };
   initSandboxDb(ctx);
@@ -74,6 +74,8 @@ function setup(config: Record<string, unknown> = {}) {
     activePublications: vi.fn(async (_spec: any, publicationIds: string[]) => publicationIds.filter((publicationId) => forwarders.has(publicationId))),
     update: vi.fn(async () => {}),
     remove: vi.fn(async (spec: any) => { containers.delete(spec.name); }),
+    removeByName: vi.fn(async (spec: any) => { containers.delete(spec.name); }),
+    removeSnapshotImage: vi.fn(), removeRetainedSiteImage: vi.fn(),
     exec: vi.fn(async () => ({ code: 0, stdout: '', stderr: '', truncated: false })),
     // A start waits for the guest system bus before anything runs through `systemd-run`.
     waitForSystemBus: vi.fn(async () => {}),
@@ -615,13 +617,41 @@ describe('durable managed environment lifecycle', () => {
     await runtime.revokeProjectAccess({ projectId: 7, accountUserId: 1 });
     expect(sql.prepare('SELECT id FROM p_sandbox_file_uploads').all()).toEqual([]);
   });
-  it('keeps a failed delete checkpoint and does not finalize the core Project', async () => {
-    const { runtime, podman, stores } = setup();
+  it('deletes a recreated environment with a snapshot from the legacy workspace layout', async () => {
+    const { runtime, podman, stores, db, containers, project } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'legacy-snapshot-start', action: { kind: 'start' } }); await runtime.reconcile();
+    const row = db.prepare("SELECT spec_json FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get() as any;
+    const legacySpec = JSON.parse(row.spec_json);
+    delete legacySpec.input.workspaceTarget;
+    db.prepare("INSERT INTO p_sandbox_runtime_snapshots(id,kind,resource_id,generation,spec_json,manifest_json) VALUES('snapshot-legacy','project','7',1,?,?)")
+      .run(JSON.stringify(legacySpec), JSON.stringify({ snapshotId: 'snapshot-legacy', retained: false }));
+
+    await runtime.requestEnvironment({ ...input, requestId: 'legacy-snapshot-recreate', action: { kind: 'recreate' } }); await runtime.reconcile();
+    const op = await runtime.requestEnvironment({ ...input, requestId: 'legacy-snapshot-delete', action: { kind: 'delete' } }); await runtime.reconcile();
+
+    expect((await runtime.environmentOperation({ operationId: op.id, accountUserId: 1 }))?.status).toBe('succeeded');
+    expect(podman.removeSnapshotImage).toHaveBeenCalledWith(expect.objectContaining({ workdir: '/workspace' }), 'snapshot-legacy');
+    expect(podman.removeVolume).toHaveBeenCalledTimes(3);
+    expect(containers.size).toBe(0);
+    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get()).toEqual({ n: 0 });
+    expect(stores.projects.finishDeletion).toHaveBeenCalledWith(7);
+    expect(project.lifecycle).toBe('deleted');
+  });
+
+  it('keeps a failed delete checkpoint and converges when the same delete is requested again', async () => {
+    const { runtime, podman, stores, db } = setup();
     await runtime.requestEnvironment({ ...input, action: { kind: 'start' } }); await runtime.reconcile();
     podman.removeStorage.mockRejectedValueOnce(new Error('disk busy'));
-    const op = await runtime.requestEnvironment({ ...input, action: { kind: 'delete' } }); await runtime.reconcile();
+    const op = await runtime.requestEnvironment({ ...input, requestId: 'retry-delete', action: { kind: 'delete' } }); await runtime.reconcile();
     expect((await runtime.environmentOperation({ operationId: op.id, accountUserId: 1 }))?.status).toBe('failed');
     expect(stores.projects.finishDeletion).not.toHaveBeenCalled();
+
+    const retried = await runtime.requestEnvironment({ ...input, requestId: 'retry-delete', action: { kind: 'delete' } });
+    expect(retried.id).toBe(op.id);
+    await runtime.reconcile();
+    expect((await runtime.environmentOperation({ operationId: op.id, accountUserId: 1 }))?.status).toBe('succeeded');
+    expect(db.prepare("SELECT COUNT(*) AS n FROM p_sandbox_runtimes WHERE kind='project' AND resource_id='7'").get()).toEqual({ n: 0 });
+    expect(stores.projects.finishDeletion).toHaveBeenCalledWith(7);
   });
 });
 

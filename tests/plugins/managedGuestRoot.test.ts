@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { createBoundSiteSpec, createContainerSpec, guestMountTarget, RESERVED_GUEST_ROOTS as pluginReserved } from '../../plugins/sandbox/lib/containerSpec.mjs';
+import { createBoundSiteSpec, createContainerSpec, createLegacyProjectSpec, guestMountTarget, RESERVED_GUEST_ROOTS as pluginReserved } from '../../plugins/sandbox/lib/containerSpec.mjs';
 import { managedGuestRoot as pluginRoot } from '../../plugins/sandbox/lib/containerPaths.mjs';
 import { createProjectSchema } from '../../src/api/schemas/projects.js';
 import { isReservedProjectSlug, managedGuestRoot as coreRoot, RESERVED_GUEST_ROOTS } from '../../src/shared/projectExecution.js';
@@ -65,6 +65,13 @@ describe('managed project mount point', () => {
   it('gives a project moved to a new mount point a new container identity', () => {
     const at = (target: string) => createContainerSpec({ resource: { kind: 'project', id: 3 }, workspaceTarget: target, generation: 1, image: 'localhost/base:v1' }, paths).specHash;
     expect(at('/kolin')).not.toBe(at('/other'));
+  });
+
+  it('reconstructs only the exact pre-mount project identity for cleanup', () => {
+    const spec = createLegacyProjectSpec({ resource: { kind: 'project', id: 3 }, generation: 1, image: 'localhost/base:v1' }, paths);
+    expect(spec.specHash).toBe('61d17623c553e5e689fe7dc9e19e2bb8262301e0758cee0ff527a78a6a00ab92');
+    expect(spec.workdir).toBe('/workspace');
+    expect(() => createLegacyProjectSpec({ resource: { kind: 'project', id: 3 }, workspaceTarget: '/kolin', generation: 1, image: 'localhost/base:v1' }, paths)).toThrow(/legacy Project/);
   });
 
   // Sites were migrated separately and their containers are in production: their specification identity
