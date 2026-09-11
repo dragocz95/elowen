@@ -48,6 +48,13 @@ export function createContainerSpec(input, paths) {
   return buildSpec(input, paths);
 }
 
+/** Reconstruct the trusted identity persisted by project records from before named guest mounts. This is
+ * cleanup-only: current project specifications must still carry and validate their workspace target. */
+export function createLegacyProjectSpec(input, paths) {
+  if (input?.resource?.kind !== 'project' || input.workspaceTarget !== undefined) throw new Error('A legacy Project specification is required');
+  return buildSpec(input, paths, null, true);
+}
+
 export function createBoundSiteSpec(input, binding) {
   closed(binding, ['sitesDataDir', 'sourcePath', 'brokerDir', 'namespace']);
   if (input?.resource?.kind !== 'site') throw new Error('A Site binding is required');
@@ -69,7 +76,7 @@ export function withContainerLimits(spec, requested) {
   freeze(next); trustedSpecs.add(next); return next;
 }
 
-function buildSpec(input, paths, binding = null) {
+function buildSpec(input, paths, binding = null, legacyProjectWorkspace = false) {
   closed(input, ['resource', 'generation', 'image', 'limits', 'network', 'workspaceReadOnly', 'previewBroker', 'workspaceTarget']);
   if (input.previewBroker !== undefined && (input.resource?.kind !== 'project' || typeof input.previewBroker !== 'boolean')) throw new Error('Invalid preview broker policy');
   closed(input.resource, ['kind', 'id']);
@@ -101,9 +108,8 @@ function buildSpec(input, paths, binding = null) {
   const volumes = components.map((component) => ({
     component, name: `${name}-${component}`, path: join(storageRoot, 'storage', String(generation), component),
   }));
-  // A project is mounted under its own name; a Site keeps the anonymous `/workspace` its published
-  // containers were created with.
-  const workdir = kind === 'project' ? guestMountTarget(input.workspaceTarget) : '/workspace';
+  // A project is mounted under its own name; a Site and a historical project cleanup keep `/workspace`.
+  const workdir = kind === 'project' && !legacyProjectWorkspace ? guestMountTarget(input.workspaceTarget) : '/workspace';
   const mounts = kind === 'project'
     ? volumes.map((volume) => ({ type: 'volume', source: volume.name, target: { workspace: workdir, home: '/root', data: '/data' }[volume.component], readOnly: false }))
     : [
