@@ -405,6 +405,25 @@ describe('durable managed environment lifecycle', () => {
     expect((await runtime.environmentFor(input)).state).toBe('running');
   });
 
+  it('recreates a limited container with the changed limits as its new creation baseline', async () => {
+    const { runtime, podman } = setup();
+    await runtime.requestEnvironment({ ...input, requestId: 'lim-start', action: { kind: 'start' } }); await runtime.reconcile();
+    const changed = { cpus: 2, memoryMb: 2048, pidsLimit: 1024 };
+    await runtime.requestEnvironment({ ...input, accountUserId: 3, requestId: 'lim-limits', action: { kind: 'limits', limits: changed } }); await runtime.reconcile();
+    podman.create.mockClear();
+
+    await runtime.requestEnvironment({ ...input, requestId: 'lim-recreate', action: { kind: 'recreate' } }); await runtime.reconcile();
+
+    expect(podman.create).toHaveBeenCalledOnce();
+    const recreated = podman.create.mock.calls[0]![0];
+    expect(recreated.limits).toEqual(changed);
+    expect(recreated.creationLimits ?? recreated.limits).toEqual(changed);
+    expect((await runtime.environmentFor(input)).state).toBe('running');
+    // The new container is verified against the baseline it was created with, so a stop still passes ownership.
+    await runtime.requestEnvironment({ ...input, requestId: 'lim-stop', action: { kind: 'stop' } }); await runtime.reconcile();
+    expect((await runtime.environmentFor(input)).state).toBe('stopped');
+  });
+
   it('reaches recovery attempts one through four after short successful restarts and manual start resets them', async () => {
     vi.useFakeTimers();
     cleanup.push(() => vi.useRealTimers());
